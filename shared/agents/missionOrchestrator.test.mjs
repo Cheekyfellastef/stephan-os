@@ -591,7 +591,8 @@ test('agent result accepts exact scheduler scope identity across Git path casing
 
 test('Forge signed draft publication atomically advances commit, push, PR without merge authority', () => {
   let state = createMissionOrchestratorState({
-    ...base, missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
+    ...base, repository: 'cheekyfellastef/stephan-os',
+    missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
     requiredEvidence: ['focused test output'],
   }, { now: new Date(timestamp(0)) });
   state = event(state, 'WORKTREE_READY', {
@@ -635,6 +636,11 @@ test('Forge signed draft publication atomically advances commit, push, PR withou
     receipt: receipt('draft publication', 'forge-bad-publish'),
   });
   assert.equal(invalid.currentPhase, 'BLOCKED');
+  const lookalike = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, repository: 'Cheekyfellastef/stephan-os-fork' },
+    receipt: receipt('draft publication', 'forge-lookalike-publish'),
+  });
+  assert.equal(lookalike.currentPhase, 'BLOCKED');
   const published = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
     publication,
     receipt: receipt('draft publication', 'forge-publish'),

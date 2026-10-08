@@ -197,7 +197,7 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
     missionId: 'binary-mission',
     actionId: 'binary-action',
     adapter: 'stephanos-native',
-    repository: 'Cheekyfellastef/stephan-os',
+    repository: 'cheekyfellastef/stephan-os',
     branch: 'feat/binary-test',
     worktreePath: options.repoRoot,
     requiredTests: [TEST_COMMAND],
@@ -211,6 +211,7 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
   });
 
   assert.equal(finalized.testsPassed, true);
+  assert.equal(finalized.sourceArtifactEscrow.repository, 'Cheekyfellastef/stephan-os');
   const artifactName = finalized.sourceArtifactEscrow.artifactRef.split('/').at(-1);
   const bundle = JSON.parse(await readFile(join(options.sharedWorkspaceRoot, 'source-artifacts', artifactName), 'utf8'));
   assert.deepEqual(

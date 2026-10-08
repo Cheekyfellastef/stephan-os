@@ -309,13 +309,20 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
       changedFiles.push(identity);
       artifactFiles.push(Object.freeze({ ...identity, mode: staged.mode, deleted: staged.deleted, contentBase64: bytes.toString('base64') }));
     }
+    // The scheduler normalizes resource repository IDs to lowercase. Only
+    // restore the fixed, allowlisted canonical identity for the escrow
+    // authority; never allow caller-supplied repositories into signed bundles.
+    const requestedRepository = text(action.repository);
+    if (requestedRepository.toLowerCase() !== 'cheekyfellastef/stephan-os') {
+      throw new Error('SOURCE_ARTIFACT_CANONICAL_REPOSITORY_REQUIRED');
+    }
     const grant = options.actionGrant || {};
     const hasPrBinding = Object.hasOwn(grant, 'prNumber');
     const canonicalPrValue = hasPrBinding ? (grant.prNumber === null ? null : positiveInteger(grant.prNumber)) : undefined;
     return Object.freeze({
       missionId: text(action.missionId),
       actionId: text(action.actionId),
-      repository: text(action.repository),
+      repository: 'Cheekyfellastef/stephan-os',
       canonicalIssue: positiveInteger(grant.issueNumber),
       canonicalPr: canonicalPrValue,
       canonicalBranch: text(action.branch),
