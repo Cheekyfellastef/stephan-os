@@ -3,6 +3,7 @@
 // An existing authorised controller must supply the signed operation grant.
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { publishForgePrePrToGitHub } from '../stephanos-server/services/forgePrePrGitHubPublisherService.js';
@@ -25,7 +26,7 @@ const pathFor = (repository, suffix) => {
   if (repository !== 'Cheekyfellastef/stephan-os') throw new Error('NONCANONICAL_REPOSITORY');
   return '/repos/' + repository + suffix;
 };
-const githubApi = {
+export const githubApi = {
   async getMain(repository) {
     const ref = runGh('GET', pathFor(repository, '/git/ref/heads/main'));
     const commit = runGh('GET', pathFor(repository, '/git/commits/' + ref.object.sha));
@@ -88,7 +89,7 @@ async function main() {
   process.stdout.write(JSON.stringify(result) + '\n');
   if (!result.ok) process.exitCode = 2;
 }
-main().catch((error) => {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => {
   process.stdout.write(JSON.stringify({
     ok: false, reason: String(error?.message || error),
     finalVerdict: 'FORGE_PRE_PR_GITHUB_PUBLICATION_BLOCKED',
