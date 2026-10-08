@@ -602,6 +602,22 @@ test('Forge signed draft publication atomically advances commit, push, PR withou
   state = event(state, 'AGENT_RESULT_RECEIVED', {
     success: true, resultId: 'forge-source-result', changedFiles: ['shared/agents/missionOrchestrator.mjs'],
     receipt: receipt('forge result', 'forge-result-receipt'),
+    sourceArtifactEscrow: {
+      schemaVersion: 'stephanos.source-artifact-escrow.v1',
+      missionId: 'critical-2732-elastic-goal', repository: base.repository,
+      canonicalBranch: 'openclaw/elastic-goal-2732', canonicalPr: null,
+      completeArtifactSha256: 'c'.repeat(64),
+      exactParentHead: 'd'.repeat(40), exactResultTree: 'b'.repeat(40),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+    },
+    offlinePublicationOutbox: {
+      schemaVersion: 'stephanos.offline-publication-outbox.v1',
+      outboxId: 'offline-publication-' + 'e'.repeat(24),
+      missionId: 'critical-2732-elastic-goal',
+      completeArtifactSha256: 'c'.repeat(64),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+      publicationPaused: true, pushAuthority: false, mergeAuthority: false,
+    },
   });
   state = event(state, 'EVIDENCE_RECORDED', {
     receipts: [receipt('focused test output', 'forge-tests')],
