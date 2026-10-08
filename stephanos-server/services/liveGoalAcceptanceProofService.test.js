@@ -17,3 +17,10 @@ test('ten grounded or explicit-gap VR responses prove route contract, not ground
  const x=await collectGoalAcceptanceProof({goalNumber:1723,mission:mission(1723),sourceHead,verifyMerge:async()=>true,askVrResearch:async()=>({ok:true,participantId:'stephanos-vr-research',answer:{answerVerdict:'GAP_KNOWLEDGE'},gapObservation:{id:'gap'}})});
  assert.deepEqual(x.reconciliation.verified,['SOURCE_MERGED','QA_ROUTE_HTTP_200','TEN_QUESTION_ROUTE_PROVEN']);assert.ok(x.reconciliation.missing.includes('INDEPENDENT_PROOF_BINDING'));assert.equal(x.reconciliation.completionAllowed,false);
 });
+
+test('fresh browser fallback check provides only its own acceptance proof',async()=>{
+ const x=await collectGoalAcceptanceProof({goalNumber:1717,mission:mission(1717),sourceHead,verifyMerge:async()=>true,checkVrLink:async()=>true,checkBrowserFallback:async()=>true});
+ assert.ok(x.reconciliation.verified.includes('DESKTOP_FALLBACK_BROWSER_PROVEN'));
+ assert.ok(x.reconciliation.missing.includes('HEADSET_SESSION_OR_UNSUPPORTED_PROOF'));
+ assert.equal(x.reconciliation.completionAllowed,false);
+});
