@@ -648,3 +648,21 @@ test('Forge signed draft publication atomically advances commit, push, PR withou
   assert.equal(published.approval.status, 'not-requested');
   assert.equal(published.pullRequest.merged, false);
 });
+
+test('pilot current-main source cannot silently complete while acceptance is missing', () => {
+  for (const issue of [1646,1717,1723]) {
+    const mission={...base,missionId:'critical-'+issue+'-elastic-goal'};
+    let state=createMissionOrchestratorState(mission,{now:new Date(timestamp(0))});
+    state=event(state,'WORKTREE_READY',{
+      worktreePath:mission.worktreePath,clean:true,
+      receipt:receipt('isolated worktree','pilot-worktree-'+issue),
+    });
+    const result=event(state,'CURRENT_MAIN_SATISFACTION_RECORDED',{
+      sourceRevision:'4'.repeat(40),canonicalMainHeadSha:'4'.repeat(40),
+      worktreeHeadSha:'4'.repeat(40),worktreeClean:true,changedFiles:[],
+    });
+    assert.notEqual(result.currentPhase,'COMPLETE');
+    assert.equal(result.currentMainAcceptance?.verified,false);
+    assert.match(result.blockers.join(' '),/independent goal-acceptance completion proof/);
+  }
+});

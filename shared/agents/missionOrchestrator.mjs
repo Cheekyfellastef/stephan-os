@@ -499,6 +499,11 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       }],
     };
   } else if (eventType === 'CURRENT_MAIN_SATISFACTION_RECORDED') {
+    // Replacement source is not whole-goal acceptance. Pilot goals require
+    // independently reconciled acceptance before a terminal transition.
+    if (/^critical-(1646|1717|1723)-elastic-goal$/.test(state.missionId)) {
+      return block(state, 'Current-main satisfaction for this pilot mission requires independent goal-acceptance completion proof; merged source alone is insufficient.', timestamp);
+    }
     if (state.missionKind !== 'implementation') return block(state, 'Current-main satisfaction is only valid for implementation missions.', timestamp);
     if (state.currentPhase !== 'AGENT_IMPLEMENTATION') return block(state, 'Current-main satisfaction can only be recorded from implementation phase.', timestamp);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept current-main satisfaction.', timestamp);
