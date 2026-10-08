@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { buildOfflinePublicationOutboxRecordV1 } from '../shared/agents/offlinePublicationOutboxV1.mjs';
-import { executeForgePublicationAction } from './mission-orchestrator-worker.mjs';
+import { executeForgePublicationAction, selectGrantedMissionWorkerQueueItem } from './mission-orchestrator-worker.mjs';
+import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 
 const NOW = new Date('2026-10-08T07:30:00.000Z');
 const digest = (bytes, algo = 'sha256') => createHash(algo).update(bytes).digest('hex');
@@ -87,6 +88,35 @@ async function fixture() {
   };
   return { workspaceRoot, privateKeyPath, publicKeyPath, action, claim, forgeGithubApi, calls };
 }
+
+test('canonical worker discovers the exact Forge publication adapter and existing queue grant', async () => {
+  const fx = await fixture();
+  const queueRoot = join(fx.workspaceRoot, 'worker-queue');
+  const pending = join(queueRoot, 'forge-publication', 'pending');
+  await mkdir(pending, { recursive: true });
+  const actionGrant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId: fx.action.missionId,
+    actionId: fx.action.actionId,
+    adapter: 'forge-publication',
+    actionKind: 'forge-escrow-publication',
+    operation: 'publish-forge-escrow',
+    boundedActionCount: 1,
+  };
+  await writeFile(join(pending, fx.action.actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'forge-publication',
+    actionId: fx.action.actionId,
+    missionId: fx.action.missionId,
+    actionGrant,
+    payload: { ...fx.action, operation: 'publish-forge-escrow' },
+  }));
+  const queue = await readMissionWorkerQueue({ queueRoot });
+  const selection = selectGrantedMissionWorkerQueueItem(queue, actionGrant);
+  assert.equal(selection.ok, true, selection.reason);
+  assert.equal(selection.entry.adapter, 'forge-publication');
+  assert.equal(selection.entry.item.actionId, fx.action.actionId);
+});
 
 test('granted Forge worker publishes exact preserved source as draft PR and blocks replay', async () => {
   const fx = await fixture();
