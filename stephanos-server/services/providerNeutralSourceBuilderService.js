@@ -285,6 +285,66 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
   return Object.freeze(snapshot);
 }
 
+async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowedFiles, sourceSnapshots, options = {}) {
+  const hydrated = [...(Array.isArray(sourceSnapshots) ? sourceSnapshots : [])];
+  const known = new Set(hydrated.map((entry) => normalizePath(entry?.path)).filter(Boolean));
+  const requested = [...new Set((Array.isArray(edits) ? edits : [])
+    .map((edit) => normalizePath(edit?.path))
+    .filter(Boolean))].sort();
+  const missing = requested.filter((path) => !known.has(path));
+  if (!missing.length) return Object.freeze(hydrated);
+  const outsideScope = missing.find((path) => path.includes('..') || !pathAllowed(path, allowedFiles));
+  if (outsideScope) {
+    throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${outsideScope || 'invalid-path'}`);
+  }
+
+  const run = options.runCommand || defaultRun;
+  const tracked = run(
+    'git.exe',
+    ['-C', worktreePath, 'ls-files', '-z', '--', ...missing],
+    { cwd: worktreePath },
+  );
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_TRACKED_QUERY_FAILED');
+  }
+  const trackedPaths = new Set(String(tracked.stdout || '').split('\0').map(normalizePath).filter(Boolean));
+  const untracked = missing.find((path) => !trackedPaths.has(path)
+    && edits.some((edit) => normalizePath(edit?.path) === path && edit?.old !== ''));
+  if (untracked) {
+    throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:${untracked}`);
+  }
+
+  const lstatImpl = options.sourceContextLstatImpl || lstat;
+  const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
+  const readFileImpl = options.sourceContextReadFileImpl || readFile;
+  const worktreeRealpath = await realpathImpl(worktreePath);
+
+  // Absent new-file targets use the existing scoped creation path. Hydrate
+  // tracked replacement targets without reclassifying existing ignored files.
+  for (const path of missing.filter((entry) => trackedPaths.has(entry))) {
+    if (path.includes('..') || !pathAllowed(path, allowedFiles)) {
+      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
+    }
+    const absolutePath = resolve(worktreePath, path);
+    const fileStat = await lstatImpl(absolutePath);
+    if (fileStat?.isSymbolicLink?.() === true) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SYMLINK_REJECTED:${path}`);
+    }
+    const fileRealpath = await realpathImpl(absolutePath);
+    const rel = relative(worktreeRealpath, fileRealpath);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE:${path}`);
+    }
+    const bytes = await readFileImpl(absolutePath);
+    if (bytes.length > MAX_PER_FILE_BYTES) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_TOO_LARGE:${path}`);
+    }
+    hydrated.push(Object.freeze({ path, content: bytes.toString('utf8') }));
+    known.add(path);
+  }
+  return Object.freeze(hydrated);
+}
+
 function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
   if (!Array.isArray(edits) || edits.length === 0 || edits.length > MAX_STRUCTURED_EDITS) {
     throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDITS_INVALID');
@@ -465,9 +525,14 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
     env: options.env || process.env,
     ghTokenProvider: options.ghTokenProvider,
   });
+  // Scheduler resource IDs are normalized to lowercase, while the existing
+  // canonical GitHub goal reader requires the repository's exact display casing.
+  // Verify the allowlisted identity before restoring that casing; never let a
+  // lookalike repository supply authoritative goal instructions to Forge.
+  if (`${repositoryMatch[1]}/${repositoryMatch[2]}`.toLowerCase() !== 'cheekyfellastef/stephan-os') return '';
   const issue = await readGithubGoalIssue({
-    owner: repositoryMatch[1],
-    repo: repositoryMatch[2],
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
     issueNumber,
     auth,
     ghTokenProvider: options.ghTokenProvider,
@@ -887,8 +952,15 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     providerCompleted = true;
 
     if (Array.isArray(generated.edits)) {
-      const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, sourceSnapshots);
-      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, options);
+      const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
+        worktreePath,
+        generated.edits,
+        sourceBuildAction.allowedFiles,
+        sourceSnapshots,
+        options,
+      );
+      const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
+      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
       mutationEvidence = JSON.stringify(edits);
       structuredEditsApplied = true;
       mutationApplied = true;
