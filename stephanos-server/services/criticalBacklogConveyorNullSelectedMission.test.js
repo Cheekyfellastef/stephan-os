@@ -8,7 +8,7 @@ test('elastic admission with no selected mission does not crash or fabricate an 
   const projection = {
     status: 'READY', blockers: [],
     machineryInventory: { sourceHead: 'a'.repeat(40) },
-    scheduler: { decisionReceipt: null, elasticCapacity: { readyIndependentWorkCount: 0 } },
+    scheduler: { failClosed: false, decisionReceipt: null, elasticCapacity: { status: 'RUNNING', readyIndependentWorkCount: 0 } },
   };
   const result = await runCore({
     backlog: DEFAULT_CRITICAL_BACKLOG,
