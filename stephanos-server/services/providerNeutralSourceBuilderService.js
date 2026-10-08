@@ -1038,6 +1038,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       success: true,
       resultId: finalized.resultId,
       changedFiles: finalized.changedFiles,
+      sourceArtifactEscrow: finalized.sourceArtifactEscrow,
+      offlinePublicationOutbox: finalized.offlinePublicationOutbox,
       receipt,
       evidenceReceipts: sourceTestReceipts,
       error: '',

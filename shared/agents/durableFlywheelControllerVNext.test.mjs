@@ -718,3 +718,130 @@ test('stale capacity evidence is never recorded as a selected liveness alternate
   assert.equal(result.cycleReceipt.controllerShouldRemainEnabled, true);
   assert.equal(result.cycleReceipt.controllerDisableAllowed, false);
 });
+
+test('idle grant wait remains non-authorising reconciliation instead of starving goal admission', async () => {
+  const f = machineryFor(projection('READY'), {
+    loadCapacityRoutingInput: async () => ({}),
+  });
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.boundedMutationSteps, 0);
+  assert.ok(result.blockers.includes('mission-worker:exact-action-grant-unavailable'));
+  assert.deepEqual(f.heartbeats.map(({ cycleState }) => cycleState),
+    ['RECONCILING', 'RECONCILING']);
+  assert.equal(f.heartbeats.at(-1).boundedMutationSteps, 0);
+  assert.equal(f.heartbeats.at(-1).lastPublishedReceiptId, '');
+  assert.equal(f.heartbeats.at(-1).lastSuccessfulReconciliationUtc, '');
+});
+
+test('READY controller grants exact Forge elastic draft publication despite parked legacy backlog', async () => {
+  const elastic = {
+    missionId: 'critical-1646-elastic-goal', revision: 10,
+    currentPhase: 'GITHUB_COMMIT', repository: REPOSITORY,
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1646' },
+    sourcePublication: {
+      artifactSha256: '7'.repeat(64),
+      exactParentHead: SOURCE_REVISION, exactResultTree: '8'.repeat(40),
+      canonicalBranch: 'openclaw/elastic-goal-1646',
+      outboxId: 'offline-publication-' + '9'.repeat(24),
+    },
+  };
+  const ready = projection('READY', { criticalBacklog: {
+    decision: 'PARKED_BLOCKERS_ONLY', activeMission: null,
+  }});
+  const f = machineryFor(ready, {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant?.missionId, elastic.missionId);
+  assert.equal(result.workerActionGrant?.adapter, 'forge-publication');
+  assert.equal(result.workerActionGrant?.operation, 'publish-forge-escrow');
+  assert.equal(result.workerActionGrant?.issueNumber, 1646);
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+  assert.equal(result.workerActionGrant?.leaseSeizureAllowed, false);
+});
+
+test('READY controller refuses stale-parent Forge publication when legacy backlog is parked', async () => {
+  const stale = {
+    missionId: 'critical-1646-elastic-goal', revision: 10,
+    currentPhase: 'GITHUB_COMMIT', repository: REPOSITORY,
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1646' },
+    sourcePublication: { artifactSha256: '7'.repeat(64),
+      exactParentHead: 'f'.repeat(40), exactResultTree: '8'.repeat(40),
+      canonicalBranch: 'openclaw/elastic-goal-1646',
+      outboxId: 'offline-publication-' + '9'.repeat(24) },
+  };
+  const f = machineryFor(projection('READY', {
+    criticalBacklog: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+  }), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+      elasticAdmission: { selectedMission: stale },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant, undefined);
+});
+
+test('READY elastic PR inspection receives an exact read-only grant', async () => {
+  const elastic = {
+    missionId: 'critical-1717-elastic-goal', revision: 8,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1717' },
+    pullRequest: { number: 2900, headSha: LANE_HEAD },
+  };
+  const f = machineryFor(projection('READY', { criticalBacklog: {
+    decision: 'PARKED_BLOCKERS_ONLY', activeMission: null,
+  }}), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant?.missionId, elastic.missionId);
+  assert.equal(result.workerActionGrant?.adapter, 'openclaw-github-readonly');
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+});
+
+test('READY elastic grant refuses parked PR inspection', async () => {
+  const elastic = {
+    missionId: 'critical-1717-elastic-goal', revision: 8,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'PARKED_BLOCKED' },
+    git: { branch: 'openclaw/elastic-goal-1717' },
+    pullRequest: { number: 2900, headSha: LANE_HEAD },
+  };
+  const f = machineryFor(projection('READY'), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant, undefined);
+});

@@ -337,6 +337,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
       headReceiptIds: [],
       testCommands: [],
     },
+    sourcePublication: null,
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -498,6 +499,11 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       }],
     };
   } else if (eventType === 'CURRENT_MAIN_SATISFACTION_RECORDED') {
+    // Replacement source is not whole-goal acceptance. Pilot goals require
+    // independently reconciled acceptance before a terminal transition.
+    if (/^critical-(1646|1717|1723)-elastic-goal$/.test(state.missionId)) {
+      return block(state, 'Current-main satisfaction for this pilot mission requires independent goal-acceptance completion proof; merged source alone is insufficient.', timestamp);
+    }
     if (state.missionKind !== 'implementation') return block(state, 'Current-main satisfaction is only valid for implementation missions.', timestamp);
     if (state.currentPhase !== 'AGENT_IMPLEMENTATION') return block(state, 'Current-main satisfaction can only be recorded from implementation phase.', timestamp);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept current-main satisfaction.', timestamp);
@@ -581,6 +587,14 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.git.worktreePath = text(event.worktreePath, state.git.worktreePath);
     state.git.clean = event.clean === true;
   } else if (eventType === 'AGENT_DISPATCHED') {
+    // Once canonical replacement-source repair is accepted, re-dispatching
+    // Forge to regenerate those same files would duplicate merged work.
+    if (state.missionId === 'critical-1717-elastic-goal'
+      && state.continuity?.history?.some((entry) => entry.eventType === 'MISSION_REPAIR_PROVEN'
+        && String(entry.receiptId || '').startsWith('verified-replacement-repair-'))
+      && text(event.adapter, event.agentId).toLowerCase() === 'foundry-forge') {
+      return block(state, 'REPLACEMENT_SOURCE_ALREADY_MERGED: Forge re-dispatch requires fresh independently approved source scope.', timestamp);
+    }
     const eventAgent = text(event.agentId).toLowerCase();
     const inferredAdapter = eventAgent === 'openclaw-standalone'
       ? (state.missionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'openclaw-standalone')
@@ -613,6 +627,34 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.completedAt = timestamp;
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
+    if (state.dispatch.adapter === 'foundry-forge') {
+      const escrow = event.sourceArtifactEscrow;
+      const outbox = event.offlinePublicationOutbox;
+      const valid = escrow?.schemaVersion === 'stephanos.source-artifact-escrow.v1'
+        && outbox?.schemaVersion === 'stephanos.offline-publication-outbox.v1'
+        && escrow?.missionId === state.missionId
+        && escrow?.repository === state.repository
+        && escrow?.canonicalBranch === state.git.branch
+        && escrow?.canonicalPr === null
+        && outbox?.completeArtifactSha256 === escrow?.completeArtifactSha256
+        && outbox?.missionId === state.missionId
+        && outbox?.artifactRef === escrow?.artifactRef
+        && outbox?.publicationPaused === true
+        && outbox?.pushAuthority === false
+        && outbox?.mergeAuthority === false
+        && SHA256_PATTERN.test(text(escrow?.completeArtifactSha256))
+        && SHA40_PATTERN.test(text(escrow?.exactParentHead))
+        && SHA40_PATTERN.test(text(escrow?.exactResultTree));
+      if (!valid) return block(state, 'Forge source result requires exact durable escrow and offline outbox.', timestamp);
+      state.sourcePublication = {
+        artifactSha256: escrow.completeArtifactSha256,
+        outboxId: outbox.outboxId,
+        exactParentHead: escrow.exactParentHead,
+        exactResultTree: escrow.exactResultTree,
+        canonicalBranch: escrow.canonicalBranch,
+      };
+    }
+
     const unsafeChanges = state.git.changedFiles.filter(
       (path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => scopeAllowsPath(scope, path)),
     );
@@ -631,6 +673,36 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     } else {
       return block(state, 'Unsupported Git operation completion event.', timestamp);
     }
+  } else if (eventType === 'FORGE_ESCROW_DRAFT_PUBLISHED') {
+    // One exact, signed pre-PR publication substitutes for commit/push/open-pr.
+    // No completion, merge, deploy or operator approval is implied.
+    const publication = event.publication;
+    if (state.currentPhase !== 'GITHUB_COMMIT'
+        || state.dispatch?.adapter !== 'foundry-forge'
+        || publication?.finalVerdict !== 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF'
+        || publication?.mergeAuthority !== false
+        || publication?.forcePushAllowed !== false
+        || publication?.draft !== true
+        || publication?.repository !== state.repository
+        || publication?.branch !== state.git?.branch
+        || !SHA40_PATTERN.test(text(publication?.commitSha))
+        || !Number.isSafeInteger(publication?.prNumber)
+        || publication.prNumber < 1
+        || !SHA256_PATTERN.test(text(publication?.sourceArtifactSha256))
+        || publication?.sourceArtifactSha256 !== state.sourcePublication?.artifactSha256
+        || publication?.exactResultTree !== state.sourcePublication?.exactResultTree
+        || !SHA40_PATTERN.test(text(publication?.exactResultTree))
+        || !appendReceipt(state, event.receipt)) {
+      return block(state, 'Forge escrow publication requires exact signed draft and verified receipt.', timestamp);
+    }
+    state.git.commitSha = publication.commitSha;
+    state.git.pushed = true;
+    state.git.clean = true;
+    state.pullRequest = { ...state.pullRequest, number: publication.prNumber,
+      url: text(event.prUrl), headSha: publication.commitSha, state: 'draft',
+      mergeable: false, checks: [], merged: false };
+    state.approval = { ...state.approval, status: 'not-requested',
+      requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '' };
   } else if (eventType === 'PULL_REQUEST_OPENED') {
     if (!appendReceipt(state, event.receipt)) return block(state, 'Pull request creation requires a valid receipt.', timestamp);
     const number = Number.parseInt(event.prNumber, 10);
