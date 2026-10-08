@@ -439,7 +439,18 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     const issueNumber = issueFromMissionId(state?.missionId);
     return missionCapacityOccupying(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
-  const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
+  // A verified replacement-source repair must not monopolise selection for
+  // another Forge build. Preserve the mission and its acceptance obligations.
+  const sourceConstructionAlreadyReplaced = (state) => (
+    state?.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(text(state?.currentPhase).toUpperCase())
+    && state?.continuity?.history?.some((entry) =>
+      entry?.eventType === 'MISSION_REPAIR_PROVEN'
+      && text(entry?.receiptId).startsWith('verified-replacement-repair-')) === true
+  );
+  const selectedMission = runnableMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
+    ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
+    ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
     ok: true,
