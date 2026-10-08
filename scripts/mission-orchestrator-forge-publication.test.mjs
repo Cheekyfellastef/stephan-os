@@ -69,7 +69,7 @@ async function fixture() {
     artifactSha256, outboxId: outbox.outboxId,
     exactParentHead: identity.exactParentHead, exactResultTree: identity.exactResultTree,
   };
-  const claim = { item: { actionGrant: { actionId: action.actionId, missionId: action.missionId } } };
+  const claim = { item: { actionGrant: { actionId: action.actionId, missionId: action.missionId, sourceRevision: identity.exactParentHead } } };
   const calls = [];
   const commitSha = 'd'.repeat(40);
   const forgeGithubApi = {
@@ -124,5 +124,15 @@ test('Forge publisher rejects modified immutable artifact bytes before any GitHu
   });
   assert.equal(published.ok, false);
   assert.equal(published.reason, 'EXACT_ESCROW_OR_PARENT_INVALID');
+  assert.deepEqual(fx.calls, []);
+});
+
+test('Forge source is refused before signing when grant head has advanced beyond artifact', async () => {
+  const fx = await fixture();
+  fx.claim.item.actionGrant.sourceRevision = 'f'.repeat(40);
+  await assert.rejects(
+    executeForgePublicationAction(fx.action, fx.claim, { sharedWorkspaceRoot: fx.workspaceRoot }),
+    /FORGE_PUBLICATION_PARENT_HEAD_GRANT_MISMATCH/,
+  );
   assert.deepEqual(fx.calls, []);
 });

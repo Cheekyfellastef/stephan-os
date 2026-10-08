@@ -896,6 +896,9 @@ export async function executeForgePublicationAction(action, claim, options = {})
       || claim.item.actionGrant.missionId !== action.missionId) {
     throw new Error('FORGE_PUBLICATION_CONTROLLER_GRANT_REQUIRED');
   }
+  if (action.exactParentHead !== claim.item.actionGrant.sourceRevision) {
+    throw new Error('FORGE_PUBLICATION_PARENT_HEAD_GRANT_MISMATCH');
+  }
   const env = options.env || process.env;
   const root = resolve(options.sharedWorkspaceRoot
     || env.STEPHANOS_SHARED_AGENT_WORKSPACE

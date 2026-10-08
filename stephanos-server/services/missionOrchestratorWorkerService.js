@@ -418,6 +418,19 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+  // The signed Forge draft publisher cannot publish a source tree built from
+  // an older main. Refuse stale exact-head work before writing a queue item.
+  if (action.actionKind === 'forge-escrow-publication'
+      && (!options.actionGrant
+        || options.actionGrant.adapter !== 'forge-publication'
+        || action.exactParentHead !== options.actionGrant.sourceRevision
+        || state.sourcePublication?.exactParentHead !== action.exactParentHead)) {
+    return {
+      published: false, reason: 'forge-publication-parent-head-drift',
+      blockers: ['FORGE_PUBLICATION_REQUIRES_FRESH_SOURCE_ARTIFACT'],
+      action, path: '',
+    };
+  }
   const adapter = adapterForAction(action);
   if (!adapter) {
     return {
