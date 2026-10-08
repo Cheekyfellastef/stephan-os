@@ -1331,10 +1331,19 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         // artifact for draft publication. Never synthesize a legacy lane,
         // grant an arbitrary elastic action or override an active owner.
         const elasticPublication = actionResult?.elasticAdmission?.selectedMission;
-        const eligibleElasticPublication = !projection?.lane
+        const eligibleElasticMission = !projection?.lane
           && projection?.status === 'READY'
           && !actionResult?.projection?.activeMission
-          && elasticPublication?.missionId?.endsWith('-elastic-goal')
+          && /^critical-[1-9][0-9]*-elastic-goal$/.test(text(elasticPublication?.missionId))
+          && text(elasticPublication?.repository) === 'Cheekyfellastef/stephan-os'
+          && text(elasticPublication?.git?.branch) === 'openclaw/elastic-goal-' + text(elasticPublication?.missionId).split('-')[1]
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE';
+        // Use the existing exact-action validator for ordinary stages. Never
+        // revive parked work, invent writer authority or bypass source fencing.
+        const eligibleReadOnlyOrSignedStep = eligibleElasticMission
+          && ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(elasticPublication?.currentPhase))
+          && elasticPublication?.dispatch?.status !== 'running';
+        const eligibleElasticPublication = eligibleElasticMission
           && elasticPublication?.currentPhase === 'GITHUB_COMMIT'
           && elasticPublication?.dispatch?.adapter === 'foundry-forge'
           && elasticPublication?.dispatch?.status === 'complete'
@@ -1347,7 +1356,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           ...projection,
           criticalBacklog: {
             ...actionResult.projection,
-            ...(eligibleElasticPublication ? { activeMission: elasticPublication } : {}),
+            ...((eligibleElasticPublication || eligibleReadOnlyOrSignedStep) ? { activeMission: elasticPublication } : {}),
           },
         };
         const capacityRouting = await requiredFunction(
