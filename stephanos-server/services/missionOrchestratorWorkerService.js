@@ -52,6 +52,7 @@ async function createImmutableJson(path, value) {
 
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
