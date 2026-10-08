@@ -73,6 +73,54 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
 });
 
 
+test('passing logical controller pulse named Capability Gap Intake is not a current capability failure', () => {
+  const payload = feed();
+  payload.records.eventRecords = [];
+  payload.records.receiptRecords = [];
+  payload.records.statusRecords = [{
+    kind: 'stephanos.shared_workspace.status',
+    participantId: 'monitor-multiplexer',
+    statusId: 'monitor-logical-goal-1721',
+    timestampUtc: '2026-10-08T04:10:47.461Z',
+    status: 'PASS',
+    summary: 'Logical controller logical-goal-1721 pulse due: Goal: Ambient Question-to-Goal Capability Gap Intake V1',
+    proofRefs: ['proof/logical-goal-1721'],
+  }];
+  payload.records.proofRecords = [{
+    kind: 'stephanos.shared_workspace.proof',
+    participantId: 'monitor-multiplexer',
+    proofId: 'monitor-logical-goal-1721',
+    timestampUtc: '2026-10-08T04:10:47.461Z',
+    status: 'PASS',
+    summary: 'Logical controller logical-goal-1721 pulse due: Goal: Ambient Question-to-Goal Capability Gap Intake V1',
+    proofRefs: ['proof/logical-goal-1721'],
+  }];
+  const view = deriveFlywheelWorkspaceView(payload);
+  const agent = view.participants.find((participant) => participant.participantId === 'monitor-multiplexer');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.currentGaps.length, 0);
+  assert.equal(view.stats.agentsNeedingUplift, 0);
+});
+
+test('typed capability failures remain visible despite successful record text nearby', () => {
+  const payload = feed();
+  payload.records.eventRecords = [];
+  payload.records.receiptRecords = [];
+  payload.records.statusRecords = [{
+    kind: 'stephanos.shared_workspace.status',
+    participantId: 'mission-orchestrator',
+    timestampUtc: '2026-10-08T04:11:00.000Z',
+    status: 'BLOCKED',
+    summary: 'Post-sync runtime refresh BLOCKED_UNCLASSIFIED_RUNTIME_PATH',
+    proofRefs: ['proof/runtime-refresh-blocked'],
+  }];
+  const view = deriveFlywheelWorkspaceView(payload);
+  const agent = view.participants.find((participant) => participant.participantId === 'mission-orchestrator');
+  assert.equal(agent.capabilityGapCount, 1);
+  assert.equal(agent.currentGaps[0].summary, 'Post-sync runtime refresh BLOCKED_UNCLASSIFIED_RUNTIME_PATH');
+});
+
 test('Flywheel keeps the source-proven Starfield seed contract visible when live feed is unavailable', () => {
   const view = deriveFlywheelWorkspaceView({
     schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
