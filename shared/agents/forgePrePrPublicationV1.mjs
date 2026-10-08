@@ -7,7 +7,7 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const HASH64 = /^[0-9a-f]{64}$/;
 const ZERO = '0'.repeat(40);
 const digest = (bytes, algorithm = 'sha256') => createHash(algorithm).update(bytes).digest('hex');
-const blobDigest = (bytes) => digest(Buffer.concat([Buffer.from(`blob ${bytes.length}\\0`), bytes]), 'sha1');
+const blobDigest = (bytes) => digest(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]), 'sha1');
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const error = (blockers) => Object.freeze({
   schemaVersion: FORGE_PRE_PR_PUBLICATION_SCHEMA,
