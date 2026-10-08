@@ -131,6 +131,13 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     );
   }
 
+  // A parked critical backlog is not proof of an idle elastic fleet when admission
+  // was skipped. Fail closed and surface the missing programme/admission authority.
+  if (text(conveyorResult.classification) === 'PARKED_BLOCKERS_ONLY'
+      && (!conveyorResult.elasticAdmission || !conveyorResult.elasticIgnition)) {
+    return blockedResult('ELASTIC_GOAL_ADMISSION_NOT_PROVEN', details);
+  }
+
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
     && dispatchCount === 0
