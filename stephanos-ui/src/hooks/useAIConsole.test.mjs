@@ -473,7 +473,7 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
 });
 
 test('successful backend health survives independent provider telemetry errors', async () => {
-  const source = await fs.readFile(path.join(new URL('.', import.meta.url).pathname, 'useAIConsole.js'), 'utf8');
+  const source = await fs.readFile(new URL('./useAIConsole.js', import.meta.url), 'utf8');
   assert.match(source, /let providerHealth = \{ data: \{\} \};/);
   assert.match(source, /catch \(providerError\) \{/);
   assert.match(source, /recordPerfEvent\('polling', 'getProviderHealth\.error'/);
