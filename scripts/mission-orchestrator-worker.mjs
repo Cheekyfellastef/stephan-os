@@ -899,6 +899,13 @@ export async function executeForgePublicationAction(action, claim, options = {})
   if (action.exactParentHead !== claim.item.actionGrant.sourceRevision) {
     throw new Error('FORGE_PUBLICATION_PARENT_HEAD_GRANT_MISMATCH');
   }
+  // The scheduler stores lowercase repository IDs, while the immutable escrow
+  // and signed GitHub grant require the exact canonical repository identity.
+  // Never trust the queued action to name a different repository.
+  const canonicalRepository = 'Cheekyfellastef/stephan-os';
+  if (text(action.repository).toLowerCase() !== canonicalRepository.toLowerCase()) {
+    throw new Error('FORGE_PUBLICATION_CANONICAL_REPOSITORY_REQUIRED');
+  }
   const env = options.env || process.env;
   const root = resolve(options.sharedWorkspaceRoot
     || env.STEPHANOS_SHARED_AGENT_WORKSPACE
@@ -917,7 +924,8 @@ export async function executeForgePublicationAction(action, claim, options = {})
     readFile(outboxFile, 'utf8').then(JSON.parse),
   ]);
   if (escrow.missionId !== action.missionId
-      || escrow.repository !== action.repository
+      || escrow.repository !== canonicalRepository
+      || outbox.repository !== canonicalRepository
       || escrow.canonicalBranch !== action.branch
       || escrow.completeArtifactSha256 !== action.artifactSha256
       || escrow.exactParentHead !== action.exactParentHead
@@ -937,7 +945,7 @@ export async function executeForgePublicationAction(action, claim, options = {})
     authorizationId: 'forge-publish-' + createHash('sha256')
       .update(action.actionId + ':' + action.artifactSha256).digest('hex').slice(0, 24),
     missionId: action.missionId, operation: 'publish-forge-escrow',
-    repository: action.repository, branch: action.branch,
+    repository: canonicalRepository, branch: action.branch,
     issueNumber: escrow.canonicalIssue,
     parentHead: action.exactParentHead, resultTree: action.exactResultTree,
     mergeAuthority: false, forcePushAllowed: false, singleUse: true,

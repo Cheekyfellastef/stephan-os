@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { buildOfflinePublicationOutboxRecordV1 } from '../shared/agents/offlinePublicationOutboxV1.mjs';
-import { executeForgePublicationAction } from './mission-orchestrator-worker.mjs';
+import { executeForgePublicationAction, selectGrantedMissionWorkerQueueItem } from './mission-orchestrator-worker.mjs';
+import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 
 const NOW = new Date('2026-10-08T07:30:00.000Z');
 const digest = (bytes, algo = 'sha256') => createHash(algo).update(bytes).digest('hex');
@@ -88,6 +89,35 @@ async function fixture() {
   return { workspaceRoot, privateKeyPath, publicKeyPath, action, claim, forgeGithubApi, calls };
 }
 
+test('canonical worker discovers the exact Forge publication adapter and existing queue grant', async () => {
+  const fx = await fixture();
+  const queueRoot = join(fx.workspaceRoot, 'worker-queue');
+  const pending = join(queueRoot, 'forge-publication', 'pending');
+  await mkdir(pending, { recursive: true });
+  const actionGrant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    missionId: fx.action.missionId,
+    actionId: fx.action.actionId,
+    adapter: 'forge-publication',
+    actionKind: 'forge-escrow-publication',
+    operation: 'publish-forge-escrow',
+    boundedActionCount: 1,
+  };
+  await writeFile(join(pending, fx.action.actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'forge-publication',
+    actionId: fx.action.actionId,
+    missionId: fx.action.missionId,
+    actionGrant,
+    payload: { ...fx.action, operation: 'publish-forge-escrow' },
+  }));
+  const queue = await readMissionWorkerQueue({ queueRoot });
+  const selection = selectGrantedMissionWorkerQueueItem(queue, actionGrant);
+  assert.equal(selection.ok, true, selection.reason);
+  assert.equal(selection.entry.adapter, 'forge-publication');
+  assert.equal(selection.entry.item.actionId, fx.action.actionId);
+});
+
 test('granted Forge worker publishes exact preserved source as draft PR and blocks replay', async () => {
   const fx = await fixture();
   const opts = { sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
@@ -102,6 +132,35 @@ test('granted Forge worker publishes exact preserved source as draft PR and bloc
   assert.equal(replay.ok, false);
   assert.equal(replay.reason, 'PUBLICATION_GRANT_ALREADY_USED_OR_UNAVAILABLE');
   assert.equal(fx.calls.filter((x) => x === 'branch').length, 1);
+});
+
+test('Forge publication restores only lowercase canonical scheduler repository before signing', async () => {
+  const fx = await fixture();
+  fx.action.repository = 'cheekyfellastef/stephan-os';
+  fx.claim.item.actionGrant.repository = 'cheekyfellastef/stephan-os';
+  const result = await executeForgePublicationAction(fx.action, fx.claim, {
+    sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+    publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(result.prNumber, 3001);
+  assert.equal(result.forcePushAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.deepEqual(fx.calls, ['blob', 'tree', 'commit', 'branch', 'draft-pr']);
+});
+
+test('Forge publisher denies a lookalike repository before signing or writing GitHub', async () => {
+  const fx = await fixture();
+  fx.action.repository = 'cheekyfellastef/stephan-os-fork';
+  await assert.rejects(
+    executeForgePublicationAction(fx.action, fx.claim, {
+      sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+      publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
+    }),
+    /FORGE_PUBLICATION_CANONICAL_REPOSITORY_REQUIRED/,
+  );
+  assert.deepEqual(fx.calls, []);
 });
 
 test('Forge publisher refuses execution without exact controller action grant', async () => {
