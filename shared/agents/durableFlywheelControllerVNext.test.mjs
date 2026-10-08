@@ -718,3 +718,22 @@ test('stale capacity evidence is never recorded as a selected liveness alternate
   assert.equal(result.cycleReceipt.controllerShouldRemainEnabled, true);
   assert.equal(result.cycleReceipt.controllerDisableAllowed, false);
 });
+
+test('idle grant wait remains non-authorising reconciliation instead of starving goal admission', async () => {
+  const f = machineryFor(projection('READY'), {
+    loadCapacityRoutingInput: async () => ({}),
+  });
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.boundedMutationSteps, 0);
+  assert.ok(result.blockers.includes('mission-worker:exact-action-grant-unavailable'));
+  assert.deepEqual(f.heartbeats.map(({ cycleState }) => cycleState),
+    ['RECONCILING', 'RECONCILING']);
+  assert.equal(f.heartbeats.at(-1).boundedMutationSteps, 0);
+  assert.equal(f.heartbeats.at(-1).lastPublishedReceiptId, '');
+  assert.equal(f.heartbeats.at(-1).lastSuccessfulReconciliationUtc, '');
+});
