@@ -175,6 +175,7 @@ export function resolveMissionWorkerGrantIdentity(state = {}, fallback = {}) {
 
 function workerAdapter(action = {}) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff') return text(action.adapter);
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
@@ -1325,9 +1326,29 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           sourceRevision,
         });
       } else {
+        // Elastic missions live outside the parked legacy critical backlog.
+        // Admit only the exact, current-head, already completed Forge source
+        // artifact for draft publication. Never synthesize a legacy lane,
+        // grant an arbitrary elastic action or override an active owner.
+        const elasticPublication = actionResult?.elasticAdmission?.selectedMission;
+        const eligibleElasticPublication = !projection?.lane
+          && projection?.status === 'READY'
+          && !actionResult?.projection?.activeMission
+          && elasticPublication?.missionId?.endsWith('-elastic-goal')
+          && elasticPublication?.currentPhase === 'GITHUB_COMMIT'
+          && elasticPublication?.dispatch?.adapter === 'foundry-forge'
+          && elasticPublication?.dispatch?.status === 'complete'
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE'
+          && elasticPublication?.sourcePublication?.exactParentHead === sourceRevision
+          && /^[a-f0-9]{64}$/.test(text(elasticPublication?.sourcePublication?.artifactSha256))
+          && /^[a-f0-9]{40}$/.test(text(elasticPublication?.sourcePublication?.exactResultTree))
+          && text(elasticPublication?.git?.branch) === text(elasticPublication?.sourcePublication?.canonicalBranch);
         const grantProjection = {
           ...projection,
-          criticalBacklog: actionResult.projection,
+          criticalBacklog: {
+            ...actionResult.projection,
+            ...(eligibleElasticPublication ? { activeMission: elasticPublication } : {}),
+          },
         };
         const capacityRouting = await requiredFunction(
           deps.loadCapacityRoutingInput,
