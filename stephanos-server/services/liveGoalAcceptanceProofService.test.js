@@ -24,3 +24,13 @@ test('fresh browser fallback check provides only its own acceptance proof',async
  assert.ok(x.reconciliation.missing.includes('HEADSET_SESSION_OR_UNSUPPORTED_PROOF'));
  assert.equal(x.reconciliation.completionAllowed,false);
 });
+
+test('VR Lab consumer proof requires independent browser success and never promotes answer authority',async()=>{
+ const a=async()=>({ok:true,participantId:'stephanos-vr-research',answer:{answerVerdict:'GAP_KNOWLEDGE'},gapObservation:{id:'gap'}});
+ const yes=await collectGoalAcceptanceProof({goalNumber:1723,mission:mission(1723),sourceHead,verifyMerge:async()=>true,askVrResearch:a,checkVrLabConsumer:async()=>true});
+ assert.ok(yes.reconciliation.verified.includes('VR_LAB_CONSUMER_PROVEN'));
+ assert.ok(yes.reconciliation.missing.includes('INDEPENDENT_PROOF_BINDING'));
+ assert.equal(yes.reconciliation.completionAllowed,false);
+ const no=await collectGoalAcceptanceProof({goalNumber:1723,mission:mission(1723),sourceHead,verifyMerge:async()=>true,askVrResearch:a,checkVrLabConsumer:async()=>false});
+ assert.ok(no.reconciliation.missing.includes('VR_LAB_CONSUMER_PROVEN'));
+});
