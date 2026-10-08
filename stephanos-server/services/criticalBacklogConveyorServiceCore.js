@@ -103,7 +103,7 @@ function eventId(value) {
 }
 
 function elasticIssueNumber(mission = {}) {
-  const match = text(mission.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
+  const match = text(mission?.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
   const parsed = Number(match?.[1]);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
