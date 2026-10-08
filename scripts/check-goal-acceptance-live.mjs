@@ -29,12 +29,25 @@ const checkBrowserFallback = async () => {
       && controls.some(x=>x.includes('Ping Stephanos'));
   } catch {return false;} finally {if(browser) await browser.close();}
 };
+const checkVrLabConsumer = async () => {
+  let browser;
+  try {
+    const { chromium } = await import('playwright');
+    browser=await chromium.launch({headless:true,executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'});
+    const page=await browser.newPage();
+    const response=await page.goto('http://127.0.0.1:4173/apps/vr-research-lab/index.html',{timeout:15000});
+    await page.locator('#vr-research-qa-refresh').click();
+    await page.waitForFunction(()=>document.querySelector('#vr-research-qa-state')?.textContent.includes('stephanos-vr-research:'),{timeout:8000});
+    const verdict=await page.locator('#vr-research-qa-state').innerText();
+    return response.status()===200 && /stephanos-vr-research: (GAP_KNOWLEDGE|GAP_FRESHNESS|ANSWERED_GROUNDED)/.test(verdict);
+  }catch{return false;}finally{if(browser)await browser.close();}
+};
 const askVrResearch = async questionClass => {
   const r=await fetch('http://127.0.0.1:8787/api/shared-workspace/vr-research-qa?questionClass='+questionClass,{signal:AbortSignal.timeout(5000)});
   return r.ok?await r.json():null;
 };
 for (const goalNumber of [1646,1717,1723]) {
   const mission=(await readMissionRecord('critical-'+goalNumber+'-elastic-goal')).state;
-  const result=await collectGoalAcceptanceProof({goalNumber,mission,sourceHead:head,verifyMerge,checkVrLink,checkBrowserFallback,askVrResearch});
+  const result=await collectGoalAcceptanceProof({goalNumber,mission,sourceHead:head,verifyMerge,checkVrLink,checkBrowserFallback,checkVrLabConsumer,askVrResearch});
   console.log(JSON.stringify({goalNumber,phase:mission.currentPhase,verified:result.reconciliation.verified,missing:result.reconciliation.missing,classification:result.reconciliation.classification,completionAllowed:result.reconciliation.completionAllowed}));
 }
