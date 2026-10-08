@@ -266,7 +266,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 5);
+  assert.equal(unavailable.outcomeSeeds.length, 6);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -430,7 +430,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 5);
+  assert.equal(live.outcomeSeeds.length, 6);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
@@ -831,7 +831,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 5);
+  assert.equal(live.outcomeSeeds.length, 6);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
@@ -1338,4 +1338,72 @@ test('Flywheel Brain Bay falls back to historical brain evidence when canonical 
   const view = deriveFlywheelWorkspaceView(payload);
   assert.equal(view.brainBay.model, 'qwen:14b');
   assert.equal(view.brainBay.source, 'shared-workspace-history-fallback');
+});
+
+
+test('Flywheel exposes workspace integrity provenance as a persistent evidence-backed seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.declared, true);
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.planted, false);
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.missionId, 'workspace-integrity-provenance');
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.issueRef, '#2898');
+  assert.equal(unavailable.workspaceIntegritySeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'workspace-integrity-provenance',
+    missionId: 'workspace-integrity-provenance',
+    relatedIssue: '#2898',
+    participantId: 'flywheel',
+    timestampUtc: '2026-10-07T20:10:00.000Z',
+    status: 'SEED_ACTIVE',
+    title: 'Every Workspace, Card and Visualiser Has Verified End-to-End Provenance',
+    summary: 'Workspace integrity provenance persistent seed heartbeat is active.',
+    proofRefs: ['proof/workspace-integrity-seed-source'],
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'workspace-integrity-provenance',
+      issueRef: '#2898',
+    },
+  });
+  const signals = [
+    ['workspace-integrity-inventory', 'Component inventory and workspace discovery published for all visible cards and visualisers.'],
+    ['workspace-integrity-identities', 'Stable workspace id and component id assigned with unique identity proof.'],
+    ['workspace-integrity-binding', 'Canonical source binding provenance published for each component.'],
+    ['workspace-integrity-contract', 'Schema version and unit contract proven for every canonical binding.'],
+    ['workspace-integrity-hydration', 'End-to-end hydration proven from source through transport to consumer.'],
+    ['workspace-integrity-reconciliation', 'Source-render reconciliation proved rendered value equals canonical value.'],
+    ['workspace-integrity-synthetic', 'Synthetic end-to-end probe and synthetic proof current for every binding.'],
+    ['workspace-integrity-orphans', 'Orphan audit complete: zero orphan consumers and no unconsumed source remains.'],
+    ['workspace-integrity-continuous', 'Continuous integrity audit and regression monitoring is active.'],
+  ];
+  signals.forEach(([eventId, summary], index) => payload.records.eventRecords.push({
+    eventId,
+    missionId: 'workspace-integrity-provenance',
+    relatedIssue: '#2898',
+    participantId: 'flywheel',
+    timestampUtc: `2026-10-07T20:${11 + index}:00.000Z`,
+    eventKind: eventId,
+    status: 'CURRENT',
+    summary,
+    proofRefs: [`proof/${eventId}`],
+  }));
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.workspaceIntegritySeedGrowth.planted, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.currentRung, 'CONTINUOUSLY_VERIFIED');
+  assert.equal(live.workspaceIntegritySeedGrowth.inventoryProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.canonicalBindingProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.hydrationProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.reconciliationProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.syntheticProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.orphanAuditProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.continuousAuditProofCount >= 1, true);
+  assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
+  assert.equal(live.outcomeSeeds.length, 6);
 });

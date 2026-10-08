@@ -35,6 +35,11 @@ test('Flywheel hydration preserves the full-history dashboard projection used by
 
   assert.equal(bundle.state, 'ready');
   assert.deepEqual(observedScopes, ['full-history']);
+  assert.equal(bundle.datasets.dashboard.provenance.workspaceId, 'flywheel');
+  assert.equal(bundle.datasets.dashboard.provenance.transportId, '/api/shared-workspace/hydrate');
+  assert.equal(bundle.datasets.dashboard.provenance.expectedSchemaVersion, 'stephanos.shared-workspace-dashboard-feed.v1');
+  assert.equal(bundle.integrity.finalVerdict, 'WORKSPACE_INTEGRITY_PROOF_INCOMPLETE');
+  assert.equal(bundle.integrity.amber, 1);
 });
 
 test('workspace hydration service returns a versioned partial bundle instead of hiding failed datasets', async () => {
@@ -53,6 +58,9 @@ test('workspace hydration service returns a versioned partial bundle instead of 
   assert.equal(bundle.state, 'partial');
   assert.equal(bundle.datasets.dashboard.state, 'ready');
   assert.equal(bundle.datasets['vr-capability'].state, 'unavailable');
+  assert.equal(bundle.datasets['vr-capability'].provenance.sourceState, 'BROKEN');
+  assert.equal(bundle.integrity.finalVerdict, 'WORKSPACE_INTEGRITY_BROKEN');
+  assert.equal(bundle.integrity.red, 1);
   assert.deepEqual(bundle.errors, ['vr-capability:VR_FEED_DOWN']);
 });
 
