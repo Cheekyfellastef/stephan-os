@@ -181,6 +181,75 @@ test('rejects expired escrow using the current publication clock', async () => {
   assert.equal(outbox, null);
 });
 
+test('finalizes a tracked shared/runtime source file instead of misclassifying it as runtime state', async () => {
+  const options = await roots();
+  const sourceDir = join(options.repoRoot, 'shared', 'runtime');
+  const sourcePath = join(sourceDir, 'stephanosmemory.mjs');
+  await mkdir(sourceDir, { recursive: true });
+  await writeFile(sourcePath, 'export const memory = 1;\n');
+
+  const runCommand = (executable, args, runOptions = {}) => spawnSync(
+    executable === 'git.exe' && process.platform !== 'win32' ? 'git' : executable,
+    args,
+    {
+      cwd: runOptions.cwd,
+      env: runOptions.env || process.env,
+      encoding: Object.hasOwn(runOptions, 'encoding') ? runOptions.encoding : 'utf8',
+      shell: false,
+      windowsHide: true,
+    },
+  );
+  for (const args of [
+    ['-C', options.repoRoot, 'init'],
+    ['-C', options.repoRoot, 'config', 'user.email', 'offline-test@example.invalid'],
+    ['-C', options.repoRoot, 'config', 'user.name', 'Offline Test'],
+    ['-C', options.repoRoot, 'add', '.'],
+    ['-C', options.repoRoot, 'commit', '-m', 'baseline'],
+  ]) {
+    const result = runCommand('git.exe', args, { cwd: options.repoRoot });
+    assert.equal(result.status, 0, String(result.stderr || result.stdout || ''));
+  }
+
+  await writeFile(sourcePath, 'export const memory = 2;\n');
+  const completedAt = '2026-10-08T16:48:14.986Z';
+  const execution = {
+    success: true,
+    resultId: 'shared-runtime-run-1',
+    changedFiles: ['shared/runtime/stephanosmemory.mjs'],
+    completedAt,
+    sourceTestReceipts: [{
+      receiptId: 'shared-runtime-test',
+      requirement: 'source deterministic test',
+      testCommand: TEST_COMMAND,
+      source: 'test',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: 'e'.repeat(64),
+      createdAt: completedAt,
+    }],
+  };
+  const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1({
+    missionId: 'critical-1645-elastic-goal',
+    actionId: 'critical-1645-shared-runtime-test',
+    adapter: 'foundry-forge',
+    repository: 'cheekyfellastef/stephan-os',
+    branch: 'openclaw/elastic-goal-1645',
+    worktreePath: options.repoRoot,
+    requiredTests: [TEST_COMMAND],
+  }, execution, {
+    processingPath: join(options.repoRoot, '..', 'shared-runtime-claim.json'),
+  }, {
+    ...options,
+    runCommand,
+    actionGrant: { issueNumber: 1645, prNumber: null },
+    persistOfflinePublicationOutbox: async () => ({ outboxId: 'shared-runtime-test-outbox' }),
+  });
+
+  assert.equal(finalized.testsPassed, true);
+  assert.equal(finalized.sourceArtifactIdentity.changedFiles[0].path, 'shared/runtime/stephanosmemory.mjs');
+  assert.equal(finalized.sourceArtifactEscrow.changedFiles[0].path, 'shared/runtime/stephanosmemory.mjs');
+});
+
 test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async () => {
   const options = await roots();
   const binaryPath = join(options.repoRoot, 'shared', 'agents', 'binary.bin');
