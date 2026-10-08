@@ -448,7 +448,18 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
       entry?.eventType === 'MISSION_REPAIR_PROVEN'
       && text(entry?.receiptId).startsWith('verified-replacement-repair-')) === true
   );
-  const selectedMission = runnableMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
+  // Prefer a phase the existing exact-action controller can actually grant.
+  // Pending source-writer work must not hide an independently runnable
+  // worktree, verification, PR inspection, or exact Forge publication step.
+  const grantablePhase = (state) => (
+    ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(state?.currentPhase).toUpperCase())
+    || (text(state?.currentPhase).toUpperCase() === 'GITHUB_COMMIT'
+      && state?.dispatch?.adapter === 'foundry-forge'
+      && state?.dispatch?.status === 'complete')
+  );
+  const eligibleRunnable = runnableMissions.filter((state) => !sourceConstructionAlreadyReplaced(state));
+  const selectedMission = eligibleRunnable.find(grantablePhase)
+    ?? eligibleRunnable[0]
     ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
     ?? null;
   return freeze({
