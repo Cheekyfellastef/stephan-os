@@ -114,6 +114,10 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(result.preservationVerdict, 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION');
   assert.equal(collected.length, 1);
   assert.equal(collected[0].success, true);
+  assert.equal(collected[0].sourceArtifactEscrow?.schemaVersion, 'stephanos.source-artifact-escrow.v1');
+  assert.equal(collected[0].offlinePublicationOutbox?.schemaVersion, 'stephanos.offline-publication-outbox.v1');
+  assert.equal(collected[0].offlinePublicationOutbox?.completeArtifactSha256,
+    collected[0].sourceArtifactEscrow?.completeArtifactSha256);
   assert.equal(
     (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
     'export const value = 2;\n',
