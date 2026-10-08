@@ -588,3 +588,47 @@ test('agent result accepts exact scheduler scope identity across Git path casing
   assert.equal(blocked.currentPhase, 'BLOCKED');
   assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
 });
+
+test('Forge signed draft publication atomically advances commit, push, PR without merge authority', () => {
+  let state = createMissionOrchestratorState({
+    ...base, missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
+    requiredEvidence: ['focused test output'],
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath, clean: true,
+    receipt: receipt('isolated worktree', 'forge-worktree-receipt'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true, resultId: 'forge-source-result', changedFiles: ['shared/agents/missionOrchestrator.mjs'],
+    receipt: receipt('forge result', 'forge-result-receipt'),
+  });
+  state = event(state, 'EVIDENCE_RECORDED', {
+    receipts: [receipt('focused test output', 'forge-tests')],
+  });
+  assert.equal(state.currentPhase, 'GITHUB_COMMIT');
+  const publication = {
+    finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
+    repository: base.repository, branch: 'openclaw/elastic-goal-2732',
+    commitSha: 'a'.repeat(40), exactResultTree: 'b'.repeat(40),
+    sourceArtifactSha256: 'c'.repeat(64), prNumber: 3001, draft: true,
+    mergeAuthority: false, forcePushAllowed: false,
+  };
+  const invalid = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, forcePushAllowed: true },
+    receipt: receipt('draft publication', 'forge-bad-publish'),
+  });
+  assert.equal(invalid.currentPhase, 'BLOCKED');
+  const published = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication,
+    receipt: receipt('draft publication', 'forge-publish'),
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/3001',
+  });
+  assert.equal(published.currentPhase, 'CHECK_PULL_REQUEST');
+  assert.equal(published.git.commitSha, publication.commitSha);
+  assert.equal(published.git.pushed, true);
+  assert.equal(published.pullRequest.number, 3001);
+  assert.equal(published.pullRequest.state, 'draft');
+  assert.equal(published.approval.status, 'not-requested');
+  assert.equal(published.pullRequest.merged, false);
+});
