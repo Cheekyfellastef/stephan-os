@@ -545,7 +545,20 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
   };
 }
 
+export function replacementSourceForgePublicationBlocked(state = {}) {
+  return state.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
+    && state.dispatch?.adapter === 'foundry-forge'
+    && state.continuity?.history?.some(entry =>
+      entry.eventType === 'MISSION_REPAIR_PROVEN'
+      && String(entry.receiptId || '').startsWith('verified-replacement-repair-')) === true;
+}
+
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (replacementSourceForgePublicationBlocked(inputState)) return {
+    published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
+    action:null,path:'',
+  };
   if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
   const prepared = await beginRepairIfRequired(inputState, options);
   if (prepared.preconditionFailed) {
