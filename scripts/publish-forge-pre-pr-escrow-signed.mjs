@@ -76,7 +76,7 @@ async function main() {
   // The original escrow projection has expiry/authority fields not carried in
   // the immutable bundle. The matching outbox is the only accepted link.
   // A separately grounded escrow receipt is mandatory; never synthesize one.
-  const escrowPath = resolve(outboxPath + '.escrow.json');
+  const escrowPath = join(workspaceRoot, 'source-artifacts', outbox.completeArtifactSha256 + '.escrow.json');
   const escrow = JSON.parse(await readFile(escrowPath, 'utf8'));
   const authorization = JSON.parse(await readFile(resolve(authorizationPath), 'utf8'));
   const publicKeyPem = await readFile(resolve(publicKeyPath), 'utf8');
