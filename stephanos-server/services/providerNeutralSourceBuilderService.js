@@ -565,9 +565,13 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
-        'Return JSON only with keys patch and summary.',
-        'patch must be one git-compatible unified diff relative to the repository root.',
-        'Use patch mode only because no tracked source snapshot is available, for example a scoped new-file mission.',
+        'Return JSON only with keys edits and summary.',
+        'edits must be a non-empty array with exactly path, old, and new string fields.',
+        'There are no tracked source snapshots for this scope. Prefer creating one genuinely absent allowed file.',
+        'For each new file use old as the empty string and new as its complete, literal contents.',
+        'Never invent old contents or overwrite an existing, ignored, or protected file.',
+        'Do not hand-write a unified diff for a new file; the guarded structured-edit path handles creation.',
+        'A legacy JSON object with patch and summary is accepted only as a fallback for a valid git diff.',
       ];
   const goalContextSection = text(action.goalContext)
     ? `\nAuthoritative GitHub goal context:\n${text(action.goalContext)}\n`
@@ -648,7 +652,10 @@ async function callLocalBuilder(action, options = {}) {
       finalError = 'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON';
       continue;
     }
-    if (sourceSnapshots.length && modelStructuredEditsContractValid(parsed?.edits)) {
+    // An empty snapshot set usually means a scoped file-creation goal, not a
+    // reason to force brittle model-authored unified diffs. The guarded
+    // structured-edit path already verifies absent targets, scope and rollback.
+    if (modelStructuredEditsContractValid(parsed?.edits)) {
       try {
         normalizeStructuredEdits(parsed.edits, action.allowedFiles, sourceSnapshots);
         return { edits: parsed.edits, summary: text(parsed?.summary) };

@@ -568,6 +568,83 @@ test('local Forge builder removes a structured new file when a later required te
   assert.equal(status.stdout.trim(), '');
 });
 
+test('elastic Forge model creates a scoped new file with structured edits when source snapshots are empty', async () => {
+  const fx = await fixture(['node --check shared/agents/no-snapshot-target.mjs']);
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.allowedFiles = ['shared/agents/no-snapshot-target.mjs'];
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate an allowed new file.',
+    localModelFetchImpl: async (_url, request) => {
+      calls += 1;
+      const prompt = JSON.parse(request.body).messages[0].content;
+      assert.match(prompt, /There are no tracked source snapshots/);
+      assert.match(prompt, /old as the empty string/);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: { content: JSON.stringify({
+            edits: [{
+              path: 'shared/agents/no-snapshot-target.mjs',
+              old: '',
+              new: 'export const created = true;\n',
+            }],
+            summary: 'Create only the allowed new file.',
+          }) },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.testsPassed, true);
+  assert.equal(calls, 1);
+  assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'no-snapshot-target.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const created = true;\n',
+  );
+});
+
+test('elastic Forge rejects an out-of-scope structured new file with no source snapshots', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.allowedFiles = ['shared/agents/approved-new.mjs'];
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate only an approved new file.',
+    localModelFetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: true, status: 200,
+        json: async () => ({ message: { content: JSON.stringify({
+          edits: [{ path: 'runtime/unsafe.json', old: '', new: '{"unsafe":true}\n' }],
+          summary: 'Unsafe file mutation must not be accepted.',
+        }) } }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION:runtime\/unsafe\.json/);
+  assert.equal(calls, 2);
+  assert.equal(existsSync(join(fx.repoRoot, 'runtime', 'unsafe.json')), false);
+  assert.equal(run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
+});
+
 test('elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
   const fx = await fixture(['node --check shared/agents/model-created.mjs']);
   fx.action.missionId = 'critical-3001-elastic-goal';
