@@ -104,6 +104,35 @@ test('granted Forge worker publishes exact preserved source as draft PR and bloc
   assert.equal(fx.calls.filter((x) => x === 'branch').length, 1);
 });
 
+test('Forge publication restores only lowercase canonical scheduler repository before signing', async () => {
+  const fx = await fixture();
+  fx.action.repository = 'cheekyfellastef/stephan-os';
+  fx.claim.item.actionGrant.repository = 'cheekyfellastef/stephan-os';
+  const result = await executeForgePublicationAction(fx.action, fx.claim, {
+    sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+    publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(result.prNumber, 3001);
+  assert.equal(result.forcePushAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.deepEqual(fx.calls, ['blob', 'tree', 'commit', 'branch', 'draft-pr']);
+});
+
+test('Forge publisher denies a lookalike repository before signing or writing GitHub', async () => {
+  const fx = await fixture();
+  fx.action.repository = 'cheekyfellastef/stephan-os-fork';
+  await assert.rejects(
+    executeForgePublicationAction(fx.action, fx.claim, {
+      sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+      publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
+    }),
+    /FORGE_PUBLICATION_CANONICAL_REPOSITORY_REQUIRED/,
+  );
+  assert.deepEqual(fx.calls, []);
+});
+
 test('Forge publisher refuses execution without exact controller action grant', async () => {
   const fx = await fixture();
   await assert.rejects(

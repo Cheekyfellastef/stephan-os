@@ -897,7 +897,8 @@ export async function processNextForgePublicationItem(options = {}) {
         || publication?.finalVerdict !== 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF'
         || publication?.mergeAuthority !== false || publication?.forcePushAllowed !== false
         || publication?.draft !== true
-        || publication?.repository !== action.repository
+        || publication?.repository !== 'Cheekyfellastef/stephan-os'
+        || normalizedText(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
         || publication?.branch !== action.branch
         || publication?.exactResultTree !== action.exactResultTree
         || publication?.sourceArtifactSha256 !== action.artifactSha256) {
