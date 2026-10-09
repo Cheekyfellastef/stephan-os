@@ -348,9 +348,9 @@ function mergeEvidence(github = {}, expected = {}) {
 // not from caller intent, PR OPEN state, or possession of a source lease.
 export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords = []) {
   const id = text(lease?.leaseId);
-  const match = /^(critical-([1-9]\\d*)-elastic-goal(?:[-_.][a-z0-9._-]+)?)-r([1-9]\\d*)-lease$/i.exec(id);
+  const match = /^(critical-([1-9]\d*)-elastic-goal(?:[-_.][a-z0-9._-]+)?)-r([1-9]\d*)-lease$/i.exec(id);
   if (!match) return Object.freeze({
-    elastic: /^critical-[1-9]\\d*-elastic-goal/i.test(id),
+    elastic: /^critical-[1-9]\d*-elastic-goal/i.test(id),
     valid: false, reviewOnly: false, materialImplementation: false,
     phase: 'UNKNOWN', blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
   });
