@@ -35,7 +35,7 @@ test('backend route is independently probed from the loaded browser, not painted
 });
 
 test('honest boundary: backend reachability does not assert durable conversation or cross-device UI parity', () => {
-  assert.match(html, /Shared continuity<\/dt><dd>not yet verified durable/);
+  assert.match(html, /Shared continuity<\/dt><dd id="threadTruth">not yet verified durable/);
   assert.match(js, /Backend health is not proof of identical UI assets/);
 });
 
