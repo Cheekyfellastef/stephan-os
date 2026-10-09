@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { fileURLToPath } from 'node:url';
+import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-performance-recommendations.mjs';
 import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-performance-loop.mjs';
 
-const repoRoot = new URL('..', import.meta.url).pathname;
+const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const identity = {
   status: 'VERIFIED_PROVIDER',
   provider: 'mutar-openxr',
@@ -64,4 +66,35 @@ test('telemetry reporter publishes the project loop into shared workspace', asyn
   assert.match(report, /loop-current\.json/);
   assert.match(report, /projectTelemetryGapCount/);
   assert.match(report, /projectNextExperiment/);
+});
+
+
+test('provider recommendation gate rejects a verified flag without telemetry-bound provider identity', async () => {
+  for (const missingProvider of ['', 'UNKNOWN', 'unapproved-route']) {
+    const plan = await buildStarfieldVrPerformanceRecommendations({
+      repoRoot,
+      provider: 'vorpx', // Untrusted hint must never fill a missing verified identity.
+      runIdentity: { status: 'VERIFIED_PROVIDER', provider: missingProvider },
+      diagnosis: { focus: 'VRAM_PRESSURE', signals: ['vram-pressure-high'] },
+    });
+    assert.equal(plan.verdict, 'UNKNOWN_PROVIDER');
+    assert.equal(plan.currentProvider, 'UNKNOWN');
+    assert.equal(plan.recommendationCount, 0);
+    assert.equal(plan.nextExperiment, null);
+    assert.equal(plan.boundaries.automaticRecommendation, false);
+    assert.equal(plan.boundaries.automaticRuntimeMutation, false);
+  }
+});
+
+test('telemetry-bound supported provider remains eligible for advisory recommendations', async () => {
+  const plan = await buildStarfieldVrPerformanceRecommendations({
+    repoRoot,
+    provider: 'vorpx', // Conflicting hint cannot override verified MutaR identity.
+    runIdentity: identity,
+    diagnosis: { focus: 'GPU_RENDER_LOAD', signals: ['gpu-saturation-high'] },
+  });
+  assert.equal(plan.verdict, 'RECOMMENDATIONS_READY');
+  assert.equal(plan.currentProvider, 'mutar-openxr');
+  assert.ok(plan.recommendationCount > 0);
+  assert.equal(plan.boundaries.providerAutoSwitch, false);
 });
