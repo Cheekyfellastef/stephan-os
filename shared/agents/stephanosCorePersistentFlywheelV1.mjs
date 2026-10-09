@@ -40,6 +40,49 @@ function boundedText(value, max = 120) {
   return text(value).slice(0, max);
 }
 
+export const PERSISTENT_FLYWHEEL_STAGE_LIMITS_MS = Object.freeze({
+  REFILL: 180_000,
+  SELF_HEAL: 240_000,
+  RECONCILE: 300_000,
+  PUBLISH_LANE_TRUTH: 120_000,
+  RECONCILE_ONION: 120_000,
+});
+
+// Independent read-only single-flight witness. A timed-out stage remains
+// owned by its original in-flight process: never start a replacement job,
+// release its lease, or mark work complete on timeout alone.
+export function projectPersistentFlywheelStageWatchV1({
+  cycleRunning = false, stage = '', stageStartedAtUtc = '',
+  observedAtUtc = new Date().toISOString(),
+} = {}) {
+  const name = text(stage).toUpperCase();
+  const stageLimitMs = PERSISTENT_FLYWHEEL_STAGE_LIMITS_MS[name] || 0;
+  const started = Date.parse(text(stageStartedAtUtc));
+  const observed = Date.parse(text(observedAtUtc));
+  const trustedTime = Number.isFinite(started) && Number.isFinite(observed)
+    && started <= observed + 30_000;
+  const ageMs = cycleRunning && stageLimitMs && trustedTime
+    ? Math.max(0, observed - started) : null;
+  const state = !cycleRunning ? 'IDLE'
+    : !stageLimitMs || !trustedTime ? 'UNKNOWN'
+      : ageMs > stageLimitMs ? 'STALLED' : 'IN_PROGRESS';
+  return Object.freeze({
+    schemaVersion: 'stephanos.core-flywheel-stage-watch.v1',
+    state,
+    stage: stageLimitMs ? name : 'UNKNOWN',
+    elapsedMs: ageMs,
+    deadlineMs: stageLimitMs || null,
+    blocker: state === 'STALLED' ? 'PERSISTENT_FLYWHEEL_STAGE_DEADLINE_EXCEEDED'
+      : state === 'UNKNOWN' ? 'PERSISTENT_FLYWHEEL_STAGE_EVIDENCE_MISSING' : '',
+    ownerIssue: '#2961',
+    singleFlightRetained: true,
+    workerLeaseOverrideAllowed: false,
+    duplicateCycleAllowed: false,
+    mutationAuthority: false,
+    mergeAuthority: false,
+  });
+}
+
 export function projectPersistentFlywheelTrigger(input = {}) {
   const nowMs = finiteMs(input.nowMs) ?? Date.now();
   const fallbackMs = finiteMs(input.fallbackMs) ?? DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
@@ -352,12 +395,13 @@ export function auditCoreLoopClosureV1({
 
   const cycleAt = flywheel?.flywheelLastCycleFinishedAtUtc;
   const cycleFresh = recent(cycleAt);
-  const cycleFailed = Boolean(flywheel?.flywheelLastError || flywheel?.octopusLastError);
+  const stageStalled = flywheel?.flywheelStageWatchState === 'STALLED';
+  const cycleFailed = Boolean(flywheel?.flywheelLastError || flywheel?.octopusLastError) || stageStalled;
   const cycleRunning = flywheel?.flywheelCycleRunning === true;
   const gaming = coreState?.gamingActive === true;
   add('WATCH_TO_RECONCILIATION',
     gaming ? 'PAUSED' : cycleFailed ? 'GAP' : cycleFresh ? 'CLOSED' : cycleRunning ? 'IN_PROGRESS' : 'GAP',
-    gaming ? 'GAMING_PROTECTED' : cycleFailed ? 'PERSISTENT_CYCLE_FAILED'
+    gaming ? 'GAMING_PROTECTED' : cycleFailed ? (stageStalled ? 'PERSISTENT_CYCLE_STAGE_STALLED' : 'PERSISTENT_CYCLE_FAILED')
       : cycleFresh ? 'FRESH_PERSISTENT_CYCLE_OBSERVED' : cycleRunning ? 'PERSISTENT_CYCLE_IN_PROGRESS' : 'PERSISTENT_CYCLE_MISSING_OR_STALE',
     '#2593', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
 
