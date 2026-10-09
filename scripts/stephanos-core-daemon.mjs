@@ -26,6 +26,7 @@ import {
   summarizeOctopusBuildProductivity,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
+  auditCoreLoopClosureV1,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
@@ -738,7 +739,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
   return trigger;
 }
 
-async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus()) {
+async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(), loopEvidence = {}) {
   const layout = await ensureSharedWorkspaceLayout({ root: workspaceRoot, repoRoot });
   if (!layout.ok) throw new Error('STEPHANOS_CORE_DAEMON_SHARED_WORKSPACE_UNAVAILABLE');
 
@@ -748,6 +749,10 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
   });
 
   const { schemaVersion: controlPlaneSchemaVersion, ...controlPlaneFields } = controlPlane;
+  const loopClosureAudit = auditCoreLoopClosureV1({
+    coreState: state, flywheel, observedAtUtc: timestampUtc,
+    worker: loopEvidence.worker, lease: loopEvidence.lease,
+  });
 
   const common = {
     heartbeatAtUtc: timestampUtc,
@@ -772,6 +777,12 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     sovereignCommanderIsMachineExecutor: true,
     duplicateControllerFabricAllowed: false,
     ...flywheel,
+    loopClosureAudit,
+    loopClosureAuditSchemaVersion: loopClosureAudit.schemaVersion,
+    allGoalBuildLoopsProvenClosed: loopClosureAudit.allLoopsProvenClosed,
+    loopClosureObservedGapCount: loopClosureAudit.gapCount,
+    loopClosureUnprovenEdgeCount: loopClosureAudit.unprovenCount,
+    loopClosureNextAction: loopClosureAudit.nextAction,
     ...controlPlaneFields,
     controlPlaneSchemaVersion,
     coreDaemonFinalVerdict: state.finalVerdict,
@@ -882,7 +893,10 @@ try {
     const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
     const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
     await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
-    await publish(state, new Date().toISOString(), persistentFlywheelStatus());
+    await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
+      worker: await readJsonIfPresent(workerHeartbeatPath),
+      lease: await readJsonIfPresent(sourceLeasePath),
+    });
     await new Promise((resolveWait) => setTimeout(resolveWait, HEARTBEAT_MS));
   }
 } catch (error) {
