@@ -107,3 +107,17 @@ test('no evidence or stale evidence cannot manufacture a new chat experience rep
     false,
   );
 });
+
+test('wrong-source heartbeat cannot admit conversation experience repair even with a relevant current gap', () => {
+  const feed = fixture([event()]);
+  const original = feed.records.statusRecords[0];
+  feed.records.statusRecords = [{
+    ...original,
+    seedHeartbeat: { ...original.seedHeartbeat, contractSource: 'unbound/source.mjs' },
+  }];
+  const view = deriveFlywheelWorkspaceView(feed, { nowMs: NOW_MS });
+  assert.equal(
+    planSeedGrowthWorkV1(view, feed, NOW_MS).some((work) => work.seedId === SEED_ID),
+    false,
+  );
+});
