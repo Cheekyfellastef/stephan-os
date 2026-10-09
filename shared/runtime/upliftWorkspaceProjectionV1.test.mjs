@@ -1455,3 +1455,60 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
   assert.equal(live.outcomeSeeds.length, 7);
 });
+
+
+test('Goal Conveyor & Fleet Care requires live heartbeat and typed proof, and recognises existing owner incidents', () => {
+  const now = '2026-10-09T14:55:00.000Z';
+  const nowMs = Date.parse(now);
+  const missing = deriveFlywheelWorkspaceView({}, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(missing.declared, true);
+  assert.equal(missing.planted, false);
+  assert.equal(missing.sourceTruth, 'UNKNOWN');
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel', proofRefs: [],
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  const heartbeatOnly = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(heartbeatOnly.planted, true);
+  assert.equal(heartbeatOnly.sourceTruth, 'CURRENT');
+  assert.equal(heartbeatOnly.currentRung, 'SEED_PLANTED');
+  assert.equal(heartbeatOnly.healthState, 'AWAITING_FLEET_PROOF');
+  assert.equal(heartbeatOnly.proofCount, 0);
+
+  payload.records.eventRecords.push({
+    eventId: 'inventory-1', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, eventKind: 'fleet-inventory-verified',
+    status: 'CURRENT', proofRefs: ['proof/fleet-inventory'],
+  }, {
+    eventId: 'pickup-missing', relatedIssue: '#1622', timestampUtc: now,
+    eventKind: 'worker-pickup-failed', capabilityId: 'worker-pickup-missing',
+    status: 'BLOCKED', proofRefs: ['proof/pickup-failure'], summary: 'SELECT without physical worker pickup',
+  });
+  const observed = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(observed.currentRung, 'FLEET_OBSERVED');
+  assert.equal(observed.healthState, 'FLEET_REPAIR_NEEDED');
+  assert.equal(observed.currentGaps.length, 1);
+  assert.equal(observed.currentGaps[0].owner, '#1622');
+  assert.equal(observed.currentGaps[0].capabilityId, 'worker-pickup-missing');
+  assert.equal(observed.nextGrowthRung, 'HEALTH_VERIFIED');
+  assert.equal(observed.proofCount, 1);
+
+  payload.records.eventRecords.push({
+    eventId: 'pickup-recovered', relatedIssue: '#1622', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: '2026-10-09T14:55:01.000Z', eventKind: 'goal-build-recovered',
+    resolvedGapId: 'worker-pickup-missing', status: 'CURRENT', proofRefs: ['proof/recovery'],
+  });
+  const recovered = deriveFlywheelWorkspaceView(payload, { nowMs: nowMs + 1000 }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(recovered.currentGaps.length, 0);
+  payload.records.statusRecords.at(-1).timestampUtc = '2026-10-07T14:55:00.000Z';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.sourceTruth, 'STALE');
+  assert.equal(stale.pressureState, 'UNKNOWN');
+  assert.equal(stale.nextGrowthRung, '');
+});
