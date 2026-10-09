@@ -42,6 +42,7 @@ function blockedResult(blocker, details = {}) {
     availableSlotCount: integer(details.availableSlotCount),
     dispatchCount: integer(details.dispatchCount),
     heldGoalCount: integer(details.heldGoalCount),
+    heldIssues: frozen(Array.isArray(details.heldIssues) ? details.heldIssues.slice(0, 20) : []),
     commanderParity: details.commanderParity || null,
     commanderParityHealthy: details.commanderParity?.ok === true,
     capabilityParityOwnerGoal: text(details.commanderParity?.canonicalOwnerGoal, '#2573'),
@@ -129,6 +130,25 @@ export async function runSovereignCommanderFleetGoalSupervisor({
       conveyorResult?.reason || conveyorResult?.finalVerdict || 'CANONICAL_GOAL_CONVEYOR_BLOCKED',
       details,
     );
+  }
+
+  // Distinguish genuinely missing admission from a *proven* all-held mission
+  // estate. The latter needs exact mission-owner repair, not another scheduler.
+  // Never mark this blocked state green or fabricate runnable goals.
+  if (text(conveyorResult.classification) === 'PARKED_BLOCKERS_ONLY'
+      && admission.ok === true
+      && text(admission.classification) === 'ELASTIC_GOAL_MISSIONS_HELD'
+      && activeMissionCount === 0
+      && runnableGoalCount === 0
+      && Array.isArray(admission.held)
+      && admission.held.length > 0) {
+    return blockedResult('ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED', {
+      ...details,
+      heldGoalCount: admission.held.length,
+      heldIssues: admission.held
+        .filter((item) => Number.isSafeInteger(item?.issueNumber))
+        .map((item) => Object.freeze({ issueNumber: item.issueNumber, reason: text(item.reason).slice(0, 96) })),
+    });
   }
 
   // A parked critical backlog is not proof of an idle elastic fleet when admission
