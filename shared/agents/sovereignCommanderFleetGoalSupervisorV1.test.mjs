@@ -283,3 +283,33 @@ test('one-minute supervisor never treats unavailable Commander parity as zero kn
   assert.equal(result.commanderParityHealthy, false);
   assert.equal(result.duplicateLeaseAllowed, false);
 });
+
+test('Sovereign supervisor carries exact read-only admission-gate cause on a held conveyor', async () => {
+  const admissionGate = {
+    schemaVersion: 'stephanos.elastic-admission-gate-observation.v1',
+    admissionPreflightEligible: false,
+    blocker: 'AUTHORITATIVE_PROGRAMME_HOLD',
+    programmeStatus: 'HOLD',
+    programmeBlockers: ['source-mutation-lease-held'],
+    canonicalOwner: '#2961',
+    sourceMutationAllowed: false,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  };
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['source-mutation-lease-held'],
+      elasticAdmission: null,
+      elasticIgnition: null,
+      elasticAdmissionGate: admissionGate,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(result.elasticAdmissionGate.blocker, 'AUTHORITATIVE_PROGRAMME_HOLD');
+  assert.equal(result.elasticAdmissionGate.canonicalOwner, '#2961');
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mergeAuthority, false);
+});
