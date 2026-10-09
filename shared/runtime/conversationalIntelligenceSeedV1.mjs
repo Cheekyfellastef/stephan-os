@@ -19,6 +19,24 @@ export const CONVERSATIONAL_INTELLIGENCE_LOOP_V1 = Object.freeze([
   'REPEAT',
 ]);
 
+// Reuse canonical outcome owners. These are ownership links, not proof that
+// the goals have been picked up, completed, merged or deployed.
+export const CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_GOALS_V1 = Object.freeze([
+  Object.freeze({ issueRef: '#2434', title: 'Shared conversation and durable memory', area: 'canonical-thread-continuity' }),
+  Object.freeze({ issueRef: '#1722', title: 'Cross-surface Stephanos AI experience', area: 'touch-accessibility-and-performance' }),
+  Object.freeze({ issueRef: '#2966', title: 'iPad and Battle Bridge workspace parity', area: 'hosted-workspace-bridge-parity' }),
+]);
+
+export const CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_PROOF_DIMENSIONS_V1 = Object.freeze([
+  'crash-recovery-after-reload',
+  'shared-thread-id-on-ipad-and-desktop',
+  'backend-and-hydration-reachability',
+  'frontend-asset-version-parity',
+  'touch-scroll-and-composer-access',
+  'bounded-chat-render-memory',
+  'no-duplicate-replay-after-uncertain-send',
+]);
+
 export const CONVERSATIONAL_INTELLIGENCE_GROWTH_RUNGS_V1 = Object.freeze([
   'HEAR_INTENT',
   'HOLD_CONTEXT',
@@ -43,6 +61,11 @@ export const CONVERSATIONAL_INTELLIGENCE_DIMENSIONS_V1 = Object.freeze([
   'answer-relevance',
   'conversational-naturalness',
   'learning-retention',
+  'chat-crash-recovery',
+  'touch-scroll-accessibility',
+  'cross-device-conversation-continuity',
+  'hosted-frontend-version-parity',
+  'mobile-render-memory-pressure',
 ]);
 
 export function buildConversationalIntelligenceSeedV1(input = {}) {
@@ -58,6 +81,8 @@ export function buildConversationalIntelligenceSeedV1(input = {}) {
     operatingLoop: CONVERSATIONAL_INTELLIGENCE_LOOP_V1,
     growthRungs: CONVERSATIONAL_INTELLIGENCE_GROWTH_RUNGS_V1,
     qualityDimensions: CONVERSATIONAL_INTELLIGENCE_DIMENSIONS_V1,
+    linkedOutcomeGoals: CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_GOALS_V1,
+    experienceProofDimensions: CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_PROOF_DIMENSIONS_V1,
     operatorRole: 'conversation-intent-judgment-protected-approval',
     growthContract: Object.freeze({
       evidenceBackedOnly: true,
@@ -65,6 +90,12 @@ export function buildConversationalIntelligenceSeedV1(input = {}) {
       conversationFailuresBecomeLearningSignals: true,
       wrongBrainRoutingBecomesLearningSignal: true,
       contextLossBecomesLearningSignal: true,
+      ipadScrollAndCrashFailuresBecomeLearningSignals: true,
+      sharedThreadRecoveryFailuresBecomeLearningSignals: true,
+      crossDeviceParityFailuresBecomeLearningSignals: true,
+      genuineDeviceAndReloadProofRequired: true,
+      failureGapOwnerMustBeExistingGoal: true,
+      noDuplicateConveyorOrController: true,
       successfulEvaluationsRequireProof: true,
       retainedLessonsFeedNextConversation: true,
       sovereigntyIsNonNegotiable: true,
