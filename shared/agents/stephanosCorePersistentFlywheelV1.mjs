@@ -6,6 +6,11 @@ export const OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS = Object.freeze([
   'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
   'CONTROLLER_FLEET_ATTENTION_REQUIRED',
   'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID',
+  // A parked critical backlog must not hide an unproven elastic admission path.
+  // Run the existing bounded control-plane repair before retrying admission.
+  'ELASTIC_GOAL_ADMISSION_NOT_PROVEN',
+  // Admission is proven but every selected goal needs existing mission-owner repair.
+  'ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED',
 ]);
 
 export function projectOctopusRepairEscalation(blocker = '') {
@@ -122,7 +127,14 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
 
 export function summarizePersistentFlywheelResult(result = {}) {
   const blockers = Array.isArray(result?.blockers) ? result.blockers : [];
+  const idleGrantWait = result?.status === 'HOLD'
+    && !result?.authoritativeProjection?.lane
+    && result?.allowWorkerTick === false
+    && Number(result?.boundedMutationSteps) === 0
+    && blockers.length === 1
+    && blockers[0] === 'mission-worker:exact-action-grant-unavailable';
   return Object.freeze({
+    idleGrantWait,
     schemaVersion: STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA,
     status: boundedText(result?.status, 40) || 'UNKNOWN',
     action: boundedText(result?.action, 100) || 'NONE',
