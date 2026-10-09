@@ -169,6 +169,22 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     return blockedResult('ELASTIC_GOAL_ADMISSION_NOT_PROVEN', details);
   }
 
+  // The programme may have no runnable/parked worker receipts precisely because
+  // its authoritative owner is on HOLD. Never report this as IDLE_GREEN.
+  // The Core Daemon owns the bounded Sovereign repair nudge; this supervisor
+  // must surface the fault rather than invent independent execution authority.
+  if (text(conveyorResult.programmeStatus).toUpperCase() === 'HOLD') {
+    return blockedResult('CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED', details);
+  }
+
+  // Missing parity evidence is not equivalent to zero observed capability gaps.
+  if (commanderParity?.ok !== true) {
+    return blockedResult(
+      text(commanderParity?.blocker) || 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_UNPROVEN',
+      details,
+    );
+  }
+
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
     && dispatchCount === 0
