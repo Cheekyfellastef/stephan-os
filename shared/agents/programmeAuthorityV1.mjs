@@ -438,7 +438,7 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   }
   const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
-  const elasticPhaseBound = /^critical-[1-9]\\d*-elastic-goal/i.test(text(lease?.leaseId));
+  const elasticPhaseBound = /^critical-[1-9]\d*-elastic-goal/i.test(text(lease?.leaseId));
   const phaseBinding = input.elasticMissionPhaseBinding || null;
   if (elasticPhaseBound && phaseBinding?.valid !== true) {
     blockers.push('elastic-mission-phase-binding-unproven');
