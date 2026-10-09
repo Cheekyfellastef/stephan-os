@@ -1,4 +1,5 @@
 import express from 'express';
+import { readCanonicalVrResearchAnswer, VR_RESEARCH_QA_ROUTE } from '../services/vrResearchCanonicalQaService.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
@@ -169,6 +170,22 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         reason: 'VR_CAPABILITY_FEED_UNAVAILABLE',
         error: String(error?.message || 'unknown'),
       });
+    }
+  });
+
+  router.get('/vr-research-qa', async (req, res) => {
+    res.set({ 'Cache-Control': 'no-store, no-cache, must-revalidate' });
+    try {
+      const answer = await readCanonicalVrResearchAnswer({
+        repoRoot, questionClass: req.query?.questionClass,
+        subjectRef: req.query?.subjectRef ?? '',
+        nowUtc: Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : new Date().toISOString(),
+      });
+      res.status(answer.ok ? 200 : answer.reason === 'QUESTION_CLASS_NOT_SUPPORTED' || answer.reason === 'SUBJECT_REF_INVALID' ? 400 : 503)
+        .json({ route: VR_RESEARCH_QA_ROUTE, ...answer });
+    } catch {
+      res.status(503).json({ route: VR_RESEARCH_QA_ROUTE, ok: false,
+        readOnly: true, reason: 'CANONICAL_VR_QA_UNAVAILABLE' });
     }
   });
 

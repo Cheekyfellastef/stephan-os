@@ -150,7 +150,7 @@ export function validateBattleBridgeLocalGitConfiguration(output = '') {
     || entry.key === 'core.sparsecheckout'
     || entry.key === 'core.sparsecheckoutcone'
     || entry.key === 'index.sparse'
-    || entry.key === 'core.hookspath'
+    || (entry.key === 'core.hookspath' && entry.value !== '.githooks')
     || entry.key === 'core.fsmonitor'
     || entry.key === 'core.trustctime'
     || entry.key === 'core.checkstat'

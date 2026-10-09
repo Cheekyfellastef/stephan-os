@@ -291,3 +291,65 @@ test('PR evidence preserves a fork head repository so lease identity cannot be b
   assert.equal(payload.baseRepository, 'owner/repo');
   assert.equal(payload.headRepositoryMatchesBase, false);
 });
+
+
+test('PR evidence holds on GitHub API rate limit without multiplying requests or inventing PR truth', async () => {
+  const calls = [];
+  let fallbackAttempts = 0;
+  const auth = { configured: true, token: 'rate-limited-auth-token', authority: 'environment' };
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: false,
+      status: 403,
+      headers: { get: (name) => name === 'x-ratelimit-remaining' ? '0' : null },
+      json: async () => ({ message: 'API rate limit exceeded for user ID 123' }),
+    };
+  };
+  const args = {
+    owner: 'rate-limit-test-owner',
+    repo: 'rate-limit-test-repo',
+    prNumber: 1645,
+    auth,
+    fetchImpl,
+    ghTokenProvider: async () => { fallbackAttempts += 1; return 'unused-fallback-token'; },
+  };
+  const first = await fetchGithubPrEvidence(args);
+  const second = await fetchGithubPrEvidence(args);
+  assert.equal(first.status, 'error');
+  assert.equal(first.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(second.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(first.retryAfterUtc, second.retryAfterUtc);
+  assert.equal(calls.length, 1);
+  assert.equal(fallbackAttempts, 0);
+  assert.equal(Object.hasOwn(first, 'headSha'), false);
+  assert.equal(JSON.stringify([first, second]).includes('rate-limited-auth-token'), false);
+});
+
+test('PR evidence respects retry-after for 429 and leaves other repositories independently observable', async () => {
+  const args = {
+    owner: 'rate-limit-other-owner',
+    repo: 'rate-limit-retry-after-repo',
+    prNumber: 55,
+    auth: { configured: true, token: '429-token', authority: 'environment' },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 429,
+      headers: { get: (name) => name === 'retry-after' ? '120' : null },
+      json: async () => ({ message: 'Too many requests' }),
+    }),
+  };
+  const hold = await fetchGithubPrEvidence(args);
+  assert.equal(hold.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  const retryDelay = Date.parse(hold.retryAfterUtc) - Date.now();
+  assert.ok(retryDelay > 100_000 && retryDelay <= 125_000);
+  const unrelated = await fetchGithubPrEvidence({
+    owner: 'rate-limit-unrelated-owner',
+    repo: 'rate-limit-unrelated-repo',
+    prNumber: 56,
+    auth: { configured: true, token: 'another-token', authority: 'environment' },
+    fetchImpl: async () => ({ ok: false, status: 404, headers: { get: () => null } }),
+  });
+  assert.equal(unrelated.status, 'error');
+  assert.notEqual(unrelated.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+});

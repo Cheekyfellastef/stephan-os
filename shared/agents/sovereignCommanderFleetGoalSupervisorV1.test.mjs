@@ -202,3 +202,16 @@ test('one-minute supervisor reconciles Remote Commander capability parity before
   assert.equal(result.duplicateSchedulerAllowed, false);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });
+
+test('parked backlog without elastic admission is blocked, never falsely idle green', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      elasticAdmission: null,
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED');
+});

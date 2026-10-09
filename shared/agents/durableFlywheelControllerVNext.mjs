@@ -178,6 +178,7 @@ export function resolveMissionWorkerGrantIdentity(state = {}, fallback = {}) {
 
 function workerAdapter(action = {}) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff') return text(action.adapter);
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
@@ -959,8 +960,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   }
 
   const publishHeartbeat = requiredFunction(deps.publishControllerHeartbeat, 'publishControllerHeartbeat');
+  // RECONCILING permits observation of an idle scheduler during a bounded cycle,
+  // but carries zero mutation steps and no success receipt. STARTING is reserved
+  // for boot before the controller has entered its reconciliation loop.
   const initialHeartbeat = await publishHeartbeat(heartbeatInput({
-    state: 'STARTING',
+    state: 'RECONCILING',
     sourceRevision,
     nowUtc,
   }), serviceOptions);
@@ -1363,9 +1367,38 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           sourceRevision,
         });
       } else {
+        // Elastic missions live outside the parked legacy critical backlog.
+        // Admit only the exact, current-head, already completed Forge source
+        // artifact for draft publication. Never synthesize a legacy lane,
+        // grant an arbitrary elastic action or override an active owner.
+        const elasticPublication = actionResult?.elasticAdmission?.selectedMission;
+        const eligibleElasticMission = !projection?.lane
+          && projection?.status === 'READY'
+          && !actionResult?.projection?.activeMission
+          && /^critical-[1-9][0-9]*-elastic-goal$/.test(text(elasticPublication?.missionId))
+          && text(elasticPublication?.repository) === 'Cheekyfellastef/stephan-os'
+          && text(elasticPublication?.git?.branch) === 'openclaw/elastic-goal-' + text(elasticPublication?.missionId).split('-')[1]
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE';
+        // Use the existing exact-action validator for ordinary stages. Never
+        // revive parked work, invent writer authority or bypass source fencing.
+        const eligibleReadOnlyOrSignedStep = eligibleElasticMission
+          && ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(elasticPublication?.currentPhase))
+          && elasticPublication?.dispatch?.status !== 'running';
+        const eligibleElasticPublication = eligibleElasticMission
+          && elasticPublication?.currentPhase === 'GITHUB_COMMIT'
+          && elasticPublication?.dispatch?.adapter === 'foundry-forge'
+          && elasticPublication?.dispatch?.status === 'complete'
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE'
+          && elasticPublication?.sourcePublication?.exactParentHead === sourceRevision
+          && /^[a-f0-9]{64}$/.test(text(elasticPublication?.sourcePublication?.artifactSha256))
+          && /^[a-f0-9]{40}$/.test(text(elasticPublication?.sourcePublication?.exactResultTree))
+          && text(elasticPublication?.git?.branch) === text(elasticPublication?.sourcePublication?.canonicalBranch);
         const grantProjection = {
           ...projection,
-          criticalBacklog: actionResult.projection,
+          criticalBacklog: {
+            ...actionResult.projection,
+            ...((eligibleElasticPublication || eligibleReadOnlyOrSignedStep) ? { activeMission: elasticPublication } : {}),
+          },
         };
         const capacityRouting = await requiredFunction(
           deps.loadCapacityRoutingInput,
@@ -1430,7 +1463,16 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       blockers: result.blockers,
     });
   }
-  const finalState = result.status === 'HOLD'
+  // A missing exact worker grant with no active lane is an idle admission wait,
+  // not programme-wide mutation unsafety. Keep the heartbeat in zero-authority
+  // reconciliation so independent eligible goals can still be admitted.
+  const idleGrantWait = result.status === 'HOLD'
+    && !projection?.lane
+    && result.allowWorkerTick === false
+    && result.boundedMutationSteps === 0
+    && list(result.blockers).length === 1
+    && result.blockers[0] === 'mission-worker:exact-action-grant-unavailable';
+  const finalState = idleGrantWait ? 'RECONCILING' : result.status === 'HOLD'
     ? 'HOLD'
     : result.status === 'ACTIVE'
       ? 'ACTIVE_LANE'
@@ -1440,9 +1482,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     sourceRevision,
     activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
     nowUtc,
-    cycleReceiptId: receipt.receiptId,
+    cycleReceiptId: idleGrantWait ? '' : receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
-    successful: receiptPublication?.ok === true,
+    successful: !idleGrantWait && receiptPublication?.ok === true,
   }), serviceOptions);
   if (finalHeartbeat?.ok !== true) {
     result = holdResult(`controller-heartbeat:${text(finalHeartbeat?.reason, 'final-publication-failed')}`, {
