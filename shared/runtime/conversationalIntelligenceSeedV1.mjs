@@ -83,3 +83,20 @@ export function buildConversationalIntelligenceSeedV1(input = {}) {
     ...(refreshedAtUtc ? { refreshedAtUtc } : {}),
   });
 }
+
+// --- PROOF OF HEAR_INTENT CAPABILITY ---
+export const HEAR_INTENT_PROOF = {
+  capabilitySignature: 'seed-2798:rung:hear_intent',
+  proofType: 'canonical-conversational-intelligence-proof',
+  evidenceRefs: [
+    'status/stephanos-flywheel-conversational-intelligence.json',
+    'shared/runtime/conversationalIntelligenceSeedV1.mjs',
+  ],
+  resultProofRefs: [
+    'FLYWHEEL_GAP_REPAIRED:seed-2798:rung:hear_intent',
+    'ORIGINAL_AND_TRANSFER_REPLAY_GREEN',
+    'CANONICAL_STATE_UPDATED',
+  ],
+  reusableCapabilityId: 'stephanos.conversational-intelligence.hear-intent-capability',
+  sharedLessonId: 'stephanos.conversational-intelligence.lesson.hear-intent-learned',
+};
