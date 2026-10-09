@@ -100,6 +100,26 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 <p>{seed.northStar || 'North star unavailable.'}</p>
               </div>
 
+              {Array.isArray(seed.linkedImprovementWork) && seed.linkedImprovementWork.length > 0 ? (
+                <div className="seed-canopy__linked-work" aria-label="Canonical linked improvement work">
+                  <span>CONNECTED IMPROVEMENTS · NOT COMPLETION PROOF</span>
+                  <ul>
+                    {seed.linkedImprovementWork.map((work) => (
+                      <li key={work.ref}>
+                        <a
+                          href={`https://github.com/Cheekyfellastef/stephan-os/${work.kind}/${work.ref.replace('#', '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={work.outcome}
+                        >
+                          <b>{work.ref}</b> {work.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               <div className="seed-canopy__rungs" aria-label={compactTitle(seed) + " growth rungs"}>
                 {rungs.map((rung, index) => (
                   <span

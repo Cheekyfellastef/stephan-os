@@ -63,6 +63,11 @@ function buildHighLevelFlywheelSeedsV1() {
       northStar: conversationalIntelligence.northStar,
       operatingLoop: conversationalIntelligence.operatingLoop,
       growthRungs: conversationalIntelligence.growthRungs,
+      linkedImprovementWork: conversationalIntelligence.linkedImprovementWork,
+      linkedGoalIssueRefs: Object.freeze(conversationalIntelligence.linkedImprovementWork
+        .filter((work) => work.kind === 'issues' && ['#2434', '#2966'].includes(work.ref))
+        .map((work) => work.ref)),
+      continuousExperienceChecks: conversationalIntelligence.continuousExperienceChecks,
       source: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
     }),
     Object.freeze({

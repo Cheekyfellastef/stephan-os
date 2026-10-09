@@ -290,3 +290,35 @@
   border-color: rgba(255,204,91,0.28);
   background: rgba(255,204,91,0.045);
 }
+
+.seed-canopy__linked-work {
+  margin-top: 0.55rem;
+  padding: 0.56rem;
+  border-radius: 10px;
+  border: 1px solid rgba(111,202,255,0.16);
+  background: rgba(59,116,180,0.045);
+}
+.seed-canopy__linked-work > span {
+  display: block;
+  font-size: 0.56rem;
+  color: rgba(211,231,245,0.6);
+  letter-spacing: 0.06em;
+}
+.seed-canopy__linked-work ul {
+  margin: 0.32rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.25rem;
+}
+.seed-canopy__linked-work a {
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: rgba(174,223,255,0.94);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.seed-canopy__linked-work a:focus-visible {
+  outline: 2px solid #55e6ff;
+  outline-offset: 3px;
+}
