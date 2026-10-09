@@ -1608,12 +1608,28 @@ function deriveGoalConveyorFleetCareSeedGrowth(payload = {}, nowMs = Date.now())
   if (planted) for (let index = 1; index < rungProof.length && rungProof[index]; index += 1) currentRungIndex = index;
   const missingIndex = rungProof.findIndex((item) => !item);
   const nextGrowthRung = heartbeatCurrent ? contract.growthRungs[missingIndex] || '' : '';
+  // Read the existing backend goal-build journey projection. Counts are telemetry,
+  // not completion or mutation authority; a stale projection earns no green.
+  const conveyor = payload?.projection?.goalBuildConveyor;
+  const conveyorCurrent = heartbeatCurrent
+    && conveyor?.schemaVersion === 'stephanos.goal-build-conveyor.v1'
+    && payload?.projection?.sourceFreshness?.truth === 'CURRENT';
+  const conveyorTelemetry = Object.freeze({
+    sourceTruth: conveyorCurrent ? 'CURRENT' : 'UNKNOWN',
+    visibleGoals: conveyorCurrent ? Number(conveyor.visibleGoalCount || 0) : null,
+    builderPickups: conveyorCurrent ? Number(conveyor.provenToBuilderCount || 0) : null,
+    activelyBuilding: conveyorCurrent ? Number(conveyor.buildingCount || 0) : null,
+    completed: conveyorCurrent ? Number(conveyor.completedCount || 0) : null,
+    blocked: conveyorCurrent ? Number(conveyor.blockedCount || 0) : null,
+  });
   const nextBestAction = !planted
     ? 'Publish the #2972 source-bound heartbeat through the existing Flywheel.'
     : !heartbeatCurrent
       ? 'Restore a fresh #2972 heartbeat and healthy Shared Workspace feed.'
       : currentGaps.length
         ? 'Repair the evidenced fault with existing owner ' + currentGaps[0].owner + ': ' + currentGaps[0].summary
+        : conveyorCurrent && conveyorTelemetry.blocked > 0
+          ? 'Review blocked goals in the existing Goal Build Conveyor and publish a source-bound fault receipt before readmission.'
         : missingIndex > 0
           ? 'Collect a fresh, proven ' + FLEET_STAGES[missingIndex - 1] + ' receipt from the existing conveyor/fleet.'
           : 'Continue unattended fleet and build-conveyor audits; detect regressions and retain lessons.';
@@ -1627,7 +1643,8 @@ function deriveGoalConveyorFleetCareSeedGrowth(payload = {}, nowMs = Date.now())
     stage: planted ? contract.growthRungs[currentRungIndex] : 'AWAITING_LIVE_PROOF',
     healthState: !heartbeatCurrent ? 'AWAITING_LIVE_PROOF'
       : currentGaps.length ? 'FLEET_REPAIR_NEEDED'
-        : !stageProof[0] ? 'AWAITING_FLEET_PROOF' : 'MONITORING',
+        : conveyorCurrent && conveyorTelemetry.blocked > 0 ? 'CONVEYOR_BLOCKED_GOALS'
+          : !stageProof[0] ? 'AWAITING_FLEET_PROOF' : 'MONITORING',
     pressureState: !heartbeatCurrent ? 'UNKNOWN'
       : currentGaps.length ? 'ACTIVE' : stageProof.every(Boolean) ? 'CURRENT' : 'AWAITING_EVIDENCE',
     currentRungIndex,
@@ -1636,6 +1653,7 @@ function deriveGoalConveyorFleetCareSeedGrowth(payload = {}, nowMs = Date.now())
     currentGaps: Object.freeze(currentGaps.slice(0, 8)),
     fleetObservationProofCount: heartbeatCurrent ? Number(stageProof[0]) : null,
     incidentCount: heartbeatCurrent ? currentGaps.length : null,
+    conveyorTelemetry,
     proofCount: heartbeatCurrent ? proved.flatMap(proofRefs).length : null,
     latestEvidenceAt: latestByTime(events) ? safeTime(latestByTime(events)) : '',
     nextBestAction,
