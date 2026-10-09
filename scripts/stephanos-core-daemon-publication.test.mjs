@@ -188,3 +188,68 @@ test('failed unattended repair publishes one typed Flywheel learning gap owned b
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('fresh healthy reconciliation routes missing edge proof to existing owner without inventing failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const at = '2026-10-09T20:55:00.000Z';
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: '237fd54f7c33798515b20efd344ea8864aff30ab',
+      sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    const flywheel = {
+      ...context.persistentFlywheelStatus(),
+      flywheelLastCycleFinishedAtUtc: at,
+      refillStatus: 'READY',
+      refillCanonicalProgrammeHeld: false,
+      refillSafeEligibleWorkRemaining: 0,
+      refillProvenSafeFreeLanes: 0,
+    };
+    await context.publish(state, at, flywheel, { publishEvents: true });
+    const firstFiles = await readdir(join(root, 'events'));
+    assert.equal(firstFiles.length, 1, 'one missing-proof request per heartbeat');
+    assert.match(firstFiles[0],
+      /^core-loop-proof-needed-[a-f0-9]{12}-reconciliation-to-goal-admission\.json$/);
+    const event = JSON.parse(await readFile(join(root, 'events', firstFiles[0]), 'utf8'));
+    assert.equal(event.eventKind, 'goal-conveyor-proof-needed');
+    assert.equal(event.relatedIssue, '#2002');
+    assert.equal(event.evidenceTruth, 'UNKNOWN');
+    assert.equal(event.learningCandidate.requiresExistingGoalSearch, true);
+    assert.equal(event.learningCandidate.observedState, 'UNKNOWN');
+    assert.equal(event.closedLoopLearning, undefined, 'absence of proof is not a proven capability failure');
+    assert.equal(event.newGoalScopeAuthorized, false);
+    assert.equal(event.sourceMutationAuthority, false);
+    assert.equal(event.mergeAuthority, false);
+    assert.equal(validateSharedWorkspaceRecord(event).valid, true);
+    await context.publish(state, '2026-10-09T20:55:15.000Z', flywheel, { publishEvents: true });
+    const followupFiles = await readdir(join(root, 'events'));
+    assert.equal(followupFiles.filter((name) => name === firstFiles[0]).length, 1,
+      'same source-head and edge never duplicate pressure');
+    assert.equal(followupFiles.length, 2, 'one additional UNKNOWN edge requested on the following heartbeat');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Core publisher does not pressure UNKNOWN edges when reconciliation itself is stalled', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: '237fd54f7c33798515b20efd344ea8864aff30ab',
+      sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    await context.publish(state, '2026-10-09T20:55:00.000Z',
+      context.persistentFlywheelStatus(), { publishEvents: true });
+    const events = await readdir(join(root, 'events'));
+    assert.equal(events.length, 1);
+    assert.ok(events.every((name) => !name.startsWith('core-loop-proof-needed-')),
+      'stale reconciliation publishes the measured GAP first, not missing-proof noise');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
