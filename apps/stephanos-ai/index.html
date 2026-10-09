@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Stephanos AI</title>
   <link rel="stylesheet" href="./workspace.css" />
 </head>
@@ -14,7 +14,7 @@
         <div class="brand-mark">✦</div>
         <div><strong>Stephanos</strong><small>HUMAN + AI OPERATING SYSTEM</small></div>
       </div>
-      <div class="rail-heading"><span>AGENTS</span><span class="truth-pill">live route</span></div>
+      <div class="rail-heading"><span>AGENTS</span><span class="truth-pill">presence unproven</span></div>
       <nav id="agentList" class="agent-list" aria-label="Project agents"></nav>
       <div class="rail-heading group-heading"><span>GROUP CHATS</span></div>
       <nav id="groupList" class="agent-list groups" aria-label="Project groups"></nav>
@@ -27,7 +27,7 @@
           <h1 id="targetTitle">Stephanos AI</h1>
           <p id="targetSubtitle">Chat with the whole project, agents, and teams.</p>
         </div>
-        <div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div>
+        <div class="header-status"><div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div><span id="bridgeStatus" class="bridge-status" role="status" aria-live="polite">Backend · unproven</span></div>
       </header>
 
       <section id="welcome" class="welcome">
@@ -62,8 +62,10 @@
         <dl>
           <div><dt>Conversation surface</dt><dd>Stephanos AI</dd></div>
           <div><dt>Backend path</dt><dd>/api/ai/chat</dd></div>
+          <div><dt>Loaded UI origin</dt><dd id="frontendOrigin">unknown</dd></div>
+          <div><dt>Backend route</dt><dd id="backendRoute">unproven</dd></div>
           <div><dt>Target</dt><dd id="contextTarget">Everyone</dd></div>
-          <div><dt>Shared continuity</dt><dd>backend-governed</dd></div>
+          <div><dt>Shared continuity</dt><dd>not yet verified durable</dd></div>
         </dl>
       </section>
       <section class="context-card">
