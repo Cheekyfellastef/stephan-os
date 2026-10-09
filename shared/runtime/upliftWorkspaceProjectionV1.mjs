@@ -186,9 +186,13 @@ function isGapSignal(record = {}) {
   ) return true;
   if (record?.flywheelImprovementCandidate?.requiresExistingGoalSearch === true) return true;
   if (record?.learningCandidate?.requiresExistingGoalSearch === true) return true;
-  return /capability[- ]gap|missing capability|unsupported|blocked|needs[_ -]?uplift/i.test(
-    `${record.eventKind || ''} ${record.kind || ''} ${record.reason || ''} ${record.summary || ''} ${record.status || ''} ${record.state || ''}`,
-  );
+  // Machine-readable failure fields override prose. A passing monitor pulse may
+  // contain a goal title such as "Capability Gap Intake" without reporting a gap.
+  const gapPattern = /capability[- ]gap|missing capability|unsupported|blocked|needs[_ -]?uplift/i;
+  if (gapPattern.test(`${record.eventKind || ''} ${record.reason || ''} ${record.state || ''}`)) return true;
+  const outcome = text(record.status).toUpperCase().replace(/[\\s-]+/g, '_');
+  if (['PASS', 'PASSED', 'READY', 'CURRENT', 'SUCCESS', 'SUCCEEDED', 'PROVED', 'VERIFIED', 'COMPLETE', 'COMPLETED'].includes(outcome)) return false;
+  return gapPattern.test(`${record.status || ''} ${record.summary || ''}`);
 }
 
 const POSITIVE_RECOVERY_STATES = Object.freeze(new Set([
