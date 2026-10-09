@@ -61,6 +61,8 @@ function buildHighLevelFlywheelSeedsV1() {
       northStar: conversationalIntelligence.northStar,
       operatingLoop: conversationalIntelligence.operatingLoop,
       growthRungs: conversationalIntelligence.growthRungs,
+      linkedOutcomeGoals: conversationalIntelligence.linkedOutcomeGoals,
+      experienceProofDimensions: conversationalIntelligence.experienceProofDimensions,
       source: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
     }),
     Object.freeze({
