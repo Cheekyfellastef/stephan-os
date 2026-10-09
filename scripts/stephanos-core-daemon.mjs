@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
+  createSharedWorkspaceEventRecord,
   ensureSharedWorkspaceLayout,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -24,8 +25,10 @@ import {
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
+  summarizePersistentGapClosure,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
+  auditCoreLoopClosureV1,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
@@ -252,8 +255,10 @@ let lastRefillError = '';
 let lastControllerLanePublicationVerdict = 'NOT_RUN';
 let lastControllerLanePublicationBlocker = '';
 let lastOctopusMaterialBuildAtUtc = '';
+let lastGapClosureSummary = summarizePersistentGapClosure();
 let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
   lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+gapClosureSummary: lastGapClosureSummary,
 });
 let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
@@ -269,6 +274,7 @@ let lastDependencySelfHealVerdict = 'NOT_RUN';
 let lastDependencySelfHealBlocker = '';
 let lastDependencySelfHealAttemptCount = 0;
 let lastDependencySelfHealProofHashes = Object.freeze([]);
+let lastLoopGapEventPublicationVerdict = 'NOT_RUN';
 
 async function publishControllerLaneTruth() {
   try {
@@ -544,6 +550,7 @@ async function maybeSelfHealOctopus(sourceHead) {
     }
     lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
       lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+    gapClosureSummary: lastGapClosureSummary,
     });
     lastOctopusSelfHealVerdict = lastOctopusBuildSummary.octopusNeedsRepair
       ? 'OCTOPUS_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY'
@@ -632,6 +639,7 @@ function persistentFlywheelStatus() {
     duplicateSchedulerAllowed: false,
     onionContinuation: lastOnionContinuation,
     ...lastLogicalLaneSummary,
+    ...lastGapClosureSummary,
     ...lastRefillSummary,
     ...lastOctopusBuildSummary,
   });
@@ -678,6 +686,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         }
         lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        gapClosureSummary: lastGapClosureSummary,
         });
 
       } catch (error) {
@@ -688,6 +697,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         });
         lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        gapClosureSummary: lastGapClosureSummary,
         });
       }
 
@@ -708,6 +718,11 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           calibrationTrigger: 'CORE_DAEMON',
         });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+        lastGapClosureSummary = summarizePersistentGapClosure(result?.learningGoalReconciliation);
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+          gapClosureSummary: lastGapClosureSummary,
+        });
         lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
         // Publish the existing proof-backed controller/lane observer after the
         // canonical programme reconciliation. This adds no scheduler, timer or
@@ -738,7 +753,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
   return trigger;
 }
 
-async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus()) {
+async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(), loopEvidence = {}) {
   const layout = await ensureSharedWorkspaceLayout({ root: workspaceRoot, repoRoot });
   if (!layout.ok) throw new Error('STEPHANOS_CORE_DAEMON_SHARED_WORKSPACE_UNAVAILABLE');
 
@@ -748,6 +763,10 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
   });
 
   const { schemaVersion: controlPlaneSchemaVersion, ...controlPlaneFields } = controlPlane;
+  const loopClosureAudit = auditCoreLoopClosureV1({
+    coreState: state, flywheel, observedAtUtc: timestampUtc,
+    worker: loopEvidence.worker, lease: loopEvidence.lease,
+  });
 
   const common = {
     heartbeatAtUtc: timestampUtc,
@@ -772,6 +791,13 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     sovereignCommanderIsMachineExecutor: true,
     duplicateControllerFabricAllowed: false,
     ...flywheel,
+    loopClosureAudit,
+    loopClosureAuditSchemaVersion: loopClosureAudit.schemaVersion,
+    allGoalBuildLoopsProvenClosed: loopClosureAudit.allLoopsProvenClosed,
+    loopClosureObservedGapCount: loopClosureAudit.gapCount,
+    loopClosureUnprovenEdgeCount: loopClosureAudit.unprovenCount,
+    loopClosureNextAction: loopClosureAudit.nextAction,
+    loopClosureGapEventPublicationVerdict: lastLoopGapEventPublicationVerdict,
     ...controlPlaneFields,
     controlPlaneSchemaVersion,
     coreDaemonFinalVerdict: state.finalVerdict,
@@ -809,6 +835,61 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     writeAtomicJson(workspaceRoot, ['proof', 'stephanos-core-daemon-current.json'], proof, { repoRoot }),
   ]);
   if (!statusWrite.ok || !proofWrite.ok) throw new Error('STEPHANOS_CORE_DAEMON_HEARTBEAT_WRITE_FAILED');
+
+  // Only observed GAPs, never unproven UNKNOWN stages, enter the existing
+  // Flywheel gap-to-goal intake. One stable issue-owned event per edge/source
+  // head avoids duplicate queues and GitHub polling; publishing is local.
+  if (loopEvidence.publishEvents === true) {
+    // A failed local event write cannot take down the Core Daemon.
+    try {
+    const observedGaps = loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
+    for (const gap of observedGaps) {
+      const edgeKey = gap.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const eventId = 'core-loop-gap-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;
+      const segments = ['events', eventId + '.json'];
+      const exists = await readJsonIfPresent(resolve(workspaceRoot, ...segments));
+      if (exists) continue;
+      const capabilityId = 'core-loop-closure-' + edgeKey;
+      const event = {
+        ...createSharedWorkspaceEventRecord({
+          eventId,
+          participantId: 'stephanos-core',
+          timestampUtc,
+          eventKind: 'goal-conveyor-incident',
+          summary: 'Core loop closure audit: ' + gap.reason + '. Existing owner: ' + gap.ownerIssue,
+          capabilityFailure: {
+            failureClass: 'CAPABILITY_GAP',
+            genuineCapabilityFailure: true,
+            capabilityId,
+            targetRefs: ['goal:' + gap.ownerIssue],
+            teacherHint: 'stephanos-core',
+            observedAtUtc: timestampUtc,
+          },
+        }),
+        missionId: 'goal-conveyor-fleet-care',
+        relatedIssue: gap.ownerIssue,
+        rootGapId: capabilityId,
+        capabilityId,
+        proofRefs: ['proof/stephanos-core-daemon-current.json'],
+        loopClosureEdgeId: gap.id,
+        canonicalOwner: gap.ownerIssue,
+        createsReplacementScheduler: false,
+        sourceMutationAuthority: false,
+        mergeAuthority: false,
+      };
+      const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
+      if (write.ok !== true) {
+        throw new Error('CORE_LOOP_CLOSURE_GAP_EVENT_WRITE_FAILED:' + String(write.reason || 'UNKNOWN'));
+      }
+      lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_PUBLISHED';
+      break; // At most one new gap event per heartbeat.
+    }
+    } catch (error) {
+      lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:' + String(error?.message || error).slice(0, 90);
+      // The next heartbeat surfaces the blocker without inhibiting repairs
+      // already eligible through the other canonical Core Daemon loops.
+    }
+  }
 }
 
 async function sample(sourceHead) {
@@ -882,7 +963,11 @@ try {
     const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
     const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
     await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
-    await publish(state, new Date().toISOString(), persistentFlywheelStatus());
+    await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
+      worker: await readJsonIfPresent(workerHeartbeatPath),
+      lease: await readJsonIfPresent(sourceLeasePath),
+      publishEvents: true,
+    });
     await new Promise((resolveWait) => setTimeout(resolveWait, HEARTBEAT_MS));
   }
 } catch (error) {
