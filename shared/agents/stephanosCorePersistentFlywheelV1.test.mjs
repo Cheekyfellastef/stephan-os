@@ -11,6 +11,7 @@ import {
   auditCoreLoopClosureV1,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
+  summarizePersistentGapClosure,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
 } from './stephanosCorePersistentFlywheelV1.mjs';
@@ -474,4 +475,61 @@ test('gaming protection pauses repair checks without claiming missing proof is g
   const audit = auditCoreLoopClosureV1(input);
   assert.equal(audit.edges.find((edge) => edge.id === 'WATCH_TO_RECONCILIATION').state, 'PAUSED');
   assert.equal(audit.allLoopsProvenClosed, false);
+});
+
+
+test('unresolved canonical Flywheel owners are deduped and never called completed', () => {
+  const closure = summarizePersistentGapClosure({
+    ok: true,
+    attachments: [
+      { disposition: 'ATTACH_TO_EXISTING_GOAL', ownerGoals: ['#2961', '#2961'] },
+      { disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED', ownerGoals: ['#2954'] },
+    ],
+    canonicalGoalAdmissionHeldCount: 0,
+  });
+  assert.equal(closure.gapClosureStatus, 'PENDING_PROOF');
+  assert.equal(closure.gapClosureUnresolvedOwnerCount, 2);
+  assert.deepEqual(closure.gapClosureOwnerRefs, ['#2954', '#2961']);
+  assert.equal(closure.gapClosureCompletionProven, false);
+  assert.equal(closure.gapClosureMergeAuthority, false);
+});
+
+test('an owned actionable gap with proven idle and no worker pickup triggers existing guarded repair', () => {
+  const gapClosureSummary = summarizePersistentGapClosure({
+    ok: true, attachments: [{ disposition: 'ATTACH_TO_EXISTING_GOAL', ownerGoals: ['#2961'] }],
+  });
+  const summary = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY', refillMaterialActionsSucceeded: 0,
+    refillNoRunnableSourceWorkProven: true, refillParkedLaneCount: 0,
+  }, { gapClosureSummary });
+  assert.equal(summary.octopusBuildVerdict, 'OWNED_GAP_PICKUP_MISSING');
+  assert.equal(summary.octopusNeedsRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(summary, { nowMs: 1000 }).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(summary, { nowMs: 1000, lastAttemptAtMs: 900 }).shouldRepair, false);
+});
+
+test('material building takes priority, and unknown gap evidence cannot manufacture repair', () => {
+  const gapClosureSummary = summarizePersistentGapClosure({
+    ok: true, attachments: [{ disposition: 'ATTACH_TO_EXISTING_GOAL', ownerGoals: ['#2961'] }],
+  });
+  const active = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY', refillMaterialActionsSucceeded: 1,
+  }, { gapClosureSummary });
+  assert.equal(active.octopusBuildVerdict, 'BUILDING');
+  assert.equal(active.octopusNeedsRepair, false);
+  const unknown = summarizePersistentGapClosure();
+  assert.equal(unknown.gapClosureStatus, 'UNKNOWN');
+  const idle = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY', refillNoRunnableSourceWorkProven: true,
+  }, { gapClosureSummary: unknown });
+  assert.equal(idle.octopusBuildVerdict, 'IDLE_PROVEN');
+  assert.equal(idle.octopusNeedsRepair, false);
+});
+
+test('Core Daemon wires Flywheel-owned gap proof into existing Sovereign repair flow', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /summarizePersistentGapClosure\(result\?\.learningGoalReconciliation\)/);
+  assert.match(source, /gapClosureSummary: lastGapClosureSummary/);
+  assert.match(source, /maybeSelfHealOctopus\(sourceHead\)/);
+  assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
 });

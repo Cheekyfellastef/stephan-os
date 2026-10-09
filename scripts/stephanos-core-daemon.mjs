@@ -25,6 +25,7 @@ import {
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
+  summarizePersistentGapClosure,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
   auditCoreLoopClosureV1,
@@ -254,8 +255,10 @@ let lastRefillError = '';
 let lastControllerLanePublicationVerdict = 'NOT_RUN';
 let lastControllerLanePublicationBlocker = '';
 let lastOctopusMaterialBuildAtUtc = '';
+let lastGapClosureSummary = summarizePersistentGapClosure();
 let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
   lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+gapClosureSummary: lastGapClosureSummary,
 });
 let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
@@ -547,6 +550,7 @@ async function maybeSelfHealOctopus(sourceHead) {
     }
     lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
       lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+    gapClosureSummary: lastGapClosureSummary,
     });
     lastOctopusSelfHealVerdict = lastOctopusBuildSummary.octopusNeedsRepair
       ? 'OCTOPUS_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY'
@@ -635,6 +639,7 @@ function persistentFlywheelStatus() {
     duplicateSchedulerAllowed: false,
     onionContinuation: lastOnionContinuation,
     ...lastLogicalLaneSummary,
+    ...lastGapClosureSummary,
     ...lastRefillSummary,
     ...lastOctopusBuildSummary,
   });
@@ -681,6 +686,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         }
         lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        gapClosureSummary: lastGapClosureSummary,
         });
 
       } catch (error) {
@@ -691,6 +697,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         });
         lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        gapClosureSummary: lastGapClosureSummary,
         });
       }
 
@@ -711,6 +718,11 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           calibrationTrigger: 'CORE_DAEMON',
         });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+        lastGapClosureSummary = summarizePersistentGapClosure(result?.learningGoalReconciliation);
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+          gapClosureSummary: lastGapClosureSummary,
+        });
         lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
         // Publish the existing proof-backed controller/lane observer after the
         // canonical programme reconciliation. This adds no scheduler, timer or

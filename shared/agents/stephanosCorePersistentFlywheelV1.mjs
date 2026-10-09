@@ -203,8 +203,39 @@ export function summarizePersistentRefillSweep(result = {}) {
   });
 }
 
+// An existing goal owner is not proof that the goal was picked up.
+// Retain the canonical Flywheel reconciliation truth without adding authority.
+export function summarizePersistentGapClosure(reconciliation = null) {
+  const observed = reconciliation !== null && typeof reconciliation === 'object' && !Array.isArray(reconciliation);
+  const attachments = observed && Array.isArray(reconciliation.attachments)
+    ? reconciliation.attachments : [];
+  const owners = new Set();
+  for (const attachment of attachments) {
+    if (!['ATTACH_TO_EXISTING_GOAL', 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+      'DEDUPED_CANONICAL_GOAL_ADMITTED'].includes(attachment?.disposition)) continue;
+    for (const owner of Array.isArray(attachment?.ownerGoals) ? attachment.ownerGoals : []) {
+      if (/^#[1-9]\d*$/.test(String(owner))) owners.add(String(owner));
+    }
+  }
+  const heldCount = observed && Number.isSafeInteger(reconciliation.canonicalGoalAdmissionHeldCount)
+    ? Math.max(0, reconciliation.canonicalGoalAdmissionHeldCount) : 0;
+  return Object.freeze({
+    gapClosureObserved: observed,
+    gapClosureStatus: !observed ? 'UNKNOWN'
+      : reconciliation.ok !== true ? 'DEGRADED'
+        : owners.size || heldCount ? 'PENDING_PROOF' : 'NO_UNRESOLVED_OWNED_GAPS_OBSERVED',
+    gapClosureUnresolvedOwnerCount: owners.size,
+    gapClosureAdmissionHeldCount: heldCount,
+    gapClosureOwnerRefs: Object.freeze([...owners].sort().slice(0, 20)),
+    gapClosureCompletionProven: false,
+    gapClosureSchedulerAuthority: false,
+    gapClosureMergeAuthority: false,
+  });
+}
+
 export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   lastMaterialBuildAtUtc = '',
+  gapClosureSummary = {},
 } = {}) {
   const materialActions = Number.isSafeInteger(Number(refillSummary?.refillMaterialActionsSucceeded))
     ? Math.max(0, Number(refillSummary.refillMaterialActionsSucceeded))
@@ -225,6 +256,8 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   const noRunnableWorkProven = refillSummary?.refillNoRunnableSourceWorkProven === true;
   const programmeHeld = refillSummary?.refillCanonicalProgrammeHeld === true;
   const sweepExhausted = refillSummary?.refillWorkConservingSweepExhausted === true;
+  const unresolvedOwnedGaps = Number.isSafeInteger(gapClosureSummary?.gapClosureUnresolvedOwnerCount)
+    ? Math.max(0, gapClosureSummary.gapClosureUnresolvedOwnerCount) : 0;
 
   let verdict = 'WAITING';
   if (materialActions > 0) verdict = 'BUILDING';
@@ -234,14 +267,16 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   // truthfully reported zero runnable work because everything was blocked.
   else if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
+  else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
   else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
   else if (eligibleWorkRemaining > 0 || provenSafeFreeLanes > 0 || sweepExhausted) verdict = 'STALLED_WITH_CAPACITY';
 
   return Object.freeze({
     octopusBuildVerdict: verdict,
-    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED'].includes(verdict),
-    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'DEGRADED'].includes(verdict),
+    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
+    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
     octopusProgrammeHeld: programmeHeld,
+    octopusUnresolvedOwnedGapCount: unresolvedOwnedGaps,
     octopusMaterialActionsLastCycle: materialActions,
     octopusSweepAttemptsLastCycle: sweepAttempts,
     octopusEligibleWorkRemaining: eligibleWorkRemaining,
