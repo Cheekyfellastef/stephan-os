@@ -247,3 +247,39 @@ test('parked backlog without elastic admission is blocked, never falsely idle gr
   assert.equal(result.daemonMayReportGreen, false);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED');
 });
+
+test('one-minute supervisor never calls an authoritative programme HOLD healthy idle', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['SOURCE_MUTATION_LEASE_HELD'],
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.blocker, 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED');
+  assert.deepEqual(result.programmeBlockers, ['SOURCE_MUTATION_LEASE_HELD']);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('one-minute supervisor never treats unavailable Commander parity as zero known gaps', async () => {
+  const result = await runSupervisor({
+    reconcileCommanderParity: async () => ({
+      ok: false,
+      blocker: 'SOVEREIGN_PARITY_LEDGER_STALE',
+      buildableGapCount: 0,
+    }),
+    conveyor: async () => conveyorResult({
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.blocker, 'SOVEREIGN_PARITY_LEDGER_STALE');
+  assert.equal(result.commanderParityHealthy, false);
+  assert.equal(result.duplicateLeaseAllowed, false);
+});
