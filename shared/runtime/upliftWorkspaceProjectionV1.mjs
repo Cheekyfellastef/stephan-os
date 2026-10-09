@@ -1052,6 +1052,8 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     operatingLoop: contract.operatingLoop,
     growthRungs: contract.growthRungs,
     qualityDimensions: contract.qualityDimensions,
+    linkedOutcomeGoals: contract.linkedOutcomeGoals,
+    experienceProofDimensions: contract.experienceProofDimensions,
     operatorRole: contract.operatorRole,
     currentRungIndex,
     currentRung,
@@ -1130,6 +1132,15 @@ function conversationalBindingText(record = {}) {
 }
 
 function isConversationalIntelligenceRelevant(record = {}) {
+  // Tie experience failures to the *existing* goal owners, not an invented
+  // seed-specific controller. Only structured references qualify here.
+  const linkedIssues = new Set(buildConversationalIntelligenceSeedV1().linkedOutcomeGoals.map((goal) => goal.issueRef));
+  const exactRefs = [
+    record.relatedIssue, record.relatedGoal, record.ownerGoal, record.canonicalOwnerGoal,
+    ...list(record.targetRefs), ...list(record.domainRefs),
+    ...list(record?.closedLoopLearning?.targetRefs),
+  ];
+  if (exactRefs.some((ref) => linkedIssues.has(String(ref || '').trim()))) return true;
   const binding = conversationalBindingText(record);
   if (
     binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
