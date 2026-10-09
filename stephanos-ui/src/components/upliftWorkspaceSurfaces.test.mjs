@@ -55,6 +55,10 @@ test('Flywheel tile always renders the seed observatory while live evidence rema
   assert.match(canopy, /Proof/);
   assert.match(canopy, /NEXT RUNG/);
   assert.match(canopy, /NORTH STAR/);
+  assert.match(canopy, /CONNECTED TO GOAL CONVEYOR/);
+  assert.match(canopy, /seed\.linkedOutcomeGoals/);
+  assert.match(canopy, /Existing goal owners for seed improvements/);
+  assert.match(canopy, /Linked ownership only/);
 });
 
 test('Agents tile renders command constellation and receives canonical backend routing context', async () => {
