@@ -1,4 +1,5 @@
 import test from 'node:test';
+import '../runtime/sovereignMeterIndependenceSeedV1.test.mjs';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
