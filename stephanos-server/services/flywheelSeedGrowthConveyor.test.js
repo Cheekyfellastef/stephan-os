@@ -62,15 +62,15 @@ function github() {
   };
 }
 
-test('all five seeds generate stable owned pressure; healthy whole-system observation creates no repair', () => {
+test('registered seeds generate stable owned pressure; healthy whole-system observation creates no repair', () => {
   const payload = feed({ wholeGap: true });
   const planned = pressures(payload);
-  assert.equal(planned.length, 5);
-  assert.deepEqual(planned.map((work) => work.ownerIssueRef), ['#2655', '#2670', '#2796', '#2798', '#2519']);
+  assert.equal(planned.length, 6);
+  assert.deepEqual(planned.map((work) => work.ownerIssueRef), ['#2655', '#2670', '#2796', '#2798', '#2519', '#2968']);
   const keys = planned.map((work) => work.pressureKey);
   payload.records.statusRecords = payload.records.statusRecords.map((record) => ({ ...record, timestampUtc: '2026-10-07T19:59:59.000Z' }));
   assert.deepEqual(pressures(payload).map((work) => work.pressureKey), keys);
-  assert.equal(pressures(feed()).length, 4);
+  assert.equal(pressures(feed()).length, 5);
 });
 
 test('stale, future, unavailable and conflicting feeds cannot authorize seed goals', () => {
@@ -100,16 +100,16 @@ test('existing reconciliation admits one owned goal per pressure and repeats wit
   };
   const first = await reconcileFlywheelLearningGoalsV1(options);
   assert.equal(first.createdCanonicalGoalCount, 4);
-  assert.equal(first.seedGrowthAttachments.length, 5);
+  assert.equal(first.seedGrowthAttachments.length, 6);
   assert.equal(first.authority.dispatchAllowed, false);
   assert.equal(first.authority.mergeAllowed, false);
   const second = await reconcileFlywheelLearningGoalsV1(options);
-  assert.equal(second.createdCanonicalGoalCount, 1);
+  assert.equal(second.createdCanonicalGoalCount, 2);
   assert.equal(second.dedupedCanonicalGoalCount, 4);
-  assert.equal(adapter.shapes.length, 5);
+  assert.equal(adapter.shapes.length, 6);
   const third = await reconcileFlywheelLearningGoalsV1(options);
   assert.equal(third.createdCanonicalGoalCount, 0);
-  assert.equal(adapter.shapes.length, 5);
+  assert.equal(adapter.shapes.length, 6);
   const goal = JSON.parse(await readFile(join(paths.root, 'goals/goal-9001.json'), 'utf8'));
   assert.ok(goal.seedGrowthWork.ownerIssueRef);
   assert.equal(goal.dispatchAllowed, false);
