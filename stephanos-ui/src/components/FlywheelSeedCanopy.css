@@ -290,3 +290,35 @@
   border-color: rgba(255,204,91,0.28);
   background: rgba(255,204,91,0.045);
 }
+
+.seed-canopy__owners {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.55rem;
+  padding: 0.6rem;
+  border: 1px solid rgba(112,203,255,0.18);
+  border-radius: 10px;
+  background: rgba(60,120,190,0.045);
+}
+.seed-canopy__owners > span {
+  color: rgba(204,232,249,0.67);
+  font-size: 0.59rem;
+  letter-spacing: 0.08em;
+}
+.seed-canopy__owners a {
+  display: block;
+  color: #b9dfff;
+  font-size: 0.71rem;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.seed-canopy__owners a:hover,
+.seed-canopy__owners a:focus-visible {
+  color: white;
+  text-decoration: underline;
+}
+.seed-canopy__owners small {
+  color: rgba(212,229,241,0.56);
+  font-size: 0.63rem;
+  line-height: 1.35;
+}
