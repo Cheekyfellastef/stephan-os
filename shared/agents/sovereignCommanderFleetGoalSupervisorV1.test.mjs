@@ -203,6 +203,31 @@ test('one-minute supervisor reconciles Remote Commander capability parity before
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });
 
+test('parked backlog with all selected goals proven held routes exact repair causes, never false green', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      elasticAdmission: {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSIONS_HELD',
+        activeMissions: [],
+        runnableMissions: [],
+        held: [
+          { issueNumber: 1383, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION' },
+          { issueNumber: 1645, reason: 'EXISTING_GOAL_MISSION_AWAITING_OPERATOR_APPROVAL' },
+        ],
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED');
+  assert.equal(result.heldGoalCount, 2);
+  assert.deepEqual(result.heldIssues.map((issue) => issue.issueNumber), [1383, 1645]);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
 test('parked backlog without elastic admission is blocked, never falsely idle green', async () => {
   const result = await runSupervisor({
     conveyor: async () => conveyorResult({

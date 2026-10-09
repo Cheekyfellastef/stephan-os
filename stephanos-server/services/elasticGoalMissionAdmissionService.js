@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -268,6 +269,11 @@ function missionInput(issueNumber, goal, scope, options = {}) {
       `Build durable GitHub goal #${issueNumber} through the canonical elastic Goal Flywheel.`,
       'Read the authoritative GitHub goal and current repository truth before implementation.',
       'Stay within the scheduler-approved resource scope and do not create duplicate implementation work.',
+      ...(validateSeedGrowthWorkV1(goal?.seedGrowthWork) ? [
+        `Seed owner ${goal.seedGrowthWork.ownerIssueRef}; pressure ${goal.seedGrowthWork.pressureKey}.`,
+        goal.seedGrowthWork.nextBestAction,
+        'Return result proof, reusable capability and shared lesson to the canonical goal, then replay the seed-specific acceptance evidence.',
+      ] : []),
     ].join(' '),
     intendedOutcome: title,
     missionKind: 'implementation',
@@ -349,7 +355,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, goal, scope, options),
+      missionInput: missionInput(issueNumber, { ...goal, seedGrowthWork: record?.seedGrowthWork }, scope, options),
       resourceIds: scope.resourceIds,
     });
   }

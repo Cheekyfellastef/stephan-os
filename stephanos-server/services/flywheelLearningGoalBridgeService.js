@@ -1,6 +1,9 @@
 import {
   readSharedWorkspaceRecordDirectory,
+  readSharedWorkspaceDashboardFeed,
 } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import { deriveFlywheelWorkspaceView } from '../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import { planSeedGrowthWorkV1, seedGrowthGoalCompletedV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import {
   resolveSharedWorkspaceRuntimeConfig,
 } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
@@ -424,6 +427,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   let canonicalGoalAdmissionHeldCount = 0;
   let dedupedGoalCandidateCount = 0;
   let heldCount = 0;
+  const seedGrowthAttachments = [];
 
   for (const event of events) {
     const eventId = eventIdentity(event);
@@ -606,6 +610,67 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     }
   }
 
+  // This is the existing controller reconciliation, lock, admission policy and
+  // scheduler store. Seed pressure must not become a second work queue.
+  try {
+    const readSeedFeed = input.readSeedFeed || readSharedWorkspaceDashboardFeed;
+    const currentFeed = await readSeedFeed({ root: resolved.root, repoRoot, nowMs });
+    const seedFeed = { ...currentFeed, errors: [...list(currentFeed.errors), ...list(eventHistory?.errors)], records: { ...currentFeed.records,
+      eventRecords: list(eventHistory?.records) } };
+    const pressures = planSeedGrowthWorkV1(deriveFlywheelWorkspaceView(seedFeed, { nowMs }), seedFeed, nowMs);
+    for (const pressure of pressures) {
+      const { existingGoal, identityConflict, ...seedGrowthWork } = pressure;
+      if (identityConflict) {
+        seedGrowthAttachments.push({ pressureKey: pressure.pressureKey, disposition: 'SEED_GOAL_IDENTITY_CONFLICT' });
+        continue;
+      }
+      if (existingGoal) {
+        seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+          ownerGoals: [`#${existingGoal.issueNumber}`],
+          disposition: seedGrowthGoalCompletedV1(existingGoal)
+            ? 'COMPLETION_PROOF_RETURNED_AWAITING_RUNG_EVIDENCE' : 'ATTACHED_EXISTING_CANONICAL_SEED_GOAL' });
+        continue;
+      }
+      if (input.canonicalGoalAdmissionAuthorized !== true) {
+        seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+          disposition: 'SEED_GOAL_PRODUCTION_AUTHORITY_REQUIRED' });
+        continue;
+      }
+      let canonical;
+      try {
+        canonical = await admitCanonicalGoal({
+          ...(input.canonicalGoalAdmissionOptions || {}),
+          root: resolved.root, repoRoot, nowMs, nowUtc: now.toISOString(),
+          canonicalGoalAdmissionAuthorized: true,
+          eventId: pressure.pressureKey, capabilityId: pressure.pressureKey,
+          evidenceRefs: pressure.evidenceRefs, seedGrowthWork,
+          allowIssueCreation: createdCanonicalGoalCount < maxCanonicalGoals,
+        });
+      } catch (error) {
+        canonical = { ok: false, reason: text(error?.message, 'SEED_GOAL_ADMISSION_FAILED') };
+      }
+      const number = Number(canonical?.issue?.number);
+      if (canonical?.created === true) {
+        createdCanonicalGoalCount += 1;
+        if (Number.isSafeInteger(number) && number > 0) createdCanonicalGoalIssueNumbers.push(number);
+      }
+      if (canonical?.ok === true && canonical?.created !== true) {
+        dedupedCanonicalGoalCount += 1;
+        dedupedCanonicalGoalIssueNumbers.push(number);
+      }
+      if (canonical?.ok !== true) {
+        canonicalGoalAdmissionHeldCount += 1;
+        canonicalGoalAdmissionBlockers.push(`${pressure.pressureKey}:${text(canonical?.reason, 'SEED_GOAL_ADMISSION_HELD')}`);
+      }
+      seedGrowthAttachments.push({ seedId: pressure.seedId, pressureKey: pressure.pressureKey,
+        ownerGoals: Number.isSafeInteger(number) && number > 0 ? [`#${number}`] : [],
+        schedulerGoalId: text(canonical?.schedulerGoal?.goalId),
+        disposition: text(canonical?.reason, 'SEED_GOAL_ADMISSION_HELD') });
+    }
+  } catch (error) {
+    errors.push(`seed-growth:${text(error?.message, 'SEED_GOAL_RECONCILIATION_FAILED')}`);
+  }
+
   return resultBase({
     ok: errors.length === 0,
     reason: errors.length
@@ -625,6 +690,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     brainDiagnosisFailureCount,
     brainDiagnoses: Object.freeze(brainDiagnoses),
     attachments: Object.freeze(attachments),
+    seedGrowthAttachments: Object.freeze(seedGrowthAttachments.map((item) => Object.freeze(item))),
     createdCanonicalGoalIssueNumbers: Object.freeze(createdCanonicalGoalIssueNumbers),
     dedupedCanonicalGoalIssueNumbers: Object.freeze(dedupedCanonicalGoalIssueNumbers),
     canonicalGoalAdmissionBlockers: Object.freeze(canonicalGoalAdmissionBlockers),

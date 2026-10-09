@@ -443,11 +443,72 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
 
+// A failing authenticated read must not make every supervised controller tick
+// spend another API request. Backoff is an outage hold, never cached PR truth.
+const GITHUB_PR_RATE_LIMIT_MIN_BACKOFF_MS = 30_000;
+const GITHUB_PR_RATE_LIMIT_DEFAULT_BACKOFF_MS = 120_000;
+const GITHUB_PR_RATE_LIMIT_MAX_BACKOFF_MS = 65 * 60_000;
+const githubPrRateLimitBackoff = new Map();
+
+function githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs) {
+  return {
+    status: 'error',
+    source: 'github-api',
+    owner,
+    repo,
+    prNumber,
+    authAuthority: authority,
+    reasonCode: 'GITHUB_PR_RATE_LIMIT_BACKOFF',
+    retryAfterUtc: new Date(untilMs).toISOString(),
+    recommendedNextAction: 'GitHub PR evidence is rate-limited. Retain the exact-head HOLD and retry after the bounded backoff.',
+  };
+}
+
+async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, authority) {
+  if (![403, 429].includes(response?.status)) return null;
+  const remaining = String(response.headers?.get?.('x-ratelimit-remaining') ?? '');
+  let message = '';
+  try { message = String((await response.json())?.message ?? ''); } catch {}
+  const limited = response.status === 429
+    || remaining === '0'
+    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message);
+  if (!limited) return null;
+  const nowMs = Date.now();
+  const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
+  const retrySeconds = Number(response.headers?.get?.('retry-after'));
+  const requestedMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+    ? retrySeconds * 1000
+    : Number.isFinite(resetSeconds) && resetSeconds > 0
+      ? resetSeconds * 1000 - nowMs + 5000
+      : GITHUB_PR_RATE_LIMIT_DEFAULT_BACKOFF_MS;
+  const delayMs = Math.min(GITHUB_PR_RATE_LIMIT_MAX_BACKOFF_MS,
+    Math.max(GITHUB_PR_RATE_LIMIT_MIN_BACKOFF_MS, requestedMs));
+  const untilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, nowMs + delayMs);
+  githubPrRateLimitBackoff.set(key, untilMs);
+  return githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs);
+}
+
 export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
   let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
+  const key = `${String(owner).toLowerCase()}/${String(repo).toLowerCase()}`;
+  const holdUntilMs = githubPrRateLimitBackoff.get(key) || 0;
+  if (holdUntilMs > Date.now()) {
+    return githubPrRateLimitHold(owner, repo, prNumber, activeAuth.authority, holdUntilMs);
+  }
+  if (holdUntilMs) githubPrRateLimitBackoff.delete(key);
   const request = async (candidateAuth) => fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: githubHeaders(candidateAuth, 'stephanos-readonly-pr-evidence') });
   let prRes = await request(activeAuth);
-  if (prRes.status === 403 && activeAuth.authority !== 'gh-cli') { const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider }); if (ghAuth.configured) { activeAuth = ghAuth; prRes = await request(activeAuth); } }
+  let rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority);
+  if (rateLimit) return rateLimit;
+  if ([401, 403].includes(prRes.status) && activeAuth.authority !== 'gh-cli') {
+    const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+    if (ghAuth.configured) {
+      activeAuth = ghAuth;
+      prRes = await request(activeAuth);
+      rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority);
+      if (rateLimit) return rateLimit;
+    }
+  }
   if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, authAuthority: activeAuth.authority, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
   const pr = await prRes.json(); const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
   const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }); const files = filesRes.ok ? await filesRes.json() : [];

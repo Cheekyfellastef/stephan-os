@@ -570,11 +570,13 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       // canonical runnable work disappeared. Keep sweeping while the scheduler
       // still exposes runnable missions so safe eligible work cannot collapse
       // into a false healthy-idle result.
+      const canonicalProgrammeHeld = String(result?.programmeStatus || '').toUpperCase() === 'HOLD';
       const returningNoWork = !built
         && !blocked
         && !elasticHold
         && !externalPickupPending
-        && runnableMissionCount === 0;
+        && runnableMissionCount === 0
+        && !canonicalProgrammeHeld;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -623,6 +625,14 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
       if (!elasticHold && !externalPickupPending && runnableMissionCount === 0) {
         const materialProgress = materialActionsSucceeded > 0;
+        if (canonicalProgrammeHeld) {
+          lastCycleDecision = buildCycleDecision({
+            result,
+            materialActionsSucceeded,
+            waitingLaneCount: parkedLaneBlockers.size,
+            noRunnableSourceWorkProven: false,
+          });
+        }
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
@@ -645,13 +655,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
           cycleDecision: lastCycleDecision,
           parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
-          noRunnableSourceWorkProven: true,
+          noRunnableSourceWorkProven: !canonicalProgrammeHeld,
           materialProgress,
-          controllerContinuity: 'RETURN_WORK_CONSERVING',
+          controllerContinuity: canonicalProgrammeHeld ? 'RECONCILE_CANONICAL_PROGRAMME_HOLD' : 'RETURN_WORK_CONSERVING',
           ...authorityBoundary(),
-          finalVerdict: materialProgress
-            ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
-            : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
+          finalVerdict: canonicalProgrammeHeld
+            ? 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD'
+            : materialProgress
+              ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
+              : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
         });
       }
     }
