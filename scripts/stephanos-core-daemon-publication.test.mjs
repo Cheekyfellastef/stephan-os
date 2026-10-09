@@ -158,3 +158,33 @@ test('Core publisher emits one deduped typed Flywheel repair event for a measure
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('failed unattended repair publishes one typed Flywheel learning gap owned by existing repair goal', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: '237fd54f7c33798515b20efd344ea8864aff30ab',
+      sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    vm.runInContext("lastOctopusSelfHealAttemptCount = 1; lastOctopusSelfHealAtUtc = '2026-10-09T20:18:58.332Z'; lastOctopusSelfHealBlocker = 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN'; lastOctopusBuildSummary = Object.freeze({ ...lastOctopusBuildSummary, octopusNeedsRepair: true });", context);
+    await context.publish(state, '2026-10-09T20:32:00.000Z', context.persistentFlywheelStatus(), { publishEvents: true });
+    const first = await readdir(join(root, 'events'));
+    assert.equal(first.length, 1, 'at most one new event per heartbeat');
+    assert.match(first[0], /^core-octopus-repair-gap-[a-f0-9]{12}-elastic-goal-admission-not-proven\.json$/);
+    const event = JSON.parse(await readFile(join(root, 'events', first[0]), 'utf8'));
+    assert.equal(event.relatedIssue, '#2961');
+    assert.equal(event.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+    assert.equal(event.closedLoopLearning.learningEligibleCapabilityFailure, true);
+    assert.equal(event.leaseOverrideAllowed, false);
+    assert.equal(event.mergeAuthority, false);
+    assert.equal(validateSharedWorkspaceRecord(event).valid, true);
+    await context.publish(state, '2026-10-09T20:32:15.000Z', context.persistentFlywheelStatus(), { publishEvents: true });
+    const later = await readdir(join(root, 'events'));
+    assert.equal(later.filter((name) => name === first[0]).length, 1, 'stable root gap deduplication');
+    assert.ok(later.length <= 2, 'generic loop gap uses following heartbeat, no event storm');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -48,6 +48,7 @@ function blockedResult(blocker, details = {}) {
       ? details.programmeBlockers.map((blocker) => text(blocker).slice(0, 160)).filter(Boolean).slice(0, 20)
       : []),
     elasticAdmissionPresent: details.elasticAdmissionPresent === true,
+    elasticAdmissionGate: details.elasticAdmissionGate || null,
     elasticIgnitionPresent: details.elasticIgnitionPresent === true,
     commanderParity: details.commanderParity || null,
     commanderParityHealthy: details.commanderParity?.ok === true,
@@ -132,6 +133,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     programmeStatus: conveyorResult?.programmeStatus,
     programmeBlockers: conveyorResult?.programmeBlockers,
     elasticAdmissionPresent: Boolean(conveyorResult?.elasticAdmission),
+    elasticAdmissionGate: conveyorResult?.elasticAdmissionGate || null,
     elasticIgnitionPresent: Boolean(conveyorResult?.elasticIgnition),
     commanderParity,
   };

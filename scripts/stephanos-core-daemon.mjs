@@ -29,6 +29,7 @@ import {
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
   auditCoreLoopClosureV1,
+  projectOctopusFailedRepairLearningEventV1,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
@@ -768,6 +769,13 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     worker: loopEvidence.worker, lease: loopEvidence.lease,
   });
 
+  const failedRepairGap = projectOctopusFailedRepairLearningEventV1({
+    sourceHead: state.sourceHead,
+    attemptAtUtc: lastOctopusSelfHealAtUtc,
+    attemptCount: lastOctopusSelfHealAttemptCount,
+    blocker: lastOctopusSelfHealBlocker,
+    needsRepair: flywheel?.octopusNeedsRepair === true,
+  });
   const common = {
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
@@ -792,6 +800,8 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     duplicateControllerFabricAllowed: false,
     ...flywheel,
     loopClosureAudit,
+    failedOctopusRepairGapPressure: failedRepairGap.publish ? failedRepairGap.reason : '',
+    failedOctopusRepairGapOwner: failedRepairGap.publish ? failedRepairGap.ownerIssue : '',
     loopClosureAuditSchemaVersion: loopClosureAudit.schemaVersion,
     allGoalBuildLoopsProvenClosed: loopClosureAudit.allLoopsProvenClosed,
     loopClosureObservedGapCount: loopClosureAudit.gapCount,
@@ -842,7 +852,47 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
   if (loopEvidence.publishEvents === true) {
     // A failed local event write cannot take down the Core Daemon.
     try {
-    const observedGaps = loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
+    let specificGapPublished = false;
+    if (failedRepairGap.publish) {
+      const segments = ['events', failedRepairGap.eventId + '.json'];
+      const exists = await readJsonIfPresent(resolve(workspaceRoot, ...segments));
+      if (!exists) {
+        const event = {
+          ...createSharedWorkspaceEventRecord({
+            eventId: failedRepairGap.eventId,
+            participantId: 'stephanos-core',
+            timestampUtc,
+            eventKind: 'goal-conveyor-incident',
+            summary: 'Bounded Sovereign goal-builder repair blocked: ' + failedRepairGap.reason,
+            capabilityFailure: {
+              failureClass: 'CAPABILITY_GAP',
+              genuineCapabilityFailure: true,
+              capabilityId: failedRepairGap.capabilityId,
+              targetRefs: ['goal:' + failedRepairGap.ownerIssue],
+              teacherHint: 'stephanos-core',
+              observedAtUtc: failedRepairGap.attemptAtUtc,
+            },
+          }),
+          missionId: 'goal-conveyor-fleet-care',
+          relatedIssue: failedRepairGap.ownerIssue,
+          rootGapId: failedRepairGap.capabilityId,
+          capabilityId: failedRepairGap.capabilityId,
+          failedRepairAtUtc: failedRepairGap.attemptAtUtc,
+          blocker: failedRepairGap.reason,
+          proofRefs: ['proof/stephanos-core-daemon-current.json'],
+          canonicalOwner: failedRepairGap.ownerIssue,
+          createsReplacementScheduler: false,
+          sourceMutationAuthority: false,
+          mergeAuthority: false,
+          leaseOverrideAllowed: false,
+        };
+        const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
+        if (write.ok !== true) throw new Error('CORE_FAILED_REPAIR_GAP_EVENT_WRITE_FAILED');
+        lastLoopGapEventPublicationVerdict = 'CANONICAL_FAILED_REPAIR_GAP_EVENT_PUBLISHED';
+        specificGapPublished = true;
+      }
+    }
+    const observedGaps = specificGapPublished ? [] : loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
     for (const gap of observedGaps) {
       const edgeKey = gap.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const eventId = 'core-loop-gap-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;

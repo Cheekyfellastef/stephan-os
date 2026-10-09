@@ -7,6 +7,7 @@ import {
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
+  projectOctopusFailedRepairLearningEventV1,
   projectPersistentFlywheelTrigger,
   auditCoreLoopClosureV1,
   summarizeLogicalGoalControllerFabric,
@@ -532,4 +533,44 @@ test('Core Daemon wires Flywheel-owned gap proof into existing Sovereign repair 
   assert.match(source, /gapClosureSummary: lastGapClosureSummary/);
   assert.match(source, /maybeSelfHealOctopus\(sourceHead\)/);
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
+});
+
+
+test('failed Sovereign repair is deduped by source head and real blocker under original owner', () => {
+  const input = {
+    sourceHead: AUDIT_HEAD, attemptAtUtc: AUDIT_NOW, attemptCount: 3,
+    blocker: 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN', needsRepair: true,
+  };
+  const first = projectOctopusFailedRepairLearningEventV1(input);
+  const retried = projectOctopusFailedRepairLearningEventV1({ ...input, attemptCount: 4 });
+  assert.equal(first.publish, true);
+  assert.equal(first.eventId, retried.eventId);
+  assert.equal(first.ownerIssue, '#2961');
+  assert.equal(first.reason, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(first.leaseOverrideAllowed, false);
+  assert.equal(first.mergeAuthority, false);
+});
+
+test('failed repair learning pressure requires a proven attempt, typed blocker and still-blocked system', () => {
+  const data = {
+    sourceHead: AUDIT_HEAD, attemptAtUtc: AUDIT_NOW, attemptCount: 1,
+    blocker: 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN', needsRepair: true,
+  };
+  for (const overrides of [
+    { sourceHead: '' }, { attemptAtUtc: '' }, { attemptCount: 0 },
+    { blocker: 'free text containing untrusted details' }, { needsRepair: false },
+  ]) assert.equal(projectOctopusFailedRepairLearningEventV1({ ...data, ...overrides }).publish, false);
+});
+
+test('a refill heartbeat is not proof of canonical goal admission, and a real admission hold is a GAP', () => {
+  const idle = auditCoreLoopClosureV1(auditFixture());
+  const edge = idle.edges.find((item) => item.id === 'RECONCILIATION_TO_GOAL_ADMISSION');
+  assert.equal(edge.state, 'UNKNOWN');
+  assert.equal(edge.reason, 'REFILL_SWEEP_NOT_CANONICAL_ADMISSION_PROOF');
+  const held = auditFixture();
+  held.flywheel.gapClosureAdmissionHeldCount = 2;
+  const blocked = auditCoreLoopClosureV1(held);
+  assert.equal(blocked.edges.find((item) => item.id === 'RECONCILIATION_TO_GOAL_ADMISSION').state, 'GAP');
+  assert.equal(blocked.edges.find((item) => item.id === 'RECONCILIATION_TO_GOAL_ADMISSION').reason,
+    'CANONICAL_GOAL_ADMISSION_HELD');
 });

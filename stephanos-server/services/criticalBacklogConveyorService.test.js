@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
+import { projectElasticAdmissionGateV1 } from './criticalBacklogConveyorServiceCore.js';
 import {
   applyMissionOrchestratorEvent,
   createMissionOrchestratorState,
@@ -68,6 +69,58 @@ test('conveyor retains canonical programme HOLD evidence on deferred legacy admi
   assert.equal(result.createdMission, false);
 });
 
+
+test('elastic admission gate diagnoses a canonical programme HOLD without authorizing the bypass', async () => {
+  const gate = projectElasticAdmissionGateV1({
+    programmeStatus: 'HOLD',
+    programmeBlockers: ['source-mutation-lease-held', 'phase-lease-reconciliation-blocked'],
+    sourceRevision: 'a'.repeat(40),
+    scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+  });
+  assert.equal(gate.admissionPreflightEligible, false);
+  assert.equal(gate.blocker, 'AUTHORITATIVE_PROGRAMME_HOLD');
+  assert.deepEqual(gate.programmeBlockers, ['source-mutation-lease-held', 'phase-lease-reconciliation-blocked']);
+  assert.equal(gate.canonicalOwner, '#2961');
+  assert.equal(gate.sourceMutationAllowed, false);
+  assert.equal(gate.leaseOverrideAllowed, false);
+
+  const paths = await roots();
+  const result = await ensureCriticalBacklogMission({
+    allowLegacyMissionCreation: false, paths,
+    now: new Date('2026-10-09T20:50:00.000Z'),
+    readProgrammeProjection: async () => ({
+      status: 'HOLD', blockers: ['source-mutation-lease-held'],
+      scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+      machineryInventory: { sourceHead: 'a'.repeat(40) },
+    }),
+    listMissions: async () => [],
+    publishProjection: async () => ({ ok: true }),
+  });
+  assert.equal(result.elasticAdmissionGate.blocker, 'AUTHORITATIVE_PROGRAMME_HOLD');
+  assert.equal(result.elasticAdmissionGate.admissionPreflightEligible, false);
+  assert.equal(result.elasticAdmission, null);
+  assert.equal(result.elasticIgnition, null);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('elastic admission gate identifies head, scheduler and capacity faults separately', () => {
+  const gate = projectElasticAdmissionGateV1({
+    programmeStatus: 'READY', sourceRevision: '',
+    scheduler: { failClosed: true, elasticCapacity: { status: 'PAUSED' } },
+  });
+  assert.deepEqual(gate.gateReasons, [
+    'ELASTIC_ADMISSION_SOURCE_HEAD_INVALID',
+    'PROGRAMME_SCHEDULER_FAIL_CLOSED',
+    'ELASTIC_SCHEDULER_CAPACITY_NOT_RUNNING',
+  ]);
+  assert.equal(gate.admissionPreflightEligible, false);
+  const eligible = projectElasticAdmissionGateV1({
+    programmeStatus: 'READY', sourceRevision: 'b'.repeat(40),
+    scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+  });
+  assert.equal(eligible.admissionPreflightEligible, true);
+  assert.equal(eligible.mergeAuthority, false);
+});
 test('retry worktree refresh fast-forwards only a clean matching branch to canonical current main', () => {
   const oldHead = '1'.repeat(40);
   const newHead = '2'.repeat(40);

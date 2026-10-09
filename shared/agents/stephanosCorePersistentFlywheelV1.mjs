@@ -289,6 +289,34 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
 }
 
 
+// A failed bounded Sovereign repair enters the existing Flywheel learning feed.
+// Stable source head and typed root blocker dedupe cooldown retries.
+
+export function projectOctopusFailedRepairLearningEventV1({
+  sourceHead = '', attemptAtUtc = '', attemptCount = 0,
+  blocker = '', needsRepair = false,
+} = {}) {
+  const head = text(sourceHead).toLowerCase();
+  const reason = text(blocker).toUpperCase();
+  const observed = Date.parse(text(attemptAtUtc));
+  const publish = /^[0-9a-f]{40}$/.test(head)
+    && /^[A-Z0-9][A-Z0-9_.:-]{4,119}$/.test(reason)
+    && Number.isSafeInteger(attemptCount) && attemptCount > 0
+    && Number.isFinite(observed) && needsRepair === true;
+  const id = publish
+    ? 'core-octopus-repair-gap-' + head.slice(0, 12) + '-'
+      + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 80)
+    : '';
+  return Object.freeze({
+    publish, eventId: id,
+    reason: publish ? reason : '',
+    ownerIssue: '#2961',
+    capabilityId: publish ? 'core-octopus-failed-repair-' + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+    attemptAtUtc: publish ? attemptAtUtc : '',
+    schedulerAuthority: false, mergeAuthority: false, leaseOverrideAllowed: false,
+  });
+}
+
 // A read-only meta-check on the existing Core Daemon heartbeat. It deliberately
 // distinguishes a live controller from a proven, closed goal-to-live loop.
 // Missing producer evidence stays UNKNOWN and can never turn the dashboard green.
@@ -337,16 +365,18 @@ export function auditCoreLoopClosureV1({
   const eligible = Number(flywheel?.refillSafeEligibleWorkRemaining) || 0;
   const free = Number(flywheel?.refillProvenSafeFreeLanes) || 0;
   const stranded = eligible > 0 && free > 0 && refillActions === 0;
+  const admissionHeld = Number(flywheel?.gapClosureAdmissionHeldCount) > 0;
   const octopus = String(flywheel?.octopusBuildVerdict || '');
   const contradictoryBuild = octopus === 'BUILDING' && refillActions === 0;
   add('RECONCILIATION_TO_GOAL_ADMISSION',
-    gaming ? 'PAUSED' : cycleFailed || stranded || contradictoryBuild || flywheel?.refillCanonicalProgrammeHeld === true
-      ? 'GAP' : cycleFresh && flywheel?.refillStatus === 'READY' ? 'CLOSED' : 'UNKNOWN',
+    gaming ? 'PAUSED' : cycleFailed || stranded || contradictoryBuild || admissionHeld
+      || flywheel?.refillCanonicalProgrammeHeld === true ? 'GAP' : 'UNKNOWN',
     stranded ? 'RUNNABLE_WORK_WITH_FREE_CAPACITY_STRANDED'
       : contradictoryBuild ? 'BUILDING_CLAIM_WITHOUT_MATERIAL_ACTION'
-        : flywheel?.refillCanonicalProgrammeHeld === true ? 'CANONICAL_PROGRAMME_HELD'
+        : admissionHeld ? 'CANONICAL_GOAL_ADMISSION_HELD'
+          : flywheel?.refillCanonicalProgrammeHeld === true ? 'CANONICAL_PROGRAMME_HELD'
           : cycleFailed ? 'REFILL_CYCLE_FAILED' : gaming ? 'GAMING_PROTECTED'
-            : cycleFresh && flywheel?.refillStatus === 'READY' ? 'REFILL_CYCLE_ATTEMPT_PROVEN_NOT_GOAL_PICKUP'
+            : cycleFresh && flywheel?.refillStatus === 'READY' ? 'REFILL_SWEEP_NOT_CANONICAL_ADMISSION_PROOF'
               : 'FRESH_REFILL_EVIDENCE_MISSING',
     '#2002', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
 
