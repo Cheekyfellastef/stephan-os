@@ -2908,3 +2908,75 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|privateHeadSync|C:\\\\secret|localPath|\"secret\":/);
 });
+
+test('oversized Programme Authority receipt retains precise HOLD diagnosis while discarding raw lane payload', () => {
+  const head = 'a'.repeat(40);
+  const packet = {
+    programmeStatus: 'HOLD',
+    programmeFinalVerdict: 'PROGRAMME_AUTHORITY_HOLD',
+    programmeBlockers: [
+      'source:NO_EXECUTION_RECEIPTS',
+      'controller-heartbeat-invalid-or-missing',
+      'private C:\\Users\\Operator\\secret.txt',
+    ],
+    schedulerFailClosed: true,
+    schedulerProgrammeStatus: 'HOLD',
+    schedulerDecisionStatus: 'BLOCKED',
+    schedulerSelectedIssue: 2956,
+    elasticCapacityStatus: 'PAUSED',
+    elasticDesiredWidth: 15,
+    elasticRemainingAdmissionSlots: 0,
+    controllerValid: false,
+    controllerFresh: false,
+    workerValid: true,
+    workerFresh: true,
+    criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+    sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+    sourceReadControllerHeartbeat: 'CONTROLLER_HEARTBEAT_STALE',
+    sourceReadWorkerHeartbeat: 'MISSION_WORKER_HEARTBEAT_CURRENT',
+    sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+      issueNumber: index + 2500,
+      continuityState: 'TRACKING',
+      controllerId: 'logical-goal-' + index,
+    })),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'programme-overlarge-diagnostic-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: head,
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'programme-overlarge-diagnostic-001',
+      result: {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: packet,
+        codexLastMessage: 'ignored large raw payload '.repeat(300),
+      },
+    },
+  };
+  const maxBytes = 4600;
+  const compactJson = serializeBoundedReceiptJson(receipt, maxBytes);
+  assert.ok(Buffer.byteLength(compactJson, 'utf8') <= maxBytes);
+  const result = JSON.parse(compactJson);
+  const summary = result.result.result;
+  assert.equal(result.githubProjectionTruncated, true);
+  assert.equal(summary.programmeStatus, 'HOLD');
+  assert.equal(summary.schedulerFailClosed, true);
+  assert.deepEqual(summary.programmeBlockers, [
+    'SOURCE:NO_EXECUTION_RECEIPTS', 'CONTROLLER-HEARTBEAT-INVALID-OR-MISSING',
+  ]);
+  assert.equal(summary.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(summary.sourceReadRepositoryHead, 'CANONICAL_REPOSITORY_HEAD_READ');
+  assert.equal(summary.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+  assert.equal(summary.originalProgrammeLaneListOmitted, true);
+  assert.equal(summary.logicalGoalLanes, undefined);
+  assert.doesNotMatch(compactJson, /Users|secret\.txt|ignored large raw payload/i);
+});
