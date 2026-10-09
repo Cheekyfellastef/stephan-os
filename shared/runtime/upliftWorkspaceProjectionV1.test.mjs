@@ -1,4 +1,5 @@
 import test from 'node:test';
+import '../../tests/conversational-intelligence-experience-seed.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
 
