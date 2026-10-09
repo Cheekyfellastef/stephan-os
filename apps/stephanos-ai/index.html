@@ -27,7 +27,8 @@
           <h1 id="targetTitle">Stephanos AI</h1>
           <p id="targetSubtitle">Chat with the whole project, agents, and teams.</p>
         </div>
-        <div class="header-status"><div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div><span id="bridgeStatus" class="bridge-status" role="status" aria-live="polite">Backend · unproven</span></div>
+        <div class="header-status"><div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div><span id="bridgeStatus" class="bridge-status" role="status" aria-live="polite">Backend · unproven</span><span id="memoryStatus" class="bridge-status" role="status" aria-live="polite">Memory · unproven</span>
+        <button id="reloadThread" class="bridge-status" type="button" title="Recover canonical shared conversation from Battle Bridge">Refresh chat</button></div>
       </header>
 
       <section id="welcome" class="welcome">
@@ -65,7 +66,7 @@
           <div><dt>Loaded UI origin</dt><dd id="frontendOrigin">unknown</dd></div>
           <div><dt>Backend route</dt><dd id="backendRoute">unproven</dd></div>
           <div><dt>Target</dt><dd id="contextTarget">Everyone</dd></div>
-          <div><dt>Shared continuity</dt><dd>not yet verified durable</dd></div>
+          <div><dt>Shared continuity</dt><dd id="threadTruth">not yet verified durable</dd></div>
         </dl>
       </section>
       <section class="context-card">
