@@ -92,6 +92,18 @@ function validOutbox(missionId, actionId) {
   };
 }
 
+function forgeSourceFields(missionId) {
+  const escrow = { ...validEscrow(missionId, 'test-source'),
+    canonicalPr: null,
+    artifactRef: 'shared-workspace://source-artifacts/' + 'e'.repeat(64) + '.json',
+  };
+  const outbox = { ...validOutbox(missionId, 'test-source'),
+    outboxId: 'offline-publication-' + 'f'.repeat(24),
+    artifactRef: escrow.artifactRef, publicationPaused: true,
+  };
+  return { sourceArtifactEscrow: escrow, offlinePublicationOutbox: outbox };
+}
+
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -129,6 +141,7 @@ test('verification consumer binds canonical elastic goal evidence to proven sour
     eventType: 'AGENT_RESULT_RECEIVED',
     success: true,
     resultId: 'verification-source-result',
+    ...forgeSourceFields('critical-1818-elastic-goal'),
     changedFiles: ['shared/agents/example.mjs'],
     receipt: {
       receiptId: 'verification-source-receipt',
@@ -191,6 +204,7 @@ test('verification consumer refuses browser evidence from source-test receipts',
     eventType: 'AGENT_RESULT_RECEIVED',
     success: true,
     resultId: 'browser-verification-source-result',
+    ...forgeSourceFields('verification-browser-proof-test'),
     changedFiles: ['shared/agents/example.mjs'],
     receipt: {
       receiptId: 'browser-verification-source-receipt',

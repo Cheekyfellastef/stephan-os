@@ -12,6 +12,7 @@ import {
 import {
   collectAgentWorkerResult,
   publishMissionWorkerAction,
+  replacementSourceForgePublicationBlocked,
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
   resolveMissionWorkerQueueRoot,
@@ -606,4 +607,16 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   assert.equal(afterClaim.state.revision, grant.missionRevision + 1);
   assert.equal(afterClaim.state.dispatch.status, 'running');
   assert.equal(afterClaim.state.dispatch.adapter, 'codex');
+});
+
+test('replacement-source repair fences Forge at queue publication before claiming a worker',async()=>{
+ const state={missionId:'critical-1717-elastic-goal',currentPhase:'AGENT_IMPLEMENTATION',
+   dispatch:{adapter:'foundry-forge',status:'pending'},continuity:{history:[
+     {eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'}]}};
+ assert.equal(replacementSourceForgePublicationBlocked(state),true);
+ const result=await publishMissionWorkerAction(state,{});
+ assert.equal(result.published,false);
+ assert.equal(result.reason,'replacement-source-already-merged-forge-publication-fenced');
+ assert.equal(replacementSourceForgePublicationBlocked({...state,missionId:'critical-1723-elastic-goal'}),false);
+ assert.equal(replacementSourceForgePublicationBlocked({...state,continuity:{history:[]}}),false);
 });

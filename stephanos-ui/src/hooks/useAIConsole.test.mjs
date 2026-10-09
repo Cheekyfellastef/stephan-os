@@ -471,3 +471,12 @@ test('useAIConsole injects bounded project awareness prompt context for mission-
   assert.match(source, /agent_reality_loop_projection_source_seen/);
   assert.match(source, /agent_reality_loop_availability_blocker/);
 });
+
+test('successful backend health survives independent provider telemetry errors', async () => {
+  const source = await fs.readFile(new URL('./useAIConsole.js', import.meta.url), 'utf8');
+  assert.match(source, /let providerHealth = \{ data: \{\} \};/);
+  assert.match(source, /catch \(providerError\) \{/);
+  assert.match(source, /recordPerfEvent\('polling', 'getProviderHealth\.error'/);
+  assert.match(source, /const nextProviderHealth = providerHealth\?\.data \|\| \{\};/);
+  assert.match(source, /backendReachable: health\.ok,/);
+});

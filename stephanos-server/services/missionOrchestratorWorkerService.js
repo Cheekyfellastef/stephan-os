@@ -52,6 +52,7 @@ async function createImmutableJson(path, value) {
 
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
@@ -417,6 +418,19 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+  // The signed Forge draft publisher cannot publish a source tree built from
+  // an older main. Refuse stale exact-head work before writing a queue item.
+  if (action.actionKind === 'forge-escrow-publication'
+      && (!options.actionGrant
+        || options.actionGrant.adapter !== 'forge-publication'
+        || action.exactParentHead !== options.actionGrant.sourceRevision
+        || state.sourcePublication?.exactParentHead !== action.exactParentHead)) {
+    return {
+      published: false, reason: 'forge-publication-parent-head-drift',
+      blockers: ['FORGE_PUBLICATION_REQUIRES_FRESH_SOURCE_ARTIFACT'],
+      action, path: '',
+    };
+  }
   const adapter = adapterForAction(action);
   if (!adapter) {
     return {
@@ -531,7 +545,20 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
   };
 }
 
+export function replacementSourceForgePublicationBlocked(state = {}) {
+  return state.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
+    && state.dispatch?.adapter === 'foundry-forge'
+    && state.continuity?.history?.some(entry =>
+      entry.eventType === 'MISSION_REPAIR_PROVEN'
+      && String(entry.receiptId || '').startsWith('verified-replacement-repair-')) === true;
+}
+
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (replacementSourceForgePublicationBlocked(inputState)) return {
+    published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
+    action:null,path:'',
+  };
   if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
   const prepared = await beginRepairIfRequired(inputState, options);
   if (prepared.preconditionFailed) {
@@ -655,7 +682,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -678,7 +705,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     collected = await appendMissionEvent(missionId, {

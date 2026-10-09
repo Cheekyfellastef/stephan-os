@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
 import { buildFinalRouteTruthView } from '../state/finalRouteTruthView';
-import { buildCockpitModel, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
+import { buildCockpitModel, deriveCockpitBackendHealthDiagnostics, CONNECTIONS, COCKPIT_VIEWBOX, NODE_LAYOUT } from '../state/cockpitTruthModel.js';
 import { buildCockpitProjection } from '../state/cockpitProjection.js';
 import { buildCanonicalCockpitProjectionRuntimeStatus } from '../state/cockpitProjectionSelector.js';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
@@ -136,6 +136,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     if (!cockpitModel) {
       return { title: 'Cockpit detail', state: 'unknown', facts: ['Cockpit is paused while hidden.'] };
     }
+    const backendHealthDiagnostics = deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView, runtimeStatus });
     const node = NODE_LAYOUT[detailId];
     if (node) {
       const nodeState = cockpitModel.nodeStates[detailId] || 'unknown';
@@ -145,9 +146,9 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           `Observer session: ${runtimeStatus?.runtimeContext?.sessionKind || runtimeStatus?.sessionKind || 'unknown'}`,
           `Selected-route reachability: ${routeTruthView.selectedRouteReachableState || 'unknown'}`,
           `Backend route reachability: ${routeTruthView.backendReachableState || 'unknown'}`,
-          `Backend health proof fresh: ${routeTruthView.currentBackendHealthFresh || 'no'}`,
-          `Health source: ${routeTruthView.routeTruthHealthSource || 'unknown'}`,
-          `Last health check: ${runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'}`,
+          `Backend health proof fresh: ${backendHealthDiagnostics.fresh}`,
+          `Health source: ${backendHealthDiagnostics.source}`,
+          `Last health check: ${backendHealthDiagnostics.checkedAt}`,
         ]
         : [
           `Launch state: ${routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}`,
@@ -179,7 +180,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }
 
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
-  }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
+  }, [detailId, cockpitModel, finalAgentView, apiStatus, runtimeStatus.appLaunchState, routeTruthView]);
 
   const resolveCockpitActionTarget = useCallback((action) => {
     const targetPaneId = action.targetPaneId === 'missionConsolePanel' || action.targetPaneId === 'aiCoreMissionConsolePanel'

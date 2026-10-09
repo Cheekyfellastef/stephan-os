@@ -768,6 +768,8 @@ async function processAgentClaim(adapter, options, execute) {
       success: execution.success === true,
       resultId: execution.resultId || action.actionId,
       changedFiles: execution.changedFiles || [],
+      sourceArtifactEscrow: execution.sourceArtifactEscrow,
+      offlinePublicationOutbox: execution.offlinePublicationOutbox,
       receipt: execution.receipt,
       evidenceReceipts: execution.evidenceReceipts || [],
       error: execution.error || '',
@@ -868,6 +870,81 @@ export async function processNextVerificationItem(options = {}) {
     const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, true);
     return { processed: true, claim, applied, result, resultPath };
   } catch (error) {
+    return failClaim(claim, action, error);
+  }
+}
+
+export async function processNextForgePublicationItem(options = {}) {
+  if (typeof options.executeForgePublication !== 'function')
+    throw new Error('Bounded Forge publication executor adapter required.');
+  const claim = await claimNextMissionWorkerItem('forge-publication', options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item?.payload || {};
+  if (action.actionKind !== 'forge-escrow-publication'
+      || action.adapter !== 'forge-publication'
+      || action.missionId !== claim.item.missionId
+      || action.actionId !== claim.item.actionId
+      || !claim.item.actionGrant
+      || claim.item.actionGrant.actionId !== action.actionId) {
+    return failClaim(claim, action, new Error('FORGE_PUBLICATION_QUEUE_GRANT_INVALID'));
+  }
+  let executionReceipt = null;
+  try {
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
+    const publication = await options.executeForgePublication(action, claim);
+    if (publication?.ok !== true
+        || publication?.finalVerdict !== 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF'
+        || publication?.mergeAuthority !== false || publication?.forcePushAllowed !== false
+        || publication?.draft !== true
+        || publication?.repository !== 'Cheekyfellastef/stephan-os'
+        || normalizedText(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
+        || publication?.branch !== action.branch
+        || publication?.exactResultTree !== action.exactResultTree
+        || publication?.sourceArtifactSha256 !== action.artifactSha256) {
+      throw new Error(publication?.reason || 'FORGE_PUBLICATION_EXACT_RESULT_INVALID');
+    }
+    const now = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
+    const receipt = {
+      receiptId: 'forge-publication-' + action.actionId,
+      requirement: action.receiptRequirement,
+      source: 'forge-signed-github-publication',
+      evidenceType: 'signed-exact-tree-publication',
+      verified: true,
+      commandOutputHash: createHash('sha256').update(JSON.stringify(publication)).digest('hex'),
+      createdAt: now,
+    };
+    const event = {
+      eventId: 'forge-published-' + action.actionId, missionId: action.missionId,
+      eventType: 'FORGE_ESCROW_DRAFT_PUBLISHED', timestamp: now, publication, receipt,
+      prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/' + publication.prNumber,
+      summary: 'Signed exact-tree Forge draft PR publication completed.',
+    };
+    const applied = await appendMissionEvent(action.missionId, event, options);
+    if (applied?.state?.pullRequest?.number !== publication.prNumber
+        || applied?.state?.pullRequest?.headSha !== publication.commitSha) {
+      throw new Error('FORGE_PUBLICATION_MISSION_RECEIPT_UNPROVEN');
+    }
+    if (executionReceipt) await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'completed', options, {
+      phase: 'forge-draft-pr-published',
+      proofRefs: [receipt.receiptId],
+      expectedNextAction: 'Require independent PR checks and operator merge approval.',
+    });
+    const result = {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      missionId: action.missionId, actionId: action.actionId, adapter: 'forge-publication',
+      prNumber: publication.prNumber, commitSha: publication.commitSha,
+      finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+    };
+    const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, true);
+    return { processed: true, claim, applied, result, resultPath };
+  } catch (error) {
+    if (executionReceipt) {
+      try { await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
+        phase: 'forge-publication-blocked', blocker: String(error?.message || error),
+        expectedNextAction: 'Preserve escrow and reconcile remote branch/PR before retry.',
+      }); } catch {}
+    }
     return failClaim(claim, action, error);
   }
 }

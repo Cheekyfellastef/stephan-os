@@ -122,14 +122,48 @@ function Get-GpuSnapshot {
     }
 }
 
-function Test-RealAirLinkActive {
-    # OculusDash appears when the Quest enters the PC VR session. Treat that as
-    # headset detection, before Starfield itself starts, so local AI cannot grab
-    # VRAM during the launch tunnel. SteamVR equivalents retain provider neutrality.
-    foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard')) {
-        if ($null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1)) {
-            return $true
+function Test-StaleOculusDashAfterCrash {
+    # Never infer disconnection from OculusDash alone. Fail closed if the
+    # evidence is missing or ambiguous, including while the Quest is in VR.
+    if (Get-Process -Name 'Starfield', 'vrcompositor', 'vrdashboard' -ErrorAction SilentlyContinue | Select-Object -First 1) { return $false }
+    $log = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'Oculus') -Filter 'Service_*.txt' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+    if (-not $log -or $log.LastWriteTimeUtc -lt [datetime]::UtcNow.AddSeconds(-35)) { return $false }
+    try {
+        $stream = [IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+        try {
+            $count = [int][math]::Min($stream.Length, 1048576)
+            [void]$stream.Seek(-$count, 'End')
+            $bytes = [byte[]]::new($count)
+            $read = $stream.Read($bytes, 0, $count)
+            $tail = [Text.Encoding]::UTF8.GetString($bytes, 0, $read)
+        } finally { $stream.Dispose() }
+        $hmd = [regex]::Matches($tail, "(?m)(\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3}).*?HMD Reporting state change: \{'State':'([^']+)','IsDetected':([01])")
+        if ($hmd.Count -lt 2) { return $false }
+        foreach ($item in $hmd) {
+            if ($item.Groups[2].Value -ne 'NotDetected' -or $item.Groups[3].Value -ne '0') { return $false }
         }
+        $year = [datetime]::Now.Year
+        $first = [datetime]::ParseExact("$year/$($hmd[0].Groups[1].Value)", 'yyyy/dd/MM HH:mm:ss.fff', [globalization.cultureinfo]::InvariantCulture)
+        $last = [datetime]::ParseExact("$year/$($hmd[$hmd.Count - 1].Groups[1].Value)", 'yyyy/dd/MM HH:mm:ss.fff', [globalization.cultureinfo]::InvariantCulture)
+        if (($last - $first).TotalMinutes -lt 10 -or $last -lt [datetime]::Now.AddSeconds(-35)) { return $false }
+        # Any live wireless streaming transition keeps the VR guard engaged.
+        $session = [regex]::Matches($tail, 'oculus_xrs_session_state_transition previous_state: \w+ current_state: (\w+)[^\r\n]*?current_session_type: (\w+)')
+        if ($session.Count -eq 0) { return $false }
+        $latest = $session[$session.Count - 1]
+        if ($latest.Groups[2].Value -eq 'streaming') { return $false }
+        if ($latest.Groups[1].Value -notin @('Connected', 'Disconnected')) { return $false }
+        return $latest.Groups[2].Value -in @('basic', 'none')
+    } catch { return $false }
+}
+
+function Test-RealAirLinkActive {
+    # SteamVR processes always win. OculusDash alone can persist after a crash.
+    foreach ($name in @('vrcompositor', 'vrdashboard')) {
+        if (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1) { return $true }
+    }
+    if (Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue | Select-Object -First 1) {
+        return -not (Test-StaleOculusDashAfterCrash)
     }
     return $false
 }
