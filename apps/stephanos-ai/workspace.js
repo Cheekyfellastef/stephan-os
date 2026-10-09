@@ -1,4 +1,5 @@
 import { queryStephanosAI } from '../../shared/ai/stephanosClient.mjs';
+import { requestStephanosBackend } from '../../shared/runtime/backendClient.mjs';
 
 const agents = [
   { id:'everyone', label:'Everyone', icon:'◎', subtitle:'Stephanos AI · whole project', kind:'agent' },
@@ -30,6 +31,35 @@ const messages = $('messages');
 const prompt = $('prompt');
 const composer = $('composer');
 const sendButton = $('sendButton');
+const bridgeStatus = $('bridgeStatus');
+
+function surfaceKind() {
+  if (navigator.maxTouchPoints > 0) return window.innerWidth < 760 ? 'iphone' : 'ipad';
+  return 'desktop-browser';
+}
+
+// Probe from the actual browser. Backend health is not proof of identical UI assets.
+async function probeBackendBridge() {
+  $('frontendOrigin').textContent = window.location.host || 'unknown';
+  bridgeStatus.dataset.state = 'checking';
+  bridgeStatus.textContent = 'Backend · checking';
+  try {
+    const response = await requestStephanosBackend({
+      path: '/api/health',
+      timeoutMs: 5000,
+      runtimeContext: { surface: surfaceKind(), workspace: 'stephanos-ai' },
+    });
+    bridgeStatus.dataset.state = 'reachable';
+    bridgeStatus.textContent = 'Backend reachable';
+    $('backendRoute').textContent = new URL(response.baseUrl).host;
+  } catch (error) {
+    bridgeStatus.dataset.state = 'unavailable';
+    bridgeStatus.textContent = `Backend unavailable (${error?.code || 'network'})`;
+    bridgeStatus.title = error?.message || 'Backend route not proven';
+    $('backendRoute').textContent = error?.code || 'unreachable';
+  }
+}
+
 
 function historyFor(id) {
   if (!histories.has(id)) histories.set(id, []);
@@ -50,7 +80,7 @@ function makeButton(item) {
     <span class="agent-icon">${item.icon}</span>
     <span class="agent-copy"><b>${item.label}</b><small>${item.subtitle}</small></span>
     <span class="status-dot unknown" aria-label="Presence not yet proven"></span>`;
-  button.addEventListener('click', () => selectTarget(item));
+  button.addEventListener('click', () => selectTarget(item, { focus: true }));
   return button;
 }
 
@@ -66,7 +96,7 @@ function updateNavSelection() {
   });
 }
 
-function selectTarget(item) {
+function selectTarget(item, { focus = false } = {}) {
   selected = item;
   updateNavSelection();
   $('routeLabel').textContent = 'Canonical AI route';
@@ -79,7 +109,8 @@ function selectTarget(item) {
   $('presenceTruth').textContent = item.id === 'everyone' ? 'project conversation route' : 'addressed identity; direct presence unproven';
   prompt.placeholder = item.id === 'everyone' ? 'Message Stephanos AI…' : `Message ${item.label}…`;
   renderMessages();
-  prompt.focus();
+  // Do not summon the iPad software keyboard on workspace load or agent selection.
+  if (focus && window.matchMedia?.('(pointer: fine)')?.matches) prompt.focus();
 }
 
 function escapeText(value='') {
@@ -162,7 +193,7 @@ async function send(text) {
       routeMode: 'auto',
       fallbackEnabled: true,
       runtimeContext: {
-        surface: 'desktop-browser',
+        surface: surfaceKind(),
         workspace: 'stephanos-ai',
         participantTarget: activeTarget.id,
       },
@@ -220,3 +251,4 @@ document.querySelectorAll('[data-prompt]').forEach((button) => {
 
 renderNav();
 selectTarget(selected);
+void probeBackendBridge();
