@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
+  createSharedWorkspaceEventRecord,
   ensureSharedWorkspaceLayout,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -820,6 +821,53 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     writeAtomicJson(workspaceRoot, ['proof', 'stephanos-core-daemon-current.json'], proof, { repoRoot }),
   ]);
   if (!statusWrite.ok || !proofWrite.ok) throw new Error('STEPHANOS_CORE_DAEMON_HEARTBEAT_WRITE_FAILED');
+
+  // Only observed GAPs, never unproven UNKNOWN stages, enter the existing
+  // Flywheel gap-to-goal intake. One stable issue-owned event per edge/source
+  // head avoids duplicate queues and GitHub polling; publishing is local.
+  if (loopEvidence.publishEvents === true) {
+    const observedGaps = loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
+    for (const gap of observedGaps) {
+      const edgeKey = gap.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const eventId = 'core-loop-gap-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;
+      const segments = ['events', eventId + '.json'];
+      const exists = await readJsonIfPresent(resolve(workspaceRoot, ...segments));
+      if (exists) continue;
+      const capabilityId = 'core-loop-closure-' + edgeKey;
+      const event = {
+        ...createSharedWorkspaceEventRecord({
+          eventId,
+          participantId: 'stephanos-core',
+          timestampUtc,
+          eventKind: 'goal-conveyor-incident',
+          summary: 'Core loop closure audit: ' + gap.reason + '. Existing owner: ' + gap.ownerIssue,
+          capabilityFailure: {
+            failureClass: 'CAPABILITY_GAP',
+            genuineCapabilityFailure: true,
+            capabilityId,
+            targetRefs: ['goal:' + gap.ownerIssue],
+            teacherHint: 'stephanos-core',
+            observedAtUtc: timestampUtc,
+          },
+        }),
+        missionId: 'goal-conveyor-fleet-care',
+        relatedIssue: gap.ownerIssue,
+        rootGapId: capabilityId,
+        capabilityId,
+        proofRefs: ['proof/stephanos-core-daemon-current.json'],
+        loopClosureEdgeId: gap.id,
+        canonicalOwner: gap.ownerIssue,
+        createsReplacementScheduler: false,
+        sourceMutationAuthority: false,
+        mergeAuthority: false,
+      };
+      const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
+      if (write.ok !== true) {
+        throw new Error('CORE_LOOP_CLOSURE_GAP_EVENT_WRITE_FAILED:' + String(write.reason || 'UNKNOWN'));
+      }
+      break; // At most one new gap event per heartbeat.
+    }
+  }
 }
 
 async function sample(sourceHead) {
@@ -896,6 +944,7 @@ try {
     await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
       worker: await readJsonIfPresent(workerHeartbeatPath),
       lease: await readJsonIfPresent(sourceLeasePath),
+      publishEvents: true,
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, HEARTBEAT_MS));
   }
