@@ -194,6 +194,11 @@ export function summarizePersistentRefillSweep(result = {}) {
     refillNoRunnableSourceWorkProven: result?.noRunnableSourceWorkProven === true,
     refillWorkConservingSweepExhausted: result?.workConservingSweepExhausted === true,
     refillParkedLaneCount: Array.isArray(result?.parkedLaneBlockers) ? result.parkedLaneBlockers.length : 0,
+    // A canonical programme HOLD can have no runnable goals and no parked worker
+    // receipts. That is not proved idle: route it to the existing bounded repair.
+    refillCanonicalProgrammeHeld: text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
+      || result?.controllerContinuity === 'RECONCILE_CANONICAL_PROGRAMME_HOLD'
+      || result?.finalVerdict === 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
     refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
   });
 }
@@ -218,19 +223,25 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     : 0;
   const degraded = text(refillSummary?.refillStatus).toUpperCase() === 'DEGRADED';
   const noRunnableWorkProven = refillSummary?.refillNoRunnableSourceWorkProven === true;
+  const programmeHeld = refillSummary?.refillCanonicalProgrammeHeld === true;
   const sweepExhausted = refillSummary?.refillWorkConservingSweepExhausted === true;
 
   let verdict = 'WAITING';
   if (materialActions > 0) verdict = 'BUILDING';
   else if (degraded) verdict = 'DEGRADED';
-  else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
+  // HOLD and stranded parked lanes must wake the existing guarded Sovereign
+  // repair flow. Checking idle first suppressed repair when the goal conveyor
+  // truthfully reported zero runnable work because everything was blocked.
+  else if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
+  else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
   else if (eligibleWorkRemaining > 0 || provenSafeFreeLanes > 0 || sweepExhausted) verdict = 'STALLED_WITH_CAPACITY';
 
   return Object.freeze({
     octopusBuildVerdict: verdict,
-    octopusBuildStallDetected: verdict === 'STALLED_WITH_CAPACITY',
-    octopusNeedsRepair: verdict === 'STALLED_WITH_CAPACITY' || verdict === 'DEGRADED',
+    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED'].includes(verdict),
+    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'DEGRADED'].includes(verdict),
+    octopusProgrammeHeld: programmeHeld,
     octopusMaterialActionsLastCycle: materialActions,
     octopusSweepAttemptsLastCycle: sweepAttempts,
     octopusEligibleWorkRemaining: eligibleWorkRemaining,
