@@ -8,6 +8,7 @@ import vm from 'node:vm';
 import {
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
+  createSharedWorkspaceEventRecord,
   ensureSharedWorkspaceLayout,
   validateSharedWorkspaceRecord,
   writeAtomicJson,
@@ -32,7 +33,9 @@ function sourceChunk(start, end) {
 function isolatedPublisher(workspaceRoot) {
   const context = vm.createContext({
     Object, String, Promise, Date, process: { pid: process.pid },
-    repoRoot, workspaceRoot,
+    repoRoot, workspaceRoot, resolve,
+    readJsonIfPresent: async (path) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } },
+    createSharedWorkspaceEventRecord,
     FLYWHEEL_FALLBACK_MS: flywheel.DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
     TARGET_MATERIAL_LANES: 15,
     OCTOPUS_SELF_HEAL_COOLDOWN_MS: flywheel.DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
@@ -85,6 +88,9 @@ test('Core publisher atomically writes valid status and proof for startup, degra
         assert.equal(record.logicalLaneDeficitToTarget, null);
         assert.equal(record.sourceMutationAllowed, false);
         assert.equal(record.mergeAuthority, false);
+        assert.equal(record.allGoalBuildLoopsProvenClosed, false);
+        assert.equal(record.loopClosureAudit.totalEdgeCount, 12);
+        assert.ok(record.loopClosureUnprovenEdgeCount > 0);
         const validation = validateSharedWorkspaceRecord(record);
         assert.equal(validation.valid, true, validation.errors.join(','));
         assert.deepEqual(await readdir(join(root, directory)), ['stephanos-core-daemon-current.json']);
@@ -120,6 +126,35 @@ test('Core publisher refuses secret-bearing telemetry without replacing prior st
   } finally {
     assert.equal(dirname(root), tempParent);
     assert.ok(basename(root).startsWith('stephanos-core-publish-test-'));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('Core publisher emits one deduped typed Flywheel repair event for a measured gap', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: '237fd54f7c33798515b20efd344ea8864aff30ab',
+      sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    for (const timestampUtc of ['2026-10-09T19:00:00.000Z', '2026-10-09T19:00:15.000Z']) {
+      await context.publish(state, timestampUtc, context.persistentFlywheelStatus(), { publishEvents: true });
+    }
+    const events = await readdir(join(root, 'events'));
+    assert.equal(events.length, 1);
+    assert.match(events[0], /^core-loop-gap-[a-f0-9]{12}-watch-to-reconciliation\.json$/);
+    const event = JSON.parse(await readFile(join(root, 'events', events[0]), 'utf8'));
+    assert.equal(event.eventKind, 'goal-conveyor-incident');
+    assert.equal(event.relatedIssue, '#2593');
+    assert.equal(event.missionId, 'goal-conveyor-fleet-care');
+    assert.equal(event.loopClosureEdgeId, 'WATCH_TO_RECONCILIATION');
+    assert.equal(event.mergeAuthority, false);
+    assert.equal(event.sourceMutationAuthority, false);
+    assert.equal(validateSharedWorkspaceRecord(event).valid, true);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

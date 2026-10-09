@@ -203,10 +203,10 @@ export function summarizePersistentRefillSweep(result = {}) {
   });
 }
 
-// The persistent Flywheel is the canonical gap-to-goal intake. Linking an
-// unresolved gap to a goal is not evidence of worker pickup or a repair.
+// An existing goal owner is not proof that the goal was picked up.
+// Retain the canonical Flywheel reconciliation truth without adding authority.
 export function summarizePersistentGapClosure(reconciliation = null) {
-  const observed = reconciliation !== null && typeof reconciliation === 'object';
+  const observed = reconciliation !== null && typeof reconciliation === 'object' && !Array.isArray(reconciliation);
   const attachments = observed && Array.isArray(reconciliation.attachments)
     ? reconciliation.attachments : [];
   const owners = new Set();
@@ -267,8 +267,6 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   // truthfully reported zero runnable work because everything was blocked.
   else if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
-  // An existing actionable gap owner without pickup is not proven idle. Reuse
-  // the cooldown-bound Sovereign repair, never a second scheduler or lease.
   else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
   else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
   else if (eligibleWorkRemaining > 0 || provenSafeFreeLanes > 0 || sweepExhausted) verdict = 'STALLED_WITH_CAPACITY';
@@ -287,5 +285,138 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     octopusNoRunnableWorkProven: noRunnableWorkProven,
     octopusLastMaterialBuildAtUtc: text(lastMaterialBuildAtUtc),
     octopusProofSource: 'CANONICAL_GOAL_BUILD_REFILL',
+  });
+}
+
+
+// A read-only meta-check on the existing Core Daemon heartbeat. It deliberately
+// distinguishes a live controller from a proven, closed goal-to-live loop.
+// Missing producer evidence stays UNKNOWN and can never turn the dashboard green.
+export const STEPHANOS_CORE_LOOP_CLOSURE_AUDIT_SCHEMA_V1 = 'stephanos.core-loop-closure-audit.v1';
+
+export function auditCoreLoopClosureV1({
+  coreState = {}, flywheel = {}, worker = {}, lease = {},
+  observedAtUtc = new Date().toISOString(),
+} = {}) {
+  const now = Date.parse(observedAtUtc);
+  const head = String(coreState?.sourceHead || '').trim().toLowerCase();
+  const headValid = /^[0-9a-f]{40}$/.test(head);
+  const maxAge = Math.max(180_000, Number(flywheel?.flywheelFallbackIntervalMs) * 3 || 180_000);
+  const timestamp = (value) => {
+    const ms = typeof value === 'string' ? Date.parse(value) : NaN;
+    return Number.isFinite(ms) && Number.isFinite(now) && ms <= now + 30_000 ? ms : null;
+  };
+  const recent = (value, age = maxAge) => {
+    const ms = timestamp(value);
+    return ms !== null && now >= ms && now - ms <= age;
+  };
+  const edges = [];
+  const add = (id, state, reason, ownerIssue, proofRef = '') => {
+    edges.push(Object.freeze({ id, state, reason, ownerIssue, proofRefs: proofRef ? [proofRef] : [] }));
+  };
+
+  const coreHealthy = coreState?.sovereignCommanderHealthy === true
+    && coreState?.backendHealthy === true
+    && coreState?.missionWorkerHealthy === true;
+  add('DEPENDENCIES_TO_WATCH', !headValid ? 'GAP' : coreHealthy ? 'CLOSED' : 'GAP',
+    !headValid ? 'SOURCE_HEAD_UNPROVEN' : coreHealthy ? 'CORE_DEPENDENCIES_OBSERVED_HEALTHY' : 'CORE_DEPENDENCY_UNHEALTHY',
+    '#2593', headValid ? 'status/stephanos-core-daemon-current.json' : '');
+
+  const cycleAt = flywheel?.flywheelLastCycleFinishedAtUtc;
+  const cycleFresh = recent(cycleAt);
+  const cycleFailed = Boolean(flywheel?.flywheelLastError || flywheel?.octopusLastError);
+  const cycleRunning = flywheel?.flywheelCycleRunning === true;
+  const gaming = coreState?.gamingActive === true;
+  add('WATCH_TO_RECONCILIATION',
+    gaming ? 'PAUSED' : cycleFailed ? 'GAP' : cycleFresh ? 'CLOSED' : cycleRunning ? 'IN_PROGRESS' : 'GAP',
+    gaming ? 'GAMING_PROTECTED' : cycleFailed ? 'PERSISTENT_CYCLE_FAILED'
+      : cycleFresh ? 'FRESH_PERSISTENT_CYCLE_OBSERVED' : cycleRunning ? 'PERSISTENT_CYCLE_IN_PROGRESS' : 'PERSISTENT_CYCLE_MISSING_OR_STALE',
+    '#2593', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
+
+  const refillActions = Number(flywheel?.refillMaterialActionsSucceeded) || 0;
+  const eligible = Number(flywheel?.refillSafeEligibleWorkRemaining) || 0;
+  const free = Number(flywheel?.refillProvenSafeFreeLanes) || 0;
+  const stranded = eligible > 0 && free > 0 && refillActions === 0;
+  const octopus = String(flywheel?.octopusBuildVerdict || '');
+  const contradictoryBuild = octopus === 'BUILDING' && refillActions === 0;
+  add('RECONCILIATION_TO_GOAL_ADMISSION',
+    gaming ? 'PAUSED' : cycleFailed || stranded || contradictoryBuild || flywheel?.refillCanonicalProgrammeHeld === true
+      ? 'GAP' : cycleFresh && flywheel?.refillStatus === 'READY' ? 'CLOSED' : 'UNKNOWN',
+    stranded ? 'RUNNABLE_WORK_WITH_FREE_CAPACITY_STRANDED'
+      : contradictoryBuild ? 'BUILDING_CLAIM_WITHOUT_MATERIAL_ACTION'
+        : flywheel?.refillCanonicalProgrammeHeld === true ? 'CANONICAL_PROGRAMME_HELD'
+          : cycleFailed ? 'REFILL_CYCLE_FAILED' : gaming ? 'GAMING_PROTECTED'
+            : cycleFresh && flywheel?.refillStatus === 'READY' ? 'REFILL_CYCLE_ATTEMPT_PROVEN_NOT_GOAL_PICKUP'
+              : 'FRESH_REFILL_EVIDENCE_MISSING',
+    '#2002', cycleFresh ? 'status/stephanos-core-daemon-current.json' : '');
+
+  // This read-only daemon has no proof that a particular candidate passed
+  // admission, SELECT and CLAIM: aggregate refill/dispatch counters do NOT count.
+  add('ADMISSION_TO_SELECT', 'UNKNOWN', 'CANONICAL_GOAL_SELECTION_RECEIPT_NOT_OBSERVED', '#1622');
+  add('SELECT_TO_CLAIM', 'UNKNOWN', 'EXACT_GOAL_CLAIM_RECEIPT_NOT_OBSERVED', '#1622');
+
+  const task = String(worker?.activeTaskId || '').trim();
+  const receipt = String(worker?.activeReceiptId || '').trim();
+  const workerHead = String(worker?.headSha || '').trim().toLowerCase();
+  const workerAt = worker?.heartbeatAtUtc || worker?.timestampUtc || worker?.observedAtUtc;
+  const workerFresh = recent(workerAt, 180_000);
+  const mismatchedHead = Boolean(task && workerHead && workerHead !== head);
+  const partialClaim = Boolean(task) !== Boolean(receipt);
+  const claimed = Boolean(task && receipt);
+  const physicalPickup = claimed && !receipt.startsWith('claim:')
+    && Boolean(String(worker?.executionPhase || '').trim())
+    && workerFresh && !mismatchedHead && workerHead === head;
+  add('CLAIM_TO_PHYSICAL_PICKUP',
+    mismatchedHead || partialClaim || (claimed && !workerFresh) ? 'GAP'
+      : physicalPickup ? 'CLOSED' : 'UNKNOWN',
+    mismatchedHead ? 'WORKER_SOURCE_HEAD_MISMATCH' : partialClaim ? 'PARTIAL_CLAIM_OR_RECEIPT'
+      : claimed && !workerFresh ? 'WORKER_HEARTBEAT_STALE'
+        : physicalPickup ? 'FRESH_EXACT_HEAD_WORKER_EXECUTION_RECEIPT' : 'PHYSICAL_PICKUP_NOT_PROVEN',
+    '#2961', physicalPickup ? 'status/mission-orchestrator-worker-heartbeat.json' : '');
+
+  const leaseActive = lease?.active === true;
+  const leaseExpired = leaseActive && timestamp(lease?.expiresAtUtc) !== null && Date.parse(lease.expiresAtUtc) < now;
+  add('PICKUP_TO_EXECUTION',
+    leaseExpired ? 'GAP' : physicalPickup ? 'IN_PROGRESS' : 'UNKNOWN',
+    leaseExpired ? 'ACTIVE_SOURCE_MUTATION_LEASE_EXPIRED'
+      : physicalPickup ? 'WORKER_RUNNING_EXECUTION_COMPLETION_NOT_PROVEN' : 'EXECUTION_NOT_PROVEN',
+    '#2961');
+
+  // No fabricated proof, merge, deployment, lesson or regression truth. Exact
+  // typed receipts must be wired from their canonical producers in follow-up work.
+  add('EXECUTION_TO_DETERMINISTIC_PROOF', 'UNKNOWN', 'GOAL_SPECIFIC_TEST_AND_PROOF_RECEIPT_NOT_OBSERVED', '#2670');
+  add('PROOF_TO_PROTECTED_MERGE', 'UNKNOWN', 'EXACT_HEAD_APPROVAL_AND_MERGE_RECEIPT_NOT_OBSERVED', '#2670');
+  add('MERGE_TO_LIVE_ACCEPTANCE', 'UNKNOWN', 'POST_MERGE_RUNTIME_ACCEPTANCE_NOT_OBSERVED', '#2972');
+  add('LIVE_TO_REGRESSION_RESCAN', 'UNKNOWN', 'UNATTENDED_REGRESSION_RESCAN_NOT_OBSERVED', '#2972');
+  add('GAP_TO_GOAL_AND_RETRY', 'UNKNOWN', 'EVIDENCED_GAP_DEDUPE_ADMISSION_AND_RETRY_NOT_OBSERVED', '#2670');
+
+  const gaps = edges.filter((edge) => edge.state === 'GAP');
+  const unproven = edges.filter((edge) => edge.state === 'UNKNOWN');
+  const closed = edges.filter((edge) => edge.state === 'CLOSED');
+  const allClosed = gaps.length === 0 && unproven.length === 0
+    && edges.every((edge) => edge.state === 'CLOSED');
+  const priority = gaps[0] || unproven[0] || edges.find((edge) => edge.state !== 'CLOSED');
+  return Object.freeze({
+    schemaVersion: STEPHANOS_CORE_LOOP_CLOSURE_AUDIT_SCHEMA_V1,
+    observedAtUtc,
+    sourceHead: headValid ? head : '',
+    classification: allClosed ? 'ALL_LOOPS_PROVEN_CLOSED'
+      : gaps.length ? 'LOOP_GAPS_DETECTED' : 'LOOP_CLOSURE_EVIDENCE_INCOMPLETE',
+    allLoopsProvenClosed: allClosed,
+    totalEdgeCount: edges.length,
+    closedEdgeCount: closed.length,
+    gapCount: gaps.length,
+    unprovenCount: unproven.length,
+    pausedCount: edges.filter((edge) => edge.state === 'PAUSED').length,
+    edges: Object.freeze(edges),
+    nextAction: priority ? Object.freeze({
+      ownerIssue: priority.ownerIssue, edgeId: priority.id, reason: priority.reason,
+      route: 'EXISTING_CANONICAL_GOAL_AND_REPAIR_MACHINERY',
+    }) : null,
+    noNewScheduler: true,
+    noNewMutationAuthority: true,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
   });
 }
