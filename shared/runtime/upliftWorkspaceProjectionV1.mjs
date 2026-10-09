@@ -1134,6 +1134,11 @@ function isConversationalIntelligenceRelevant(record = {}) {
   if (
     binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
     || binding.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
+    // Canonical owner records feed the existing #2798 seed. These do not
+    // constitute new seeds or grant any building/merge authority.
+    || record.relatedIssue === '#2434'
+    || record.relatedIssue === '#2966'
+    || record.relatedPr === '#2965'
   ) return true;
 
   const recognizedConversationType = /(^|[^a-z])(conversation|conversational|shared-thread|conversation-thread|conversation-turn|q&a|qa-response|project-intelligence|memory-retrieval|context-continuity)([^a-z]|$)/;
@@ -1237,6 +1242,8 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
     operatingLoop: contract.operatingLoop,
     growthRungs: contract.growthRungs,
     qualityDimensions: contract.qualityDimensions,
+    linkedImprovementWork: contract.linkedImprovementWork,
+    continuousExperienceChecks: contract.continuousExperienceChecks,
     operatorRole: contract.operatorRole,
     currentRungIndex,
     currentRung,
