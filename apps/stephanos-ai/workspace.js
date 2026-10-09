@@ -37,18 +37,20 @@ const sendButton = $('sendButton');
 const bridgeStatus = $('bridgeStatus');
 const memoryStatus = $('memoryStatus');
 const reloadThread = $('reloadThread');
+const releaseDraft = $('releaseDraft');
 
 function readPendingDraft() {
   try {
     const value = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
     if (value && typeof value.text === 'string' && typeof value.turnId === 'string'
-      && /^[a-z0-9._:-]{1,128}$/i.test(value.turnId) && value.text.length <= 6000) return value;
+      && (value.turnId === '' || /^[a-z0-9._:-]{1,128}$/i.test(value.turnId)) && value.text.length <= 6000) return value;
   } catch { /* Storage might be disabled on a private browser. */ }
   return null;
 }
 
 function writePendingDraft(value) {
   pendingDraft = value;
+  if (releaseDraft) releaseDraft.hidden = !value;
   try {
     if (value) localStorage.setItem(PENDING_KEY, JSON.stringify(value));
     else localStorage.removeItem(PENDING_KEY);
@@ -177,11 +179,14 @@ function renderMessages({ forceBottom = false } = {}) {
 
 function translateTurn(turn) {
   const participant = turn.senderParticipantId;
+  const shownText = participant === 'operator'
+    ? String(turn.text || '').replace(/^\[Stephanos AI addressed target: [^\n]+\]\n/, '')
+    : turn.text;
   return {
     turnId: turn.turnId,
     role: participant === 'operator' ? 'user' : 'assistant',
     author: participant === 'chatgpt-bridge' ? 'ChatGPT' : participant === 'stephanos' ? 'Stephanos AI' : 'You',
-    text: turn.text,
+    text: shownText,
   };
 }
 
@@ -364,10 +369,22 @@ renderNav();
 selectTarget(selected);
 pendingDraft = readPendingDraft();
 if (pendingDraft) {
+  releaseDraft.hidden = false;
   prompt.value = pendingDraft.text;
   autoGrow();
   showPendingStatus();
 }
 reloadThread?.addEventListener('click', () => { void loadCanonicalThread(); });
+releaseDraft?.addEventListener('click', () => {
+  if (!pendingDraft || busy) return;
+  const confirmed = window.confirm('The previous turn is not confirmed in the canonical thread. Keep its text in the editor and allow a new send? This could duplicate a turn if Battle Bridge received it.');
+  if (!confirmed) return;
+  const text = pendingDraft.text;
+  writePendingDraft(null);
+  prompt.value = text;
+  autoGrow();
+  memoryStatus.dataset.state = 'unavailable';
+  memoryStatus.textContent = 'Draft released · verify before resend';
+});
 void probeBackendBridge();
 void loadCanonicalThread();
