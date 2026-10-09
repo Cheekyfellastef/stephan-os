@@ -99,6 +99,24 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 <p>{seed.northStar || 'North star unavailable.'}</p>
               </div>
 
+              {Array.isArray(seed.linkedOutcomeGoals) && seed.linkedOutcomeGoals.length > 0 ? (
+                <div className="seed-canopy__owners" aria-label="Existing goal owners for seed improvements">
+                  <span>CONNECTED TO GOAL CONVEYOR</span>
+                  {seed.linkedOutcomeGoals.map((owner) => {
+                    const number = /^#[1-9][0-9]*$/.test(String(owner.issueRef || ''))
+                      ? Number(owner.issueRef.slice(1)) : null;
+                    if (!number) return null;
+                    return (
+                      <a key={owner.issueRef} href={`https://github.com/Cheekyfellastef/stephan-os/issues/${number}`}
+                        target="_blank" rel="noopener noreferrer" title="Open existing canonical goal (not proof of completion)">
+                        <b>{owner.issueRef}</b> {owner.title}
+                      </a>
+                    );
+                  })}
+                  <small>Linked ownership only. Growth requires current Shared Workspace evidence and completed live proof.</small>
+                </div>
+              ) : null}
+
               <div className="seed-canopy__rungs" aria-label={compactTitle(seed) + " growth rungs"}>
                 {rungs.map((rung, index) => (
                   <span
