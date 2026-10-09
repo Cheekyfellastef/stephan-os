@@ -234,9 +234,16 @@ test('parked backlog without elastic admission is blocked, never falsely idle gr
       classification: 'PARKED_BLOCKERS_ONLY',
       elasticAdmission: null,
       elasticIgnition: null,
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['phase-lease-reconciliation-blocked', 'source-mutation-proof-missing'],
     }),
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(result.programmeStatus, 'HOLD');
+  assert.deepEqual(result.programmeBlockers, ['phase-lease-reconciliation-blocked', 'source-mutation-proof-missing']);
+  assert.equal(result.elasticAdmissionPresent, false);
+  assert.equal(result.elasticIgnitionPresent, false);
+  assert.equal(result.daemonMayReportGreen, false);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED');
 });

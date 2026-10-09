@@ -43,6 +43,12 @@ function blockedResult(blocker, details = {}) {
     dispatchCount: integer(details.dispatchCount),
     heldGoalCount: integer(details.heldGoalCount),
     heldIssues: frozen(Array.isArray(details.heldIssues) ? details.heldIssues.slice(0, 20) : []),
+    programmeStatus: text(details.programmeStatus) || 'UNKNOWN',
+    programmeBlockers: frozen(Array.isArray(details.programmeBlockers)
+      ? details.programmeBlockers.map((blocker) => text(blocker).slice(0, 160)).filter(Boolean).slice(0, 20)
+      : []),
+    elasticAdmissionPresent: details.elasticAdmissionPresent === true,
+    elasticIgnitionPresent: details.elasticIgnitionPresent === true,
     commanderParity: details.commanderParity || null,
     commanderParityHealthy: details.commanderParity?.ok === true,
     capabilityParityOwnerGoal: text(details.commanderParity?.canonicalOwnerGoal, '#2573'),
@@ -54,7 +60,8 @@ function blockedResult(blocker, details = {}) {
     flywheelLearningPromotionCount: integer(details.commanderParity?.flywheelLearning?.promotedLessonIds?.length),
     zeroGapInvariantSatisfied: integer(details.commanderParity?.buildableGapCount) === 0,
     capabilityParityClosureRequired: integer(details.commanderParity?.buildableGapCount) > 0,
-    daemonMayReportGreen: integer(details.commanderParity?.buildableGapCount) === 0,
+    // An admission/proof failure must not be green even when parity has zero known gaps.
+    daemonMayReportGreen: false,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -122,6 +129,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     availableSlotCount,
     dispatchCount,
     heldGoalCount,
+    programmeStatus: conveyorResult?.programmeStatus,
+    programmeBlockers: conveyorResult?.programmeBlockers,
+    elasticAdmissionPresent: Boolean(conveyorResult?.elasticAdmission),
+    elasticIgnitionPresent: Boolean(conveyorResult?.elasticIgnition),
     commanderParity,
   };
 
