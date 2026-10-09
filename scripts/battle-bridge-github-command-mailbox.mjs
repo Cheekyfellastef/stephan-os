@@ -2084,6 +2084,43 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
   });
 }
 
+// Even when an oversized 59-lane Programme Authority packet is reduced to a
+// compact GitHub receipt, retain the *actual blocker codes* and controlling
+// readiness edges. No raw diagnostics, local paths, goals, or credentials.
+function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
+  if (receipt?.operation !== 'READ_PROGRAMME_AUTHORITY_STATUS') return {};
+  const token = (value, max = 120) => {
+    const safe = safeTelemetryText(value, max).toUpperCase();
+    return /^[A-Z0-9][A-Z0-9._:-]{0,119}$/.test(safe) ? safe : '';
+  };
+  const blockers = (Array.isArray(inner?.programmeBlockers) ? inner.programmeBlockers : [])
+    .map((item) => token(item))
+    .filter(Boolean).slice(0, 16);
+  const sources = (value) => token(value);
+  return Object.freeze({
+    programmeStatus: token(inner?.programmeStatus, 80),
+    programmeFinalVerdict: token(inner?.programmeFinalVerdict),
+    programmeBlockers: Object.freeze(blockers),
+    schedulerFailClosed: inner?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: token(inner?.schedulerProgrammeStatus),
+    schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),
+    schedulerSelectedIssue: safeGoalIssue(inner?.schedulerSelectedIssue),
+    elasticCapacityStatus: token(inner?.elasticCapacityStatus),
+    elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
+    controllerValid: inner?.controllerValid === true,
+    controllerFresh: inner?.controllerFresh === true,
+    workerValid: inner?.workerValid === true,
+    workerFresh: inner?.workerFresh === true,
+    criticalBacklogDecision: safeConveyorDecision(inner?.criticalBacklogDecision),
+    sourceReadRepositoryHead: sources(inner?.sourceReadRepositoryHead),
+    sourceReadControllerHeartbeat: sources(inner?.sourceReadControllerHeartbeat),
+    sourceReadWorkerHeartbeat: sources(inner?.sourceReadWorkerHeartbeat),
+    sourceReadGithubGoalEstate: sources(inner?.sourceReadGithubGoalEstate),
+    originalProgrammeLaneListOmitted: true,
+  });
+}
+
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
@@ -2125,6 +2162,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
+        ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
         githubProjectionTruncated: true,
         originalBytes: fullBytes,
       }),
