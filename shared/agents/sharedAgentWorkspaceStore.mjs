@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
@@ -323,12 +323,38 @@ function isTransientAtomicRenameError(error) {
   return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
 }
 
+async function replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options = {}) {
+  const openFn = typeof options.openFn === 'function' ? options.openFn : open;
+  const lstatFn = typeof options.lstatFn === 'function' ? options.lstatFn : lstat;
+  const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const unlinkFn = typeof options.unlinkFn === 'function' ? options.unlinkFn : unlink;
+  const observed = await lstatFn(targetPath);
+  const safeFile = (info) => info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+  const sameFile = (info) => safeFile(info) && info.dev === observed.dev && info.ino === observed.ino;
+  if (!safeFile(observed)) throw new Error('WORKSPACE_PINNED_TARGET_UNSAFE');
+  const payload = await readFileFn(sourcePath);
+  let handle;
+  try {
+    handle = await openFn(targetPath, 'r+');
+    if (!sameFile(await handle.stat()) || !sameFile(await lstatFn(targetPath))) {
+      throw new Error('WORKSPACE_PINNED_TARGET_CHANGED');
+    }
+    await handle.writeFile(payload);
+    await handle.truncate(payload.length);
+    await handle.sync();
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  await unlinkFn(sourcePath);
+}
+
 export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
   const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
   const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
     ? options.atomicRenameRetryDelaysMs
     : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  const platform = String(options.platform || process.platform).toLowerCase();
   let attempts = 0;
   while (true) {
     attempts += 1;
@@ -336,12 +362,20 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
       await renameFn(sourcePath, targetPath);
       return attempts;
     } catch (error) {
+      const transient = isTransientAtomicRenameError(error);
       const delayMs = Number(retryDelaysMs[attempts - 1]);
-      if (!isTransientAtomicRenameError(error) || !Number.isFinite(delayMs) || delayMs < 0) {
-        if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
-        throw error;
+      if (transient && Number.isFinite(delayMs) && delayMs >= 0) {
+        await sleepFn(delayMs);
+        continue;
       }
-      await sleepFn(delayMs);
+      const pinnedStatus = basename(dirname(targetPath)) === 'status'
+        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+      if (transient && platform === 'win32' && pinnedStatus) {
+        await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
+        return attempts;
+      }
+      if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+      throw error;
     }
   }
 }
