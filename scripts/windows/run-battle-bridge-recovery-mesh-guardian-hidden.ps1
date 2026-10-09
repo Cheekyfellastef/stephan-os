@@ -277,7 +277,7 @@ function Get-TaskHealth {
     $now = Get-Date
     $lastRun = if ($info) { $info.LastRunTime } else { $null }
     $age = if ($lastRun -and $lastRun -gt [datetime]::MinValue) { ($now - $lastRun).TotalMinutes } else { $null }
-    $lastResult = if ($info) { [long]$info.LastTaskResult } else { $null }
+    $lastResult = if ($info) { [int]$info.LastTaskResult } else { $null }
     $healthy = $null -ne $task -and $null -ne $info -and $identityCanonical -and $lastResult -eq 0 -and $null -ne $age -and $age -le $FreshMinutes
     return [pscustomobject]@{
         task = $task
@@ -459,7 +459,7 @@ if ($mailboxRepairEligible) {
         $mailboxRepairRunProven = $postIdentity `
             -and $null -ne $postInfo `
             -and $postRunAdvanced `
-            -and [long]$postInfo.LastTaskResult -eq 0 `
+            -and [int]$postInfo.LastTaskResult -eq 0 `
             -and [string]$postTask.State -ne 'Running'
     } while (-not $mailboxRepairRunProven -and (Get-Date) -lt $mailboxProofDeadline)
 
