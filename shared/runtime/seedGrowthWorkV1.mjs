@@ -79,7 +79,10 @@ export function planSeedGrowthWorkV1(view = {}, feed = {}, nowMs = Date.now()) {
     const gapEvidence = gap ? list(feed.records?.eventRecords).find((record) =>
       currentTime(record, nowMs)
       && text(record.capabilityId || record.closedLoopLearning?.capabilityId || record.eventKind) === text(gap.capabilityId)
-      && (record.missionId === seed.seedId || record.relatedIssue === seed.issue)
+      && (record.missionId === seed.seedId
+        || record.relatedIssue === seed.issue
+        || (Array.isArray(seed.linkedGoalIssueRefs)
+          && seed.linkedGoalIssueRefs.includes(record.relatedIssue)))
       && record.closedLoopLearning?.telemetry?.retryReady !== true) : null;
     if (gap && !gapEvidence) return [];
     const nextRung = growth.nextGrowthRung;
