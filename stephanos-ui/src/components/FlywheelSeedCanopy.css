@@ -290,3 +290,14 @@
   border-color: rgba(255,204,91,0.28);
   background: rgba(255,204,91,0.045);
 }
+
+.seed-canopy__owners {
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(139, 104, 255, 0.2);
+  border-radius: 10px;
+}
+.seed-canopy__owners summary { cursor: pointer; font-size: 0.69rem; }
+.seed-canopy__owners nav { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.45rem; }
+.seed-canopy__owners a { color: #b5ddff; font-size: 0.7rem; text-decoration: underline; }
+.seed-canopy__owners small { display: block; margin-top: 0.35rem; opacity: 0.75; font-size: 0.6rem; }
