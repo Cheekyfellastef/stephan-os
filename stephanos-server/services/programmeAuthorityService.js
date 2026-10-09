@@ -38,6 +38,7 @@ import {
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import {
   acquireSharedWorkspaceOperationLock,
   readCurrentExecutionReceipt,
@@ -637,6 +638,31 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
           githubAdmissionState: 'ADMISSION_PROVEN',
           githubAdmissionObservedAt: observedAt,
           operatorLaneContainment,
+        });
+        continue;
+      }
+
+      // Proposal publication cannot grant dispatch. Only a fresh admission
+      // already proved by the canonical GitHub observer can release this hold.
+      if (existing.admissionSource === 'flywheel-canonical-goal-admission-v1'
+        && validateSeedGrowthWorkV1(existing.seedGrowthWork)
+        && existing.status === 'BLOCKED' && (!existing.state || existing.state === 'BLOCKED')
+        && existing.route === 'BLOCKED_UNSAFE_OR_UNKNOWN'
+        && existing.dispatchAdmissionState === 'PENDING_CANONICAL_DISPATCH_ADMISSION'
+        && existing.approvalRequired === false
+        && existing.repository === CANONICAL_GOAL_REPOSITORY
+        && existing.goalId === `goal-${issueNumber}`
+        && validGithubGoalEstateSnapshotIssue(issue)
+        && issue.admissionState === 'ADMISSION_PROVEN'
+        && Date.parse(observedAt) <= Date.parse(nowUtc)
+        && Date.parse(nowUtc) - Date.parse(observedAt) <= DEFAULT_STALE_AFTER_MS
+        && admittedResourceIds.length > 0) {
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing, status: 'READY', state: 'READY', route: issue.admission.route,
+          resourceIds: Object.freeze(admittedResourceIds), evidenceAt: observedAt,
+          dispatchAdmissionState: 'CANONICAL_DISPATCH_ADMISSION_PROVEN',
+          githubAdmissionState: 'ADMISSION_PROVEN', githubAdmissionObservedAt: observedAt,
+          sourceUrl: text(issue.htmlUrl), operatorLaneContainment,
         });
         continue;
       }

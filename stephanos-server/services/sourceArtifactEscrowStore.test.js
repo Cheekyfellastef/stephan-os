@@ -86,6 +86,56 @@ test('persists a content-addressed externally-readable pre-PR complete-file bund
   assert.deepEqual(bundle.testsRun, [TEST_COMMAND]);
 });
 
+test('escrow preserves canonical shared/runtime source but rejects mutable runtime and protected paths', async () => {
+  const options = await roots();
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = input();
+  const scopedFile = { ...valid.changedFiles[0], path: sourcePath };
+  const escrow = await persistSourceArtifactEscrowV1(input({
+    canonicalIssue: 1645,
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(escrow, 'tracked shared/runtime source must reach escrow');
+  assert.equal(escrow.changedFiles[0].path, sourcePath);
+  assert.equal(escrow.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(escrow.canonicalIssue, 1645);
+  // Direct immutable escrow requires canonical casing; lowercase is normalized
+  // by the separate guarded worktree-finalization boundary, not this API.
+  const nonCanonical = await persistSourceArtifactEscrowV1(input({
+    repository: 'cheekyfellastef/stephan-os',
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.equal(nonCanonical, null);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  assert.ok(outbox, 'proven tracked source must reach publication outbox');
+  assert.equal(outbox.mergeAuthority, false);
+  assert.equal(outbox.pushAuthority, false);
+
+  const denied = [
+    'runtime/state.json',
+    'runtime-data/private.json',
+    'apps/example/runtime/state.json',
+    'shared/runtime/deep/runtime/state.json',
+    'shared/runtime-data/state.json',
+    'shared/runtime/.git/config',
+    'shared/runtime/node_modules/internal.js',
+    'shared/runtime/.env',
+    'shared/runtime/secret.pem',
+    'stephanos-server/data/state.json',
+    '../shared/runtime/stephanosMemory.mjs',
+  ];
+  for (const path of denied) {
+    const changed = { ...valid.changedFiles[0], path };
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed],
+      artifactFiles: [{ ...valid.artifactFiles[0], path }],
+    }), options);
+    assert.equal(invalid, null, path);
+  }
+});
+
 test('queues a proven source artifact for later governed publication without adding push or merge authority', async () => {
   const options = await roots();
   const escrow = await persistSourceArtifactEscrowV1(input(), options);
@@ -197,7 +247,7 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
     missionId: 'binary-mission',
     actionId: 'binary-action',
     adapter: 'stephanos-native',
-    repository: 'Cheekyfellastef/stephan-os',
+    repository: 'cheekyfellastef/stephan-os',
     branch: 'feat/binary-test',
     worktreePath: options.repoRoot,
     requiredTests: [TEST_COMMAND],
@@ -211,6 +261,7 @@ test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async
   });
 
   assert.equal(finalized.testsPassed, true);
+  assert.equal(finalized.sourceArtifactEscrow.repository, 'Cheekyfellastef/stephan-os');
   const artifactName = finalized.sourceArtifactEscrow.artifactRef.split('/').at(-1);
   const bundle = JSON.parse(await readFile(join(options.sharedWorkspaceRoot, 'source-artifacts', artifactName), 'utf8'));
   assert.deepEqual(

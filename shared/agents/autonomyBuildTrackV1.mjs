@@ -34,7 +34,9 @@ function gateGuidance(gate={}) {
     SYNC:['Battle Bridge source sync is not proven'+detail,'Repair or refresh the canonical GitHub sync before diagnosing downstream build stages.'],
     CONTROL_PLANE:['The Stephanos control plane is not proven ready'+detail,'Repair the control-plane/runtime refresh blocker, then rerun the existing heartbeat.'],
     HEARTBEAT:['The autonomous goal heartbeat is blocked'+detail,'Inspect the heartbeat/conveyor failure. Do not infer scheduler or worker health from later stale records.'],
-    ELIGIBLE_GOAL:['No eligible goal reached the autonomous conveyor'+detail,'Inspect canonical goal discovery, admission and eligibility. Confirm an open goal becomes scheduler-visible.'],
+    ELIGIBLE_GOAL: reason.startsWith('PROGRAMME_ADMISSION_HOLD:')
+      ? ['Canonical programme HOLD prevents goal admission'+detail,'Reconcile the canonical programme blocker and its exact lane/lease/receipt evidence before re-admission. Shared Workspace READY is not execution authority.']
+      : ['No eligible goal reached the autonomous conveyor'+detail,'Inspect canonical goal discovery, admission and eligibility. Confirm an open goal becomes scheduler-visible.'],
     SELECT:['A goal is visible but scheduler selection is not proven'+detail,'Inspect the scheduler decision and contradictions for the visible goal.'],
     MISSION:['The scheduler selected work but no durable mission is visible'+detail,'Inspect mission creation/publication and mission-store persistence for the selected goal.'],
     CLAIM:['A mission exists but no source claim/dispatch is proven'+detail,'Inspect lease/claim creation and the provider-neutral dispatch handoff for this mission.'],
@@ -86,6 +88,8 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const selectedItemId=text(conveyor?.projection?.selectedItem?.itemId);
   const remainingItems=Array.isArray(conveyor?.projection?.remainingItemIds)?conveyor.projection.remainingItemIds:[];
   const observed=Boolean(selectedItemId||missionId||remainingItems.length||conveyor?.classification==='ELASTIC_GOAL_MISSION_SELECTED'||conveyor?.classification==='WAIT_ACTIVE_MISSION');
+  const programmeAdmissionHeld=!observed&&text(conveyor?.programmeStatus).toUpperCase()==='HOLD';
+  const programmeHoldBlocker=(Array.isArray(conveyor?.programmeBlockers)?conveyor.programmeBlockers:[]).map(text).find(Boolean)||'UNSPECIFIED_CANONICAL_PROGRAMME_BLOCKER';
   const selected=Boolean(selectedItemId||missionId||conveyor?.classification==='ELASTIC_GOAL_MISSION_SELECTED'||conveyor?.classification==='WAIT_ACTIVE_MISSION');
   const missionCreated=Boolean(missionId);
   const issueNumber=issueFromMission(mission||conveyor?.missionRecord||{});
@@ -128,7 +132,7 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
 
   const gates=[
     freezeGate('HEARTBEAT',conveyorOk?'PASS':'BLOCKED',conveyorOk?'':conveyorBlocker),
-    freezeGate('ELIGIBLE_GOAL',observed?'PASS':(conveyorOk?'WAITING':'NOT_REACHED'),observed?'':'NO_ELIGIBLE_GOAL_OBSERVED'),
+    freezeGate('ELIGIBLE_GOAL',observed?'PASS':programmeAdmissionHeld?'BLOCKED':(conveyorOk?'WAITING':'NOT_REACHED'),observed?'':programmeAdmissionHeld?`PROGRAMME_ADMISSION_HOLD:${programmeHoldBlocker}`:'NO_ELIGIBLE_GOAL_OBSERVED'),
     freezeGate('SELECT',selected?'PASS':observed?'WAITING':'NOT_REACHED',selected?'':'SCHEDULER_SELECTION_NOT_OBSERVED'),
     freezeGate('MISSION',missionCreated?'PASS':selected?'WAITING':'NOT_REACHED',missionCreated?'':'MISSION_NOT_CREATED'),
     freezeGate('CLAIM',claimBlocked?'BLOCKED':claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimBlocked?buildReason:claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),

@@ -103,7 +103,7 @@ function eventId(value) {
 }
 
 function elasticIssueNumber(mission = {}) {
-  const match = text(mission.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
+  const match = text(mission?.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
   const parsed = Number(match?.[1]);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
@@ -600,6 +600,8 @@ export async function ensureCriticalBacklogMission({
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
   let elasticAdmission = null;
   let elasticIgnition = null;
+  let programmeStatus = 'UNKNOWN';
+  let programmeBlockers = [];
   try {
     const authoritative = await readProgrammeProjection({
       env,
@@ -610,7 +612,8 @@ export async function ensureCriticalBacklogMission({
       snapshotRoot: paths.snapshotRoot,
     });
     const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
-    const programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
+    programmeStatus = text(authoritative?.status, 'UNKNOWN').toUpperCase();
+    programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
       .map((blocker) => text(blocker))
       .filter(Boolean);
     const workerRuntimeHold = Boolean(
@@ -792,6 +795,8 @@ export async function ensureCriticalBacklogMission({
     publication,
     elasticAdmission,
     elasticIgnition,
+    programmeStatus,
+    programmeBlockers: Object.freeze([...programmeBlockers]),
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     duplicateActiveMissionAllowed: false,

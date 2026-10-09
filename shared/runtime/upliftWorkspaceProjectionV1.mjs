@@ -1,4 +1,5 @@
 import { buildAgentUpliftScorecardV1 } from '../agents/flywheelAgentUpliftV1.mjs';
+import { projectSeedGrowthWorkV1 } from './seedGrowthWorkV1.mjs';
 import {
   STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
   STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
@@ -1055,6 +1056,7 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     currentRungIndex,
     currentRung,
     pressureState,
+    nextGrowthRung: planted ? (contract.growthRungs[currentRungIndex + 1] || '') : '',
     decisionCount: planted ? decisions.length : null,
     delegationCount: planted ? delegations.length : null,
     pickupProofCount: planted ? pickupProofs.length : null,
@@ -1239,6 +1241,7 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
     currentRungIndex,
     currentRung,
     pressureState,
+    nextGrowthRung: planted ? (contract.growthRungs[rungProof.findIndex((proven) => !proven)] || '') : '',
     intentSignalCount: planted ? intentSignals.length : null,
     contextSignalCount: planted ? contextSignals.length : null,
     groundingSignalCount: planted ? groundingSignals.length : null,
@@ -1390,6 +1393,7 @@ function deriveSovereignCommanderParitySeedGrowth(payload = {}) {
     currentRungIndex,
     currentRung,
     pressureState,
+    nextGrowthRung: planted ? (contract.growthRungs[rungProof.findIndex((proven) => !proven)] || '') : '',
     remoteObservationCount: planted ? remoteObservations.length : null,
     parityGapSignalCount: planted ? gapSignals.length : null,
     safetyClassificationProofCount: planted ? safetySignals.length : null,
@@ -1539,7 +1543,7 @@ function deriveWorkspaceIntegritySeedGrowth(payload = {}) {
   });
 }
 
-export function deriveFlywheelWorkspaceView(payload = {}) {
+export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
     && payload?.records && typeof payload.records === 'object';
@@ -1611,7 +1615,10 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       deriveConversationalIntelligenceSeedGrowth(payload),
       deriveSovereignCommanderParitySeedGrowth(payload),
       deriveWorkspaceIntegritySeedGrowth(payload),
-    ]),
+    ].map((seed) => Object.freeze({ ...seed,
+      growthWork: projectSeedGrowthWorkV1(seed.missionId, payload.records.goalRecords,
+        Number.isFinite(options.nowMs) ? options.nowMs : Date.now()),
+    }))),
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,

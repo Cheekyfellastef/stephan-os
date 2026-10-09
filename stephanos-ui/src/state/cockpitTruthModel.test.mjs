@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCockpitModel, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
+import { buildCockpitModel, deriveCockpitBackendHealthDiagnostics, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
 
 test('cockpit layout places memory halfway between backend and operator', () => {
   const midpointY = (NODE_LAYOUT.backend.y + NODE_LAYOUT.operator.y) / 2;
@@ -373,4 +373,54 @@ test('local cockpit keeps direct backend failure red without hosted observer amb
   });
 
   assert.equal(model.nodeStates.backend, 'dead');
+});
+
+test('Cockpit diagnoses fresh verified backend health using its live API receipt', () => {
+  const timestamp = '2026-10-08T19:00:00.000Z';
+  const apiStatus = {
+    backendReachable: true,
+    lastCheckedAt: timestamp,
+    meta: {
+      ok: true,
+      service: 'stephanos-server',
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' },
+    },
+    runtimeContext: {
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: timestamp,
+        lastBackendHealthProbeResult: 'ok:true',
+        currentBackendHealthSource: 'refresh-health-poll',
+      },
+    },
+  };
+  const fallback = {
+    currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+  };
+  const nowMs = Date.parse(timestamp) + 1000;
+  assert.deepEqual(
+    deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: fallback, nowMs }),
+    { fresh: 'yes', source: 'refresh-health-poll', checkedAt: timestamp },
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({
+      apiStatus: { ...apiStatus, meta: { ...apiStatus.meta, backendIdentity: { runtimeId: 'foreign-service' } } },
+      routeTruthView: fallback,
+      nowMs,
+    }).fresh,
+    'no',
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: fallback, nowMs: nowMs + 120000 }).fresh,
+    'no',
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({
+      apiStatus: { ...apiStatus, backendReachable: false },
+      routeTruthView: fallback,
+      nowMs,
+    }).fresh,
+    'no',
+  );
 });

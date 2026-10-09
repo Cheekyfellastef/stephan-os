@@ -3614,8 +3614,15 @@ export function useAIConsole() {
       recordPerfCounter('polling', 'checkApiHealth.attempt');
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
-      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
-      const nextProviderHealth = providerHealth.data || {};
+      // Backend reachability is independent of provider telemetry. A provider
+      // probe exception must not turn a successful /api/health into "backend dead".
+      let providerHealth = { data: {} };
+      try {
+        providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
+      } catch (providerError) {
+        recordPerfEvent('polling', 'getProviderHealth.error', providerError?.message || 'unknown');
+      }
+      const nextProviderHealth = providerHealth?.data || {};
       setProviderHealth(nextProviderHealth);
       recordPerfCounter('store_writes', 'providerHealth');
       ['groq', 'gemini'].forEach((providerKey) => {

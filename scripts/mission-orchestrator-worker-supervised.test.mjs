@@ -8,6 +8,7 @@ import {
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
   deriveDurableSurfaceFailureHistory,
+  carryCompletionGuardianFailure,
   inspectMissionWorkerRepositoryIdentity,
   launchRecurringCalibrationLane,
   missionWorkerTickMadeProgress,
@@ -15,6 +16,7 @@ import {
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
   planMissionDeadlockSideline,
   runSupervisedMissionWorker,
+  controllerRequiresMaterialProgress,
 } from './mission-orchestrator-worker-supervised.mjs';
 
 function sink() {
@@ -231,6 +233,44 @@ test('canonical Mission Worker task runs Completion Guardian once per enabled cy
   assert.match(output.read(), /"event":"completion-guardian"/);
   assert.match(output.read(), /"actionableCount":3/);
   assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+});
+
+test('failed Completion Guardian does not silently become green between scheduled guardian sweeps', () => {
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', true), 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', false), 'MISSION_WORKER_TICK_PASS');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_FAILED', true), 'MISSION_WORKER_TICK_FAILED');
+});
+
+test('Completion Guardian status file publication failure retains red proof in worker logs', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async () => ({
+      ok: false,
+      finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+      writes: { statusWrite: { ok: false, reason: 'COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED' } },
+      projection: { actionableCount: 43 },
+    }),
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.match(output.read(), /"publicationBlocker":"COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED"/);
+  assert.match(output.read(), /"actionableCount":43/);
 });
 
 test('supervised worker refreshes heartbeat while a long tick is still running', async () => {
@@ -1325,4 +1365,11 @@ test('surface-quarantine HOLD sidelines the stuck mission instead of becoming na
   assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
   assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
   assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+test('READY with no selected mission is idle rather than no-grant execution defect', () => {
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},allowWorkerTick:false}),false);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY',lane:{missionId:'critical-1507-elastic-goal'}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'HOLD'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),false);
 });

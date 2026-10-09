@@ -58,6 +58,17 @@ test('Octopus escalates controller-fabric blockers through the existing control-
   assert.equal(controller.duplicateControllerAllowed, false);
   assert.equal(controller.authorityWideningAllowed, false);
 
+  const allHeld = projectOctopusRepairEscalation('ELASTIC_GOALS_ALL_HELD_REPAIR_REQUIRED');
+  assert.equal(allHeld.shouldRepairControlPlane, true);
+  assert.equal(allHeld.retryGoalBuilderAfterRepair, true);
+  assert.equal(allHeld.duplicateControllerAllowed, false);
+  const admission = projectOctopusRepairEscalation('ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.equal(admission.shouldRepairControlPlane, true);
+  assert.equal(admission.repairActionId, 'repair-control-plane');
+  assert.equal(admission.retryGoalBuilderAfterRepair, true);
+  assert.equal(admission.duplicateControllerAllowed, false);
+  assert.equal(admission.authorityWideningAllowed, false);
+
   const unrelated = projectOctopusRepairEscalation('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED');
   assert.equal(unrelated.shouldRepairControlPlane, false);
   assert.equal(unrelated.repairActionId, '');
@@ -88,6 +99,24 @@ test('Octopus self-heal decision fires only for unhealthy build truth and respec
   );
   assert.equal(healthy.shouldRepair, false);
   assert.equal(healthy.reason, 'OCTOPUS_SELF_HEAL_NOT_REQUIRED');
+});
+
+test('single missing exact worker grant without an active lane is an explicit idle wait, never execution proof', () => {
+  const idle = summarizePersistentFlywheelResult({
+    status: 'HOLD', blockers: ['mission-worker:exact-action-grant-unavailable'],
+    allowWorkerTick: false, boundedMutationSteps: 0,
+    authoritativeProjection: { status: 'READY', lane: null },
+  });
+  assert.equal(idle.idleGrantWait, true);
+  assert.equal(idle.blockerCount, 1);
+  assert.equal(idle.allowWorkerTick, false);
+  assert.equal(idle.boundedMutationSteps, 0);
+  const active = summarizePersistentFlywheelResult({
+    status: 'HOLD', blockers: ['mission-worker:exact-action-grant-unavailable'],
+    allowWorkerTick: false, boundedMutationSteps: 0,
+    authoritativeProjection: { lane: { laneId: 'busy-lane' } },
+  });
+  assert.equal(active.idleGrantWait, false);
 });
 
 test('Flywheel status summary stays bounded and does not expose blocker bodies', () => {

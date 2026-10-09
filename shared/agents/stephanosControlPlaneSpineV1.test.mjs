@@ -99,6 +99,27 @@ test('control-plane spine reports DEGRADED immediately when startup dependencies
 });
 
 
+test('proven no-work exact-grant wait is not falsely sent to self-repair', () => {
+  const flywheelStatus = {
+    flywheelLastCycleFinishedAtUtc: '2026-10-09T09:55:45.921Z',
+    flywheelLastStatus: 'HOLD', flywheelLastBlockerCount: 1,
+    flywheelLastIdleGrantWait: true, flywheelLastError: '',
+    refillStatus: 'READY', refillNoRunnableSourceWorkProven: true,
+    refillSafeEligibleWorkRemaining: 0, refillProvenSafeFreeLanes: 0,
+    octopusBuildVerdict: 'IDLE_PROVEN', octopusNeedsRepair: false,
+  };
+  const idle = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus });
+  assert.equal(idle.idleGrantWaitProven, true);
+  assert.equal(idle.flywheelReconciliationBlocked, false);
+  assert.equal(idle.repairRequired, false);
+  assert.equal(idle.materialActionsLastCycle, 0);
+  const unproven = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus: { ...flywheelStatus, refillNoRunnableSourceWorkProven: false } });
+  assert.equal(unproven.flywheelReconciliationBlocked, true);
+  assert.equal(unproven.repairRequired, true);
+  const realFault = projectStephanosControlPlaneSpine({ coreState: healthyCore, flywheelStatus: { ...flywheelStatus, flywheelLastBlockerCount: 2 } });
+  assert.equal(realFault.flywheelReconciliationBlocked, true);
+});
+
 test('control-plane spine refuses AWAKE after a blocked Flywheel reconciliation', () => {
   const projected = projectStephanosControlPlaneSpine({
     coreState: healthyCore,
