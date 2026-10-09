@@ -271,6 +271,6 @@ test('one failed seed admission does not stop resource-disjoint seed reconciliat
     admitCanonicalGoal: async () => { attempts += 1; if (attempts === 1) throw new Error('surface-unavailable');
       return { ok: false, reason: 'existing-owner-resolution-required' }; },
   });
-  assert.equal(attempts, 4);
-  assert.equal(result.seedGrowthAttachments.length, 4);
+  assert.equal(attempts, 5);
+  assert.equal(result.seedGrowthAttachments.length, 5);
 });
