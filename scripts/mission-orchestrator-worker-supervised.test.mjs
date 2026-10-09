@@ -8,6 +8,7 @@ import {
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
   deriveDurableSurfaceFailureHistory,
+  carryCompletionGuardianFailure,
   inspectMissionWorkerRepositoryIdentity,
   launchRecurringCalibrationLane,
   missionWorkerTickMadeProgress,
@@ -232,6 +233,44 @@ test('canonical Mission Worker task runs Completion Guardian once per enabled cy
   assert.match(output.read(), /"event":"completion-guardian"/);
   assert.match(output.read(), /"actionableCount":3/);
   assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+});
+
+test('failed Completion Guardian does not silently become green between scheduled guardian sweeps', () => {
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', true), 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_PASS', false), 'MISSION_WORKER_TICK_PASS');
+  assert.equal(carryCompletionGuardianFailure('MISSION_WORKER_TICK_FAILED', true), 'MISSION_WORKER_TICK_FAILED');
+});
+
+test('Completion Guardian status file publication failure retains red proof in worker logs', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async () => ({
+      ok: false,
+      finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+      writes: { statusWrite: { ok: false, reason: 'COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED' } },
+      projection: { actionableCount: 43 },
+    }),
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED');
+  assert.match(output.read(), /"publicationBlocker":"COMPLETION_GUARDIAN_STATUS_PUBLICATION_FAILED"/);
+  assert.match(output.read(), /"actionableCount":43/);
 });
 
 test('supervised worker refreshes heartbeat while a long tick is still running', async () => {

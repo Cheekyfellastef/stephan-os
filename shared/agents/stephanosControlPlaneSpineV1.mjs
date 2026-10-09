@@ -27,7 +27,18 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   const flywheelLastStatus = text(flywheel.flywheelLastStatus, 'NOT_RUN').toUpperCase();
   const flywheelLastBlockerCount = count(flywheel.flywheelLastBlockerCount);
   const flywheelLastError = text(flywheel.flywheelLastError);
-  const flywheelReconciliationBlocked = completedCycle && (
+  // The canonical Flywheel explicitly treats a missing exact grant with no
+  // active lane as RECONCILING, not an unattended-repair fault. Require an
+  // independent no-runnable-work proof so an actual stranded lane stays red.
+  const idleGrantWaitProven = completedCycle
+    && flywheel.flywheelLastIdleGrantWait === true
+    && flywheelLastStatus === 'HOLD'
+    && flywheelLastBlockerCount === 1
+    && !flywheelLastError
+    && flywheel.refillNoRunnableSourceWorkProven === true
+    && count(flywheel.refillSafeEligibleWorkRemaining) === 0
+    && text(flywheel.octopusBuildVerdict).toUpperCase() === 'IDLE_PROVEN';
+  const flywheelReconciliationBlocked = completedCycle && !idleGrantWaitProven && (
     Boolean(flywheelLastError)
     || flywheelLastBlockerCount > 0
     || ['HOLD', 'DEGRADED', 'UNKNOWN'].includes(flywheelLastStatus)
@@ -73,7 +84,8 @@ export function projectStephanosControlPlaneSpine(input = {}) {
     flywheelLastBlockerCount,
     flywheelLastError,
     flywheelReconciliationBlocked,
-    safeEligibleWorkRemaining,
+    idleGrantWaitProven,
+    safeEligibleWorkRemaining:
     provenSafeFreeLanes,
     materialActionsLastCycle: materialActions,
     strandedCapacity,
