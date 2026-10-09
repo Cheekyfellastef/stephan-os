@@ -192,6 +192,7 @@ function translateTurn(turn) {
 
 /** Reload the canonical thread from the Battle Bridge backend, never browser-local chat history. */
 async function loadCanonicalThread() {
+  if (busy) return false;
   memoryStatus.dataset.state = 'checking';
   memoryStatus.textContent = 'Memory · checking';
   try {
@@ -217,7 +218,7 @@ async function loadCanonicalThread() {
       ? 'Unconfirmed turn · check before retry'
       : `Memory · ${data.totalRetained || 0} durable turns`;
     $('threadTruth').textContent = data.threadId || 'unknown';
-    renderMessages({ forceBottom: canonicalHistory.length > 0 });
+    renderMessages();
     return true;
   } catch (error) {
     memoryStatus.dataset.state = 'unavailable';
@@ -385,6 +386,11 @@ releaseDraft?.addEventListener('click', () => {
   autoGrow();
   memoryStatus.dataset.state = 'unavailable';
   memoryStatus.textContent = 'Draft released · verify before resend';
+});
+// Refresh the shared thread on return from another device/app without a
+// background polling loop that would tax an older iPad.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !busy) void loadCanonicalThread();
 });
 void probeBackendBridge();
 void loadCanonicalThread();
