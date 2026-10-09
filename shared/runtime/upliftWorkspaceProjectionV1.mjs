@@ -13,6 +13,7 @@ import {
 import {
   CONVERSATIONAL_INTELLIGENCE_ISSUE,
   CONVERSATIONAL_INTELLIGENCE_MISSION_ID,
+  CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_GOALS_V1,
   buildConversationalIntelligenceSeedV1,
 } from './conversationalIntelligenceSeedV1.mjs';
 import {
@@ -1131,16 +1132,19 @@ function conversationalBindingText(record = {}) {
   ].map((value) => text(value, '')).join(' ').toLowerCase();
 }
 
+const CONVERSATIONAL_EXPERIENCE_OWNER_ISSUES = new Set(
+  CONVERSATIONAL_INTELLIGENCE_EXPERIENCE_GOALS_V1.map((goal) => goal.issueRef),
+);
+
 function isConversationalIntelligenceRelevant(record = {}) {
   // Tie experience failures to the *existing* goal owners, not an invented
   // seed-specific controller. Only structured references qualify here.
-  const linkedIssues = new Set(buildConversationalIntelligenceSeedV1().linkedOutcomeGoals.map((goal) => goal.issueRef));
   const exactRefs = [
     record.relatedIssue, record.relatedGoal, record.ownerGoal, record.canonicalOwnerGoal,
     ...list(record.targetRefs), ...list(record.domainRefs),
     ...list(record?.closedLoopLearning?.targetRefs),
   ];
-  if (exactRefs.some((ref) => linkedIssues.has(String(ref || '').trim()))) return true;
+  if (exactRefs.some((ref) => CONVERSATIONAL_EXPERIENCE_OWNER_ISSUES.has(String(ref || '').trim()))) return true;
   const binding = conversationalBindingText(record);
   if (
     binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
