@@ -104,13 +104,20 @@ export async function buildStarfieldVrPerformanceRecommendations({
   const corpusAvailable = Boolean(teachingPacket && labWorkspace);
   const signals = new Set(Array.isArray(diagnosis?.signals) ? diagnosis.signals.map(text) : []);
   const focus = text(diagnosis?.focus, 'UNCLASSIFIED');
-  const identityStatus = text(runIdentity?.status, 'UNKNOWN_PROVIDER');
-  const verifiedProvider = identityStatus === 'VERIFIED_PROVIDER' ? text(runIdentity?.provider || provider) : '';
-  if (identityStatus !== 'VERIFIED_PROVIDER') {
+  const identityStatus = text(runIdentity?.status) || 'UNKNOWN_PROVIDER';
+  // The caller's provider hint is not telemetry-bound identity evidence.
+  // Even a VERIFIED_PROVIDER flag must name a supported provider in the same run identity.
+  const identityProvider = text(runIdentity?.provider);
+  const providerVerified = identityStatus === 'VERIFIED_PROVIDER'
+    && ['mutar-openxr', 'vorpx'].includes(identityProvider);
+  const verifiedProvider = providerVerified ? identityProvider : '';
+  const effectiveIdentityStatus = providerVerified ? 'VERIFIED_PROVIDER'
+    : identityStatus === 'VERIFIED_PROVIDER' ? 'UNKNOWN_PROVIDER' : identityStatus;
+  if (!providerVerified) {
     return {
       schemaVersion: STARFIELD_VR_PERFORMANCE_RECOMMENDATIONS_SCHEMA,
       corpusAvailable,
-      verdict: identityStatus,
+      verdict: effectiveIdentityStatus,
       diagnosisFocus: focus,
       diagnosisSignals: [...signals],
       currentProvider: 'UNKNOWN',
