@@ -5,6 +5,7 @@ import {
   SHARED_WORKSPACE_RECORD_KINDS,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import { STEPHANOS_AMBIENT_CAPABILITY_QUESTION_SCHEMA_VERSION } from './stephanosAmbientCapabilityQuestionV1.mjs';
 import {
   STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
   STEPHANOS_CAPABILITY_QUESTION_SCHEMA_VERSION,
@@ -13,13 +14,17 @@ import {
   canonicalStephanosQuestionIntentFingerprint,
 } from './stephanosConversationalCapabilityLadderV1.mjs';
 import {
+  STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION,
   STEPHANOS_SHARED_WORKSPACE_CONVERSATION_CHANNEL,
   STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE,
   buildStephanosWorkspaceQuestionRound,
   createStephanosWorkspaceAnswerRecord,
+  createStephanosWorkspaceAnswerRecordByLineage,
   createStephanosWorkspaceQuestionRecord,
   decodeStephanosWorkspaceAnswerRecord,
+  decodeStephanosWorkspaceAnswerRecordByLineage,
   decodeStephanosWorkspaceQuestionRecord,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
   evaluateStephanosWorkspaceConversation,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 
@@ -359,4 +364,54 @@ test('corrupt conversation bodies and malformed questions fail closed', () => {
   const rejected = createStephanosWorkspaceQuestionRecord(malformed, questionOptions());
   assert.equal(rejected.valid, false);
   assert.match(rejected.errors.join('\n'), /unknown-field:unexpectedAuthority/);
+});
+
+
+test('lineage-aware canonical adapter preserves ambient correlation without persisted roundId', () => {
+  const ambientQuestion = {
+    schemaVersion: STEPHANOS_AMBIENT_CAPABILITY_QUESTION_SCHEMA_VERSION,
+    questionId: 'ambient-q-live-001',
+    askerParticipantId: 'chatgpt-bridge',
+    targetParticipantId: 'stephanos',
+    questionText: 'What product goal should advance next?',
+    questionClass: 'CURRENT_PROGRAMME_TRUTH',
+    intentFingerprint: 'intent-ambient-live-001',
+    noveltyRefs: ['issue:#1721'],
+    contextRefs: ['goal:#1290'],
+    expectedEvidenceClass: 'CURRENT_PROGRAMME_STATE',
+    createdAtUtc,
+  };
+  const seed = createStephanosWorkspaceQuestionRecord(question(0), questionOptions()).record;
+  const ambientRecord = {
+    ...seed,
+    messageId: 'qa-q-ambient-live-001',
+    correlationId: 'ambient-live-001',
+    subjectId: ambientQuestion.questionId,
+    body: JSON.stringify({
+      schemaVersion: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_ADAPTER_SCHEMA_VERSION,
+      subtype: STEPHANOS_SHARED_WORKSPACE_CONVERSATION_SUBTYPE.QUESTION,
+      payload: ambientQuestion,
+    }),
+  };
+  const decoded = decodeStephanosWorkspaceQuestionRecordByLineage(ambientRecord, {
+    workspaceValidationOptions: { nowMs: createdAtMs },
+  });
+  assert.equal(decoded.valid, true, decoded.errors.join(', '));
+  assert.equal(decoded.lineage.ambient, true);
+  assert.equal(Object.hasOwn(decoded.question, 'roundId'), false);
+
+  const ambientAnswer = { ...answer(0), questionId: ambientQuestion.questionId };
+  delete ambientAnswer.roundId;
+  const built = createStephanosWorkspaceAnswerRecordByLineage(ambientAnswer, ambientRecord, answerOptions());
+  assert.equal(built.valid, true, built.errors.join(', '));
+  const payload = JSON.parse(built.record.body).payload;
+  assert.equal(Object.hasOwn(payload, 'roundId'), false);
+  assert.equal(built.record.correlationId, ambientRecord.correlationId);
+
+  const answerDecoded = decodeStephanosWorkspaceAnswerRecordByLineage(built.record, ambientRecord, {
+    expectedRecipientParticipantId: 'chatgpt-bridge',
+    workspaceValidationOptions: { nowMs: answeredAtMs },
+  });
+  assert.equal(answerDecoded.valid, true, answerDecoded.errors.join(', '));
+  assert.equal(Object.hasOwn(answerDecoded.answer, 'roundId'), false);
 });
