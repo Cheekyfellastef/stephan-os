@@ -9,6 +9,7 @@ import {
   projectOctopusSelfHealDecision,
   projectOctopusFailedRepairLearningEventV1,
   projectPersistentFlywheelTrigger,
+  projectPersistentFlywheelStageWatchV1,
   auditCoreLoopClosureV1,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
@@ -573,4 +574,53 @@ test('a refill heartbeat is not proof of canonical goal admission, and a real ad
   assert.equal(blocked.edges.find((item) => item.id === 'RECONCILIATION_TO_GOAL_ADMISSION').state, 'GAP');
   assert.equal(blocked.edges.find((item) => item.id === 'RECONCILIATION_TO_GOAL_ADMISSION').reason,
     'CANONICAL_GOAL_ADMISSION_HELD');
+});
+
+test('Flywheel stage timeout is an evidence-backed STALLED state, not permission to run another cycle', () => {
+  const overdue = projectPersistentFlywheelStageWatchV1({
+    cycleRunning: true, stage: 'REFILL',
+    stageStartedAtUtc: '2026-10-09T20:00:00.000Z',
+    observedAtUtc: '2026-10-09T20:03:01.000Z',
+  });
+  assert.equal(overdue.state, 'STALLED');
+  assert.equal(overdue.deadlineMs, 180000);
+  assert.equal(overdue.blocker, 'PERSISTENT_FLYWHEEL_STAGE_DEADLINE_EXCEEDED');
+  assert.equal(overdue.ownerIssue, '#2961');
+  assert.equal(overdue.singleFlightRetained, true);
+  assert.equal(overdue.duplicateCycleAllowed, false);
+  assert.equal(overdue.workerLeaseOverrideAllowed, false);
+  const active = projectPersistentFlywheelStageWatchV1({
+    cycleRunning: true, stage: 'REFILL',
+    stageStartedAtUtc: '2026-10-09T20:00:00.000Z',
+    observedAtUtc: '2026-10-09T20:01:25.000Z',
+  });
+  assert.equal(active.state, 'IN_PROGRESS', '85s startup never signals a proved stall');
+});
+
+test('unknown timing remains unknown and finished Flywheel remains IDLE, never false-green', () => {
+  assert.equal(projectPersistentFlywheelStageWatchV1({
+    cycleRunning: true, stage: 'REFILL', stageStartedAtUtc: '',
+  }).state, 'UNKNOWN');
+  assert.equal(projectPersistentFlywheelStageWatchV1({
+    cycleRunning: true, stage: 'NOT_IN_CATALOG',
+    stageStartedAtUtc: '2026-10-09T20:00:00.000Z',
+  }).state, 'UNKNOWN');
+  const idle = projectPersistentFlywheelStageWatchV1({
+    cycleRunning: false, stage: 'REFILL',
+    stageStartedAtUtc: '2026-10-09T20:00:00.000Z',
+  });
+  assert.equal(idle.state, 'IDLE');
+  assert.equal(idle.blocker, '');
+});
+
+test('existing loop meta-check routes overdue in-flight stage to existing repair owner', () => {
+  const input = auditFixture();
+  input.flywheel.flywheelCycleRunning = true;
+  input.flywheel.flywheelStageWatchState = 'STALLED';
+  const result = auditCoreLoopClosureV1(input);
+  const watch = result.edges.find((edge) => edge.id === 'WATCH_TO_RECONCILIATION');
+  assert.equal(watch.state, 'GAP');
+  assert.equal(watch.reason, 'PERSISTENT_CYCLE_STAGE_STALLED');
+  assert.equal(watch.ownerIssue, '#2593');
+  assert.equal(result.allLoopsProvenClosed, false);
 });
