@@ -25,6 +25,11 @@ import {
   WORKSPACE_INTEGRITY_MISSION_ID,
   buildWorkspaceIntegritySeedV1,
 } from './workspaceIntegritySeedV1.mjs';
+import {
+  SOVEREIGN_METER_INDEPENDENCE_ISSUE,
+  SOVEREIGN_METER_INDEPENDENCE_MISSION_ID,
+  buildSovereignMeterIndependenceSeedV1,
+} from './sovereignMeterIndependenceSeedV1.mjs';
 import { GOAL_CONVEYOR_FLEET_CARE_MISSION_ID, GOAL_CONVEYOR_FLEET_CARE_ISSUE, GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1, buildGoalConveyorFleetCareSeedV1 } from './goalConveyorFleetCareSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
@@ -1135,6 +1140,11 @@ function isConversationalIntelligenceRelevant(record = {}) {
   if (
     binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
     || binding.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
+    // Canonical owner records feed the existing #2798 seed. These do not
+    // constitute new seeds or grant any building/merge authority.
+    || record.relatedIssue === '#2434'
+    || record.relatedIssue === '#2966'
+    || record.relatedPr === '#2965'
   ) return true;
 
   const recognizedConversationType = /(^|[^a-z])(conversation|conversational|shared-thread|conversation-thread|conversation-turn|q&a|qa-response|project-intelligence|memory-retrieval|context-continuity)([^a-z]|$)/;
@@ -1238,6 +1248,8 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
     operatingLoop: contract.operatingLoop,
     growthRungs: contract.growthRungs,
     qualityDimensions: contract.qualityDimensions,
+    linkedImprovementWork: contract.linkedImprovementWork,
+    continuousExperienceChecks: contract.continuousExperienceChecks,
     operatorRole: contract.operatorRole,
     currentRungIndex,
     currentRung,
@@ -1545,6 +1557,89 @@ function deriveWorkspaceIntegritySeedGrowth(payload = {}) {
 }
 
 
+function deriveSovereignMeterIndependenceSeedGrowth(payload = {}) {
+  const contract = buildSovereignMeterIndependenceSeedV1();
+  const records = payload.records || {};
+  const expectedSource = 'shared/runtime/sovereignMeterIndependenceSeedV1.mjs';
+  // One canonical source-bound heartbeat plants the seed. A GitHub issue or
+  // incidental mention alone is not a live signal or autonomous pickup.
+  const heartbeat = list(records.statusRecords).find((record) =>
+    record.statusId === SOVEREIGN_METER_INDEPENDENCE_MISSION_ID
+      && record.seedHeartbeat?.schemaVersion === 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+      && record.seedHeartbeat.missionId === SOVEREIGN_METER_INDEPENDENCE_MISSION_ID
+      && record.seedHeartbeat.issueRef === SOVEREIGN_METER_INDEPENDENCE_ISSUE
+      && record.seedHeartbeat.contractSource === expectedSource);
+  const planted = Boolean(heartbeat);
+  const bound = (record) => record?.missionId === SOVEREIGN_METER_INDEPENDENCE_MISSION_ID
+    || record?.relatedIssue === SOVEREIGN_METER_INDEPENDENCE_ISSUE;
+  const relevant = planted ? [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(bound) : [];
+  const latest = latestByTime(relevant);
+  const proved = relevant.filter((record) =>
+    record !== heartbeat && isPositiveProofRecord(record) && proofRefs(record).length > 0);
+  // Phase completion is typed, exact-mission evidence, not a prose keyword.
+  const rungProof = contract.growthRungs.map((rung) => proved.some((record) =>
+    record.meterIndependenceEvidence?.schemaVersion === 'stephanos.meter-independence-rung-proof.v1'
+      && record.meterIndependenceEvidence?.rung === rung));
+  const firstMissing = rungProof.findIndex((hasProof) => !hasProof);
+  const currentRungIndex = planted ? (firstMissing < 0 ? rungProof.length - 1 : Math.max(0, firstMissing)) : null;
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex];
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+  const actions = [
+    'Inventory Codex, Remote Commander, paid relay, GitHub and model meters against existing owners and task classes.',
+    'Map each metered critical task to an already-qualified local, Sovereign Commander, Forge or OpenClaw route.',
+    'Deduplicate and classify the first remaining critical-path gap with canonical ownership and evidence.',
+    'Build or adapt one safe native capability through the existing provider-neutral execution machinery.',
+    'Prove equivalent representative tasks with bounded execution and exact-head evidence.',
+    'Qualify the native route and make the canonical router prefer it without weakening review.',
+    'Run a zero-meter build-and-repair blackout with worker pickup, result proof and protected gates.',
+    'Continually recheck provider meters and regressions; preserve legitimate external service boundaries.',
+  ];
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: !planted ? 'AWAITING_LIVE_PROOF' : currentGaps.length ? 'CRITICAL_PATH_GAPS_PRESENT' : firstMissing < 0 ? 'EVIDENCE_COMPLETE_AUDIT_REQUIRED' : 'LEARNING',
+    sourceTruth: planted ? truthFromRecord(latest || heartbeat) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    nextGrowthRung: planted && firstMissing >= 0 ? contract.growthRungs[firstMissing] : '',
+    pressureState: !planted ? 'UNKNOWN' : currentGaps.length || firstMissing >= 0 ? 'ACTIVE' : 'CURRENT',
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    rungProofCount: planted ? rungProof.filter(Boolean).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: planted ? safeTime(latest || heartbeat) : '',
+    nextBestAction: !planted
+      ? 'Publish the #2968 source-bound seed heartbeat into Shared Workspace.'
+      : currentGaps.length
+        ? 'Resolve the first evidenced meter-independence gap through its existing canonical owner: ' + currentGaps[0].summary
+        : firstMissing >= 0
+          ? actions[firstMissing]
+          : 'Continue metered-dependency audits and replay zero-meter acceptance when routes change.',
+  });
+}
+
+
 const FLEET_STAGES = Object.freeze([
   'fleet-inventory-verified', 'fleet-health-verified', 'goal-select-claim-proven',
   'worker-pickup-proven', 'goal-build-live-proof', 'blocked-goal-recovered',
@@ -1678,6 +1773,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
       sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth({}),
       workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth({}),
+      sovereignMeterIndependenceSeedGrowth: deriveSovereignMeterIndependenceSeedGrowth({}),
       goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
@@ -1686,6 +1782,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
         deriveConversationalIntelligenceSeedGrowth({}),
         deriveSovereignCommanderParitySeedGrowth({}),
         deriveWorkspaceIntegritySeedGrowth({}),
+        deriveSovereignMeterIndependenceSeedGrowth({}),
         deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       ]),
       stats: Object.freeze({
@@ -1727,6 +1824,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
     conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
     sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth(payload),
     workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth(payload),
+    sovereignMeterIndependenceSeedGrowth: deriveSovereignMeterIndependenceSeedGrowth(payload),
     goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
@@ -1735,6 +1833,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       deriveConversationalIntelligenceSeedGrowth(payload),
       deriveSovereignCommanderParitySeedGrowth(payload),
       deriveWorkspaceIntegritySeedGrowth(payload),
+      deriveSovereignMeterIndependenceSeedGrowth(payload),
       deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     ].map((seed) => Object.freeze({ ...seed,
       growthWork: projectSeedGrowthWorkV1(seed.missionId, payload.records.goalRecords,

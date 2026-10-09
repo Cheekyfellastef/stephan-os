@@ -80,13 +80,15 @@ export function planSeedGrowthWorkV1(view = {}, feed = {}, nowMs = Date.now()) {
     const gapEvidence = gap ? list(feed.records?.eventRecords).find((record) =>
       currentTime(record, nowMs)
       && text(record.capabilityId || record.closedLoopLearning?.capabilityId || record.eventKind) === text(gap.capabilityId)
-      && (record.missionId === seed.seedId || record.relatedIssue === seed.issue
+      && (record.missionId === seed.seedId
+        || record.relatedIssue === seed.issue
+        || (Array.isArray(seed.linkedGoalIssueRefs)
+          && seed.linkedGoalIssueRefs.includes(record.relatedIssue))
         || (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE
           && GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1.some((owner) => owner.issue === record.relatedIssue)))
       && record.closedLoopLearning?.telemetry?.retryReady !== true) : null;
     if (gap && !gapEvidence) return [];
-    // An empty fleet heartbeat is not a repair request. Wait for a real inventory
-    // receipt or a proved fault before generating this seed's growth pressure.
+    // A heartbeat alone must not invent maintenance work: require proven fleet inventory or a scoped fault.
     if (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE && !gap && !growth.fleetObservationProofCount) return [];
     const nextRung = growth.nextGrowthRung;
     // Healthy continuous observation is not an invitation to invent repair work.

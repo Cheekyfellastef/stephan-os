@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+// Exercise the existing fleet supervisor fail-closed tests in the trusted parity CI lane.
+import './sovereignCommanderFleetGoalSupervisorV1.test.mjs';
+
 import {
   SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE,
   buildSovereignCommanderCapabilityParityLedger,

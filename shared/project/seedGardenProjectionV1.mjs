@@ -4,6 +4,7 @@ import { buildAutonomousProjectStewardshipSeedV1 } from '../runtime/autonomousPr
 import { buildConversationalIntelligenceSeedV1 } from '../runtime/conversationalIntelligenceSeedV1.mjs';
 import { buildSovereignCommanderParitySeedV1 } from '../runtime/sovereignCommanderParitySeedV1.mjs';
 import { buildWorkspaceIntegritySeedV1 } from '../runtime/workspaceIntegritySeedV1.mjs';
+import { buildSovereignMeterIndependenceSeedV1 } from '../runtime/sovereignMeterIndependenceSeedV1.mjs';
 import { buildGoalConveyorFleetCareSeedV1 } from '../runtime/goalConveyorFleetCareSeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
@@ -27,6 +28,7 @@ function buildHighLevelFlywheelSeedsV1() {
   const conversationalIntelligence = buildConversationalIntelligenceSeedV1();
   const sovereignCommanderParity = buildSovereignCommanderParitySeedV1();
   const workspaceIntegrity = buildWorkspaceIntegritySeedV1();
+  const sovereignMeterIndependence = buildSovereignMeterIndependenceSeedV1();
   const fleetCare = buildGoalConveyorFleetCareSeedV1();
   return Object.freeze([
     Object.freeze({
@@ -63,6 +65,11 @@ function buildHighLevelFlywheelSeedsV1() {
       northStar: conversationalIntelligence.northStar,
       operatingLoop: conversationalIntelligence.operatingLoop,
       growthRungs: conversationalIntelligence.growthRungs,
+      linkedImprovementWork: conversationalIntelligence.linkedImprovementWork,
+      linkedGoalIssueRefs: Object.freeze(conversationalIntelligence.linkedImprovementWork
+        .filter((work) => work.kind === 'issues' && ['#2434', '#2966'].includes(work.ref))
+        .map((work) => work.ref)),
+      continuousExperienceChecks: conversationalIntelligence.continuousExperienceChecks,
       source: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
     }),
     Object.freeze({
@@ -74,6 +81,16 @@ function buildHighLevelFlywheelSeedsV1() {
       operatingLoop: sovereignCommanderParity.operatingLoop,
       growthRungs: sovereignCommanderParity.growthRungs,
       source: 'shared/runtime/sovereignCommanderParitySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: sovereignMeterIndependence.missionId,
+      title: sovereignMeterIndependence.title,
+      seedKind: sovereignMeterIndependence.seedKind,
+      issue: sovereignMeterIndependence.issueRef,
+      northStar: sovereignMeterIndependence.northStar,
+      operatingLoop: sovereignMeterIndependence.operatingLoop,
+      growthRungs: sovereignMeterIndependence.growthRungs,
+      source: 'shared/runtime/sovereignMeterIndependenceSeedV1.mjs',
     }),
     Object.freeze({
       seedId: workspaceIntegrity.missionId,

@@ -34,6 +34,7 @@ function compactTitle(seed = {}) {
   if (seed.missionId === 'stephanos-runs-the-project') return 'Project Foreman';
   if (seed.missionId === 'stephanos-flywheel-conversational-intelligence') return 'Conversation Intelligence';
   if (seed.missionId === 'sovereign-commander-safe-parity') return 'Sovereign Commander Parity';
+  if (seed.missionId === 'stephanos-sovereign-meter-independence') return 'Meter Independence';
   if (seed.missionId === 'goal-conveyor-fleet-care') return 'Conveyor & Fleet Care';
   return seed.title || seed.missionId || 'Outcome seed';
 }
@@ -99,6 +100,26 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 <span>NORTH STAR</span>
                 <p>{seed.northStar || 'North star unavailable.'}</p>
               </div>
+
+              {Array.isArray(seed.linkedImprovementWork) && seed.linkedImprovementWork.length > 0 ? (
+                <div className="seed-canopy__linked-work" aria-label="Canonical linked improvement work">
+                  <span>CONNECTED IMPROVEMENTS · NOT COMPLETION PROOF</span>
+                  <ul>
+                    {seed.linkedImprovementWork.map((work) => (
+                      <li key={work.ref}>
+                        <a
+                          href={`https://github.com/Cheekyfellastef/stephan-os/${work.kind}/${work.ref.replace('#', '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={work.outcome}
+                        >
+                          <b>{work.ref}</b> {work.title}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               {Array.isArray(seed.canonicalOwnerGoals) && seed.canonicalOwnerGoals.length ? (
                 <details className="seed-canopy__owners">
