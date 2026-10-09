@@ -140,3 +140,10 @@ test('dedicated Agents landing surface opens the canonical workspace while norma
   assert.match(tile, /agents-tile--workspace-surface/);
   assert.match(styles, /\.agents-tile--workspace-surface > \.panel-header-row[\s\S]*display:\s*none/);
 });
+
+
+test('fleet care marker stays asserted in the existing trusted UI test suite', async () => {
+  const source = await readFile(flywheelSeedCanopyUrl, 'utf8');
+  assert.match(source, /goal-conveyor-fleet-care/);
+  assert.match(source, /Conveyor & Fleet Care/);
+});

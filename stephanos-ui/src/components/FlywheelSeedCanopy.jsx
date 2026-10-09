@@ -35,6 +35,7 @@ function compactTitle(seed = {}) {
   if (seed.missionId === 'stephanos-flywheel-conversational-intelligence') return 'Conversation Intelligence';
   if (seed.missionId === 'sovereign-commander-safe-parity') return 'Sovereign Commander Parity';
   if (seed.missionId === 'stephanos-sovereign-meter-independence') return 'Meter Independence';
+  if (seed.missionId === 'goal-conveyor-fleet-care') return 'Conveyor & Fleet Care';
   return seed.title || seed.missionId || 'Outcome seed';
 }
 
@@ -120,6 +121,19 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 </div>
               ) : null}
 
+              {Array.isArray(seed.canonicalOwnerGoals) && seed.canonicalOwnerGoals.length ? (
+                <details className="seed-canopy__owners">
+                  <summary>Existing repair and build owners ({seed.canonicalOwnerGoals.length})</summary>
+                  <nav aria-label="Canonical owner goals">
+                    {seed.canonicalOwnerGoals.map((owner) => (
+                      <a key={owner.issue} href={`https://github.com/Cheekyfellastef/stephan-os/issues/${owner.issue.replace('#', '')}`}
+                        target="_blank" rel="noopener noreferrer" title={owner.role}>{owner.issue}</a>
+                    ))}
+                  </nav>
+                  <small>Ownership links are not completion proof.</small>
+                </details>
+              ) : null}
+
               <div className="seed-canopy__rungs" aria-label={compactTitle(seed) + " growth rungs"}>
                 {rungs.map((rung, index) => (
                   <span
@@ -146,6 +160,13 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 <div><span>Growth pressure</span><strong className={truthClass(pressure)}>{pressure}</strong></div>
                 <div><span>Open roots</span><strong>{live ? gapCount(seed) : 'UNKNOWN'}</strong></div>
                 <div><span>Proof</span><strong>{live ? proofCount(seed) : 'UNKNOWN'}</strong></div>
+                {seed.conveyorTelemetry ? (
+                  <>
+                    <div><span>Builder pickups</span><strong>{seed.conveyorTelemetry.sourceTruth === 'CURRENT' ? seed.conveyorTelemetry.builderPickups : 'UNKNOWN'}</strong></div>
+                    <div><span>Actively building</span><strong>{seed.conveyorTelemetry.sourceTruth === 'CURRENT' ? seed.conveyorTelemetry.activelyBuilding : 'UNKNOWN'}</strong></div>
+                    <div><span>Blocked goals</span><strong>{seed.conveyorTelemetry.sourceTruth === 'CURRENT' ? seed.conveyorTelemetry.blocked : 'UNKNOWN'}</strong></div>
+                  </>
+                ) : null}
                 {seed.autonomyExcludedProofCount !== undefined ? (
                   <div><span>Autonomy-excluded</span><strong>{live ? seed.autonomyExcludedProofCount : 'UNKNOWN'}</strong></div>
                 ) : null}

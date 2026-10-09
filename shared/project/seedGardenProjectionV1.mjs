@@ -5,6 +5,7 @@ import { buildConversationalIntelligenceSeedV1 } from '../runtime/conversational
 import { buildSovereignCommanderParitySeedV1 } from '../runtime/sovereignCommanderParitySeedV1.mjs';
 import { buildWorkspaceIntegritySeedV1 } from '../runtime/workspaceIntegritySeedV1.mjs';
 import { buildSovereignMeterIndependenceSeedV1 } from '../runtime/sovereignMeterIndependenceSeedV1.mjs';
+import { buildGoalConveyorFleetCareSeedV1 } from '../runtime/goalConveyorFleetCareSeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
 
@@ -28,6 +29,7 @@ function buildHighLevelFlywheelSeedsV1() {
   const sovereignCommanderParity = buildSovereignCommanderParitySeedV1();
   const workspaceIntegrity = buildWorkspaceIntegritySeedV1();
   const sovereignMeterIndependence = buildSovereignMeterIndependenceSeedV1();
+  const fleetCare = buildGoalConveyorFleetCareSeedV1();
   return Object.freeze([
     Object.freeze({
       seedId: starfield.missionId,
@@ -99,6 +101,17 @@ function buildHighLevelFlywheelSeedsV1() {
       operatingLoop: workspaceIntegrity.operatingLoop,
       growthRungs: workspaceIntegrity.growthRungs,
       source: 'shared/runtime/workspaceIntegritySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: fleetCare.missionId,
+      title: fleetCare.title,
+      seedKind: fleetCare.seedKind,
+      issue: fleetCare.issueRef,
+      northStar: fleetCare.northStar,
+      operatingLoop: fleetCare.operatingLoop,
+      growthRungs: fleetCare.growthRungs,
+      canonicalOwnerGoals: fleetCare.canonicalOwnerGoals,
+      source: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
     }),
   ]);
 }

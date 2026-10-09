@@ -315,7 +315,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 7);
+  assert.equal(unavailable.outcomeSeeds.length, 8);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -479,7 +479,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 7);
+  assert.equal(live.outcomeSeeds.length, 8);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
@@ -880,7 +880,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 7);
+  assert.equal(live.outcomeSeeds.length, 8);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
@@ -1454,5 +1454,96 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.orphanAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.continuousAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
-  assert.equal(live.outcomeSeeds.length, 7);
+  assert.equal(live.outcomeSeeds.length, 8);
+});
+
+test('Goal Conveyor & Fleet Care requires live heartbeat and typed proof, and recognises existing owner incidents', () => {
+  const now = '2026-10-09T14:55:00.000Z';
+  const nowMs = Date.parse(now);
+  const missing = deriveFlywheelWorkspaceView({}, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(missing.declared, true);
+  assert.equal(missing.planted, false);
+  assert.equal(missing.sourceTruth, 'UNKNOWN');
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel', proofRefs: [],
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  const heartbeatOnly = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(heartbeatOnly.planted, true);
+  assert.equal(heartbeatOnly.sourceTruth, 'CURRENT');
+  assert.equal(heartbeatOnly.currentRung, 'SEED_PLANTED');
+  assert.equal(heartbeatOnly.healthState, 'AWAITING_FLEET_PROOF');
+  assert.equal(heartbeatOnly.proofCount, 0);
+
+  payload.records.eventRecords.push({
+    eventId: 'inventory-1', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, eventKind: 'fleet-inventory-verified',
+    status: 'CURRENT', proofRefs: ['proof/fleet-inventory'],
+  }, {
+    eventId: 'pickup-missing', relatedIssue: '#1622', timestampUtc: now,
+    eventKind: 'worker-pickup-failed', capabilityId: 'worker-pickup-missing',
+    status: 'BLOCKED', proofRefs: ['proof/pickup-failure'], summary: 'SELECT without physical worker pickup',
+  });
+  const observed = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(observed.currentRung, 'FLEET_OBSERVED');
+  assert.equal(observed.healthState, 'FLEET_REPAIR_NEEDED');
+  assert.equal(observed.currentGaps.length, 1);
+  assert.equal(observed.currentGaps[0].owner, '#1622');
+  assert.equal(observed.currentGaps[0].capabilityId, 'worker-pickup-missing');
+  assert.equal(observed.nextGrowthRung, 'HEALTH_VERIFIED');
+  assert.equal(observed.proofCount, 1);
+
+  payload.records.eventRecords.push({
+    eventId: 'pickup-recovered', relatedIssue: '#1622', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: '2026-10-09T14:55:01.000Z', eventKind: 'goal-build-recovered',
+    resolvedGapId: 'worker-pickup-missing', status: 'CURRENT', proofRefs: ['proof/recovery'],
+  });
+  const recovered = deriveFlywheelWorkspaceView(payload, { nowMs: nowMs + 1000 }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(recovered.currentGaps.length, 0);
+  payload.records.statusRecords.at(-1).timestampUtc = '2026-10-07T14:55:00.000Z';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.sourceTruth, 'STALE');
+  assert.equal(stale.pressureState, 'UNKNOWN');
+  assert.equal(stale.nextGrowthRung, '');
+});
+
+
+test('fleet care shows real canonical goal conveyor counts without treating stale backend data as healthy', () => {
+  const now = '2026-10-09T15:01:00.000Z';
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel',
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  payload.projection = {
+    sourceFreshness: { truth: 'CURRENT' },
+    goalBuildConveyor: {
+      schemaVersion: 'stephanos.goal-build-conveyor.v1',
+      visibleGoalCount: 51, provenToBuilderCount: 9,
+      buildingCount: 3, completedCount: 6, blockedCount: 2,
+    },
+  };
+  const current = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(current.conveyorTelemetry.visibleGoals, 51);
+  assert.equal(current.conveyorTelemetry.builderPickups, 9);
+  assert.equal(current.conveyorTelemetry.activelyBuilding, 3);
+  assert.equal(current.conveyorTelemetry.blocked, 2);
+  assert.equal(current.healthState, 'CONVEYOR_BLOCKED_GOALS');
+  assert.equal(current.currentRung, 'SEED_PLANTED');
+  assert.equal(current.currentGaps.length, 0);
+  payload.projection.sourceFreshness.truth = 'STALE';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.conveyorTelemetry.sourceTruth, 'UNKNOWN');
+  assert.equal(stale.conveyorTelemetry.builderPickups, null);
 });

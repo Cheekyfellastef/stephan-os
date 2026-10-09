@@ -1,4 +1,5 @@
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../project/seedGardenProjectionV1.mjs';
+import { GOAL_CONVEYOR_FLEET_CARE_ISSUE, GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1 } from './goalConveyorFleetCareSeedV1.mjs';
 
 export const SEED_GROWTH_WORK_SCHEMA_V1 = 'stephanos.seed-growth-work.v1';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -82,9 +83,13 @@ export function planSeedGrowthWorkV1(view = {}, feed = {}, nowMs = Date.now()) {
       && (record.missionId === seed.seedId
         || record.relatedIssue === seed.issue
         || (Array.isArray(seed.linkedGoalIssueRefs)
-          && seed.linkedGoalIssueRefs.includes(record.relatedIssue)))
+          && seed.linkedGoalIssueRefs.includes(record.relatedIssue))
+        || (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE
+          && GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1.some((owner) => owner.issue === record.relatedIssue)))
       && record.closedLoopLearning?.telemetry?.retryReady !== true) : null;
     if (gap && !gapEvidence) return [];
+    // A heartbeat alone must not invent maintenance work: require proven fleet inventory or a scoped fault.
+    if (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE && !gap && !growth.fleetObservationProofCount) return [];
     const nextRung = growth.nextGrowthRung;
     // Healthy continuous observation is not an invitation to invent repair work.
     if (!gap && !nextRung && seed.issue === '#2670') return [];
