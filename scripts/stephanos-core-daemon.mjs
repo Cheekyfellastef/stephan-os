@@ -934,6 +934,59 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
       lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_PUBLISHED';
       break; // At most one new gap event per heartbeat.
     }
+
+    // When there is no measured GAP and reconciliation is fresh, UNKNOWN
+    // handoffs still need evidence-gathering pressure. Route one immutable,
+    // issue-owned proof request through the existing Flywheel intake, not a
+    // capability-failure report or a replacement scheduler. Missing evidence
+    // must never be promoted to FAILED or CLOSED.
+    const reconciled = loopClosureAudit.edges.some(
+      (edge) => edge.id === 'WATCH_TO_RECONCILIATION' && edge.state === 'CLOSED',
+    );
+    if (!specificGapPublished && observedGaps.length === 0 && reconciled
+        && state.gamingActive !== true) {
+      for (const edge of loopClosureAudit.edges.filter((item) => item.state === 'UNKNOWN')) {
+        const edgeKey = edge.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const eventId = 'core-loop-proof-needed-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;
+        const segments = ['events', eventId + '.json'];
+        if (await readJsonIfPresent(resolve(workspaceRoot, ...segments))) continue;
+        const canonicalOwner = edge.ownerIssue === '#2670' ? '#2972' : edge.ownerIssue;
+        const capabilityId = 'core-loop-evidence-' + edgeKey;
+        const event = {
+          ...createSharedWorkspaceEventRecord({
+            eventId,
+            participantId: 'stephanos-core',
+            timestampUtc,
+            eventKind: 'goal-conveyor-proof-needed',
+            summary: 'Core handoff proof unavailable: ' + edge.reason + '. Existing owner: ' + canonicalOwner,
+            learningCandidate: {
+              capabilityId,
+              requiresExistingGoalSearch: true,
+              repairReplayRequired: false,
+              componentAndOwnerRefs: [canonicalOwner],
+              existingGoalCandidates: [canonicalOwner],
+              proofRequired: true,
+              observedState: 'UNKNOWN',
+            },
+          }),
+          missionId: 'goal-conveyor-fleet-care',
+          relatedIssue: canonicalOwner,
+          loopClosureEdgeId: edge.id,
+          evidenceTruth: 'UNKNOWN',
+          requestedProofReason: edge.reason,
+          proofRefs: ['proof/stephanos-core-daemon-current.json'],
+          canonicalOwner,
+          createsReplacementScheduler: false,
+          newGoalScopeAuthorized: false,
+          sourceMutationAuthority: false,
+          mergeAuthority: false,
+        };
+        const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
+        if (write.ok !== true) throw new Error('CORE_LOOP_EVIDENCE_REQUEST_WRITE_FAILED');
+        lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_PROOF_REQUEST_PUBLISHED';
+        break; // At most one proof request per heartbeat.
+      }
+    }
     } catch (error) {
       lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:' + String(error?.message || error).slice(0, 90);
       // The next heartbeat surfaces the blocker without inhibiting repairs
