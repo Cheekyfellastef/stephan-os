@@ -25,6 +25,9 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   assert.match(garden.highLevelSeeds[2].northStar, /without routine operator or ChatGPT pokes/);
   assert.equal(garden.highLevelSeeds[3].title, 'Stephanos + Flywheel Conversational Intelligence');
   assert.equal(garden.highLevelSeeds[3].issue, '#2798');
+  assert.deepEqual(garden.highLevelSeeds[3].linkedOutcomeGoals.map((goal) => goal.issueRef), ['#2434', '#1722', '#2966']);
+  assert.ok(garden.highLevelSeeds[3].experienceProofDimensions.includes('crash-recovery-after-reload'));
+  assert.ok(garden.highLevelSeeds[3].experienceProofDimensions.includes('frontend-asset-version-parity'));
   assert.match(garden.highLevelSeeds[3].northStar, /coherent, context-rich, grounded, insightful/);
   assert.equal(garden.highLevelSeeds[4].title, 'Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely');
   assert.equal(garden.highLevelSeeds[4].issue, '#2519');
