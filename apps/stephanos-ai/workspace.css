@@ -62,4 +62,3 @@ body.has-messages .welcome{display:none}
 .bridge-status[data-state="unavailable"]{color:#ffac96;border-color:rgba(255,140,110,.35)}
 .truth-pill{color:var(--muted);border-color:var(--line)}
 @media(max-width:760px){.header-status{justify-content:flex-start}}
-
