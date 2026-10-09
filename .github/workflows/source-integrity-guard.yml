@@ -1,0 +1,33 @@
+name: Source Integrity Guard
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-integrity-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prove changed JavaScript source integrity
+        run: node scripts/changed-source-integrity-guard.mjs
+
+      - name: Guard regression
+        run: node --test scripts/changed-source-integrity-guard.test.mjs
