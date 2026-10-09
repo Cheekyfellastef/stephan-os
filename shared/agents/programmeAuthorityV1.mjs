@@ -452,6 +452,9 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
+    if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
+      blockers.push('elastic-lease-expired-or-not-active');
+    }
     mutationLeaseIdentity = {
       leaseId: text(lease.leaseId),
       ownerId: text(lease.ownerId),
