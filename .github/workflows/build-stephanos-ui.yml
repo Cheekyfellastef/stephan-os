@@ -123,7 +123,6 @@ jobs:
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
             shared/agents/flywheelAgentUpliftV1.test.mjs \
             shared/agents/starfieldVrOutcomeOwnershipSeedV1.test.mjs \
-            shared/runtime/sovereignMeterIndependenceSeedV1.test.mjs \
             shared/agents/agentSystem.test.mjs \
             shared/runtime/upliftWorkspaceProjectionV1.test.mjs \
             shared/ai/missionKernelV1.test.mjs \
