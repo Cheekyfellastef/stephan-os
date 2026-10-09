@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND,
   OPENCLAW_GATEWAY_VERDICTS,
+  PLUGIN_VERDICTS,
+  WORKER_VERDICTS,
   runBattleBridgePreflightVerifier,
   runVerificationHarness,
   runVerifier,
@@ -63,6 +65,21 @@ test('OpenClaw gateway verifier rejects readonly adapter even with HTTP 200', ()
   assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.READONLY_ADAPTER_ONLY);
 });
 
+test('OpenClaw gateway verifier rejects non-18789 executable-looking endpoint', () => {
+  const result = runVerifier('OpenClawGatewayVerifier', {
+    endpoint: 'http://127.0.0.1:18790/health',
+    httpStatus: 200,
+    endpointIdentity: 'openclaw-executable-gateway',
+    canExecute: true,
+    command: 'node.exe npm/node_modules/openclaw/dist/index.js gateway --port 18790',
+    safeRestartTarget: 'OpenClaw Gateway',
+    safeRestartTargetVerified: true,
+  });
+
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.WRONG_ENDPOINT);
+});
+
 test('OpenClaw gateway verifier accepts executable gateway fixture', () => {
   const result = runVerifier('OpenClawGatewayVerifier', {
     endpoint: 'http://127.0.0.1:18789/health',
@@ -79,6 +96,22 @@ test('OpenClaw gateway verifier accepts executable gateway fixture', () => {
   assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.VERIFIED);
 });
 
+test('worker verifier distinguishes not configured stopped and running', () => {
+  assert.equal(runVerifier('WorkerVerifier', {}).finalVerdict, WORKER_VERDICTS.NOT_CONFIGURED);
+  assert.equal(runVerifier('WorkerVerifier', { workerConfigured: true, workerRunning: false }).finalVerdict, WORKER_VERDICTS.CONFIGURED_STOPPED);
+  const running = runVerifier('WorkerVerifier', { workerConfigured: true, workerRunning: true });
+  assert.equal(running.finalVerdict, WORKER_VERDICTS.RUNNING);
+  assert.equal(running.status, 'PASS');
+});
+
+test('plugin verifier distinguishes missing installed and loaded runtime', () => {
+  assert.equal(runVerifier('PluginVerifier', {}).finalVerdict, PLUGIN_VERDICTS.RUNTIME_MISSING);
+  assert.equal(runVerifier('PluginVerifier', { pluginInstalled: true, pluginRuntimeLoaded: false }).finalVerdict, PLUGIN_VERDICTS.INSTALLED_NOT_LOADED);
+  const loaded = runVerifier('PluginVerifier', { pluginInstalled: true, pluginRuntimeLoaded: true });
+  assert.equal(loaded.finalVerdict, PLUGIN_VERDICTS.RUNTIME_LOADED);
+  assert.equal(loaded.status, 'PASS');
+});
+
 test('Battle Bridge preflight blocks with deterministic reasons', () => {
   const preflight = runBattleBridgePreflightVerifier({
     git: { repoExists: true, branch: 'main', head: '4f0bbb24', originMain: '4f0bbb24', repoClean: true, ahead: 0, behind: 0, expectedHead: true },
@@ -86,7 +119,7 @@ test('Battle Bridge preflight blocks with deterministic reasons', () => {
     openClawGateway: { endpoint: 'http://127.0.0.1:8790/health', httpStatus: 200, endpointIdentity: 'openclaw-readonly-adapter-stub', mode: 'readonly_status_only', canExecute: false, safeRestartTarget: 'none' },
     worker: { workerRunning: true, workerMode: 'read-only', taskState: 'ready' },
     files: { filesPresent: true, sourcePresent: true, targetPluginSourcePresent: true },
-    plugin: { pluginRuntimePresent: true, targetPluginSourcePresent: true },
+    plugin: { pluginInstalled: true, pluginRuntimeLoaded: true, pluginRuntimePresent: true, targetPluginSourcePresent: true },
     task: { taskReady: true, stephanosBackendTask: 'ready' },
   }, { timestampUtc: '2026-07-01T00:00:00Z' });
 
@@ -103,7 +136,7 @@ test('Battle Bridge preflight passes only when all required evidence passes', ()
     openClawGateway: { endpoint: 'http://127.0.0.1:18789/health', httpStatus: 200, endpointIdentity: 'openclaw-executable-gateway', canExecute: true, command: 'node.exe npm/node_modules/openclaw/dist/index.js gateway --port 18789', safeRestartTarget: 'OpenClaw Gateway', safeRestartTargetVerified: true },
     worker: { workerRunning: true, workerMode: 'read-only', taskState: 'ready' },
     files: { filesPresent: true, sourcePresent: true, targetPluginSourcePresent: true },
-    plugin: { pluginRuntimePresent: true, targetPluginSourcePresent: true },
+    plugin: { pluginInstalled: true, pluginRuntimeLoaded: true, pluginRuntimePresent: true, targetPluginSourcePresent: true },
     task: { taskReady: true, stephanosBackendTask: 'ready' },
   });
 
