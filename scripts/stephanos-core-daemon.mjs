@@ -23,6 +23,7 @@ import {
   projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
+  projectPersistentFlywheelStageWatchV1,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
   summarizePersistentGapClosure,
@@ -215,6 +216,13 @@ async function persistentFlywheelEventFingerprint() {
 }
 
 let flywheelCycleRunning = false;
+let flywheelCurrentStage = 'IDLE';
+let flywheelStageStartedAtUtc = '';
+
+function markFlywheelStage(stage) {
+  flywheelCurrentStage = stage;
+  flywheelStageStartedAtUtc = new Date().toISOString();
+}
 let lastFlywheelCycleAtMs = null;
 let lastFlywheelCycleStartedAtUtc = '';
 let lastFlywheelCycleFinishedAtUtc = '';
@@ -601,7 +609,20 @@ async function reconcileOnionContinuation(flywheelResult = {}) {
 }
 
 function persistentFlywheelStatus() {
+  const stageWatch = projectPersistentFlywheelStageWatchV1({
+    cycleRunning: flywheelCycleRunning,
+    stage: flywheelCurrentStage,
+    stageStartedAtUtc: flywheelStageStartedAtUtc,
+  });
   return Object.freeze({
+    flywheelCurrentStage,
+    flywheelStageStartedAtUtc,
+    flywheelStageWatchState: stageWatch.state,
+    flywheelStageWatchBlocker: stageWatch.blocker,
+    flywheelStageElapsedMs: stageWatch.elapsedMs,
+    flywheelStageDeadlineMs: stageWatch.deadlineMs,
+    flywheelStageWatchOwner: stageWatch.ownerIssue,
+    flywheelStageWatchSingleFlightRetained: stageWatch.singleFlightRetained,
     persistentFlywheelEnabled: true,
     flywheelEventDriven: true,
     flywheelSingleFlight: true,
@@ -671,6 +692,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
   lastFlywheelCycleStartedAtUtc = new Date().toISOString();
   lastFlywheelError = '';
   lastRefillError = '';
+  markFlywheelStage('REFILL');
 
   void (async () => {
     try {
@@ -705,11 +727,13 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
       // A thrown refill and a truthfully stalled refill are both repair
       // signals. Consume the signal through the existing bounded Sovereign
       // goal-builder recovery path, then verify with another canonical refill.
+      markFlywheelStage('SELF_HEAL');
       await maybeSelfHealOctopus(sourceHead);
 
       // Reconcile after the material build/refill attempt so Flywheel
       // degradation cannot suppress Octopus construction progress.
       try {
+        markFlywheelStage('RECONCILE');
         const result = await runDurableFlywheelStartupCycle({}, {
           sourceRevision: sourceHead,
           repoRoot,
@@ -729,7 +753,9 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         // canonical programme reconciliation. This adds no scheduler, timer or
         // mutation authority; it only makes the current handoff/refill truth
         // continuously visible to Shared Workspace and the outbound beacon.
+        markFlywheelStage('PUBLISH_LANE_TRUTH');
         await publishControllerLaneTruth();
+        markFlywheelStage('RECONCILE_ONION');
         await reconcileOnionContinuation(result);
       } catch (error) {
         lastFlywheelError = String(error?.message || error).slice(0, 200);
@@ -742,12 +768,15 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           sourceRevision: sourceHead,
           safeSummaryOnly: true,
         });
+        markFlywheelStage('RECONCILE_ONION');
         await reconcileOnionContinuation({});
       }
     } finally {
       lastFlywheelCycleAtMs = Date.now();
       lastFlywheelCycleFinishedAtUtc = new Date().toISOString();
       flywheelCycleRunning = false;
+      flywheelCurrentStage = 'IDLE';
+      flywheelStageStartedAtUtc = '';
     }
   })();
 
