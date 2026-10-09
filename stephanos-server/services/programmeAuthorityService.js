@@ -12,6 +12,7 @@ import {
   TERMINAL_LANE_FINALIZATION_SCHEMA,
   buildAuthoritativeProgrammeProjection,
   buildCanonicalImplementationLaneProjection,
+  projectElasticMissionPhaseBindingV1,
   buildProgrammeStallMonitorDefinition,
   buildSchedulerGoalsFromProgrammeSources,
   buildTerminalLaneFinalizationPlan,
@@ -2365,6 +2366,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   const lease = releasedLeaseIsSafelyInactive
     ? null
     : (leaseRead.present ? leaseRead.record : null);
+  const elasticMissionPhaseBinding = lease
+    ? projectElasticMissionPhaseBindingV1(lease, missionRecords)
+    : null;
   const githubIdentity = lease ?? (selector.complete ? selector : null);
   if (githubIdentity && !githubAuth) githubAuth = await resolveProgrammeGithubAuth(options, deps);
   const github = githubIdentity
@@ -2394,6 +2398,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       repository: selector.repository || lease?.repository,
       github,
       mutationLease: lease,
+      elasticMissionPhaseBinding,
       executionReceipt,
       proofRefs: proof.proofRefs,
       nowUtc,
@@ -2467,7 +2472,17 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ...(!schedulerGoals.valid ? schedulerGoals.blockers.map((blocker) => `source:${blocker}`) : []),
     ...(selector.requested && !selector.complete ? ['source:lane-selector-incomplete-or-invalid'] : []),
     ...(githubIdentity && github?.status !== 'fetched' ? ['source:github-pr-evidence-unavailable'] : []),
-    ...(lease && executionRead?.ok === false ? [`source:${executionRead.reason}`] : []),
+    ...(
+      lease && executionRead?.ok === false
+      && !(
+        elasticMissionPhaseBinding?.valid === true
+        && elasticMissionPhaseBinding.reviewOnly === true
+        && leaseRead.ok === true
+        && lane?.valid === true
+        && executionRead.reason === 'NO_EXECUTION_RECEIPTS'
+      )
+        ? [`source:${executionRead.reason}`] : []
+    ),
   ];
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
@@ -2522,6 +2537,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
         : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
       executionReceipt: executionRead?.reason ?? 'not-required',
+      elasticMissionPhase: elasticMissionPhaseBinding?.valid === true
+        ? elasticMissionPhaseBinding.phase
+        : (elasticMissionPhaseBinding?.elastic === true ? 'UNPROVEN' : 'not-elastic'),
     }),
   });
 }

@@ -344,6 +344,48 @@ function mergeEvidence(github = {}, expected = {}) {
   });
 }
 
+// Verify a review-only elastic mission from authoritative persisted records,
+// not from caller intent, PR OPEN state, or possession of a source lease.
+export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords = []) {
+  const id = text(lease?.leaseId);
+  const match = /^(critical-([1-9]\d*)-elastic-goal(?:[-_.][a-z0-9._-]+)?)-r([1-9]\d*)-lease$/i.exec(id);
+  if (!match) return Object.freeze({
+    elastic: /^critical-[1-9]\d*-elastic-goal/i.test(id),
+    valid: false, reviewOnly: false, materialImplementation: false,
+    phase: 'UNKNOWN', blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+  });
+  const expectedId = match[1];
+  const issue = Number(match[2]);
+  const revision = Number(match[3]);
+  const sameIdentity = (mission) => mission && typeof mission === 'object'
+    && text(mission.missionId).toLowerCase() === expectedId.toLowerCase()
+    && Number.isSafeInteger(mission.revision) && mission.revision === revision
+    && issue === number(lease?.issueNumber)
+    && number(mission?.pullRequest?.number) === number(lease?.prNumber)
+    && text(mission.repository).toLowerCase() === text(lease?.repository).toLowerCase()
+    && text(mission?.git?.branch) === text(lease?.branch)
+    && sha(mission?.pullRequest?.headSha) === sha(lease?.headSha)
+    && Boolean(sha(lease?.headSha));
+  const candidates = list(missionRecords).filter((mission) =>
+    text(mission?.missionId).toLowerCase() === expectedId.toLowerCase(),
+  );
+  const matched = candidates.filter(sameIdentity);
+  const valid = candidates.length === 1 && matched.length === 1;
+  const phase = valid ? text(matched[0].currentPhase).toUpperCase() : 'UNKNOWN';
+  const reviewOnly = valid && phase === 'CHECK_PULL_REQUEST';
+  const materialImplementation = valid && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(phase);
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-mission-phase-binding.v1',
+    elastic: true, valid, reviewOnly, materialImplementation, phase,
+    issueNumber: valid ? issue : null,
+    missionId: valid ? expectedId : '',
+    revision: valid ? revision : null,
+    blocker: valid ? '' : 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+    releaseLeaseAllowed: false, replaceWriterAllowed: false,
+    mutationAuthority: false, mergeAuthority: false,
+  });
+}
+
 export function buildCanonicalImplementationLaneProjection(input = {}) {
   const blockers = [];
   const laneId = text(input.laneId ?? input.id);
@@ -396,6 +438,12 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   }
   const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
+  const elasticPhaseBound = /^critical-[1-9]\d*-elastic-goal/i.test(text(lease?.leaseId));
+  const phaseBinding = input.elasticMissionPhaseBinding || null;
+  if (elasticPhaseBound && phaseBinding?.valid !== true) {
+    blockers.push('elastic-mission-phase-binding-unproven');
+  }
+
 
   let mutationLeaseIdentity = null;
   if (lease) {
@@ -404,6 +452,9 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
+    if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
+      blockers.push('elastic-lease-expired-or-not-active');
+    }
     mutationLeaseIdentity = {
       leaseId: text(lease.leaseId),
       ownerId: text(lease.ownerId),
@@ -438,7 +489,11 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     ...list(input.proofReferences),
     ...list(input.proofRefs),
   ].map((value) => text(value)).filter(Boolean));
-  const active = blockers.length === 0 && github.active;
+  const materialPhasePermitted = !elasticPhaseBound
+    || phaseBinding?.materialImplementation === true;
+  const active = blockers.length === 0 && github.active && materialPhasePermitted;
+  const reviewPending = blockers.length === 0 && github.active
+    && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
   if (!active && !terminal && github.prState === 'CLOSED' && !github.affirmativelyMerged) {
     blockers.push('github-pr-closed-without-affirmative-merge');
@@ -458,8 +513,10 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     prState: github.prState,
     merged: github.affirmativelyMerged,
     mergeEvidence: github,
-    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : 'HOLD',
+    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
+    reviewPending,
+    elasticMissionPhaseBinding: elasticPhaseBound ? phaseBinding : null,
     terminal,
     executionReceiptRefs,
     proofReferences,

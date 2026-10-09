@@ -411,6 +411,70 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
+
+test('production Programme Authority keeps r6 CHECK_PULL_REQUEST review leased without claiming source building or requiring source receipt', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const reviewBranch = 'openclaw/elastic-goal-2956';
+    const leaseId = 'critical-2956-elastic-goal-r6-lease';
+    const sourceLease = leaseInput({
+      leaseId, laneId: 'goal-2956-pr-2960',
+      issueNumber: 2956, prNumber: 2960,
+      branch: reviewBranch, headSha: HEAD,
+      ownerId: 'review-worker-2956',
+    });
+    const reviewPr = {
+      ...githubOpen(), prNumber: 2960,
+      headBranch: reviewBranch, headSha: HEAD,
+    };
+    const claimed = await claimSourceMutationLease(
+      sourceLease, githubAuthorityOptions(root, repoRoot, reviewPr),
+    );
+    assert.equal(claimed.ok, true);
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    const dependencies = {
+      resolveGithubTokenConfig: async () => ({ configured: true, token: 'test-only', authority: 'test-only' }),
+      fetchGithubPrEvidence: async () => reviewPr,
+      readRepositoryHead: async () => ({
+        ok: true, branch: 'main', headSha: HEAD,
+        reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+      }),
+      listMissionRecords: async () => [{
+        missionId: 'critical-2956-elastic-goal',
+        revision: 6, currentPhase: 'CHECK_PULL_REQUEST',
+        repository: REPOSITORY,
+        git: { branch: reviewBranch },
+        pullRequest: { number: 2960, headSha: HEAD },
+      }],
+    };
+    const result = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true, dependencies,
+    });
+    assert.equal(result.lane.valid, true);
+    assert.equal(result.lane.active, false);
+    assert.equal(result.lane.status, 'REVIEW_PENDING');
+    assert.equal(result.lane.mutationLeaseIdentity.leaseId, leaseId);
+    assert.equal(result.sourceReads.elasticMissionPhase, 'CHECK_PULL_REQUEST');
+    assert.equal(result.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(!result.blockers.includes('source:NO_EXECUTION_RECEIPTS'));
+    assert.ok(!result.blockers.includes('active-lane-execution-receipt-missing'));
+    assert.ok(!result.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+    const mismatched = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true,
+      dependencies: {
+        ...dependencies,
+        listMissionRecords: async () => [{ ...await dependencies.listMissionRecords().then(rows => rows[0]), revision: 5 }],
+      },
+    });
+    assert.equal(mismatched.lane.valid, false);
+    assert.equal(mismatched.lane.status, 'HOLD');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.lane.active, false);
+  });
+});
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
