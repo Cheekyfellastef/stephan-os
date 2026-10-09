@@ -8,6 +8,7 @@ import {
   projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
+  auditCoreLoopClosureV1,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
   summarizePersistentFlywheelResult,
@@ -366,4 +367,111 @@ test('a genuinely empty proven-idle conveyor does not start redundant repair', (
   assert.equal(summary.octopusBuildVerdict, 'IDLE_PROVEN');
   assert.equal(summary.octopusNeedsRepair, false);
   assert.equal(projectOctopusSelfHealDecision(summary).shouldRepair, false);
+});
+
+
+const AUDIT_HEAD = 'a'.repeat(40);
+const AUDIT_NOW = '2026-10-09T19:00:00.000Z';
+function auditFixture() {
+  return {
+    coreState: { sourceHead: AUDIT_HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHealthy: true, gamingActive: false },
+    flywheel: {
+      flywheelFallbackIntervalMs: 60_000,
+      flywheelLastCycleFinishedAtUtc: '2026-10-09T18:59:30.000Z',
+      refillStatus: 'READY', refillMaterialActionsSucceeded: 0,
+      refillSafeEligibleWorkRemaining: 0, refillProvenSafeFreeLanes: 0,
+      octopusBuildVerdict: 'IDLE_PROVEN',
+    },
+    observedAtUtc: AUDIT_NOW,
+  };
+}
+
+test('meta-check never upgrades healthy checkers or an idle flywheel to proven goal-to-live closure', () => {
+  const audit = auditCoreLoopClosureV1(auditFixture());
+  assert.equal(audit.allLoopsProvenClosed, false);
+  assert.equal(audit.classification, 'LOOP_CLOSURE_EVIDENCE_INCOMPLETE');
+  assert.equal(audit.edges.find((edge) => edge.id === 'DEPENDENCIES_TO_WATCH').state, 'CLOSED');
+  assert.equal(audit.edges.find((edge) => edge.id === 'ADMISSION_TO_SELECT').state, 'UNKNOWN');
+  assert.equal(audit.edges.find((edge) => edge.id === 'MERGE_TO_LIVE_ACCEPTANCE').state, 'UNKNOWN');
+  assert.equal(audit.mergeAuthority, false);
+  assert.equal(audit.noNewMutationAuthority, true);
+});
+
+test('fresh controller heartbeats cannot conceal work stranded at a closed edge', () => {
+  const input = auditFixture();
+  input.flywheel.refillSafeEligibleWorkRemaining = 3;
+  input.flywheel.refillProvenSafeFreeLanes = 2;
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.classification, 'LOOP_GAPS_DETECTED');
+  assert.equal(audit.edges.find((edge) => edge.id === 'RECONCILIATION_TO_GOAL_ADMISSION').reason,
+    'RUNNABLE_WORK_WITH_FREE_CAPACITY_STRANDED');
+  assert.equal(audit.nextAction.ownerIssue, '#2002');
+});
+
+test('contradictory BUILDING claim with no material actions fails the loop meta-check', () => {
+  const input = auditFixture();
+  input.flywheel.octopusBuildVerdict = 'BUILDING';
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'RECONCILIATION_TO_GOAL_ADMISSION').state, 'GAP');
+  assert.equal(audit.allLoopsProvenClosed, false);
+});
+
+test('dispatch or an action claim alone is never evidence of physical worker pickup', () => {
+  const input = auditFixture();
+  input.worker = {
+    activeTaskId: 'task-1', activeReceiptId: 'claim:123',
+    executionPhase: 'processing:codex',
+    headSha: AUDIT_HEAD,
+    timestampUtc: AUDIT_NOW,
+  };
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'CLAIM_TO_PHYSICAL_PICKUP').state, 'UNKNOWN');
+  assert.equal(audit.allLoopsProvenClosed, false);
+});
+
+test('fresh exact-head physical worker receipt proves only pickup, never completion', () => {
+  const input = auditFixture();
+  input.worker = {
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'running-tests',
+    headSha: AUDIT_HEAD,
+    timestampUtc: AUDIT_NOW,
+  };
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'CLAIM_TO_PHYSICAL_PICKUP').state, 'CLOSED');
+  assert.equal(audit.edges.find((edge) => edge.id === 'PICKUP_TO_EXECUTION').state, 'IN_PROGRESS');
+  assert.equal(audit.edges.find((edge) => edge.id === 'EXECUTION_TO_DETERMINISTIC_PROOF').state, 'UNKNOWN');
+  assert.equal(audit.allLoopsProvenClosed, false);
+});
+
+test('stale worker, incorrect head and expired lease independently block closure', () => {
+  const input = auditFixture();
+  input.worker = {
+    activeTaskId: 'task-1', activeReceiptId: 'receipt-1',
+    executionPhase: 'running-tests', headSha: 'b'.repeat(40),
+    timestampUtc: '2026-10-09T18:40:00.000Z',
+  };
+  input.lease = { active: true, expiresAtUtc: '2026-10-09T18:59:00.000Z' };
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'CLAIM_TO_PHYSICAL_PICKUP').reason, 'WORKER_SOURCE_HEAD_MISMATCH');
+  assert.equal(audit.edges.find((edge) => edge.id === 'PICKUP_TO_EXECUTION').reason, 'ACTIVE_SOURCE_MUTATION_LEASE_EXPIRED');
+  assert.equal(audit.classification, 'LOOP_GAPS_DETECTED');
+});
+
+test('missing fresh reconciliation is a detected gap, not an all-green state', () => {
+  const input = auditFixture();
+  input.flywheel.flywheelLastCycleFinishedAtUtc = '2026-10-09T18:30:00.000Z';
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'WATCH_TO_RECONCILIATION').reason,
+    'PERSISTENT_CYCLE_MISSING_OR_STALE');
+  assert.equal(audit.classification, 'LOOP_GAPS_DETECTED');
+});
+
+test('gaming protection pauses repair checks without claiming missing proof is green', () => {
+  const input = auditFixture();
+  input.coreState.gamingActive = true;
+  const audit = auditCoreLoopClosureV1(input);
+  assert.equal(audit.edges.find((edge) => edge.id === 'WATCH_TO_RECONCILIATION').state, 'PAUSED');
+  assert.equal(audit.allLoopsProvenClosed, false);
 });
