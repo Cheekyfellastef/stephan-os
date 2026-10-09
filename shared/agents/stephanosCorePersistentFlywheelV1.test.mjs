@@ -310,3 +310,60 @@ test('Core daemon breaks the Commander repair circular dependency and publishes 
   assert.match(source, /controlPlane\.wakeState/);
   assert.match(source, /dependencySelfHealEnabled: true/);
 });
+
+test('canonical programme HOLD wakes bounded Sovereign repair instead of looking idle', () => {
+  const refill = summarizePersistentRefillSweep({
+    ok: true,
+    finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
+    conveyorResult: { programmeStatus: 'HOLD', programmeBlockers: ['lease-blocked'] },
+    controllerContinuity: 'RECONCILE_CANONICAL_PROGRAMME_HOLD',
+    materialActionsSucceeded: 0,
+    sweepAttemptCount: 1,
+    cycleDecision: { safeEligibleWorkRemaining: 0, provenSafeFreeLanes: 0 },
+    parkedLaneBlockers: [],
+    noRunnableSourceWorkProven: false,
+  });
+  assert.equal(refill.refillCanonicalProgrammeHeld, true);
+  const summary = summarizeOctopusBuildProductivity(refill);
+  assert.equal(summary.octopusBuildVerdict, 'PROGRAMME_HOLD');
+  assert.equal(summary.octopusBuildStallDetected, true);
+  assert.equal(summary.octopusNeedsRepair, true);
+  assert.equal(summary.octopusProgrammeHeld, true);
+  const wake = projectOctopusSelfHealDecision(summary, {
+    nowMs: 1_000,
+    lastAttemptAtMs: null,
+  });
+  assert.equal(wake.shouldRepair, true);
+  assert.equal(wake.reason, 'OCTOPUS_SELF_HEAL_REQUIRED');
+});
+
+test('all parked work is repair pressure even when zero runnable work was observed', () => {
+  const summary = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 0,
+    refillSafeEligibleWorkRemaining: 0,
+    refillProvenSafeFreeLanes: 0,
+    refillNoRunnableSourceWorkProven: true,
+    refillParkedLaneCount: 2,
+    refillCanonicalProgrammeHeld: false,
+  });
+  assert.equal(summary.octopusBuildVerdict, 'PARKED');
+  assert.equal(summary.octopusNeedsRepair, true);
+  assert.equal(summary.octopusBuildStallDetected, true);
+  assert.equal(summary.octopusProgrammeHeld, false);
+});
+
+test('a genuinely empty proven-idle conveyor does not start redundant repair', () => {
+  const summary = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 0,
+    refillSafeEligibleWorkRemaining: 0,
+    refillProvenSafeFreeLanes: 0,
+    refillNoRunnableSourceWorkProven: true,
+    refillParkedLaneCount: 0,
+    refillCanonicalProgrammeHeld: false,
+  });
+  assert.equal(summary.octopusBuildVerdict, 'IDLE_PROVEN');
+  assert.equal(summary.octopusNeedsRepair, false);
+  assert.equal(projectOctopusSelfHealDecision(summary).shouldRepair, false);
+});
