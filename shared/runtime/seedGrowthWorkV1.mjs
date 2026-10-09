@@ -1,4 +1,5 @@
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../project/seedGardenProjectionV1.mjs';
+import { GOAL_CONVEYOR_FLEET_CARE_ISSUE, GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1 } from './goalConveyorFleetCareSeedV1.mjs';
 
 export const SEED_GROWTH_WORK_SCHEMA_V1 = 'stephanos.seed-growth-work.v1';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -79,9 +80,14 @@ export function planSeedGrowthWorkV1(view = {}, feed = {}, nowMs = Date.now()) {
     const gapEvidence = gap ? list(feed.records?.eventRecords).find((record) =>
       currentTime(record, nowMs)
       && text(record.capabilityId || record.closedLoopLearning?.capabilityId || record.eventKind) === text(gap.capabilityId)
-      && (record.missionId === seed.seedId || record.relatedIssue === seed.issue)
+      && (record.missionId === seed.seedId || record.relatedIssue === seed.issue
+        || (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE
+          && GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1.some((owner) => owner.issue === record.relatedIssue)))
       && record.closedLoopLearning?.telemetry?.retryReady !== true) : null;
     if (gap && !gapEvidence) return [];
+    // An empty fleet heartbeat is not a repair request. Wait for a real inventory
+    // receipt or a proved fault before generating this seed's growth pressure.
+    if (seed.issue === GOAL_CONVEYOR_FLEET_CARE_ISSUE && !gap && !growth.fleetObservationProofCount) return [];
     const nextRung = growth.nextGrowthRung;
     // Healthy continuous observation is not an invitation to invent repair work.
     if (!gap && !nextRung && seed.issue === '#2670') return [];
