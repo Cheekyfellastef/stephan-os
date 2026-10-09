@@ -113,3 +113,30 @@ test('Commander queue depth counts only Desktop Commander mission actions', asyn
   assert.equal(result.queueDepth, 2);
   assert.equal(publications[0].queueDepth, 2);
 });
+
+test('watchdog Ready is accepted only with a proven healthy process and successful health probe', async () => {
+  const receipt = baseOptions({
+    probeDesktopCommander: undefined,
+    allowNonWindowsForTest: true,
+    spawnSyncFn: () => ({
+      status: 0,
+      stdout: JSON.stringify({ healthy: true, commanderProcessCount: 1, watchdogTaskState: 'Ready' }),
+    }),
+  });
+  const accepted = await refreshDesktopCommanderCapacity(receipt.options);
+  assert.equal(accepted.available, true);
+  assert.equal(receipt.proofs[0].watchdogTaskState, 'Ready');
+
+  const unproven = baseOptions({
+    probeDesktopCommander: undefined,
+    allowNonWindowsForTest: true,
+    spawnSyncFn: () => ({
+      status: 0,
+      stdout: JSON.stringify({ healthy: false, commanderProcessCount: 1, watchdogTaskState: 'Ready' }),
+    }),
+  });
+  const rejected = await refreshDesktopCommanderCapacity(unproven.options);
+  assert.equal(rejected.available, false);
+  assert.equal(rejected.reason, 'DESKTOP_COMMANDER_NOT_HEALTHY');
+  assert.equal(unproven.publications.length, 0);
+});

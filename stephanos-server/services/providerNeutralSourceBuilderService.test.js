@@ -114,6 +114,10 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(result.preservationVerdict, 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION');
   assert.equal(collected.length, 1);
   assert.equal(collected[0].success, true);
+  assert.equal(collected[0].sourceArtifactEscrow?.schemaVersion, 'stephanos.source-artifact-escrow.v1');
+  assert.equal(collected[0].offlinePublicationOutbox?.schemaVersion, 'stephanos.offline-publication-outbox.v1');
+  assert.equal(collected[0].offlinePublicationOutbox?.completeArtifactSha256,
+    collected[0].sourceArtifactEscrow?.completeArtifactSha256);
   assert.equal(
     (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
     'export const value = 2;\n',
@@ -564,6 +568,83 @@ test('local Forge builder removes a structured new file when a later required te
   assert.equal(status.stdout.trim(), '');
 });
 
+test('elastic Forge model creates a scoped new file with structured edits when source snapshots are empty', async () => {
+  const fx = await fixture(['node --check shared/agents/no-snapshot-target.mjs']);
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.allowedFiles = ['shared/agents/no-snapshot-target.mjs'];
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate an allowed new file.',
+    localModelFetchImpl: async (_url, request) => {
+      calls += 1;
+      const prompt = JSON.parse(request.body).messages[0].content;
+      assert.match(prompt, /There are no tracked source snapshots/);
+      assert.match(prompt, /old as the empty string/);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: { content: JSON.stringify({
+            edits: [{
+              path: 'shared/agents/no-snapshot-target.mjs',
+              old: '',
+              new: 'export const created = true;\n',
+            }],
+            summary: 'Create only the allowed new file.',
+          }) },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.testsPassed, true);
+  assert.equal(calls, 1);
+  assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'no-snapshot-target.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const created = true;\n',
+  );
+});
+
+test('elastic Forge rejects an out-of-scope structured new file with no source snapshots', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  fx.action.allowedFiles = ['shared/agents/approved-new.mjs'];
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate only an approved new file.',
+    localModelFetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: true, status: 200,
+        json: async () => ({ message: { content: JSON.stringify({
+          edits: [{ path: 'runtime/unsafe.json', old: '', new: '{"unsafe":true}\n' }],
+          summary: 'Unsafe file mutation must not be accepted.',
+        }) } }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION:runtime\/unsafe\.json/);
+  assert.equal(calls, 2);
+  assert.equal(existsSync(join(fx.repoRoot, 'runtime', 'unsafe.json')), false);
+  assert.equal(run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
+});
+
 test('elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
   const fx = await fixture(['node --check shared/agents/model-created.mjs']);
   fx.action.missionId = 'critical-3001-elastic-goal';
@@ -866,6 +947,75 @@ test('elastic Forge builder hydrates authoritative goal context and retries malf
   assert.match(prompts[1], /previous response did not satisfy/i);
 });
 
+test('elastic Forge resolves lowercase canonical GitHub goal identity but rejects lookalike repositories', async () => {
+  for (const [repository, admitted] of [
+    ['cheekyfellastef/stephan-os', true],
+    ['CHEEKYFELLASTEF/STEPHAN-OS', true],
+    ['cheekyfellastef/stephan-os-fork', false],
+  ]) {
+    const fx = await fixture();
+    fx.action.missionId = 'critical-3001-elastic-goal';
+    fx.action.repository = repository;
+    let githubReads = 0;
+    let modelCalls = 0;
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      repoRoot: fx.repoRoot,
+      actionGrant: fx.actionGrant,
+      runCommand: run,
+      claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+      githubAuth: { configured: true, authority: 'test', token: 'test-token' },
+      githubFetchImpl: async (url) => {
+        githubReads += 1;
+        assert.equal(url, 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3001');
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            number: 3001, state: 'open', title: 'Goal 3001',
+            body: 'Update shared/agents/example.mjs.', labels: [{ name: 'goal' }],
+          }),
+        };
+      },
+      localModelFetchImpl: async () => {
+        modelCalls += 1;
+        return {
+          ok: true, status: 200,
+          json: async () => ({ message: { content: JSON.stringify({
+            edits: [{
+              path: 'shared/agents/example.mjs',
+              old: 'export const value = 1;\n',
+              new: 'export const value = 2;\n',
+            }],
+            summary: 'Change the approved file.',
+          }) } }),
+        };
+      },
+      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+    });
+    // Canonical scheduler casing now survives all boundaries: GitHub goal
+    // authority, provider invocation, verified tests and immutable escrow.
+    // A similarly named repository must fail before any model invocation.
+    assert.equal(result.success, admitted, repository + ': ' + result.error);
+    if (admitted) {
+      assert.equal(result.testsPassed, true, repository);
+      assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+      assert.match(result.offlinePublicationOutboxId, /^offline-publication-/);
+    } else {
+      assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
+    }
+    assert.equal(result.providerInvoked, admitted, repository);
+    assert.equal(result.providerCompleted, admitted, repository);
+    assert.equal(githubReads, admitted ? 1 : 0, repository);
+    assert.equal(modelCalls, admitted ? 1 : 0, repository);
+    assert.equal(
+      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+      admitted ? 'export const value = 2;\n' : 'export const value = 1;\n',
+      repository,
+    );
+  }
+});
+
 test('elastic Forge builder fails closed before model invocation when authoritative goal context is unavailable', async () => {
   const fx = await fixture();
   fx.action.missionId = 'critical-3001-elastic-goal';
@@ -1008,3 +1158,84 @@ test('local Forge builder resolves lowercased mission scope to one exact tracked
     'export const value = 2;\n',
   );
 });
+
+
+test('local Forge builder hydrates an admitted structured-edit target omitted by bounded source context', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, 'shared', 'agents', 'filler-context.txt'), 'x'.repeat(64 * 1024));
+  for (const args of [['add', '.'], ['commit', '-m', 'bounded context filler fixture']]) {
+    const result = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  fx.action.allowedFiles = ['shared/agents/**'];
+  fx.action.intendedOutcome = 'Prioritize filler context while preserving the admitted example target.';
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  let snapshotsSeen = [];
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, context) => {
+      snapshotsSeen = context.sourceSnapshots.map((entry) => entry.path);
+      return {
+        edits: [{
+          path: 'shared/agents/example.mjs',
+          old: 'export const value = 1;\n',
+          new: 'export const value = 2;\n',
+        }],
+        summary: 'Edit the admitted target even though bounded prompt context omitted it.',
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(snapshotsSeen.includes('shared/agents/example.mjs'), false);
+  assert.equal(result.success, true, result.error);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
+
+
+for (const oldText of ['do not edit\n', '']) {
+test(`local Forge builder rejects an existing ignored target during ${oldText ? 'hydration' : 'creation'}`, async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, '.gitignore'), 'shared/agents/ignored.txt\n');
+  const addIgnore = run('git.exe', ['-C', fx.repoRoot, 'add', '.gitignore'], { cwd: fx.repoRoot });
+  assert.equal(addIgnore.status, 0, addIgnore.stderr);
+  const commitIgnore = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'ignore hydration escape fixture'], { cwd: fx.repoRoot });
+  assert.equal(commitIgnore.status, 0, commitIgnore.stderr);
+  await writeFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'do not edit\n');
+  fx.action.allowedFiles = ['shared/agents/**'];
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/ignored.txt',
+        old: oldText,
+        new: 'escaped edit\n',
+      }],
+      summary: 'Attempt ignored target mutation.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, oldText
+    ? /PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:shared\/agents\/ignored\.txt/
+    : /PROVIDER_NEUTRAL_STRUCTURED_EDIT_NEW_FILE_ALREADY_EXISTS:shared\/agents\/ignored\.txt/);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'utf8'), 'do not edit\n');
+});
+}

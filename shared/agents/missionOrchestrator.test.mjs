@@ -588,3 +588,97 @@ test('agent result accepts exact scheduler scope identity across Git path casing
   assert.equal(blocked.currentPhase, 'BLOCKED');
   assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
 });
+
+test('Forge signed draft publication atomically advances commit, push, PR without merge authority', () => {
+  let state = createMissionOrchestratorState({
+    ...base, repository: 'cheekyfellastef/stephan-os',
+    missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
+    requiredEvidence: ['focused test output'],
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath, clean: true,
+    receipt: receipt('isolated worktree', 'forge-worktree-receipt'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true, resultId: 'forge-source-result', changedFiles: ['shared/agents/missionOrchestrator.mjs'],
+    receipt: receipt('forge result', 'forge-result-receipt'),
+    sourceArtifactEscrow: {
+      schemaVersion: 'stephanos.source-artifact-escrow.v1',
+      missionId: 'critical-2732-elastic-goal', repository: base.repository,
+      canonicalBranch: 'openclaw/elastic-goal-2732', canonicalPr: null,
+      completeArtifactSha256: 'c'.repeat(64),
+      exactParentHead: 'd'.repeat(40), exactResultTree: 'b'.repeat(40),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+    },
+    offlinePublicationOutbox: {
+      schemaVersion: 'stephanos.offline-publication-outbox.v1',
+      outboxId: 'offline-publication-' + 'e'.repeat(24),
+      missionId: 'critical-2732-elastic-goal',
+      completeArtifactSha256: 'c'.repeat(64),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+      publicationPaused: true, pushAuthority: false, mergeAuthority: false,
+    },
+  });
+  state = event(state, 'EVIDENCE_RECORDED', {
+    receipts: [receipt('focused test output', 'forge-tests')],
+  });
+  assert.equal(state.currentPhase, 'GITHUB_COMMIT');
+  const publication = {
+    finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
+    repository: base.repository, branch: 'openclaw/elastic-goal-2732',
+    commitSha: 'a'.repeat(40), exactResultTree: 'b'.repeat(40),
+    sourceArtifactSha256: 'c'.repeat(64), prNumber: 3001, draft: true,
+    mergeAuthority: false, forcePushAllowed: false,
+  };
+  const invalid = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, forcePushAllowed: true },
+    receipt: receipt('draft publication', 'forge-bad-publish'),
+  });
+  assert.equal(invalid.currentPhase, 'BLOCKED');
+  const lookalike = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, repository: 'Cheekyfellastef/stephan-os-fork' },
+    receipt: receipt('draft publication', 'forge-lookalike-publish'),
+  });
+  assert.equal(lookalike.currentPhase, 'BLOCKED');
+  const published = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication,
+    receipt: receipt('draft publication', 'forge-publish'),
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/3001',
+  });
+  assert.equal(published.currentPhase, 'CHECK_PULL_REQUEST');
+  assert.equal(published.git.commitSha, publication.commitSha);
+  assert.equal(published.git.pushed, true);
+  assert.equal(published.pullRequest.number, 3001);
+  assert.equal(published.pullRequest.state, 'draft');
+  assert.equal(published.approval.status, 'not-requested');
+  assert.equal(published.pullRequest.merged, false);
+});
+
+test('pilot current-main source cannot silently complete while acceptance is missing', () => {
+  for (const issue of [1646,1717,1723]) {
+    const mission={...base,missionId:'critical-'+issue+'-elastic-goal'};
+    let state=createMissionOrchestratorState(mission,{now:new Date(timestamp(0))});
+    state=event(state,'WORKTREE_READY',{
+      worktreePath:mission.worktreePath,clean:true,
+      receipt:receipt('isolated worktree','pilot-worktree-'+issue),
+    });
+    const result=event(state,'CURRENT_MAIN_SATISFACTION_RECORDED',{
+      sourceRevision:'4'.repeat(40),canonicalMainHeadSha:'4'.repeat(40),
+      worktreeHeadSha:'4'.repeat(40),worktreeClean:true,changedFiles:[],
+    });
+    assert.notEqual(result.currentPhase,'COMPLETE');
+    assert.equal(result.currentMainAcceptance?.verified,false);
+    assert.match(result.blockers.join(' '),/independent goal-acceptance completion proof/);
+  }
+});
+
+test('accepted replacement repair prevents duplicate Forge pickup for VR Link',()=>{
+ const input={...base,missionId:'critical-1717-elastic-goal'};
+ let state=createMissionOrchestratorState(input,{now:new Date(timestamp(0))});
+ state=event(state,'WORKTREE_READY',{worktreePath:base.worktreePath,clean:true,receipt:receipt('isolated worktree','replaced-vr-link-worktree')});
+ state.continuity.history.push({eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'});
+ const next=event(state,'AGENT_DISPATCHED',{agentId:'foundry-forge',adapter:'foundry-forge'});
+ assert.notEqual(next.dispatch.status,'running');
+ assert.match(next.blockers.join(' '),/REPLACEMENT_SOURCE_ALREADY_MERGED/);
+});
