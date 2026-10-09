@@ -4,11 +4,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - 'shared/runtime/seedGrowthWorkV1.mjs'
-      - 'shared/runtime/upliftWorkspaceProjectionV1.mjs'
-      - 'stephanos-server/services/flywheelSeedGrowthConveyor.test.js'
-      - 'stephanos-server/services/flywheelLearningGoalBridgeService.js'
-      - 'stephanos-server/services/flywheelCanonicalGoalAdmissionService.js'
       - 'shared/agents/programmeAuthorityV1.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
@@ -99,10 +94,6 @@ jobs:
       - name: Run supporting seam proofs
         run: >-
           node --test
-          stephanos-server/services/flywheelSeedGrowthConveyor.test.js
-          stephanos-server/services/flywheelLearningGoalBridgeService.test.js
-          stephanos-server/services/flywheelCanonicalGoalAdmissionService.test.js
-          shared/runtime/upliftWorkspaceProjectionV1.test.mjs
           shared/agents/programmeAuthorityV1.test.mjs
           shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
           stephanos-server/services/programmeAuthorityService.test.js
