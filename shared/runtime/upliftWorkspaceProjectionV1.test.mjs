@@ -1455,3 +1455,54 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
   assert.equal(live.outcomeSeeds.length, 6);
 });
+
+test('conversation seed binds iPad and continuity failures to existing outcome owners without pretending they are complete', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.eventRecords = [{
+    eventId: 'ipad-chat-scroll-regression',
+    relatedIssue: '#1722',
+    participantId: 'user-interface-agent',
+    eventKind: 'capability-gap',
+    status: 'BLOCKED',
+    capabilityId: 'ipad-chat-scroll-recovery',
+    timestampUtc: '2026-10-09T14:15:00.000Z',
+    summary: 'Actual iPad chat page cannot scroll on touch.',
+    proofRefs: ['proof/ipad-scroll-regression-1'],
+    closedLoopLearning: {
+      capabilityId: 'ipad-chat-scroll-recovery',
+      learningEligibleCapabilityFailure: true,
+      telemetry: { retryReady: false },
+    },
+  }];
+  const view = deriveFlywheelWorkspaceView(payload);
+  const seed = view.conversationalIntelligenceSeedGrowth;
+  assert.equal(seed.planted, true);
+  assert.deepEqual(seed.linkedOutcomeGoals.map((goal) => goal.issueRef), ['#2434', '#1722', '#2966']);
+  assert.ok(seed.qualityDimensions.includes('chat-crash-recovery'));
+  assert.ok(seed.experienceProofDimensions.includes('touch-scroll-and-composer-access'));
+  assert.ok(seed.currentGaps.some((gap) => gap.capabilityId === 'ipad-chat-scroll-recovery'));
+  assert.match(seed.nextBestAction, /iPad chat page cannot scroll/);
+  assert.equal(seed.sourceTruth, 'CONFLICTING');
+  assert.equal(seed.currentRungIndex, 0);
+});
+
+test('linking conversation and bridge owners alone does not award completed seed growth', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.eventRecords = [{
+    eventId: 'cross-device-goal-queued',
+    relatedIssue: '#2966',
+    participantId: 'flywheel',
+    eventKind: 'goal-admission',
+    status: 'WAITING',
+    timestampUtc: '2026-10-09T14:16:00.000Z',
+    summary: 'Cross-device workspace parity repair still waiting for real device evidence.',
+    proofRefs: [],
+  }];
+  const result = deriveFlywheelWorkspaceView(payload).conversationalIntelligenceSeedGrowth;
+  assert.equal(result.planted, true);
+  assert.equal(result.proofCount, 0);
+  assert.equal(result.currentRungIndex, 0);
+  assert.equal(result.sourceTruth, 'STALE');
+});
