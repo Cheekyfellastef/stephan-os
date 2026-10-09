@@ -6,15 +6,16 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   const garden = buildSeedGardenProjectionV1({ observedAtUtc: '2026-10-04T19:00:00.000Z' });
   assert.equal(garden.schemaVersion, 'stephanos.seed-garden-projection.v1');
   assert.equal(garden.freshness, 'STATIC');
-  assert.equal(garden.highLevelSeedCount, 6);
+  assert.equal(garden.highLevelSeedCount, 7);
   assert.equal(garden.capabilitySeedCount, 15);
-  assert.equal(garden.seedCount, 21);
+  assert.equal(garden.seedCount, 22);
   assert.deepEqual(garden.highLevelSeeds.map((seed) => seed.seedId), [
     'starfield-vr-outcome-ownership',
     'stephanos-whole-system-capability-closure',
     'stephanos-runs-the-project',
     'stephanos-flywheel-conversational-intelligence',
     'sovereign-commander-safe-parity',
+    'stephanos-sovereign-meter-independence',
     'workspace-integrity-provenance',
   ]);
   assert.equal(garden.highLevelSeeds[0].title, 'Starfield VR Excellence');
@@ -29,9 +30,13 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   assert.equal(garden.highLevelSeeds[4].title, 'Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely');
   assert.equal(garden.highLevelSeeds[4].issue, '#2519');
   assert.match(garden.highLevelSeeds[4].northStar, /everything that Remote Desktop Commander can do safely/i);
-  assert.equal(garden.highLevelSeeds[5].title, 'Every Workspace, Card and Visualiser Has Verified End-to-End Provenance');
-  assert.equal(garden.highLevelSeeds[5].issue, '#2898');
-  assert.match(garden.highLevelSeeds[5].northStar, /canonical source through transport and transformation/i);
+  assert.equal(garden.highLevelSeeds[5].title, 'Stephanos Sovereign Meter Independence');
+  assert.equal(garden.highLevelSeeds[5].issue, '#2968');
+  assert.match(garden.highLevelSeeds[5].northStar, /third-party metered tool/i);
+  assert.equal(garden.highLevelSeeds[5].source, 'shared/runtime/sovereignMeterIndependenceSeedV1.mjs');
+  assert.equal(garden.highLevelSeeds[6].title, 'Every Workspace, Card and Visualiser Has Verified End-to-End Provenance');
+  assert.equal(garden.highLevelSeeds[6].issue, '#2898');
+  assert.match(garden.highLevelSeeds[6].northStar, /canonical source through transport and transformation/i);
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
 });
