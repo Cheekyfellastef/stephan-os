@@ -257,6 +257,7 @@ export async function queryStephanosAI({
   fallbackOrder = undefined,
   providerConfigs = undefined,
   runtimeContext = {},
+  requestId = '',
   fetchImpl = globalThis.fetch,
 } = {}) {
   const payload = buildChatPayload({
@@ -275,6 +276,7 @@ export async function queryStephanosAI({
     path: '/api/ai/chat',
     method: 'POST',
     body: payload,
+    headers: /^[a-z0-9][a-z0-9._:-]{0,127}$/i.test(requestId) ? { 'x-request-id': requestId } : {},
     runtimeContext,
     fetchImpl,
     timeoutMs,
