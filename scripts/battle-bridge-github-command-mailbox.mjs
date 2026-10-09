@@ -2089,37 +2089,34 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
 // readiness edges. No raw diagnostics, local paths, goals, or credentials.
 function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   if (receipt?.operation !== 'READ_PROGRAMME_AUTHORITY_STATUS') return {};
-  // Programme truth belongs to the nested validated diagnostic packet.
-  const authority = inner?.programmeAuthority;
-  if (!authority || typeof authority !== 'object' || Array.isArray(authority)) return {};
   const token = (value, max = 120) => {
     const safe = safeTelemetryText(value, max).toUpperCase();
     return /^[A-Z0-9][A-Z0-9._:-]{0,119}$/.test(safe) ? safe : '';
   };
-  const blockers = (Array.isArray(authority?.programmeBlockers) ? inner.programmeBlockers : [])
+  const blockers = (Array.isArray(inner?.programmeBlockers) ? inner.programmeBlockers : [])
     .map((item) => token(item))
     .filter(Boolean).slice(0, 16);
   const sources = (value) => token(value);
   return Object.freeze({
-    programmeStatus: token(authority?.programmeStatus, 80),
-    programmeFinalVerdict: token(authority?.programmeFinalVerdict),
+    programmeStatus: token(inner?.programmeStatus, 80),
+    programmeFinalVerdict: token(inner?.programmeFinalVerdict),
     programmeBlockers: Object.freeze(blockers),
-    schedulerFailClosed: authority?.schedulerFailClosed === true,
-    schedulerProgrammeStatus: token(authority?.schedulerProgrammeStatus),
-    schedulerDecisionStatus: token(authority?.schedulerDecisionStatus),
-    schedulerSelectedIssue: safeGoalIssue(authority?.schedulerSelectedIssue),
-    elasticCapacityStatus: token(authority?.elasticCapacityStatus),
-    elasticDesiredWidth: safeNonNegativeNumber(authority?.elasticDesiredWidth),
-    elasticRemainingAdmissionSlots: safeNonNegativeNumber(authority?.elasticRemainingAdmissionSlots),
-    controllerValid: authority?.controllerValid === true,
-    controllerFresh: authority?.controllerFresh === true,
-    workerValid: authority?.workerValid === true,
-    workerFresh: authority?.workerFresh === true,
-    criticalBacklogDecision: safeConveyorDecision(authority?.criticalBacklogDecision),
-    sourceReadRepositoryHead: sources(authority?.sourceReadRepositoryHead),
-    sourceReadControllerHeartbeat: sources(authority?.sourceReadControllerHeartbeat),
-    sourceReadWorkerHeartbeat: sources(authority?.sourceReadWorkerHeartbeat),
-    sourceReadGithubGoalEstate: sources(authority?.sourceReadGithubGoalEstate),
+    schedulerFailClosed: inner?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: token(inner?.schedulerProgrammeStatus),
+    schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),
+    schedulerSelectedIssue: safeGoalIssue(inner?.schedulerSelectedIssue),
+    elasticCapacityStatus: token(inner?.elasticCapacityStatus),
+    elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
+    controllerValid: inner?.controllerValid === true,
+    controllerFresh: inner?.controllerFresh === true,
+    workerValid: inner?.workerValid === true,
+    workerFresh: inner?.workerFresh === true,
+    criticalBacklogDecision: safeConveyorDecision(inner?.criticalBacklogDecision),
+    sourceReadRepositoryHead: sources(inner?.sourceReadRepositoryHead),
+    sourceReadControllerHeartbeat: sources(inner?.sourceReadControllerHeartbeat),
+    sourceReadWorkerHeartbeat: sources(inner?.sourceReadWorkerHeartbeat),
+    sourceReadGithubGoalEstate: sources(inner?.sourceReadGithubGoalEstate),
     originalProgrammeLaneListOmitted: true,
   });
 }
