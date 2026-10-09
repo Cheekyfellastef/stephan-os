@@ -314,7 +314,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 6);
+  assert.equal(unavailable.outcomeSeeds.length, 7);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
