@@ -583,6 +583,47 @@ export async function publishCriticalBacklogProjection(projection, {
   });
 }
 
+
+export function projectElasticAdmissionGateV1({
+  programmeStatus = 'UNKNOWN', programmeBlockers = [], sourceRevision = '',
+  scheduler = null,
+} = {}) {
+  const status = text(programmeStatus, 'UNKNOWN').toUpperCase();
+  const blocked = (Array.isArray(programmeBlockers) ? programmeBlockers : [])
+    .map((value) => text(value).slice(0, 160)).filter(Boolean).slice(0, 20);
+  const workerOnlyHold = status === 'HOLD' && blocked.length > 0
+    && blocked.every((value) => [
+      'worker-heartbeat-stale', 'worker-heartbeat-invalid-or-missing',
+      'source:mission-worker-heartbeat-unavailable',
+    ].includes(value));
+  const gateReasons = [];
+  if (status !== 'READY' && !workerOnlyHold) {
+    gateReasons.push(status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_HOLD'
+      : 'AUTHORITATIVE_PROGRAMME_NOT_READY');
+  }
+  if (!SHA_40.test(text(sourceRevision).toLowerCase())) {
+    gateReasons.push('ELASTIC_ADMISSION_SOURCE_HEAD_INVALID');
+  }
+  if (scheduler?.failClosed !== false) gateReasons.push('PROGRAMME_SCHEDULER_FAIL_CLOSED');
+  if (text(scheduler?.elasticCapacity?.status).toUpperCase() !== 'RUNNING') {
+    gateReasons.push('ELASTIC_SCHEDULER_CAPACITY_NOT_RUNNING');
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-admission-gate-observation.v1',
+    admissionPreflightEligible: gateReasons.length === 0,
+    workerRuntimeHold: workerOnlyHold,
+    blocker: gateReasons[0] || '',
+    gateReasons: Object.freeze(gateReasons),
+    programmeStatus: status,
+    programmeBlockers: Object.freeze(blocked),
+    canonicalOwner: '#2961',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
 export async function ensureCriticalBacklogMission({
   backlog = DEFAULT_CRITICAL_BACKLOG,
   env = process.env,
@@ -602,6 +643,7 @@ export async function ensureCriticalBacklogMission({
   let elasticIgnition = null;
   let programmeStatus = 'UNKNOWN';
   let programmeBlockers = [];
+  let elasticAdmissionGate = projectElasticAdmissionGateV1();
   try {
     const authoritative = await readProgrammeProjection({
       env,
@@ -616,21 +658,11 @@ export async function ensureCriticalBacklogMission({
     programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
       .map((blocker) => text(blocker))
       .filter(Boolean);
-    const workerRuntimeHold = Boolean(
-      authoritative?.status === 'HOLD'
-      && programmeBlockers.length > 0
-      && programmeBlockers.every((blocker) => [
-        'worker-heartbeat-stale',
-        'worker-heartbeat-invalid-or-missing',
-        'source:mission-worker-heartbeat-unavailable',
-      ].includes(blocker)),
-    );
-    if (
-      (authoritative?.status === 'READY' || workerRuntimeHold)
-      && SHA_40.test(sourceRevision)
-      && authoritative?.scheduler?.failClosed === false
-      && authoritative?.scheduler?.elasticCapacity?.status === 'RUNNING'
-    ) {
+    elasticAdmissionGate = projectElasticAdmissionGateV1({
+      programmeStatus, programmeBlockers, sourceRevision, scheduler: authoritative?.scheduler,
+    });
+    const workerRuntimeHold = elasticAdmissionGate.workerRuntimeHold;
+    if (elasticAdmissionGate.admissionPreflightEligible) {
       elasticAdmission = await ensureElasticMissions({
         scheduler: authoritative.scheduler,
         env,
@@ -699,6 +731,7 @@ export async function ensureCriticalBacklogMission({
           publication: null,
           elasticAdmission,
           elasticIgnition,
+          elasticAdmissionGate,
           programmeStatus: text(authoritative?.status).toUpperCase(),
           programmeBlockers: Object.freeze([...programmeBlockers]),
           workerRuntimeHold,
@@ -742,6 +775,7 @@ export async function ensureCriticalBacklogMission({
         publication: preflightPublication,
         elasticAdmission,
         elasticIgnition,
+        elasticAdmissionGate,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         duplicateActiveMissionAllowed: false,
@@ -795,6 +829,7 @@ export async function ensureCriticalBacklogMission({
     publication,
     elasticAdmission,
     elasticIgnition,
+    elasticAdmissionGate,
     programmeStatus,
     programmeBlockers: Object.freeze([...programmeBlockers]),
     arbitraryShellAllowed: false,
