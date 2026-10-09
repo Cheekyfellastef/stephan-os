@@ -25,6 +25,7 @@ import {
   WORKSPACE_INTEGRITY_MISSION_ID,
   buildWorkspaceIntegritySeedV1,
 } from './workspaceIntegritySeedV1.mjs';
+import { GOAL_CONVEYOR_FLEET_CARE_MISSION_ID, GOAL_CONVEYOR_FLEET_CARE_ISSUE, GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1, buildGoalConveyorFleetCareSeedV1 } from './goalConveyorFleetCareSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -1543,6 +1544,104 @@ function deriveWorkspaceIntegritySeedGrowth(payload = {}) {
   });
 }
 
+
+const FLEET_STAGES = Object.freeze([
+  'fleet-inventory-verified', 'fleet-health-verified', 'goal-select-claim-proven',
+  'worker-pickup-proven', 'goal-build-live-proof', 'blocked-goal-recovered',
+  'fleet-learning-retained', 'conveyor-fleet-continuous-audit',
+]);
+const FLEET_INCIDENTS = new Set([
+  'goal-conveyor-incident', 'fleet-health-incident', 'goal-build-blocked',
+  'worker-pickup-failed', 'worker-lease-expired', 'provider-meter-exhausted',
+  'github-rate-limit-hit', 'core-daemon-stalled', 'capability-gap',
+]);
+const FLEET_RECOVERIES = new Set(['goal-build-recovered', 'fleet-recovered', 'blocked-goal-readmitted']);
+const FLEET_OWNER_ISSUES = new Set(GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1.map((owner) => owner.issue));
+const FLEET_GAP_PREFIX = /^(goal[-_](build|conveyor|select|claim)|fleet[-_]|controller[-_]|worker[-_]|core[-_]daemon|recovery[-_]mesh|sovereign[-_]commander|github[-_]rate[-_]limit)/i;
+function freshFleetRecord(record, nowMs) {
+  const ms = recordTimeMs(record);
+  return ms > 0 && ms <= nowMs && nowMs - ms <= 3600000;
+}
+function fleetSeedScoped(record = {}) {
+  if (record.missionId === GOAL_CONVEYOR_FLEET_CARE_MISSION_ID
+      || record.relatedIssue === GOAL_CONVEYOR_FLEET_CARE_ISSUE) return true;
+  if (!FLEET_OWNER_ISSUES.has(record.relatedIssue)) return false;
+  const kind = String(record.eventKind || '').toLowerCase();
+  return FLEET_INCIDENTS.has(kind) && (kind !== 'capability-gap'
+    || FLEET_GAP_PREFIX.test(String(record.capabilityId || '')));
+}
+function deriveGoalConveyorFleetCareSeedGrowth(payload = {}, nowMs = Date.now()) {
+  const contract = buildGoalConveyorFleetCareSeedV1();
+  const records = payload.records || {};
+  const heartbeat = latestByTime(list(records.statusRecords).filter((record) =>
+    record.statusId === contract.missionId && record.missionId === contract.missionId
+    && record.seedHeartbeat?.schemaVersion === 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+    && record.seedHeartbeat?.missionId === contract.missionId
+    && record.seedHeartbeat?.issueRef === contract.issueRef
+    && record.seedHeartbeat?.contractSource === 'shared/runtime/goalConveyorFleetCareSeedV1.mjs'));
+  const planted = Boolean(heartbeat);
+  const heartbeatCurrent = planted && freshFleetRecord(heartbeat, nowMs)
+    && payload.state === 'ready' && !list(payload.errors).length;
+  const events = list(records.eventRecords).filter((record) =>
+    freshFleetRecord(record, nowMs) && fleetSeedScoped(record));
+  const proved = events.filter(isPositiveProofRecord);
+  const stageProof = FLEET_STAGES.map((kind) => proved.some((record) => record.eventKind === kind));
+  const incidents = events.filter((record) => FLEET_INCIDENTS.has(record.eventKind)
+    && proofRefs(record).length && text(record.capabilityId, ''));
+  const recoveries = proved.filter((record) => FLEET_RECOVERIES.has(record.eventKind));
+  const recentIncidents = new Map();
+  for (const record of incidents) {
+    const id = text(record.capabilityId, '');
+    const previous = recentIncidents.get(id);
+    if (!previous || recordTimeMs(record) > recordTimeMs(previous)) recentIncidents.set(id, record);
+  }
+  const currentGaps = [...recentIncidents.entries()].filter(([id, record]) =>
+    !recoveries.some((recovery) => recovery.resolvedGapId === id
+      && recordTimeMs(recovery) > recordTimeMs(record))).map(([id, record]) => Object.freeze({
+    capabilityId: id,
+    owner: text(record.relatedIssue || record.canonicalOwner, contract.issueRef),
+    state: text(record.state || record.status, 'OPEN'),
+    summary: summary(record),
+  }));
+  const rungProof = [planted, ...stageProof];
+  let currentRungIndex = planted ? 0 : null;
+  if (planted) for (let index = 1; index < rungProof.length && rungProof[index]; index += 1) currentRungIndex = index;
+  const missingIndex = rungProof.findIndex((item) => !item);
+  const nextGrowthRung = heartbeatCurrent ? contract.growthRungs[missingIndex] || '' : '';
+  const nextBestAction = !planted
+    ? 'Publish the #2972 source-bound heartbeat through the existing Flywheel.'
+    : !heartbeatCurrent
+      ? 'Restore a fresh #2972 heartbeat and healthy Shared Workspace feed.'
+      : currentGaps.length
+        ? 'Repair the evidenced fault with existing owner ' + currentGaps[0].owner + ': ' + currentGaps[0].summary
+        : missingIndex > 0
+          ? 'Collect a fresh, proven ' + FLEET_STAGES[missingIndex - 1] + ' receipt from the existing conveyor/fleet.'
+          : 'Continue unattended fleet and build-conveyor audits; detect regressions and retain lessons.';
+  return Object.freeze({
+    declared: true, contractTruth: 'SOURCE_PROVEN', planted, persistent: true,
+    missionId: contract.missionId, issueRef: contract.issueRef, title: contract.title,
+    northStar: contract.northStar, operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs, qualityDimensions: contract.qualityDimensions,
+    canonicalOwnerGoals: contract.canonicalOwnerGoals, operatorRole: contract.operatorRole,
+    sourceTruth: !planted ? 'UNKNOWN' : heartbeatCurrent ? 'CURRENT' : 'STALE',
+    stage: planted ? contract.growthRungs[currentRungIndex] : 'AWAITING_LIVE_PROOF',
+    healthState: !heartbeatCurrent ? 'AWAITING_LIVE_PROOF'
+      : currentGaps.length ? 'FLEET_REPAIR_NEEDED'
+        : !stageProof[0] ? 'AWAITING_FLEET_PROOF' : 'MONITORING',
+    pressureState: !heartbeatCurrent ? 'UNKNOWN'
+      : currentGaps.length ? 'ACTIVE' : stageProof.every(Boolean) ? 'CURRENT' : 'AWAITING_EVIDENCE',
+    currentRungIndex,
+    currentRung: planted ? contract.growthRungs[currentRungIndex] : 'AWAITING_LIVE_PROOF',
+    nextGrowthRung,
+    currentGaps: Object.freeze(currentGaps.slice(0, 8)),
+    fleetObservationProofCount: heartbeatCurrent ? Number(stageProof[0]) : null,
+    incidentCount: heartbeatCurrent ? currentGaps.length : null,
+    proofCount: heartbeatCurrent ? proved.flatMap(proofRefs).length : null,
+    latestEvidenceAt: latestByTime(events) ? safeTime(latestByTime(events)) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -1561,6 +1660,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
       sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth({}),
       workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth({}),
+      goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
         deriveWholeSystemSeedGrowth({}),
@@ -1568,6 +1668,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
         deriveConversationalIntelligenceSeedGrowth({}),
         deriveSovereignCommanderParitySeedGrowth({}),
         deriveWorkspaceIntegritySeedGrowth({}),
+        deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       ]),
       stats: Object.freeze({
         observedAgents: 0,
@@ -1608,6 +1709,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
     conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
     sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth(payload),
     workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth(payload),
+    goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
       deriveWholeSystemSeedGrowth(payload),
@@ -1615,6 +1717,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       deriveConversationalIntelligenceSeedGrowth(payload),
       deriveSovereignCommanderParitySeedGrowth(payload),
       deriveWorkspaceIntegritySeedGrowth(payload),
+      deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     ].map((seed) => Object.freeze({ ...seed,
       growthWork: projectSeedGrowthWorkV1(seed.missionId, payload.records.goalRecords,
         Number.isFinite(options.nowMs) ? options.nowMs : Date.now()),
