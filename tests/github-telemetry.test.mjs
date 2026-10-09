@@ -4,6 +4,10 @@ import { answerLiveTelemetryQuestion, classifyGithubNotification, normalizeGithu
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readBrokeredGithubRateLimitHold } from '../shared/agents/githubObservationBrokerV1.mjs';
 
 test('GitHub notifications classify into required categories and count unread state', () => {
   const telemetry = normalizeGithubTelemetry({ available: true, notifications: [
@@ -352,4 +356,41 @@ test('PR evidence respects retry-after for 429 and leaves other repositories ind
   });
   assert.equal(unrelated.status, 'error');
   assert.notEqual(unrelated.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+});
+
+
+test('PR evidence shares rate-limit hold with disk broker, and rejects secondary 403 as PR proof', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-pr-shared-hold-'));
+  const calls = [];
+  const opts = {
+    owner: 'cross-process-owner', repo: 'cross-process-repo', prNumber: 89,
+    auth: { configured: true, token: 'synthetic-test-secret', authority: 'environment' },
+    workspaceRoot,
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith('/pulls/89')) return okJson({ number: 89, head: { sha: 'a'.repeat(40), ref: 'branch' } });
+      return { status: 403, ok: false, headers: { get: name => name === 'x-ratelimit-remaining' ? '0' : null }, json: async () => ({ message: 'API rate limit exceeded' }) };
+    },
+  };
+  try {
+    const result = await fetchGithubPrEvidence(opts);
+    assert.equal(result.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+    assert.equal(calls.length, 2, 'must stop before checks and comments after files response is rate-limited');
+    assert.equal(Object.hasOwn(result, 'headSha'), false);
+    const shared = readBrokeredGithubRateLimitHold({ repository: 'cross-process-owner/cross-process-repo', workspaceRoot });
+    assert.ok(shared?.untilMs > Date.now());
+    assert.equal(shared.retryAfterUtc, result.retryAfterUtc);
+    const broker = await import('../shared/agents/githubObservationBrokerV1.mjs');
+    let cliCalls = 0;
+    const blocked = broker.readBrokeredGithubJson({
+      key: 'pr-89-other-worker', endpoint: 'repos/cross-process-owner/cross-process-repo/issues/89',
+      workspaceRoot, spawnSyncFn: () => { cliCalls++; return { status: 0, stdout: '{}', stderr: '' }; },
+    });
+    assert.equal(blocked.reason, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(cliCalls, 0);
+    const receipt = JSON.stringify(shared);
+    assert.equal(receipt.includes('synthetic-test-secret'), false);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
 });

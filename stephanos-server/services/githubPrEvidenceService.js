@@ -1,4 +1,5 @@
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { readBrokeredGithubRateLimitHold, recordBrokeredGithubRateLimitHold } from '../../shared/agents/githubObservationBrokerV1.mjs';
 import {
   PROTECTED_APPROVAL_MARKER,
   extractJsonObjects,
@@ -464,7 +465,7 @@ function githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs) {
   };
 }
 
-async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, authority) {
+async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, authority, workspaceRoot, useSharedHold) {
   if (![403, 429].includes(response?.status)) return null;
   const remaining = String(response.headers?.get?.('x-ratelimit-remaining') ?? '');
   let message = '';
@@ -483,37 +484,53 @@ async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, au
       : GITHUB_PR_RATE_LIMIT_DEFAULT_BACKOFF_MS;
   const delayMs = Math.min(GITHUB_PR_RATE_LIMIT_MAX_BACKOFF_MS,
     Math.max(GITHUB_PR_RATE_LIMIT_MIN_BACKOFF_MS, requestedMs));
-  const untilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, nowMs + delayMs);
+  const shared = useSharedHold ? recordBrokeredGithubRateLimitHold({
+    repository: key, retryAfterMs: delayMs, workspaceRoot, nowMs,
+  }) : null;
+  const untilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, shared?.untilMs || 0, nowMs + delayMs);
   githubPrRateLimitBackoff.set(key, untilMs);
   return githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs);
 }
 
-export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
+export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch, workspaceRoot }) {
   let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
   const key = `${String(owner).toLowerCase()}/${String(repo).toLowerCase()}`;
-  const holdUntilMs = githubPrRateLimitBackoff.get(key) || 0;
+  // Injected fetch tests must not touch an operator's Shared Workspace unless
+  // they provide their own test workspaceRoot. Production readers always share it.
+  const useSharedHold = fetchImpl === fetch || Boolean(workspaceRoot);
+  const sharedHold = useSharedHold ? readBrokeredGithubRateLimitHold({ repository: key, workspaceRoot }) : null;
+  const holdUntilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, sharedHold?.untilMs || 0);
   if (holdUntilMs > Date.now()) {
     return githubPrRateLimitHold(owner, repo, prNumber, activeAuth.authority, holdUntilMs);
   }
   if (holdUntilMs) githubPrRateLimitBackoff.delete(key);
   const request = async (candidateAuth) => fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: githubHeaders(candidateAuth, 'stephanos-readonly-pr-evidence') });
   let prRes = await request(activeAuth);
-  let rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority);
+  let rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
   if (rateLimit) return rateLimit;
   if ([401, 403].includes(prRes.status) && activeAuth.authority !== 'gh-cli') {
     const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
     if (ghAuth.configured) {
       activeAuth = ghAuth;
       prRes = await request(activeAuth);
-      rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority);
+      rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
       if (rateLimit) return rateLimit;
     }
   }
   if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, authAuthority: activeAuth.authority, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
   const pr = await prRes.json(); const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
-  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }); const files = filesRes.ok ? await filesRes.json() : [];
-  const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers }); const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
-  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }); const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
+  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
+  const filesHold = await checkPrRateLimitResponse(filesRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (filesHold) return filesHold;
+  const files = filesRes.ok ? await filesRes.json() : [];
+  const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
+  const checksHold = await checkPrRateLimitResponse(checksRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (checksHold) return checksHold;
+  const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
+  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers });
+  const commentsHold = await checkPrRateLimitResponse(commentsRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (commentsHold) return commentsHold;
+  const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
   const retrievedAt = new Date().toISOString(); const trustedOperatorApprovalReceipts = [];
   for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) { if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue; if (!asText(comment?.body).includes(PROTECTED_APPROVAL_MARKER)) continue; for (const candidate of extractJsonObjects(comment.body)) { const projection = projectProtectedApprovalReceiptForWorkspace(candidate, { nowUtc: retrievedAt }); if (projection.valid) trustedOperatorApprovalReceipts.push(projection.receipt); } }
   const checkRuns = asList(checksPayload?.check_runs?.map((run) => run?.conclusion || run?.status));

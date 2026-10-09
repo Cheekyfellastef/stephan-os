@@ -4,9 +4,12 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import {
   invalidateBrokeredGithubObservation,
+  readBrokeredGithubRateLimitHold,
+  recordBrokeredGithubRateLimitHold,
   publishBrokeredGithubMutation,
   readBrokeredGithubJson,
 } from './githubObservationBrokerV1.mjs';
@@ -203,6 +206,71 @@ test('invalidating an observation forces the next read upstream', async () => {
     const second = readBrokeredGithubJson({ ...base, nowMs: Date.parse('2026-09-28T15:00:10.000Z') });
     assert.equal(second.source, 'UPSTREAM_REFRESH');
     assert.equal(calls, 2);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+
+test('shared cooldown is atomic, monotonic, and visible to a separate Node process', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-shared-gh-rate-'));
+  const nowMs = Date.parse('2026-10-09T10:00:00Z');
+  try {
+    const first = recordBrokeredGithubRateLimitHold({ repository: 'Owner/Repo', workspaceRoot, nowMs, retryAfterMs: 120_000 });
+    const shorter = recordBrokeredGithubRateLimitHold({ repository: 'owner/repo', workspaceRoot, nowMs: nowMs + 1_000, retryAfterMs: 30_000 });
+    assert.equal(first.ok, true);
+    assert.equal(shorter.ok, true);
+    assert.equal(shorter.retryAfterUtc, first.retryAfterUtc);
+    const script = `import {readBrokeredGithubRateLimitHold} from ${JSON.stringify(new URL('./githubObservationBrokerV1.mjs', import.meta.url).href)}; console.log(JSON.stringify(readBrokeredGithubRateLimitHold({repository:'OWNER/REPO',workspaceRoot:${JSON.stringify(workspaceRoot)},nowMs:${nowMs + 2_000}})));`;
+    const observed = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' }));
+    assert.equal(observed.retryAfterUtc, first.retryAfterUtc);
+    assert.equal(observed.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
+    assert.equal(readBrokeredGithubRateLimitHold({ repository: 'other/repo', workspaceRoot, nowMs }), null);
+    assert.equal(readBrokeredGithubRateLimitHold({ repository: 'owner/repo', workspaceRoot, nowMs: nowMs + 120_001 }), null);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('a rate-limited broker reader stops another endpoint from retrying during hold', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-shared-gh-cli-hold-'));
+  const nowMs = Date.parse('2026-10-09T10:00:00Z');
+  let calls = 0;
+  const base = {
+    workspaceRoot, nowMs, ttlMs: 1_000,
+    spawnSyncFn: () => { calls++; return { status: 1, stdout: '', stderr: 'HTTP 403: API rate limit exceeded for user ID 123' }; },
+  };
+  try {
+    const first = readBrokeredGithubJson({ ...base, key: 'first', endpoint: 'repos/owner/repo/issues/1' });
+    const second = readBrokeredGithubJson({ ...base, key: 'second', endpoint: 'repos/owner/repo/issues/2', nowMs: nowMs + 1_000 });
+    assert.equal(first.reason, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(second.reason, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(second.upstreamCalls, 0);
+    assert.equal(calls, 1);
+    const third = readBrokeredGithubJson({ ...base, key: 'third', endpoint: 'repos/owner/repo/issues/3', nowMs: nowMs + 120_001 });
+    assert.equal(third.upstreamCalls, 1);
+    assert.equal(calls, 2);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('a permissions 403 is not misclassified as GitHub rate limiting', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-shared-gh-permission-'));
+  let calls = 0;
+  try {
+    const a = readBrokeredGithubJson({
+      key: 'permission-a', endpoint: 'repos/owner/permissions-repo/issues/1', workspaceRoot,
+      spawnSyncFn: () => { calls++; return { status: 1, stdout: '', stderr: 'HTTP 403: Resource not accessible by integration' }; },
+    });
+    const b = readBrokeredGithubJson({
+      key: 'permission-b', endpoint: 'repos/owner/permissions-repo/issues/2', workspaceRoot,
+      spawnSyncFn: () => { calls++; return { status: 1, stdout: '', stderr: 'HTTP 403: Resource not accessible by integration' }; },
+    });
+    assert.equal(a.reason, 'GITHUB_OBSERVATION_UPSTREAM_FAILED');
+    assert.equal(b.reason, 'GITHUB_OBSERVATION_UPSTREAM_FAILED');
+    assert.equal(calls, 2);
+    assert.equal(readBrokeredGithubRateLimitHold({ repository: 'owner/permissions-repo', workspaceRoot }), null);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

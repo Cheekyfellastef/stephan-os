@@ -18,6 +18,9 @@ export const DEFAULT_GITHUB_OBSERVATION_TTL_MS = 75_000;
 export const DEFAULT_GITHUB_OBSERVATION_MAX_STALE_MS = 15 * 60 * 1000;
 export const DEFAULT_GITHUB_PUBLICATION_HEARTBEAT_MS = 5 * 60 * 1000;
 export const GITHUB_OBSERVATION_BROKER_MAX_BYTES = 2 * 1024 * 1024;
+export const GITHUB_SHARED_RATE_LIMIT_MIN_MS = 30_000;
+export const GITHUB_SHARED_RATE_LIMIT_MAX_MS = 65 * 60_000;
+export const GITHUB_SHARED_RATE_LIMIT_DEFAULT_MS = 120_000;
 
 const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/?-]{1,500}$/;
 
@@ -115,6 +118,77 @@ function releaseLock(path, ownerToken) {
   }
 }
 
+// Shared Workspace is already the cross-process broker. Keep *unavailability*
+// separate from observation snapshots so a 403 can never become cached PR proof.
+// A repository-scoped lease is enough for Battle Bridge's single canonical repo.
+function rateLimitPaths(repository, options = {}) {
+  const name = text(repository).toLowerCase();
+  if (!/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/.test(name) || name.includes('..')) {
+    throw new Error('GITHUB_RATE_LIMIT_REPOSITORY_INVALID');
+  }
+  const paths = brokerPaths({ ...options, key: `rate-limit:${name}` });
+  const id = digest(`rate-limit:${name}`);
+  return { repository: name, receipt: join(paths.root, `hold-${id}.json`), lock: join(paths.root, `hold-${id}.lock`) };
+}
+
+export function readBrokeredGithubRateLimitHold({ repository, workspaceRoot, env = process.env, nowMs = Date.now() } = {}) {
+  const paths = rateLimitPaths(repository, { workspaceRoot, env });
+  const record = readJsonFile(paths.receipt);
+  const untilMs = Date.parse(text(record?.retryAfterUtc));
+  if (record?.schemaVersion !== GITHUB_OBSERVATION_BROKER_SCHEMA
+      || record.repository !== paths.repository
+      || !Number.isFinite(untilMs)
+      || untilMs <= nowMs
+      || untilMs - nowMs > GITHUB_SHARED_RATE_LIMIT_MAX_MS + 10_000) return null;
+  return Object.freeze({
+    reasonCode: 'GITHUB_RATE_LIMIT_BACKOFF',
+    retryAfterUtc: new Date(untilMs).toISOString(),
+    untilMs,
+    source: 'SHARED_GITHUB_RATE_LIMIT_HOLD',
+  });
+}
+
+export function recordBrokeredGithubRateLimitHold({
+  repository, retryAfterMs = GITHUB_SHARED_RATE_LIMIT_DEFAULT_MS,
+  workspaceRoot, env = process.env, nowMs = Date.now(),
+} = {}) {
+  const paths = rateLimitPaths(repository, { workspaceRoot, env });
+  const raw = Number(retryAfterMs);
+  const delay = Math.min(GITHUB_SHARED_RATE_LIMIT_MAX_MS,
+    Math.max(GITHUB_SHARED_RATE_LIMIT_MIN_MS,
+      Number.isFinite(raw) ? raw : GITHUB_SHARED_RATE_LIMIT_DEFAULT_MS));
+  const owner = acquireLock(paths.lock, 30_000);
+  if (!owner) return Object.freeze({ ok: false, reasonCode: 'GITHUB_RATE_LIMIT_LOCK_BUSY' });
+  try {
+    const prior = readBrokeredGithubRateLimitHold({ repository, workspaceRoot, env, nowMs });
+    const untilMs = Math.max(prior?.untilMs || 0, nowMs + delay);
+    const retryAfterUtc = new Date(untilMs).toISOString();
+    writeAtomicJson(paths.receipt, {
+      schemaVersion: GITHUB_OBSERVATION_BROKER_SCHEMA,
+      repository: paths.repository,
+      retryAfterUtc,
+      reasonCode: 'GITHUB_RATE_LIMIT_BACKOFF',
+      // No tokens, user IDs, bodies, secrets, or stale GitHub payload.
+      mutationAllowed: false,
+      arbitraryShellAllowed: false,
+    });
+    return Object.freeze({ ok: true, reasonCode: 'GITHUB_RATE_LIMIT_BACKOFF', retryAfterUtc, untilMs });
+  } catch {
+    return Object.freeze({ ok: false, reasonCode: 'GITHUB_RATE_LIMIT_HOLD_WRITE_FAILED' });
+  } finally {
+    releaseLock(paths.lock, owner);
+  }
+}
+
+function repositoryFromGithubEndpoint(endpoint) {
+  const match = /^\/?repos\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:[/?]|$)/i.exec(text(endpoint));
+  return match ? `${match[1]}/${match[2]}` : '';
+}
+
+function isGithubCliRateLimitError(stderr) {
+  return /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(text(stderr));
+}
+
 export function invalidateBrokeredGithubObservation({ key, workspaceRoot, env = process.env } = {}) {
   const paths = brokerPaths({ workspaceRoot, key, env });
   try {
@@ -169,12 +243,24 @@ export function readBrokeredGithubJson({
   const ttl = boundedMs(ttlMs, DEFAULT_GITHUB_OBSERVATION_TTL_MS);
   const staleLimit = boundedMs(maxStaleMs, DEFAULT_GITHUB_OBSERVATION_MAX_STALE_MS, ttl);
   const requestFingerprint = digest(JSON.stringify([text(endpoint), Array.isArray(args) ? args.map(String) : []]));
+  const repository = repositoryFromGithubEndpoint(endpoint);
+  const cooldown = () => repository ? readBrokeredGithubRateLimitHold({ repository, workspaceRoot, env, nowMs }) : null;
   const cachedCandidate = readJsonFile(paths.snapshot);
   const cached = cachedCandidate?.requestFingerprint === requestFingerprint ? cachedCandidate : null;
   const cachedAtMs = Date.parse(text(cached?.observedAtUtc));
   const ageMs = Number.isFinite(cachedAtMs) ? Math.max(0, nowMs - cachedAtMs) : Number.POSITIVE_INFINITY;
   if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= ttl) {
     return Object.freeze({ ok: true, source: 'SHARED_CACHE', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, upstreamCalls: 0 });
+  }
+
+  // A hold recorded by a different Node process suppresses fresh upstream reads.
+  // Cached discovery may be observed as stale but never authorizes a mutation.
+  const held = cooldown();
+  if (held) {
+    if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= staleLimit) {
+      return Object.freeze({ ok: true, source: 'SHARED_CACHE_STALE_RATE_LIMIT', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, rateLimitHold: held, upstreamCalls: 0 });
+    }
+    return Object.freeze({ ok: false, reason: 'GITHUB_RATE_LIMIT_BACKOFF', rateLimitHold: held, upstreamCalls: 0 });
   }
 
   const readLockOwner = acquireLock(paths.readLock, Math.max(300_000, Number(timeoutMs || 120_000) + 60_000));
@@ -194,8 +280,25 @@ export function readBrokeredGithubJson({
       return Object.freeze({ ok: true, source: 'SHARED_CACHE', payload: afterLock.payload, observedAtUtc: afterLock.observedAtUtc, ageMs: afterAgeMs, upstreamCalls: 0 });
     }
 
+    const afterLockHold = cooldown();
+    if (afterLockHold) {
+      if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= staleLimit) {
+        return Object.freeze({ ok: true, source: 'SHARED_CACHE_STALE_RATE_LIMIT', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, rateLimitHold: afterLockHold, upstreamCalls: 0 });
+      }
+      return Object.freeze({ ok: false, reason: 'GITHUB_RATE_LIMIT_BACKOFF', rateLimitHold: afterLockHold, upstreamCalls: 0 });
+    }
     const result = captureGithub({ endpoint, args, ghCommand, spawnSyncFn, cwd, timeoutMs });
     if (!result.ok) {
+      const rateLimitHold = repository && isGithubCliRateLimitError(result.stderr)
+        ? recordBrokeredGithubRateLimitHold({ repository, workspaceRoot, env, nowMs })
+        : null;
+      // Stale discovery is labelled as stale; never turn 403 into a success proof.
+      if (rateLimitHold?.ok) {
+        if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= staleLimit) {
+          return Object.freeze({ ok: true, source: 'SHARED_CACHE_STALE_RATE_LIMIT', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, upstreamCalls: 1, rateLimitHold });
+        }
+        return Object.freeze({ ok: false, reason: 'GITHUB_RATE_LIMIT_BACKOFF', upstreamCalls: 1, rateLimitHold });
+      }
       if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= staleLimit) {
         return Object.freeze({ ok: true, source: 'SHARED_CACHE_STALE_AFTER_UPSTREAM_FAILURE', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, upstreamCalls: 1, upstreamStatus: result.status });
       }
