@@ -271,6 +271,7 @@ let lastDependencySelfHealVerdict = 'NOT_RUN';
 let lastDependencySelfHealBlocker = '';
 let lastDependencySelfHealAttemptCount = 0;
 let lastDependencySelfHealProofHashes = Object.freeze([]);
+let lastLoopGapEventPublicationVerdict = 'NOT_RUN';
 
 async function publishControllerLaneTruth() {
   try {
@@ -784,6 +785,7 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     loopClosureObservedGapCount: loopClosureAudit.gapCount,
     loopClosureUnprovenEdgeCount: loopClosureAudit.unprovenCount,
     loopClosureNextAction: loopClosureAudit.nextAction,
+    loopClosureGapEventPublicationVerdict: lastLoopGapEventPublicationVerdict,
     ...controlPlaneFields,
     controlPlaneSchemaVersion,
     coreDaemonFinalVerdict: state.finalVerdict,
@@ -826,6 +828,8 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
   // Flywheel gap-to-goal intake. One stable issue-owned event per edge/source
   // head avoids duplicate queues and GitHub polling; publishing is local.
   if (loopEvidence.publishEvents === true) {
+    // A failed local event write cannot take down the Core Daemon.
+    try {
     const observedGaps = loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
     for (const gap of observedGaps) {
       const edgeKey = gap.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -865,7 +869,13 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
       if (write.ok !== true) {
         throw new Error('CORE_LOOP_CLOSURE_GAP_EVENT_WRITE_FAILED:' + String(write.reason || 'UNKNOWN'));
       }
+      lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_PUBLISHED';
       break; // At most one new gap event per heartbeat.
+    }
+    } catch (error) {
+      lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:' + String(error?.message || error).slice(0, 90);
+      // The next heartbeat surfaces the blocker without inhibiting repairs
+      // already eligible through the other canonical Core Daemon loops.
     }
   }
 }
