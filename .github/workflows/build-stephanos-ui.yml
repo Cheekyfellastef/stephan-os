@@ -272,6 +272,7 @@ jobs:
 
           const requiredMarkers = [
             'flywheel-seed-canopy',
+            'goal-conveyor-fleet-care',
             'stephanos-runs-the-project',
             'stephanos-flywheel-conversational-intelligence',
             'sovereign-commander-safe-parity',
