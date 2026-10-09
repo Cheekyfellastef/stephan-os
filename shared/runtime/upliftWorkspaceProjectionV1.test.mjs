@@ -1512,3 +1512,38 @@ test('Goal Conveyor & Fleet Care requires live heartbeat and typed proof, and re
   assert.equal(stale.pressureState, 'UNKNOWN');
   assert.equal(stale.nextGrowthRung, '');
 });
+
+
+test('fleet care shows real canonical goal conveyor counts without treating stale backend data as healthy', () => {
+  const now = '2026-10-09T15:01:00.000Z';
+  const payload = feed();
+  payload.records.statusRecords.push({
+    statusId: 'goal-conveyor-fleet-care', missionId: 'goal-conveyor-fleet-care',
+    timestampUtc: now, status: 'SEED_ACTIVE', participantId: 'flywheel',
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'goal-conveyor-fleet-care', issueRef: '#2972',
+      contractSource: 'shared/runtime/goalConveyorFleetCareSeedV1.mjs',
+    },
+  });
+  payload.projection = {
+    sourceFreshness: { truth: 'CURRENT' },
+    goalBuildConveyor: {
+      schemaVersion: 'stephanos.goal-build-conveyor.v1',
+      visibleGoalCount: 51, provenToBuilderCount: 9,
+      buildingCount: 3, completedCount: 6, blockedCount: 2,
+    },
+  };
+  const current = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(current.conveyorTelemetry.visibleGoals, 51);
+  assert.equal(current.conveyorTelemetry.builderPickups, 9);
+  assert.equal(current.conveyorTelemetry.activelyBuilding, 3);
+  assert.equal(current.conveyorTelemetry.blocked, 2);
+  assert.equal(current.healthState, 'CONVEYOR_BLOCKED_GOALS');
+  assert.equal(current.currentRung, 'SEED_PLANTED');
+  assert.equal(current.currentGaps.length, 0);
+  payload.projection.sourceFreshness.truth = 'STALE';
+  const stale = deriveFlywheelWorkspaceView(payload, { nowMs: Date.parse(now) }).goalConveyorFleetCareSeedGrowth;
+  assert.equal(stale.conveyorTelemetry.sourceTruth, 'UNKNOWN');
+  assert.equal(stale.conveyorTelemetry.builderPickups, null);
+});
