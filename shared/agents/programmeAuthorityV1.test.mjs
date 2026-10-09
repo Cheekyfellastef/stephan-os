@@ -18,6 +18,7 @@ import {
   SOURCE_MUTATION_LEASE_SCHEMA,
   buildAuthoritativeProgrammeProjection,
   buildCanonicalImplementationLaneProjection,
+  projectElasticMissionPhaseBindingV1,
   buildProgrammeStallMonitorDefinition,
   buildSchedulerGoalsFromProgrammeSources,
   buildTerminalLaneFinalizationPlan,
@@ -1964,4 +1965,103 @@ test('authoritative programme projection carries Shared Workspace engineering le
   });
   assert.deepEqual(projected.engineeringLessonRecords, [lesson]);
   assert.equal(projected.chatMemoryAuthoritative, false);
+});
+
+const ELASTIC_HEAD = 'c'.repeat(40);
+function exactElasticLease(overrides = {}) {
+  return createSourceMutationLeaseRecord({
+    leaseId: 'critical-2956-elastic-goal-r6-lease',
+    laneId: 'goal-2956-pr-2960', repository: REPOSITORY,
+    issueNumber: 2956, prNumber: 2960,
+    branch: 'openclaw/elastic-goal-2956', headSha: ELASTIC_HEAD,
+    ownerId: 'canonical-r6-review-worker',
+    acquiredAtUtc: '2026-07-30T09:30:00.000Z',
+    expiresAtUtc: '2026-07-30T11:30:00.000Z',
+    ...overrides,
+  });
+}
+function exactElasticMission(overrides = {}) {
+  return {
+    missionId: 'critical-2956-elastic-goal',
+    revision: 6, currentPhase: 'CHECK_PULL_REQUEST',
+    repository: REPOSITORY,
+    git: { branch: 'openclaw/elastic-goal-2956' },
+    pullRequest: { number: 2960, headSha: ELASTIC_HEAD },
+    ...overrides,
+  };
+}
+function phaseAwareElasticLane(leaseRecord, binding) {
+  return buildCanonicalImplementationLaneProjection({
+    laneId: 'goal-2956-pr-2960',
+    issueNumber: 2956, prNumber: 2960,
+    branch: 'openclaw/elastic-goal-2956', repository: REPOSITORY,
+    headSha: ELASTIC_HEAD,
+    github: {
+      repository: REPOSITORY, prNumber: 2960, headSha: ELASTIC_HEAD,
+      headBranch: 'openclaw/elastic-goal-2956', prState: 'open',
+      merged: false, mergedAt: '', mergeCommitSha: '',
+    },
+    mutationLease: leaseRecord,
+    elasticMissionPhaseBinding: binding,
+    nowUtc: NOW,
+  });
+}
+
+test('review-only r6 CHECK_PULL_REQUEST keeps legitimate lease but is not active source implementation', () => {
+  const sourceLease = exactElasticLease();
+  const binding = projectElasticMissionPhaseBindingV1(sourceLease, [exactElasticMission()]);
+  assert.equal(binding.valid, true);
+  assert.equal(binding.reviewOnly, true);
+  assert.equal(binding.materialImplementation, false);
+  assert.equal(binding.releaseLeaseAllowed, false);
+  const projected = phaseAwareElasticLane(sourceLease, binding);
+  assert.equal(projected.valid, true);
+  assert.equal(projected.status, 'REVIEW_PENDING');
+  assert.equal(projected.reviewPending, true);
+  assert.equal(projected.active, false);
+  assert.equal(projected.executionReceiptRefs.length, 0);
+  assert.equal(projected.mutationLeaseIdentity.leaseId, sourceLease.leaseId);
+});
+
+test('actual source implementation remains active, subject to current execution receipt proof', () => {
+  const sourceLease = exactElasticLease();
+  for (const phase of ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']) {
+    const binding = projectElasticMissionPhaseBindingV1(sourceLease, [
+      exactElasticMission({ currentPhase: phase }),
+    ]);
+    assert.equal(binding.materialImplementation, true);
+    const projected = phaseAwareElasticLane(sourceLease, binding);
+    assert.equal(projected.active, true);
+    assert.equal(projected.status, 'ACTIVE');
+  }
+});
+
+test('elastic phase identification never trusts missing, conflicting, stale or mismatched mission identities', () => {
+  const sourceLease = exactElasticLease();
+  const bad = [
+    [], [exactElasticMission(), exactElasticMission()],
+    [exactElasticMission({ revision: 5 })],
+    [exactElasticMission({ repository: 'other/repository' })],
+    [exactElasticMission({ git: { branch: 'openclaw/other' } })],
+    [exactElasticMission({ pullRequest: { number: 2999, headSha: ELASTIC_HEAD } })],
+    [exactElasticMission({ pullRequest: { number: 2960, headSha: 'd'.repeat(40) } })],
+  ];
+  for (const missions of bad) {
+    const binding = projectElasticMissionPhaseBindingV1(sourceLease, missions);
+    assert.equal(binding.valid, false);
+    assert.equal(binding.reviewOnly, false);
+    const projected = phaseAwareElasticLane(sourceLease, binding);
+    assert.equal(projected.valid, false);
+    assert.equal(projected.status, 'HOLD');
+    assert.equal(projected.active, false);
+    assert.ok(projected.blockers.includes('elastic-mission-phase-binding-unproven'));
+  }
+  const expired = exactElasticLease({
+    acquiredAtUtc: '2026-07-29T08:00:00.000Z',
+    expiresAtUtc: '2026-07-29T09:00:00.000Z',
+  });
+  const expiredLane = phaseAwareElasticLane(expired,
+    projectElasticMissionPhaseBindingV1(expired, [exactElasticMission()]));
+  assert.equal(expiredLane.active, false);
+  assert.equal(expiredLane.status, 'HOLD');
 });
