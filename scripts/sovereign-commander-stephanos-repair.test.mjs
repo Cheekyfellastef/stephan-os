@@ -190,6 +190,29 @@ test('continuous repair retries builder after an unrelated fixed control-plane i
 });
 
 
+test('continuous repair attempts independent repair for unproven elastic admission without claiming green', () => {
+  const calls = [];
+  const queue = [
+    result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
+    result({ ok: false, blocker: 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN' }, 2),
+    result({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_GREEN' }),
+    result({ ok: false, blocker: 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN' }, 2),
+  ];
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD,
+    continuousRepairCycle: true,
+    runStep: (step) => { calls.push(step.id); return queue.shift(); },
+  });
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'ELASTIC_GOAL_ADMISSION_NOT_PROVEN');
+  assert.deepEqual(calls, [
+    'sovereign-control-plane-caretaker',
+    'repair-goal-builder-flow',
+    'repair-control-plane',
+    'repair-goal-builder-flow',
+  ]);
+});
+
 test('continuous repair escalation fits inside the enclosing 220-second action budget', () => {
   assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS, 190_000);
   assert.deepEqual(CONTINUOUS_REPAIR_STEP_TIMEOUTS, {

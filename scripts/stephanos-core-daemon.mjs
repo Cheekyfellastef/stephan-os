@@ -604,6 +604,7 @@ function persistentFlywheelStatus() {
     flywheelLastStatus: lastFlywheelSummary.status,
     flywheelLastAction: lastFlywheelSummary.action,
     flywheelLastBlockerCount: lastFlywheelSummary.blockerCount,
+    flywheelLastIdleGrantWait: lastFlywheelSummary.idleGrantWait === true,
     flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
     flywheelLastWakeReason: lastFlywheelWakeReason,
     octopusLastError: lastRefillError ? 'OCTOPUS_REFILL_CYCLE_FAILED' : '',
