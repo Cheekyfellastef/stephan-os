@@ -470,7 +470,9 @@ test('production Programme Authority keeps r6 CHECK_PULL_REQUEST review leased w
     assert.equal(mismatched.lane.valid, false);
     assert.equal(mismatched.lane.status, 'HOLD');
     assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
-    assert.ok(mismatched.blockers.includes('source:NO_EXECUTION_RECEIPTS'));
+    assert.equal(mismatched.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.lane.active, false);
   });
 });
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
