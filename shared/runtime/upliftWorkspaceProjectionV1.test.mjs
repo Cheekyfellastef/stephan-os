@@ -478,7 +478,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 7);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
@@ -879,7 +879,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 7);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
@@ -1453,5 +1453,5 @@ test('Flywheel exposes workspace integrity provenance as a persistent evidence-b
   assert.equal(live.workspaceIntegritySeedGrowth.orphanAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.continuousAuditProofCount >= 1, true);
   assert.equal(live.workspaceIntegritySeedGrowth.pressureState, 'CURRENT');
-  assert.equal(live.outcomeSeeds.length, 6);
+  assert.equal(live.outcomeSeeds.length, 7);
 });
