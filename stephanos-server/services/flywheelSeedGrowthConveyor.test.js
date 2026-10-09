@@ -274,3 +274,33 @@ test('one failed seed admission does not stop resource-disjoint seed reconciliat
   assert.equal(attempts, 4);
   assert.equal(result.seedGrowthAttachments.length, 4);
 });
+
+
+test('fleet care creates deduped canonical growth pressure only for a fresh proved real fault', () => {
+  const payload = feed();
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  const event = {
+    schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.event',
+    eventId: 'pickup-blocked-1', timestampUtc: NOW, participantId: 'goal-building-agent',
+    relatedIssue: '#1622', eventKind: 'worker-pickup-failed',
+    capabilityId: 'worker-pickup-missing', status: 'BLOCKED',
+    summary: 'SELECT/CLAIM was recorded but there was no physical worker pickup.',
+    proofRefs: ['proof/actual-pickup-failure'],
+  };
+  payload.records.eventRecords.push(event);
+  const first = pressures(payload).find((work) => work.ownerIssueRef === '#2972');
+  assert.ok(first);
+  assert.equal(first.seedId, 'goal-conveyor-fleet-care');
+  assert.equal(first.capabilityGapId, 'worker-pickup-missing');
+  assert.equal(first.pressureKey, 'seed-2972:gap:worker-pickup-missing');
+  assert.deepEqual(first.evidenceRefs.slice(-1), ['events/pickup-blocked-1.json']);
+  assert.equal(pressures(payload).find((work) => work.ownerIssueRef === '#2972').pressureKey, first.pressureKey);
+  event.timestampUtc = '2026-10-06T20:00:00.000Z';
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  event.timestampUtc = NOW;
+  event.proofRefs = [];
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+  event.proofRefs = ['proof/actual-pickup-failure'];
+  event.relatedIssue = '#1722';
+  assert.equal(pressures(payload).some((work) => work.ownerIssueRef === '#2972'), false);
+});
