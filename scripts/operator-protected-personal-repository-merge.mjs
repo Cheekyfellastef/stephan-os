@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   readFileSync,
+  writeFileSync,
 } from 'node:fs';
 import {
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
@@ -58,6 +59,14 @@ import {
   evaluateMainMovementTolerantBaseBinding,
 } from '../shared/agents/operatorMergeBaseBindingV1.mjs';
 import {
+  PRE_MUTATION_FAILURE_FILE,
+  PRE_MUTATION_FAILURE_MAX_BYTES,
+  createPreMutationFailureBoundary,
+  preMutationFailureArtifactName,
+  validatePreMutationFailureArtifact,
+  validatePreMutationFailureReceipt,
+} from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
   PROTECTED_WORKFLOW_DISPATCH_ISSUE,
   PROTECTED_WORKFLOW_DISPATCH_OPERATION,
@@ -72,6 +81,8 @@ const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
 const MAILBOX_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR.toLowerCase();
 const mode = String(process.argv[2] || '').trim().toLowerCase();
+let failureIdentity = null;
+const mutationBoundary = createPreMutationFailureBoundary();
 
 class GateError extends Error {
   constructor(message, details = {}) {
@@ -364,10 +375,38 @@ async function currentWorkflowExecution(context) {
         priorRunIds: execution.replayRunIds,
       });
     }
-    const priorRunJobSets = await Promise.all(execution.replayRunIds.map(async (runId) => ({
-      runId,
-      jobs: (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs')).items,
-    })));
+    const priorRunJobSets = await Promise.all(execution.replayRunIds.map(async (runId) => {
+      const priorRun = dispatchRuns.find((candidate) => candidate.id === runId);
+      const jobs = (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/jobs?filter=all`, 'jobs')).items;
+      const failedMergeJobs = jobs.filter((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB
+        && job.status === 'completed' && job.conclusion === 'failure');
+      const preMutationFailures = [];
+      if (failedMergeJobs.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
+        fail('Prior merge-failure artifact proof exceeds the bounded attempt estate.');
+      }
+      if (failedMergeJobs.length) {
+        const artifacts = (await apiCollection(`/repos/${context.owner}/${context.repo}/actions/runs/${runId}/artifacts`, 'artifacts')).items;
+        for (const job of failedMergeJobs) {
+          const matches = artifacts.filter((artifact) => artifact.name === preMutationFailureArtifactName(runId, job.run_attempt));
+          // Old runs and uncertain failures have no admitted receipt and remain blocked.
+          if (matches.length !== 1 || !validatePreMutationFailureArtifact(matches[0], priorRun, job).valid) continue;
+          const artifact = matches[0];
+          const bytes = await apiArtifactArchive(`/repos/${context.owner}/${context.repo}/actions/artifacts/${artifact.id}/zip`, context.repository, PRE_MUTATION_FAILURE_MAX_BYTES);
+          if (bytes.length !== artifact.size_in_bytes || `sha256:${sha256(bytes)}` !== artifact.digest) {
+            fail('Prior pre-mutation failure artifact archive changed.');
+          }
+          const payload = extractPersonalRepositoryArtifactZip(bytes, PRE_MUTATION_FAILURE_FILE);
+          const receipt = parseJson(payload.toString('utf8'), 'Prior pre-mutation failure receipt is invalid JSON.');
+          const validation = validatePreMutationFailureReceipt(receipt, {
+            run: priorRun, job,
+            expected: { repository: context.repository, ...context.dispatch.identity },
+          });
+          if (!validation.valid) fail('Prior pre-mutation failure receipt is not exact.', { blockers: validation.blockers });
+          preMutationFailures.push({ receipt, artifactId: artifact.id, archiveDigest: artifact.digest, payloadSha256: sha256(payload) });
+        }
+      }
+      return { runId, jobs, preMutationFailures };
+    }));
     execution = validatePersonalRepositoryDispatchExecution({
       definitions,
       run,
@@ -376,6 +415,9 @@ async function currentWorkflowExecution(context) {
     }, {
       repository: context.repository,
       sourceHead: context.dispatch.identity.sourceHead,
+      prNumber: context.dispatch.identity.prNumber,
+      branch: context.dispatch.identity.branch,
+      sourceTree: context.dispatch.identity.sourceTree,
       baseSha: context.dispatch.identity.baseSha,
       workflowRunId: context.runId,
       workflowRunAttempt: context.runAttempt,
@@ -1147,6 +1189,7 @@ async function main() {
   const runAttempt = positiveInteger(process.env.GITHUB_RUN_ATTEMPT);
   if (!owner || !repo || !runId || !runAttempt) fail('GitHub workflow run identity is incomplete or unsafe.');
   const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId };
+  failureIdentity = { repository, ...dispatch.identity, workflowRunId: runId, workflowRunAttempt: runAttempt };
 
   if (mode === 'evidence') {
     const collected = await collectEvidence(context);
@@ -1226,13 +1269,13 @@ async function main() {
       blockers: receiptValidation.blockers,
     });
   }
-  const mergeResponse = await apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}/merge`, {
+  const mergeResponse = await mutationBoundary.requestMerge(() => apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}/merge`, {
     method: 'PUT',
     body: {
       merge_method: 'squash',
       sha: receipt.sourceHead,
     },
-  });
+  }));
   const mergedPullRequest = await apiJson(`/repos/${owner}/${repo}/pulls/${receipt.prNumber}`);
   const liveMainRef = await apiJson(`/repos/${owner}/${repo}/git/ref/heads/main`);
   const mergeCommit = await apiJson(`/repos/${owner}/${repo}/git/commits/${text(mergeResponse?.sha).toLowerCase()}`);
@@ -1272,6 +1315,11 @@ async function main() {
 }
 
 main().catch((error) => {
+  const failurePath = text(process.env.STEPHANOS_PRE_MUTATION_FAILURE_PATH);
+  if (failurePath && failureIdentity) {
+    const receipt = mutationBoundary.failureReceipt(failureIdentity, { mode });
+    if (receipt) writeFileSync(failurePath, JSON.stringify(receipt));
+  }
   const details = error instanceof GateError ? error.details : {};
   process.stderr.write(`${JSON.stringify({
     finalStatus: 'PERSONAL_REPOSITORY_PROTECTED_MERGE_BLOCKED',
