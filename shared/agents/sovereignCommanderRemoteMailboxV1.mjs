@@ -244,9 +244,21 @@ function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_R
     : fallbackMs;
 }
 
+// Bounded repair actions may need Commander to be revived before opening an MCP
+// session. Use the existing guarded, fixed-capability ignition preflight only;
+// read-only/status commands never gain service-recycle authority.
+const COMMANDER_RUNTIME_PREFLIGHT_ACTIONS = new Set([
+  'repair-stephanos',
+  'repair-goal-builder-flow',
+  'fleet-goal-supervisor',
+]);
+
 function sovereignCommanderRepairEnvelopeRequired(command = {}) {
-  return text(command?.remoteAction) === 'repair-stephanos'
-    || (Array.isArray(command?.remotePlan) && command.remotePlan.map((value) => text(value)).includes('repair-stephanos'));
+  const actions = [
+    text(command?.remoteAction),
+    ...(Array.isArray(command?.remotePlan) ? command.remotePlan.map((value) => text(value)) : []),
+  ];
+  return actions.some((actionId) => COMMANDER_RUNTIME_PREFLIGHT_ACTIONS.has(actionId));
 }
 
 export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
