@@ -8,7 +8,9 @@ import {
 // This is a bounded *candidate* reviewer. No local model may sign itself into
 // a protected GitHub approval, specialist class, or merge authority.
 export const SOVEREIGN_REVIEWER_SCHEMA = 'stephanos.sovereign-reviewer.v1';
-export const SOVEREIGN_REVIEWER_MAX_DIFF_BYTES = 96 * 1024;
+// Keep the full patch within the default local model's bounded 8K context.
+// Oversized changes must be split or escalated, never implicitly truncated.
+export const SOVEREIGN_REVIEWER_MAX_DIFF_BYTES = 12 * 1024;
 const SHA = /^[a-f0-9]{40}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/;

@@ -109,3 +109,11 @@ test('blocks local clearance for OpenClaw authority and exact-head review engine
     assert.equal(result.reason, 'QUALIFIED_HIGH_RISK_SPECIALIST_REQUIRED', file);
   }
 });
+
+test('refuses model context overflow rather than letting the local model truncate unseen diff content', () => {
+  const result = inspectSovereignReviewSnapshot({
+    ...sample, diff: 'diff --git a/a b/a\n' + '+safe-looking-change\n'.repeat(1100),
+  });
+  assert.equal(result.reason, 'INCOMPLETE_OR_UNREVIEWABLE_DIFF');
+  assert.equal(result.mergeAuthority, false);
+});
