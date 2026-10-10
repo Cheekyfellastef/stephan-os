@@ -224,7 +224,7 @@ async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
 }
 
 function exactOriginalCancellation(lease, mission) {
-  const match = text(lease?.leaseId).match(/-r([1-9]\\d*)-lease$/);
+  const match = text(lease?.leaseId).match(/-r([1-9]\d*)-lease$/);
   const revision = Number(match?.[1]);
   const eventId = text(mission?.storeMetadata?.lastEventId);
   return Boolean(match
