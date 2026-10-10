@@ -41,6 +41,10 @@ const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
 const IGNITION_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHA40 = /^[0-9a-f]{40}$/;
+const SOVEREIGN_COMMANDER_HEALTH_URL = 'http://127.0.0.1:18791/health';
+const SOVEREIGN_COMMANDER_CANONICAL_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const SOVEREIGN_COMMANDER_RUNNER = resolve(IGNITION_REPO_ROOT, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+const SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS = 3000;
 
 export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
   expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
@@ -99,6 +103,70 @@ function startApprovedOpenClawSurface({ target, spawnFn = spawn, log = (message)
   const pid = Number(child?.pid || 0) || null;
   log(`[IGNITION] openclaw-autostart-surface=${JSON.stringify({ surface: target.id, started: true, pid, guardrails: OPENCLAW_GATEWAY_STARTUP_GUARDRAILS })}`);
   return { surface: target.id, started: true, pid };
+}
+
+export async function ensureSovereignCommanderAtIgnitionWithDeps({
+  platform = process.platform,
+  fetchFn = globalThis.fetch,
+  captureStep = runStepCapture,
+  log = (message) => console.log(message),
+  healthTimeoutMs = SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS,
+} = {}) {
+  if (platform !== 'win32') {
+    const status = { state: 'sovereign-commander-skipped-non-windows', healthy: false, required: false };
+    log(`[IGNITION] sovereign-commander-status=${JSON.stringify(status)}`);
+    return status;
+  }
+
+  const probe = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(1, Number(healthTimeoutMs) || SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS));
+    try {
+      const response = await fetchFn(SOVEREIGN_COMMANDER_HEALTH_URL, { signal: controller.signal });
+      if (!response?.ok) return false;
+      const body = await response.json();
+      return body?.ok === true
+        && body?.service === 'stephanos-sovereign-commander'
+        && body?.vendorMeterRequired === false
+        && body?.externalSaasRelayRequired === false;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  if (await probe()) {
+    const status = { state: 'sovereign-commander-reused-existing-runtime', healthy: true, startupAttempted: false };
+    log(`[IGNITION] sovereign-commander-status=${JSON.stringify(status)}`);
+    return status;
+  }
+
+  let launchResult;
+  try {
+    launchResult = captureStep('sovereign-commander-watchdog', SOVEREIGN_COMMANDER_CANONICAL_POWERSHELL, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', SOVEREIGN_COMMANDER_RUNNER,
+    ]);
+  } catch (error) {
+    throw new Error(`blocked for safety: Sovereign Commander watchdog start failed (${error.message}).`);
+  }
+
+  if (!(await probe())) {
+    throw new Error(`blocked for safety: Sovereign Commander did not become healthy at ${SOVEREIGN_COMMANDER_HEALTH_URL} after the fixed watchdog ran.`);
+  }
+
+  const status = {
+    state: 'sovereign-commander-watchdog-started',
+    healthy: true,
+    startupAttempted: true,
+    runner: SOVEREIGN_COMMANDER_RUNNER,
+    launchStdoutPresent: Boolean(String(launchResult?.stdout || '').trim()),
+  };
+  log(`[IGNITION] sovereign-commander-status=${JSON.stringify(status)}`);
+  return status;
 }
 
 export async function evaluateOpenClawRuntimeAutostartWithDeps({
@@ -2224,6 +2292,7 @@ export async function run() {
       }
 
       if (ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32') {
+        await ensureSovereignCommanderAtIgnitionWithDeps();
         await evaluateOpenClawRuntimeAutostartWithDeps();
       } else if (ignitionMode === 'NORMAL_IGNITION') {
         console.log('[IGNITION] OpenClaw startup connect recovery skipped (non-Windows desktop service probe unavailable).');
