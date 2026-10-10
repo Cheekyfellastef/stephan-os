@@ -655,3 +655,34 @@ test('missing source and capacity proof blocks queued receipt before writer or h
   assert.equal(published, 0);
   assert.equal(result.leaseSeizureAllowed, false);
 });
+
+test('first PR-head lease claim is refused before reservation when queued proof is absent', async () => {
+  const candidate = mission(1802, 2096, HEAD_A, { evidenceReceipts: [] });
+  let leaseClaims = 0;
+  let queuedAppends = 0;
+  let workerPublishes = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({
+      ok: true, present: false, reason: 'SOURCE_MUTATION_LEASE_NOT_CLAIMED',
+    }),
+    claimSourceMutationLease: async () => {
+      leaseClaims += 1;
+      return { ok: true };
+    },
+    appendExecutionReceipt: async () => {
+      queuedAppends += 1;
+      return { ok: true };
+    },
+    publishWorkerAction: async () => {
+      workerPublishes += 1;
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_PROOF_BLOCKED');
+  assert.equal(result.held[0].reason, 'CANONICAL_QUEUED_EXECUTION_PROOF_REQUIRED');
+  assert.equal(leaseClaims, 0, 'must not reserve global lease without valid first receipt');
+  assert.equal(queuedAppends, 0);
+  assert.equal(workerPublishes, 0);
+  assert.equal(result.leaseSeizureAllowed, false);
+});
