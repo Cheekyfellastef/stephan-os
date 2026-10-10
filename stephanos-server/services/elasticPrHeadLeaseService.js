@@ -1,4 +1,4 @@
-import { access } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import {
@@ -179,6 +179,64 @@ async function defaultActionInFlight({ adapter, actionId, env }) {
   return false;
 }
 
+// A cancelled original can only hand back its own stale source lease after
+// durable cancellation, a fully terminal original execution and observation of
+// EVERY pending/processing worker adapter. Unknown roots/items fail closed.
+// This checks source responsibility, not replacement-goal acceptance.
+const ORIGINAL_SOURCE_QUEUE_ADAPTERS = Object.freeze([
+  'openclaw-signed', 'openclaw-github-readonly', 'codex',
+  'openclaw-standalone', 'openclaw-local', 'chatgpt-github',
+  'foundry-forge', 'forge-publication', 'desktop-commander',
+  'sovereign-commander', 'stephanos-native', 'openclaw-readonly',
+  'openclaw-local-deployment', 'verification',
+]);
+
+async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
+  const root = resolveMissionWorkerQueueRoot(env);
+  if (!root) throw new Error('ORIGINAL_MISSION_QUEUE_ROOT_UNAVAILABLE');
+  await access(root);
+  for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
+    for (const state of ['pending', 'processing']) {
+      const directory = resolve(root, adapter, state);
+      let items;
+      try { items = await readdir(directory, { withFileTypes: true }); }
+      catch (error) {
+        if (error?.code === 'ENOENT') continue;
+        throw error;
+      }
+      if (items.length > 512) throw new Error('ORIGINAL_MISSION_QUEUE_INVENTORY_UNBOUNDED');
+      for (const item of items) {
+        if (!item.isFile() || !item.name.endsWith('.json')) {
+          if (item.isDirectory() || item.isSymbolicLink()) throw new Error('ORIGINAL_MISSION_QUEUE_ENTRY_UNSAFE');
+          continue;
+        }
+        let record;
+        try { record = JSON.parse(await readFile(resolve(directory, item.name), 'utf8')); }
+        catch { throw new Error('ORIGINAL_MISSION_QUEUE_ITEM_UNREADABLE'); }
+        if (text(record?.missionId).toLowerCase() === missionId
+          || text(record?.payload?.missionId).toLowerCase() === missionId
+          || text(record?.executionBinding?.leaseKey) === leaseId
+          || text(record?.actionGrant?.leaseKey) === leaseId) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function exactOriginalCancellation(lease, mission) {
+  const match = text(lease?.leaseId).match(/-r([1-9]\\d*)-lease$/);
+  const revision = Number(match?.[1]);
+  const eventId = text(mission?.storeMetadata?.lastEventId);
+  return Boolean(match
+    && Number.isSafeInteger(revision)
+    && mission?.revision === revision + 1
+    && mission?.currentPhase === 'CANCELLED'
+    && mission?.cancelled === true
+    && ['complete', 'idle'].includes(text(mission?.dispatch?.status).toLowerCase())
+    && /^cancel-[a-z0-9._-]{8,127}$/.test(eventId)
+    && mission?.storeMetadata?.processedEventIds?.includes(eventId) === true);
+}
+
 function exactPrHeadWorkerGrant(mission, identity, sourceRevision, capacityRouting, now) {
   const projectedState = projectMissionWorkerActionState(mission, { now });
   const projectedIdentity = exactElasticPrHeadIdentity(projectedState);
@@ -278,6 +336,7 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   releaseLease = releaseSourceMutationLease,
   readReceiptHistoryFn = readExecutionReceiptHistory,
   isActionInFlightFn = defaultActionInFlight,
+  originalMissionInFlightFn = originalMissionHasQueuedWork,
 } = {}) {
   const held = (reason) => freeze({
     ok: false, released: false,
@@ -310,9 +369,59 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   if (candidates.length !== 1) return held('EXACT_ORIGINAL_MISSION_UNAVAILABLE_OR_AMBIGUOUS');
   const mission = candidates[0];
   const identity = exactElasticPrHeadIdentity(mission);
+  const originalCancelled = phaseOf(mission) === 'CANCELLED';
   if (!identity || !sameLeaseIdentity(lease, identity)
-      || text(lease.leaseId) !== leaseIdForMission(mission, identity)) {
+      || (originalCancelled
+        ? !exactOriginalCancellation(lease, mission)
+        : text(lease.leaseId) !== leaseIdForMission(mission, identity))) {
     return held('REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH');
+  }
+  // Durable operator cancellation retires a superseded SOURCE ATTEMPT only.
+  // It cannot prove the issue accepted, deploy anything or create a new writer.
+  // The original lease's rN revision remains bound to the rN+1 cancellation
+  // event; no unrelated mission, head, branch, PR or receipt may authorize it.
+  if (originalCancelled) {
+    if (!resolveMissionWorkerQueueRoot(env)) return held('CANONICAL_WORKER_QUEUE_UNAVAILABLE');
+    let history;
+    let actionInFlight;
+    try {
+      history = await readReceiptHistoryFn(paths.workspaceRoot, {
+        leaseKey: lease.leaseId, expectedHead: lease.headSha,
+      }, { repoRoot: paths.repoRoot });
+      if (history?.ok !== true
+          || !Array.isArray(history.receipts)
+          || history.receipts.length === 0
+          || !history.latestReceipt
+          || !TERMINAL_EXECUTION_RECEIPT_STATES.has(
+            text(history.latestReceipt.state).toLowerCase())) {
+        return held('CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN');
+      }
+      actionInFlight = await (typeof originalMissionInFlightFn === 'function'
+        ? originalMissionInFlightFn : originalMissionHasQueuedWork)({
+        missionId: identity.missionId, leaseId: lease.leaseId, env,
+      });
+    } catch {
+      return held('CANCELLED_SOURCE_WORKER_QUEUE_UNOBSERVABLE');
+    }
+    if (actionInFlight !== false) return held('CANCELLED_SOURCE_WORK_STILL_IN_FLIGHT');
+    const release = await releaseLease({
+      leaseId: lease.leaseId, laneId: lease.laneId, repository: lease.repository,
+      issueNumber: lease.issueNumber, prNumber: lease.prNumber,
+      branch: lease.branch, headSha: lease.headSha, ownerId: lease.ownerId, nowUtc,
+    }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
+    if (release?.ok !== true || release.released !== true) {
+      return held('CANCELLED_SOURCE_LEASE_RELEASE_NOT_PROVEN');
+    }
+    return freeze({
+      ok: true, released: true,
+      classification: 'ELASTIC_CANCELLED_ORIGINAL_EXACT_LEASE_RELEASED',
+      originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
+      sourceHead: sourceRevision.toLowerCase(),
+      nextAction: 'REREAD_CANONICAL_PROGRAMME_AND_ADMIT_EXISTING_GOAL',
+      replacementAcceptanceProven: false, goalComplete: false,
+      leaseSeizureAllowed: false, sourceMutationAllowed: false,
+      mergeAuthority: false, dispatchAuthority: false, materialPickupProven: false,
+    });
   }
   if (phaseOf(mission) !== 'CHECK_PULL_REQUEST') {
     return held('EXACT_READ_ONLY_REVIEW_PHASE_NOT_PROVEN');
