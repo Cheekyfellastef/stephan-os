@@ -647,7 +647,7 @@ test('completed source result replays only missing evidence after interrupted qu
     success: true, resultId: result.resultId,
     changedFiles: result.changedFiles, receipt,
   }, options);
-  assert.equal(first.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(first.state.currentPhase, 'VERIFYING');
   assert.equal(first.state.dispatch.status, 'complete');
   assert.equal(first.state.evidenceReceipts.some((item) =>
     item.receiptId === 'replay-test-evidence'), false);

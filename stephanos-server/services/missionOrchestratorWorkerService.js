@@ -719,7 +719,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   // dispatch is no longer running. Resume only the missing evidence step.
   // Never reexecute a provider or accept a different result under this action.
   const exactSuccessfulReplay = result.success === true
-    && previous.currentPhase === 'GITHUB_COMMIT'
+    && ['VERIFYING', 'GITHUB_COMMIT'].includes(previous.currentPhase)
     && previous.dispatch?.status === 'complete'
     && previous.dispatch?.resultId === resultId
     && previous.storeMetadata?.processedEventIds?.includes(eventId) === true
