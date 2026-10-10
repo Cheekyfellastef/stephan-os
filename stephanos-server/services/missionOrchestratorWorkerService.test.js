@@ -620,3 +620,54 @@ test('replacement-source repair fences Forge at queue publication before claimin
  assert.equal(replacementSourceForgePublicationBlocked({...state,missionId:'critical-1723-elastic-goal'}),false);
  assert.equal(replacementSourceForgePublicationBlocked({...state,continuity:{history:[]}}),false);
 });
+
+test('completed source result replays only missing evidence after interrupted queue acknowledgement', async () => {
+  const options = await runtime();
+  const missionId = 'source-result-replay-proof';
+  const receipt = proof('codex result', 'replay-source-result-receipt');
+  await createMissionRecord({
+    ...intent, missionId, branch: 'openclaw/source-result-replay-proof',
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'replay-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath, clean: true,
+    receipt: proof('isolated worktree', 'replay-worktree-receipt'),
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'replay-dispatch', eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex', adapter: 'codex',
+  }, options);
+  const result = {
+    missionId, actionId: 'replay-source-action', adapter: 'codex', success: true,
+    resultId: 'replay-source-action', changedFiles: ['shared/agents/example.mjs'],
+    receipt, evidenceReceipts: [proof('focused test output', 'replay-test-evidence')],
+  };
+  const first = await appendMissionEvent(missionId, {
+    eventId: 'result-replay-source-action', eventType: 'AGENT_RESULT_RECEIVED',
+    success: true, resultId: result.resultId,
+    changedFiles: result.changedFiles, receipt,
+  }, options);
+  assert.equal(first.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(first.state.dispatch.status, 'complete');
+  assert.equal(first.state.evidenceReceipts.some((item) =>
+    item.receiptId === 'replay-test-evidence'), false);
+  const recovered = await collectAgentWorkerResult(result, options);
+  assert.equal(recovered.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(recovered.state.evidenceReceipts.some((item) =>
+    item.receiptId === 'replay-test-evidence'), true);
+  const again = await collectAgentWorkerResult(result, options);
+  assert.equal(again.state.revision, recovered.state.revision);
+  assert.equal(again.duplicate, true);
+  const stored = (await readMissionRecord(missionId, options)).state;
+  assert.equal(stored.storeMetadata.processedEventIds.filter((id) =>
+    id === 'result-replay-source-action').length, 1);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, actionId: 'another-action', resultId: 'another-action',
+  }, options), /no active agent dispatch/);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, changedFiles: ['shared/agents/unauthorized.mjs'],
+  }, options), /no active agent dispatch/);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, receipt: proof('codex result', 'forged-receipt'),
+  }, options), /no active agent dispatch/);
+});
