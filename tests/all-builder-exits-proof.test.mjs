@@ -234,6 +234,7 @@ const PATCH = [
 for (const builder of [
   { adapter: 'foundry-forge', route: 'FOUNDRY_FORGE', issueNumber: 7105 },
   { adapter: 'chatgpt-github', route: 'CHATGPT_GITHUB', issueNumber: 7106 },
+  { adapter: 'sovereign-commander', route: 'SOVEREIGN_COMMANDER', issueNumber: 7108 },
 ]) {
   test(`${builder.adapter} claims exact goal packet, mutates/tests source, and emits full execution truth`, async () => {
     const fx = await runtime(builder.issueNumber, builder.adapter);
