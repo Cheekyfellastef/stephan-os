@@ -401,7 +401,11 @@ export function planCoreLoopCheckerEscalationsV1(audit = {}, {
     candidates: Object.freeze(candidates.map((edge) => Object.freeze({
       edgeId: edge.id,
       state: edge.state,
-      ownerIssue: edge.ownerIssue,
+      // #2670 is a whole-system parent filtered from direct Flywheel
+      // owner attachments. Escalate its edge via existing concrete #2972;
+      // keep the original audit owner visible for traceability.
+      ownerIssue: edge.ownerIssue === '#2670' ? '#2972' : edge.ownerIssue,
+      auditOwnerIssue: edge.ownerIssue,
       reason: edge.reason,
       eventId: `core-loop-${edge.state === 'GAP' ? 'gap' : 'proof-needed'}-${head.slice(0, 12)}-${edge.id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-w${windowId}`,
     }))),
