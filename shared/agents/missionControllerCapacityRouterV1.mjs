@@ -315,10 +315,18 @@ function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
     const commander = candidateForReceipt(input.desktopCommanderLaneReceipt, expected);
     if (commander?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER) candidates.push(commander);
     const sovereign = candidateForReceipt(input.sovereignCommanderLaneReceipt, expected);
+    // Builder 8 does not inherit Desktop Commander's capacity. It must supply its
+    // own short-lived local proof on the exact source head before admission.
     if (sovereign?.route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
       && sovereign.workerId === 'stephanos-sovereign-builder-08'
-      && sovereign.authorityReceiptIds.includes(`sovereign-builder8-source-${expected.sourceHead}`)
-      && sovereign.proofRefs.includes(`proof/sovereign-builder8-capacity-${expected.sourceHead}.json`)) {
+      && sovereign.authorityReceiptIds.length === 1
+      && sovereign.authorityReceiptIds[0] === `sovereign-builder8-source-${expected.sourceHead}`
+      && sovereign.proofRefs.length === 1
+      && sovereign.proofRefs[0] === `proof/sovereign-builder8-capacity-${expected.sourceHead}.json`
+      && Date.parse(input.sovereignCommanderLaneReceipt.expiresAtUtc)
+        - Date.parse(input.sovereignCommanderLaneReceipt.observedAtUtc) <= 5 * 60_000
+      && sovereign.p95StartLatencySeconds <= 600
+      && sovereign.queueDepth <= 64) {
       candidates.push(sovereign);
     }
   }
