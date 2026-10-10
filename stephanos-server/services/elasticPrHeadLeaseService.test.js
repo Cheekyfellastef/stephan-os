@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { readExecutionReceiptHistory, validateExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
 
 import { dispatchElasticGoalBuildsFromCanonicalMain } from './criticalBacklogConveyorService.js';
 import {
@@ -35,6 +39,11 @@ function mission(issueNumber, prNumber, headSha, overrides = {}) {
     allowedFiles: [`shared/agents/goal-${issueNumber}.mjs`],
     requiredTests: [`node --test shared/agents/goal-${issueNumber}.test.mjs`],
     requiredEvidence: [`goal-${issueNumber}-proof`],
+    evidenceReceipts: [{
+      receiptId: `goal-${issueNumber}-source-proof`, requirement: `goal-${issueNumber}-proof`,
+      source: 'mission-orchestrator', evidenceType: 'command-output',
+      verified: true, commandOutputHash: 'f'.repeat(64),
+    }],
     dispatch: { status: 'idle' },
     ...overrides,
   };
@@ -589,4 +598,60 @@ test('completed original r7 repair lease retires only with failed required check
     assert.equal(result.leaseSeizureAllowed, false);
   }
   assert.equal(releases, 1, 'only the fully grounded original exact lease may be released');
+});
+
+test('real durable receipt writer accepts exact queued PR-head proof from original mission', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'elastic-pr-head-receipt-real-writer-'));
+  const candidate = mission(1802, 2096, HEAD_A);
+  const paths = { ...PATHS, workspaceRoot: root, repoRoot: resolve('.') };
+  const lease = leaseFor(candidate);
+  let published = 0;
+  try {
+    const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+      now: NOW, paths, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({
+        ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: lease,
+      }),
+      renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
+      readExecutionReceiptHistory: (...args) => readExecutionReceiptHistory(...args),
+      isActionInFlight: async () => false,
+      publishWorkerAction: async () => {
+        published += 1;
+        return { published: true, actionGrantAccepted: true };
+      },
+    });
+    assert.equal(result.classification, 'ELASTIC_PR_HEAD_DISPATCH_LIVE', JSON.stringify(result.held));
+    assert.equal(published, 1);
+    const history = await readExecutionReceiptHistory(root, { leaseKey: lease.leaseId }, { repoRoot: resolve('.') });
+    assert.equal(history.ok, true, history.reason);
+    assert.equal(history.latestReceipt?.state, 'queued');
+    assert.equal(history.latestReceipt?.sourceHead, HEAD_A);
+    assert.equal(history.latestReceipt?.prNumber, 2096);
+    assert.equal(history.latestReceipt?.leaseKey, lease.leaseId);
+    assert.deepEqual(history.latestReceipt?.proofRefs, ['goal-1802-source-proof']);
+    assert.equal(validateExecutionReceipt(history.latestReceipt).valid, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('missing source and capacity proof blocks queued receipt before writer or handoff', async () => {
+  const candidate = mission(1802, 2096, HEAD_A, { evidenceReceipts: [] });
+  const lease = leaseFor(candidate);
+  let appendCalls = 0;
+  let published = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: lease }),
+    renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    isActionInFlight: async () => false,
+    appendExecutionReceipt: async () => { appendCalls += 1; return { ok: true }; },
+    publishWorkerAction: async () => { published += 1; return { published: true, actionGrantAccepted: true }; },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_PROOF_BLOCKED');
+  assert.equal(result.held[0].reason, 'CANONICAL_QUEUED_EXECUTION_PROOF_REQUIRED');
+  assert.equal(appendCalls, 0);
+  assert.equal(published, 0);
+  assert.equal(result.leaseSeizureAllowed, false);
 });
