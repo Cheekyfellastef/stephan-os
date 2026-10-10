@@ -383,7 +383,7 @@ test('pull-request planning remains a successful read-only neutral gate', () => 
   const neutralStep = planJob.match(
     /^      - name: Publish pull-request neutral planning truth\n[\s\S]*?^      - name: Check out trusted default-branch planner/m,
   )?.[0] || '';
-  assert.match(planJob, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(planJob, /^  plan:\n(?:    #[^\n]*\n)*    if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\n    runs-on: ubuntu-latest/m);
   assert.match(neutralStep, /if: github\.event_name == 'pull_request'/);
   assert.doesNotMatch(neutralStep, /GITHUB_TOKEN|STEPHANOS_|actions: write|issues: write|pull-requests: write/);
   assert.match(
