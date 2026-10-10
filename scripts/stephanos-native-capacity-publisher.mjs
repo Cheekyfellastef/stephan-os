@@ -68,6 +68,8 @@ export async function ensureStephanosNativeCapacityKeyPair(options = {}) {
   return Object.freeze({ ok: true, reason: 'STEPHANOS_NATIVE_CAPACITY_KEY_READY', ...paths, privateKeyPem });
 }
 
+import { summarizeNativePublisherDirt } from './stephanos-native-capacity-publisher-source-gate.mjs';
+
 export function inspectStephanosNativeCapacitySourceIdentity(options = {}) {
   const env = options.env || process.env;
   const repoRoot = canonicalRepositoryRoot(env);
@@ -86,16 +88,17 @@ export function inspectStephanosNativeCapacitySourceIdentity(options = {}) {
   try {
     const branchResult = runGit(['branch', '--show-current']);
     const headResult = runGit(['rev-parse', 'HEAD']);
-    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=no']);
+    const dirtResult = runGit(['status', '--porcelain=v1', '--untracked-files=all']);
     if (branchResult?.status !== 0 || headResult?.status !== 0 || dirtResult?.status !== 0) {
       return Object.freeze({ ok: false, reason: 'native-capacity-source-identity-read-failed' });
     }
     const branch = text(branchResult.stdout);
     const sourceHead = text(headResult.stdout).toLowerCase();
-    const trackedDirt = text(dirtResult.stdout);
+    const dirtLines = text(dirtResult.stdout).split(/\r?\n/).filter((line) => line.trim());
+    const dirtSummary = summarizeNativePublisherDirt(dirtLines);
     if (branch !== 'main') return Object.freeze({ ok: false, reason: 'native-capacity-source-not-main', branch, sourceHead });
     if (!SHA40.test(sourceHead)) return Object.freeze({ ok: false, reason: 'native-capacity-source-head-invalid', branch, sourceHead: '' });
-    if (trackedDirt) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
+    if (dirtSummary.blocksSync) return Object.freeze({ ok: false, reason: 'native-capacity-source-dirty', branch, sourceHead });
     const expectedHead = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
     if (expectedHead && expectedHead !== sourceHead) {
       return Object.freeze({ ok: false, reason: 'native-capacity-launch-head-mismatch', branch, sourceHead, expectedHead });
