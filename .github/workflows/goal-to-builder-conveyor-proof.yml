@@ -13,6 +13,7 @@ on:
       - 'shared/runtime/missionScheduler.test.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.test.mjs'
+      - 'shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs'
       - 'shared/agents/openClawProviderPoolQualificationV1.mjs'
       - 'shared/agents/openClawProviderPoolQualificationV1.test.mjs'
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
@@ -100,6 +101,7 @@ jobs:
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
+          shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
           stephanos-server/services/providerNeutralSourceBuilderService.test.js
