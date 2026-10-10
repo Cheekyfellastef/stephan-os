@@ -251,7 +251,14 @@ test('a lease owned by another canonical lane blocks PR-head takeover without se
 });
 
 test('signed PR-head commit actions use the canonical openclaw-signed adapter', async () => {
-  const candidate = mission(1802, 2096, HEAD_A, { currentPhase: 'GITHUB_COMMIT' });
+  const candidate = mission(1802, 2096, HEAD_A, {
+    currentPhase: 'GITHUB_COMMIT',
+    git: {
+      branch: 'openclaw/elastic-goal-1802',
+      worktreePath: '/worktrees/critical-1802-elastic-goal',
+      changedFiles: ['shared/agents/goal-1802.mjs'],
+    },
+  });
   const lease = leaseFor(candidate);
   let publishedGrant = null;
   const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
