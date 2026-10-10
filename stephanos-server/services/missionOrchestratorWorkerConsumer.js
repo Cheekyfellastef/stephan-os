@@ -19,7 +19,7 @@ import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscr
 
 function providerNeutralTerminalQueueReleaseProven(item, result, adapter) {
   const normalizedAdapter = normalizedText(adapter).toLowerCase();
-  if (!['foundry-forge', 'chatgpt-github'].includes(normalizedAdapter)) return false;
+  if (!['foundry-forge', 'chatgpt-github', 'sovereign-commander'].includes(normalizedAdapter)) return false;
   return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
     && item?.actionGrant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
     && item?.executionBinding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
@@ -171,7 +171,7 @@ function executionWorkerTypeForAdapter(adapter = '') {
   if (normalized === 'codex') return 'remote-codex';
   if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
   if (normalized === 'stephanos-native') return 'orchestration-engine';
-  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander') return 'github-first';
+  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander' || normalized === 'sovereign-commander') return 'github-first';
   return normalized;
 }
 

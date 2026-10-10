@@ -26,6 +26,7 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   OPENCLAW_STANDALONE: 'OPENCLAW_STANDALONE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
   DESKTOP_COMMANDER: 'DESKTOP_COMMANDER',
+  SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER',
   STEPHANOS_NATIVE: STEPHANOS_NATIVE_ROUTE,
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
@@ -39,7 +40,11 @@ const RECEIPT_KEYS = Object.freeze([
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
   'queueDepth', 'p95StartLatencySeconds', 'authorityReceiptIds', 'proofRefs',
 ]);
-const DESKTOP_COMMANDER_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
+const HEAD_BOUND_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
+const HEAD_BOUND_CAPACITY_ROUTES = new Set([
+  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+]);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
@@ -47,12 +52,14 @@ const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
   [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER]: 'desktop-commander',
+  [MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER]: 'sovereign-commander',
   [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: STEPHANOS_NATIVE_ADAPTER,
 });
 const BUILD_LANE_CAPACITY_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
@@ -151,8 +158,8 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
   const authorities = uniqueStrings(receipt?.authorityReceiptIds);
   const proofRefs = uniqueStrings(receipt?.proofRefs);
   const route = text(receipt?.route).toUpperCase();
-  const receiptKeys = route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
-    ? DESKTOP_COMMANDER_RECEIPT_KEYS
+  const receiptKeys = HEAD_BOUND_CAPACITY_ROUTES.has(route)
+    ? HEAD_BOUND_RECEIPT_KEYS
     : RECEIPT_KEYS;
   const expectedSourceHead = text(expected.sourceHead).toLowerCase();
   const receiptSourceHead = text(receipt?.sourceHead).toLowerCase();
@@ -160,7 +167,7 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
     && receipt.schemaVersion === BUILD_LANE_CAPACITY_RECEIPT_SCHEMA
     && SAFE_ID.test(text(receipt.receiptId))
     && BUILD_LANE_CAPACITY_ROUTES.has(route)
-    && (route !== MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    && (!HEAD_BOUND_CAPACITY_ROUTES.has(route)
       || (FULL_SHA.test(receiptSourceHead)
         && FULL_SHA.test(expectedSourceHead)
         && receiptSourceHead === expectedSourceHead))
@@ -191,7 +198,7 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     repository: receipt?.repository,
     taskClass: firstTaskClass,
     nowUtc: options.nowUtc || receipt?.observedAtUtc,
-    sourceHead: receipt?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    sourceHead: HEAD_BOUND_CAPACITY_ROUTES.has(receipt?.route)
       ? receipt?.sourceHead
       : '',
   });
@@ -200,7 +207,9 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     ? 'chatgpt-github-build-capacity-current'
     : receipt.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
       ? 'desktop-commander-build-capacity-current'
-      : 'foundry-forge-build-capacity-current';
+      : receipt.route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+        ? 'sovereign-commander-build-capacity-current'
+        : 'foundry-forge-build-capacity-current';
   return frozen({
     ...createSharedWorkspaceStatusRecord({
       statusId,
@@ -305,6 +314,21 @@ function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
     const commander = candidateForReceipt(input.desktopCommanderLaneReceipt, expected);
     if (commander?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER) candidates.push(commander);
+    const sovereign = candidateForReceipt(input.sovereignCommanderLaneReceipt, expected);
+    // Builder 8 does not inherit Desktop Commander's capacity. It must supply its
+    // own short-lived local proof on the exact source head before admission.
+    if (sovereign?.route === MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER
+      && sovereign.workerId === 'stephanos-sovereign-builder-08'
+      && sovereign.authorityReceiptIds.length === 1
+      && sovereign.authorityReceiptIds[0] === `sovereign-builder8-source-${expected.sourceHead}`
+      && sovereign.proofRefs.length === 1
+      && sovereign.proofRefs[0] === `proof/sovereign-builder8-capacity-${expected.sourceHead}.json`
+      && Date.parse(input.sovereignCommanderLaneReceipt.expiresAtUtc)
+        - Date.parse(input.sovereignCommanderLaneReceipt.observedAtUtc) <= 5 * 60_000
+      && sovereign.p95StartLatencySeconds <= 600
+      && sovereign.queueDepth <= 64) {
+      candidates.push(sovereign);
+    }
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
   const lifeboat = !task.windowsBound

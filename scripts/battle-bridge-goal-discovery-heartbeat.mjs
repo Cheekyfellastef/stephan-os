@@ -18,6 +18,7 @@ import {
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
+import { refreshSovereignBuilder8Capacity } from '../stephanos-server/services/sovereignBuilder8CapacityService.js';
 import { refreshOpenClawProviderPoolCapacity } from '../stephanos-server/services/openClawProviderPoolAdmissionService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
@@ -160,6 +161,7 @@ const PROCESSING_PICKUP_ADAPTERS = Object.freeze([
   'chatgpt-github',
   'foundry-forge',
   'desktop-commander',
+  'sovereign-commander',
   'stephanos-native',
 ]);
 
@@ -399,6 +401,8 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   lifeboatOptions = {},
   refreshCommanderCapacity = refreshDesktopCommanderCapacity,
   commanderOptions = {},
+  refreshSovereignCapacity = refreshSovereignBuilder8Capacity,
+  sovereignOptions = {},
   refreshOpenClawCapacity = refreshOpenClawProviderPoolCapacity,
   openClawOptions = {},
   refreshGithubLifeboat = runGitHubLifeboatLane7,
@@ -432,6 +436,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestTrackPublication = null;
   let lifeboatCapacity = null;
   let commanderCapacity = null;
+  let sovereignCapacity = null;
   let openClawCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
@@ -466,6 +471,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
+    try { sovereignCapacity = await refreshSovereignCapacity({ paths, ...sovereignOptions }); }
+    catch (error) { sovereignCapacity = { ok: false, available: false, reason: 'SOVEREIGN_BUILDER8_CAPACITY_REFRESH_EXCEPTION' }; }
+
     try { openClawCapacity = await refreshOpenClawCapacity(openClawOptions); }
     catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 
@@ -499,6 +507,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          sovereignCapacity,
           openClawCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
@@ -641,6 +650,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          sovereignCapacity,
           openClawCapacity,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
@@ -682,6 +692,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      sovereignCapacity,
       openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
@@ -728,6 +739,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      sovereignCapacity,
       openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
