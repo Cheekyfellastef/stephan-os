@@ -697,3 +697,15 @@ test('failed checker event publication is itself a measured gap with its canonic
   const plan = planCoreLoopCheckerEscalationsV1(audit);
   assert.ok(plan.candidates.some((value) => value.edgeId === 'GAP_TO_GOAL_AND_RETRY' && value.state === 'GAP'));
 });
+
+test('checker routes root #2670 proof to the existing concrete #2972 owner instead of creating a duplicate goal', () => {
+  const audit = auditCoreLoopClosureV1(auditFixture());
+  const originalEdge = audit.edges.find((edge) => edge.id === 'GAP_TO_GOAL_AND_RETRY');
+  assert.equal(originalEdge.ownerIssue, '#2670');
+  const plan = planCoreLoopCheckerEscalationsV1(audit);
+  const candidate = plan.candidates.find((edge) => edge.edgeId === 'GAP_TO_GOAL_AND_RETRY');
+  assert.equal(candidate.auditOwnerIssue, '#2670');
+  assert.equal(candidate.ownerIssue, '#2972');
+  assert.equal(candidate.state, 'UNKNOWN');
+  assert.equal(plan.noNewGoalScopeAuthority, true);
+});
