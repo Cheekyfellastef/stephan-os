@@ -157,3 +157,18 @@ test('qualified Builder 8 receipt reaches the real elastic external admission pa
   assert.equal(result.dispatched[0].pickupProven, false);
   assert.equal(result.mergeAuthority, false);
 });
+
+test('an unexpected worker/model failure replaces any prior READY state with blocked status', async () => {
+  for (const change of [
+    { probeEnvironment: async () => { throw new Error('health-probe-crash'); } },
+    { probeModel: async () => { throw new Error('ollama-crash'); } },
+    { readQueue: async () => { throw new Error('queue-unreadable'); } },
+    { writeProof: async () => { throw new Error('disk-error'); } },
+  ]) {
+    const h = harness(change);
+    const result = await refreshSovereignBuilder8Capacity(h.opts);
+    assert.equal(result.reason, 'SOVEREIGN_BUILDER8_CAPACITY_PROBE_EXCEPTION');
+    assert.equal(h.statuses.length, 1);
+    assert.equal(h.statuses[0].status, 'BLOCKED');
+  }
+});
