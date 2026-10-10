@@ -2501,3 +2501,22 @@ test('unbound push duplicate is neutral only when the same check has an exact PR
     assert.ok(hostile.blockers.includes('personal-repository-check-run-identity-invalid'), label);
   }
 });
+
+test('protected workflow treats GitHub Actions as transport only and still proves the owner comment', () => {
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/operator-merge-approval-gate.yml', import.meta.url),
+    'utf8',
+  );
+  const entry = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(workflow, /Prove exact owner-authored mailbox authorization/);
+  assert.match(workflow, /validateProtectedWorkflowAuthorizationComment\(comment/);
+  assert.match(workflow, /github-actions\[bot\]/);
+  assert.match(workflow, /AUTHORIZATION_COMMENT_ID:/);
+  assert.match(workflow, /Re-prove immutable evidence after protected approval/);
+  assert.match(entry, /MAILBOX_GITHUB_ACTIONS_ACTOR_ID = 41898282/);
+  assert.match(entry, /validateProtectedWorkflowAuthorizationComment\(comment/);
+  assert.match(entry, /!trustedOwnerTransport && !trustedMailboxCarrier/);
+  assert.match(workflow, /Mark exact authorized pull request ready and publish lifecycle proof/);
+  // The separate ready path is unchanged and still requires the owner actor.
+  assert.match(workflow, /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
+});
