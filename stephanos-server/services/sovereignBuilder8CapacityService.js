@@ -135,6 +135,7 @@ export async function refreshSovereignBuilder8Capacity(options = {}) {
     return reject(reason);
   }
 
+  try {
   const headReader = options.readSourceHead || ((root) => defaultReadHead(root, options));
   const originalHead = text(await headReader(paths.repoRoot)).toLowerCase();
   if (!SHA40.test(originalHead)) return blocked('SOVEREIGN_BUILDER8_SOURCE_HEAD_UNPROVEN');
@@ -216,4 +217,8 @@ export async function refreshSovereignBuilder8Capacity(options = {}) {
     mergeAuthority: false, leaseSeizureAllowed: false, arbitraryCommandAllowed: false,
     finalVerdict: 'SOVEREIGN_BUILDER8_CAPACITY_PUBLISHED',
   });
+  } catch {
+    // A crashed probe must not leave a previously published READY route usable.
+    return blocked('SOVEREIGN_BUILDER8_CAPACITY_PROBE_EXCEPTION');
+  }
 }
