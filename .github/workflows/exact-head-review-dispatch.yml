@@ -124,6 +124,37 @@ jobs:
             echo 'Canonical-target discovery and every coordinator mutation are disabled for pull-request verification.'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Gate hosted review on its own GitHub installation API budget
+        id: github_budget
+        if: >-
+          github.event_name != 'pull_request' &&
+          (github.event_name != 'issue_comment' || github.event.issue.pull_request != null)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GET /rate_limit does not spend primary/core quota. It can count
+          # against secondary limits, so fail closed if it cannot be read.
+          if ! quota="$(gh api rate_limit 2>/dev/null)"; then
+            echo "::error::GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN"
+            exit 1
+          fi
+          limit="$(jq -er '.resources.core.limit | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          remaining="$(jq -er '.resources.core.remaining | select(type == "number" and . >= 0)' <<< "$quota")" || exit 1
+          reset="$(jq -er '.resources.core.reset | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          reserve=$(( (limit + 4) / 5 ))
+          if (( reserve < 50 )); then reserve=50; fi
+          echo "limit=$limit" >> "$GITHUB_OUTPUT"
+          echo "remaining=$remaining" >> "$GITHUB_OUTPUT"
+          echo "reset_epoch=$reset" >> "$GITHUB_OUTPUT"
+          echo "reserve=$reserve" >> "$GITHUB_OUTPUT"
+          if (( remaining <= reserve )); then
+            echo "::warning::GITHUB_HOSTED_REVIEW_BUDGET_HOLD remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
+            echo "GitHub hosted review is held: installation core REST budget under 20% reserve." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "GITHUB_HOSTED_REVIEW_BUDGET_READY remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
       - name: Check out trusted default-branch planner
         if: >-
           github.event_name != 'pull_request' &&
@@ -209,6 +240,34 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Gate hosted review on its own GitHub installation API budget
+        id: github_budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GET /rate_limit does not spend primary/core quota. It can count
+          # against secondary limits, so fail closed if it cannot be read.
+          if ! quota="$(gh api rate_limit 2>/dev/null)"; then
+            echo "::error::GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN"
+            exit 1
+          fi
+          limit="$(jq -er '.resources.core.limit | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          remaining="$(jq -er '.resources.core.remaining | select(type == "number" and . >= 0)' <<< "$quota")" || exit 1
+          reset="$(jq -er '.resources.core.reset | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          reserve=$(( (limit + 4) / 5 ))
+          if (( reserve < 50 )); then reserve=50; fi
+          echo "limit=$limit" >> "$GITHUB_OUTPUT"
+          echo "remaining=$remaining" >> "$GITHUB_OUTPUT"
+          echo "reset_epoch=$reset" >> "$GITHUB_OUTPUT"
+          echo "reserve=$reserve" >> "$GITHUB_OUTPUT"
+          if (( remaining <= reserve )); then
+            echo "::warning::GITHUB_HOSTED_REVIEW_BUDGET_HOLD remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
+            echo "GitHub hosted review is held: installation core REST budget under 20% reserve." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "GITHUB_HOSTED_REVIEW_BUDGET_READY remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
       - name: Check out trusted default-branch coordinator
         uses: actions/checkout@v4
         with:
