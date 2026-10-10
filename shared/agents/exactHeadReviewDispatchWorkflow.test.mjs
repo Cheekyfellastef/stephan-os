@@ -53,7 +53,7 @@ test('pull-request planning succeeds neutrally without entering the real planner
   const neutral = workflowStep(
     plan,
     'Publish pull-request neutral planning truth',
-    'Check out trusted default-branch planner',
+    'Gate hosted review on its own GitHub installation API budget',
   );
   const discovery = plan.match(
     /^      - name: Discover canonical PR targets without mutation\n[\s\S]*$/m,
@@ -74,7 +74,7 @@ test('every real planning dependency is gated away from pull-request verificatio
   const workflow = readWorkflow();
   const plan = workflowJob(workflow, 'plan', 'coordinate');
   const admitted = /if: >-\n          github\.event_name != 'pull_request' &&\n          \(github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\)/g;
-  assert.equal([...plan.matchAll(admitted)].length, 3);
+  assert.equal([...plan.matchAll(admitted)].length, 4); // Includes fail-closed quota admission
   assert.match(plan, /permissions:\n      actions: read\n      contents: read\n      issues: read\n      pull-requests: read/);
   assert.match(workflow, /coordinate:\n    needs: plan\n    if: >-\n      needs\.plan\.outputs\.targets != ''/);
 });
