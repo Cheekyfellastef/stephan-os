@@ -5,6 +5,7 @@ import { dispatchElasticGoalBuildsFromCanonicalMain } from './criticalBacklogCon
 import {
   dispatchElasticPrHeadBuildsFromCanonicalLease,
   exactElasticPrHeadIdentity,
+  reconcileExpiredElasticReviewLeaseV1,
 } from './elasticPrHeadLeaseService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -326,4 +327,81 @@ test('aggregate ignition preserves a failed PR-head lease verdict even when sibl
   assert.equal(result.classification, 'ELASTIC_GOAL_BUILD_DISPATCH_PARTIAL_BLOCKED');
   assert.equal(result.prHeadLease.ok, false);
   assert.equal(result.held.some((item) => item.reason === 'LEASE_RENEWAL_FAILED'), true);
+});
+
+test('guarded expired r7 review lease can be released only after matching owner/phase and no pending worker action', async () => {
+  const review = mission(1802, 2096, HEAD_A);
+  const stale = leaseFor(review);
+  const calls = [];
+  const result = await reconcileExpiredElasticReviewLeaseV1({
+    now: NOW, sourceRevision: SOURCE, paths: PATHS,
+    env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/worker-queue' },
+    missionRecords: [review],
+    readLease: async () => ({
+      ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_STALE',
+      validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+      record: stale,
+    }),
+    readReceiptHistoryFn: async () => ({ ok: true, latestReceipt: null }),
+    isActionInFlightFn: async (input) => {
+      calls.push(['queue-observed', input.adapter]);
+      assert.equal(input.adapter, 'openclaw-github-readonly');
+      return false;
+    },
+    releaseLease: async (input) => {
+      calls.push(['released', input.leaseId]);
+      assert.equal(input.ownerId, 'mission-worker');
+      assert.equal(input.headSha, HEAD_A);
+      assert.equal(input.prNumber, 2096);
+      return { ok: true, released: true };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.released, true);
+  assert.equal(result.classification, 'ELASTIC_EXPIRED_REVIEW_LEASE_SAFELY_RELEASED');
+  assert.equal(result.originalMissionId, 'critical-1802-elastic-goal');
+  assert.deepEqual(calls.map((item) => item[0]), ['queue-observed', 'released']);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.materialPickupProven, false);
+});
+
+test('stale review lease refuses release for running, mismatched, queued, or unproven ownership', async () => {
+  const review = mission(1802, 2096, HEAD_A);
+  const stale = leaseFor(review);
+  const goodLease = async () => ({
+    ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_STALE',
+    validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+    record: stale,
+  });
+  let releases = 0;
+  const base = {
+    now: NOW, sourceRevision: SOURCE, paths: PATHS,
+    env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/worker-queue' },
+    missionRecords: [review],
+    readLease: goodLease,
+    readReceiptHistoryFn: async () => ({ ok: true, latestReceipt: null }),
+    isActionInFlightFn: async () => false,
+    releaseLease: async () => { releases += 1; return { ok: true, released: true }; },
+  };
+  const cases = [
+    { missionRecords: [mission(1802, 2096, HEAD_A, { dispatch: { status: 'running' } })] },
+    { missionRecords: [mission(1802, 2096, HEAD_A, { currentPhase: 'AGENT_IMPLEMENTATION' })] },
+    { missionRecords: [mission(1802, 2096, HEAD_C)] },
+    { missionRecords: [review, review] },
+    { isActionInFlightFn: async () => true },
+    { readReceiptHistoryFn: async () => ({ ok: true, latestReceipt: { state: 'started' } }) },
+    { readReceiptHistoryFn: async () => ({ ok: false, reason: 'READ_FAILED' }) },
+    { readLease: async () => ({ ...(await goodLease()), validation: { valid: true, active: true, stale: false } }) },
+    { readLease: async () => ({ ...(await goodLease()), record: { ...stale, ownerId: 'another-worker' } }) },
+    { sourceRevision: '' },
+    { env: {} },
+  ];
+  for (const scenario of cases) {
+    const result = await reconcileExpiredElasticReviewLeaseV1({ ...base, ...scenario });
+    assert.equal(result.released, false, result.blocker);
+    assert.equal(result.leaseSeizureAllowed, false);
+    assert.equal(result.dispatchAuthority, false);
+  }
+  assert.equal(releases, 0, 'no unsafe source lease must be released');
 });

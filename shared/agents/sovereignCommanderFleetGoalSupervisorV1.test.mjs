@@ -313,3 +313,25 @@ test('Sovereign supervisor carries exact read-only admission-gate cause on a hel
   assert.equal(result.daemonMayReportGreen, false);
   assert.equal(result.mergeAuthority, false);
 });
+
+test('Sovereign supervisor reports exact guarded stale review lease hold instead of generic admission error', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['lane:elastic-lease-expired-or-not-active'],
+      elasticAdmission: null,
+      elasticIgnition: null,
+      elasticReviewLeaseRecovery: {
+        ok: false, released: false,
+        blocker: 'NONTERMINAL_REVIEW_EXECUTION_RECEIPT',
+        leaseSeizureAllowed: false, mergeAuthority: false,
+      },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NONTERMINAL_REVIEW_EXECUTION_RECEIPT');
+  assert.equal(result.elasticReviewLeaseRecovery.released, false);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mergeAuthority, false);
+});

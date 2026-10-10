@@ -2149,3 +2149,31 @@ test('superseded reconciliation projects from the durable winning mirror rather 
   assert.equal(selected[0].mirrorBuildPickupAllowed, false);
   assert.equal(selected[0].mirrorObservedAtUtc, '2026-07-30T10:30:00.000Z');
 });
+
+test('canonical guarded release can reconcile an exact expired lease without seizing a new writer', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const staleRecord = leaseInput({
+      expiresAtUtc: '2026-07-30T09:45:00.000Z',
+    });
+    const claim = await claimSourceMutationLease(
+      staleRecord, githubAuthorityOptions(root, repoRoot),
+    );
+    assert.equal(claim.ok, true);
+    const before = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(before.ok, true);
+    assert.equal(before.present, true);
+    assert.equal(before.validation.valid, true);
+    assert.equal(before.validation.stale, true);
+    const release = await releaseSourceMutationLease({
+      ...staleRecord,
+      nowUtc: NOW,
+    }, { root, repoRoot });
+    assert.equal(release.ok, true);
+    assert.equal(release.released, true);
+    assert.equal(release.releaseOnlyExactLease, true);
+    const after = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(after.ok, true);
+    assert.equal(after.present, false);
+    assert.equal(after.reason, 'SOURCE_MUTATION_LEASE_NOT_CLAIMED');
+  });
+});
