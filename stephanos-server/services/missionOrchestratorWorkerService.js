@@ -708,9 +708,36 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const adapter = text(result?.adapter).toLowerCase();
   if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
-  if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  const eventId = `result-${actionId}`.slice(0, 128);
+  const resultId = text(result.resultId, actionId);
+  const previous = current.state;
+  const normalizedFiles = (files) => (Array.isArray(files) ? files : [])
+    .map((file) => text(file).replace(/\\\\/g, '/')).sort();
+  // A crash between AGENT_RESULT_RECEIVED and EVIDENCE_RECORDED leaves the
+  // exact original result persisted, but a replay used to fail merely because
+  // dispatch is no longer running. Resume only the missing evidence step.
+  // Never reexecute a provider or accept a different result under this action.
+  const exactSuccessfulReplay = result.success === true
+    && previous.currentPhase === 'GITHUB_COMMIT'
+    && previous.dispatch?.status === 'complete'
+    && previous.dispatch?.resultId === resultId
+    && previous.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && Boolean(text(result.receipt?.receiptId || result.receipt?.id))
+    && previous.evidenceReceipts?.some((receipt) =>
+      receipt.receiptId === text(result.receipt?.receiptId || result.receipt?.id)) === true
+    && JSON.stringify(normalizedFiles(previous.git?.changedFiles))
+      === JSON.stringify(normalizedFiles(result.changedFiles))
+    && (adapter !== 'foundry-forge'
+      || (Boolean(text(result.sourceArtifactEscrow?.completeArtifactSha256))
+        && previous.sourcePublication?.artifactSha256
+          === text(result.sourceArtifactEscrow?.completeArtifactSha256)));
+  if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
+    throw new Error('Mission has no active agent dispatch.');
+  }
+  let collected = exactSuccessfulReplay
+    ? { state: previous, duplicate: true, eventId }
+    : await appendMissionEvent(missionId, { eventId, eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId, changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     collected = await appendMissionEvent(missionId, {
