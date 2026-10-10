@@ -5,6 +5,7 @@ import {
   appendExecutionReceipt,
   createExecutionReceipt,
   readExecutionReceiptHistory,
+  validateExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import {
   buildMissionWorkerAction,
@@ -114,7 +115,27 @@ function receiptWorkerType(grant = {}) {
   return 'orchestration-engine';
 }
 
-function createQueuedExecutionReceipt(grant, lease, nowUtc) {
+// Queue receipts must cite already persisted original mission proof or an
+// authenticated capacity/lease proof. An empty synthetic reference is not proof.
+// Mission receipts have passed the existing orchestrator evidence gate.
+function existingQueuedProofRefs(grant, lease, mission) {
+  const evidence = Array.isArray(mission?.evidenceReceipts)
+    ? mission.evidenceReceipts.filter((receipt) => receipt?.verified === true
+      && text(receipt?.requirement) && text(receipt?.source)
+      && text(receipt?.evidenceType)
+      && (text(receipt?.sha256).match(/^[a-f0-9]{64}$/i)
+        || text(receipt?.commandOutputHash).match(/^[a-f0-9]{64}$/i)
+        || receipt?.exitCode === 0 || text(receipt?.receiptPath)))
+      .map((receipt) => text(receipt.receiptPath || receipt.receiptId))
+    : [];
+  return [...new Set([
+    ...(Array.isArray(grant?.capacityProofRefs) ? grant.capacityProofRefs : []),
+    ...(Array.isArray(lease?.proofRefs) ? lease.proofRefs : []),
+    ...evidence,
+  ].filter((ref) => typeof ref === 'string' && ref.trim().length > 0))].slice(0, 24);
+}
+
+function createQueuedExecutionReceipt(grant, lease, nowUtc, proofRefs) {
   return createExecutionReceipt({
     repository: grant.repository,
     issueNumber: grant.issueNumber,
@@ -129,7 +150,7 @@ function createQueuedExecutionReceipt(grant, lease, nowUtc) {
     phase: 'pr-head-dispatch-queued',
     sequence: 1,
     timestampUtc: nowUtc,
-    proofRefs: [],
+    proofRefs,
     expectedNextAction: 'Mission Worker must append accepted before executor authority is invoked.',
   });
 }
@@ -890,7 +911,29 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
 
   if (!executionReceipt) {
-    executionReceipt = createQueuedExecutionReceipt(grant, currentLease, nowUtc);
+    const proofRefs = existingQueuedProofRefs(grant, currentLease, leasedEntry.mission);
+    if (proofRefs.length === 0) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_PROOF_BLOCKED',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: 'CANONICAL_QUEUED_EXECUTION_PROOF_REQUIRED' }],
+        activeLease: currentLease,
+        releasedLease,
+      });
+    }
+    executionReceipt = createQueuedExecutionReceipt(grant, currentLease, nowUtc, proofRefs);
+    const validation = validateExecutionReceipt(executionReceipt);
+    if (!validation.valid) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_PROOF_BLOCKED',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: `CANONICAL_QUEUED_EXECUTION_RECEIPT_INVALID:${validation.refusalReason}` }],
+        activeLease: currentLease,
+        releasedLease,
+      });
+    }
     let queuedAppend;
     try {
       queuedAppend = await appendReceipt(paths.workspaceRoot, executionReceipt, receiptOptions);
