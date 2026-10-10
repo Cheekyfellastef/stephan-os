@@ -498,8 +498,8 @@ export function auditCoreLoopClosureV1({
   // Persisted lease records carry status=ACTIVE, not a computed .active flag.
   // Observing an expired on-disk lease is a GAP even when the runtime
   // validation correctly reports that it no longer grants mutation authority.
-  const leasePresent = typeof lease?.leaseId === 'string' && lease.leaseId.length > 0
-    && lease?.status !== 'RELEASED';
+  const leasePresent = (typeof lease?.leaseId === 'string' && lease.leaseId.length > 0
+    && lease?.status !== 'RELEASED') || lease?.active === true;
   const leaseExpiry = timestamp(lease?.expiresAtUtc);
   const leaseExpired = leasePresent && leaseExpiry !== null && leaseExpiry < now;
   add('PICKUP_TO_EXECUTION',
