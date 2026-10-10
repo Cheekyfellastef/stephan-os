@@ -102,6 +102,8 @@ test('claims the canonical lease before publishing one exact PR-head worker gran
     releaseSourceMutationLease: async () => {
       throw new Error('release must not run on active work');
     },
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    appendExecutionReceipt: async () => ({ ok: true }),
     isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
       calls.push(['publish', options.actionGrant]);
@@ -190,6 +192,8 @@ test('releases a parked exact lease and refills the same lease slot with the nex
     renewSourceMutationLease: async () => {
       throw new Error('renew must not run after parked lease release');
     },
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    appendExecutionReceipt: async () => ({ ok: true }),
     isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
       calls.push(['publish', options.actionGrant]);
@@ -258,6 +262,8 @@ test('signed PR-head commit actions use the canonical openclaw-signed adapter', 
     renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
     claimSourceMutationLease: async () => { throw new Error('claim must not run'); },
     releaseSourceMutationLease: async () => { throw new Error('release must not run'); },
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    appendExecutionReceipt: async () => ({ ok: true }),
     isActionInFlight: async () => false,
     publishWorkerAction: async ({ actionGrant }) => {
       publishedGrant = actionGrant;
@@ -284,6 +290,7 @@ test('an in-flight non-handoff grant renews its lease without republishing a dup
     renewSourceMutationLease: async () => ({ ok: true, renewed: true, record: lease }),
     claimSourceMutationLease: async () => { throw new Error('claim must not run'); },
     releaseSourceMutationLease: async () => { throw new Error('release must not run'); },
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [{ state: 'queued' }], latestReceipt: { state: 'queued' } }),
     isActionInFlight: async ({ adapter, actionId }) => {
       assert.equal(adapter, 'openclaw-github-readonly');
       assert.match(actionId, /^critical-1802-elastic-goal-r7-/);
