@@ -145,7 +145,7 @@ test('Core publisher emits one deduped typed Flywheel repair event for a measure
     }
     const events = await readdir(join(root, 'events'));
     assert.equal(events.length, 1);
-    assert.match(events[0], /^core-loop-gap-[a-f0-9]{12}-watch-to-reconciliation\.json$/);
+    assert.match(events[0], /^core-loop-gap-[a-f0-9]{12}-watch-to-reconciliation-w[0-9]+\.json$/);
     const event = JSON.parse(await readFile(join(root, 'events', events[0]), 'utf8'));
     assert.equal(event.eventKind, 'goal-conveyor-incident');
     assert.equal(event.relatedIssue, '#2593');
@@ -212,7 +212,7 @@ test('fresh healthy reconciliation routes missing edge proof to existing owner w
     const firstFiles = await readdir(join(root, 'events'));
     assert.equal(firstFiles.length, 1, 'one missing-proof request per heartbeat');
     assert.match(firstFiles[0],
-      /^core-loop-proof-needed-[a-f0-9]{12}-reconciliation-to-goal-admission\.json$/);
+      /^core-loop-proof-needed-[a-f0-9]{12}-reconciliation-to-goal-admission-w[0-9]+\.json$/);
     const event = JSON.parse(await readFile(join(root, 'events', firstFiles[0]), 'utf8'));
     assert.equal(event.eventKind, 'goal-conveyor-proof-needed');
     assert.equal(event.relatedIssue, '#2002');
@@ -249,6 +249,66 @@ test('Core publisher does not pressure UNKNOWN edges when reconciliation itself 
     assert.equal(events.length, 1);
     assert.ok(events.every((name) => !name.startsWith('core-loop-proof-needed-')),
       'stale reconciliation publishes the measured GAP first, not missing-proof noise');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('daemon checker sweeps all observed gaps AND missing handoffs without leaving persistent UNKNOWNs unqueued', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const head = '237fd54f7c33798515b20efd344ea8864aff30ab';
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: head, sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    const at = '2026-10-10T06:15:00.000Z';
+    const flywheelSnapshot = {
+      ...context.persistentFlywheelStatus(),
+      flywheelLastCycleFinishedAtUtc: at,
+      refillSafeEligibleWorkRemaining: 3,
+      refillProvenSafeFreeLanes: 2,
+      refillMaterialActionsSucceeded: 0,
+      refillCanonicalProgrammeHeld: true,
+    };
+    const audit = context.auditCoreLoopClosureV1({
+      coreState: state, flywheel: flywheelSnapshot, observedAtUtc: at,
+    });
+    const candidateCount = audit.gapCount + audit.unprovenCount;
+    assert.ok(audit.gapCount > 0);
+    assert.ok(audit.unprovenCount > 0);
+    for (let i = 0; i < candidateCount; i += 1) {
+      await context.publish(state, new Date(Date.parse(at) + i * 15_000).toISOString(),
+        flywheelSnapshot, { publishEvents: true });
+    }
+    const filenames = await readdir(join(root, 'events'));
+    assert.equal(filenames.length, candidateCount, 'all unresolved handoffs receive an independent existing-owner event');
+    const events = await Promise.all(filenames.map(async (name) =>
+      JSON.parse(await readFile(join(root, 'events', name), 'utf8'))));
+    const byEdge = new Map(events.map((event) => [event.loopClosureEdgeId, event]));
+    assert.equal(byEdge.size, candidateCount, 'one event per unresolved edge, including late ones');
+    assert.equal(byEdge.get('RECONCILIATION_TO_GOAL_ADMISSION').evidenceTruth, 'GAP');
+    assert.equal(byEdge.get('PROOF_TO_PROTECTED_MERGE').evidenceTruth, 'UNKNOWN');
+    assert.equal(byEdge.get('PROOF_TO_PROTECTED_MERGE').eventKind, 'goal-conveyor-proof-needed');
+    assert.equal(byEdge.get('PROOF_TO_PROTECTED_MERGE').closedLoopLearning, undefined);
+    assert.ok(events.every((e) => e.newGoalScopeAuthorized === false));
+    assert.ok(events.every((e) => e.sourceMutationAuthority === false && e.mergeAuthority === false));
+    assert.ok(events.every((e) => validateSharedWorkspaceRecord(e).valid));
+    // Once every edge has a local event, the next heartbeat must be idle.
+    await context.publish(state, new Date(Date.parse(at) + 90 * 60_000).toISOString(),
+      flywheelSnapshot, { publishEvents: true });
+    assert.equal((await readdir(join(root, 'events'))).length, candidateCount);
+    // Same unresolved evidence may be re-escalated after the bounded window,
+    // using the same owners, while the old immutable events remain intact.
+    await context.publish(state, new Date(Date.parse(at) + flywheel.CORE_LOOP_CHECKER_RECHECK_MS).toISOString(),
+      flywheelSnapshot, { publishEvents: true });
+    assert.equal((await readdir(join(root, 'events'))).length, candidateCount + 1);
+    const status = JSON.parse(await readFile(join(root, 'status', 'stephanos-core-daemon-current.json'), 'utf8'));
+    assert.equal(status.allGoalBuildLoopsProvenClosed, false);
+    assert.equal(status.checkerEscalationPlan.totalAuditedEdgeCount, 12);
+    assert.ok(status.checkerEscalationCandidateCount > 0);
+    assert.equal(status.checkerEscalationPlan.mergeAuthority, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
