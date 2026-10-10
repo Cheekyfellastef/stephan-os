@@ -11,6 +11,8 @@ import {
   projectPersistentFlywheelTrigger,
   projectPersistentFlywheelStageWatchV1,
   auditCoreLoopClosureV1,
+  planCoreLoopCheckerEscalationsV1,
+  CORE_LOOP_CHECKER_RECHECK_MS,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
   summarizePersistentGapClosure,
@@ -623,4 +625,87 @@ test('existing loop meta-check routes overdue in-flight stage to existing repair
   assert.equal(watch.reason, 'PERSISTENT_CYCLE_STAGE_STALLED');
   assert.equal(watch.ownerIssue, '#2593');
   assert.equal(result.allLoopsProvenClosed, false);
+});
+
+test('checker-of-checkers independently routes every unresolved edge even if an earlier GAP persists', () => {
+  const input = auditFixture();
+  input.flywheel.refillSafeEligibleWorkRemaining = 2;
+  input.flywheel.refillProvenSafeFreeLanes = 1;
+  const audit = auditCoreLoopClosureV1(input);
+  const plan = planCoreLoopCheckerEscalationsV1(audit);
+  assert.equal(audit.totalEdgeCount, 12);
+  assert.equal(plan.totalAuditedEdgeCount, 12);
+  assert.equal(plan.measuredGapEdgeCount, audit.gapCount);
+  assert.equal(plan.needsProofEdgeCount, audit.unprovenCount);
+  assert.equal(plan.candidates.length, audit.gapCount + audit.unprovenCount);
+  assert.equal(new Set(plan.candidates.map((c) => c.edgeId)).size, plan.candidates.length);
+  assert.equal(plan.candidates[0].state, 'GAP');
+  assert.ok(plan.candidates.some((edge) => edge.edgeId === 'LIVE_TO_REGRESSION_RESCAN'));
+  assert.ok(plan.candidates.some((edge) => edge.edgeId === 'GAP_TO_GOAL_AND_RETRY'));
+  assert.ok(plan.candidates.every((edge) => /^#[0-9]+$/.test(edge.ownerIssue)));
+  assert.ok(plan.candidates.every((edge) => edge.eventId.endsWith('-w' + plan.windowId)));
+  assert.equal(plan.mergeAuthority, false);
+  assert.equal(plan.noDuplicateController, true);
+});
+
+test('known cases reenter the original owner after one six-hour window, never each heartbeat', () => {
+  const input = auditFixture();
+  const audit = auditCoreLoopClosureV1(input);
+  const initial = planCoreLoopCheckerEscalationsV1(audit);
+  const sameWindow = planCoreLoopCheckerEscalationsV1(audit, {
+    observedAtUtc: new Date(Date.parse(AUDIT_NOW) + 15_000).toISOString(),
+  });
+  const later = planCoreLoopCheckerEscalationsV1(audit, {
+    observedAtUtc: new Date(Date.parse(AUDIT_NOW) + CORE_LOOP_CHECKER_RECHECK_MS).toISOString(),
+  });
+  assert.deepEqual(initial.candidates.map((edge) => edge.eventId),
+    sameWindow.candidates.map((edge) => edge.eventId));
+  assert.ok(initial.candidates.every((edge, index) => later.candidates[index].eventId !== edge.eventId));
+  assert.deepEqual(initial.candidates.map((edge) => edge.ownerIssue),
+    later.candidates.map((edge) => edge.ownerIssue));
+  const noHead = planCoreLoopCheckerEscalationsV1(audit, { sourceHead: 'unknown' });
+  assert.equal(noHead.candidates.length, 0);
+  assert.equal(noHead.mergeAuthority, false);
+});
+
+test('expired persisted mutation lease is an observed checker gap despite no runtime .active flag', () => {
+  const input = auditFixture();
+  input.lease = {
+    schema: 'stephanos.source-mutation-lease.v1',
+    status: 'ACTIVE',
+    leaseId: 'critical-2956-elastic-goal-r6-lease',
+    expiresAtUtc: '2026-10-09T18:58:00.000Z',
+  };
+  const audit = auditCoreLoopClosureV1(input);
+  const edge = audit.edges.find((value) => value.id === 'PICKUP_TO_EXECUTION');
+  assert.equal(edge.state, 'GAP');
+  assert.equal(edge.reason, 'ACTIVE_SOURCE_MUTATION_LEASE_EXPIRED');
+  assert.equal(audit.allLoopsProvenClosed, false);
+  input.lease.status = 'RELEASED';
+  const noLongerActive = auditCoreLoopClosureV1(input);
+  assert.notEqual(noLongerActive.edges.find((value) => value.id === 'PICKUP_TO_EXECUTION').state, 'GAP');
+});
+
+test('failed checker event publication is itself a measured gap with its canonical owner', () => {
+  const input = auditFixture();
+  input.flywheel.loopClosureGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:DISK_FULL';
+  const audit = auditCoreLoopClosureV1(input);
+  const edge = audit.edges.find((value) => value.id === 'GAP_TO_GOAL_AND_RETRY');
+  assert.equal(edge.state, 'GAP');
+  assert.equal(edge.ownerIssue, '#2670');
+  assert.equal(edge.reason, 'CANONICAL_FLYWHEEL_GAP_PUBLICATION_FAILED');
+  const plan = planCoreLoopCheckerEscalationsV1(audit);
+  assert.ok(plan.candidates.some((value) => value.edgeId === 'GAP_TO_GOAL_AND_RETRY' && value.state === 'GAP'));
+});
+
+test('checker routes root #2670 proof to the existing concrete #2972 owner instead of creating a duplicate goal', () => {
+  const audit = auditCoreLoopClosureV1(auditFixture());
+  const originalEdge = audit.edges.find((edge) => edge.id === 'GAP_TO_GOAL_AND_RETRY');
+  assert.equal(originalEdge.ownerIssue, '#2670');
+  const plan = planCoreLoopCheckerEscalationsV1(audit);
+  const candidate = plan.candidates.find((edge) => edge.edgeId === 'GAP_TO_GOAL_AND_RETRY');
+  assert.equal(candidate.auditOwnerIssue, '#2670');
+  assert.equal(candidate.ownerIssue, '#2972');
+  assert.equal(candidate.state, 'UNKNOWN');
+  assert.equal(plan.noNewGoalScopeAuthority, true);
 });
