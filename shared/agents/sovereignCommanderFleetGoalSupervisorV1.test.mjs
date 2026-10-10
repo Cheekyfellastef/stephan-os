@@ -335,3 +335,74 @@ test('Sovereign supervisor reports exact guarded stale review lease hold instead
   assert.equal(result.daemonMayReportGreen, false);
   assert.equal(result.mergeAuthority, false);
 });
+
+test('post-lease READY programme with failed elastic admission reports the typed cause, not a generic retry blocker', async () => {
+  for (const [classification, expectedBlocker] of [
+    ['ELASTIC_GOAL_ADMISSION_SAFE_HOLD', 'ELASTIC_GOAL_ADMISSION_SAFE_HOLD'],
+    ['ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED', 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED'],
+    ['UNKNOWN_ADMISSION_CLASSIFICATION', 'ELASTIC_GOAL_ADMISSION_FAILED'],
+  ]) {
+    const result = await runSupervisor({
+      conveyor: async () => conveyorResult({
+        classification: 'PARKED_BLOCKERS_ONLY',
+        programmeStatus: 'READY',
+        programmeBlockers: [],
+        elasticAdmission: {
+          ok: false,
+          classification,
+          reason: 'SCHEDULER_ELASTIC_ADMISSION_NOT_PROVEN',
+        },
+        elasticIgnition: null,
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, expectedBlocker);
+    assert.equal(result.elasticAdmissionClassification, classification);
+    assert.equal(result.elasticAdmissionReasonCode, 'SCHEDULER_ELASTIC_ADMISSION_NOT_PROVEN');
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.duplicateLeaseAllowed, false);
+    assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+  }
+});
+
+test('missing claimable mission is not silently recast as success or an unknown preflight', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'READY',
+      programmeBlockers: [],
+      elasticAdmission: {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSIONS_HELD',
+        activeMissions: [],
+        runnableMissions: [],
+        held: [],
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ELASTIC_GOAL_MISSIONS_HELD_WITHOUT_CLAIMABLE_WORK');
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+});
+
+test('admission diagnostic never exposes arbitrary local exception paths via supervisor receipts', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult({
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'READY',
+      programmeBlockers: [],
+      elasticAdmission: {
+        ok: false,
+        classification: 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED',
+        reason: 'ENOENT C:\\\\Users\\\\somebody\\\\private-keys',
+      },
+      elasticIgnition: null,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.elasticAdmissionReasonCode, '');
+  assert.equal(JSON.stringify(result).includes('private-keys'), false);
+  assert.equal(result.daemonMayReportGreen, false);
+});
