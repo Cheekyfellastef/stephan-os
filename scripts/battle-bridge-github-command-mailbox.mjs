@@ -1638,8 +1638,22 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
 }
 
 function programmeAuthorityProjection(operationResult = {}) {
-  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
-  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  if (operationResult?.programmeAuthorityTelemetry === true) {
+    return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  }
+  // Local receipt checkpointing already sanitizes and flattens the packet.
+  // Re-serializing that checkpoint for the bounded public GitHub comment must
+  // retain the same verified source blockers rather than silently stripping
+  // them on the second pass. Only accept the existing complete packet markers.
+  if (
+    safeTelemetryText(operationResult?.programmeStatus, 80)
+    && safeTelemetryText(operationResult?.programmeFinalVerdict, 160)
+    && safeTelemetryText(operationResult?.sourceReadRepositoryHead, 120)
+    && safeTelemetryText(operationResult?.sourceReadGithubGoalEstate, 120)
+  ) {
+    return sanitizeProgrammeAuthorityPacket(operationResult);
+  }
+  return Object.freeze({});
 }
 
 function conveyorProjection(operationResult = {}) {
