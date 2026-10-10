@@ -19,6 +19,13 @@ import {
   buildIndependentReviewFindingsArtifact,
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
+import {
+  GITHUB_READ_MAX_ATTEMPTS,
+  GitHubReadInfrastructureError,
+  buildIndependentReviewInfrastructureBlockedArtifact,
+  classifyGitHubReadFailure,
+  githubReadRetryDelayMs,
+} from '../shared/agents/githubReadResilienceV1.mjs';
 import { resolve } from 'node:path';
 import {
   adjudicateQualifiedSpecialistReview,
@@ -29,6 +36,8 @@ import { TextDecoder } from 'node:util';
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-independent-merge-security-review-v2';
 const MAX_PAGES = 20;
+
+let retryIdentity = null;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -44,35 +53,126 @@ function readJson(path) {
   return JSON.parse(fs.readFileSync(path, 'utf8'));
 }
 
+function sleep(ms) {
+  return ms > 0 ? new Promise((resolveDelay) => setTimeout(resolveDelay, ms)) : Promise.resolve();
+}
+
+async function verifyRetryIdentity() {
+  if (!retryIdentity) throw new Error('GitHub read retry identity is unavailable.');
+  const {
+    owner,
+    repo,
+    prNumber,
+    sourceHead,
+    branch,
+    baseSha,
+  } = retryIdentity;
+  const [pullRequest, mainRef] = await Promise.all([
+    githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, {
+      retryReads: false,
+      verifyIdentityBetweenRetries: false,
+    }),
+    githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`, {
+      retryReads: false,
+      verifyIdentityBetweenRetries: false,
+    }),
+  ]);
+  if (text(pullRequest?.state).toLowerCase() !== 'open'
+    || text(pullRequest?.head?.sha).toLowerCase() !== sourceHead
+    || text(pullRequest?.head?.ref) !== branch
+    || text(pullRequest?.base?.ref) !== 'main') {
+    throw new Error('Pull-request identity changed while retrying a GitHub read.');
+  }
+  requireExactBase(pullRequest, mainRef, baseSha, 'retry');
+}
+
 async function githubRequest(path, {
   method = 'GET',
   body = null,
   accept = 'application/vnd.github+json',
   allowNotFound = false,
   maxResponseBytes = 0,
+  retryReads = true,
+  verifyIdentityBetweenRetries = true,
 } = {}) {
   const token = text(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
   if (!token) throw new Error('GitHub token is required.');
-  const response = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      Accept: accept,
-      Authorization: `Bearer ${token}`,
-      'X-GitHub-Api-Version': API_VERSION,
-      'User-Agent': USER_AGENT,
-      ...(body === null ? {} : { 'Content-Type': 'application/json' }),
-    },
-    ...(body === null ? {} : { body: JSON.stringify(body) }),
-  });
-  const rawBytes = Buffer.from(await response.arrayBuffer());
-  if (maxResponseBytes && rawBytes.length > maxResponseBytes) {
-    throw new Error(`GitHub ${method} ${path} exceeded the ${maxResponseBytes}-byte response bound.`);
+  const normalizedMethod = text(method || 'GET').toUpperCase();
+  const maxAttempts = normalizedMethod === 'GET' && retryReads
+    ? GITHUB_READ_MAX_ATTEMPTS
+    : 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(`https://api.github.com${path}`, {
+        method: normalizedMethod,
+        redirect: 'error',
+        headers: {
+          Accept: accept,
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': API_VERSION,
+          'User-Agent': USER_AGENT,
+          ...(body === null ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === null ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (error) {
+      const classification = classifyGitHubReadFailure({
+        method: normalizedMethod,
+        networkError: true,
+      });
+      if (!classification.retryable) throw error;
+      if (attempt < maxAttempts && classification.retryImmediately !== false) {
+        if (verifyIdentityBetweenRetries) await verifyRetryIdentity();
+        await sleep(githubReadRetryDelayMs(attempt));
+        continue;
+      }
+      throw new GitHubReadInfrastructureError({
+        code: classification.code,
+        method: normalizedMethod,
+        path,
+        attempts: attempt,
+        retryAtUtc: classification.retryAtUtc,
+      });
+    }
+
+    const rawBytes = Buffer.from(await response.arrayBuffer());
+    if (maxResponseBytes && rawBytes.length > maxResponseBytes) {
+      throw new Error(`GitHub ${normalizedMethod} ${path} exceeded the ${maxResponseBytes}-byte response bound.`);
+    }
+    const raw = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
+    const classification = classifyGitHubReadFailure({
+      method: normalizedMethod,
+      status: response.status,
+      body: raw,
+      rateLimitRemaining: response.headers.get('x-ratelimit-remaining'),
+      rateLimitResetEpochSeconds: response.headers.get('x-ratelimit-reset'),
+    });
+
+    if (allowNotFound && response.status === 404 && !classification.retryable) return null;
+    if (!response.ok) {
+      if (classification.retryable) {
+        if (attempt < maxAttempts && classification.retryImmediately !== false) {
+          if (verifyIdentityBetweenRetries) await verifyRetryIdentity();
+          await sleep(githubReadRetryDelayMs(attempt));
+          continue;
+        }
+        throw new GitHubReadInfrastructureError({
+          code: classification.code,
+          method: normalizedMethod,
+          path,
+          status: response.status,
+          attempts: attempt,
+          retryAtUtc: classification.retryAtUtc,
+        });
+      }
+      throw new Error(`GitHub ${normalizedMethod} ${path} failed (${response.status}): ${raw.slice(0, 500)}`);
+    }
+    if (accept.includes('diff')) return raw;
+    return raw ? JSON.parse(raw) : null;
   }
-  const raw = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
-  if (allowNotFound && response.status === 404) return null;
-  if (!response.ok) throw new Error(`GitHub ${method} ${path} failed (${response.status}): ${raw.slice(0, 500)}`);
-  if (accept.includes('diff')) return raw;
-  return raw ? JSON.parse(raw) : null;
+  throw new Error(`GitHub ${normalizedMethod} ${path} exhausted an impossible read state.`);
 }
 
 async function githubPages(path, itemKey = null) {
@@ -213,6 +313,32 @@ function writeReviewArtifact(artifact) {
   return artifactPath;
 }
 
+function writeInfrastructureBlockedArtifact(error) {
+  if (!(error instanceof GitHubReadInfrastructureError) || !retryIdentity) return null;
+  const requestedPath = text(process.env.STEPHANOS_INDEPENDENT_REVIEW_ARTIFACT_PATH);
+  if (requestedPath && fs.existsSync(resolve(requestedPath))) return null;
+  const artifact = buildIndependentReviewInfrastructureBlockedArtifact({
+    repository: retryIdentity.repository,
+    prNumber: retryIdentity.prNumber,
+    branch: retryIdentity.branch,
+    sourceHead: retryIdentity.sourceHead,
+    baseSha: retryIdentity.baseSha,
+    workflowRunId: retryIdentity.runId,
+    workflowRunAttempt: retryIdentity.runAttempt,
+    createdAtUtc: new Date().toISOString(),
+    failure: error,
+  });
+  const artifactPath = writeReviewArtifact(artifact);
+  console.log('INDEPENDENT_SECURITY_REVIEW=REVIEW_INFRASTRUCTURE_BLOCKED');
+  console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_NAME=${artifact.artifactName}`);
+  console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PATH=${artifactPath}`);
+  console.log(`INDEPENDENT_SECURITY_REVIEW_ARTIFACT_PAYLOAD_SHA256=${artifact.payloadSha256}`);
+  console.log(`INDEPENDENT_SECURITY_REVIEW_HEAD=${artifact.sourceHead}`);
+  console.log(`INDEPENDENT_SECURITY_REVIEW_BASE=${artifact.baseSha}`);
+  console.log(`INDEPENDENT_SECURITY_REVIEW_RETRY_AT=${artifact.blocker.retryAtUtc || ''}`);
+  return artifactPath;
+}
+
 function requireExactBase(pullRequest, mainRef, baseSha, phase) {
   const prBase = validatePullRequestBaseBinding(pullRequest, baseSha);
   const liveBase = validateMainRefBaseBinding(mainRef, baseSha);
@@ -244,6 +370,17 @@ async function main() {
   if (text(event?.pull_request?.head?.repo?.full_name).toLowerCase() !== repository.toLowerCase()) {
     throw new Error('Cross-repository pull requests require a separate specialist route.');
   }
+  retryIdentity = Object.freeze({
+    repository,
+    owner,
+    repo,
+    prNumber,
+    sourceHead,
+    baseSha,
+    branch,
+    runId,
+    runAttempt,
+  });
 
   const initialPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
   const initialMainRef = await githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`);
@@ -398,6 +535,11 @@ async function main() {
 }
 
 main().catch((error) => {
+  try {
+    writeInfrastructureBlockedArtifact(error);
+  } catch (artifactError) {
+    console.error(`INDEPENDENT_SECURITY_REVIEW_INFRASTRUCTURE_ARTIFACT_BLOCKED=${artifactError instanceof Error ? artifactError.message : String(artifactError)}`);
+  }
   console.error(`INDEPENDENT_SECURITY_REVIEW_BLOCKED=${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
