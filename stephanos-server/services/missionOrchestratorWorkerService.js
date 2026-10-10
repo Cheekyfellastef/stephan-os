@@ -687,7 +687,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -706,7 +706,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
