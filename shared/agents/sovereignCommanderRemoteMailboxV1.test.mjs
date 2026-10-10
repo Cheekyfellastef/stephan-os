@@ -2080,6 +2080,8 @@ test('stalled Sovereign maintenance transport times out fail-closed instead of r
       readFileFn: readToken,
       fetchFn,
       networkTimeoutMs: 10,
+      // This test isolates MCP transport timing, not the Windows boot preflight.
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
     },
   );
 
@@ -2128,6 +2130,8 @@ test('Sovereign response-body stall is covered by the same hard transport deadli
       readFileFn: readToken,
       fetchFn,
       networkTimeoutMs: 10,
+      // This test isolates MCP transport timing, not the Windows boot preflight.
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
     },
   );
 
@@ -2792,6 +2796,65 @@ test('repair-stephanos fails closed when Commander runtime preflight cannot conv
   assert.equal(result.runtimeBlocker, 'SOVEREIGN_COMMANDER_HEALTH_UNAVAILABLE');
   assert.equal(result.runtimeBootstrapAttempted, true);
   assert.equal(result.staleCapabilityRecycleRequested, true);
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  assert.equal(calls.length, 0);
+});
+
+test('canonical goal repair actions preflight Commander health before opening MCP', async () => {
+  for (const remoteAction of ['fleet-goal-supervisor', 'repair-goal-builder-flow']) {
+    const base = mcpFetch();
+    let runtimeReady = false;
+    let preflightCalls = 0;
+    let healthCalls = 0;
+    const fetchFn = async (url, options) => {
+      if (url.endsWith('/health')) {
+        healthCalls += 1;
+        if (!runtimeReady) throw new Error('COMMANDER_UNAVAILABLE');
+      }
+      return base.fetchFn(url, options);
+    };
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+        ensureRuntimeFn: async () => {
+          preflightCalls += 1;
+          runtimeReady = true;
+          return { ok: true, bootstrapAttempted: true };
+        },
+      },
+    );
+    assert.equal(preflightCalls, 1, remoteAction);
+    assert.ok(healthCalls >= 1, remoteAction);
+    assert.notEqual(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_HEALTH_REQUIRED', remoteAction);
+    assert.equal(result.publicReceiptSafe, true, remoteAction);
+    assert.equal(result.secretMaterialReturned, false, remoteAction);
+  }
+});
+
+test('goal repair preflight failure never opens MCP or reports success', async () => {
+  const { calls, fetchFn } = mcpFetch();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'fleet-goal-supervisor' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      ensureRuntimeFn: async () => ({
+        ok: false,
+        bootstrapAttempted: true,
+        blocker: 'SOVEREIGN_COMMANDER_HEALTH_UNAVAILABLE',
+      }),
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED');
+  assert.equal(result.runtimeBlocker, 'SOVEREIGN_COMMANDER_HEALTH_UNAVAILABLE');
   assert.equal(result.publicReceiptSafe, true);
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(calls.length, 0);
