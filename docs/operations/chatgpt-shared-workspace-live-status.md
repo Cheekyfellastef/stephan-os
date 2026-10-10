@@ -21,6 +21,16 @@ For Music Tile URL/artwork delivery, live requires all three feature receipts:
 
 The bridge remains read-only for status queries and grants no arbitrary filesystem, command, source-mutation, merge, deployment or self-approval authority.
 
+## Q&A publication recovery
+
+The existing #1506 relay must distinguish answer persistence from public response delivery. Validate decoded JSON strings and keys, including nested values, while checking prose outside the single JSON block separately. Transport escapes are not private paths; decoded paths and secret-shaped strings remain forbidden.
+
+If an authenticated question has a matching `BRIDGE_VERIFIED_PASS:WORKSPACE_QA_PASS` receipt but publication failed, an expiry retry may deliver only that exact persisted result. Require the accepted receipt's request/correlation/issue/PR identity, acceptance before expiry, byte-for-byte question equality, a valid correlated answer at the receipt's original timestamp, and the already-persisted private Canvas handoff. Missing or contradictory evidence blocks recovery without new cognition or workspace writes. An expired request without an accepted durable result remains rejected.
+
+The same rule repairs the legacy contradictory state where the accepted Q&A audit survived but a later completion receipt recorded expiry rejection. Rebind cached requests to the current canonical owner-authored inbox before recovery. A successful recovery replaces that terminal rejection only after the canonical public response has been published; it does not refresh the answer's timestamp or turn an old plan into current truth.
+
+This is the handoff-responsibility invariant applied to #1308 Stephanos Project Intelligence and the existing #1506 participant relay. No alternate chat, mailbox, scheduler, provider route or authority is created.
+
 ## Canonical commit truth
 
 `READ_CURRENT_STATUS` is the shared source-head question for Stephanos, ChatGPT, Codex, OpenClaw and future workspace participants. It reads only the existing fixed Shared Workspace records:
