@@ -13,15 +13,12 @@ on:
       - 'shared/runtime/missionScheduler.test.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.test.mjs'
-      - 'shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs'
       - 'shared/agents/openClawProviderPoolQualificationV1.mjs'
       - 'shared/agents/openClawProviderPoolQualificationV1.test.mjs'
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
-      - 'stephanos-server/services/sovereignBuilder8CapacityService.js'
-      - 'stephanos-server/services/sovereignBuilder8CapacityService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'stephanos-server/services/missionOrchestratorWorkerService.js'
       - 'stephanos-server/services/missionOrchestratorWorkerService.test.js'
@@ -76,7 +73,6 @@ jobs:
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
           node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
           node --check stephanos-server/services/criticalBacklogConveyorServiceCore.js
-          node --check stephanos-server/services/sovereignBuilder8CapacityService.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
@@ -104,7 +100,6 @@ jobs:
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
-          shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
           stephanos-server/services/providerNeutralSourceBuilderService.test.js
@@ -113,7 +108,6 @@ jobs:
           stephanos-server/services/missionOrchestratorWorkerService.test.js
           stephanos-server/services/missionOrchestratorWorkerConsumer.test.js
           stephanos-server/services/criticalBacklogConveyorService.test.js
-          stephanos-server/services/sovereignBuilder8CapacityService.test.js
           scripts/battle-bridge-goal-discovery-heartbeat.test.mjs
 
       - name: Check pull request diff
