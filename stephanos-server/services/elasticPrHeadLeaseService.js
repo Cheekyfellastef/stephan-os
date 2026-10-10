@@ -619,6 +619,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   const isActionInFlight = normalized.isActionInFlight ?? defaultActionInFlight;
   const readReceiptHistory = normalized.readExecutionReceiptHistory ?? readExecutionReceiptHistory;
   const appendReceipt = normalized.appendExecutionReceipt ?? appendExecutionReceipt;
+  let capacityRouting = normalized.capacityRouting ?? null;
 
   let leaseRead = await readLease({
     root: paths.workspaceRoot,
@@ -753,6 +754,54 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       });
     }
     const requestedLeaseId = leaseIdForMission(leasedEntry.mission, leasedEntry.identity);
+    // Before reserving the global source lease, prove the exact queued action
+    // can publish its first durable execution receipt. Previously an action
+    // with no valid proof refs claimed the lease and then deadlocked itself.
+    // Read qualified capacity first where the selected phase requires it.
+    if (SOURCE_PHASES.has(phaseOf(leasedEntry.mission)) && !capacityRouting) {
+      capacityRouting = await readCapacityRouting({
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        nowUtc, sourceRevision, env,
+      });
+      if (!capacityRouting) {
+        return baseResult({
+          ok: false,
+          classification: 'ELASTIC_PR_HEAD_CAPACITY_ROUTING_UNAVAILABLE',
+          handledMissionIds,
+          held: [{ missionId: leasedEntry.identity.missionId, reason: 'PROVIDER_INDEPENDENT_CAPACITY_ROUTING_UNAVAILABLE' }],
+          releasedLease,
+        });
+      }
+    }
+    const previewGrant = exactPrHeadWorkerGrant(
+      leasedEntry.mission, leasedEntry.identity, sourceRevision, capacityRouting, now,
+    );
+    if (!previewGrant) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_EXACT_ACTION_GRANT_UNAVAILABLE',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: 'EXACT_PR_HEAD_ACTION_GRANT_UNAVAILABLE' }],
+        releasedLease,
+      });
+    }
+    const previewProofRefs = existingQueuedProofRefs(previewGrant, null, leasedEntry.mission);
+    const previewReceipt = createQueuedExecutionReceipt(
+      previewGrant, { leaseId: requestedLeaseId }, nowUtc, previewProofRefs,
+    );
+    const previewValidation = validateExecutionReceipt(previewReceipt);
+    if (!previewValidation.valid) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_PROOF_BLOCKED',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId,
+          reason: previewProofRefs.length === 0
+            ? 'CANONICAL_QUEUED_EXECUTION_PROOF_REQUIRED'
+            : `CANONICAL_QUEUED_EXECUTION_RECEIPT_INVALID:${previewValidation.refusalReason}` }],
+        releasedLease,
+      });
+    }
     const claim = await claimLease({
       leaseId: requestedLeaseId,
       laneId: leasedEntry.identity.missionId,
@@ -778,7 +827,6 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
 
   const currentPhase = phaseOf(leasedEntry.mission);
-  let capacityRouting = normalized.capacityRouting ?? null;
   if (SOURCE_PHASES.has(currentPhase) && !capacityRouting) {
     capacityRouting = await readCapacityRouting({
       root: paths.workspaceRoot,
