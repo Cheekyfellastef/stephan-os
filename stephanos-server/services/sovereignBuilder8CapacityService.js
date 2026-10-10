@@ -49,7 +49,7 @@ function reject(reason, extra = {}) {
   });
 }
 function localEndpoint(value) {
-  const normalized = (text(value) || 'http://127.0.0.1:11434').replace(/\\/+$/, '').replace(/\\/api\\/chat$/, '');
+  const normalized = (text(value) || 'http://127.0.0.1:11434').replace(/\/+$/, '').replace(/\/api\/chat$/, '');
   return BASE_ENDPOINTS.has(normalized) ? normalized : '';
 }
 function defaultReadHead(repoRoot, options) {
@@ -82,7 +82,7 @@ async function defaultProbeEnvironment(options = {}) {
   }
   const gameProbe = run(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-Command',
-    "@(Get-Process -Name 'Starfield','Cyberpunk2077','NMS','SkyrimVR','RDR2','vrcompositor','OculusClient' -ErrorAction SilentlyContinue).Count",
+    "@(Get-Process -Name 'Starfield','Cyberpunk2077','NMS','SkyrimVR','RDR2','vrcompositor' -ErrorAction SilentlyContinue).Count",
   ], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 12000 });
   if (gameProbe.error || gameProbe.status !== 0 || !/^0$/.test(text(gameProbe.stdout))) {
     return { ok: false, reason: 'SOVEREIGN_BUILDER8_GAME_OR_VR_PROCESS_PRESENT' };
@@ -91,7 +91,7 @@ async function defaultProbeEnvironment(options = {}) {
   const gpu = run('nvidia-smi.exe', ['--query-gpu=memory.free', '--format=csv,noheader,nounits'], {
     encoding: 'utf8', shell: false, windowsHide: true, timeout: 10000,
   });
-  const freeVramMib = Number(text(gpu.stdout).split(/\\r?\\n/)[0]);
+  const freeVramMib = Number(text(gpu.stdout).split(/\r?\n/)[0]);
   if (gpu.error || gpu.status !== 0 || !Number.isFinite(freeVramMib) || freeVramMib < MIN_FREE_VRAM_MIB) {
     return { ok: false, reason: 'SOVEREIGN_BUILDER8_VRAM_PRESSURE_OR_UNKNOWN' };
   }
