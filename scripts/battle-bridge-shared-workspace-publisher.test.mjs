@@ -13,6 +13,8 @@ import {
 import { collectLauncherReadinessLiveFacts, LIVE_COLLECTOR_AUTHORITY } from './launcher-readiness-live-facts.mjs';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
 import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+// Publisher source identity and runtime-only dirt checks share this existing hosted proof suite.
+import './stephanos-native-capacity-publisher-source-gate.test.mjs';
 
 async function withTempDir(prefix, fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
