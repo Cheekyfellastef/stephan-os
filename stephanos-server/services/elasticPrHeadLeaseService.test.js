@@ -517,3 +517,73 @@ test('cancelled original owner safely returns its expired rN lease only with ter
   }
   assert.equal(calls.length, 1, 'no unsafe release in any adversarial case');
 });
+
+test('completed original r7 repair lease retires only with failed required checks and terminal exact worker proof', async () => {
+  const repairing = mission(2962, 2987, HEAD_A, {
+    currentPhase: 'REPAIR_REQUIRED',
+    dispatch: { status: 'complete' },
+    pullRequest: { number: 2987, headSha: HEAD_A,
+      checks: [{ name: 'required', required: true, status: 'failure' }] },
+    continuity: { parkingStatus: 'ACTIVE' },
+  });
+  const stale = leaseFor(repairing);
+  const terminal = {
+    state: 'completed', leaseKey: stale.leaseId, sourceHead: stale.headSha,
+    branch: stale.branch, repository: stale.repository,
+    issueNumber: stale.issueNumber, prNumber: stale.prNumber,
+  };
+  let releases = 0;
+  const base = {
+    now: NOW, sourceRevision: SOURCE, paths: PATHS,
+    env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/worker-queue' },
+    missionRecords: [repairing],
+    readLease: async () => ({
+      ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_STALE',
+      validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+      record: stale,
+    }),
+    readReceiptHistoryFn: async () => ({
+      ok: true, receipts: [terminal], latestReceipt: terminal,
+    }),
+    originalMissionInFlightFn: async () => false,
+    releaseLease: async (identity) => {
+      assert.equal(identity.leaseId, stale.leaseId);
+      assert.equal(identity.ownerId, 'mission-worker');
+      releases += 1;
+      return { ok: true, released: true };
+    },
+  };
+  const passing = await reconcileExpiredElasticReviewLeaseV1(base);
+  assert.equal(passing.released, true);
+  assert.equal(passing.classification, 'ELASTIC_COMPLETED_FAILED_CHECKS_EXACT_LEASE_RELEASED');
+  assert.equal(passing.repairStillRequired, true);
+  assert.equal(passing.goalComplete, false);
+  assert.equal(passing.sourceMutationAllowed, false);
+  assert.equal(passing.dispatchAuthority, false);
+  assert.equal(passing.mergeAuthority, false);
+  assert.equal(releases, 1);
+  const cases = [
+    [{ missionRecords: [{ ...repairing, dispatch: { status: 'running' } }] }, 'REPAIR_ORIGINAL_DISPATCH_NOT_TERMINAL'],
+    [{ missionRecords: [{ ...repairing, dispatch: { status: 'pending' } }] }, 'REPAIR_ORIGINAL_DISPATCH_NOT_TERMINAL'],
+    [{ missionRecords: [{ ...repairing, pullRequest: { ...repairing.pullRequest, checks: [] } }] }, 'REPAIR_REQUIRED_CHECK_FAILURE_NOT_PROVEN'],
+    [{ missionRecords: [{ ...repairing, pullRequest: { ...repairing.pullRequest, checks: [{ required: false, status: 'failure' }] } }] }, 'REPAIR_REQUIRED_CHECK_FAILURE_NOT_PROVEN'],
+    [{ missionRecords: [{ ...repairing, continuity: { parkingStatus: 'PARKED_BLOCKED' } }] }, 'REPAIR_ORIGINAL_CONTINUITY_NOT_ACTIVE'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }) }, 'REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [terminal], latestReceipt: { ...terminal, state: 'started' } }) }, 'REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [terminal], latestReceipt: { ...terminal, sourceHead: HEAD_C } }) }, 'REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [terminal], latestReceipt: { ...terminal, leaseKey: 'wrong-owner' } }) }, 'REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN'],
+    [{ originalMissionInFlightFn: async () => true }, 'REPAIR_ORIGINAL_WORK_STILL_IN_FLIGHT'],
+    [{ originalMissionInFlightFn: async () => { throw new Error('unobservable'); } }, 'REPAIR_ORIGINAL_WORKER_QUEUE_UNOBSERVABLE'],
+    [{ missionRecords: [{ ...repairing, revision: 8 }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ missionRecords: [repairing, repairing] }, 'EXACT_ORIGINAL_MISSION_UNAVAILABLE_OR_AMBIGUOUS'],
+    [{ missionRecords: [{ ...repairing, pullRequest: { ...repairing.pullRequest, headSha: HEAD_C } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ missionRecords: [{ ...repairing, currentPhase: 'AGENT_IMPLEMENTATION' }] }, 'EXACT_READ_ONLY_REVIEW_PHASE_NOT_PROVEN'],
+  ];
+  for (const [input, blocker] of cases) {
+    const result = await reconcileExpiredElasticReviewLeaseV1({ ...base, ...input });
+    assert.equal(result.released, false, JSON.stringify(input));
+    assert.equal(result.blocker, blocker);
+    assert.equal(result.leaseSeizureAllowed, false);
+  }
+  assert.equal(releases, 1, 'only the fully grounded original exact lease may be released');
+});
