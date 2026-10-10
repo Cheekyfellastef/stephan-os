@@ -3038,9 +3038,9 @@ test('double-serialized 32KB Programme Authority HOLD retains original blockers 
   assert.equal(publicReceipt.result.result.programmeStatus, 'HOLD');
   assert.equal(publicReceipt.result.result.programmeFinalVerdict, 'PROGRAMME_AUTHORITY_HOLD');
   assert.deepEqual(publicReceipt.result.result.programmeBlockers, [
-    'source:NO_EXECUTION_RECEIPTS',
-    'lane:elastic-mission-phase-binding-unproven',
-    'controller-heartbeat-active-lane-mismatch',
+    'SOURCE:NO_EXECUTION_RECEIPTS',
+    'LANE:ELASTIC-MISSION-PHASE-BINDING-UNPROVEN',
+    'CONTROLLER-HEARTBEAT-ACTIVE-LANE-MISMATCH',
   ]);
   assert.equal(publicReceipt.result.result.workerFresh, true);
   assert.equal(publicReceipt.result.result.controllerFresh, false);
