@@ -2080,6 +2080,8 @@ test('stalled Sovereign maintenance transport times out fail-closed instead of r
       readFileFn: readToken,
       fetchFn,
       networkTimeoutMs: 10,
+      // This test isolates MCP transport timing, not the Windows boot preflight.
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
     },
   );
 
@@ -2128,6 +2130,8 @@ test('Sovereign response-body stall is covered by the same hard transport deadli
       readFileFn: readToken,
       fetchFn,
       networkTimeoutMs: 10,
+      // This test isolates MCP transport timing, not the Windows boot preflight.
+      ensureRuntimeFn: async () => ({ ok: true, bootstrapAttempted: false }),
     },
   );
 
