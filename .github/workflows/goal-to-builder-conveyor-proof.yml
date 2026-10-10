@@ -18,6 +18,8 @@ on:
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.js'
+      - 'stephanos-server/services/elasticPrHeadLeaseService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'stephanos-server/services/missionOrchestratorWorkerService.js'
@@ -72,6 +74,7 @@ jobs:
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
           node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
+          node --check stephanos-server/services/elasticPrHeadLeaseService.js
           node --check stephanos-server/services/criticalBacklogConveyorServiceCore.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
@@ -99,6 +102,7 @@ jobs:
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
+          stephanos-server/services/elasticPrHeadLeaseService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
