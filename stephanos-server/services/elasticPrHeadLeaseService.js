@@ -423,6 +423,71 @@ export async function reconcileExpiredElasticReviewLeaseV1({
       mergeAuthority: false, dispatchAuthority: false, materialPickupProven: false,
     });
   }
+  // A completed original source execution may have already reached
+  // REPAIR_REQUIRED because the *existing* PR's required checks failed.
+  // This is not a review-phase lease and must never be promoted to one.
+  // Retire only this exact expired execution lease, after its original
+  // terminal execution history and every possible worker queue are proven
+  // idle. The repair mission and PR remain open; this grants no new writer.
+  if (phaseOf(mission) === 'REPAIR_REQUIRED') {
+    if (text(mission?.dispatch?.status).toLowerCase() !== 'complete') {
+      return held('REPAIR_ORIGINAL_DISPATCH_NOT_TERMINAL');
+    }
+    if (mission?.continuity?.parkingStatus
+        && text(mission.continuity.parkingStatus).toUpperCase() !== 'ACTIVE') {
+      return held('REPAIR_ORIGINAL_CONTINUITY_NOT_ACTIVE');
+    }
+    const failedRequiredCheck = Array.isArray(mission?.pullRequest?.checks)
+      && mission.pullRequest.checks.some((check) => check?.required !== false
+        && ['failure', 'failed', 'cancelled', 'timed_out', 'action_required']
+          .includes(text(check?.status).toLowerCase()));
+    if (!failedRequiredCheck) return held('REPAIR_REQUIRED_CHECK_FAILURE_NOT_PROVEN');
+    if (!resolveMissionWorkerQueueRoot(env)) return held('CANONICAL_WORKER_QUEUE_UNAVAILABLE');
+    let history;
+    let inFlight;
+    try {
+      history = await readReceiptHistoryFn(paths.workspaceRoot, {
+        leaseKey: lease.leaseId, expectedHead: lease.headSha,
+      }, { repoRoot: paths.repoRoot });
+      if (history?.ok !== true || !Array.isArray(history.receipts)
+          || history.receipts.length === 0 || !history.latestReceipt
+          || !TERMINAL_EXECUTION_RECEIPT_STATES.has(
+            text(history.latestReceipt.state).toLowerCase())
+          || text(history.latestReceipt.leaseKey) !== text(lease.leaseId)
+          || text(history.latestReceipt.sourceHead).toLowerCase() !== text(lease.headSha).toLowerCase()
+          || text(history.latestReceipt.branch) !== text(lease.branch)
+          || text(history.latestReceipt.repository).toLowerCase() !== text(lease.repository).toLowerCase()
+          || Number(history.latestReceipt.issueNumber) !== Number(lease.issueNumber)
+          || Number(history.latestReceipt.prNumber) !== Number(lease.prNumber)) {
+        return held('REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN');
+      }
+      inFlight = await originalMissionInFlightFn({
+        missionId: identity.missionId, leaseId: lease.leaseId, env,
+      });
+    } catch {
+      return held('REPAIR_ORIGINAL_WORKER_QUEUE_UNOBSERVABLE');
+    }
+    if (inFlight !== false) return held('REPAIR_ORIGINAL_WORK_STILL_IN_FLIGHT');
+    const released = await releaseLease({
+      leaseId: lease.leaseId, laneId: lease.laneId, repository: lease.repository,
+      issueNumber: lease.issueNumber, prNumber: lease.prNumber,
+      branch: lease.branch, headSha: lease.headSha, ownerId: lease.ownerId, nowUtc,
+    }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
+    if (released?.ok !== true || released.released !== true) {
+      return held('REPAIR_ORIGINAL_EXACT_LEASE_RELEASE_UNPROVEN');
+    }
+    return freeze({
+      ok: true, released: true,
+      classification: 'ELASTIC_COMPLETED_FAILED_CHECKS_EXACT_LEASE_RELEASED',
+      originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
+      originalPhase: 'REPAIR_REQUIRED', repairStillRequired: true,
+      sourceHead: sourceRevision.toLowerCase(),
+      nextAction: 'REREAD_CANONICAL_PROGRAMME_AND_SCHEDULE_REPAIR',
+      goalComplete: false, replacementAcceptanceProven: false,
+      leaseSeizureAllowed: false, sourceMutationAllowed: false,
+      mergeAuthority: false, dispatchAuthority: false, materialPickupProven: false,
+    });
+  }
   if (phaseOf(mission) !== 'CHECK_PULL_REQUEST') {
     return held('EXACT_READ_ONLY_REVIEW_PHASE_NOT_PROVEN');
   }
