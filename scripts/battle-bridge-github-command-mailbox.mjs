@@ -1537,6 +1537,15 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     programmeBlockers: Array.isArray(packet?.programmeBlockers)
       ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
       : [],
+    // Existing authoritative lease-phase projection; diagnosis only.
+    elasticLeaseId: safeTelemetryId(packet?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(packet?.elasticLeaseRevision),
+    elasticBindingValid: packet?.elasticBindingValid === true,
+    elasticBindingBlocker: safeTelemetryText(packet?.elasticBindingBlocker, 120).toUpperCase(),
+    elasticOriginalMissionUnique: packet?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(packet?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: safeTelemetryText(packet?.elasticObservedMissionPhase, 80).toUpperCase(),
+    elasticObservedDispatchStatus: safeTelemetryText(packet?.elasticObservedDispatchStatus, 60).toUpperCase(),
     sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
     schedulerFailClosed: packet?.schedulerFailClosed === true,
     schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
@@ -1592,10 +1601,21 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
   const capacity = scheduler?.elasticCapacity || {};
   const decision = scheduler?.decisionReceipt || {};
   const sourceReads = projection?.sourceReads || {};
+  const phaseBinding = projection?.lane?.elasticMissionPhaseBinding || null;
+  const leaseId = String(projection?.mutationLease?.leaseId || '');
+  const leaseRevisionMatch = /^critical-[1-9]\d*-elastic-goal-r([1-9]\d*)-lease$/.exec(leaseId);
   return sanitizeProgrammeAuthorityPacket({
     programmeStatus: projection?.status,
     programmeFinalVerdict: projection?.finalVerdict,
     programmeBlockers: projection?.blockers,
+    elasticLeaseId: leaseId,
+    elasticLeaseRevision: leaseRevisionMatch ? Number(leaseRevisionMatch[1]) : null,
+    elasticBindingValid: phaseBinding?.valid === true,
+    elasticBindingBlocker: phaseBinding?.blocker,
+    elasticOriginalMissionUnique: phaseBinding?.observedUniqueOriginal === true,
+    elasticObservedMissionRevision: phaseBinding?.observedRevision,
+    elasticObservedMissionPhase: phaseBinding?.observedPhase,
+    elasticObservedDispatchStatus: phaseBinding?.observedDispatchStatus,
     sourceConstructionMode: projection?.sourceConstructionMode,
     schedulerFailClosed: scheduler?.failClosed,
     schedulerProgrammeStatus: scheduler?.programmeStatus,
@@ -2115,6 +2135,14 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     programmeStatus: token(inner?.programmeStatus, 80),
     programmeFinalVerdict: token(inner?.programmeFinalVerdict),
     programmeBlockers: Object.freeze(blockers),
+    elasticLeaseId: safeTelemetryId(inner?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(inner?.elasticLeaseRevision),
+    elasticBindingValid: inner?.elasticBindingValid === true,
+    elasticBindingBlocker: token(inner?.elasticBindingBlocker),
+    elasticOriginalMissionUnique: inner?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(inner?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: token(inner?.elasticObservedMissionPhase),
+    elasticObservedDispatchStatus: token(inner?.elasticObservedDispatchStatus),
     schedulerFailClosed: inner?.schedulerFailClosed === true,
     schedulerProgrammeStatus: token(inner?.schedulerProgrammeStatus),
     schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),

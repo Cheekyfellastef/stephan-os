@@ -3065,3 +3065,31 @@ test('second-pass Programme Authority packet is never reconstructed from an inco
   assert.equal(projection.result.result.programmeBlockers, undefined);
   assert.equal(projection.result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
 });
+
+test('read-only programme receipt exposes observed original lease identity without dispatch authority', () => {
+  const packet = createSanitizedProgrammeAuthorityStatusProjection({
+    status: 'HOLD',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+    blockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+    mutationLease: { leaseId: 'critical-2956-elastic-goal-r6-lease' },
+    lane: { elasticMissionPhaseBinding: {
+      valid: false, blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+      observedUniqueOriginal: true, observedRevision: 7,
+      observedPhase: 'GITHUB_COMMIT', observedDispatchStatus: 'complete',
+      releaseLeaseAllowed: false, mutationAuthority: false,
+    } },
+  });
+  assert.equal(packet.elasticLeaseId, 'critical-2956-elastic-goal-r6-lease');
+  assert.equal(packet.elasticLeaseRevision, 6);
+  assert.equal(packet.elasticBindingValid, false);
+  assert.equal(packet.elasticOriginalMissionUnique, true);
+  assert.equal(packet.elasticObservedMissionRevision, 7);
+  assert.equal(packet.elasticObservedMissionPhase, 'GITHUB_COMMIT');
+  assert.equal(packet.elasticObservedDispatchStatus, 'COMPLETE');
+  assert.equal(Object.hasOwn(packet, 'releaseLeaseAllowed'), false);
+  assert.equal(Object.hasOwn(packet, 'mutationAuthority'), false);
+  const unknown = createSanitizedProgrammeAuthorityStatusProjection({});
+  assert.equal(unknown.elasticLeaseId, '');
+  assert.equal(unknown.elasticObservedMissionPhase, '');
+  assert.equal(unknown.elasticOriginalMissionUnique, false);
+});

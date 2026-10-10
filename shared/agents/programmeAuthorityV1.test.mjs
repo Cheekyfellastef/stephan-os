@@ -2169,3 +2169,33 @@ test('proven elastic material lane uses canonical scheduler when legacy critical
   assert.equal(legacyLane.status, 'HOLD');
   assert.ok(legacyLane.blockers.includes('critical-backlog-active-lane-status-mismatch'));
 });
+
+test('stale exact source lease exposes unique original phase without widening authority', () => {
+  const lease = {
+    leaseId: 'critical-2956-elastic-goal-r6-lease',
+    issueNumber: 2956, prNumber: 2960, repository: REPOSITORY,
+    branch: 'openclaw/elastic-goal-2956', headSha: HEAD,
+  };
+  const mission = {
+    missionId: 'critical-2956-elastic-goal', revision: 7,
+    repository: REPOSITORY, git: { branch: lease.branch },
+    pullRequest: { number: 2960, headSha: HEAD },
+    currentPhase: 'GITHUB_COMMIT', dispatch: { status: 'complete' },
+  };
+  const binding = projectElasticMissionPhaseBindingV1(lease, [mission]);
+  assert.equal(binding.valid, false);
+  assert.equal(binding.phase, 'UNKNOWN');
+  assert.equal(binding.observedUniqueOriginal, true);
+  assert.equal(binding.observedRevision, 7);
+  assert.equal(binding.observedPhase, 'GITHUB_COMMIT');
+  assert.equal(binding.observedDispatchStatus, 'COMPLETE');
+  assert.equal(binding.releaseLeaseAllowed, false);
+  assert.equal(binding.replaceWriterAllowed, false);
+  assert.equal(binding.mutationAuthority, false);
+  assert.equal(binding.mergeAuthority, false);
+  const ambiguous = projectElasticMissionPhaseBindingV1(lease, [mission, mission]);
+  assert.equal(ambiguous.observedUniqueOriginal, false);
+  assert.equal(ambiguous.observedRevision, null);
+  assert.equal(ambiguous.observedPhase, 'UNKNOWN');
+  assert.equal(ambiguous.releaseLeaseAllowed, false);
+});
