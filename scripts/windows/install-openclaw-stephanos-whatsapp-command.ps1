@@ -22,6 +22,13 @@ if ($null -eq $openclaw) {
 }
 
 if ($PSCmdlet.ShouldProcess($pluginId, "Install linked OpenClaw plugin from $pluginRoot")) {
+    $uninstallOutput = @(& $openclaw.Source plugins uninstall $pluginId 2>&1)
+    $uninstallExit = $LASTEXITCODE
+    if ($uninstallExit -ne 0 -and (($uninstallOutput -join "`n") -notmatch '(?i)not\s+installed|not\s+found|unknown\s+plugin')) {
+        $uninstallOutput
+        throw "OpenClaw stale plugin uninstall failed with exit code $uninstallExit"
+    }
+
     & $openclaw.Source plugins install --link $pluginRoot
     if ($LASTEXITCODE -ne 0) { throw "OpenClaw plugin install failed with exit code $LASTEXITCODE" }
 
