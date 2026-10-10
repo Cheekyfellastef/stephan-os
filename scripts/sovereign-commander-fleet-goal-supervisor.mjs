@@ -48,6 +48,8 @@ function blockedResult(blocker, details = {}) {
       ? details.programmeBlockers.map((blocker) => text(blocker).slice(0, 160)).filter(Boolean).slice(0, 20)
       : []),
     elasticAdmissionPresent: details.elasticAdmissionPresent === true,
+    elasticAdmissionClassification: text(details.elasticAdmissionClassification).slice(0, 120),
+    elasticAdmissionReasonCode: text(details.elasticAdmissionReasonCode).slice(0, 120),
     elasticAdmissionGate: details.elasticAdmissionGate || null,
     elasticReviewLeaseRecovery: details.elasticReviewLeaseRecovery || null,
     elasticIgnitionPresent: details.elasticIgnitionPresent === true,
@@ -134,6 +136,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     programmeStatus: conveyorResult?.programmeStatus,
     programmeBlockers: conveyorResult?.programmeBlockers,
     elasticAdmissionPresent: Boolean(conveyorResult?.elasticAdmission),
+    elasticAdmissionClassification: text(admission?.classification),
+    // Do not copy arbitrary exception text (paths or credentials) to public receipts.
+    elasticAdmissionReasonCode: /^[A-Z][A-Z0-9_:-]{0,119}$/.test(text(admission?.reason))
+      ? text(admission.reason) : '',
     elasticAdmissionGate: conveyorResult?.elasticAdmissionGate || null,
     elasticReviewLeaseRecovery: conveyorResult?.elasticReviewLeaseRecovery || null,
     elasticIgnitionPresent: Boolean(conveyorResult?.elasticIgnition),
@@ -176,6 +182,24 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   }
   if (text(conveyorResult.classification) === 'PARKED_BLOCKERS_ONLY'
       && (!conveyorResult.elasticAdmission || !conveyorResult.elasticIgnition)) {
+    // Distinguish failure inside eligible admission from a genuinely missing
+    // admission preflight. Otherwise every unattended repair retries the same
+    // opaque blocker without routing to the actual incumbent owner.
+    if (admission.ok === false) {
+      const cause = text(admission.classification);
+      return blockedResult(
+        cause === 'ELASTIC_GOAL_ADMISSION_SAFE_HOLD'
+          ? 'ELASTIC_GOAL_ADMISSION_SAFE_HOLD'
+          : cause === 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED'
+            ? 'ELASTIC_GOAL_ADMISSION_DIAGNOSTIC_FAILED'
+            : 'ELASTIC_GOAL_ADMISSION_FAILED',
+        details,
+      );
+    }
+    if (admission.ok === true
+        && text(admission.classification) === 'ELASTIC_GOAL_MISSIONS_HELD') {
+      return blockedResult('ELASTIC_GOAL_MISSIONS_HELD_WITHOUT_CLAIMABLE_WORK', details);
+    }
     return blockedResult('ELASTIC_GOAL_ADMISSION_NOT_PROVEN', details);
   }
 
