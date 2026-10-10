@@ -26,6 +26,11 @@ import {
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
+// Retain Builder 8's new independent capacity and publisher regressions in the
+// existing proof entry point, without altering the protected Actions workflow.
+import '../shared/agents/sovereignCommanderBuilder8CapacityV1.test.mjs';
+import '../stephanos-server/services/sovereignBuilder8CapacityService.test.js';
+
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const proof = (requirement, receiptId, source = 'all-builder-exits-proof') => ({
   receiptId,
