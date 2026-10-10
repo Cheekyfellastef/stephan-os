@@ -136,6 +136,11 @@ jobs:
             stephanos-server/services/flywheelLearningGoalBridgeService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs
+      - name: Prove Stephanos AI iPad recovery and canonical memory
+        run: |
+          node --test --test-concurrency=1 \
+            tests/stephanos-ai-ipad-scroll-bridge.test.mjs \
+            stephanos-server/services/sharedIntelligenceContinuityService.test.js
 
   vr-research-tests:
     if: >-

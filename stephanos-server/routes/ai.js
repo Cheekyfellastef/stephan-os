@@ -16,6 +16,7 @@ import { buildStephanosExecutiveChatBridge } from '../services/stephanosExecutiv
 import {
   prepareSharedIntelligenceForAiTurnV1,
   completeSharedIntelligenceAiTurnV1,
+  readSharedIntelligenceConversationForWorkspaceV1,
   prepareAuthorisedHistoricalChatContextV1,
   governAuthorisedHistoricalTeachingV1,
   recallGovernedOperatorTeachingV1,
@@ -406,6 +407,31 @@ router.post('/ollama/release', async (req, res) => {
       note: 'No safe process-level targeted kill is currently available. Use normal Stop generating for active requests; if load persists, operator must manually intervene in local Ollama tooling.',
     },
   });
+});
+
+// Recovery surface for the existing Shared Workspace thread, not a second chat log.
+// HTTPS private home bridge / existing backend CORS policy remain the access boundary.
+router.get('/shared-thread', async (_req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const state = await readSharedIntelligenceConversationForWorkspaceV1();
+    if (!state.ok) {
+      return res.status(503).json({
+        success: false,
+        classification: state.classification,
+        errors: state.errors,
+      });
+    }
+    return res.json({ success: true, data: state });
+  } catch (error) {
+    logger.warn('[AI CONTINUITY] canonical shared thread read failed', {
+      message: error?.message || 'read-failed',
+    });
+    return res.status(503).json({
+      success: false,
+      classification: 'SHARED_INTELLIGENCE_THREAD_UNAVAILABLE',
+    });
+  }
 });
 
 router.post('/chat', async (req, res) => {

@@ -11,6 +11,7 @@ import {
   SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
   completeSharedIntelligenceAiTurnV1,
   loadSharedIntelligenceThreadRecordsV1,
+  readSharedIntelligenceConversationForWorkspaceV1,
   prepareSharedIntelligenceForAiTurnV1,
   prepareAuthorisedHistoricalChatContextV1,
   governAuthorisedHistoricalTeachingV1,
@@ -396,4 +397,54 @@ test('context-only historical chat is never sent to durable memory adjudication'
   assert.equal(governed.candidateCount, 0);
   assert.equal(governed.promotedCount, 0);
   assert.equal(calls, 0);
+});
+
+test('workspace recovery reads the existing durable thread after a simulated device restart', async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const options = { repoRoot: join(tmpdir(), 'stephanos-repo-test'), env: envFor(root) };
+  const empty = await readSharedIntelligenceConversationForWorkspaceV1(options);
+  assert.equal(empty.ok, true);
+  assert.equal(empty.classification, 'SHARED_INTELLIGENCE_THREAD_EMPTY');
+  assert.deepEqual(empty.turns, []);
+
+  const prepared = await prepareSharedIntelligenceForAiTurnV1({
+    ...options,
+    requestIdentity: 'device-restart-001',
+    operatorText: 'Remember this shared conversation across the iPad restart.',
+    timestampUtc: NOW,
+  });
+  assert.equal(prepared.ok, true, prepared.errors.join(', '));
+  const done = await completeSharedIntelligenceAiTurnV1({
+    ...options,
+    prepared,
+    requestIdentity: 'device-restart-001',
+    answerText: 'I can resume this verified turn on Battle Bridge.',
+    timestampUtc: '2026-09-25T22:45:02.000Z',
+    surface: 'ipad',
+  });
+  assert.equal(done.ok, true, done.errors.join(', '));
+
+  const recovered = await readSharedIntelligenceConversationForWorkspaceV1({
+    ...options,
+    nowMs: Date.parse('2026-09-26T10:00:00.000Z'),
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.threadId, SHARED_INTELLIGENCE_PRIMARY_THREAD_ID);
+  assert.equal(recovered.totalRetained, 2);
+  assert.deepEqual(recovered.turns.map((turn) => turn.senderParticipantId), ['operator', 'stephanos']);
+  assert.equal(recovered.turns[1].replyToTurnId, prepared.operatorTurnId);
+  assert.equal(recovered.authority.memoryWriteAllowed, false);
+  assert.equal(recovered.authority.commandExecutionAllowed, false);
+});
+
+test('workspace recovery fails closed when canonical Shared Workspace is unavailable', async () => {
+  const missingRoot = join(tmpdir(), `missing-stephanos-recovery-${process.pid}-${Date.now()}`);
+  const result = await readSharedIntelligenceConversationForWorkspaceV1({
+    repoRoot: join(tmpdir(), 'stephanos-repo-test'),
+    env: envFor(missingRoot),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.turns.length, 0);
+  assert.notEqual(result.classification, 'SHARED_INTELLIGENCE_THREAD_RECOVERED');
 });
