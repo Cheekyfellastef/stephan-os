@@ -18,7 +18,7 @@ import {
 } from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
-const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'sovereign-commander']);
 
 // Source context caps
 const MAX_PER_FILE_BYTES = 64 * 1024; // 64 KiB
