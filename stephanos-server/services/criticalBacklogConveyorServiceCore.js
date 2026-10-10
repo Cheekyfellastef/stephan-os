@@ -38,6 +38,7 @@ import {
   readMissionControllerCapacityRoutingInput,
 } from './programmeAuthorityService.js';
 import { ensureElasticGoalMissions } from './elasticGoalMissionAdmissionService.js';
+import { reconcileExpiredElasticReviewLeaseV1 } from './elasticPrHeadLeaseService.js';
 import { publishNextMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 
 export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
@@ -637,6 +638,7 @@ export async function ensureCriticalBacklogMission({
   ensureElasticMissions = ensureElasticGoalMissions,
   readCapacityRouting = readMissionControllerCapacityRoutingInput,
   dispatchElasticBuilds = dispatchElasticGoalBuilds,
+  reconcileExpiredReviewLease = reconcileExpiredElasticReviewLeaseV1,
 } = {}) {
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
   let elasticAdmission = null;
@@ -644,8 +646,9 @@ export async function ensureCriticalBacklogMission({
   let programmeStatus = 'UNKNOWN';
   let programmeBlockers = [];
   let elasticAdmissionGate = projectElasticAdmissionGateV1();
+  let elasticReviewLeaseRecovery = null;
   try {
-    const authoritative = await readProgrammeProjection({
+    let authoritative = await readProgrammeProjection({
       env,
       nowUtc,
       root: paths.workspaceRoot,
@@ -654,6 +657,30 @@ export async function ensureCriticalBacklogMission({
       snapshotRoot: paths.snapshotRoot,
     });
     const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+    // A verified expired review-only lease is no longer a source writer,
+    // but the persisted stale file still prevents other eligible goals from
+    // entering canonical Programme Authority. Reconcile it exactly once via
+    // the existing guarded lease release, only after persisted mission,
+    // current PR head, canonical queue and execution history all disprove
+    // in-flight work. Never remove a lease based on timeout alone.
+    if (text(authoritative?.status).toUpperCase() === 'HOLD'
+        && Array.isArray(authoritative?.blockers)
+        && authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+        && SHA_40.test(sourceRevision)) {
+      const originalMissions = await listMissions({
+        root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env,
+      });
+      elasticReviewLeaseRecovery = await reconcileExpiredReviewLease({
+        missionRecords: originalMissions,
+        now, env, paths, sourceRevision,
+      });
+      if (elasticReviewLeaseRecovery?.released === true) {
+        authoritative = await readProgrammeProjection({
+          env, nowUtc, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+          orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot,
+        });
+      }
+    }
     programmeStatus = text(authoritative?.status, 'UNKNOWN').toUpperCase();
     programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
       .map((blocker) => text(blocker))
@@ -732,6 +759,7 @@ export async function ensureCriticalBacklogMission({
           elasticAdmission,
           elasticIgnition,
           elasticAdmissionGate,
+          elasticReviewLeaseRecovery,
           programmeStatus: text(authoritative?.status).toUpperCase(),
           programmeBlockers: Object.freeze([...programmeBlockers]),
           workerRuntimeHold,
@@ -776,6 +804,7 @@ export async function ensureCriticalBacklogMission({
         elasticAdmission,
         elasticIgnition,
         elasticAdmissionGate,
+        elasticReviewLeaseRecovery,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         duplicateActiveMissionAllowed: false,
@@ -830,6 +859,7 @@ export async function ensureCriticalBacklogMission({
     elasticAdmission,
     elasticIgnition,
     elasticAdmissionGate,
+    elasticReviewLeaseRecovery,
     programmeStatus,
     programmeBlockers: Object.freeze([...programmeBlockers]),
     arbitraryShellAllowed: false,
