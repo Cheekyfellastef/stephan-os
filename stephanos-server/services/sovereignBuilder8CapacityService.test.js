@@ -6,6 +6,7 @@ import {
   SOVEREIGN_BUILDER8_STATUS_ID,
 } from './sovereignBuilder8CapacityService.js';
 import { routeMissionControllerCapacity } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import { dispatchElasticGoalBuilds } from './criticalBacklogConveyorService.js';
 
 const HEAD = 'b'.repeat(40);
 const NOW = new Date('2026-10-10T14:00:00.000Z');
@@ -120,4 +121,39 @@ test('Builder 8 does not confer protected merge, lease or shell authority', asyn
     assert.equal(value.leaseSeizureAllowed, false);
   }
   assert.equal(result.arbitraryCommandAllowed, false);
+});
+
+test('qualified Builder 8 receipt reaches the real elastic external admission path', async () => {
+  const h = harness();
+  assert.equal((await refreshSovereignBuilder8Capacity(h.opts)).ok, true);
+  const publishCalls = [];
+  const mission = {
+    missionId: 'critical-3002-elastic-goal',
+    title: 'Builder 8 first bounded proof goal',
+    repository: 'Cheekyfellastef/stephan-os',
+    operatorIntent: 'Repair an allowed source file using one local builder.',
+    intendedOutcome: 'Bounded source repair with focused tests.',
+    allowedFiles: ['shared/agents/goal-3002.mjs'],
+    requiredTests: ['node --test shared/agents/goal-3002.test.mjs'],
+    requiredEvidence: ['focused proof'],
+    revision: 1, currentPhase: 'AGENT_IMPLEMENTATION',
+    git: { branch: 'openclaw/elastic-goal-3002', worktreePath: '/bounded/critical-3002-elastic-goal' },
+  };
+  const result = await dispatchElasticGoalBuilds({
+    desiredWidth: 1, selectedMission: null, activeMissions: [], runnableMissions: [mission],
+  }, {
+    now: NOW, sourceRevision: HEAD,
+    paths: { repoRoot: '/repo', workspaceRoot: '/workspace', orchestratorRoot: '/orchestrator', snapshotRoot: '/snapshots' },
+    capacityRouting: { sovereignCommanderLaneReceipt: h.receipts[0], codexStatus: null },
+    publishWorkerAction: async ({ actionGrant }) => {
+      publishCalls.push(actionGrant);
+      return { published: true, actionGrantAccepted: true };
+    },
+  });
+  assert.equal(result.dispatchCount, 1, JSON.stringify(result.held));
+  assert.equal(publishCalls.length, 1);
+  assert.equal(publishCalls[0].adapter, 'sovereign-commander');
+  assert.equal(result.dispatched[0].workerId, SOVEREIGN_BUILDER8_WORKER_ID);
+  assert.equal(result.dispatched[0].pickupProven, false);
+  assert.equal(result.mergeAuthority, false);
 });
