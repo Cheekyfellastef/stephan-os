@@ -160,6 +160,7 @@ const PROCESSING_PICKUP_ADAPTERS = Object.freeze([
   'chatgpt-github',
   'foundry-forge',
   'desktop-commander',
+  'sovereign-commander',
   'stephanos-native',
 ]);
 
