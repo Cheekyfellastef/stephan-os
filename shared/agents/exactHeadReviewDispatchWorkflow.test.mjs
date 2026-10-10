@@ -190,5 +190,5 @@ test('hosted reviews fail closed before API reads when the installation budget i
     < hosted[0].indexOf('name: Resolve immutable review identity'));
   assert.ok(hosted[1].indexOf('name: Gate hosted review on its own GitHub installation API budget')
     < hosted[1].indexOf('name: Check out trusted exact-base reviewer'));
-  assert.ok(hosted[1].includes("id: terminal_findings\\n        if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
+  assert.ok(hosted[1].includes('name: Surface terminal exact-head findings or pre-artifact failure'));
 });
