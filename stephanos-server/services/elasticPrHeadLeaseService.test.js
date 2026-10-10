@@ -445,3 +445,61 @@ test('canonical completed implementation dispatch in CHECK_PULL_REQUEST can rele
   assert.equal(pending.blocker, 'REVIEW_DISPATCH_NOT_SAFELY_TERMINAL');
   assert.equal(released, 1);
 });
+
+test('cancelled original owner safely returns its expired rN lease only with terminal receipt and empty original queue', async () => {
+  const baseMission = mission(2962, 2987, HEAD_A, {
+    currentPhase: 'CANCELLED', revision: 8, cancelled: true,
+    dispatch: { status: 'complete' },
+    storeMetadata: {
+      lastEventId: 'cancel-operator-superseded-2962',
+      processedEventIds: ['cancel-operator-superseded-2962'],
+    },
+  });
+  const oldLease = leaseFor({ ...baseMission, revision: 7 });
+  const observation = {
+    ok: true, present: true, record: oldLease,
+    validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+  };
+  const terminal = {
+    ok: true,
+    receipts: [{ state: 'completed', leaseKey: oldLease.leaseId }],
+    latestReceipt: { state: 'completed', leaseKey: oldLease.leaseId },
+  };
+  const calls = [];
+  const args = {
+    now: NOW, sourceRevision: SOURCE, paths: PATHS,
+    env: { USERPROFILE: '/fake', STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/queue' },
+    missionRecords: [baseMission],
+    readLease: async () => observation,
+    readReceiptHistoryFn: async () => terminal,
+    originalMissionInFlightFn: async () => false,
+    releaseLease: async (input) => {
+      calls.push(input);
+      return { ok: true, released: true };
+    },
+  };
+  const safe = await reconcileExpiredElasticReviewLeaseV1(args);
+  assert.equal(safe.released, true);
+  assert.equal(safe.classification, 'ELASTIC_CANCELLED_ORIGINAL_EXACT_LEASE_RELEASED');
+  assert.equal(safe.goalComplete, false);
+  assert.equal(safe.sourceMutationAllowed, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].leaseId, oldLease.leaseId);
+  for (const [overrides, expected] of [
+    [{ missionRecords: [{ ...baseMission, currentPhase: 'REPAIR_REQUIRED', cancelled: false }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ missionRecords: [{ ...baseMission, revision: 9 }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ missionRecords: [{ ...baseMission, storeMetadata: { lastEventId: 'forged', processedEventIds: ['forged'] } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ missionRecords: [{ ...baseMission, dispatch: { status: 'running' } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }) }, 'CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [{ state: 'started' }], latestReceipt: { state: 'started' } }) }, 'CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN'],
+    [{ originalMissionInFlightFn: async () => true }, 'CANCELLED_SOURCE_WORK_STILL_IN_FLIGHT'],
+    [{ originalMissionInFlightFn: async () => { throw Error('unknown'); } }, 'CANCELLED_SOURCE_WORKER_QUEUE_UNOBSERVABLE'],
+    [{ readLease: async () => ({ ...observation, validation: { ...observation.validation, active: true, stale: false } }) }, 'CANONICAL_LEASE_EXPIRED_STATE_NOT_PROVEN'],
+    [{ missionRecords: [{ ...baseMission, git: { ...baseMission.git, branch: 'openclaw/unrelated' } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
+  ]) {
+    const denied = await reconcileExpiredElasticReviewLeaseV1({ ...args, ...overrides });
+    assert.equal(denied.released, false);
+    assert.equal(denied.blocker, expected);
+  }
+  assert.equal(calls.length, 1, 'no unsafe release in any adversarial case');
+});
