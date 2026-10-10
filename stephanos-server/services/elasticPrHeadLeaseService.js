@@ -314,9 +314,17 @@ export async function reconcileExpiredElasticReviewLeaseV1({
       || text(lease.leaseId) !== leaseIdForMission(mission, identity)) {
     return held('REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH');
   }
-  if (phaseOf(mission) !== 'CHECK_PULL_REQUEST'
-      || text(mission?.dispatch?.status).toLowerCase() !== 'idle') {
-    return held('REVIEW_ONLY_IDLE_PHASE_NOT_PROVEN');
+  if (phaseOf(mission) !== 'CHECK_PULL_REQUEST') {
+    return held('EXACT_READ_ONLY_REVIEW_PHASE_NOT_PROVEN');
+  }
+  // The real mission orchestrator sets dispatch.status='complete' after
+  // successful implementation and *then* transitions to CHECK_PULL_REQUEST.
+  // 'idle' is also admitted for an undispatched exact review action. Neither
+  // state alone authorizes release: queue absence and canonical execution
+  // receipt proof below are still mandatory. 'running', 'pending', 'failed',
+  // and unknown states must never be mistaken for a completed source writer.
+  if (!['idle', 'complete'].includes(text(mission?.dispatch?.status).toLowerCase())) {
+    return held('REVIEW_DISPATCH_NOT_SAFELY_TERMINAL');
   }
   const grant = exactPrHeadWorkerGrant(
     mission, identity, text(sourceRevision).toLowerCase(), null, now,
