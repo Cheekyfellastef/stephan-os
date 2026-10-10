@@ -449,17 +449,27 @@ export async function reconcileExpiredElasticReviewLeaseV1({
       history = await readReceiptHistoryFn(paths.workspaceRoot, {
         leaseKey: lease.leaseId, expectedHead: lease.headSha,
       }, { repoRoot: paths.repoRoot });
-      if (history?.ok !== true || !Array.isArray(history.receipts)
-          || history.receipts.length === 0 || !history.latestReceipt
-          || !TERMINAL_EXECUTION_RECEIPT_STATES.has(
-            text(history.latestReceipt.state).toLowerCase())
-          || text(history.latestReceipt.leaseKey) !== text(lease.leaseId)
+      // A generic receipt refusal obscures whether the original worker never
+      // published terminal evidence, is still active, or has mismatched binding.
+      // Keep all three fail-closed, but return distinct diagnosis to the
+      // existing Supervisor so it can repair the correct original-owner step.
+      if (history?.ok !== true || !Array.isArray(history?.receipts)) {
+        return held('REPAIR_ORIGINAL_EXECUTION_HISTORY_UNVERIFIED');
+      }
+      if (history.receipts.length === 0 || !history.latestReceipt) {
+        return held('REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+      }
+      if (!TERMINAL_EXECUTION_RECEIPT_STATES.has(
+        text(history.latestReceipt.state).toLowerCase())) {
+        return held('REPAIR_ORIGINAL_EXECUTION_RECEIPT_NONTERMINAL');
+      }
+      if (text(history.latestReceipt.leaseKey) !== text(lease.leaseId)
           || text(history.latestReceipt.sourceHead).toLowerCase() !== text(lease.headSha).toLowerCase()
           || text(history.latestReceipt.branch) !== text(lease.branch)
           || text(history.latestReceipt.repository).toLowerCase() !== text(lease.repository).toLowerCase()
           || Number(history.latestReceipt.issueNumber) !== Number(lease.issueNumber)
           || Number(history.latestReceipt.prNumber) !== Number(lease.prNumber)) {
-        return held('REPAIR_ORIGINAL_TERMINAL_EXECUTION_NOT_PROVEN');
+        return held('REPAIR_ORIGINAL_EXECUTION_RECEIPT_IDENTITY_MISMATCH');
       }
       inFlight = await originalMissionInFlightFn({
         missionId: identity.missionId, leaseId: lease.leaseId, env,
