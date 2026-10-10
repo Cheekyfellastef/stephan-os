@@ -192,3 +192,22 @@ test('hosted reviews fail closed before API reads when the installation budget i
     < hosted[1].indexOf('name: Check out trusted exact-base reviewer'));
   assert.ok(hosted[1].includes('name: Surface terminal exact-head findings or pre-artifact failure'));
 });
+
+test('canonical plan and coordinate jobs enforce installation reserve before GitHub API reads', () => {
+  const source = readWorkflow();
+  const plan = workflowJob(source, 'plan', 'coordinate');
+  const coordinate = source.slice(source.indexOf('  coordinate:'));
+  for (const job of [plan, coordinate]) {
+    const gateIndex = job.indexOf('name: Gate hosted review on its own GitHub installation API budget');
+    assert.ok(gateIndex > -1, 'missing installation quota gate');
+    assert.ok(job.includes('gh api rate_limit 2>/dev/null'));
+    assert.ok(job.includes('GITHUB_HOSTED_REVIEW_BUDGET_HOLD'));
+    assert.ok(job.includes('GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN'));
+    assert.ok(job.includes('remaining <= reserve'));
+  }
+  assert.ok(plan.indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < plan.indexOf('name: Discover canonical PR targets without mutation'));
+  assert.ok(coordinate.indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < coordinate.indexOf('name: Recheck target exact-current-main admission'));
+  assert.ok(plan.includes("github.event_name != 'pull_request'"));
+});
