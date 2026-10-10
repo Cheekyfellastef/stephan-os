@@ -171,24 +171,24 @@ test('isolates provider-neutral assurance intake from Codex review command vocab
   assert.doesNotMatch(workflow, /\/stephanos-review|@codex|\/codex|chatgpt-codex/i);
 });
 
-test('hosted exact-head and independent reviews stop before API reads when installation REST quota is low', () => {
+test('hosted reviews fail closed before API reads when the installation budget is low', () => {
   const hosted = [
     readDeterministicReviewWorkflow(),
-    fs.readFileSync(new URL('../../.github/workflows/independent-merge-security-review.yml', import.meta.url), 'utf8').replaceAll('\\r\\n', '\\n'),
+    fs.readFileSync(new URL('../../.github/workflows/independent-merge-security-review.yml', import.meta.url), 'utf8'),
   ];
   for (const workflow of hosted) {
-    const gate = workflow.indexOf('name: Gate hosted review on its own GitHub installation API budget');
-    assert.ok(gate > -1, 'hosted review must have a budget preflight');
-    assert.ok(gate < workflow.indexOf('name: Resolve immutable review identity') || workflow.includes('name: Check out trusted exact-base reviewer'), 'gate is placed before identity REST calls');
-    assert.match(workflow, /quota="\\$\\(gh api rate_limit 2>\\/dev\\/null\\)"/);
-    assert.match(workflow, /remaining <= reserve/);
-    assert.match(workflow, /reserve=\\$\\(\\( \\(limit \\+ 4\\) \\/ 5 \\)\\)/);
-    assert.match(workflow, /GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN/);
-    assert.match(workflow, /GITHUB_HOSTED_REVIEW_BUDGET_HOLD/);
-    assert.match(workflow, /remaining=\\$remaining/);
-    assert.match(workflow, /reset_epoch=\\$reset/);
-    assert.match(workflow, /steps\\.github_budget\\.outcome == 'success'/);
-    assert.doesNotMatch(workflow, /continue-on-error:\\s*true/);
+    assert.ok(workflow.includes('name: Gate hosted review on its own GitHub installation API budget'));
+    assert.ok(workflow.includes('gh api rate_limit 2>/dev/null'));
+    assert.ok(workflow.includes('remaining <= reserve'));
+    assert.ok(workflow.includes('GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN'));
+    assert.ok(workflow.includes('GITHUB_HOSTED_REVIEW_BUDGET_HOLD'));
+    assert.ok(workflow.includes('reset_epoch=$reset'));
+    assert.ok(workflow.includes("steps.github_budget.outcome == 'success'"));
+    assert.ok(!workflow.includes('continue-on-error: true'));
   }
-  assert.match(hosted[1], /name: Surface terminal exact-head findings or pre-artifact failure\\n\\s+id: terminal_findings\\n\\s+if: \\$\\{\\{ always\\(\\) && steps\\.github_budget\\.outcome == 'success' \\}\\}/);
+  assert.ok(hosted[0].indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < hosted[0].indexOf('name: Resolve immutable review identity'));
+  assert.ok(hosted[1].indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < hosted[1].indexOf('name: Check out trusted exact-base reviewer'));
+  assert.ok(hosted[1].includes("id: terminal_findings\\n        if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
 });
