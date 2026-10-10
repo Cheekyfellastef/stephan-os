@@ -1287,7 +1287,7 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('mailbox authorization binds the exact owner actor and rejects legacy bot or lookalike transport identities', () => {
+test('mailbox dispatch actor must match verified owner-comment provenance without granting bot approval authority', () => {
   const mailboxAuthorization = {
     authorizedAtUtc: '2026-09-20T11:55:03Z',
     commentId: 5749628881,
@@ -1295,37 +1295,46 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
     requestId: 'multiplexer-control-plane-protected-merge-2300-cdb875c6-20260920-v1',
     transportActor: 'Cheekyfellastef',
   };
-  const ready = validatePersonalRepositoryDispatchExecution(
+  const ownerReady = validatePersonalRepositoryDispatchExecution(
     dispatchExecutionInput(),
     { ...expectedDispatchExecution, mailboxAuthorization },
   );
-  assert.equal(ready.valid, true);
-  assert.deepEqual(ready.currentMismatches, []);
+  assert.equal(ownerReady.valid, true);
 
-  for (const transportActor of ['github-actions[bot]', 'lookalike-operator']) {
-    const blocked = validatePersonalRepositoryDispatchExecution(
-      dispatchExecutionInput(),
-      {
-        ...expectedDispatchExecution,
-        mailboxAuthorization: { ...mailboxAuthorization, transportActor },
-      },
-    );
-    assert.equal(blocked.valid, false, transportActor);
-    assert.ok(
-      blocked.blockers.includes('personal-repository-mailbox-authorization-provenance-invalid'),
-      transportActor,
-    );
-  }
+  // github-actions[bot] is the fixed mailbox carrier; only authenticated
+  // owner-comment provenance can bind it to the actual workflow-run actor.
+  const botRun = dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } });
+  const botAuthorization = { ...mailboxAuthorization, transportActor: 'github-actions[bot]' };
+  const botReady = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ run: botRun }),
+    { ...expectedDispatchExecution, mailboxAuthorization: botAuthorization },
+  );
+  assert.equal(botReady.valid, true, JSON.stringify(botReady.blockers));
+  assert.deepEqual(botReady.currentMismatches, []);
+
+  // A bot run without the owner-comment provenance must remain blocked.
+  const unprovedBot = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ run: botRun }),
+    expectedDispatchExecution,
+  );
+  assert.equal(unprovedBot.valid, false);
+  assert.ok(unprovedBot.currentMismatches.includes('triggering-actor'));
 
   const wrongRunActor = validatePersonalRepositoryDispatchExecution(
-    dispatchExecutionInput({
-      run: dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } }),
-    }),
+    dispatchExecutionInput({ run: botRun }),
     { ...expectedDispatchExecution, mailboxAuthorization },
   );
   assert.equal(wrongRunActor.valid, false);
-  assert.deepEqual(wrongRunActor.currentMismatches, ['triggering-actor']);
-  assert.ok(wrongRunActor.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+  assert.ok(wrongRunActor.currentMismatches.includes('triggering-actor'));
+
+  for (const badActor of ['lookalike-operator', 'github-actions[bot]-evil', '']) {
+    const denied = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: dispatchRun({ triggering_actor: { login: badActor } }) }),
+      { ...expectedDispatchExecution, mailboxAuthorization: { ...mailboxAuthorization, transportActor: badActor } },
+    );
+    assert.equal(denied.valid, false, badActor);
+    assert.ok(denied.blockers.includes('personal-repository-mailbox-authorization-provenance-invalid'));
+  }
 });
 
 test('prior authority jobs bind one complete canonical parent-run envelope', () => {
