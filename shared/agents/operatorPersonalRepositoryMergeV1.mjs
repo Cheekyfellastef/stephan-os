@@ -998,11 +998,19 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     && strictPositiveInteger(mailboxAuthorization.commentId)
     && text(mailboxAuthorization.requestId)
     && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
-    && text(mailboxAuthorization.transportActor).toLowerCase() === nativeOwnerActor
+    && [
+      nativeOwnerActor,
+      'github-actions[bot]',
+    ].includes(text(mailboxAuthorization.transportActor).toLowerCase())
     && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
     && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
   );
-  const expectedActor = nativeOwnerActor;
+  // A valid mailbox authorization is bound to the original owner comment
+  // and the authenticated transport actor by the trusted evidence collector.
+  // Only that exact validated provenance can change the expected workflow actor.
+  const expectedActor = mailboxAuthorizationValid
+    ? text(mailboxAuthorization.transportActor).toLowerCase()
+    : nativeOwnerActor;
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
