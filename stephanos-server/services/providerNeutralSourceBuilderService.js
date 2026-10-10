@@ -12,13 +12,14 @@ import {
 } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
-const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'sovereign-commander']);
 
 // Source context caps
 const MAX_PER_FILE_BYTES = 64 * 1024; // 64 KiB
@@ -1004,6 +1005,18 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
     const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
+
+    // Reject structurally invalid generated modules before tests, signed escrow or GitHub PR publication.
+    // Run only on scoped changed JS sources to avoid rechecking the entire repository on every build.
+    for (const sourcePath of files) {
+      if (!/\.(?:mjs|js)$/i.test(sourcePath)) continue;
+      const source = await readFile(resolve(worktreePath, sourcePath), 'utf8');
+      const violations = analyzeImportStructureInSource(source, sourcePath);
+      if (violations.length) {
+        const first = violations[0];
+        throw new Error(`PROVIDER_NEUTRAL_IMPORT_STRUCTURE_INVALID:${first.file}:${first.reason}`);
+      }
+    }
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
     const receipt = Object.freeze({

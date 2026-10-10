@@ -54,7 +54,7 @@ function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -130,6 +130,9 @@ function executionSurfaceForAdapter(adapter = '') {
   if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
   if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
   if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  // Builder 8 source work is confined to the exact mission worktree, even
+  // though Sovereign Commander's separate maintenance surface can inspect the host.
+  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
   return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
 }
 
@@ -191,6 +194,8 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       ? 'chatgpt'
       : action.adapter === 'desktop-commander'
         ? 'desktop-commander'
+        : action.adapter === 'sovereign-commander'
+          ? 'sovereign-commander'
         : action.adapter === 'openclaw-standalone'
           ? 'openclaw-standalone'
           : action.adapter === 'openclaw-local'
@@ -354,7 +359,7 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action?.adapter);
+  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -486,7 +491,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     payload,
   });
   if (!published) {
-    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
+    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
         await unlink(path).catch(() => {});
@@ -519,7 +524,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     };
   }
   let fabricPublication = null;
-  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
+  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
       await unlink(path).catch(() => {});
@@ -682,7 +687,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -701,7 +706,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');

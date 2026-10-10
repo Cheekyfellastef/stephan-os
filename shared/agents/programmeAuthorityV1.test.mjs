@@ -43,6 +43,7 @@ import {
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
 import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
   DEFAULT_CRITICAL_BACKLOG,
   buildCriticalBacklogProjection,
 } from './criticalBacklogConveyor.mjs';
@@ -2064,4 +2065,107 @@ test('elastic phase identification never trusts missing, conflicting, stale or m
     projectElasticMissionPhaseBindingV1(expired, [exactElasticMission()]));
   assert.equal(expiredLane.active, false);
   assert.equal(expiredLane.status, 'HOLD');
+});
+
+test('proven elastic material lane uses canonical scheduler when legacy critical backlog is safely parked', () => {
+  const sourceLease = exactElasticLease();
+  const activeBinding = projectElasticMissionPhaseBindingV1(sourceLease, [
+    exactElasticMission({ currentPhase: 'AGENT_IMPLEMENTATION' }),
+  ]);
+  const activeLane = phaseAwareElasticLane(sourceLease, activeBinding);
+  assert.equal(activeLane.valid, true);
+  assert.equal(activeLane.active, true);
+  assert.equal(activeLane.mutationLeaseIdentity.active, true);
+  const executionReceipt = createExecutionReceipt({
+    receiptId: 'execution-elastic-2956-1',
+    repository: REPOSITORY,
+    issueNumber: 2956,
+    prNumber: 2960,
+    branch: 'openclaw/elastic-goal-2956',
+    sourceHead: ELASTIC_HEAD,
+    workerId: sourceLease.ownerId,
+    workerType: 'github-first',
+    executionId: 'execution-elastic-2956',
+    leaseKey: sourceLease.leaseId,
+    state: 'started',
+    phase: 'bounded-source-mutation',
+    sequence: 1,
+    timestampUtc: '2026-07-30T09:59:00.000Z',
+    heartbeatExpiresAtUtc: '2026-07-30T10:01:00.000Z',
+    proofRefs: ['proofs/elastic-execution-2956.json'],
+    expectedNextAction: 'Continue bounded work.',
+  });
+  const criticalBacklog = {
+    schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+    validation: { valid: true },
+    elasticGoalMissionsUseSchedulerCapacity: true,
+    decision: 'PARKED_BLOCKERS_ONLY',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+    remainingItemIds: [],
+    activeMission: null,
+  };
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'ready' },
+    lane: activeLane,
+    mutationLease: sourceLease,
+    controllerHeartbeatProjection: {
+      valid: true, fresh: true, ageMs: 0,
+      cycleState: 'ACTIVE_LANE',
+      activeLaneId: activeLane.laneId,
+      reconciliationSucceeded: true,
+      boundedMutationSteps: 1,
+    },
+    workerHeartbeatProjection: { valid: true, fresh: true, ageMs: 0 },
+    executionReceipt,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: null,
+      decisionReceipt: { status: 'ACTIVE_LANE', activeIssue: 2956 },
+    },
+    criticalBacklog,
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+
+  const admitted = buildAuthoritativeProgrammeProjection(base);
+  assert.equal(admitted.status, 'ACTIVE');
+  assert.ok(!admitted.blockers.some((item) => item.startsWith('critical-backlog-active-lane-')));
+
+  const noReceipt = buildAuthoritativeProgrammeProjection({ ...base, executionReceipt: null });
+  assert.equal(noReceipt.status, 'HOLD');
+  assert.ok(noReceipt.blockers.includes('active-lane-execution-receipt-missing'));
+
+  const unprovedLegacyPark = buildAuthoritativeProgrammeProjection({
+    ...base,
+    criticalBacklog: { ...criticalBacklog, validation: { valid: false } },
+  });
+  assert.equal(unprovedLegacyPark.status, 'HOLD');
+  assert.ok(unprovedLegacyPark.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+  const unprovedLeaseCorrelation = buildAuthoritativeProgrammeProjection({
+    ...base,
+    mutationLease: { ...sourceLease, leaseId: 'wrong-lease-correlation' },
+  });
+  assert.equal(unprovedLeaseCorrelation.status, 'HOLD');
+  assert.ok(unprovedLeaseCorrelation.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+  const legacyLane = buildAuthoritativeProgrammeProjection({
+    ...base,
+    lane: lane(),
+    mutationLease: lease(),
+    controllerHeartbeatProjection: {
+      ...base.controllerHeartbeatProjection,
+      activeLaneId: LANE_ID,
+    },
+    executionReceipt: receipt(),
+    scheduler: {
+      failClosed: false,
+      selectedGoal: null,
+      decisionReceipt: { status: 'ACTIVE_LANE', activeIssue: 1497 },
+    },
+  });
+  assert.equal(legacyLane.status, 'HOLD');
+  assert.ok(legacyLane.blockers.includes('critical-backlog-active-lane-status-mismatch'));
 });

@@ -1426,7 +1426,40 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
 
   const conveyor = input.criticalBacklog;
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
-  if (lane?.active) {
+
+  // Elastic source work is admitted by the canonical scheduler, not by the
+  // separate legacy critical-backlog mission slot. Only a fully bound, live
+  // material-phase lease with affirmative parked/complete legacy capacity
+  // may skip the legacy active-mission identity checks. The controller,
+  // execution-receipt, scheduler, and source-lease gates above still apply.
+  const independentlyScheduledElasticActiveLane = Boolean(
+    lane?.active === true
+    && lane?.valid === true
+    && lane?.elasticMissionPhaseBinding?.valid === true
+    && lane?.elasticMissionPhaseBinding?.materialImplementation === true
+    && lane?.elasticMissionPhaseBinding?.issueNumber === lane?.issueNumber
+    && lane?.mutationLeaseIdentity?.active === true
+    && lane?.mutationLeaseIdentity?.stale === false
+    && lease?.leaseId === lane?.mutationLeaseIdentity?.leaseId
+    && lease?.issueNumber === lane?.issueNumber
+    && lease?.prNumber === lane?.prNumber
+    && sha(lease?.headSha) === lane?.headSha
+    && text(lease?.branch) === lane?.branch
+    && text(lease?.repository).toLowerCase() === text(lane?.repository).toLowerCase()
+    && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission
+  );
+  if (lane?.active && !independentlyScheduledElasticActiveLane) {
     if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
