@@ -49,6 +49,7 @@ jobs:
       - name: Run coordinator regressions
         run: |
           npm run stephanos:exact-head-review:test
+          npm run stephanos:provider-neutral-review:test
           node --test shared/agents/codexReviewCapacityFailoverV1.test.mjs
           node --test shared/agents/exactHeadReviewCoordinatorAuthority.test.mjs
           node --test shared/agents/independentReviewRetryPlanner.test.mjs
@@ -83,6 +84,8 @@ jobs:
           node --check scripts/bind-independent-review-handoff-provenance-v1.mjs
           node --check scripts/exact-head-review-current-main-admission-v1.mjs
           node --check scripts/exact-head-review-dispatch.mjs
+          node --check scripts/sovereign-reviewer-v1.mjs
+          node --check shared/agents/sovereignReviewerV1.mjs
           node --check scripts/retry-independent-review.mjs
           node --check scripts/launch-missing-independent-review-v1.mjs
           node --check scripts/recover-successful-independent-review-v1.mjs
