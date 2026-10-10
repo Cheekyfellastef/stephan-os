@@ -97,3 +97,15 @@ test('holds absent model and never mistakes it for a clean review', async () => 
   assert.equal(result.reason, 'LOCAL_MODEL_UNAVAILABLE');
   assert.equal(result.mergeAuthority, false);
 });
+
+test('blocks local clearance for OpenClaw authority and exact-head review engine edits', () => {
+  for (const file of [
+    'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
+    'shared/agents/exactHeadReviewDispatchCoordinator.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'scripts/exact-head-review-dispatch.mjs',
+  ]) {
+    const result = inspectSovereignReviewSnapshot({ ...sample, changedFiles: [file] });
+    assert.equal(result.reason, 'QUALIFIED_HIGH_RISK_SPECIALIST_REQUIRED', file);
+  }
+});

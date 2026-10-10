@@ -71,26 +71,32 @@ function persistReview(result, env) {
   if (!fs.statSync(root).isDirectory() || !fs.statSync(join(root, 'status')).isDirectory()) {
     throw new Error('SHARED_WORKSPACE_UNAVAILABLE');
   }
-  if (result.status !== 'LOCAL_REVIEW_EVIDENCE_READY') return false;
-  const proofRoot = join(root, 'proofs');
-  fs.mkdirSync(proofRoot, { recursive: true });
-  const file = join(proofRoot, result.proofRef.split('/')[1]);
-  // Immutable proof: a second run on the same PR/head must not silently replace
-  // a review by a different model/session or turn findings into 'clean'.
-  fs.writeFileSync(file, JSON.stringify(result, null, 2) + '\n', {
-    encoding: 'utf8', flag: 'wx', mode: 0o600,
-  });
-  const statusPath = join(root, 'status', `sovereign-review-pr-${result.reviewReceipt.prNumber}.json`);
+  const prNumber = result.reviewReceipt?.prNumber || Number(env.STEPHANOS_REVIEW_PR);
+  const safePr = Number.isSafeInteger(prNumber) && prNumber > 0 && prNumber <= 999999999 ? prNumber : null;
+  if (result.status === 'LOCAL_REVIEW_EVIDENCE_READY') {
+    const proofRoot = join(root, 'proofs');
+    fs.mkdirSync(proofRoot, { recursive: true });
+    const file = join(proofRoot, result.proofRef.split('/')[1]);
+    // Immutable same-PR/head evidence. A later model run cannot rewrite
+    // findings into a clean verdict, nor silently replace reviewer identity.
+    fs.writeFileSync(file, JSON.stringify(result, null, 2) + '\n', {
+      encoding: 'utf8', flag: 'wx', mode: 0o600,
+    });
+  }
+  const statusPath = join(root, 'status', safePr ? `sovereign-review-pr-${safePr}.json` : 'sovereign-reviewer.json');
   const record = {
     schemaVersion: 'stephanos.sovereign-review-status.v1',
     participantId: 'sovereign-reviewer',
     participantStatusId: 'sovereign-reviewer',
-    observedAtUtc: result.reviewReceipt.timestampUtc,
-    status: 'LOCAL_EVIDENCE_PENDING_INDEPENDENT_ATTESTATION',
-    sourceHead: result.reviewReceipt.sourceHead,
-    prNumber: result.reviewReceipt.prNumber,
-    proofRef: result.proofRef,
-    verdict: result.reviewReceipt.verdict,
+    observedAtUtc: new Date().toISOString(),
+    status: result.status === 'LOCAL_REVIEW_EVIDENCE_READY'
+      ? 'LOCAL_EVIDENCE_PENDING_INDEPENDENT_ATTESTATION'
+      : 'REVIEW_HELD',
+    blocker: result.status === 'LOCAL_REVIEW_EVIDENCE_READY' ? '' : text(result.reason).slice(0, 120),
+    sourceHead: result.reviewReceipt?.sourceHead || (SHA.test(text(env.STEPHANOS_REVIEW_EXACT_HEAD)) ? text(env.STEPHANOS_REVIEW_EXACT_HEAD) : ''),
+    prNumber: safePr,
+    proofRef: result.proofRef || '',
+    verdict: result.reviewReceipt?.verdict || '',
     mergeAuthority: false,
     runtimeDeploymentProven: false,
   };
@@ -116,10 +122,8 @@ export async function main(env = process.env, dependencies = {}) {
       mergeAuthority: false,
     };
   }
-  if (result.status === 'LOCAL_REVIEW_EVIDENCE_READY') {
-    try { publish(result, env); }
-    catch { result = { status: 'SOVEREIGN_REVIEW_HELD', reason: 'SHARED_WORKSPACE_PUBLICATION_FAILED', mergeAuthority: false }; }
-  }
+  try { publish(result, env); }
+  catch { result = { status: 'SOVEREIGN_REVIEW_HELD', reason: 'SHARED_WORKSPACE_PUBLICATION_FAILED', mergeAuthority: false }; }
   const summary = {
     status: result.status,
     reason: result.reason || '',

@@ -14,11 +14,10 @@ const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/;
 const PATH = /^(?:[a-z0-9]|\.[a-z0-9])[a-z0-9._/-]{0,240}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,100}$/i;
-const HIGH_RISK_PATH = /^(?:\.github\/|AGENTS\.md$|shared\/agents\/(?:operator|qualified|providerNeutralReview|elasticIndependentReview|sovereignReviewer|windowsAuthority)|scripts\/(?:operator|independent|sovereign|github)|stephanos-server\/services\/(?:githubAuth|githubPrEvidence))|(?:secret|credential|permission|approval|token|authority|security|protected-merge)/i;
+const HIGH_RISK_PATH = /^(?:\.github\/|AGENTS\.md$|shared\/agents\/(?:operator|qualified|providerNeutralReview|elasticIndependentReview|sovereignReviewer|windowsAuthority|exactHeadReview|openClaw|githubObservationBroker|sovereignCommander)|scripts\/(?:operator|independent|sovereign|github|exact-head-review)|stephanos-server\/services\/(?:githubAuth|githubPrEvidence))|(?:secret|credential|permission|approval|token|authority|security|protected-merge)/i;
 
 const text = value => String(value ?? '').trim();
 const validId = value => SAFE_ID.test(text(value));
-const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const hash = value => createHash('sha256').update(value, 'utf8').digest('hex');
 const blocked = (reason, details = {}) => Object.freeze({
   schemaVersion: SOVEREIGN_REVIEWER_SCHEMA,
