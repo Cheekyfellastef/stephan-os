@@ -130,7 +130,9 @@ function executionSurfaceForAdapter(adapter = '') {
   if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
   if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
   if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
-  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER;
+  // Builder 8 source work is confined to the exact mission worktree, even
+  // though Sovereign Commander's separate maintenance surface can inspect the host.
+  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
   return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
 }
 
