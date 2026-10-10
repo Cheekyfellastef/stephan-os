@@ -2980,3 +2980,88 @@ test('oversized Programme Authority receipt retains precise HOLD diagnosis while
   assert.equal(summary.logicalGoalLanes, undefined);
   assert.doesNotMatch(compactJson, /Users|secret\.txt|ignored large raw payload/i);
 });
+
+test('double-serialized 32KB Programme Authority HOLD retains original blockers at the real 9KB public limit', () => {
+  const sha = 'a'.repeat(40);
+  const rawDiagnostic = {
+    programmeStatus: 'HOLD',
+    programmeFinalVerdict: 'PROGRAMME_AUTHORITY_HOLD',
+    programmeBlockers: [
+      'source:NO_EXECUTION_RECEIPTS',
+      'lane:elastic-mission-phase-binding-unproven',
+      'controller-heartbeat-active-lane-mismatch',
+    ],
+    schedulerFailClosed: true,
+    schedulerProgrammeStatus: 'HOLD',
+    schedulerDecisionStatus: 'BLOCKED',
+    schedulerSelectedIssue: 2956,
+    elasticCapacityStatus: 'PAUSED',
+    elasticDesiredWidth: 15,
+    elasticRemainingAdmissionSlots: 0,
+    workerValid: true, workerFresh: true,
+    controllerValid: false, controllerFresh: false,
+    criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+    sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+    sourceReadControllerHeartbeat: 'CONTROLLER_HEARTBEAT_STALE',
+    sourceReadWorkerHeartbeat: 'MISSION_WORKER_HEARTBEAT_CURRENT',
+    sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+      issueNumber: 2600 + index,
+      continuityState: 'TRACKING',
+      proofRefs: ['private C:\\Users\\operator\\secret.txt'],
+      hostControllerTitle: 'canonical goal controller ' + index,
+    })),
+  };
+  const full = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'elastic-authority-double-publication-proof-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: sha, processSourceHead: sha,
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'elastic-authority-double-publication-proof-001',
+      result: {
+        ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: sha, programmeAuthorityTelemetry: true,
+        programmeAuthority: rawDiagnostic,
+      },
+    },
+  };
+  const locallyCheckpointed = JSON.parse(serializeBoundedReceiptJson(full, 256 * 1024));
+  assert.equal(locallyCheckpointed.result.result.programmeStatus, 'HOLD');
+  assert.equal(locallyCheckpointed.result.result.programmeAuthority, undefined);
+  const githubJson = serializeBoundedReceiptJson(locallyCheckpointed);
+  assert.ok(Buffer.byteLength(githubJson, 'utf8') <= 9 * 1024);
+  const publicReceipt = JSON.parse(githubJson);
+  assert.equal(publicReceipt.result.result.programmeStatus, 'HOLD');
+  assert.equal(publicReceipt.result.result.programmeFinalVerdict, 'PROGRAMME_AUTHORITY_HOLD');
+  assert.deepEqual(publicReceipt.result.result.programmeBlockers, [
+    'source:NO_EXECUTION_RECEIPTS',
+    'lane:elastic-mission-phase-binding-unproven',
+    'controller-heartbeat-active-lane-mismatch',
+  ]);
+  assert.equal(publicReceipt.result.result.workerFresh, true);
+  assert.equal(publicReceipt.result.result.controllerFresh, false);
+  assert.equal(publicReceipt.result.result.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(publicReceipt.result.result.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+  assert.doesNotMatch(githubJson, /operator|secret\.txt|hostControllerTitle/i);
+});
+
+test('second-pass Programme Authority packet is never reconstructed from an incomplete success marker', () => {
+  const incomplete = {
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS', state: 'DONE',
+    requestId: 'elastic-incomplete-authority-proof-001',
+    result: { ok: true, result: {
+      ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['source:NO_EXECUTION_RECEIPTS'],
+      // No repository-head or GitHub-estate source receipts.
+    } },
+  };
+  const projection = JSON.parse(serializeBoundedReceiptJson(incomplete));
+  assert.equal(projection.result.result.programmeStatus, undefined);
+  assert.equal(projection.result.result.programmeBlockers, undefined);
+  assert.equal(projection.result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+});
