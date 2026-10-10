@@ -405,3 +405,43 @@ test('stale review lease refuses release for running, mismatched, queued, or unp
   }
   assert.equal(releases, 0, 'no unsafe source lease must be released');
 });
+
+test('canonical completed implementation dispatch in CHECK_PULL_REQUEST can release expired review lease only after queue/history prove idle', async () => {
+  const review = mission(1802, 2096, HEAD_A, { dispatch: { status: 'complete' } });
+  const stale = leaseFor(review);
+  let released = 0;
+  const args = {
+    now: NOW, sourceRevision: SOURCE, paths: PATHS,
+    env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/worker-queue' },
+    missionRecords: [review],
+    readLease: async () => ({
+      ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_STALE',
+      validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+      record: stale,
+    }),
+    readReceiptHistoryFn: async () => ({ ok: true, latestReceipt: null }),
+    isActionInFlightFn: async () => false,
+    releaseLease: async () => {
+      released += 1;
+      return { ok: true, released: true };
+    },
+  };
+  const safe = await reconcileExpiredElasticReviewLeaseV1(args);
+  assert.equal(safe.released, true);
+  assert.equal(released, 1);
+  assert.equal(safe.leaseSeizureAllowed, false);
+
+  const activeQueue = await reconcileExpiredElasticReviewLeaseV1({
+    ...args, isActionInFlightFn: async () => true,
+  });
+  assert.equal(activeQueue.released, false);
+  assert.equal(activeQueue.blocker, 'EXACT_REVIEW_ACTION_STILL_IN_FLIGHT');
+  assert.equal(released, 1);
+
+  const pending = await reconcileExpiredElasticReviewLeaseV1({
+    ...args, missionRecords: [mission(1802, 2096, HEAD_A, { dispatch: { status: 'pending' } })],
+  });
+  assert.equal(pending.released, false);
+  assert.equal(pending.blocker, 'REVIEW_DISPATCH_NOT_SAFELY_TERMINAL');
+  assert.equal(released, 1);
+});
