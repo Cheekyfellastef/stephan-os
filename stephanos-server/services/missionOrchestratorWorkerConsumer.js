@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
 import {
   appendExecutionReceipt,
@@ -397,6 +398,10 @@ async function proveProcessingClaim(claim, options = {}) {
   const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
   const adapter = normalizedText(claim?.adapter).toLowerCase();
   const record = await readMissionRecord(missionId, options);
+  if (record.state.cancelled === true || record.state.currentPhase === 'CANCELLED'
+      || record.state.storeMetadata?.originalSourceAttemptFence) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
   const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
 
@@ -499,11 +504,27 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         );
         continue;
       }
+      try {
+        await assertOriginalSourceAttemptNotFenced(item.missionId, {
+          env: options.env, missionStoreOptions: { root: options.root },
+        });
+      } catch (fenceError) {
+        if (fenceError?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw fenceError;
+        await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+          'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+        continue;
+      }
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
       try {
         claim.pickupProof = await proveProcessingClaim(claim, options);
       } catch (claimError) {
+        if (claimError?.message === 'ORIGINAL_SOURCE_ATTEMPT_FENCED') {
+          await rename(processingPath, pendingPath);
+          await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+            'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+          continue;
+        }
         // Do not strand an item in processing when mission-state pickup proof
         // cannot be recorded. Return ownership to pending so the canonical
         // conveyor can safely retry or route it on the next bounded sweep.

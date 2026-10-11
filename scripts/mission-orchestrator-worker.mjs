@@ -960,6 +960,7 @@ export async function executeForgePublicationAction(action, claim, options = {})
     receiptRoot: join(root, 'publication-authorizations'),
     githubApi: options.forgeGithubApi || canonicalForgeGithubApi,
     nowUtc: now.toISOString(),
+    env,
   });
 }
 

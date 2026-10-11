@@ -1,0 +1,130 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createMissionRecord, readMissionRecord, appendMissionEvent } from './missionOrchestratorStore.js';
+import {
+  proveOriginalSourceQuarantine, quarantineOriginalSourceAttempt,
+  originalSourceFenceBindsLease, assertOriginalSourceAttemptNotFenced,
+} from './originalSourceAttemptFenceService.js';
+
+const digest = (v) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
+function fixture() {
+  const missionId = 'critical-2962-elastic-goal';
+  const action = `${missionId}-r1-27828c3fdb2c`;
+  const mission = { missionId, revision: 7, repository: 'Cheekyfellastef/stephan-os',
+    currentPhase: 'REPAIR_REQUIRED', git: { branch: 'openclaw/elastic-goal-2962' },
+    pullRequest: { number: 2987, headSha: 'a'.repeat(40) },
+    dispatch: { status: 'complete', adapter: 'foundry-forge', resultId: 'opaque-result' } };
+  const lease = { leaseId: `${missionId}-r7-lease`, laneId: missionId,
+    repository: mission.repository, issueNumber: 2962, prNumber: 2987,
+    branch: mission.git.branch, headSha: mission.pullRequest.headSha, ownerId: 'mission-worker' };
+  const receipt = { state: 'completed', executionId: action,
+    receiptId: `${action}-5`, leaseKey: `${missionId}-r1-lease`, repository: mission.repository,
+    branch: lease.branch, sourceHead: 'b'.repeat(40), issueNumber: 2962, prNumber: 0 };
+  const pair = { item: { missionId, actionId: action, executionBinding: {
+    missionId, executionId: action, leaseKey: receipt.leaseKey, repository: receipt.repository,
+    branch: receipt.branch, headSha: receipt.sourceHead, issueNumber: 2962, prNumber: 0 } },
+    result: { missionId, actionId: action, processed: true, success: true, testsPassed: true }, pairDigest: 'f'.repeat(64) };
+  const input = { missionId, commandId: 'fence-original-2962-test', reason: 'Retire source attempt only.',
+    operatorSourceRevision: 'd'.repeat(40), operatorRequestId: 'fence-original-2962-test-request',
+    expectedMissionRevision: 7, originalLeaseId: lease.leaseId, originalLeaseDigest: digest(lease) };
+  const options = { env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/queue' },
+    paths: { workspaceRoot: '/workspace', repoRoot: '/repo' },
+    readSourceMutationLease: async () => ({ ok: true, record: lease,
+      validation: { valid: true, active: false, stale: true } }),
+    readOriginalSourceExecutionId: async () => action,
+    readExecutionReceiptHistory: async (_root, filter) => filter.leaseKey
+      ? { ok: true, receipts: [], latestReceipt: null }
+      : { ok: true, receipts: [receipt], latestReceipt: receipt },
+    readTerminalSourcePair: async () => pair,
+    originalMissionHasQueuedWork: async () => false,
+    withOriginalSourceLeaseFenceGuard: async (operation) => operation(),
+  };
+  return { mission, lease, receipt, pair, input, options };
+}
+
+test('authenticated older source completion can fence r7 without fabricating an r7 terminal receipt', async () => {
+  const f = fixture(); const proof = await proveOriginalSourceQuarantine(f.mission, f.input, f.options);
+  assert.equal(originalSourceFenceBindsLease(proof, f.lease), true);
+  assert.equal(proof.sourceReceiptId, f.receipt.receiptId);
+  assert.equal(proof.goalComplete, false);
+  assert.equal(proof.leaseSeizureAllowed, false);
+});
+
+for (const [label, change] of [
+  ['mission revision race', f => { f.mission.revision++; }],
+  ['running original writer', f => { f.mission.dispatch.status = 'running'; }],
+  ['different source branch', f => { f.receipt.branch = 'other'; }],
+  ['wrong original source lease', f => { f.receipt.leaseKey = f.lease.leaseId; }],
+  ['source receipt is active', f => { f.receipt.state = 'progress'; }],
+  ['source result is not terminal', f => { f.pair.result.success = false; }],
+  ['source tests unproven', f => { f.pair.result.testsPassed = false; }],
+  ['queue source head mismatch', f => { f.pair.item.executionBinding.headSha = 'c'.repeat(40); }],
+  ['current lease digest mismatch', f => { f.input.originalLeaseDigest = 'e'.repeat(64); }],
+  ['queue activity', f => { f.options.originalMissionHasQueuedWork = async () => true; }],
+  ['queue nonactivity unknown', f => { f.options.originalMissionHasQueuedWork = async () => null; }],
+  ['source binding ambiguity', f => { f.options.readOriginalSourceExecutionId = async () => ''; }],
+  ['source signature unavailable', f => { f.options.readExecutionReceiptHistory = async () => ({ ok: false }); }],
+]) test(`quarantine refuses ${label}`, async () => {
+  const f = fixture(); change(f);
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options));
+});
+
+test('lease renewal between proof reads prevents fencing', async () => {
+  const f = fixture(); let reads = 0;
+  f.options.readSourceMutationLease = async () => ({ ok: true,
+    record: ++reads === 1 ? f.lease : { ...f.lease, renewedAtUtc: 'changed' },
+    validation: { valid: true, active: false, stale: true } });
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options), /LEASE_CHANGED/);
+});
+
+test('an active exact r7 execution cannot be concealed by older source completion', async () => {
+  const f = fixture(); const reader = f.options.readExecutionReceiptHistory;
+  f.options.readExecutionReceiptHistory = async (root, filter) => filter.leaseKey
+    ? { ok: true, receipts: [{ ...f.receipt, executionId: 'current-r7-execution',
+      leaseKey: f.lease.leaseId, sourceHead: f.lease.headSha, prNumber: f.lease.prNumber, state: 'progress' }] }
+    : reader(root, filter);
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options), /HELD_EXECUTION_ACTIVE/);
+});
+
+test('durable cancellation and fence commit share the existing mission and lease locks and survive restart', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-source-fence-'));
+  const created = await createMissionRecord({ missionId: f.mission.missionId,
+    repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+    worktreePath: '/worktree', operatorIntent: 'Repair original source.', intendedOutcome: 'Preserve same goal.',
+    allowedFiles: ['shared/test.mjs'], requiredTests: [], requiredEvidence: [] }, { root, env: {} });
+  const realistic = { ...created.state, ...f.mission };
+  await writeFile(created.statePath, JSON.stringify(realistic));
+  let insideLeaseLock = false;
+  f.options.withOriginalSourceLeaseFenceGuard = async (operation) => {
+    insideLeaseLock = true; try { return await operation(); } finally { insideLeaseLock = false; }
+  };
+  const originalRead = f.options.readSourceMutationLease;
+  f.options.readSourceMutationLease = async () => { assert.equal(insideLeaseLock, true); return originalRead(); };
+  const result = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+  assert.equal(result.state.currentPhase, 'CANCELLED');
+  assert.equal(result.state.revision, 8);
+  assert.equal(result.state.storeMetadata.originalSourceAttemptFence.originalLeaseId, f.lease.leaseId);
+  const restarted = await readMissionRecord(f.mission.missionId, { root });
+  assert.equal(originalSourceFenceBindsLease(restarted.state.storeMetadata.originalSourceAttemptFence, f.lease), true);
+  const log = await readFile(restarted.eventPath, 'utf8');
+  assert.match(log, /originalSourceAttemptFence/);
+  await assert.rejects(assertOriginalSourceAttemptNotFenced(f.mission.missionId,
+    { missionStoreOptions: { root } }), /FENCED/);
+  const duplicate = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.state.revision, 8);
+});
+
+test('plain cancellation cannot fabricate a quarantine fence', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'unproved-source-fence-'));
+  await createMissionRecord({ missionId: f.mission.missionId, operatorIntent: 'Test cancellation.',
+    intendedOutcome: 'No invented authority.', repository: f.mission.repository, repositoryRoot: '/repo',
+    branch: f.mission.git.branch, worktreePath: '/worktree', allowedFiles: [], requiredEvidence: [], requiredTests: [] }, { root, env: {} });
+  await assert.rejects(appendMissionEvent(f.mission.missionId, {
+    eventId: 'cancel-forged-proof', eventType: 'MISSION_CANCELLED', originalSourceQuarantineRequested: true,
+  }, { root, env: {} }), /GUARD_REQUIRED/);
+});

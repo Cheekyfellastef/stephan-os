@@ -313,14 +313,33 @@ export async function appendMissionEvent(missionId, event, options = {}) {
     if (preparedEvent.eventType === 'OPERATOR_APPROVAL_RECORDED') {
       preparedEvent.approvalTokenHash = sha256(preparedEvent.approvalToken);
     }
-    const next = withStoreMetadata(applyMissionOrchestratorEvent(current, preparedEvent, options), {
-      processedEventIds: [...processedEventIds, eventId].slice(-1000),
-      lastEventId: eventId,
-    });
-    await atomicWriteJson(paths.statePath, next);
-    await appendFile(paths.eventPath, `${JSON.stringify(sanitizeEventForLog(preparedEvent))}\n`, 'utf8');
-    const snapshot = await publishSnapshot(next, options.snapshotRoot || resolveMissionOperationsSnapshotRoot(options.env || process.env));
-    return { state: next, duplicate: false, eventId, snapshot };
+    const commit = async () => {
+      let originalSourceAttemptFence = current.storeMetadata?.originalSourceAttemptFence;
+      if (preparedEvent.originalSourceQuarantineRequested === true) {
+        if (preparedEvent.eventType !== 'MISSION_CANCELLED'
+            || typeof options.proveOriginalSourceQuarantine !== 'function') {
+          throw new Error('ORIGINAL_SOURCE_QUARANTINE_PROOF_REQUIRED');
+        }
+        originalSourceAttemptFence = await options.proveOriginalSourceQuarantine(current);
+        preparedEvent.originalSourceAttemptFence = originalSourceAttemptFence;
+      }
+      const next = withStoreMetadata(applyMissionOrchestratorEvent(current, preparedEvent, options), {
+        ...(originalSourceAttemptFence ? { originalSourceAttemptFence } : {}),
+        processedEventIds: [...processedEventIds, eventId].slice(-1000),
+        lastEventId: eventId,
+      });
+      await atomicWriteJson(paths.statePath, next);
+      await appendFile(paths.eventPath, `${JSON.stringify(sanitizeEventForLog(preparedEvent))}\n`, 'utf8');
+      const snapshot = await publishSnapshot(next, options.snapshotRoot || resolveMissionOperationsSnapshotRoot(options.env || process.env));
+      return { state: next, duplicate: false, eventId, snapshot };
+    };
+    if (preparedEvent.originalSourceQuarantineRequested === true) {
+      if (typeof options.withOriginalSourceLeaseFenceGuard !== 'function') {
+        throw new Error('ORIGINAL_SOURCE_LEASE_FENCE_GUARD_REQUIRED');
+      }
+      return await options.withOriginalSourceLeaseFenceGuard(commit);
+    }
+    return await commit();
   } finally {
     await releaseLock(lockHandle, paths.lockPath);
   }

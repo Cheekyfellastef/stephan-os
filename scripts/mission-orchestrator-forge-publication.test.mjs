@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { buildOfflinePublicationOutboxRecordV1 } from '../shared/agents/offlinePublicationOutboxV1.mjs';
 import { executeForgePublicationAction, selectGrantedMissionWorkerQueueItem } from './mission-orchestrator-worker.mjs';
+import { createMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 
 const NOW = new Date('2026-10-08T07:30:00.000Z');
@@ -86,7 +87,13 @@ async function fixture() {
     async createPullRequest(_, args) { calls.push('draft-pr'); assert.equal(args.draft, true);
       return { number: 3001, head: { sha: commitSha } }; },
   };
-  return { workspaceRoot, privateKeyPath, publicKeyPath, action, claim, forgeGithubApi, calls };
+  const missionRoot = join(parent, 'missions');
+  const env = { STEPHANOS_MISSION_ORCHESTRATOR_DIR: missionRoot };
+  await createMissionRecord({ missionId: identity.missionId, repository: identity.repository,
+    repositoryRoot: '/repo', worktreePath: '/worktree', branch: identity.canonicalBranch,
+    operatorIntent: 'Publish preserved source.', intendedOutcome: 'Draft only.',
+    allowedFiles: [], requiredTests: [], requiredEvidence: [] }, { root: missionRoot, env: {} });
+  return { env, workspaceRoot, privateKeyPath, publicKeyPath, action, claim, forgeGithubApi, calls };
 }
 
 test('canonical worker discovers the exact Forge publication adapter and existing queue grant', async () => {
@@ -120,7 +127,7 @@ test('canonical worker discovers the exact Forge publication adapter and existin
 
 test('granted Forge worker publishes exact preserved source as draft PR and blocks replay', async () => {
   const fx = await fixture();
-  const opts = { sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+  const opts = { env: fx.env, sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
     publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW };
   const published = await executeForgePublicationAction(fx.action, fx.claim, opts);
   assert.equal(published.ok, true, JSON.stringify(published));
@@ -139,7 +146,7 @@ test('Forge publication restores only lowercase canonical scheduler repository b
   fx.action.repository = 'cheekyfellastef/stephan-os';
   fx.claim.item.actionGrant.repository = 'cheekyfellastef/stephan-os';
   const result = await executeForgePublicationAction(fx.action, fx.claim, {
-    sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+    env: fx.env, sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
     publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
   });
   assert.equal(result.ok, true, JSON.stringify(result));
@@ -155,7 +162,7 @@ test('Forge publisher denies a lookalike repository before signing or writing Gi
   fx.action.repository = 'cheekyfellastef/stephan-os-fork';
   await assert.rejects(
     executeForgePublicationAction(fx.action, fx.claim, {
-      sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+      env: fx.env, sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
       publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
     }),
     /FORGE_PUBLICATION_CANONICAL_REPOSITORY_REQUIRED/,
@@ -178,7 +185,7 @@ test('Forge publisher rejects modified immutable artifact bytes before any GitHu
   const original = await readFile(file);
   await writeFile(file, Buffer.concat([original, Buffer.from(' ')]));
   const published = await executeForgePublicationAction(fx.action, fx.claim, {
-    sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
+    env: fx.env, sharedWorkspaceRoot: fx.workspaceRoot, privateKeyPath: fx.privateKeyPath,
     publicKeyPath: fx.publicKeyPath, forgeGithubApi: fx.forgeGithubApi, now: NOW,
   });
   assert.equal(published.ok, false);

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { validateSourceMutationLease } from '../shared/agents/programmeAuthorityV1.mjs';
 import { readSourceMutationLease } from '../stephanos-server/services/programmeAuthorityService.js';
+import { assertOriginalSourceAttemptNotFenced } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
 
 export const SOURCE_MUTATION_COMMIT_GUARD_SCHEMA='stephanos.source-mutation-commit-guard.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA='stephanos.source-mutation-lease.v1';
@@ -163,6 +164,8 @@ export async function runSourceMutationCommitGuard({
     return fail(observed.reason||'SOURCE_MUTATION_LEASE_MISSING',{branch,headSha});
   }
   const lease=observed.record;
+  try { await assertOriginalSourceAttemptNotFenced(lease.laneId, { env }); }
+  catch { return fail('ORIGINAL_SOURCE_ATTEMPT_FENCED_OR_UNOBSERVABLE', { branch, headSha }); }
   const leaseHead=text(lease?.headSha).toLowerCase();
   const ancestry=SHA.test(leaseHead)?git(repoRoot,['merge-base','--is-ancestor',leaseHead,headSha]):{ok:false};
   return evaluateSourceMutationCommitGuard({branch,headSha,lease,nowMs,leaseHeadIsAncestor:ancestry.ok,stagedPaths});

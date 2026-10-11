@@ -560,6 +560,9 @@ export function replacementSourceForgePublicationBlocked(state = {}) {
 }
 
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
   if (replacementSourceForgePublicationBlocked(inputState)) return {
     published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
     action:null,path:'',
@@ -708,6 +711,9 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const adapter = text(result?.adapter).toLowerCase();
   if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
+  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
   const eventId = `result-${actionId}`.slice(0, 128);
   const resultId = text(result.resultId, actionId);

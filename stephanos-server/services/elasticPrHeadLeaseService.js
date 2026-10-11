@@ -23,6 +23,7 @@ import {
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
 import { readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
+import { verifyOriginalSourceAttemptFence } from './originalSourceAttemptFenceService.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
@@ -43,7 +44,7 @@ const TERMINAL_EXECUTION_RECEIPT_STATES = new Set(['completed', 'failed', 'cance
 // their relationship from the canonical consumed result event, never by
 // stripping a provider prefix. Caller holds the mission-state precondition
 // lock, preventing a concurrent result or retry from replacing this identity.
-async function readOriginalSourceExecutionIdV1(mission, paths, env) {
+export async function readOriginalSourceExecutionIdV1(mission, paths, env) {
   const resultId = text(mission?.dispatch?.resultId);
   if (!resultId) return '';
   const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
@@ -236,11 +237,17 @@ const ORIGINAL_SOURCE_QUEUE_ADAPTERS = Object.freeze([
   'openclaw-local-deployment', 'verification',
 ]);
 
-async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
+export async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
   const root = resolveMissionWorkerQueueRoot(env);
   if (!root) throw new Error('ORIGINAL_MISSION_QUEUE_ROOT_UNAVAILABLE');
   await access(root);
-  for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
+  const entries = await readdir(root, { withFileTypes: true });
+  if (entries.length > 64 || entries.some((entry) => entry.isSymbolicLink())) {
+    throw new Error('ORIGINAL_MISSION_QUEUE_ROOT_UNSAFE');
+  }
+  const adapters = new Set([...ORIGINAL_SOURCE_QUEUE_ADAPTERS,
+    ...entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)]);
+  for (const adapter of adapters) {
     for (const state of ['pending', 'processing']) {
       const directory = resolve(root, adapter, state);
       let items;
@@ -566,6 +573,28 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   // The original lease's rN revision remains bound to the rN+1 cancellation
   // event; no unrelated mission, head, branch, PR or receipt may authorize it.
   if (originalCancelled) {
+    if (mission.storeMetadata?.originalSourceAttemptFence) {
+      try {
+        const guarded = await runWithMissionStatePrecondition(identity.missionId, {
+          expectedRevision: mission.revision, expectedCurrentPhase: 'CANCELLED',
+        }, async (current) => {
+          if (await verifyOriginalSourceAttemptFence(current, lease, paths, env) !== true) {
+            return { ok: false, released: false, reason: 'ORIGINAL_SOURCE_FENCE_PROOF_UNVERIFIED' };
+          }
+          return releaseLease({ ...lease, nowUtc,
+            originalLeaseDigest: current.storeMetadata.originalSourceAttemptFence.originalLeaseDigest,
+          }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
+        }, { root: paths.orchestratorRoot, env });
+        if (guarded.preconditionFailed || guarded.result?.ok !== true
+            || guarded.result?.released !== true) return held('ORIGINAL_QUARANTINED_EXACT_RELEASE_UNPROVEN');
+        return freeze({ ok: true, released: true,
+          classification: 'ELASTIC_QUARANTINED_ORIGINAL_EXACT_LEASE_RELEASED',
+          originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
+          sourceMutationAllowed: false, leaseSeizureAllowed: false, mergeAuthority: false,
+          goalComplete: false, materialPickupProven: false,
+        });
+      } catch { return held('ORIGINAL_QUARANTINED_FENCE_OR_RELEASE_UNOBSERVABLE'); }
+    }
     if (!resolveMissionWorkerQueueRoot(env)) return held('CANONICAL_WORKER_QUEUE_UNAVAILABLE');
     let history;
     let actionInFlight;

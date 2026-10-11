@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -958,6 +959,10 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       { ...options, sourceSnapshots },
     );
     providerCompleted = true;
+    await assertOriginalSourceAttemptNotFenced(action.missionId, {
+      env: options.env, missionStoreOptions: { root: options.root },
+      readMissionRecord: options.readMissionRecord,
+    });
 
     if (Array.isArray(generated.edits)) {
       const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
