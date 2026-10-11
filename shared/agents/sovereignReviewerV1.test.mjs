@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { inspectSovereignReviewSnapshot, evaluateSovereignReviewSnapshot } from './sovereignReviewerV1.mjs';
-import { validateProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
+import { validateProviderNeutralReviewReceipt, providerNeutralReviewToExecutionReceipt } from './providerNeutralReviewV1.mjs';
 
 const sample = Object.freeze({
   repository: 'Cheekyfellastef/stephan-os',
@@ -34,11 +34,13 @@ test('local sovereign reviewer emits a valid exact-head candidate but grants no 
   assert.equal(result.approvalAuthority, false);
   assert.equal(result.specialistAuthority, false);
   assert.equal(result.runtimeDeploymentProven, false);
-  assert.equal(result.reviewReceipt.sourceHead, sample.sourceHead);
-  assert.equal(result.reviewReceipt.reviewerClass, 'openclaw-local-readonly');
-  assert.equal(result.reviewReceipt.verdict, 'clean');
-  assert.equal(validateProviderNeutralReviewReceipt(result.reviewReceipt, { expectedHead: sample.sourceHead }).valid, true);
-  assert.equal(result.executionReceipt.sourceHead, sample.sourceHead);
+  assert.equal(result.candidateEvidence.sourceHead, sample.sourceHead);
+  assert.equal(result.candidateEvidence.producerClass, 'openclaw-local-readonly');
+  assert.equal(result.candidateEvidence.verdict, 'clean');
+  assert.equal(result.reviewReceipt, undefined);
+  assert.equal(result.executionReceipt, undefined);
+  assert.equal(validateProviderNeutralReviewReceipt(result.candidateEvidence, { expectedHead: sample.sourceHead }).valid, false);
+  assert.equal(providerNeutralReviewToExecutionReceipt(result.candidateEvidence, { expectedHead: sample.sourceHead }).ok, false);
 });
 
 test('blocks specialist/high-risk changes before calling model', async () => {
@@ -94,8 +96,8 @@ test('keeps actual model findings with path and severity in the candidate receip
     findings: [{ severity: 'P1', code: 'unhandled-error', path: 'src/sample.js', summary: 'Uncaught errors escape the normal boundary.' }],
   }) });
   assert.equal(result.status, 'LOCAL_REVIEW_EVIDENCE_READY');
-  assert.equal(result.reviewReceipt.verdict, 'findings');
-  assert.equal(result.reviewReceipt.findings[0].severity, 'P1');
+  assert.equal(result.candidateEvidence.verdict, 'findings');
+  assert.equal(result.candidateEvidence.findings[0].severity, 'P1');
   assert.equal(result.mergeAuthority, false);
 });
 

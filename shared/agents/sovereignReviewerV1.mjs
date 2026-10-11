@@ -1,9 +1,4 @@
 import { createHash } from 'node:crypto';
-import {
-  createProviderNeutralReviewReceipt,
-  validateProviderNeutralReviewReceipt,
-  providerNeutralReviewToExecutionReceipt,
-} from './providerNeutralReviewV1.mjs';
 
 // This is a bounded *candidate* reviewer. No local model may sign itself into
 // a protected GitHub approval, specialist class, or merge authority.
@@ -133,52 +128,40 @@ export async function evaluateSovereignReviewSnapshot(input = {}, { invokeModel 
   const timestampUtc = text(input.timestampUtc) || new Date().toISOString();
   const modelClass = text(input.modelClass);
   if (!validId(modelClass)) return blocked('INVALID_MODEL_CLASS');
-  const reviewReceipt = createProviderNeutralReviewReceipt({
-    receiptId: `sovereign-review-${input.prNumber}-${text(input.sourceHead).slice(0,12)}`,
+  // This deliberately is not a provider-neutral review receipt. Caller-supplied
+  // session labels cannot prove identity or independence, so only an external
+  // attestor may promote this candidate into canonical review/execution truth.
+  const candidateEvidence = Object.freeze({
+    schemaVersion: 'stephanos.sovereign-review-candidate-evidence.v1',
+    evidenceId: `sovereign-review-${input.prNumber}-${text(input.sourceHead).slice(0,12)}`,
     repository: input.repository,
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
     branch: input.branch,
     sourceHead: input.sourceHead,
-    reviewerId: 'sovereign-local-reviewer',
-    reviewerClass: 'openclaw-local-readonly',
-    provider: 'sovereign-local-ollama',
+    producerId: 'sovereign-local-reviewer',
+    producerClass: 'openclaw-local-readonly',
+    providerIntent: 'sovereign-local-ollama',
     modelClass,
     reviewerSessionId: input.reviewerSessionId,
     implementerProvider: input.implementerProvider,
     implementerSessionId: input.implementerSessionId,
-    riskTier: 'standard',
-    assuranceMode: 'independent',
+    claimedRiskTier: 'standard',
+    assuranceMode: 'candidate-pending-external-attestation',
     reviewScope: ['exact-head', 'changed-files', 'policy-security'],
     findings: parsed.findings,
     verdict: parsed.verdict,
     timestampUtc,
     proofRefs: [proofRef],
-    quorumChecks: [],
-    blocker: '',
+    qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+    authority: Object.freeze({ review: false, execution: false, specialist: false, approval: false, merge: false }),
   });
-  const validation = validateProviderNeutralReviewReceipt(reviewReceipt, {
-    repository: input.repository,
-    issueNumber: input.issueNumber,
-    prNumber: input.prNumber,
-    branch: input.branch,
-    expectedHead: input.sourceHead,
-    riskTier: 'standard',
-  });
-  if (!validation.valid) return blocked('INVALID_PROVIDER_NEUTRAL_RECEIPT', { errors: validation.errors });
-  const execution = providerNeutralReviewToExecutionReceipt(reviewReceipt, {
-    repository: input.repository, issueNumber: input.issueNumber,
-    prNumber: input.prNumber, branch: input.branch, expectedHead: input.sourceHead,
-    riskTier: 'standard',
-  });
-  if (!execution.ok) return blocked('EXECUTION_RECEIPT_VALIDATION_FAILED');
   return Object.freeze({
     schemaVersion: SOVEREIGN_REVIEWER_SCHEMA,
     status: 'LOCAL_REVIEW_EVIDENCE_READY',
     // This is local evidence, NOT an authenticated reviewer attestation.
     qualification: 'PENDING_INDEPENDENT_ATTESTATION',
-    reviewReceipt,
-    executionReceipt: execution.receipt,
+    candidateEvidence,
     rawModelOutput: raw,
     diffSha256: plan.diffSha256,
     proofRef,
