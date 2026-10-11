@@ -303,11 +303,22 @@ export function buildStephanosBuildTruth(status = {}) {
     const lanes = Array.isArray(host?.materialLanes) ? host.materialLanes : [];
     const lane = lanes.find((candidate) => canonicalGoalKey(candidate?.goalId) === goalKey) || null;
     const continuityState = text(logical?.continuityState, 40).toUpperCase() || 'TRACKING';
-    let state = continuityState === 'ACTIVE' ? 'BUILDING' : continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
+    const hostState = text(host?.activityState, 80).toUpperCase();
+    // A scheduler ACTIVE/selected goal and a BUILDING host are not proof that
+    // this particular logical goal was picked up by a material worker.
+    // Only a current host plus a same-goal, worker-bound material receipt
+    // can promote this goal to BUILDING. Keep the canonical scheduler as owner.
+    const materialPickupProven = Boolean(
+      lane
+      && text(lane.workerId, 120)
+      && text(lane.proofRef, 220)
+      && timestamp(lane.lastMaterialActionAtUtc)
+    );
+    let state = continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
     if (text(host?.freshness, 40).toUpperCase() !== 'CURRENT') state = 'STALE';
     else if (text(host?.trafficLight, 20).toUpperCase() === 'RED') state = 'BLOCKED';
-    else if (text(host?.activityState, 80).toUpperCase() === 'BUILDING' && (logical?.selectedForAdmission === true || continuityState === 'ACTIVE')) state = 'BUILDING';
-    else if (logical?.selectedForAdmission === true && text(host?.activityState, 80).toUpperCase().includes('ELIGIBLE_WORK')) state = 'BLOCKED';
+    else if (continuityState !== 'PARKED' && hostState === 'BUILDING' && materialPickupProven) state = 'BUILDING';
+    else if (logical?.selectedForAdmission === true && hostState.includes('ELIGIBLE_WORK')) state = 'BLOCKED';
     const blocker = text(lane?.blocker || host?.blocker, 160);
     if (blocker && state !== 'STALE') state = 'BLOCKED';
     return Object.freeze({
@@ -318,14 +329,16 @@ export function buildStephanosBuildTruth(status = {}) {
       controllerTitle: text(logical?.hostControllerTitle, 120),
       logicalLaneId: text(logical?.logicalControllerId, 120),
       builder: text(lane?.workerId || logical?.executionOwner, 120) || 'canonical-mission-worker',
-      currentPhase: text(lane?.lastMaterialAction || host?.activityState || logical?.route, 160).toUpperCase(),
-      lastMaterialProgressAtUtc: latestTimestamp([lane?.lastMaterialActionAtUtc, host?.lastMaterialActionAtUtc]),
+      currentPhase: text(lane?.lastMaterialAction || logical?.route || hostState, 160).toUpperCase(),
+      lastMaterialProgressAtUtc: state === 'BUILDING' ? timestamp(lane?.lastMaterialActionAtUtc) : '',
       prNumber: integer(lane?.prNumber) || null,
-      proofRefs: Object.freeze([...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)),
+      proofRefs: Object.freeze(state === 'BUILDING'
+        ? [...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)
+        : []),
       blocker,
       nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
-      autonomous: autonomyProvenanceProved(lane?.autonomyProvenance),
-      autonomyTruth: autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
+      autonomous: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance),
+      autonomyTruth: state === 'BUILDING' && autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
       selectedForAdmission: logical?.selectedForAdmission === true,
     });
   });
