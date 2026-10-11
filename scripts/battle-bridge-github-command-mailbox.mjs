@@ -798,6 +798,60 @@ function safeControllerLaneStatusReceiptProjection(value = {}) {
   });
 }
 
+function safeOriginalR7WorkerEvidenceReceiptProjection(value = {}) {
+  if (!value || value.schemaVersion !== 'stephanos.original-r7-worker-evidence.v1'
+    || value.readOnly !== true || value.rawPathsReturned !== false
+    || value.rawRecordsReturned !== false || value.secretMaterialReturned !== false
+    || value.writerInactivityProven !== false
+    || value.canonicalTerminalExecutionReceiptProven !== false
+    || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false || value.mergeAuthority !== false) return null;
+  const count = (key) => {
+    const candidate = value[key];
+    return Number.isSafeInteger(candidate) && candidate >= 0 && candidate <= 1_000_000 ? candidate : null;
+  };
+  const allowedBlockers = new Set([
+    '', 'ORIGINAL_QUEUE_ROOT_UNAVAILABLE', 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    'ORIGINAL_QUEUE_SCAN_LIMIT_REACHED', 'ORIGINAL_QUEUE_IDENTITY_UNVERIFIED',
+    'ORIGINAL_QUEUE_RESULT_NOT_PROVEN',
+  ]);
+  const blocker = safeTelemetryText(value.blocker, 100).toUpperCase();
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-r7-worker-evidence.v1',
+    originalOwner: '#2961',
+    originalMission: '#2962',
+    originalLeaseKey: 'critical-2962-elastic-goal-r7-lease',
+    originalPrNumber: 2987,
+    sourceHead: '4e5023eef829b285095db4eeb09d6f2b365e33e4',
+    queueObserved: safeBoolean(value.queueObserved),
+    inventoryComplete: safeBoolean(value.inventoryComplete),
+    inspectedAdapterDirectories: count('inspectedAdapterDirectories'),
+    missingAdapterDirectories: count('missingAdapterDirectories'),
+    scannedFiles: count('scannedFiles'),
+    matchingOriginalItems: count('matchingOriginalItems'),
+    exactBindingItems: count('exactBindingItems'),
+    mismatchedOriginalItems: count('mismatchedOriginalItems'),
+    pendingOriginalItems: count('pendingOriginalItems'),
+    processingOriginalItems: count('processingOriginalItems'),
+    completedOriginalItems: count('completedOriginalItems'),
+    failedOriginalItems: count('failedOriginalItems'),
+    exactResultPairCandidates: count('exactResultPairCandidates'),
+    missingResultPairs: count('missingResultPairs'),
+    actionHashes: Object.freeze((Array.isArray(value.actionHashes) ? value.actionHashes : [])
+      .map(safeSha256).filter(Boolean).slice(0, 4)),
+    blocker: allowedBlockers.has(blocker) ? blocker : 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    readOnly: true,
+    rawPathsReturned: false,
+    rawRecordsReturned: false,
+    secretMaterialReturned: false,
+    writerInactivityProven: false,
+    canonicalTerminalExecutionReceiptProven: false,
+    leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+  });
+}
+
 function safeVisibilitySnapshotReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || value.schemaVersion !== 'stephanos.sovereign-visibility-snapshot.v1'
@@ -884,6 +938,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     unknownMeansGreen: false,
     finalVerdict: `SOVEREIGN_HEAD_SYNC_${syncState}`,
   });
+  const originalR7Evidence = safeOriginalR7WorkerEvidenceReceiptProjection(value?.originalR7Evidence);
   const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
   const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
   let meters = null;
@@ -1021,6 +1076,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     controllers,
     meters,
     relay,
+    ...(originalR7Evidence ? { originalR7Evidence } : {}),
     health,
     readOnly: true,
     sourceMutationAllowed: false,
