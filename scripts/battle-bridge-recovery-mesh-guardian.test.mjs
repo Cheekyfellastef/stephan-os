@@ -146,7 +146,12 @@ test('guardian reports mailbox recovery only after a fresh successful scheduled-
   assert.match(guardian, /Start-Sleep -Milliseconds 500/);
   assert.match(guardian, /\$postRunTime -gt \$mailboxLastRunBefore/);
   assert.match(guardian, /\$postRunTime -ge \$mailboxRepairStartedAt\.AddSeconds\(-2\)/);
-  assert.match(guardian, /\[int\]\$postInfo\.LastTaskResult -eq 0/);
+  // Task Scheduler may return HRESULTs above signed Int32 (for example 0x800710E0).
+  // Preserve nonzero failure truth without overflowing during Guardian inspection.
+  assert.ok(2147946720 > 2147483647);
+  assert.match(guardian, /\$lastResult = if \(\$info\) \{ \[long\]\$info\.LastTaskResult \}/);
+  assert.match(guardian, /\[long\]\$postInfo\.LastTaskResult -eq 0/);
+  assert.doesNotMatch(guardian, /\[int\]\$(?:info|postInfo)\.LastTaskResult/);
   assert.match(guardian, /\[string\]\$postTask\.State -ne 'Running'/);
   assert.match(guardian, /MAILBOX_REPAIR_SUCCESSFUL_RUN_NOT_YET_PROVEN/);
   assert.doesNotMatch(guardian, /Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF'/);

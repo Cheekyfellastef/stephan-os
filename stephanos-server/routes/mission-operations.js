@@ -56,6 +56,16 @@ router.use((_req, res, next) => {
 });
 
 router.get('/', async (req, res) => {
+  if (text(req.query.identityOnly) === '1') {
+    res.status(200).json({
+      ok: true,
+      schemaVersion: 'stephanos.mission-operations-feed.v1',
+      status: 'identity',
+      missions: [],
+    });
+    return;
+  }
+
   const feed = await readPublicMissionOperations();
   const requestedMissionId = text(req.query.missionId);
   const payload = requestedMissionId

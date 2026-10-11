@@ -689,6 +689,10 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     }
   }
 
+  const providerNeutralPickupProven = providerNeutral
+    && providerNeutralBaton?.providerExecutionStarted === true
+    && String(providerNeutralBaton?.providerTaskId || '').trim().length > 0
+    && String(providerNeutralBaton?.proofRef || providerNeutralBaton?.receiptProofRef || '').trim().length > 0;
   const dispatchSucceeded = codexDispatchAccepted || providerNeutral;
   const dispatcherFinalVerdict = String(
     dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
@@ -730,9 +734,15 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     dispatchJobId: queueRecord.jobId,
     providerTaskId: codexExecutionStarted
       ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
-      : '',
-    providerExecutionStarted: codexExecutionStarted,
-    resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
+      : (providerNeutralPickupProven ? String(providerNeutralBaton.providerTaskId) : ''),
+    providerExecutionStarted: codexExecutionStarted || providerNeutralPickupProven,
+    pickupProven: codexExecutionStarted || providerNeutralPickupProven,
+    handoffResponsibilityRetained: providerNeutral && !providerNeutralPickupProven,
+    publicationIsTerminal: codexExecutionStarted || providerNeutralPickupProven,
+    retryCodexAllowed: providerNeutral ? false : undefined,
+    resultReadbackOperation: codexExecutionStarted
+      ? 'READ_GUARDED_CODEX_TASK_RESULT'
+      : (providerNeutralPickupProven ? String(providerNeutralBaton.resultReadbackOperation || '') : ''),
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
     blocker: dispatcherBlocker,
@@ -751,8 +761,11 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     providerNeutralBaton,
     receipt: codexDispatchReceipt,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
-    nextOperatorAction: providerNeutral
-      ? 'Dispatch the same bounded task through the selected existing provider-neutral route and obtain that provider\'s execution receipt before attempting result readback.'
+    nextAutomaticAction: providerNeutral && !providerNeutralPickupProven
+      ? 'Retain the same task identity and continue through the canonical provider router until the selected route produces durable pickup/execution proof.'
+      : '',
+    nextOperatorAction: providerNeutral && !providerNeutralPickupProven
+      ? 'No operator action required unless the canonical provider router reports a genuine authority or no-qualified-route blocker.'
       : codexExecutionStarted
         ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
         : codexDispatchAccepted

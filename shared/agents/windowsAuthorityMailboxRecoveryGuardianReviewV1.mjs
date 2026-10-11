@@ -134,6 +134,7 @@ function reviewGuardian(source, findings) {
     ["$recoveryInstallerPath = Join-Path $repoRoot 'scripts\\windows\\install-battle-bridge-recovery-mesh.ps1'", 'mailbox-recovery-guardian-recovery-installer-not-fixed'],
     ["function Test-MailboxTaskIdentity", 'mailbox-recovery-guardian-mailbox-identity-check-missing'],
     ["function Test-RecoveryTaskIdentity", 'mailbox-recovery-guardian-recovery-identity-check-missing'],
+    ["[string]$Task.Principal.LogonType -eq 'S4U'", 'mailbox-recovery-guardian-recovery-s4u-proof-missing'],
     ["github-command-mailbox", 'mailbox-recovery-guardian-mailbox-launcher-id-not-fixed'],
     ["recovery-mesh", 'mailbox-recovery-guardian-recovery-launcher-id-not-fixed'],
     ["'repos/Cheekyfellastef/stephan-os/branches/main'", 'mailbox-recovery-guardian-main-api-not-fixed'],

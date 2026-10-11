@@ -26,6 +26,7 @@ export const PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA = 'stephanos.programme-contro
 export const TERMINAL_LANE_FINALIZATION_SCHEMA = 'stephanos.terminal-lane-finalization.v1';
 export const PROGRAMME_STALL_DIAGNOSIS_SCHEMA = 'stephanos.programme-stall-diagnosis.v1';
 export const AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA = 'stephanos.authoritative-programme-projection.v1';
+export const CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA = 'stephanos.canonical-goal-hydration-proof.v1';
 export const PROGRAMME_STALL_MONITOR_ID = 'programme-stall-monitor';
 export const PROGRAMME_STALL_MONITOR_HANDLER_ID = 'programme-stall-diagnosis';
 export const SOURCE_MUTATION_LEASE_STATUS_ID = 'source-mutation-lease-current';
@@ -177,6 +178,37 @@ function laneIdentityFromId(laneId) {
     : Object.freeze({ issueNumber: null, prNumber: null });
 }
 
+function criticalBacklogMissionIssueNumbers(missionId) {
+  const normalized = text(missionId).toLowerCase();
+  if (!normalized.startsWith('critical-')) return [];
+  const issues = [];
+  for (const segment of normalized.slice('critical-'.length).split('-')) {
+    const issue = number(segment);
+    if (!issue) break;
+    issues.push(issue);
+  }
+  return unique(issues);
+}
+
+function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
+  const decision = text(conveyor?.decision).toUpperCase();
+  const parkedRelease = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission;
+  if (!parkedRelease) return new Set();
+  const missionIds = unique([
+    ...list(conveyor?.parkedMissionIds),
+    ...list(conveyor?.parkedApprovalMissionIds),
+    ...list(conveyor?.parkedBlockedMissionIds),
+  ].map((value) => text(value)).filter(Boolean));
+  return new Set(missionIds.flatMap((missionId) => criticalBacklogMissionIssueNumbers(missionId)));
+}
+
 function identityConflict(name, values, blockers) {
   const present = unique(values.filter((value) => value !== null && value !== ''));
   if (present.length > 1) blockers.push(`${name}-identity-conflict`);
@@ -312,6 +344,55 @@ function mergeEvidence(github = {}, expected = {}) {
   });
 }
 
+// Verify a review-only elastic mission from authoritative persisted records,
+// not from caller intent, PR OPEN state, or possession of a source lease.
+export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords = []) {
+  const id = text(lease?.leaseId);
+  const match = /^(critical-([1-9]\d*)-elastic-goal(?:[-_.][a-z0-9._-]+)?)-r([1-9]\d*)-lease$/i.exec(id);
+  if (!match) return Object.freeze({
+    elastic: /^critical-[1-9]\d*-elastic-goal/i.test(id),
+    valid: false, reviewOnly: false, materialImplementation: false,
+    phase: 'UNKNOWN', blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+  });
+  const expectedId = match[1];
+  const issue = Number(match[2]);
+  const revision = Number(match[3]);
+  const sameIdentity = (mission) => mission && typeof mission === 'object'
+    && text(mission.missionId).toLowerCase() === expectedId.toLowerCase()
+    && Number.isSafeInteger(mission.revision) && mission.revision === revision
+    && issue === number(lease?.issueNumber)
+    && number(mission?.pullRequest?.number) === number(lease?.prNumber)
+    && text(mission.repository).toLowerCase() === text(lease?.repository).toLowerCase()
+    && text(mission?.git?.branch) === text(lease?.branch)
+    && sha(mission?.pullRequest?.headSha) === sha(lease?.headSha)
+    && Boolean(sha(lease?.headSha));
+  const candidates = list(missionRecords).filter((mission) =>
+    text(mission?.missionId).toLowerCase() === expectedId.toLowerCase(),
+  );
+  const matched = candidates.filter(sameIdentity);
+  const valid = candidates.length === 1 && matched.length === 1;
+  // Observation is separate from authority: a unique persisted original may
+  // reveal revision drift without ever satisfying the exact lease binding.
+  const observed = candidates.length === 1 ? candidates[0] : null;
+  const phase = valid ? text(matched[0].currentPhase).toUpperCase() : 'UNKNOWN';
+  const reviewOnly = valid && phase === 'CHECK_PULL_REQUEST';
+  const materialImplementation = valid && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(phase);
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-mission-phase-binding.v1',
+    elastic: true, valid, reviewOnly, materialImplementation, phase,
+    issueNumber: valid ? issue : null,
+    missionId: valid ? expectedId : '',
+    revision: valid ? revision : null,
+    blocker: valid ? '' : 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+    observedUniqueOriginal: Boolean(observed),
+    observedRevision: observed && Number.isSafeInteger(observed.revision) ? observed.revision : null,
+    observedPhase: observed ? text(observed.currentPhase).toUpperCase() : 'UNKNOWN',
+    observedDispatchStatus: observed ? text(observed.dispatch?.status).toUpperCase() : 'UNKNOWN',
+    releaseLeaseAllowed: false, replaceWriterAllowed: false,
+    mutationAuthority: false, mergeAuthority: false,
+  });
+}
+
 export function buildCanonicalImplementationLaneProjection(input = {}) {
   const blockers = [];
   const laneId = text(input.laneId ?? input.id);
@@ -364,6 +445,12 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   }
   const github = mergeEvidence(input.github, { prNumber, headSha, nowUtc: input.nowUtc });
   blockers.push(...github.blockers);
+  const elasticPhaseBound = /^critical-[1-9]\d*-elastic-goal/i.test(text(lease?.leaseId));
+  const phaseBinding = input.elasticMissionPhaseBinding || null;
+  if (elasticPhaseBound && phaseBinding?.valid !== true) {
+    blockers.push('elastic-mission-phase-binding-unproven');
+  }
+
 
   let mutationLeaseIdentity = null;
   if (lease) {
@@ -372,6 +459,9 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
       expected: { laneId, issueNumber, prNumber, headSha, branch, repository },
     });
     if (!leaseValidation.valid) blockers.push(...leaseValidation.errors.map((error) => `lease:${error}`));
+    if (elasticPhaseBound && (leaseValidation.active !== true || leaseValidation.stale === true)) {
+      blockers.push('elastic-lease-expired-or-not-active');
+    }
     mutationLeaseIdentity = {
       leaseId: text(lease.leaseId),
       ownerId: text(lease.ownerId),
@@ -406,7 +496,11 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     ...list(input.proofReferences),
     ...list(input.proofRefs),
   ].map((value) => text(value)).filter(Boolean));
-  const active = blockers.length === 0 && github.active;
+  const materialPhasePermitted = !elasticPhaseBound
+    || phaseBinding?.materialImplementation === true;
+  const active = blockers.length === 0 && github.active && materialPhasePermitted;
+  const reviewPending = blockers.length === 0 && github.active
+    && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
   if (!active && !terminal && github.prState === 'CLOSED' && !github.affirmativelyMerged) {
     blockers.push('github-pr-closed-without-affirmative-merge');
@@ -426,8 +520,10 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     prState: github.prState,
     merged: github.affirmativelyMerged,
     mergeEvidence: github,
-    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : 'HOLD',
+    status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
+    reviewPending,
+    elasticMissionPhaseBinding: elasticPhaseBound ? phaseBinding : null,
     terminal,
     executionReceiptRefs,
     proofReferences,
@@ -963,6 +1059,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const records = list(input.goalRecords);
   const trustedApprovalReceipts = list(input.trustedOperatorApprovalReceipts);
   const goals = [];
+  const hydrationReceipts = [];
   for (const [index, record] of records.entries()) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
       blockers.push(`goal-record-${index}-invalid`);
@@ -1025,6 +1122,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: text(record.title, `Goal #${issueNumber}`),
       state: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
       prerequisites: ownValueOr(record, 'prerequisites', []),
+      resourceIds: ownValueOr(record, 'resourceIds', []),
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
@@ -1047,8 +1145,39 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
+    const hydratedGoal = goals[goals.length - 1];
+    hydrationReceipts.push(freeze({
+      schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+      receiptKind: 'CANONICAL_GOAL_HYDRATION',
+      sourceIndex: index,
+      sourceGoalId: text(record.goalId),
+      sourceRecordSchemaVersion: text(record.schemaVersion),
+      sourceRecordKind: text(record.kind),
+      sourceTimestampUtc: text(record.timestampUtc),
+      observedAtUtc: nowUtc,
+      canonicalIssueNumber: issueNumber,
+      hydratedIssueNumber: hydratedGoal.issue,
+      identityPreserved: hydratedGoal.issue === issueNumber,
+      sourceState: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
+      hydratedState: hydratedGoal.state,
+      hydratedRoute: hydratedGoal.route,
+      hydratedTitle: hydratedGoal.title,
+      hydratedResourceIds: freeze(Array.isArray(hydratedGoal.resourceIds) ? [...hydratedGoal.resourceIds] : []),
+      sourceResourceIds: freeze(Array.isArray(record.resourceIds) ? [...record.resourceIds] : []),
+      resourceScopePreserved: JSON.stringify(Array.isArray(hydratedGoal.resourceIds) ? hydratedGoal.resourceIds : [])
+        === JSON.stringify(Array.isArray(record.resourceIds) ? record.resourceIds : []),
+      finalVerdict: hydratedGoal.issue === issueNumber
+        ? 'CANONICAL_GOAL_HYDRATED'
+        : 'CANONICAL_GOAL_HYDRATION_IDENTITY_MISMATCH',
+    }));
   }
   const conveyor = input.criticalBacklog;
+  const parkedIssueNumbers = parkedCriticalBacklogIssueNumbers(conveyor);
+  if (parkedIssueNumbers.size > 0) {
+    for (let index = goals.length - 1; index >= 0; index -= 1) {
+      if (parkedIssueNumbers.has(goals[index].issue)) goals.splice(index, 1);
+    }
+  }
   const conveyorDecision = text(conveyor?.decision);
   const conveyorActionable = [
     CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
@@ -1150,6 +1279,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
       state: 'ACTIVE',
       prerequisites: ownValueOr(existing, 'prerequisites', []),
+      resourceIds: ownValueOr(existing, 'resourceIds', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
@@ -1179,10 +1309,27 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   }
   const duplicates = goals.map((goal) => goal.issue).filter((issue, index, all) => all.indexOf(issue) !== index);
   if (duplicates.length) blockers.push('duplicate-scheduler-goal-identity');
+  const hydrationProof = freeze({
+    schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+    observedAtUtc: nowUtc,
+    canonicalRecordsObserved: records.length,
+    hydratedCanonicalGoals: hydrationReceipts.length,
+    rejectedCanonicalRecords: Math.max(0, records.length - hydrationReceipts.length),
+    proven: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true),
+    receipts: hydrationReceipts,
+    finalVerdict: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true)
+      ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
+      : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
+  });
   return freeze({
     valid: blockers.length === 0,
     blockers: unique(blockers),
     goals,
+    hydrationProof,
     finalVerdict: blockers.length ? 'PROGRAMME_SCHEDULER_GOALS_HOLD' : 'PROGRAMME_SCHEDULER_GOALS_READY',
   });
 }
@@ -1286,7 +1433,40 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
 
   const conveyor = input.criticalBacklog;
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
-  if (lane?.active) {
+
+  // Elastic source work is admitted by the canonical scheduler, not by the
+  // separate legacy critical-backlog mission slot. Only a fully bound, live
+  // material-phase lease with affirmative parked/complete legacy capacity
+  // may skip the legacy active-mission identity checks. The controller,
+  // execution-receipt, scheduler, and source-lease gates above still apply.
+  const independentlyScheduledElasticActiveLane = Boolean(
+    lane?.active === true
+    && lane?.valid === true
+    && lane?.elasticMissionPhaseBinding?.valid === true
+    && lane?.elasticMissionPhaseBinding?.materialImplementation === true
+    && lane?.elasticMissionPhaseBinding?.issueNumber === lane?.issueNumber
+    && lane?.mutationLeaseIdentity?.active === true
+    && lane?.mutationLeaseIdentity?.stale === false
+    && lease?.leaseId === lane?.mutationLeaseIdentity?.leaseId
+    && lease?.issueNumber === lane?.issueNumber
+    && lease?.prNumber === lane?.prNumber
+    && sha(lease?.headSha) === lane?.headSha
+    && text(lease?.branch) === lane?.branch
+    && text(lease?.repository).toLowerCase() === text(lane?.repository).toLowerCase()
+    && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission
+  );
+  if (lane?.active && !independentlyScheduledElasticActiveLane) {
     if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }
@@ -1482,6 +1662,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     executionReceipt: input.executionReceipt ?? null,
     battleBridgeProofs: list(input.battleBridgeProofs),
     runtimeHealthRecords: list(input.runtimeHealthRecords),
+    engineeringLessonRecords: list(workspace?.records?.lessonRecords),
     scheduler,
     criticalBacklog: conveyor,
     machineryInventory: input.machineryInventory,

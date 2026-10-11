@@ -49,10 +49,11 @@
     "immersiveWebxrSessionAdapter": true,
     "offlineEntryModuleGraphCached": true,
     "immersiveRendererSourceReady": true,
+    "startingChamberSourceReady": true,
     "immersiveRendererObservedOnQuest3": false
   },
   "currentLimitations": [
-    "The Holodeck Baseline immersive WebXR source path is implemented, but has not been observed on Quest 3 hardware.",
+    "The Spatial Workspace starting chamber source path is implemented, but has not been observed on Quest 3 hardware.",
     "The PWA has not been packaged, signed, uploaded or installed on Quest.",
     "Digital Asset Link values cannot be finalized until a signing key fingerprint exists.",
     "No live Stephanos control-plane endpoint is connected; the bundled bridge projection remains static/mock data."

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCockpitModel, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
+import { buildCockpitModel, deriveCockpitBackendHealthDiagnostics, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
 
 test('cockpit layout places memory halfway between backend and operator', () => {
   const midpointY = (NODE_LAYOUT.backend.y + NODE_LAYOUT.operator.y) / 2;
@@ -280,4 +280,147 @@ test('cockpit model consumes projected agent truth to animate execution when an 
 
   assert.ok(model.animatedConnectionIds.includes('backend-execution'));
   assert.ok(model.animatedNodeIds.includes('execution'));
+});
+
+
+test('hosted cockpit does not report backend dead when only hosted observer reachability is stale', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      localAvailable: true,
+      cloudAvailable: true,
+      runtimeContext: { sessionKind: 'hosted-web' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        reachabilityTruth: { localAvailable: true, cloudAvailable: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'cloud',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'groq',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'unknown');
+  assert.equal(model.connectionStates['hostedSurface-backend'], 'broken');
+  assert.notEqual(model.connectionStates['localSurface-backend'], 'broken');
+});
+
+test('hosted cockpit reports backend dead only when a fresh backend health proof says it is unreachable', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'hosted-web' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'cloud',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'groq',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'dead');
+});
+
+test('local cockpit keeps direct backend failure red without hosted observer ambiguity', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'ollama',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'dead');
+});
+
+test('Cockpit diagnoses fresh verified backend health using its live API receipt', () => {
+  const timestamp = '2026-10-08T19:00:00.000Z';
+  const apiStatus = {
+    backendReachable: true,
+    lastCheckedAt: timestamp,
+    meta: {
+      ok: true,
+      service: 'stephanos-server',
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' },
+    },
+    runtimeContext: {
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: timestamp,
+        lastBackendHealthProbeResult: 'ok:true',
+        currentBackendHealthSource: 'refresh-health-poll',
+      },
+    },
+  };
+  const fallback = {
+    currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+  };
+  const nowMs = Date.parse(timestamp) + 1000;
+  assert.deepEqual(
+    deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: fallback, nowMs }),
+    { fresh: 'yes', source: 'refresh-health-poll', checkedAt: timestamp },
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({
+      apiStatus: { ...apiStatus, meta: { ...apiStatus.meta, backendIdentity: { runtimeId: 'foreign-service' } } },
+      routeTruthView: fallback,
+      nowMs,
+    }).fresh,
+    'no',
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: fallback, nowMs: nowMs + 120000 }).fresh,
+    'no',
+  );
+  assert.equal(
+    deriveCockpitBackendHealthDiagnostics({
+      apiStatus: { ...apiStatus, backendReachable: false },
+      routeTruthView: fallback,
+      nowMs,
+    }).fresh,
+    'no',
+  );
 });

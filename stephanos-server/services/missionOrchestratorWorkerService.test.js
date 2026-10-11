@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -12,10 +12,12 @@ import {
 import {
   collectAgentWorkerResult,
   publishMissionWorkerAction,
+  replacementSourceForgePublicationBlocked,
   publishNextMissionWorkerAction,
   readMissionWorkerQueue,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 
 const intent = {
   missionId: 'worker-service-test', operatorIntent: 'Implement a bounded source change.', intendedOutcome: 'Deliver grounded evidence.',
@@ -50,6 +52,37 @@ async function runtime() {
   return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), sharedWorkspaceRoot: join(parent, 'workspace'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) };
 }
 
+function exactCapacityGrant(state, { adapter, route, workerId, receiptId, proofRefs = [] }) {
+  const draft = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId: state.missionId,
+    missionRevision: state.revision,
+    currentPhase: state.currentPhase,
+    adapter,
+    workerId,
+    capacityRoute: route,
+    capacityReceiptId: receiptId,
+    capacityProofRefs: proofRefs,
+    repository: state.repository,
+    branch: state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const action = buildMissionWorkerAction(state, { actionGrant: draft });
+  return {
+    action,
+    grant: {
+      ...draft,
+      actionId: action.actionId,
+      actionKind: action.actionKind,
+      operation: action.operation || '',
+    },
+  };
+}
+
 test('queue root defaults below Mission Runner orchestrator state', () => {
   assert.match(resolveMissionWorkerQueueRoot({ USERPROFILE: 'C:\\Users\\Operator' }).replace(/\\/g, '/'), /mission-runner\/orchestrator\/worker-queue$/);
 });
@@ -63,6 +96,11 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const dispatch = await publishMissionWorkerAction(ready.state, options);
   assert.equal(dispatch.adapter, 'codex');
   assert.equal((await readMissionWorkerQueue(options)).some((entry) => entry.adapter === 'codex'), true);
+  assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'pending');
+  const claim = await claimNextMissionWorkerItem('codex', options);
+  assert.ok(claim);
+  assert.equal(claim.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'running');
   const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
@@ -129,7 +167,17 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   assert.equal(dispatch.adapter, 'chatgpt-github');
   assert.equal(dispatch.action.capacityReceiptId, 'github-fallback-capacity-receipt');
   assert.equal(dispatch.fabricPublication.ok, true);
+  assert.equal(dispatch.handoffResponsibility.state, 'PICKUP_PENDING');
+  assert.equal(dispatch.handoffResponsibility.pickupProofRequired, true);
+  assert.equal(dispatch.handoffResponsibility.responsibilityRetained, true);
+  assert.equal(dispatch.handoffResponsibility.publicationIsTerminal, false);
+  assert.equal(dispatch.handoffResponsibility.retryOrEscalateUntilPickup, true);
   assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['chatgpt-github']);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
+  const pickup = await claimNextMissionWorkerItem('chatgpt-github', options);
+  assert.ok(pickup);
+  assert.equal(pickup.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'running');
   const collected = await collectAgentWorkerResult({
     missionId,
     actionId: action.actionId,
@@ -141,6 +189,195 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
+});
+
+test('Stephanos can load one exact scheduler-approved goal into a Desktop Commander lane', async () => {
+  const options = await runtime();
+  const missionId = 'desktop-commander-fallback-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/desktop-commander-fallback-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'desktop-commander-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'desktop-commander-worktree-proof'),
+  }, options);
+  const now = Date.now();
+  const capacityRouting = {
+    nowUtc: new Date(now).toISOString(),
+    sourceHead: 'a'.repeat(40),
+    codexStatus: null,
+    desktopCommanderLaneReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      receiptId: 'desktop-commander-capacity-receipt',
+      route: 'DESKTOP_COMMANDER',
+      repository: intent.repository,
+      sourceHead: 'a'.repeat(40),
+      workerId: 'desktop-commander-battle-bridge-01',
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: new Date(now - 1000).toISOString(),
+      expiresAtUtc: new Date(now + 10 * 60 * 1000).toISOString(),
+      queueDepth: 0,
+      p95StartLatencySeconds: 5,
+      authorityReceiptIds: [],
+      proofRefs: ['receipts/desktop-commander/capacity.json'],
+    },
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
+  assert.equal(action.adapter, 'desktop-commander');
+  assert.equal(action.capacityRoute, 'DESKTOP_COMMANDER');
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: action.adapter,
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({ ...options, capacityRouting, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'desktop-commander');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffBody.executionCommand.surface, 'DESKTOP_COMMANDER');
+  assert.equal(handoffBody.executionCommand.scope, 'WHOLE_PC');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+  const queued = await readMissionWorkerQueue(options);
+  assert.deepEqual(queued.map(({ adapter }) => adapter), ['desktop-commander']);
+  assert.equal(queued[0].item.actionGrant.adapter, 'desktop-commander');
+  assert.equal(queued[0].item.executionBinding.executionId, action.actionId);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
+  const pickup = await claimNextMissionWorkerItem('desktop-commander', options);
+  assert.ok(pickup);
+  assert.equal(pickup.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'running');
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'desktop-commander',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('desktop commander result', 'desktop-commander-result'),
+    evidenceReceipts: [proof('focused test output', 'desktop-commander-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.adapter, 'desktop-commander');
+});
+
+test('OpenClaw Standalone handoff is a distinct whole-PC command surface', async () => {
+  const options = await runtime();
+  const missionId = 'openclaw-standalone-command-fabric-test';
+  await createMissionRecord({ ...intent, missionId, branch: 'openclaw/openclaw-standalone-command-fabric-test' }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-standalone-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-standalone-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-standalone',
+    route: 'OPENCLAW_STANDALONE',
+    workerId: 'openclaw-standalone',
+    receiptId: 'openclaw-standalone-capacity',
+    proofRefs: ['receipts/openclaw-standalone/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-standalone');
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffRecord.toParticipantId, 'openclaw-standalone');
+  assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_STANDALONE');
+  assert.equal(handoffBody.executionCommand.scope, 'WHOLE_PC');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+});
+
+test('OpenClaw Local handoff is independently selectable for a Stephanos-scoped worktree', async () => {
+  const base = await runtime();
+  const options = {
+    ...base,
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+  };
+  const missionId = 'openclaw-local-command-fabric-test';
+  const worktreePath = 'C:\\Users\\Operator\\Stephanos\\openclaw-local-command-fabric-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/openclaw-local-command-fabric-test',
+    worktreePath,
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-local-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-local-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-local',
+    route: 'OPENCLAW_LOCAL',
+    workerId: 'stephanos-scout-coder',
+    receiptId: 'openclaw-local-capacity',
+    proofRefs: ['receipts/openclaw-local/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-local');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffRecord.toParticipantId, 'stephanos-scout-coder');
+  assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_LOCAL');
+  assert.equal(handoffBody.executionCommand.scope, 'STEPHANOS_ONLY');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+  assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['openclaw-local']);
+});
+
+test('OpenClaw Local handoff fails closed when its target is outside Stephanos', async () => {
+  const options = await runtime();
+  const missionId = 'openclaw-local-scope-block-test';
+  await createMissionRecord({ ...intent, missionId, branch: 'openclaw/openclaw-local-scope-block-test' }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-local-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-local-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-local',
+    route: 'OPENCLAW_LOCAL',
+    workerId: 'stephanos-scout-coder',
+    receiptId: 'openclaw-local-capacity',
+    proofRefs: ['receipts/openclaw-local/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, false);
+  assert.equal(dispatch.reason, 'shared-workspace-handoff:EXECUTION_COMMAND_SCOPE_BLOCKED');
+  assert.equal(dispatch.fabricPublication.executionCommand.surface, 'OPENCLAW_LOCAL');
+  assert.equal(dispatch.fabricPublication.executionCommand.scope, 'STEPHANOS_ONLY');
+  assert.equal(dispatch.fabricPublication.executionCommand.dispatchAllowed, false);
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
 });
 
 test('publisher rejects a stale mission revision before signing or queueing', async () => {
@@ -357,8 +594,80 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   assert.equal(published.action.actionId, grant.actionId);
   const durable = await readMissionRecord(missionId, options);
   assert.equal(durable.state.currentPhase, 'AGENT_IMPLEMENTATION');
-  assert.equal(durable.state.revision, grant.missionRevision + 1);
+  assert.equal(durable.state.revision, grant.missionRevision);
+  assert.equal(durable.state.dispatch.status, 'pending');
   const queued = await readMissionWorkerQueue(options);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].item.payload.actionId, grant.actionId);
+
+  const claimed = await claimNextMissionWorkerItem('codex', { ...options, actionGrant: grant });
+  assert.ok(claimed);
+  assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  const afterClaim = await readMissionRecord(missionId, options);
+  assert.equal(afterClaim.state.revision, grant.missionRevision + 1);
+  assert.equal(afterClaim.state.dispatch.status, 'running');
+  assert.equal(afterClaim.state.dispatch.adapter, 'codex');
+});
+
+test('replacement-source repair fences Forge at queue publication before claiming a worker',async()=>{
+ const state={missionId:'critical-1717-elastic-goal',currentPhase:'AGENT_IMPLEMENTATION',
+   dispatch:{adapter:'foundry-forge',status:'pending'},continuity:{history:[
+     {eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'}]}};
+ assert.equal(replacementSourceForgePublicationBlocked(state),true);
+ const result=await publishMissionWorkerAction(state,{});
+ assert.equal(result.published,false);
+ assert.equal(result.reason,'replacement-source-already-merged-forge-publication-fenced');
+ assert.equal(replacementSourceForgePublicationBlocked({...state,missionId:'critical-1723-elastic-goal'}),false);
+ assert.equal(replacementSourceForgePublicationBlocked({...state,continuity:{history:[]}}),false);
+});
+
+test('completed source result replays only missing evidence after interrupted queue acknowledgement', async () => {
+  const options = await runtime();
+  const missionId = 'source-result-replay-proof';
+  const receipt = proof('codex result', 'replay-source-result-receipt');
+  await createMissionRecord({
+    ...intent, missionId, branch: 'openclaw/source-result-replay-proof',
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'replay-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath, clean: true,
+    receipt: proof('isolated worktree', 'replay-worktree-receipt'),
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'replay-dispatch', eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex', adapter: 'codex',
+  }, options);
+  const result = {
+    missionId, actionId: 'replay-source-action', adapter: 'codex', success: true,
+    resultId: 'replay-source-action', changedFiles: ['shared/agents/example.mjs'],
+    receipt, evidenceReceipts: [proof('focused test output', 'replay-test-evidence')],
+  };
+  const first = await appendMissionEvent(missionId, {
+    eventId: 'result-replay-source-action', eventType: 'AGENT_RESULT_RECEIVED',
+    success: true, resultId: result.resultId,
+    changedFiles: result.changedFiles, receipt,
+  }, options);
+  assert.equal(first.state.currentPhase, 'VERIFYING');
+  assert.equal(first.state.dispatch.status, 'complete');
+  assert.equal(first.state.evidenceReceipts.some((item) =>
+    item.receiptId === 'replay-test-evidence'), false);
+  const recovered = await collectAgentWorkerResult(result, options);
+  assert.equal(recovered.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(recovered.state.evidenceReceipts.some((item) =>
+    item.receiptId === 'replay-test-evidence'), true);
+  const again = await collectAgentWorkerResult(result, options);
+  assert.equal(again.state.revision, recovered.state.revision);
+  assert.equal(again.duplicate, true);
+  const stored = (await readMissionRecord(missionId, options)).state;
+  assert.equal(stored.storeMetadata.processedEventIds.filter((id) =>
+    id === 'result-replay-source-action').length, 1);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, actionId: 'another-action', resultId: 'another-action',
+  }, options), /no active agent dispatch/);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, changedFiles: ['shared/agents/unauthorized.mjs'],
+  }, options), /no active agent dispatch/);
+  await assert.rejects(() => collectAgentWorkerResult({
+    ...result, receipt: proof('codex result', 'forged-receipt'),
+  }, options), /no active agent dispatch/);
 });

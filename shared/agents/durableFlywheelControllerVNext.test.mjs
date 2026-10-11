@@ -1,16 +1,31 @@
 import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
 import {
+  DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA,
   evaluateControllerLivenessDecision,
   reconcileDurableFlywheelController,
   renderDurableFlywheelReceipt,
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
 import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
+import { buildEngineeringIncidentMethodRecordV1 } from './engineeringIncidentMethodMemoryV1.mjs';
+import { createSharedWorkspaceLessonRecord } from './sharedAgentWorkspaceStore.mjs';
+import {
+  createStephanosNativeCapacityReceipt,
+  createStephanosNativeSourceAuthority,
+} from './stephanosNativeCapacityReceiptV1.mjs';
+import {
+  STEPHANOS_NATIVE_CAPACITY_KEY_ID,
+  readVerifiedStephanosNativeRoutingCandidate,
+} from './stephanosNativeCapacityRoutingAdmissionV1.mjs';
 
 const NOW = '2026-07-30T13:00:00.000Z';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -37,7 +52,189 @@ function projection(status = 'IDLE', overrides = {}) {
 function activeProjection(overrides = {}) { return projection('ACTIVE', { lane: { valid: true, active: true, terminal: false, laneId: LANE_ID, repository: REPOSITORY, issueNumber: 1497, prNumber: 1617, branch: BRANCH, headSha: LANE_HEAD }, mutationLease: { leaseId: 'lease-goal-1497-pr-1617', ownerId: 'mission-worker' }, criticalBacklog: { activeMission: { missionId: 'critical-1497-controller-test', revision: 4, currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617, headSha: LANE_HEAD } } }, ...overrides }); }
 function machineryFor(authoritativeProjection, overrides = {}) { const heartbeats=[]; const receipts=[]; return { heartbeats, receipts, machinery: { publishControllerHeartbeat: async input => { heartbeats.push(input); return {ok:true}; }, loadAuthoritativeProjection: async()=>authoritativeProjection, publishReceipt: async receipt=>{receipts.push(receipt);return{ok:true};}, ensureBacklogMission: async()=>({ok:true,createdMission:false,projection:{activeMission:{missionId:'critical-1497-controller-test',revision:0,currentPhase:'LIVE_RUNTIME_INVESTIGATION',repository:REPOSITORY}}}), finalizeTerminalLane:async()=>({ok:true}), ...overrides } }; }
 
-test('production canonical ACTIVE projection authorizes one existing worker tick', async()=>{const f=machineryFor(activeProjection());const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.action,'ADVANCE_EXISTING_ACTIVE_LANE');assert.equal(r.allowWorkerTick,true);assert.equal(r.boundedMutationSteps,1);assert.equal(r.mergeAuthority,false);assert.equal(r.leaseSeizureAllowed,false);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','ACTIVE_LANE','ACTIVE_LANE']);assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');assert.equal(r.workerActionGrant.actionId.includes('critical-1497-controller-test'),true);assert.equal(r.workerActionGrant.boundedActionCount,1);assert.equal(f.receipts.length,1);assert.equal(f.receipts[0].repository,REPOSITORY);assert.equal(f.receipts[0].prNumber,1617);assert.equal(f.receipts[0].headSha,LANE_HEAD);});
+async function verifiedNativeControllerCandidate() {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const workerId = 'stephanos-native-battle-bridge';
+  const payload = {
+    schemaVersion: 'stephanos.native-capacity-payload.v1',
+    receiptId: 'native-capacity-controller-20260730125900',
+    repository: REPOSITORY,
+    sourceHead: SOURCE_REVISION,
+    workerId,
+    provider: 'ollama-local',
+    transport: 'http-loopback-fixed',
+    endpoint: 'http://127.0.0.1:11434',
+    model: 'qwen:14b',
+    modelInventorySha256: '1'.repeat(64),
+    qualificationId: 'native-source-qualification-v1',
+    supportedTaskClasses: ['FOCUSED_REPAIR'],
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    observedAtUtc: '2026-07-30T12:59:00.000Z',
+    expiresAtUtc: '2026-07-30T13:04:00.000Z',
+    queueDepth: 0,
+    p95StartLatencySeconds: 2,
+    loadState: 'READY',
+    requestSha256: '2'.repeat(64),
+    responseSha256: '3'.repeat(64),
+    proofRefs: ['proof/native-controller-capacity.json'],
+  };
+  const capacityReceipt = createStephanosNativeCapacityReceipt(payload, {
+    privateKeyPem,
+    keyId: STEPHANOS_NATIVE_CAPACITY_KEY_ID,
+  });
+  const sourceAuthority = createStephanosNativeSourceAuthority(capacityReceipt, {
+    publicKeyPem,
+    expected: {
+      repository: REPOSITORY,
+      sourceHead: SOURCE_REVISION,
+      workerId,
+      nowUtc: NOW,
+      keyId: STEPHANOS_NATIVE_CAPACITY_KEY_ID,
+    },
+  });
+  const status = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    statusId: 'stephanos-native-capacity-current',
+    participantId: workerId,
+    timestampUtc: payload.observedAtUtc,
+    status: 'READY',
+    capacityReceipt,
+    sourceAuthority,
+    publisherAttestation: {
+      keyId: STEPHANOS_NATIVE_CAPACITY_KEY_ID,
+      receiptSha256: createHash('sha256').update(JSON.stringify(capacityReceipt)).digest('hex'),
+      sourceHead: SOURCE_REVISION,
+      proofRef: payload.proofRefs[0],
+    },
+    sourceMutationAllowed: true,
+    supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+    arbitraryCommandAllowed: false,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  };
+  const parent = await mkdtemp(join(tmpdir(), 'durable-native-capacity-'));
+  const root = join(parent, 'workspace');
+  const repoRoot = join(parent, 'repo');
+  const missionRunnerRoot = join(parent, 'mission-runner');
+  const keyDir = join(missionRunnerRoot, 'keys');
+  await mkdir(join(root, 'status'), { recursive: true });
+  await mkdir(repoRoot, { recursive: true });
+  await mkdir(keyDir, { recursive: true });
+  await writeFile(
+    join(root, 'status', 'stephanos-native-capacity-current.json'),
+    `${JSON.stringify(status, null, 2)}\n`,
+    'utf8',
+  );
+  await writeFile(
+    join(keyDir, 'stephanos-native-capacity-public.pem'),
+    publicKeyPem,
+    'utf8',
+  );
+  const admission = await readVerifiedStephanosNativeRoutingCandidate({
+    root,
+    repoRoot,
+    env: { STEPHANOS_MISSION_RUNNER_ROOT: missionRunnerRoot },
+    repository: REPOSITORY,
+    sourceHead: SOURCE_REVISION,
+    taskClass: 'FOCUSED_REPAIR',
+    nowUtc: NOW,
+  });
+  assert.equal(admission.ok, true, admission.reason);
+  return admission.candidate;
+}
+
+test('production durable flywheel consumes the elastic provider-neutral capacity reader', async () => {
+  const source = await readFile(new URL('./durableFlywheelControllerVNext.mjs', import.meta.url), 'utf8');
+  assert.match(source, /readElasticMissionControllerCapacityRoutingInput/);
+  assert.match(source, /evaluateRecurringCalibrationReadinessV1/);
+  assert.doesNotMatch(source, /runRecurringCalibrationReadinessV1/);
+  assert.match(
+    source,
+    /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readElasticMissionControllerCapacityRoutingInput/,
+  );
+  assert.doesNotMatch(
+    source,
+    /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readMissionControllerCapacityRoutingInput/,
+  );
+});
+
+test('production canonical ACTIVE projection authorizes one existing worker tick', async()=>{const f=machineryFor(activeProjection());const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.action,'ADVANCE_EXISTING_ACTIVE_LANE');assert.equal(r.allowWorkerTick,true);assert.equal(r.boundedMutationSteps,1);assert.equal(r.mergeAuthority,false);assert.equal(r.leaseSeizureAllowed,false);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['RECONCILING','ACTIVE_LANE','ACTIVE_LANE']);assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');assert.equal(r.workerActionGrant.actionId.includes('critical-1497-controller-test'),true);assert.equal(r.workerActionGrant.boundedActionCount,1);assert.equal(f.receipts.length,1);assert.equal(f.receipts[0].repository,REPOSITORY);assert.equal(f.receipts[0].prNumber,1617);assert.equal(f.receipts[0].headSha,LANE_HEAD);});
+
+test('Flywheel tells Shared Workspace exactly what it did in each completed controller cycle', async () => {
+  const f = machineryFor(projection('IDLE'), {
+    publishOutcomeOwnershipSeed: async () => ({
+      ok: true,
+      reason: 'SEED_PUBLISHED',
+      missionId: 'stephanos-whole-system-capability-closure',
+    }),
+    runRecurringCalibrationReadiness: async () => ({
+      ok: true,
+      reason: 'CALIBRATION_READY',
+    }),
+    promoteIncidentLessons: async () => ({
+      ok: true,
+      reason: 'LESSONS_PROMOTED',
+      promotedLessonIds: ['lesson-ratchet-1'],
+    }),
+    reconcileLearningGoals: async () => ({
+      ok: true,
+      reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
+      observedActionableEventCount: 1,
+      attachedExistingOwnerCount: 0,
+      createdCanonicalGoalCount: 1,
+      dedupedCanonicalGoalCount: 0,
+      createdGoalCandidateCount: 0,
+      brainDiagnosisAttemptCount: 1,
+      brainDiagnosisSuccessCount: 1,
+      createdCanonicalGoalIssueNumbers: [2999],
+      dedupedCanonicalGoalIssueNumbers: [],
+      canonicalGoalAdmissionBlockers: [],
+      createdGoalCandidateIds: [],
+      dedupedGoalCandidateIds: [],
+      brainDiagnoses: [{
+        eventId: 'gap-stephanos-ai-1',
+        capabilityId: 'stephanos-ai-self-uplift',
+        attempted: true,
+        ok: true,
+        reason: 'FLYWHEEL_BRAIN_DIAGNOSIS_READY',
+        provider: 'ollama',
+        model: 'qwen3.5:27b',
+        fallbackUsed: false,
+      }],
+      attachments: [{
+        eventId: 'gap-stephanos-ai-1',
+        capabilityId: 'stephanos-ai-self-uplift',
+        disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+        ownerGoals: ['#2999'],
+        schedulerGoalId: 'goal-2999',
+      }],
+    }),
+  });
+
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(f.receipts.length, 1);
+  const receipt = f.receipts[0];
+  const journal = receipt.flywheelActionJournal;
+  assert.equal(journal.schemaVersion, DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA);
+  assert.equal(journal.provenance.source, 'durable-flywheel-controller');
+  assert.equal(journal.provenance.sharedWorkspacePublished, true);
+  assert.deepEqual(journal.learning.promotedLessonIds, ['lesson-ratchet-1']);
+  assert.deepEqual(journal.learning.createdCanonicalGoalIssueNumbers, [2999]);
+  assert.equal(journal.learning.diagnoses[0].model, 'qwen3.5:27b');
+  assert.equal(journal.learning.attachments[0].disposition, 'CANONICAL_GOAL_CREATED_AND_ADMITTED');
+  assert.deepEqual(journal.learning.attachments[0].ownerGoals, ['#2999']);
+  assert.equal(journal.authority.mergeAuthorityAdded, false);
+  assert.equal(result.flywheelActionJournal, journal);
+});
+
 
 test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',async()=>{
   const openProjection=activeProjection({
@@ -86,9 +283,195 @@ test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',
   assert.equal(r.mergeAuthority,false);
 });
 
+test('ACTIVE one-file repair materializes verified elastic Native capacity into an exact worker grant', async () => {
+  const nativeCandidate = await verifiedNativeControllerCandidate();
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair controller routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair one bounded controller file.',
+    intendedOutcome: 'The Native route completes a focused repair.',
+    allowedFiles: ['shared/agents/controller.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const f = machineryFor(
+    activeProjection({ criticalBacklog: { activeMission: sourceMission } }),
+    {
+      loadCapacityRoutingInput: async () => ({
+        nowUtc: NOW,
+        codexStatus: {
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          statusId: 'codex-capacity-current',
+          truthState: 'CURRENT',
+          meterTruthUsable: true,
+          observedAtUtc: NOW,
+          remainingPercent: 0,
+          availability: 'METER_STALLED',
+          confidence: 'high',
+        },
+        nativeRoutingCandidatesByTaskClass: {
+          FOCUSED_REPAIR: nativeCandidate,
+        },
+      }),
+    },
+  );
+
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.workerActionGrant.adapter, 'stephanos-native');
+  assert.equal(result.workerActionGrant.capacityRoute, 'STEPHANOS_NATIVE');
+  assert.equal(
+    result.workerActionGrant.capacityReceiptId,
+    'native-capacity-controller-20260730125900',
+  );
+  assert.equal(result.workerActionGrant.workerId, 'stephanos-native-battle-bridge');
+  assert.deepEqual(
+    result.workerActionGrant.capacityProofRefs,
+    ['proof/native-controller-capacity.json'],
+  );
+  assert.equal(result.workerActionGrant.mergeAuthority, false);
+  assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
+});
+
+test('ACTIVE worker grant retrieves relevant Shared Lesson engineering memory', async () => {
+  const nativeCandidate = await verifiedNativeControllerCandidate();
+  const engineeringRecord = buildEngineeringIncidentMethodRecordV1({
+    recordKey: 'controller-render-loop-method',
+    recordClass: 'REUSABLE_METHOD',
+    problemClass: 'render-loop-feedback',
+    componentAndOwnerRefs: ['shared/agents'],
+    observedAtUtc: NOW,
+    repairOrMethod: 'Reject semantic no-op state transitions before scheduling work and forbid peer heartbeat rebroadcast.',
+    prerequisites: ['Measure the live persisted runtime surface.'],
+    forbiddenShortcuts: ['Do not treat a fresh browser state as proof for a persisted browser-state fault.'],
+    failureModes: ['Broadcast feedback'],
+    counterexamples: [],
+    testAndProofRefs: ['pr:#2459'],
+    runtimeEvidenceRefs: ['proof:persisted-profile-zero-render-delta'],
+    confidenceBasis: 'Merged exact-head repair plus runtime proof.',
+    freshness: 'CURRENT',
+    applicableDomains: ['controller-runtime'],
+    privacyAndSensitivity: 'INTERNAL_BOUNDED',
+    status: 'CURRENT',
+  });
+  const lesson = createSharedWorkspaceLessonRecord({
+    lessonId: 'controller-render-loop-method',
+    participantId: 'stephanos',
+    timestampUtc: NOW,
+    summary: 'Prevent controller feedback loops.',
+    reflection: 'Peer observations may update local truth but must not echo themselves back.',
+    sourceEventIds: ['render-loop-incident'],
+    engineeringRecord,
+  });
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair controller routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair one bounded controller file.',
+    intendedOutcome: 'The Native route completes a focused repair.',
+    allowedFiles: ['shared/agents/controller.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const f = machineryFor(
+    activeProjection({
+      engineeringLessonRecords: [lesson],
+      criticalBacklog: { activeMission: sourceMission },
+    }),
+    {
+      loadCapacityRoutingInput: async () => ({
+        nowUtc: NOW,
+        codexStatus: {
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          statusId: 'codex-capacity-current',
+          truthState: 'CURRENT',
+          meterTruthUsable: true,
+          observedAtUtc: NOW,
+          remainingPercent: 0,
+          availability: 'METER_STALLED',
+          confidence: 'high',
+        },
+        nativeRoutingCandidatesByTaskClass: {
+          FOCUSED_REPAIR: nativeCandidate,
+        },
+      }),
+    },
+  );
+
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.workerActionGrant.engineeringMemoryPack?.records?.[0]?.recordId, engineeringRecord.recordId);
+  assert.equal(result.workerActionGrant.engineeringMemoryPack?.authority?.mergeAllowed, false);
+  assert.equal(result.workerActionGrant.engineeringMemoryPackId, result.workerActionGrant.engineeringMemoryPack.packId);
+});
+
+test('ACTIVE multi-file work does not widen the focused Native candidate into an exact grant', async () => {
+  const nativeCandidate = await verifiedNativeControllerCandidate();
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Multi-file controller work',
+    repository: REPOSITORY,
+    operatorIntent: 'Change two files.',
+    intendedOutcome: 'The focused Native lane must not be widened.',
+    allowedFiles: ['shared/agents/controller.mjs', 'shared/agents/other.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const f = machineryFor(
+    activeProjection({ criticalBacklog: { activeMission: sourceMission } }),
+    {
+      loadCapacityRoutingInput: async () => ({
+        nowUtc: NOW,
+        codexStatus: {
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          statusId: 'codex-capacity-current',
+          truthState: 'CURRENT',
+          meterTruthUsable: true,
+          observedAtUtc: NOW,
+          remainingPercent: 0,
+          availability: 'METER_STALLED',
+          confidence: 'high',
+        },
+        nativeRoutingCandidatesByTaskClass: {
+          FOCUSED_REPAIR: nativeCandidate,
+        },
+      }),
+    },
+  );
+
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.ok(result.blockers.includes('mission-worker:exact-action-grant-unavailable'));
+});
+
 test('ACTIVE source work receives one exact proven fallback grant when Codex capacity is low',async()=>{const sourceMission={missionId:'critical-1497-controller-test',revision:4,currentPhase:'AGENT_IMPLEMENTATION',title:'Repair controller routing',repository:REPOSITORY,operatorIntent:'Repair the bounded controller route.',intendedOutcome:'The route is proven by focused tests.',allowedFiles:['shared/agents/controller.mjs'],requiredTests:['node --test shared/agents/controller.test.mjs'],requiredEvidence:['focused tests'],dispatch:{adapter:'codex',status:'pending'},git:{branch:BRANCH,worktreePath:'/bounded/worktree'}};const f=machineryFor(activeProjection({criticalBacklog:{activeMission:sourceMission}}),{loadCapacityRoutingInput:async()=>({nowUtc:NOW,codexStatus:{schemaVersion:'shared-agent-workspace-record.v1',statusId:'codex-capacity-current',truthState:'CURRENT',meterTruthUsable:true,observedAtUtc:NOW,remainingPercent:3,availability:'AVAILABLE',confidence:'high'},githubLaneReceipt:{schemaVersion:BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,receiptId:'github-builder-capacity-controller-test',route:'CHATGPT_GITHUB',repository:REPOSITORY,workerId:'shared-fabric-chatgpt-github-builder-01',state:'READY',supportedOperations:['SOURCE_CONSTRUCTION','FOCUSED_TESTS'],supportedTaskClasses:['FOCUSED_REPAIR'],observedAtUtc:NOW,expiresAtUtc:'2026-07-30T13:15:00.000Z',queueDepth:0,p95StartLatencySeconds:15,authorityReceiptIds:[],proofRefs:['receipts/github-builder/capacity.json']}})});const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.workerActionGrant.adapter,'chatgpt-github');assert.equal(r.workerActionGrant.capacityRoute,'CHATGPT_GITHUB');assert.equal(r.workerActionGrant.capacityReceiptId,'github-builder-capacity-controller-test');assert.deepEqual(r.workerActionGrant.capacityProofRefs,['receipts/github-builder/capacity.json']);assert.equal(r.workerActionGrant.mergeAuthority,false);assert.equal(r.workerActionGrant.leaseSeizureAllowed,false);});
 
-test('canonical HOLD projection preserves authority blockers and forbids work',async()=>{const f=machineryFor(projection('HOLD',{blockers:['lane:github-merge-evidence-incomplete','execution:sourceHead mismatch','critical-backlog-active-lane-pr-mismatch']}));const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'HOLD');assert.equal(r.allowWorkerTick,false);assert.deepEqual(r.blockers,['authoritative-programme-reconciliation-blocked','authority:lane:github-merge-evidence-incomplete','authority:execution:sourceHead mismatch','authority:critical-backlog-active-lane-pr-mismatch']);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','HOLD']);});
+test('canonical HOLD projection preserves authority blockers and forbids work',async()=>{const f=machineryFor(projection('HOLD',{blockers:['lane:github-merge-evidence-incomplete','execution:sourceHead mismatch','critical-backlog-active-lane-pr-mismatch']}));const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'HOLD');assert.equal(r.allowWorkerTick,false);assert.deepEqual(r.blockers,['authoritative-programme-reconciliation-blocked','authority:lane:github-merge-evidence-incomplete','authority:execution:sourceHead mismatch','authority:critical-backlog-active-lane-pr-mismatch']);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['RECONCILING','HOLD']);});
 
 test('non-production, memory-authoritative, malformed, and unknown projections fail closed',()=>{for(const [candidate,blocker] of [[projection('IDLE',{schemaVersion:'legacy.parallel-authority.v1'}),'authoritative-programme-projection-schema-mismatch'],[projection('IDLE',{sourceConstructionMode:'deterministic-testing-seam'}),'authoritative-programme-projection-not-production-constructed'],[projection('IDLE',{chatMemoryAuthoritative:true}),'chat-memory-authority-not-explicitly-disabled'],[projection('UNRECOGNIZED'),'authoritative-programme-status-invalid'],[null,'authoritative-programme-projection-invalid']]){const r=reconcileDurableFlywheelController(candidate,{nowUtc:NOW,sourceRevision:SOURCE_REVISION});assert.equal(r.status,'HOLD');assert.equal(r.allowWorkerTick,false);assert.ok(r.blockers.includes(blocker));}});
 test('explicit observation time and exact source revision are mandatory',()=>{const a=reconcileDurableFlywheelController(projection('IDLE',{observedAtUtc:undefined}),{sourceRevision:SOURCE_REVISION});assert.ok(a.blockers.includes('controller-observation-time-invalid'));const b=reconcileDurableFlywheelController(projection(),{nowUtc:NOW});assert.ok(b.blockers.includes('controller-source-revision-invalid'));assert.equal(b.allowWorkerTick,false);});
@@ -334,4 +717,184 @@ test('stale capacity evidence is never recorded as a selected liveness alternate
   assert.equal(result.cycleReceipt.selectedAlternateSurface, null);
   assert.equal(result.cycleReceipt.controllerShouldRemainEnabled, true);
   assert.equal(result.cycleReceipt.controllerDisableAllowed, false);
+});
+
+test('Durable Flywheel publishes workspace-integrity seed pressure before learning-goal reconciliation', async () => {
+  const order = [];
+  const f = machineryFor(projection('IDLE'), {
+    publishWorkspaceIntegritySeedPressure: async () => {
+      order.push('pressure');
+      return {
+        ok: true,
+        published: true,
+        deduped: false,
+        reason: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_EVENT_PUBLISHED',
+        capabilityId: 'workspace-integrity-inventory-visible-components',
+        targetRung: 'INVENTORY_VISIBLE_COMPONENTS',
+        eventId: 'workspace-integrity-pressure-workspace-integrity-inventory-visible-components',
+      };
+    },
+    reconcileLearningGoals: async () => {
+      order.push('reconcile');
+      return {
+        ok: true,
+        reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
+        observedActionableEventCount: 1,
+        createdCanonicalGoalCount: 1,
+        createdCanonicalGoalIssueNumbers: [3901],
+        attachments: [{
+          eventId: 'workspace-integrity-pressure-workspace-integrity-inventory-visible-components',
+          capabilityId: 'workspace-integrity-inventory-visible-components',
+          disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+          ownerGoals: ['#3901'],
+          schedulerGoalId: 'goal-3901',
+        }],
+      };
+    },
+  });
+
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.deepEqual(order, ['pressure', 'reconcile']);
+  assert.equal(result.workspaceIntegritySeedPressurePublication.published, true);
+  assert.equal(result.learningGoalReconciliation.createdCanonicalGoalCount, 1);
+  const pressureAction = result.flywheelActionJournal.actions.find(
+    (action) => action.actionKind === 'WORKSPACE_INTEGRITY_SEED_PRESSURE',
+  );
+  assert.equal(pressureAction.ok, true);
+  assert.equal(pressureAction.targetRung, 'INVENTORY_VISIBLE_COMPONENTS');
+  assert.equal(pressureAction.capabilityId, 'workspace-integrity-inventory-visible-components');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+});
+
+test('idle grant wait remains non-authorising reconciliation instead of starving goal admission', async () => {
+  const f = machineryFor(projection('READY'), {
+    loadCapacityRoutingInput: async () => ({}),
+  });
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(result.boundedMutationSteps, 0);
+  assert.ok(result.blockers.includes('mission-worker:exact-action-grant-unavailable'));
+  assert.deepEqual(f.heartbeats.map(({ cycleState }) => cycleState),
+    ['RECONCILING', 'RECONCILING']);
+  assert.equal(f.heartbeats.at(-1).boundedMutationSteps, 0);
+  assert.equal(f.heartbeats.at(-1).lastPublishedReceiptId, '');
+  assert.equal(f.heartbeats.at(-1).lastSuccessfulReconciliationUtc, '');
+});
+
+test('READY controller grants exact Forge elastic draft publication despite parked legacy backlog', async () => {
+  const elastic = {
+    missionId: 'critical-1646-elastic-goal', revision: 10,
+    currentPhase: 'GITHUB_COMMIT', repository: REPOSITORY,
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1646' },
+    sourcePublication: {
+      artifactSha256: '7'.repeat(64),
+      exactParentHead: SOURCE_REVISION, exactResultTree: '8'.repeat(40),
+      canonicalBranch: 'openclaw/elastic-goal-1646',
+      outboxId: 'offline-publication-' + '9'.repeat(24),
+    },
+  };
+  const ready = projection('READY', { criticalBacklog: {
+    decision: 'PARKED_BLOCKERS_ONLY', activeMission: null,
+  }});
+  const f = machineryFor(ready, {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant?.missionId, elastic.missionId);
+  assert.equal(result.workerActionGrant?.adapter, 'forge-publication');
+  assert.equal(result.workerActionGrant?.operation, 'publish-forge-escrow');
+  assert.equal(result.workerActionGrant?.issueNumber, 1646);
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+  assert.equal(result.workerActionGrant?.leaseSeizureAllowed, false);
+});
+
+test('READY controller refuses stale-parent Forge publication when legacy backlog is parked', async () => {
+  const stale = {
+    missionId: 'critical-1646-elastic-goal', revision: 10,
+    currentPhase: 'GITHUB_COMMIT', repository: REPOSITORY,
+    dispatch: { adapter: 'foundry-forge', status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1646' },
+    sourcePublication: { artifactSha256: '7'.repeat(64),
+      exactParentHead: 'f'.repeat(40), exactResultTree: '8'.repeat(40),
+      canonicalBranch: 'openclaw/elastic-goal-1646',
+      outboxId: 'offline-publication-' + '9'.repeat(24) },
+  };
+  const f = machineryFor(projection('READY', {
+    criticalBacklog: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+  }), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null },
+      elasticAdmission: { selectedMission: stale },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant, undefined);
+});
+
+test('READY elastic PR inspection receives an exact read-only grant', async () => {
+  const elastic = {
+    missionId: 'critical-1717-elastic-goal', revision: 8,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'ACTIVE' },
+    git: { branch: 'openclaw/elastic-goal-1717' },
+    pullRequest: { number: 2900, headSha: LANE_HEAD },
+  };
+  const f = machineryFor(projection('READY', { criticalBacklog: {
+    decision: 'PARKED_BLOCKERS_ONLY', activeMission: null,
+  }}), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant?.missionId, elastic.missionId);
+  assert.equal(result.workerActionGrant?.adapter, 'openclaw-github-readonly');
+  assert.equal(result.workerActionGrant?.mergeAuthority, false);
+});
+
+test('READY elastic grant refuses parked PR inspection', async () => {
+  const elastic = {
+    missionId: 'critical-1717-elastic-goal', revision: 8,
+    currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY,
+    continuity: { parkingStatus: 'PARKED_BLOCKED' },
+    git: { branch: 'openclaw/elastic-goal-1717' },
+    pullRequest: { number: 2900, headSha: LANE_HEAD },
+  };
+  const f = machineryFor(projection('READY'), {
+    loadCapacityRoutingInput: async () => null,
+    ensureBacklogMission: async () => ({
+      ok: true, projection: { activeMission: null },
+      elasticAdmission: { selectedMission: elastic },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {},
+  });
+  assert.equal(result.workerActionGrant, undefined);
 });

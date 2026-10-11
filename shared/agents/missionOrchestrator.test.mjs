@@ -123,6 +123,40 @@ test('unsafe, vague, or evidence-free intent blocks before dispatch', () => {
   assert.match(unsafe.blockers.join(' '), /intent|required evidence|forbidden/i);
 });
 
+test('repository-wide scope permits safe source files but still blocks forbidden runtime paths', () => {
+  const scopedBase = { ...base, missionId: 'repo-wide-scope-test', allowedFiles: ['**'], branch: 'openclaw/repo-wide-scope-test' };
+  let safe = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  safe = event(safe, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-worktree'),
+  });
+  safe = event(safe, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  safe = event(safe, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-safe-result',
+    changedFiles: ['shared/agents/goal-safe.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    receipt: receipt('openclaw result', 'repo-wide-safe-result-receipt'),
+  });
+  assert.equal(safe.currentPhase, 'VERIFYING');
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-blocked-result',
+    changedFiles: ['runtime/unsafe.json'],
+    receipt: receipt('openclaw result', 'repo-wide-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
+});
+
 test('full implementation lifecycle requires evidence, exact approval, merge receipt, and all local deployment steps', () => {
   let state = advanceToOpenPullRequest();
   assert.equal(state.currentPhase, 'CHECK_PULL_REQUEST');
@@ -265,4 +299,386 @@ test('Mission Operations snapshot exposes phase, agents, repair, approval, Git, 
   assert.equal(snapshot.deployment.sync.status, 'pending');
   assert.ok(snapshot.receipts.length >= 1);
   assert.match(snapshot.warnings.join(' '), /Repair round 0\/3/);
+});
+
+test('clean exact current main can complete an already-satisfied implementation without a synthetic source change', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-current-main'),
+  });
+
+  const testReceipts = base.requiredTests.map((testCommand, index) => receipt(
+    'source deterministic test',
+    `current-main-test-${index + 1}`,
+    { testCommand },
+  ));
+  const evidenceReceipts = base.requiredEvidence.map((requirement, index) => receipt(
+    requirement,
+    `current-main-evidence-${index + 1}`,
+  ));
+
+  state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
+    sourceRevision: '4'.repeat(40),
+    canonicalMainHeadSha: '4'.repeat(40),
+    worktreeHeadSha: '4'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'current-main-head', { headSha: '4'.repeat(40), commandOutputHash: '8'.repeat(64) }),
+      receipt('worktree head', 'current-worktree-head', { headSha: '4'.repeat(40), commandOutputHash: '9'.repeat(64) }),
+    ],
+    worktreeClean: true,
+    changedFiles: [],
+    testReceipts,
+    evidenceReceipts,
+    receipt: receipt('current main acceptance', 'current-main-acceptance', { sha256: '5'.repeat(64) }),
+  });
+
+  assert.equal(state.currentPhase, 'COMPLETE');
+  assert.equal(state.finalVerdict, 'MISSION_ORCHESTRATOR_COMPLETE');
+  assert.equal(state.currentMainAcceptance.verified, true);
+  assert.equal(state.currentMainAcceptance.sourceRevision, '4'.repeat(40));
+  assert.deepEqual(state.git.changedFiles, []);
+  assert.equal(state.git.commitSha, '');
+  assert.equal(state.pullRequest.number, null);
+  assert.equal(state.operatorActionRequired, false);
+  const snapshot = buildMissionOperationsSnapshot(state, { now: new Date(timestamp(20)) });
+  assert.equal(snapshot.github.headSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.verified, true);
+  assert.equal(snapshot.currentMainAcceptance.sourceRevision, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.canonicalMainHeadSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.worktreeHeadSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.receiptId, 'current-main-acceptance');
+  assert.deepEqual(snapshot.currentMainAcceptance.headReceiptIds, ['current-main-head', 'current-worktree-head']);
+  assert.deepEqual(snapshot.currentMainAcceptance.testCommands, base.requiredTests);
+});
+
+test('current-main satisfaction fails closed without complete proof or with a source delta', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-current-main-negative'),
+  });
+
+  state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
+    sourceRevision: '6'.repeat(40),
+    canonicalMainHeadSha: '6'.repeat(40),
+    worktreeHeadSha: '6'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'negative-main-head', { headSha: '6'.repeat(40), commandOutputHash: 'a'.repeat(64) }),
+      receipt('worktree head', 'negative-worktree-head', { headSha: '6'.repeat(40), commandOutputHash: 'b'.repeat(64) }),
+    ],
+    worktreeClean: true,
+    changedFiles: ['shared/agents/unexpected.mjs'],
+    testReceipts: [],
+    evidenceReceipts: [],
+    receipt: receipt('current main acceptance', 'current-main-acceptance-negative', { sha256: '7'.repeat(64) }),
+  });
+
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.match(state.blockers.join(' '), /zero source delta/i);
+  assert.equal(state.currentMainAcceptance.verified, false);
+});
+
+
+test('current-main satisfaction rejects stale or mismatched canonical and worktree heads', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-current-main-head-mismatch'),
+  });
+  const testReceipts = base.requiredTests.map((testCommand, index) => receipt(
+    'source deterministic test',
+    `head-mismatch-test-${index + 1}`,
+    { testCommand },
+  ));
+  const evidenceReceipts = base.requiredEvidence.map((requirement, index) => receipt(
+    requirement,
+    `head-mismatch-evidence-${index + 1}`,
+  ));
+  state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
+    sourceRevision: 'c'.repeat(40),
+    canonicalMainHeadSha: 'd'.repeat(40),
+    worktreeHeadSha: 'c'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'mismatch-main-head', { headSha: 'd'.repeat(40), commandOutputHash: 'd'.repeat(64) }),
+      receipt('worktree head', 'mismatch-worktree-head', { headSha: 'c'.repeat(40), commandOutputHash: 'c'.repeat(64) }),
+    ],
+    worktreeClean: true,
+    changedFiles: [],
+    testReceipts,
+    evidenceReceipts,
+    receipt: receipt('current main acceptance', 'mismatch-acceptance', { sha256: 'e'.repeat(64) }),
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.match(state.blockers.join(' '), /canonical main HEAD and worktree HEAD bound to the exact source revision/i);
+  assert.equal(state.currentMainAcceptance.verified, false);
+});
+
+
+test('bounded retry admission reopens only a whitelisted failed agent result and consumes one repair round', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'retryable-agent-failure-test',
+    branch: 'openclaw/retryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'retry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-1',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.status, 'pending');
+  assert.equal(state.repair.currentRound, 1);
+  assert.equal(state.blockers.length, 0);
+  assert.equal(state.nextAction.type, 'DISPATCH_AGENT');
+  assert.equal(state.activeWriter, 'foundry-forge');
+});
+
+test('bounded retry admission accepts a semantic edit contract failure with safe path detail', () => {
+  const blocker = 'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1';
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'semantic-edit-retry-test',
+    branch: 'openclaw/semantic-edit-retry-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'semantic-retry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: blocker,
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: [blocker],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'semantic-retry-admission-1',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.status, 'pending');
+  assert.equal(state.repair.currentRound, 1);
+  assert.equal(state.blockers.length, 0);
+});
+
+test('bounded retry admission refuses semantic edit retry when path detail is protected', () => {
+  const blocker = 'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:.env';
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'semantic-edit-protected-path-test',
+    branch: 'openclaw/semantic-edit-protected-path-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'semantic-protected-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: blocker,
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: [blocker],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'semantic-protected-retry-admission',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+  assert.ok(state.blockers.includes(blocker));
+});
+
+test('bounded retry admission refuses to clear unrelated blockers', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'nonretryable-agent-failure-test',
+    branch: 'openclaw/nonretryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'nonretry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'UNRELATED_SOURCE_POLICY_FAILURE',
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-invalid',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+  assert.ok(state.blockers.includes('UNRELATED_SOURCE_POLICY_FAILURE'));
+});
+
+
+test('agent result accepts exact scheduler scope identity across Git path casing without widening scope', () => {
+  const scopedBase = {
+    ...base,
+    missionId: 'case-scope-test',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    branch: 'openclaw/case-scope-test',
+  };
+  let state = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-result-receipt'),
+  });
+  assert.equal(state.currentPhase, 'VERIFYING');
+  assert.deepEqual(state.git.changedFiles, ['shared/agents/battleBridgeSupervisor.mjs']);
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-blocked-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
+});
+
+test('Forge signed draft publication atomically advances commit, push, PR without merge authority', () => {
+  let state = createMissionOrchestratorState({
+    ...base, repository: 'cheekyfellastef/stephan-os',
+    missionId: 'critical-2732-elastic-goal', branch: 'openclaw/elastic-goal-2732',
+    requiredEvidence: ['focused test output'],
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath, clean: true,
+    receipt: receipt('isolated worktree', 'forge-worktree-receipt'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true, resultId: 'forge-source-result', changedFiles: ['shared/agents/missionOrchestrator.mjs'],
+    receipt: receipt('forge result', 'forge-result-receipt'),
+    sourceArtifactEscrow: {
+      schemaVersion: 'stephanos.source-artifact-escrow.v1',
+      missionId: 'critical-2732-elastic-goal', repository: base.repository,
+      canonicalBranch: 'openclaw/elastic-goal-2732', canonicalPr: null,
+      completeArtifactSha256: 'c'.repeat(64),
+      exactParentHead: 'd'.repeat(40), exactResultTree: 'b'.repeat(40),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+    },
+    offlinePublicationOutbox: {
+      schemaVersion: 'stephanos.offline-publication-outbox.v1',
+      outboxId: 'offline-publication-' + 'e'.repeat(24),
+      missionId: 'critical-2732-elastic-goal',
+      completeArtifactSha256: 'c'.repeat(64),
+      artifactRef: 'shared-workspace://source-artifacts/' + 'c'.repeat(64) + '.json',
+      publicationPaused: true, pushAuthority: false, mergeAuthority: false,
+    },
+  });
+  state = event(state, 'EVIDENCE_RECORDED', {
+    receipts: [receipt('focused test output', 'forge-tests')],
+  });
+  assert.equal(state.currentPhase, 'GITHUB_COMMIT');
+  const publication = {
+    finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
+    repository: base.repository, branch: 'openclaw/elastic-goal-2732',
+    commitSha: 'a'.repeat(40), exactResultTree: 'b'.repeat(40),
+    sourceArtifactSha256: 'c'.repeat(64), prNumber: 3001, draft: true,
+    mergeAuthority: false, forcePushAllowed: false,
+  };
+  const invalid = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, forcePushAllowed: true },
+    receipt: receipt('draft publication', 'forge-bad-publish'),
+  });
+  assert.equal(invalid.currentPhase, 'BLOCKED');
+  const lookalike = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication: { ...publication, repository: 'Cheekyfellastef/stephan-os-fork' },
+    receipt: receipt('draft publication', 'forge-lookalike-publish'),
+  });
+  assert.equal(lookalike.currentPhase, 'BLOCKED');
+  const published = event(state, 'FORGE_ESCROW_DRAFT_PUBLISHED', {
+    publication,
+    receipt: receipt('draft publication', 'forge-publish'),
+    prUrl: 'https://github.com/Cheekyfellastef/stephan-os/pull/3001',
+  });
+  assert.equal(published.currentPhase, 'CHECK_PULL_REQUEST');
+  assert.equal(published.git.commitSha, publication.commitSha);
+  assert.equal(published.git.pushed, true);
+  assert.equal(published.pullRequest.number, 3001);
+  assert.equal(published.pullRequest.state, 'draft');
+  assert.equal(published.approval.status, 'not-requested');
+  assert.equal(published.pullRequest.merged, false);
+});
+
+test('pilot current-main source cannot silently complete while acceptance is missing', () => {
+  for (const issue of [1646,1717,1723]) {
+    const mission={...base,missionId:'critical-'+issue+'-elastic-goal'};
+    let state=createMissionOrchestratorState(mission,{now:new Date(timestamp(0))});
+    state=event(state,'WORKTREE_READY',{
+      worktreePath:mission.worktreePath,clean:true,
+      receipt:receipt('isolated worktree','pilot-worktree-'+issue),
+    });
+    const result=event(state,'CURRENT_MAIN_SATISFACTION_RECORDED',{
+      sourceRevision:'4'.repeat(40),canonicalMainHeadSha:'4'.repeat(40),
+      worktreeHeadSha:'4'.repeat(40),worktreeClean:true,changedFiles:[],
+    });
+    assert.notEqual(result.currentPhase,'COMPLETE');
+    assert.equal(result.currentMainAcceptance?.verified,false);
+    assert.match(result.blockers.join(' '),/independent goal-acceptance completion proof/);
+  }
+});
+
+test('accepted replacement repair prevents duplicate Forge pickup for VR Link',()=>{
+ const input={...base,missionId:'critical-1717-elastic-goal'};
+ let state=createMissionOrchestratorState(input,{now:new Date(timestamp(0))});
+ state=event(state,'WORKTREE_READY',{worktreePath:base.worktreePath,clean:true,receipt:receipt('isolated worktree','replaced-vr-link-worktree')});
+ state.continuity.history.push({eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'});
+ const next=event(state,'AGENT_DISPATCHED',{agentId:'foundry-forge',adapter:'foundry-forge'});
+ assert.notEqual(next.dispatch.status,'running');
+ assert.match(next.blockers.join(' '),/REPLACEMENT_SOURCE_ALREADY_MERGED/);
 });

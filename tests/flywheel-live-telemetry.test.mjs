@@ -12,6 +12,18 @@ test('Flywheel live view projects canonical shared-workspace telemetry', () => {
       githubOpenPrCount: 4,
     },
     projection: {
+      closedLoopLearning: {
+        telemetry: {
+          capabilityId: 'product-surface-discovery-and-mutation',
+          lessonId: 'closed-loop-product-surface-discovery-and-mutation',
+          teacherId: 'openclaw-local',
+          state: 'RETRY_READY',
+          examPassed: true,
+          proofPassed: true,
+          retained: true,
+          retryReady: true,
+        },
+      },
       goals: [{ issue: '#1' }, { issue: '#2' }, { issue: '#3' }],
       queueDispatcher: {
         dispatcherState: 'RUNNING',
@@ -45,6 +57,15 @@ test('Flywheel live view projects canonical shared-workspace telemetry', () => {
       },
       operatorAttention: {
         blockers: ['PROOF_REQUIRED'],
+        maintenanceActions: [{
+          actionId: 'maintain-2',
+          relatedGoal: '#2',
+          owner: 'codex-housekeeper',
+          exactNextAction: 'Refresh focused proof.',
+          blockers: ['PROOF_REQUIRED'],
+          operatorDecisionRequired: false,
+        }],
+        approvals: [{ decisionId: 'merge-pr-2401' }],
         exactNextAction: 'Capture focused proof.',
       },
     },
@@ -57,6 +78,14 @@ test('Flywheel live view projects canonical shared-workspace telemetry', () => {
   assert.equal(view.metrics.find((metric) => metric.label === 'Open PRs')?.value, '4');
   assert.equal(view.stateItems.find((item) => item.id === 'merge-pipeline')?.value, 'PR #2401');
   assert.match(view.stateItems.find((item) => item.id === 'merge-pipeline')?.summary || '', /01234567/);
+  assert.equal(view.stateItems.find((item) => item.id === 'learning-loop')?.value, 'RETRY_READY');
+  assert.match(view.stateItems.find((item) => item.id === 'learning-loop')?.summary || '', /openclaw-local/);
+  assert.equal(view.metrics.find((metric) => metric.label === 'Learning Retry Ready')?.value, 'YES');
+  assert.equal(view.blockerRouting.publishedBlockerCount, 1);
+  assert.equal(view.blockerRouting.routineRepairActionCount, 1);
+  assert.equal(view.blockerRouting.operatorApprovalCount, 1);
+  assert.equal(view.stateItems.find((item) => item.id === 'blocker-routing')?.value, '1 routine repair action(s)');
+  assert.match(view.metrics.find((metric) => metric.label === 'Blockers')?.detail || '', /1 routine repair action/);
   assert.equal(view.exactNextAction, 'Capture focused proof.');
 });
 

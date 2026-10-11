@@ -1,3 +1,5 @@
+import { createHolodeckRoomRenderer } from './holodeck-room-v1.mjs';
+
 export const HOLODECK_BASELINE_SESSION_MODE = 'immersive-vr';
 export const HOLODECK_BASELINE_MODE = 'Holodeck Baseline';
 
@@ -36,6 +38,7 @@ export async function enterHolodeckBaseline({
   navigatorRef = globalThis.navigator,
   canvas,
   xrWebGLLayerCtor = globalThis.XRWebGLLayer,
+  onFrame = () => {},
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -63,18 +66,30 @@ export async function enterHolodeckBaseline({
   try {
     if (typeof gl.makeXRCompatible === 'function') await gl.makeXRCompatible();
     session.updateRenderState({ baseLayer: new xrWebGLLayerCtor(session, gl) });
-    const referenceSpace = await session.requestReferenceSpace('local-floor')
-      .catch(() => session.requestReferenceSpace('local'));
+    let referenceSpaceType = 'local-floor';
+    const referenceSpace = await session.requestReferenceSpace(referenceSpaceType)
+      .catch(async () => {
+        referenceSpaceType = 'local';
+        return session.requestReferenceSpace(referenceSpaceType);
+      });
 
+    const renderer = createHolodeckRoomRenderer({ gl });
     let active = true;
-    session.addEventListener('end', () => { active = false; }, { once: true });
+    session.addEventListener('end', () => {
+      active = false;
+      renderer.dispose();
+    }, { once: true });
 
-    const draw = (_time, frame) => {
+    const draw = (time, frame) => {
       if (!active) return;
-      const layer = frame.session.renderState.baseLayer;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-      gl.clearColor(0.01, 0.025, 0.055, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      const frameTruth = renderer.drawFrame(frame, referenceSpace) || { poseAvailable: false, viewCount: 0 };
+      try {
+        onFrame({
+          time,
+          poseAvailable: frameTruth.poseAvailable === true,
+          viewCount: Number(frameTruth.viewCount) || 0,
+        });
+      } catch {}
       frame.session.requestAnimationFrame(draw);
     };
     session.requestAnimationFrame(draw);
@@ -83,7 +98,10 @@ export async function enterHolodeckBaseline({
       ok: true,
       session,
       referenceSpace,
-      reason: 'immersive-vr session started; physical headset acceptance remains unproven',
+      referenceSpaceType,
+      room: renderer.geometry.room,
+      ideaCube: renderer.geometry.ideaCube,
+      reason: 'Stephanos Spatial Workspace chamber started; physical headset acceptance remains unproven',
     };
   } catch (error) {
     try { await session.end(); } catch {}

@@ -51,6 +51,10 @@ test('Atlas and backend are wired to the live proof feed and Spatial Workspace v
   assert.match(client, /mergeLiveConcepts/);
   assert.match(route, /\/vr-capability-feed/);
   assert.match(service, /projectVrCapabilityLiveTruth/);
+  assert.match(service, /readVrPlaytestFeed/);
+  assert.match(service, /canonicalVrEvidence/);
+  assert.match(client, /canonicalVrEvidence/);
+  assert.match(client, /atlas-canonical-vr-evidence/);
   assert.match(publisher, /spatialWorkspaceVisual|visualEvidence/);
   assert.doesNotMatch(html, /10 responsive thumbnails/);
 });

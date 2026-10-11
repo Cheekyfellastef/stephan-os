@@ -85,6 +85,62 @@ test('Windows ignition sync preflight reuses the canonical sync-and-refresh coor
   assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_PASS');
 });
 
+test('Windows ignition keeps core startup moving when only auxiliary control-plane repair is degraded', async () => {
+  const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+    syncAndRefreshFn: async () => ({
+      ok: false,
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+      sourceHead: HEAD,
+      syncClassification: 'SYNC_NO_CHANGE',
+      refreshes: [],
+      controlPlaneRepair: {
+        ok: false,
+        classification: 'CONTROL_PLANE_REPAIR_BLOCKED',
+        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+        repairAttempted: true,
+      },
+      finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+    }),
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.skipped, false);
+  assert.equal(result.classification, 'IGNITION_SYNC_PREFLIGHT_PASS_CONTROL_PLANE_DEGRADED');
+  assert.equal(result.sourceHead, HEAD);
+  assert.equal(result.syncClassification, 'SYNC_NO_CHANGE');
+  assert.equal(result.controlPlaneDegraded, true);
+  assert.equal(result.controlPlaneBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.blocker, '');
+  assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_PASS');
+});
+
+test('Windows ignition does not waive control-plane failure without proven current source', async () => {
+  for (const candidate of [
+    {
+      sourceHead: 'short-head',
+      syncClassification: 'SYNC_NO_CHANGE',
+    },
+    {
+      sourceHead: HEAD,
+      syncClassification: 'BLOCKED_SOURCE_DIRTY',
+    },
+  ]) {
+    const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
+      syncAndRefreshFn: async () => ({
+        ok: false,
+        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+        refreshes: [],
+        finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+        ...candidate,
+      }),
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+    assert.equal(result.finalVerdict, 'IGNITION_SYNC_PREFLIGHT_BLOCKED');
+  }
+});
+
 test('Windows ignition sync preflight fails closed when canonical sync-and-refresh is blocked', async () => {
   const result = await runBattleBridgeIgnitionSyncPreflight(canonicalWindowsOptions({
     syncAndRefreshFn: async () => ({

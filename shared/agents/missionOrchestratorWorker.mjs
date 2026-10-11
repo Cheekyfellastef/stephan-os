@@ -135,6 +135,28 @@ export function buildMissionWorkerAction(state, options = {}) {
     };
   }
 
+  if (state.currentPhase === 'GITHUB_COMMIT' && state.dispatch?.adapter === 'foundry-forge') {
+    const source = state.sourcePublication || {};
+    if (!/^[a-f0-9]{64}$/.test(text(source.artifactSha256))
+        || !text(source.outboxId).startsWith('offline-publication-')
+        || source.canonicalBranch !== state.git?.branch
+        || !SHA40_PATTERN.test(text(source.exactParentHead))
+        || !SHA40_PATTERN.test(text(source.exactResultTree))) {
+      return blocked(state, 'Verified Forge source escrow and publication outbox identity required.');
+    }
+    return {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionId: actionId(state, 'forge-publish'), missionId: state.missionId,
+      actionKind: 'forge-escrow-publication', adapter: 'forge-publication',
+      operation: 'publish-forge-escrow', owner: 'github-first', activeWriter: 'none',
+      repository: state.repository, branch: state.git.branch,
+      artifactSha256: source.artifactSha256, outboxId: source.outboxId,
+      exactParentHead: source.exactParentHead, exactResultTree: source.exactResultTree,
+      receiptRequirement: 'signed exact-tree Forge draft PR publication',
+      executable: true, blockers: [], finalVerdict: 'READY_TO_PUBLISH_SIGNED_FORGE_DRAFT',
+    };
+  }
+
   if (SIGNED_OPERATION_PHASES.has(state.currentPhase)) {
     const operation = SIGNED_OPERATION_PHASES.get(state.currentPhase);
     if (!OPENCLAW_BRANCH_PATTERN.test(text(state.git?.branch))) return blocked(state, 'Signed OpenClaw mutations require an openclaw/* mission branch.');

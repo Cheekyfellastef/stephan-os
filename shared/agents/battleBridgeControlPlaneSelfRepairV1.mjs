@@ -31,9 +31,16 @@ export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK = Object.freeze({
   installerRelativePath: 'scripts/windows/install-battle-bridge-monitor-multiplexer.ps1',
   intervalMinutes: 1,
 });
+export const BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK = Object.freeze({
+  id: 'sovereignCommanderWatchdog',
+  taskName: 'Stephanos Sovereign Commander',
+  runnerRelativePath: 'scripts/windows/run-sovereign-commander-hidden.ps1',
+  intervalMinutes: 1,
+});
 export const BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS = Object.freeze([
   ...CORE_CONTROL_PLANE_TASKS,
   BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
+  BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK,
 ]);
 
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -86,6 +93,32 @@ export function validateMonitorMultiplexerInstallerReceipt(payload) {
   );
 }
 
+export function validateSovereignCommanderWatchdogReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+    && payload.taskName === BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName
+    && payload.daemonHealthy === true
+    && payload.coreDaemonHealthy === true
+    && payload.fleetGoalSupervisorOk === true
+    && payload.healthy === true
+    && payload.canonicalGoalFabricOnly === true
+    && payload.sourceMutationDelegatedToMissionWorker === true
+    && payload.duplicateSchedulerAllowed === false
+    && payload.duplicateLeaseAllowed === false
+    && payload.vendorMeterRequired === false
+    && payload.externalSaasRelayRequired === false
+    && payload.networkInstallAllowed === false
+    && payload.packageMutationAllowed === false
+    && payload.arbitraryExecutableAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.unrelatedProcessRestartAllowed === false
+    && payload.pcRestartAllowed === false
+    && payload.visiblePowerShellRequired === false
+    && payload.finalVerdict === 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY'
+  );
+}
+
 function projectMonitorFailure(core, blocker, details = {}) {
   const monitorResult = Object.freeze({
     id: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.id,
@@ -112,6 +145,58 @@ function projectMonitorFailure(core, blocker, details = {}) {
   });
 }
 
+function projectSovereignFailure(current, blocker, details = {}) {
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+    intervalMinutes: 1,
+    healthy: false,
+    startRequested: true,
+    receiptValid: false,
+    runnerExitOk: details.runnerExitOk === true,
+  });
+  return Object.freeze({
+    ...current,
+    ok: false,
+    blocker,
+    failedTaskId: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    taskCount: Number(current?.taskCount || 0) + 1,
+    tasks: Object.freeze([...(Array.isArray(current?.tasks) ? current.tasks : []), commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...(Array.isArray(current?.canonicalTaskNames) ? current.canonicalTaskNames : []),
+      BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    ]),
+    sovereignCommanderRequired: true,
+    remoteCommanderRequired: false,
+    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+  });
+}
+
+function runSovereignCaretaker(canonicalRoot, spawnSyncFn) {
+  const runnerPath = resolve(
+    canonicalRoot,
+    BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+  );
+  const command = spawnSyncFn(POWERSHELL_EXE, [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', runnerPath,
+  ], {
+    cwd: canonicalRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 180_000,
+    maxBuffer: MAX_OUTPUT_BYTES,
+  });
+  const runnerExitOk = !command?.error && command?.status === 0;
+  const payload = runnerExitOk ? parseInstallerJson(command.stdout) : null;
+  const receiptValid = runnerExitOk && validateSovereignCommanderWatchdogReceipt(payload);
+  return Object.freeze({ runnerExitOk, receiptValid, payload });
+}
+
 export function reconcileBattleBridgeControlPlane({
   repoRoot = '',
   expectedHead = '',
@@ -119,12 +204,47 @@ export function reconcileBattleBridgeControlPlane({
   spawnSyncFn = spawnSync,
   env = process.env,
   home = os.homedir(),
+  skipTaskIds = [],
 } = {}) {
-  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn });
-  if (!core.ok) return core;
+  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn, skipTaskIds });
+  const coreInstallerFailure = core?.ok !== true
+    && core?.blocker === 'CONTROL_PLANE_FIXED_INSTALLER_FAILED'
+    && core?.sourceDirtSafe === true
+    && core?.workConservingRepairAttempted === true;
+  if (!core.ok && !coreInstallerFailure) return core;
 
   const canonicalRoot = canonicalBattleBridgeRoot({ env, home });
   if (resolve(repoRoot) !== canonicalRoot) return core;
+
+  if (coreInstallerFailure) {
+    const emergency = runSovereignCaretaker(canonicalRoot, spawnSyncFn);
+    const emergencyCommanderResult = Object.freeze({
+      id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+      taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+      runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+      intervalMinutes: 1,
+      healthy: emergency.receiptValid,
+      startRequested: true,
+      receiptValid: emergency.receiptValid,
+      runnerExitOk: emergency.runnerExitOk,
+    });
+    return Object.freeze({
+      ...core,
+      taskCount: Number(core.taskCount || 0) + 1,
+      tasks: Object.freeze([...(Array.isArray(core.tasks) ? core.tasks : []), emergencyCommanderResult]),
+      canonicalTaskNames: Object.freeze([
+        ...(Array.isArray(core.canonicalTaskNames) ? core.canonicalTaskNames : []),
+        BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+      ]),
+      independentSovereignRepairAttempted: true,
+      independentSovereignRepairSucceeded: emergency.receiptValid,
+      sovereignRunnerExitOk: emergency.runnerExitOk,
+      sovereignReceiptValid: emergency.receiptValid,
+      sovereignCommanderRequired: true,
+      remoteCommanderRequired: false,
+      finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    });
+  }
 
   const installerPath = resolve(canonicalRoot, BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.installerRelativePath);
   const command = spawnSyncFn(POWERSHELL_EXE, [
@@ -161,7 +281,7 @@ export function reconcileBattleBridgeControlPlane({
     receiptValid: true,
     installerExitOk: true,
   });
-  return Object.freeze({
+  const withMonitor = Object.freeze({
     ...core,
     ok: true,
     schemaVersion: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
@@ -172,6 +292,42 @@ export function reconcileBattleBridgeControlPlane({
       ...core.canonicalTaskNames,
       BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
     ]),
+    finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
+  });
+
+  const sovereign = runSovereignCaretaker(canonicalRoot, spawnSyncFn);
+  if (!sovereign.runnerExitOk) {
+    return projectSovereignFailure(withMonitor, 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED', {
+      runnerExitOk: false,
+    });
+  }
+  if (!sovereign.receiptValid) {
+    return projectSovereignFailure(withMonitor, 'SOVEREIGN_COMMANDER_WATCHDOG_RECEIPT_INVALID', {
+      runnerExitOk: true,
+    });
+  }
+
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    runnerRelativePath: BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.runnerRelativePath,
+    intervalMinutes: 1,
+    healthy: true,
+    startRequested: true,
+    receiptValid: true,
+    runnerExitOk: true,
+  });
+  return Object.freeze({
+    ...withMonitor,
+    taskCount: Number(withMonitor.taskCount) + 1,
+    tasks: Object.freeze([...withMonitor.tasks, commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...withMonitor.canonicalTaskNames,
+      BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK.taskName,
+    ]),
+    sovereignCommanderRequired: true,
+    sovereignCommanderHealthy: true,
+    remoteCommanderRequired: false,
     finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   });
 }

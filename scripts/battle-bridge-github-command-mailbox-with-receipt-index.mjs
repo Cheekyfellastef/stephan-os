@@ -26,12 +26,21 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 const SELF_UPDATE_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
 
-// The installed mailbox Scheduled Task has a 15-minute execution ceiling. Give a
-// running instance a fixed five-minute reclamation margin, then fail closed rather
-// than preserving ACCEPTED ownership forever after an executor disappears.
-export const MAILBOX_ACCEPTED_LEASE_MS = 20 * 60 * 1000;
+// ACCEPTED ownership is heartbeat-assisted, but fixed Commander maintenance
+// can occupy the mailbox while its timer cannot advance. A remote plan can last
+// eight minutes and the outbox-guarded child can run for up to fifteen minutes.
+// Do not terminalize its accepted ownership while that child may still execute:
+// reclaim only after the guarded child's deadline plus a one-minute margin.
+// This is not a replay grant, and reconciliation still consumes the request
+// without authorizing a second writer or mutating the original source lease.
+export const MAILBOX_ACCEPTED_LEASE_MS = 16 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
 export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
+
+export function safeMailboxRunnerExceptionBlocker(error) {
+  const message = String(error?.message || error || '').trim();
+  return /^[A-Z][A-Z0-9_:-]{2,179}$/.test(message) ? message : 'MAILBOX_RUNNER_FAILED';
+}
 
 function blockedIndexRefresh() {
   return Object.freeze({
@@ -477,10 +486,10 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
       : blockedGuardLease(leaseBeforeMailbox);
     const leaseAfterMailbox = verifyGuardLease();
     if (!leaseAfterMailbox.ok) mailbox = blockedGuardLease(leaseAfterMailbox);
-  } catch {
+  } catch (error) {
     mailbox = {
       ok: false,
-      blocker: 'MAILBOX_RUNNER_FAILED',
+      blocker: safeMailboxRunnerExceptionBlocker(error),
       finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
     };
   } finally {

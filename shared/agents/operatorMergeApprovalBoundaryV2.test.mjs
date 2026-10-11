@@ -88,6 +88,8 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
@@ -425,7 +427,12 @@ test('protected workflow evidence is bound to exact ref, size, blob and least-au
 
 test('failed independent reviews still publish immutable findings evidence', () => {
   const workflow = workflowContent('.github/workflows/independent-merge-security-review.yml');
-  assert.match(workflow, /Upload the exact-run immutable independent review result[\s\S]*?if: \$\{\{ always\(\) \}\}[\s\S]*?actions\/upload-artifact@v4/);
+  // Findings are still uploaded after a real review failure. An exhausted
+  // installation budget is different: no review ran and no API follow-up is safe.
+  assert.ok(workflow.includes("if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
+  assert.ok(workflow.includes('name: Upload the exact-run immutable independent review result'));
+  assert.ok(workflow.includes('name: Surface terminal exact-head findings or pre-artifact failure'));
+  assert.ok(workflow.includes('actions/upload-artifact@v4'));
   const reviewer = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
   const findingsBranch = reviewer.slice(
     reviewer.indexOf("if (analysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_CLEAN'"),
@@ -528,6 +535,26 @@ test('rejects command authority in the exact-base binding module', () => {
     diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
   });
   assert.ok(result.findings.some((item) => item.code === 'base-binding-module-gained-command-authority'));
+});
+
+test('extracted main-movement gate modules remain approval boundaries and cannot self-attest command authority', () => {
+  for (const path of [
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
+  ]) {
+    const result = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
+    });
+    assert.ok(result.findings.some((item) => (
+      item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === path
+    )));
+    assert.ok(result.findings.some((item) => (
+      item.code === 'base-binding-module-gained-command-authority'
+      && item.path === path
+    )));
+  }
 });
 
 function specialistAnalysis(paths = ['scripts/windows/start-stephanos-backend.ps1']) {

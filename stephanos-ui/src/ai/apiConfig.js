@@ -3,7 +3,7 @@ import {
   STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL,
   isMalformedStephanosHost,
   readPersistedStephanosHomeBridgeUrl,
-  readPersistedStephanosHostedExecutionBridgeUrl,
+  resolveStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
@@ -29,9 +29,10 @@ function isLoopbackHost(hostname = '') {
 function getStoredHomeNodeContext() {
   const frontendOrigin = getFrontendOrigin();
   const directBridgeUrl = globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '';
-  const hostedExecutionBridgeUrl = globalThis?.[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL]
-    || readPersistedStephanosHostedExecutionBridgeUrl(undefined, { frontendOrigin })
-    || '';
+  const hostedExecutionBridgeUrl = resolveStephanosHostedExecutionBridgeUrl({
+    frontendOrigin,
+    candidates: [globalThis?.[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL] || ''],
+  });
   let preferHostedExecution = false;
   try {
     const frontend = new URL(frontendOrigin);

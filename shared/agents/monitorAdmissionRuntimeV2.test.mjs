@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -12,9 +12,11 @@ import {
   admitLogicalMonitorWithRuntimeV2,
   buildMonitorRuntimeProjectionV2,
   isLogicalControllerPulseProposalV2,
+  loadLogicalGoalControllerFabricForMonitorRuntimeV2,
   loadMonitorAdmissionRegistryV2,
   runMonitorAdmissionRuntimeV2,
 } from './monitorAdmissionRuntimeV2.mjs';
+import { LOGICAL_GOAL_CONTROLLER_FABRIC_FILE } from './logicalGoalControllerFabricV1.mjs';
 
 const NOW = Date.parse('2026-09-19T18:30:00.000Z');
 const OWNER = 'stephan';
@@ -136,13 +138,79 @@ test('controller pulses produce a fresh batched outbox notification on each due 
   assert.notEqual(second.tick.notificationRecords[0].messageId, first.tick.notificationRecords[0].messageId);
 });
 
-test('malformed or missing durable registry never fabricates a live runtime', async () => {
+test('first missing registry is durably bootstrapped empty, but later loss fails closed', async () => {
   const workspace = await root();
   const loaded = await loadMonitorAdmissionRegistryV2(options(workspace));
-  assert.equal(loaded.ok, false);
-  assert.equal(loaded.reason, 'MONITOR_ADMISSION_REGISTRY_NOT_FOUND');
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.reason, 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAPPED_EMPTY');
+  assert.equal(loaded.monitorCount, 0);
+  assert.equal(loaded.durableRegistryPresent, true);
+
+  const registryPath = join(workspace, 'status', 'monitor-admission-registry.json');
+  const durable = JSON.parse(await readFile(registryPath, 'utf8'));
+  assert.equal(durable.registrySchemaVersion, 'stephanos.monitor-admission-registry.v1');
+  assert.deepEqual(durable.monitors, {});
 
   const result = await runMonitorAdmissionRuntimeV2({ root: workspace, repoRoot: process.cwd(), nowMs: NOW });
-  assert.equal(result.ok, false);
-  assert.equal(result.finalVerdict, 'MONITOR_ADMISSION_RUNTIME_BLOCKED');
+  assert.equal(result.ok, true);
+  assert.equal(result.monitorCount, 0);
+  assert.equal(result.logicalControllerCount, 0);
+  assert.equal(result.finalVerdict, 'MONITOR_ADMISSION_RUNTIME_TICK_PASS');
+
+  await rename(registryPath, join(workspace, 'archive', 'simulated-lost-monitor-admission-registry.json'));
+  const lost = await loadMonitorAdmissionRegistryV2(options(workspace));
+  assert.equal(lost.ok, false);
+  assert.equal(lost.reason, 'MONITOR_ADMISSION_REGISTRY_MISSING_AFTER_BOOTSTRAP');
+
+  const blocked = await runMonitorAdmissionRuntimeV2({ root: workspace, repoRoot: process.cwd(), nowMs: NOW });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.finalVerdict, 'MONITOR_ADMISSION_RUNTIME_BLOCKED');
+});
+
+test('malformed durable registry still fails closed', async () => {
+  const workspace = await root();
+  const statusDir = join(workspace, 'status');
+  await mkdir(statusDir, { recursive: true });
+  await writeFile(
+    join(statusDir, 'monitor-admission-registry.json'),
+    JSON.stringify({ registrySchemaVersion: 'bad', monitors: {}, idempotency: {} }),
+  );
+  const loaded = await loadMonitorAdmissionRegistryV2(options(workspace));
+  assert.equal(loaded.ok, false);
+  assert.equal(loaded.reason, 'MALFORMED_DURABLE_REGISTRY');
+});
+
+
+test('stale logical goal controller fabric is omitted while durable monitor runtime remains available', async () => {
+  const workspace = await root();
+  const statusDir = join(workspace, 'status');
+  await mkdir(statusDir, { recursive: true });
+  const staleFabric = {
+    schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+    valid: true,
+    observedAtUtc: new Date(NOW - (16 * 60 * 1000)).toISOString(),
+    controllers: [{ logicalControllerId: 'logical-goal-2314' }],
+  };
+  await writeFile(
+    join(statusDir, LOGICAL_GOAL_CONTROLLER_FABRIC_FILE),
+    JSON.stringify(staleFabric, null, 2),
+  );
+
+  const stale = await loadLogicalGoalControllerFabricForMonitorRuntimeV2(options(workspace));
+  assert.equal(stale.ok, true);
+  assert.equal(stale.reason, 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE');
+  assert.equal(stale.fabric, null);
+
+  const currentFabric = {
+    ...staleFabric,
+    observedAtUtc: new Date(NOW - 60_000).toISOString(),
+  };
+  await writeFile(
+    join(statusDir, LOGICAL_GOAL_CONTROLLER_FABRIC_FILE),
+    JSON.stringify(currentFabric, null, 2),
+  );
+  const current = await loadLogicalGoalControllerFabricForMonitorRuntimeV2(options(workspace));
+  assert.equal(current.ok, true);
+  assert.equal(current.reason, 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY');
+  assert.equal(current.fabric.controllers[0].logicalControllerId, 'logical-goal-2314');
 });

@@ -5,9 +5,9 @@ import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
-import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -75,6 +75,35 @@ function validEscrow(missionId, actionId) {
   };
 }
 
+function validOutbox(missionId, actionId) {
+  const escrow = validEscrow(missionId, actionId);
+  return {
+    schemaVersion: 'stephanos.offline-publication-outbox.v1',
+    outboxId: 'offline-publication-test',
+    state: 'PENDING_PUBLICATION',
+    missionId,
+    actionId,
+    completeArtifactSha256: escrow.completeArtifactSha256,
+    artifactRef: escrow.artifactRef,
+    preserveVerifiedArtifact: true,
+    rebuildRequired: false,
+    pushAuthority: false,
+    mergeAuthority: false,
+  };
+}
+
+function forgeSourceFields(missionId) {
+  const escrow = { ...validEscrow(missionId, 'test-source'),
+    canonicalPr: null,
+    artifactRef: 'shared-workspace://source-artifacts/' + 'e'.repeat(64) + '.json',
+  };
+  const outbox = { ...validOutbox(missionId, 'test-source'),
+    outboxId: 'offline-publication-' + 'f'.repeat(24),
+    artifactRef: escrow.artifactRef, publicationPaused: true,
+  };
+  return { sourceArtifactEscrow: escrow, offlinePublicationOutbox: outbox };
+}
+
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -90,12 +119,174 @@ async function readyCodexMission(missionId, options) {
   return publishMissionWorkerAction(ready.state, options);
 }
 
+test('verification consumer binds canonical elastic goal evidence to proven source and tests', async () => {
+  const options = await runtime();
+  const missionId = 'critical-1818-elastic-goal';
+  const requirement = 'Goal #1818 bounded implementation and focused verification evidence';
+  await createMissionRecord({ ...intent(missionId), requiredEvidence: [requirement] }, options);
+  let state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'verification-worktree-proof'),
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'foundry-forge',
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-source-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    resultId: 'verification-source-result',
+    ...forgeSourceFields('critical-1818-elastic-goal'),
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: {
+      receiptId: 'verification-source-receipt',
+      requirement: 'provider-neutral bounded source change',
+      source: 'foundry-forge',
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: 'a'.repeat(64),
+    },
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-test-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [{
+      receiptId: 'verification-test-receipt',
+      requirement: 'source deterministic test',
+      source: 'provider-neutral-local-builder',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: 'b'.repeat(64),
+    }],
+  }, options)).state;
+  assert.equal(state.currentPhase, 'VERIFYING');
+
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'verification');
+
+  const result = await processNextVerificationItem(options);
+  assert.equal(result.processed, true);
+  assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_GROUNDED');
+  assert.equal(result.applied.state.currentPhase, 'GITHUB_COMMIT');
+
+  const current = (await readMissionRecord(missionId, options)).state;
+  const grounded = current.evidenceReceipts.find((receipt) => receipt.requirement === requirement);
+  assert.ok(grounded);
+  assert.equal(grounded.source, 'verification-judge');
+  assert.equal(grounded.evidenceType, 'source-test-suite');
+  assert.match(grounded.commandOutputHash, /^[0-9a-f]{64}$/);
+});
+
+test('verification consumer refuses browser evidence from source-test receipts', async () => {
+  const options = await runtime();
+  const missionId = 'verification-browser-proof-test';
+  await createMissionRecord({ ...intent(missionId), requiredEvidence: ['browser proof'] }, options);
+  let state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'browser-verification-worktree-proof'),
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'foundry-forge',
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-source-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    resultId: 'browser-verification-source-result',
+    ...forgeSourceFields('verification-browser-proof-test'),
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: {
+      receiptId: 'browser-verification-source-receipt',
+      requirement: 'provider-neutral bounded source change',
+      source: 'foundry-forge',
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: 'c'.repeat(64),
+    },
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-test-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [{
+      receiptId: 'browser-verification-test-receipt',
+      requirement: 'source deterministic test',
+      source: 'provider-neutral-local-builder',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: 'd'.repeat(64),
+    }],
+  }, options)).state;
+  assert.equal(state.currentPhase, 'VERIFYING');
+
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'verification');
+
+  const result = await processNextVerificationItem(options);
+  assert.equal(result.processed, true);
+  assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_NOT_GROUNDED');
+  assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'VERIFYING');
+});
+
+test('OpenClaw Standalone consumer is a first-class queue surface', async () => {
+  const options = await runtime();
+  const result = await processNextOpenClawStandaloneItem({
+    ...options,
+    executeOpenClawStandaloneAction: async () => ({ success: true }),
+  });
+  assert.deepEqual(result, { processed: false, reason: 'queue-empty' });
+});
+
+test('OpenClaw Local consumer is a first-class queue surface', async () => {
+  const options = await runtime();
+  const result = await processNextOpenClawLocalItem({
+    ...options,
+    executeOpenClawLocalAction: async () => ({ success: true }),
+  });
+  assert.deepEqual(result, { processed: false, reason: 'queue-empty' });
+});
+
 test('claims each queue item exactly once', async () => {
   const options = await runtime();
   const created = await createMissionRecord(intent('claim-test'), options);
   await publishMissionWorkerAction(created.state, options);
   assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
+});
+
+test('agent handoff stays pending until atomic processing claim proves pickup', async () => {
+  const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
+  await createMissionRecord(intent('pickup-truth-test'), options);
+  const ready = await appendMissionEvent('pickup-truth-test', {
+    eventId: 'pickup-truth-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'pickup-truth-worktree-proof'),
+  }, options);
+  const published = await publishMissionWorkerAction(ready.state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'codex');
+  assert.equal((await readMissionRecord('pickup-truth-test', options)).state.dispatch.status, 'pending');
+
+  const claimed = await claimNextMissionWorkerItem('codex', options);
+  assert.ok(claimed);
+  assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  const running = (await readMissionRecord('pickup-truth-test', options)).state;
+  assert.equal(running.dispatch.status, 'running');
+  assert.equal(running.dispatch.adapter, 'codex');
 });
 
 test('exact action grant cannot consume another mission queue item', async () => {
@@ -194,6 +385,7 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
       testsPassed: true,
       sourceArtifactIdentity: sourceIdentity('codex-test', dispatch.action.actionId),
       sourceArtifactEscrow: validEscrow('codex-test', dispatch.action.actionId),
+      offlinePublicationOutbox: validOutbox('codex-test', dispatch.action.actionId),
     }),
   });
   assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
@@ -270,4 +462,157 @@ test('valid JSON pending item with mismatched immutable identity is quarantined 
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
   assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID');
+});
+
+
+test('retry ownership proof blocks while the prior provider-neutral claim is still processing', async () => {
+  const options = await runtime();
+  const adapter = 'foundry-forge';
+  const missionId = 'retry-ownership-processing';
+  const actionId = 'retry-ownership-processing-r1';
+  const processingRoot = join(options.queueRoot, adapter, 'processing');
+  await mkdir(processingRoot, { recursive: true });
+  await writeFile(join(processingRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    executionBinding: {
+      executionId: actionId,
+      leaseKey: 'retry-ownership-processing-lease',
+      sourceRevision: 'a'.repeat(40),
+    },
+  }));
+
+  const result = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => {
+      throw new Error('receipt history must not be consulted while claim is processing');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'MISSION_WORKER_RETRY_PRIOR_CLAIM_STILL_PROCESSING');
+});
+
+test('retry ownership proof requires released failed claim plus terminal execution receipt', async () => {
+  const options = await runtime();
+  const adapter = 'foundry-forge';
+  const missionId = 'retry-ownership-terminal';
+  const actionId = 'retry-ownership-terminal-r1';
+  const leaseKey = 'retry-ownership-terminal-lease';
+  const sourceRevision = 'b'.repeat(40);
+  const failedRoot = join(options.queueRoot, adapter, 'failed');
+  await mkdir(failedRoot, { recursive: true });
+  await writeFile(join(failedRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    executionBinding: {
+      executionId: actionId,
+      leaseKey,
+      sourceRevision,
+    },
+  }));
+  await writeFile(join(failedRoot, actionId + '.result.json'), JSON.stringify({
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+    missionId,
+    actionId,
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  }));
+
+  const missingReceipt = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => ({
+      ok: true,
+      reason: 'NO_EXECUTION_RECEIPTS',
+      receipts: [],
+      latestReceipt: null,
+    }),
+  });
+  assert.equal(missingReceipt.ok, false);
+  assert.equal(missingReceipt.classification, 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN');
+
+  await writeFile(join(failedRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    actionGrant: {
+      schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    },
+    executionBinding: {
+      schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId,
+      leaseKey,
+      sourceRevision,
+    },
+  }));
+  await writeFile(join(failedRoot, actionId + '.result.json'), JSON.stringify({
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+    processed: true,
+    success: false,
+    adapter,
+    providerAdapter: adapter,
+    missionId,
+    actionId,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+    finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+  }));
+  const legacyProven = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => ({
+      ok: true,
+      reason: 'NO_EXECUTION_RECEIPTS',
+      receipts: [],
+      latestReceipt: null,
+    }),
+  });
+  assert.equal(legacyProven.ok, true);
+  assert.equal(legacyProven.classification, 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN');
+  assert.equal(legacyProven.executionReceiptState, 'provider-neutral-failed-queue');
+
+  const proven = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async (_root, filters) => {
+      assert.equal(filters.executionId, actionId);
+      assert.equal(filters.leaseKey, leaseKey);
+      assert.equal(filters.expectedHead, sourceRevision);
+      return {
+        ok: true,
+        reason: 'EXECUTION_RECEIPTS_READ',
+        latestReceipt: {
+          receiptId: 'terminal-receipt',
+          executionId: actionId,
+          leaseKey,
+          state: 'failed',
+        },
+      };
+    },
+  });
+  assert.equal(proven.ok, true);
+  assert.equal(proven.classification, 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN');
+  assert.equal(proven.executionReceiptId, 'terminal-receipt');
 });

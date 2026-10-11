@@ -124,6 +124,8 @@ test('Git topology can bind the canonical index identity for read-only source pr
 test('local Git configuration admits only the fixed origin and blocks executable helpers', () => {
   const baseline = `core.repositoryformatversion\n0\0remote.origin.url\n${BATTLE_BRIDGE_CANONICAL_REMOTE_URL}\0remote.origin.fetch\n+refs/heads/main:refs/remotes/origin/main\0`;
   assert.equal(validateBattleBridgeLocalGitConfiguration(baseline).ok, true);
+  assert.equal(validateBattleBridgeLocalGitConfiguration(`${baseline}core.hooksPath\n.githooks\0`).ok, true);
+  assert.equal(validateBattleBridgeLocalGitConfiguration(`${baseline}core.hooksPath\n.githooks-extra\0`).ok, false);
   for (const injected of [
     'core.hooksPath\nC:\\attacker\0',
     'core.fsmonitor\nC:\\attacker.exe\0',

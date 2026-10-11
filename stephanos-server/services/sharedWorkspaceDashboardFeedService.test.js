@@ -45,7 +45,7 @@ test('backend dashboard feed reads current state without walking historical rece
   assert.deepEqual(feed.errors, []);
 });
 
-test('backend keeps valid current-state evidence renderable as stale when another current-state record is invalid', async () => {
+test('backend keeps fresh current-state evidence ready while surfacing invalid-record warnings', async () => {
   const root = await createWorkspace();
   const now = '2026-09-11T10:00:00.000Z';
   const status = createSharedWorkspaceStatusRecord({
@@ -66,12 +66,38 @@ test('backend keeps valid current-state evidence renderable as stale when anothe
     liveProjection: null,
   });
 
-  assert.equal(feed.state, 'stale');
-  assert.equal(feed.reason, 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE');
+  assert.equal(feed.state, 'ready');
+  assert.equal(feed.reason, 'CURRENT_WORKSPACE_EVIDENCE_WITH_RECORD_WARNINGS');
   assert.equal(feed.records.statusRecords.length, 1);
   assert.equal(feed.errors.length, 1);
   assert.match(feed.errors[0], /status\/invalid-current\.json:PARSE_FAILED/);
   assert.equal(feed.diagnosticTrace.at(-1).state, 'renderable');
+});
+
+test('backend still reports stale when valid current-state evidence is genuinely old and record warnings also exist', async () => {
+  const root = await createWorkspace();
+  const now = '2026-09-11T10:00:00.000Z';
+  const status = createSharedWorkspaceStatusRecord({
+    statusId: 'dashboard-old',
+    timestampUtc: '2026-09-11T09:00:00.000Z',
+    relatedIssue: '#1290',
+    status: 'CURRENT',
+    summary: 'Last valid project status is old.',
+  });
+  await writeFile(join(root, 'status', 'dashboard-old.json'), `${JSON.stringify(status)}\n`, 'utf8');
+  await writeFile(join(root, 'status', 'invalid-current.json'), '{not-json\n', 'utf8');
+
+  const feed = await readBackendSharedWorkspaceDashboardFeed({
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: process.cwd(),
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+
+  assert.equal(feed.state, 'stale');
+  assert.equal(feed.reason, 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE');
+  assert.equal(feed.errors.length, 1);
 });
 
 test('backend remains fail-closed when invalid current-state records have no valid evidence to render', async () => {

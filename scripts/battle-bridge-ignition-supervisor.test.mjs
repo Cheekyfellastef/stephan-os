@@ -17,6 +17,7 @@ import {
   resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
+  launchOptionalOpenClawCompanionSurfaces,
   runCanonicalSupervisorHousekeep,
   runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
@@ -798,6 +799,80 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
+test('optional OpenClaw companion surfaces launch configured chat and dashboard without becoming ignition requirements', async () => {
+  const spawned = [];
+  let unrefs = 0;
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    cwd: '/repo',
+    env: {
+      STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js',
+      STEPHANOS_OPENCLAW_DASHBOARD_COMMAND: 'node openclaw-dashboard.js',
+    },
+    spawnFn: (command, args, options) => {
+      spawned.push({ command, args, options });
+      return { pid: 9000 + spawned.length, unref() { unrefs += 1; } };
+    },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, false);
+  assert.deepEqual(result.surfaces.map((surface) => surface.surface), ['chat', 'dashboard']);
+  assert.deepEqual(spawned.map((entry) => entry.args[0]), ['openclaw-chat.js', 'openclaw-dashboard.js']);
+  assert.equal(spawned.every((entry) => entry.options.detached === true && entry.options.shell === false && entry.options.stdio === 'ignore'), true);
+  assert.equal(spawned.every((entry) => entry.options.env.STEPHANOS_OPENCLAW_AUTOSTART === 'runtime-surfaces-only'), true);
+  assert.equal(unrefs, 2);
+});
+
+test('optional OpenClaw companion surface launch failure is recorded and never thrown', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js' },
+    spawnFn: () => { throw new Error('app launch failed'); },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').started, false);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').reason, 'companion-launch-failed');
+});
+
+test('asynchronous OpenClaw companion spawn errors are captured as non-blocking degradation', async () => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const resultPromise = launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'missing-openclaw-chat.exe' },
+    settleTimeoutMs: 50,
+    spawnFn: () => {
+      queueMicrotask(() => child.emit('error', new Error('ENOENT missing-openclaw-chat.exe')));
+      return child;
+    },
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'companion-launch-failed');
+  assert.match(chat.error, /ENOENT/);
+});
+
+test('configured but rejected OpenClaw companion intent remains visible as degradation', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'openclaw task execute mutate-files' },
+  });
+
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.rejected, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'approved-launch-command-violates-guardrails');
+});
+
 test('OpenClaw gateway start blocks with startup-approval-required without approval when 18789 is down', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-no-approval-'));
   const spawnCalls = [];
@@ -1099,6 +1174,66 @@ test('approved OpenClaw gateway start writes all log paths on timeout', async ()
   assert.match(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'), /still down/);
 });
 
+test('optional OpenClaw launch returns immediately after spawn without readiness polling', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-optional-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let healthCalls = 0;
+  let unrefCalls = 0;
+  child.unref = () => { unrefCalls += 1; };
+
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    waitForReady: false,
+    readyTimeoutMs: 60000,
+    retryIntervalMs: 500,
+    spawnFn: () => child,
+    fetchFn: async () => {
+      healthCalls += 1;
+      throw new Error('not listening before optional start');
+    },
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.background, true);
+  assert.equal(result.healthProof.deferred, true);
+  assert.equal(result.healthProof.reason, 'optional-openclaw-health-proof-deferred');
+  assert.equal(healthCalls, 1);
+  assert.equal(unrefCalls, 1);
+});
+
+test('optional OpenClaw launch cannot hang forever on a stalled preflight health endpoint', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-stalled-probe-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+
+  const result = await Promise.race([
+    runApprovedOpenClawGateway18789Start({
+      sharedWorkspace: workspace,
+      token: 'test-token',
+      approved: true,
+      waitForReady: false,
+      healthProbeTimeoutMs: 5,
+      spawnFn: () => child,
+      fetchFn: async () => new Promise(() => {}),
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('optional OpenClaw probe did not return')), 250)),
+  ]);
+
+  assert.equal(result.started, true);
+  assert.equal(result.background, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.healthProof.deferred, true);
+});
+
 test('Windows OpenClaw spawn EINVAL is captured in exit log for start-failed classification', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-win-einval-'));
   const appData = path.join(workspace, 'AppData', 'Roaming');
@@ -1179,18 +1314,22 @@ test('approved OpenClaw gateway start blocks exact-head drift immediately before
   });
 });
 
-test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
+test('supervisor launches optional OpenClaw without waiting for readiness', async () => {
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
-    openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
+    openClawStartFn: async ({ sharedWorkspace, waitForReady }) => {
+      calls.push({ sharedWorkspace, waitForReady });
+      return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } };
+    },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].waitForReady, false);
   assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
 });
 
@@ -1218,33 +1357,80 @@ test('supervisor blocks source drift before invoking the OpenClaw startup mutato
   assert.equal(sourceTruthReads, 2);
 });
 
-test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
+test('supervisor launches OpenClaw companions even when gateway is already healthy', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
-    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
-    openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
-    repairFn: async () => { calls.push('ui-repair'); return 0; },
-    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawStartFn: async () => { throw new Error('gateway start must not run when already healthy'); },
+    openClawCompanionStartFn: ({ env, cwd }) => {
+      calls.push({ env, cwd });
+      return { requiredForIgnition: false, attempted: true, degraded: false, surfaces: [{ surface: 'chat', configured: true, started: true }] };
+    },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-start-failed');
-  assert.deepEqual(calls, []);
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.surfaces[0].started, true);
 });
 
-test('OpenClaw running without health proof blocks with no-health-proof and surfaces logPath', async () => {
+test('unexpected OpenClaw companion adapter failure remains non-blocking', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawCompanionStartFn: () => { throw new Error('companion adapter broke'); },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.degraded, true);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.reason, 'companion-launch-adapter-failed');
+});
+
+test('OpenClaw command failure degrades capability but does not block Stephanos startup', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-start-failed');
+  assert.equal(result.status.phases['OpenClaw gateway 18789'].state, 'degraded');
+  assert.equal(result.status.trafficLight, 'green');
+});
+
+test('OpenClaw without health proof stays degraded while Stephanos reaches ready', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: true, exitCode: null, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: false, health: { json: { service: 'openclaw-readonly-adapter-stub', status: 'healthy' } } } }),
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-no-health-proof');
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-no-health-proof');
   assert.equal(result.status.phases['OpenClaw gateway 18789'].logPath, '/canonical/openclaw-log');
-  assert.match(result.status.nextOperatorAction, /\/canonical\/openclaw-log/);
+  assert.match(result.status.services.openClaw18789.recoveryAction, /does not wait on OpenClaw/);
+  assert.equal(result.status.trafficLight, 'green');
 });
 
 test('default shared workspace is canonical Documents path, not temp Battle Bridge workspace', () => {

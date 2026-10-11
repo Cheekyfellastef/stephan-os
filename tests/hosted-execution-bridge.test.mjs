@@ -4,6 +4,8 @@ import {
   clearPersistedStephanosHostedExecutionBridgeUrl,
   persistStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosHostedExecutionBridgeUrl,
+  resolveStephanosHostedExecutionBridgeUrl,
+  STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL,
 } from '../shared/runtime/stephanosHomeNode.mjs';
 import { requestStephanosBackend, resolveStephanosBackendClientBaseUrl } from '../shared/runtime/backendClient.mjs';
 import { createStephanosTileDataClient } from '../shared/runtime/tileDataContract.mjs';
@@ -74,34 +76,53 @@ test('shared tile data client resolves persisted HTTPS execution bridge', () => 
 });
 
 
-test('hosted backend client fails closed when no HTTPS execution bridge is configured', async () => {
+test('hosted route resolver automatically supplies the project canonical HTTPS bridge', () => {
   const storage = createStorage();
   const frontendOrigin = 'https://cheekyfellastef.github.io';
 
-  const baseUrl = resolveStephanosBackendClientBaseUrl({
-    frontendOrigin,
-    storage,
-    bridgeUrl: 'http://100.100.100.100:8787',
-  });
-  assert.equal(baseUrl, '');
-
-  await assert.rejects(
-    requestStephanosBackend({
-      path: '/api/shared-workspace/dashboard-feed',
-      runtimeContext: {
-        frontendOrigin,
-        storage,
-        bridgeUrl: 'http://100.100.100.100:8787',
-      },
-      fetchImpl: async () => {
-        throw new Error('fetch should not run');
-      },
+  assert.equal(
+    resolveStephanosHostedExecutionBridgeUrl({ frontendOrigin, storage }),
+    STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL,
+  );
+  assert.equal(
+    resolveStephanosBackendClientBaseUrl({
+      frontendOrigin,
+      storage,
+      bridgeUrl: 'http://100.100.100.100:8787',
     }),
-    (error) => error?.code === 'hosted-backend-route-unavailable',
+    STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL,
   );
 });
 
-test('shared tile data client does not point a hosted page at phone localhost when bridge is absent', () => {
+test('hosted backend requests use the automatic canonical bridge without operator configuration', async () => {
+  const storage = createStorage();
+  const frontendOrigin = 'https://cheekyfellastef.github.io';
+  const seen = [];
+
+  const response = await requestStephanosBackend({
+    path: '/api/shared-workspace/dashboard-feed',
+    runtimeContext: {
+      frontendOrigin,
+      storage,
+    },
+    fetchImpl: async (url) => {
+      seen.push(url);
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ state: 'ready' });
+        },
+      };
+    },
+  });
+
+  assert.equal(response.json.state, 'ready');
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], `${STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL}/api/shared-workspace/dashboard-feed`);
+});
+
+test('shared tile data client never points a hosted page at phone localhost and auto-selects canonical HTTPS bridge', () => {
   const storage = createStorage();
   const client = createStephanosTileDataClient({
     storage,
@@ -116,5 +137,6 @@ test('shared tile data client does not point a hosted page at phone localhost wh
     logger: { info() {} },
   });
 
-  assert.equal(client.apiBaseUrl, '');
+  assert.equal(client.apiBaseUrl, STEPHANOS_PROJECT_HOSTED_EXECUTION_BRIDGE_URL);
+  assert.equal(client.apiBaseUrl.includes('localhost'), false);
 });

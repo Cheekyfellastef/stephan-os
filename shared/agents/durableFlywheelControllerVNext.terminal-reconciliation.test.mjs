@@ -148,7 +148,9 @@ test('FINALIZING heartbeat must publish before terminal finalization', async () 
 
   assert.equal(result.status, 'HOLD');
   assert.equal(result.allowWorkerTick, false);
-  assert.deepEqual(order, ['STARTING', 'FINALIZING', 'HOLD']);
+  // The active controller enters reconciliation before terminal cleanup;
+  // STARTING is reserved for the earlier boot boundary.
+  assert.deepEqual(order, ['RECONCILING', 'FINALIZING', 'HOLD']);
   assert.ok(result.blockers.includes(
     'controller-heartbeat:finalizing-heartbeat-failed',
   ));

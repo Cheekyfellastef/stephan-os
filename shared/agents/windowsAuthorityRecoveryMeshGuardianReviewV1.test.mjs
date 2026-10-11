@@ -50,7 +50,7 @@ function boundedIngressFixture() {
     '$currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)',
     "if ([string]$mailboxReceipt.state -notin @('ACCEPTED','DONE')) { throw 'RECOVERY_GITHUB_RECEIPT_AUTHORITY_INVALID' }",
     "$expectedArguments = \"//B //NoLogo `\"$launcherPath`\" recovery-mesh\"",
-    "if ([string]$task.Principal.LogonType -ne 'Interactive') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }",
+    "if ([string]$task.Principal.LogonType -ne 'S4U') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }",
     "if ([string]$task.Principal.RunLevel -ne 'Limited') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }",
     "if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew') { throw 'RECOVERY_MESH_TASK_SETTINGS_INVALID' }",
     "action = 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER'",

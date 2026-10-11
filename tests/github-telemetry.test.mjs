@@ -4,6 +4,10 @@ import { answerLiveTelemetryQuestion, classifyGithubNotification, normalizeGithu
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
 import { fetchGithubPrEvidence } from '../stephanos-server/services/githubPrEvidenceService.js';
 import { buildLiveGoalProjection } from '../stephanos-server/services/liveGoalProjectionService.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readBrokeredGithubRateLimitHold } from '../shared/agents/githubObservationBrokerV1.mjs';
 
 test('GitHub notifications classify into required categories and count unread state', () => {
   const telemetry = normalizeGithubTelemetry({ available: true, notifications: [
@@ -75,6 +79,12 @@ test('GitHub auth resolver uses gh CLI fallback when environment and secret stor
   assert.equal(auth.token, 'gh-token');
 });
 
+test('node:test sandbox never inherits implicit Battle Bridge GitHub auth', async () => {
+  const auth = await resolveGithubAuth({});
+  assert.equal(auth.configured, false);
+  assert.equal(auth.authority, 'unavailable');
+});
+
 test('GitHub telemetry retries once with gh CLI token after explicit 403', async () => {
   const calls = [];
   const telemetry = await readGithubTelemetry({
@@ -118,6 +128,57 @@ test('GitHub telemetry reports authority=gh-cli when fallback succeeds', async (
   assert.equal(telemetry.authAuthority, 'gh-cli');
   assert.equal(telemetry.mutationAllowed, false);
   assert.equal(telemetry.mergeAllowed, false);
+});
+
+test('GitHub telemetry reuses one bounded backend observation inside the cache window', async () => {
+  const calls = [];
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'cache-token' },
+    secretStoreToken: '',
+    fetchImpl: telemetryFetchRecorder(calls),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:00:00.000Z'),
+  };
+  const first = await readGithubTelemetry(options);
+  const second = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(second.status, 'live');
+  assert.equal(calls.length, 3);
+});
+
+test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403', async () => {
+  const calls = [];
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/fallback-cache-repo', GITHUB_TOKEN: 'rate-limited-primary-token' },
+    secretStoreToken: '',
+    ghTokenProvider: async () => 'healthy-gh-fallback-token',
+    fetchImpl: telemetryFetchRecorder(calls, { forbiddenToken: 'rate-limited-primary-token' }),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:02:00.000Z'),
+  };
+  const first = await readGithubTelemetry(options);
+  const second = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(first.authAuthority, 'gh-cli');
+  assert.equal(second.status, 'live');
+  assert.equal(calls.length, 6);
+});
+
+test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
+  const calls = [];
+  const common = {
+    secretStoreToken: '',
+    fetchImpl: telemetryFetchRecorder(calls),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:03:00.000Z'),
+  };
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-b' } });
+  assert.equal(calls.length, 6);
 });
 
 test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {
@@ -233,4 +294,103 @@ test('PR evidence preserves a fork head repository so lease identity cannot be b
   assert.equal(payload.repository, 'contributor/repo');
   assert.equal(payload.baseRepository, 'owner/repo');
   assert.equal(payload.headRepositoryMatchesBase, false);
+});
+
+
+test('PR evidence holds on GitHub API rate limit without multiplying requests or inventing PR truth', async () => {
+  const calls = [];
+  let fallbackAttempts = 0;
+  const auth = { configured: true, token: 'rate-limited-auth-token', authority: 'environment' };
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: false,
+      status: 403,
+      headers: { get: (name) => name === 'x-ratelimit-remaining' ? '0' : null },
+      json: async () => ({ message: 'API rate limit exceeded for user ID 123' }),
+    };
+  };
+  const args = {
+    owner: 'rate-limit-test-owner',
+    repo: 'rate-limit-test-repo',
+    prNumber: 1645,
+    auth,
+    fetchImpl,
+    ghTokenProvider: async () => { fallbackAttempts += 1; return 'unused-fallback-token'; },
+  };
+  const first = await fetchGithubPrEvidence(args);
+  const second = await fetchGithubPrEvidence(args);
+  assert.equal(first.status, 'error');
+  assert.equal(first.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(second.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(first.retryAfterUtc, second.retryAfterUtc);
+  assert.equal(calls.length, 1);
+  assert.equal(fallbackAttempts, 0);
+  assert.equal(Object.hasOwn(first, 'headSha'), false);
+  assert.equal(JSON.stringify([first, second]).includes('rate-limited-auth-token'), false);
+});
+
+test('PR evidence respects retry-after for 429 and leaves other repositories independently observable', async () => {
+  const args = {
+    owner: 'rate-limit-other-owner',
+    repo: 'rate-limit-retry-after-repo',
+    prNumber: 55,
+    auth: { configured: true, token: '429-token', authority: 'environment' },
+    fetchImpl: async () => ({
+      ok: false,
+      status: 429,
+      headers: { get: (name) => name === 'retry-after' ? '120' : null },
+      json: async () => ({ message: 'Too many requests' }),
+    }),
+  };
+  const hold = await fetchGithubPrEvidence(args);
+  assert.equal(hold.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  const retryDelay = Date.parse(hold.retryAfterUtc) - Date.now();
+  assert.ok(retryDelay > 100_000 && retryDelay <= 125_000);
+  const unrelated = await fetchGithubPrEvidence({
+    owner: 'rate-limit-unrelated-owner',
+    repo: 'rate-limit-unrelated-repo',
+    prNumber: 56,
+    auth: { configured: true, token: 'another-token', authority: 'environment' },
+    fetchImpl: async () => ({ ok: false, status: 404, headers: { get: () => null } }),
+  });
+  assert.equal(unrelated.status, 'error');
+  assert.notEqual(unrelated.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+});
+
+
+test('PR evidence shares rate-limit hold with disk broker, and rejects secondary 403 as PR proof', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-pr-shared-hold-'));
+  const calls = [];
+  const opts = {
+    owner: 'cross-process-owner', repo: 'cross-process-repo', prNumber: 89,
+    auth: { configured: true, token: 'synthetic-test-secret', authority: 'environment' },
+    workspaceRoot,
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.endsWith('/pulls/89')) return okJson({ number: 89, head: { sha: 'a'.repeat(40), ref: 'branch' } });
+      return { status: 403, ok: false, headers: { get: name => name === 'x-ratelimit-remaining' ? '0' : null }, json: async () => ({ message: 'API rate limit exceeded' }) };
+    },
+  };
+  try {
+    const result = await fetchGithubPrEvidence(opts);
+    assert.equal(result.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+    assert.equal(calls.length, 2, 'must stop before checks and comments after files response is rate-limited');
+    assert.equal(Object.hasOwn(result, 'headSha'), false);
+    const shared = readBrokeredGithubRateLimitHold({ repository: 'cross-process-owner/cross-process-repo', workspaceRoot });
+    assert.ok(shared?.untilMs > Date.now());
+    assert.equal(shared.retryAfterUtc, result.retryAfterUtc);
+    const broker = await import('../shared/agents/githubObservationBrokerV1.mjs');
+    let cliCalls = 0;
+    const blocked = broker.readBrokeredGithubJson({
+      key: 'pr-89-other-worker', endpoint: 'repos/cross-process-owner/cross-process-repo/issues/89',
+      workspaceRoot, spawnSyncFn: () => { cliCalls++; return { status: 0, stdout: '{}', stderr: '' }; },
+    });
+    assert.equal(blocked.reason, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(cliCalls, 0);
+    const receipt = JSON.stringify(shared);
+    assert.equal(receipt.includes('synthetic-test-secret'), false);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
 });

@@ -1,8 +1,8 @@
-# Stephanos Spatial Bridge V0
+# Stephanos Spatial Workspace V1
 
 ## Status
 
-The flat source prototype and Quest PWA entry are built, and the #1717 Holodeck Baseline now includes the first dependency-free immersive WebXR captain-scene source path. Deterministic source proof is available, while signed packaging, release-channel installation, physical Quest 3 observation, controller acceptance, Battle Bridge runtime proof and headset acceptance remain pending.
+The flat source prototype and Quest PWA entry are built, and the Holodeck Baseline now renders the first dependency-free immersive Spatial Workspace chamber: stereo room grid, focal portal, pedestal and a first idea-cube visual primitive. Deterministic source proof is available, while physical Quest 3 observation, controller interaction, signed packaging and headset acceptance remain pending.
 
 This app remains read-only. The flat prototype consumes only `bridge-state.v0.json`, a bundled mock projection with `readOnly: true` and `authority: none`; that fixture is never evidence of live Stephanos/backend reachability.
 
@@ -22,7 +22,7 @@ Flat surface:
 /apps/spatial-bridge/index.html
 ```
 
-Quest Holodeck Baseline entry:
+Spatial Workspace starting-chamber entry:
 
 ```text
 /apps/spatial-bridge/quest-entry.html
@@ -48,7 +48,9 @@ Transport simulation routes:
 - keyboard navigation suitable for later controller mapping
 - strict rejection of projections that are not read-only or that carry authority
 - Quest PWA web manifest
-- Quest Holodeck Baseline entry with bounded WebXR session handling and fail-closed fallback
+- Spatial Workspace launch card with bounded WebXR session handling and fail-closed fallback
+- stereo Holodeck starting chamber with a pedestal and first idea-cube visual primitive
+- hidden Windows launcher plus reproducible `Stephanos Spatial Workspace` desktop shortcut installer
 - offline service worker and read-only fallback shell
 - source-only deterministic generator for 192px and 512px PNG icons
 - Digital Asset Link template
@@ -91,7 +93,7 @@ Generated PNGs are deployment artifacts and must not be committed.
 ## Deterministic source test
 
 ```text
-node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs
+node --test tests/spatial-bridge-v0.test.mjs tests/spatial-bridge-holodeck-baseline-v0.test.mjs tests/spatial-workspace-launcher-v1.test.mjs
 ```
 
 The source tests validate the flat contract, Holodeck Baseline source-readiness boundary and PNG generation without promoting physical headset proof.

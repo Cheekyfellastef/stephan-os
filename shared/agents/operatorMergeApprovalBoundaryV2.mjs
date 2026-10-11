@@ -129,6 +129,8 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/operatorMergeApprovalGateV2.mjs',
   'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+  'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
   'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
@@ -141,6 +143,7 @@ export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
   'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+  'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 
@@ -161,6 +164,8 @@ const INDEPENDENT_REVIEWER_PATHS = Object.freeze([
 
 const BASE_BINDING_PATHS = Object.freeze([
   'shared/agents/operatorMergeBaseBindingV1.mjs',
+  'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+  'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
 ]);
 

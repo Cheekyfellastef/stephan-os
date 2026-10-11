@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -16,6 +17,7 @@ export const ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA = 'stephanos.elastic-goal-mis
 const SCHEDULER_SCHEMA = 'stephanos.mission-scheduler.v1';
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const REPOSITORY_PATH_RESOURCE = /^repo:([^:]+\/[^:]+):path:(.+)$/;
+const REPOSITORY_ROOT_RESOURCE = /^repo:([^:]+\/[^:]+)$/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
 const NON_RUNNABLE_PHASES = new Set(['BLOCKED', 'AWAITING_OPERATOR_APPROVAL']);
 
@@ -72,15 +74,41 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   if (!projection.valid || projection.resourceIds.length === 0) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: [], reason: 'RESOURCE_SCOPE_REQUIRED' });
   }
+
+  const suppliedMutationResourceIds = list(portfolioGoal.resourceIds).length > 0
+    ? list(portfolioGoal.resourceIds)
+    : list(candidate.resourceIds);
+  const mutationProjection = projectCanonicalResourceIds(suppliedMutationResourceIds);
+  if (
+    !mutationProjection.valid
+    || JSON.stringify(mutationProjection.resourceIds) !== JSON.stringify(projection.resourceIds)
+  ) {
+    return freeze({
+      valid: false,
+      repository: '',
+      allowedFiles: [],
+      resourceIds: projection.resourceIds,
+      reason: 'SOURCE_SCOPE_IDENTITY_MISMATCH',
+    });
+  }
+
   const repositories = new Set();
   const paths = [];
-  for (const resourceId of projection.resourceIds) {
-    const match = resourceId.match(REPOSITORY_PATH_RESOURCE);
-    if (!match) continue;
-    repositories.add(match[1]);
-    paths.push(match[2]);
+  let repositoryWide = false;
+  for (const resourceId of suppliedMutationResourceIds) {
+    const pathMatch = text(resourceId).match(REPOSITORY_PATH_RESOURCE);
+    if (pathMatch) {
+      repositories.add(pathMatch[1].toLowerCase());
+      paths.push(pathMatch[2]);
+      continue;
+    }
+    const rootMatch = text(resourceId).match(REPOSITORY_ROOT_RESOURCE);
+    if (rootMatch) {
+      repositories.add(rootMatch[1].toLowerCase());
+      repositoryWide = true;
+    }
   }
-  if (repositories.size !== 1 || paths.length === 0) {
+  if (repositories.size !== 1 || (!repositoryWide && paths.length === 0)) {
     return freeze({
       valid: false,
       repository: '',
@@ -89,11 +117,19 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
       reason: repositories.size > 1 ? 'MULTI_REPOSITORY_SOURCE_SCOPE_NOT_SUPPORTED' : 'SOURCE_PATH_SCOPE_REQUIRED',
     });
   }
-  const repository = [...repositories][0];
+  const scopedRepository = [...repositories][0];
+  const declaredRepository = text(portfolioGoal.repository ?? candidate.repository);
+  const repository = declaredRepository
+    && SAFE_REPOSITORY.test(declaredRepository)
+    && declaredRepository.toLowerCase() === scopedRepository
+    ? declaredRepository
+    : scopedRepository;
   if (!SAFE_REPOSITORY.test(repository)) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: projection.resourceIds, reason: 'REPOSITORY_SCOPE_INVALID' });
   }
-  const allowedFiles = [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort();
+  const allowedFiles = repositoryWide
+    ? ['**']
+    : [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort((left, right) => left.localeCompare(right));
   return freeze({ valid: true, repository, allowedFiles, resourceIds: projection.resourceIds, reason: '' });
 }
 
@@ -123,6 +159,19 @@ function missionTerminal(state = {}) {
   return TERMINAL_PHASES.has(text(state.currentPhase).toUpperCase());
 }
 
+function missionCapacityOccupying(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  return Boolean(phase) && !TERMINAL_PHASES.has(phase) && !NON_RUNNABLE_PHASES.has(phase);
+}
+
+function missionAdmissionExclusionReason(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  if (TERMINAL_PHASES.has(phase)) return 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION';
+  if (phase === 'BLOCKED') return 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED';
+  if (phase === 'AWAITING_OPERATOR_APPROVAL') return 'EXISTING_GOAL_MISSION_AWAITING_OPERATOR_APPROVAL';
+  return '';
+}
+
 function missionRunnable(state = {}) {
   const phase = text(state.currentPhase).toUpperCase();
   if (!phase || TERMINAL_PHASES.has(phase) || NON_RUNNABLE_PHASES.has(phase)) return false;
@@ -142,14 +191,32 @@ function schedulerEligible(scheduler = {}) {
   );
 }
 
-function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
-  if (scheduler.parallelCandidateDetails.length > 0) {
+function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssueReasons = new Map()) {
+  const projectedCandidates = list(scheduler.parallelCandidateDetails);
+  const candidates = projectedCandidates.filter((candidate) => !excludedIssueReasons.has(candidateIssue(candidate)));
+  const excluded = projectedCandidates.filter((candidate) => excludedIssueReasons.has(candidateIssue(candidate)));
+  const admissionLimit = Math.min(
+    MAXIMUM_BUILD_LANES,
+    Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
+      ? scheduler.elasticCapacity.remainingAdmissionSlots
+      : 0,
+  );
+  const excludedHeld = excluded.map((candidate) => ({
+    candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
+    issue: candidateIssue(candidate),
+    reasonCode: excludedIssueReasons.get(candidateIssue(candidate))
+      || 'EXISTING_GOAL_MISSION_NOT_ADMISSIBLE',
+    conflictingResourceIds: [],
+  }));
+
+  if (candidates.length >= admissionLimit) {
     return freeze({
-      candidates: scheduler.parallelCandidateDetails,
-      held: [],
+      candidates,
+      held: excludedHeld,
       compatibilityEnrichmentUsed: false,
     });
   }
+
   const activeIssues = new Set(list(scheduler.activeGoals).map(positiveInteger).filter(Boolean));
   const activeResourceIds = [];
   for (const issueNumber of activeIssues) {
@@ -157,30 +224,36 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
     const resourceProjection = projectCanonicalResourceIds(record?.resourceIds ?? []);
     if (resourceProjection.valid) activeResourceIds.push(...resourceProjection.resourceIds);
   }
+
+  const retainedIssueNumbers = new Set(candidates.map(candidateIssue).filter(Boolean));
+  const retainedResourceIds = candidates.flatMap((candidate) => list(candidate.resourceIds));
   const ready = list(scheduler.portfolio)
     .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
+    .filter((goal) => {
+      const issueNumber = positiveInteger(goal.issue);
+      return issueNumber && !excludedIssueReasons.has(issueNumber) && !retainedIssueNumbers.has(issueNumber);
+    })
     .map((goal) => {
       const issueNumber = positiveInteger(goal.issue);
       const record = recordForIssue(goalRecords, issueNumber);
+      const recordResourceIds = list(record?.resourceIds);
       return {
         candidateId: `#${issueNumber}`,
         issue: issueNumber,
         route: goal.route,
-        resourceIds: record?.resourceIds ?? [],
+        resourceIds: recordResourceIds.length > 0 ? recordResourceIds : list(goal.resourceIds),
       };
     });
   const selection = selectResourceDisjointCandidates(ready, {
-    limit: Math.min(
-      MAXIMUM_BUILD_LANES,
-      Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
-        ? scheduler.elasticCapacity.remainingAdmissionSlots
-        : 0,
-    ),
-    activeResourceIds,
+    limit: Math.max(0, admissionLimit - candidates.length),
+    activeResourceIds: [...activeResourceIds, ...retainedResourceIds],
   });
   return freeze({
-    candidates: selection.selected,
-    held: selection.held,
+    candidates: [...candidates, ...selection.selected],
+    held: [
+      ...excludedHeld,
+      ...selection.held,
+    ],
     compatibilityEnrichmentUsed: true,
   });
 }
@@ -196,6 +269,11 @@ function missionInput(issueNumber, goal, scope, options = {}) {
       `Build durable GitHub goal #${issueNumber} through the canonical elastic Goal Flywheel.`,
       'Read the authoritative GitHub goal and current repository truth before implementation.',
       'Stay within the scheduler-approved resource scope and do not create duplicate implementation work.',
+      ...(validateSeedGrowthWorkV1(goal?.seedGrowthWork) ? [
+        `Seed owner ${goal.seedGrowthWork.ownerIssueRef}; pressure ${goal.seedGrowthWork.pressureKey}.`,
+        goal.seedGrowthWork.nextBestAction,
+        'Return result proof, reusable capability and shared lesson to the canonical goal, then replay the seed-specific acceptance evidence.',
+      ] : []),
     ].join(' '),
     intendedOutcome: title,
     missionKind: 'implementation',
@@ -225,7 +303,13 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     });
   }
   const records = list(missionRecords);
-  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords);
+  const excludedMissionIssueReasons = new Map();
+  for (const state of records) {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    const reason = missionAdmissionExclusionReason(state);
+    if (issueNumber && reason) excludedMissionIssueReasons.set(issueNumber, reason);
+  }
+  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, excludedMissionIssueReasons);
   const admitted = [];
   const held = inventory.held.map((item) => ({
     issueNumber: candidateIssue(item),
@@ -248,8 +332,9 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
     if (existing) {
-      if (missionTerminal(existing)) {
-        held.push({ issueNumber, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION', missionId: existing.missionId });
+      const exclusionReason = missionAdmissionExclusionReason(existing);
+      if (exclusionReason) {
+        held.push({ issueNumber, reason: exclusionReason, missionId: existing.missionId });
       } else {
         admitted.push({ issueNumber, missionId: existing.missionId, existing: true, mission: existing });
       }
@@ -270,7 +355,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, goal, scope, options),
+      missionInput: missionInput(issueNumber, { ...goal, seedGrowthWork: record?.seedGrowthWork }, scope, options),
       resourceIds: scope.resourceIds,
     });
   }
@@ -358,9 +443,31 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   });
   const activeMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return !missionTerminal(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+    return missionCapacityOccupying(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
-  const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
+  // A verified replacement-source repair must not monopolise selection for
+  // another Forge build. Preserve the mission and its acceptance obligations.
+  const sourceConstructionAlreadyReplaced = (state) => (
+    state?.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(text(state?.currentPhase).toUpperCase())
+    && state?.continuity?.history?.some((entry) =>
+      entry?.eventType === 'MISSION_REPAIR_PROVEN'
+      && text(entry?.receiptId).startsWith('verified-replacement-repair-')) === true
+  );
+  // Prefer a phase the existing exact-action controller can actually grant.
+  // Pending source-writer work must not hide an independently runnable
+  // worktree, verification, PR inspection, or exact Forge publication step.
+  const grantablePhase = (state) => (
+    ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(state?.currentPhase).toUpperCase())
+    || (text(state?.currentPhase).toUpperCase() === 'GITHUB_COMMIT'
+      && state?.dispatch?.adapter === 'foundry-forge'
+      && state?.dispatch?.status === 'complete')
+  );
+  const eligibleRunnable = runnableMissions.filter((state) => !sourceConstructionAlreadyReplaced(state));
+  const selectedMission = eligibleRunnable.find(grantablePhase)
+    ?? eligibleRunnable[0]
+    ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
+    ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
     ok: true,

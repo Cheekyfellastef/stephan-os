@@ -6,6 +6,7 @@ import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-disc
 const lifeboatReady = async () => ({ ok: true, available: true, finalVerdict: 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED' });
 const githubLifeboatReady = async () => ({ ok: true, available: true, sourceHead: 'a'.repeat(40), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_READY' });
 const claimAckReady = async () => ({ ok: true, published: true, finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_CURRENT' });
+const commanderReady = async () => ({ ok: true, available: true, finalVerdict: 'DESKTOP_COMMANDER_CAPACITY_PUBLISHED' });
 
 function captureTrack() {
   const published = [];
@@ -21,6 +22,7 @@ function captureTrack() {
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     refreshGithubLifeboat: githubLifeboatReady,
     refreshGithubLifeboatClaimAck: claimAckReady,
     ...options,
@@ -45,6 +47,31 @@ test('idle heartbeat publishes truthful native-autonomy waiting position without
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+
+test('canonical programme HOLD never claims a proved empty queue or work-conserving completion', async () => {
+  const capture = captureTrack();
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: true,
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['active-lane-execution-receipt-missing'],
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+    publishTrack: capture.publishTrack,
+    now: new Date('2026-10-08T04:00:00.000Z'),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD');
+  assert.equal(result.controllerContinuity, 'RECONCILE_CANONICAL_PROGRAMME_HOLD');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.equal(result.cycleDecision.returnAllowed, false);
+  assert.equal(result.autonomyTrack.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(result.autonomyTrack.currentState, 'BLOCKED');
+  assert.equal(result.materialActionsSucceeded, 0);
+  assert.equal(capture.published.length, 1);
+  assert.equal(result.mergeAuthority, false);
+});
 
 test('goal discovery heartbeat cannot create a legacy critical mission outside the durable controller', async () => {
   let observedOptions = null;

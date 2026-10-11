@@ -1,0 +1,28 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "sovereign-commander",
+  "version": "1.0.2",
+  "description": "Use the existing guarded Stephanos Sovereign Commander on the Battle Bridge through local MCP when available and the guarded GitHub relay from cloud chats.",
+  "author": {
+    "name": "Stephanos"
+  },
+  "skills": "./skills/",
+  "extensions": {
+    "com.openai": {
+      "apps": "./.app.json",
+      "interface": {
+        "displayName": "Sovereign Commander",
+        "shortDescription": "Guarded Battle Bridge access",
+        "longDescription": "Guarded Battle Bridge access with local stdio first and the existing Sovereign Relay/GitHub mailbox as the cloud-chat fallback.",
+        "developerName": "Stephanos",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "defaultPrompt": [
+          "Show Battle Bridge telemetry.",
+          "Show Stephanos service health.",
+          "Show active physical and logical lanes."
+        ]
+      }
+    }
+  }
+}

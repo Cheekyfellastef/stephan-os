@@ -53,3 +53,34 @@ test('leader handoff after first disappears', () => {
   assert.equal(g2.getState().leader, true);
   g2.stop();
 });
+
+test('peer channel heartbeat does not rebroadcast into a feedback loop', () => {
+  const peers = new Set();
+  class TestBroadcastChannel {
+    constructor() { this.onmessage = null; peers.add(this); }
+    postMessage(data) {
+      for (const peer of peers) {
+        if (peer !== this) peer.onmessage?.({ data });
+      }
+    }
+    close() { peers.delete(this); }
+  }
+
+  const storage = makeStorage();
+  const doc = { visibilityState: 'visible', addEventListener() {} };
+  const counts = [0, 0, 0];
+  const governors = ['a', 'b', 'c'].map((tabId, index) => createRuntimeWorkGovernor({
+    documentImpl: doc,
+    storage,
+    setIntervalImpl: () => null,
+    clearIntervalImpl: () => {},
+    BroadcastChannelImpl: TestBroadcastChannel,
+    now: () => 1000 + index,
+    tabId,
+    onStateChange: () => { counts[index] += 1; },
+  }));
+
+  governors.forEach((governor) => governor.start());
+  assert.ok(counts.every((count) => count <= 3), `channel fanout must stay bounded: ${counts.join(',')}`);
+  governors.forEach((governor) => governor.stop());
+});

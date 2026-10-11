@@ -258,7 +258,7 @@ function Test-RecoveryTaskIdentity {
         if (-not [string]::Equals(([string]$action.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
         $principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId ([string]$Task.Principal.UserId)
         return $principalMatchesCurrentUser `
-            -and [string]$Task.Principal.LogonType -eq 'Interactive' `
+            -and [string]$Task.Principal.LogonType -eq 'S4U' `
             -and [string]$Task.Principal.RunLevel -eq 'Limited' `
             -and [string]$Task.Settings.MultipleInstances -eq 'IgnoreNew' `
             -and $Task.Settings.Enabled -eq $true
@@ -277,7 +277,7 @@ function Get-TaskHealth {
     $now = Get-Date
     $lastRun = if ($info) { $info.LastRunTime } else { $null }
     $age = if ($lastRun -and $lastRun -gt [datetime]::MinValue) { ($now - $lastRun).TotalMinutes } else { $null }
-    $lastResult = if ($info) { [int]$info.LastTaskResult } else { $null }
+    $lastResult = if ($info) { [long]$info.LastTaskResult } else { $null }
     $healthy = $null -ne $task -and $null -ne $info -and $identityCanonical -and $lastResult -eq 0 -and $null -ne $age -and $age -le $FreshMinutes
     return [pscustomobject]@{
         task = $task
@@ -459,7 +459,7 @@ if ($mailboxRepairEligible) {
         $mailboxRepairRunProven = $postIdentity `
             -and $null -ne $postInfo `
             -and $postRunAdvanced `
-            -and [int]$postInfo.LastTaskResult -eq 0 `
+            -and [long]$postInfo.LastTaskResult -eq 0 `
             -and [string]$postTask.State -ne 'Running'
     } while (-not $mailboxRepairRunProven -and (Get-Date) -lt $mailboxProofDeadline)
 

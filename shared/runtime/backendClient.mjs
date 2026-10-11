@@ -1,8 +1,9 @@
 import {
   readPersistedStephanosHomeNode,
-  readPersistedStephanosHostedExecutionBridgeUrl,
+  resolveStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
+  validateStephanosBackendTargetUrl,
 } from './stephanosHomeNode.mjs';
 
 const DEFAULT_BACKEND_TIMEOUT_MS = 5000;
@@ -21,6 +22,20 @@ function resolveFrontendOrigin(runtimeContext = {}) {
   }
 
   return '';
+}
+
+function resolveLocalLoopbackBackendOrigin(frontendOrigin = '') {
+  const raw = safeString(frontendOrigin);
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    const hostname = String(parsed.hostname || '').toLowerCase();
+    if (!['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname)) return '';
+    parsed.port = '8787';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
 }
 
 function normalizeHostedExecutionOrigin(value = '', frontendOrigin = '') {
@@ -44,7 +59,6 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
   const frontendOrigin = resolveFrontendOrigin(runtimeContext);
   const manualNode = runtimeContext.manualNode || readPersistedStephanosHomeNode(storage);
   const lastKnownNode = runtimeContext.lastKnownNode || readPersistedStephanosLastKnownNode(storage);
-  const persistedHostedExecutionBridgeUrl = readPersistedStephanosHostedExecutionBridgeUrl(storage, { frontendOrigin });
   let hostedSession = false;
   try {
     const frontend = new URL(frontendOrigin);
@@ -53,10 +67,15 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
     hostedSession = false;
   }
   const directBridgeUrl = runtimeContext.homeNodeBridge?.backendUrl || runtimeContext.bridgeUrl || '';
-  const hostedExecutionBridgeUrl = runtimeContext.hostedExecutionBridgeUrl
-    || runtimeContext.homeNodeBridge?.executionUrl
-    || persistedHostedExecutionBridgeUrl
-    || '';
+  const hostedExecutionBridgeUrl = resolveStephanosHostedExecutionBridgeUrl({
+    frontendOrigin,
+    storage,
+    candidates: [
+      runtimeContext.hostedExecutionBridgeUrl,
+      runtimeContext.homeNodeBridge?.executionUrl,
+      directBridgeUrl,
+    ],
+  });
 
   if (hostedSession) {
     const safeHostedExecutionOrigin = normalizeHostedExecutionOrigin(
@@ -69,11 +88,24 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
     return safeHostedExecutionOrigin;
   }
 
+  const explicitBaseUrl = safeString(runtimeContext.baseUrl);
+  if (explicitBaseUrl) {
+    const explicit = validateStephanosBackendTargetUrl(explicitBaseUrl, { allowLoopback: true });
+    if (explicit.ok && explicit.normalizedUrl) {
+      return explicit.normalizedUrl;
+    }
+  }
+
+  const localLoopbackBackendOrigin = resolveLocalLoopbackBackendOrigin(frontendOrigin);
+  if (localLoopbackBackendOrigin) {
+    return localLoopbackBackendOrigin;
+  }
+
   return resolveStephanosBackendBaseUrl({
     currentOrigin: frontendOrigin,
     manualNode,
     lastKnownNode,
-    explicitBaseUrl: runtimeContext.baseUrl,
+    explicitBaseUrl: '',
     bridgeUrl: directBridgeUrl,
   });
 }

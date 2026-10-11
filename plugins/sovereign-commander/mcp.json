@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "sovereign-commander": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-mcp.mjs"
+      ],
+      "env": {
+        "STEPHANOS_REPO_ROOT": "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os"
+      }
+    }
+  }
+}

@@ -296,10 +296,19 @@ export function buildEngineeringIncidentMethodRecordV1(input = {}) {
   return validation.record;
 }
 
+function componentRefMatches(recordRef, requestedRef) {
+  const left = text(recordRef).replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
+  const right = text(requestedRef).replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
+  if (!left || !right) return false;
+  return left === right || right.startsWith(`${left}/`) || left.startsWith(`${right}/`);
+}
+
 function relevantRecord(record, problemClass, componentRefs) {
   if (!record || record.schemaVersion !== ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1) return false;
   if (record.problemClass === problemClass) return true;
-  return record.componentAndOwnerRefs.some((ref) => componentRefs.includes(ref));
+  return record.componentAndOwnerRefs.some((recordRef) => (
+    componentRefs.some((requestedRef) => componentRefMatches(recordRef, requestedRef))
+  ));
 }
 
 function newestFirst(left, right) {

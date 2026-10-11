@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -7,6 +8,7 @@ import {
   SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import { isRetryableAgentFailureBlocker } from '../../shared/agents/missionOrchestrator.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -28,7 +30,8 @@ import {
   resolveElasticExternalCapacityCandidates,
 } from './elasticOpenClawProviderPoolService.js';
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
-import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { publishMissionWorkerAction, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
@@ -47,6 +50,41 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function defaultGitCommand(executable, args, options = {}) {
+  return spawnSync(executable, args, {
+    cwd: options.cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000,
+  });
+}
+
+export function refreshRetryWorktreeToCurrentMain({ mission, repoRoot, runCommand = defaultGitCommand } = {}) {
+  const worktreePath = text(mission?.git?.worktreePath);
+  const expectedBranch = text(mission?.git?.branch);
+  const repositoryRoot = text(repoRoot || mission?.repositoryRoot);
+  if (!worktreePath || !expectedBranch || !repositoryRoot) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_IDENTITY_INCOMPLETE' });
+  const runGit = (cwd, args) => runCommand('git.exe', ['-C', cwd, ...args], { cwd });
+  const status = runGit(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (status.error || status.status !== 0 || text(status.stdout)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_NOT_CLEAN', worktreePath, detail: text(status.error?.message || status.stderr || status.stdout) });
+  const branchResult = runGit(worktreePath, ['branch', '--show-current']);
+  const actualBranch = text(branchResult.stdout);
+  if (branchResult.error || branchResult.status !== 0 || actualBranch !== expectedBranch) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_BRANCH_MISMATCH', worktreePath, expectedBranch, actualBranch });
+  const currentHeadResult = runGit(repositoryRoot, ['rev-parse', 'HEAD']);
+  const worktreeHeadResult = runGit(worktreePath, ['rev-parse', 'HEAD']);
+  const targetHead = text(currentHeadResult.stdout).toLowerCase();
+  const beforeHead = text(worktreeHeadResult.stdout).toLowerCase();
+  if (currentHeadResult.error || currentHeadResult.status !== 0 || worktreeHeadResult.error || worktreeHeadResult.status !== 0 || !SHA_40.test(targetHead) || !SHA_40.test(beforeHead)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_HEAD_UNPROVEN', worktreePath, beforeHead, targetHead });
+  if (beforeHead !== targetHead) {
+    const ancestor = runGit(worktreePath, ['merge-base', '--is-ancestor', beforeHead, targetHead]);
+    if (ancestor.error || ancestor.status !== 0) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_NOT_FAST_FORWARDABLE', worktreePath, beforeHead, targetHead });
+    const fastForward = runGit(worktreePath, ['merge', '--ff-only', targetHead]);
+    if (fastForward.error || fastForward.status !== 0) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_FAST_FORWARD_FAILED', worktreePath, beforeHead, targetHead, detail: text(fastForward.error?.message || fastForward.stderr || fastForward.stdout) });
+  }
+  const verifiedHeadResult = runGit(worktreePath, ['rev-parse', 'HEAD']);
+  const verifiedStatus = runGit(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const afterHead = text(verifiedHeadResult.stdout).toLowerCase();
+  const clean = !text(verifiedStatus.stdout);
+  const ok = !verifiedHeadResult.error && verifiedHeadResult.status === 0 && !verifiedStatus.error && verifiedStatus.status === 0 && afterHead === targetHead && clean;
+  return Object.freeze({ ok, classification: ok ? (beforeHead === targetHead ? 'RETRY_WORKTREE_ALREADY_CURRENT' : 'RETRY_WORKTREE_FAST_FORWARDED') : 'RETRY_WORKTREE_POST_REFRESH_PROOF_FAILED', worktreePath, branch: expectedBranch, beforeHead, targetHead, afterHead, clean });
+}
 function positiveIssue(value) {
   const match = text(value).match(/^#?([1-9]\d*)$/);
   const issue = Number(match?.[1]);
@@ -181,6 +219,28 @@ function orderedBacklogCandidates(backlog, records, predicate) {
     ));
 }
 
+function orderedContinuityCandidates(backlog, records, predicate) {
+  return records
+    .filter((record) => predicate(record))
+    .filter((record) => (
+      isElasticGoalMission(record)
+      || criticalBacklogPriority(backlog, record.missionId) !== Number.MAX_SAFE_INTEGER
+    ))
+    .sort((left, right) => {
+      const leftPriority = criticalBacklogPriority(backlog, left.missionId);
+      const rightPriority = criticalBacklogPriority(backlog, right.missionId);
+      if (leftPriority !== rightPriority
+        && leftPriority !== Number.MAX_SAFE_INTEGER
+        && rightPriority !== Number.MAX_SAFE_INTEGER) {
+        return leftPriority - rightPriority;
+      }
+      if (leftPriority !== rightPriority) {
+        return leftPriority === Number.MAX_SAFE_INTEGER ? 1 : -1;
+      }
+      return text(left.missionId).localeCompare(text(right.missionId));
+    });
+}
+
 
 async function readJsonIfPresent(filePath) {
   try {
@@ -253,6 +313,7 @@ export async function recoverOrphanedLegacyCriticalMission({
   });
   const workerIdle = worker.valid === true
     && worker.fresh === true
+    && worker.lastTickVerdict !== 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING'
     && !text(workerRecord.activeTaskId)
     && !text(workerRecord.activeReceiptId)
     && !text(workerRecord.executionPhase);
@@ -340,6 +401,182 @@ export async function recoverOrphanedLegacyCriticalMission({
   });
 }
 
+export async function retrySafelyBlockedAgentFailure({
+  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  listMissions = listMissionRecords,
+  appendEvent = appendMissionEvent,
+  proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
+  refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
+} = {}) {
+  const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  const candidates = orderedContinuityCandidates(backlog, records, (record) => {
+    const blockers = Array.isArray(record?.blockers) ? record.blockers.map((item) => text(item)).filter(Boolean) : [];
+    const currentRound = Number(record?.repair?.currentRound);
+    const maximumRounds = Number(record?.repair?.maximumRounds);
+    return text(record?.currentPhase).toUpperCase() === 'BLOCKED'
+      && continuityStatus(record) === ACTIVE_CONTINUITY
+      && text(record?.dispatch?.status).toLowerCase() === 'failed'
+      && blockers.length > 0
+      && blockers.every(isRetryableAgentFailureBlocker)
+      && Number.isSafeInteger(currentRound)
+      && currentRound >= 0
+      && Number.isSafeInteger(maximumRounds)
+      && maximumRounds > 0
+      && currentRound < maximumRounds;
+  });
+  if (!candidates.length) return Object.freeze({
+    ok: true,
+    classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
+    retried: false,
+    missionId: '',
+  });
+
+  let candidate = null;
+  let firstBlockedCandidate = null;
+  for (const currentCandidate of candidates) {
+    if (!Number.isSafeInteger(currentCandidate.revision) || currentCandidate.revision < 0) {
+      firstBlockedCandidate ??= {
+        ok: false,
+        classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
+        retried: false,
+        missionId: text(currentCandidate.missionId),
+      };
+      continue;
+    }
+
+    const missionId = text(currentCandidate.missionId).toLowerCase();
+    const lastEventId = text(currentCandidate?.storeMetadata?.lastEventId).toLowerCase();
+    // Legacy resultId recovery is valid only when the atomically persisted last
+    // event is the result event that produced this exact blocked mission state.
+    // Never scan older processed events because a released prior attempt must not
+    // authorize retry of the current failed dispatch.
+    const terminalResultEventId = lastEventId.startsWith(`result-${missionId}-`)
+      ? lastEventId
+      : '';
+    const failedActionId = text(currentCandidate?.dispatch?.resultId).toLowerCase()
+      || terminalResultEventId.replace(/^result-/, '');
+    const failedAdapter = text(currentCandidate?.dispatch?.adapter).toLowerCase();
+    if (!failedActionId || !failedAdapter) {
+      firstBlockedCandidate ??= {
+        ok: true,
+        classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
+        retried: false,
+        parked: true,
+        missionId: text(currentCandidate.missionId),
+      };
+      continue;
+    }
+
+    const workspaceResolution = resolveSharedWorkspacePath({
+      root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+    });
+    if (workspaceResolution.ok !== true) return Object.freeze({
+      ok: false,
+      classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
+      retried: false,
+      missionId: text(currentCandidate.missionId),
+      workspaceReason: text(workspaceResolution.reason),
+    });
+    const ownershipRelease = await proveRetryOwnershipReleased({
+      missionId: currentCandidate.missionId,
+      actionId: failedActionId,
+      adapter: failedAdapter,
+      queueRoot: resolveMissionWorkerQueueRoot(env),
+      sharedWorkspaceRoot: workspaceResolution.root,
+      repoRoot: paths.repoRoot,
+      env,
+    });
+    if (ownershipRelease?.ok !== true) {
+      firstBlockedCandidate ??= {
+        ok: true,
+        classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
+        retried: false,
+        missionId: text(currentCandidate.missionId),
+        ownershipRelease,
+      };
+      continue;
+    }
+
+    const worktreeRefresh = await refreshRetryWorktree({ mission: currentCandidate, repoRoot: paths.repoRoot, env });
+    if (worktreeRefresh?.ok !== true) {
+      firstBlockedCandidate ??= {
+        ok: true, classification: 'RETRYABLE_AGENT_FAILURE_WORKTREE_REFRESH_BLOCKED', retried: false,
+        missionId: text(currentCandidate.missionId), worktreeRefresh,
+      };
+      continue;
+    }
+    candidate = { ...currentCandidate, retryWorktreeRefresh: worktreeRefresh };
+    break;
+  }
+
+  if (!candidate) return Object.freeze({
+    ...(firstBlockedCandidate || {
+      ok: true,
+      classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
+      retried: false,
+      missionId: '',
+    }),
+    skippedCandidateIds: Object.freeze(candidates.map((item) => text(item.missionId)).filter(Boolean)),
+  });
+
+  const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));
+  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const digest = createHash('sha256')
+    .update([text(candidate.missionId), candidate.revision, retryableBlockers.join('|'), timestamp].join(':'))
+    .digest('hex')
+    .slice(0, 20);
+  const receiptId = 'agent-retry-' + digest;
+  const result = await appendEvent(candidate.missionId, {
+    eventId: 'agent-retry-' + digest,
+    eventType: 'AGENT_FAILURE_RETRY_ADMITTED',
+    expectedRevision: candidate.revision,
+    expectedCurrentPhase: 'BLOCKED',
+    timestamp,
+    retryableBlockers,
+    receipt: {
+      receiptId,
+      requirement: 'bounded retry admission for retryable agent execution failure',
+      source: 'critical-backlog-conveyor',
+      evidenceType: 'scheduler-retry-admission',
+      verified: true,
+      createdAt: timestamp,
+      exitCode: 0,
+    },
+    summary: 'Re-admit ' + text(candidate.missionId) + ' for one bounded agent retry without widening source or merge authority.',
+  }, {
+    root: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+    env,
+    now,
+  });
+  if (result?.preconditionFailed === true) return Object.freeze({
+    ok: true,
+    classification: 'RETRYABLE_AGENT_FAILURE_PRECONDITION_MOVED',
+    retried: false,
+    missionId: text(candidate.missionId),
+  });
+  const state = result?.state;
+  const retried = continuityStatus(state) === ACTIVE_CONTINUITY
+    && text(state?.dispatch?.status).toLowerCase() === 'pending'
+    && text(state?.currentPhase).toUpperCase() === 'AGENT_IMPLEMENTATION'
+    && !(Array.isArray(state?.blockers) && state.blockers.some(isRetryableAgentFailureBlocker));
+  return Object.freeze({
+    ok: retried,
+    classification: retried ? 'RETRYABLE_AGENT_FAILURE_READMITTED' : 'RETRYABLE_AGENT_FAILURE_READMISSION_BLOCKED',
+    retried,
+    missionId: text(candidate.missionId),
+    revision: Number(state?.revision),
+    currentPhase: text(state?.currentPhase).toUpperCase(),
+    repairRound: Number(state?.repair?.currentRound),
+    receiptId,
+    retryWorktreeRefresh: candidate.retryWorktreeRefresh || null,
+  });
+}
+
 export async function parkSafelyBlockedCriticalMission({
   backlog = SELF_HOSTING_CRITICAL_BACKLOG,
   env = process.env,
@@ -349,7 +586,7 @@ export async function parkSafelyBlockedCriticalMission({
   appendEvent = appendMissionEvent,
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
-  const candidates = orderedBacklogCandidates(backlog, records, (record) => (
+  const candidates = orderedContinuityCandidates(backlog, records, (record) => (
     text(record?.currentPhase).toUpperCase() === 'BLOCKED'
     && continuityStatus(record) === ACTIVE_CONTINUITY
   ));
@@ -440,7 +677,7 @@ export async function readmitReentryReadyCriticalMission({
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   const active = records.filter(isLegacyCapacityActive);
-  const ready = orderedBacklogCandidates(backlog, records, (record) => continuityStatus(record) === REENTRY_READY);
+  const ready = orderedContinuityCandidates(backlog, records, (record) => continuityStatus(record) === REENTRY_READY);
 
   if (!ready.length) return Object.freeze({
     ok: true,
@@ -1015,6 +1252,29 @@ export async function ensureCriticalBacklogMission(options = {}) {
     });
   }
 
+  const retryAdmission = await retrySafelyBlockedAgentFailure({
+    backlog,
+    env,
+    now,
+    paths,
+    listMissions,
+    appendEvent,
+  });
+  if (retryAdmission?.ok === false) {
+    return Object.freeze({
+      schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+      ok: false,
+      classification: retryAdmission.classification,
+      orphanRecovery,
+      retryAdmission,
+      arbitraryShellAllowed: false,
+      destructiveGitAllowed: false,
+      duplicateActiveMissionAllowed: false,
+      mergeAuthority: false,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
+
   const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
   if (parking?.ok === false) {
     return Object.freeze({
@@ -1064,7 +1324,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
   const projectedResult = selfHostingPolicyActive && result?.projection
     ? Object.freeze({ ...result, projection: decorateProjection(result.projection) })
     : result;
-  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry });
+  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, orphanRecovery, retryAdmission, parking, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
   const activeMissionIgnition = await dispatchActiveCriticalMission(projectedResult, normalized);
   if (activeMissionIgnition?.ok === false) {
@@ -1072,13 +1332,14 @@ export async function ensureCriticalBacklogMission(options = {}) {
       ...projectedResult,
       ok: false,
       orphanRecovery,
+      retryAdmission,
       parking,
       reentry,
       activeMissionIgnition,
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  const completed = Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry, activeMissionIgnition });
+  const completed = Object.freeze({ ...projectedResult, orphanRecovery, retryAdmission, parking, reentry, activeMissionIgnition });
   const executiveIngressAcceptance = projectExecutiveIngressAcceptance(normalized, completed);
   if (!executiveIngressAcceptance) return completed;
   if (executiveIngressAcceptance.accepted !== true) {

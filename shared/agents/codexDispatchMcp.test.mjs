@@ -542,7 +542,13 @@ test('generic MCP dispatch can route a proven Codex capacity outage through exis
   assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
   assert.equal(result.structuredContent.providerTaskId, '');
   assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.pickupProven, false);
+  assert.equal(result.structuredContent.handoffResponsibilityRetained, true);
+  assert.equal(result.structuredContent.publicationIsTerminal, false);
+  assert.equal(result.structuredContent.retryCodexAllowed, false);
   assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextAutomaticAction, /canonical provider router/i);
+  assert.match(result.structuredContent.nextOperatorAction, /No operator action required/i);
   assert.equal(integration.calls.length, 0);
 });
 
@@ -777,6 +783,10 @@ test('provider-neutral route is not reported ready until its durable baton is pe
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.pickupProven, false);
+  assert.equal(result.structuredContent.handoffResponsibilityRetained, true);
+  assert.equal(result.structuredContent.publicationIsTerminal, false);
+  assert.equal(result.structuredContent.retryCodexAllowed, false);
   assert.equal(result.structuredContent.providerNeutralBaton.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
   assert.equal(batonCalls.length, 1);
   assert.equal(batonCalls[0].batonInput.dispatchJobId, result.structuredContent.dispatchJobId);

@@ -1,4 +1,5 @@
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
+import { readBrokeredGithubRateLimitHold, recordBrokeredGithubRateLimitHold } from '../../shared/agents/githubObservationBrokerV1.mjs';
 import {
   PROTECTED_APPROVAL_MARKER,
   extractJsonObjects,
@@ -17,7 +18,8 @@ const GITHUB_GOAL_ADMISSION_KEYS = new Set([
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS = 30 * 1000;
-const GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS = 10 * 1000;
+const GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS = 30 * 1000;
+const GOAL_BODY_REPO_PATH = /(?<![A-Za-z0-9_.\/-])((?:apps|shared|stephanos-server|scripts|docs|packages|config|tests?|\.github)\/[A-Za-z0-9._/-]+\.(?:mjs|cjs|js|ts|tsx|jsx|json|html|css|scss|ps1|sh|py|md|yml|yaml))(?=$|[\s`'")\],;:.])/gi;
 const githubGoalEstateCache = new Map();
 
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
@@ -45,11 +47,33 @@ function sourceImplementationAdmission(issueNumber, repository, resourceIds = []
 
 function goalAdmissionResourceIds(value, repository) {
   if (value === undefined) return [];
-  const projection = projectCanonicalResourceIds(value);
-  const prefix = `repo:${repository.toLowerCase()}:path:`;
+  const supplied = asList(value);
+  const projection = projectCanonicalResourceIds(supplied);
+  const repositoryLower = repository.toLowerCase();
+  const prefix = `repo:${repositoryLower}:path:`;
   if (!projection.valid || projection.resourceIds.length === 0) return null;
   if (projection.resourceIds.some((resourceId) => !resourceId.startsWith(prefix))) return null;
-  return projection.resourceIds;
+  const preserved = supplied.map((resourceId) => {
+    const match = asText(resourceId).match(/^repo:([^:]+\/[^:]+):path:(.+)$/i);
+    if (!match || match[1].toLowerCase() !== repositoryLower) return null;
+    return `repo:${repositoryLower}:path:${match[2]}`;
+  });
+  if (preserved.some((resourceId) => resourceId === null)) return null;
+  return preserved.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
+}
+
+export function deriveGoalBodyResourceIds(body, repository) {
+  const repo = asText(repository).toLowerCase();
+  if (!parseRepoSlug(repo).owner) return Object.freeze([]);
+  const matches = [...String(body ?? '').matchAll(GOAL_BODY_REPO_PATH)];
+  const resourceIds = [...new Set(matches
+    .map((match) => asText(match?.[1]).replace(/\\/g, '/').replace(/^\/+/, ''))
+    .filter((path) => path && !path.split('/').some((segment) => !segment || segment === '.' || segment === '..'))
+    .map((path) => `repo:${repo}:path:${path}`))];
+  const projection = projectCanonicalResourceIds(resourceIds);
+  return Object.freeze(projection.valid
+    ? resourceIds.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()))
+    : []);
 }
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
@@ -80,6 +104,47 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
 }
 
+function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, repository, issueBody = '') {
+  if (!discovery || discovery.creatorLogin.toLowerCase() !== asText(owner).toLowerCase()
+    || discovery.authorAssociation !== 'OWNER') return null;
+  const candidates = (Array.isArray(priorGoalRecords) ? priorGoalRecords : []).filter((record) => (
+    record?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && record?.kind === 'stephanos.shared_workspace.goal'
+    && asText(record?.goalId).toLowerCase() === `goal-${discovery.issueNumber}`
+    && Number(record?.issueNumber) === discovery.issueNumber
+    && asText(record?.repository).toLowerCase() === repository.toLowerCase()
+    && record?.mirrorSchema === 'stephanos.github-goal-mirror.v1'
+    && asText(record?.mirrorRepository).toLowerCase() === repository.toLowerCase()
+    && Number(record?.mirrorIssueNumber) === discovery.issueNumber
+    && record?.source === 'github-goal-estate-mirror'
+    && ['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(asText(record?.githubAdmissionState).toUpperCase())
+    && record?.mergeAuthority === false
+    && record?.deploymentAuthority === false
+    && record?.runtimeMutationAuthority === false
+    && record?.arbitraryShellAllowed === false
+  ));
+  if (candidates.length !== 1) return null;
+  const prior = candidates[0];
+  const priorObservedAtMs = Date.parse(asText(prior?.mirrorObservedAtUtc));
+  const issueUpdatedAtMs = Date.parse(asText(discovery.updatedAt));
+  if (!Number.isFinite(priorObservedAtMs) || !Number.isFinite(issueUpdatedAtMs)
+    || issueUpdatedAtMs >= priorObservedAtMs) return null;
+  const priorResourceIds = Array.isArray(prior?.resourceIds) && prior.resourceIds.length === 0
+    ? []
+    : goalAdmissionResourceIds(prior?.resourceIds, repository);
+  if (priorResourceIds === null) return null;
+  const derivedBodyResourceIds = deriveGoalBodyResourceIds(issueBody, repository);
+  const resourceIds = priorResourceIds.length > 0 ? priorResourceIds : derivedBodyResourceIds;
+  const operatorLaneContainment = plainObject(prior?.operatorLaneContainment)
+    ? prior.operatorLaneContainment
+    : { active: false };
+  return Object.freeze({
+    admission: sourceImplementationAdmission(discovery.issueNumber, repository, resourceIds),
+    operatorLaneContainment,
+    admissionProofSource: 'PRIOR_MIRROR_ADMISSION_REVALIDATED',
+  });
+}
+
 function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repository) {
   if (asText(issue?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
   if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
@@ -87,7 +152,7 @@ function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repos
   if (goalEvents.length === 0) return null;
   const latest = goalEvents[goalEvents.length - 1];
   if (asText(latest?.actor?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
-  return sourceImplementationAdmission(issueNumber, repository);
+  return sourceImplementationAdmission(issueNumber, repository, deriveGoalBodyResourceIds(issue?.body, repository));
 }
 
 function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
@@ -100,27 +165,32 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
+function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = [], priorMirrorAdmission = null) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
   const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
-  const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
-  const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length && comments.length === 1 ? commentAdmission : null;
+  const priorAdmission = priorMirrorAdmission?.admission || null;
+  const admission = scopedCommentAdmission || priorAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
-  const operatorLaneContainment = evaluateOperatorLaneContainmentV1({
+  const operatorLaneContainment = priorMirrorAdmission?.operatorLaneContainment || evaluateOperatorLaneContainmentV1({
     comments,
     repository,
     issueNumber: discovery.issueNumber,
     trustedOperatorLogin: owner,
   });
   const contained = operatorLaneContainment.active === true;
+  const admissionProofSource = scopedCommentAdmission
+    ? 'OWNER_AUTHENTICATED_COMMENT'
+    : priorMirrorAdmission?.admissionProofSource
+      || ((!ownerLabelAdmission && commentAdmission)
+        ? 'OWNER_AUTHENTICATED_COMMENT'
+        : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT');
   return Object.freeze({
     ...discovery,
     admission,
     admissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
-    admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
-      ? 'OWNER_AUTHENTICATED_COMMENT'
-      : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
+    admissionProofSource,
     schedulerEligible: !contained,
     operatorLaneContainment,
   });
@@ -192,6 +262,7 @@ function normalizeMutableGoalIssue(payload, repository) {
     state: asText(payload?.state).toLowerCase(),
     state_reason: asText(payload?.state_reason).toLowerCase(),
     title: asText(payload?.title),
+    body: asText(payload?.body).slice(0, 64 * 1024),
     labels: Object.freeze((Array.isArray(payload?.labels) ? payload.labels : []).map((label) => Object.freeze({
       name: asText(typeof label === 'string' ? label : label?.name),
     }))),
@@ -263,7 +334,7 @@ export async function closeGithubGoalIssue({
   return issue;
 }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
@@ -307,6 +378,26 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     if (!Array.isArray(payload)) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
+      const priorMirrorAdmission = trustedPriorGoalMirrorAdmission(
+        discovery,
+        priorGoalRecords,
+        owner,
+        repository,
+        issue?.body,
+      );
+      if (priorMirrorAdmission) {
+        const revalidated = normalizeGoalIssue(
+          issue,
+          repository,
+          retrievedAt,
+          [],
+          owner,
+          [],
+          priorMirrorAdmission,
+        );
+        if (revalidated) issues.push(revalidated);
+        continue;
+      }
       const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
       let admissionEvents = [];
       if (ownerAuthored) {
@@ -348,21 +439,98 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
 
-export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
+// A failing authenticated read must not make every supervised controller tick
+// spend another API request. Backoff is an outage hold, never cached PR truth.
+const GITHUB_PR_RATE_LIMIT_MIN_BACKOFF_MS = 30_000;
+const GITHUB_PR_RATE_LIMIT_DEFAULT_BACKOFF_MS = 120_000;
+const GITHUB_PR_RATE_LIMIT_MAX_BACKOFF_MS = 65 * 60_000;
+const githubPrRateLimitBackoff = new Map();
+
+function githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs) {
+  return {
+    status: 'error',
+    source: 'github-api',
+    owner,
+    repo,
+    prNumber,
+    authAuthority: authority,
+    reasonCode: 'GITHUB_PR_RATE_LIMIT_BACKOFF',
+    retryAfterUtc: new Date(untilMs).toISOString(),
+    recommendedNextAction: 'GitHub PR evidence is rate-limited. Retain the exact-head HOLD and retry after the bounded backoff.',
+  };
+}
+
+async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, authority, workspaceRoot, useSharedHold) {
+  if (![403, 429].includes(response?.status)) return null;
+  const remaining = String(response.headers?.get?.('x-ratelimit-remaining') ?? '');
+  let message = '';
+  try { message = String((await response.json())?.message ?? ''); } catch {}
+  const limited = response.status === 429
+    || remaining === '0'
+    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message);
+  if (!limited) return null;
+  const nowMs = Date.now();
+  const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
+  const retrySeconds = Number(response.headers?.get?.('retry-after'));
+  const requestedMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+    ? retrySeconds * 1000
+    : Number.isFinite(resetSeconds) && resetSeconds > 0
+      ? resetSeconds * 1000 - nowMs + 5000
+      : GITHUB_PR_RATE_LIMIT_DEFAULT_BACKOFF_MS;
+  const delayMs = Math.min(GITHUB_PR_RATE_LIMIT_MAX_BACKOFF_MS,
+    Math.max(GITHUB_PR_RATE_LIMIT_MIN_BACKOFF_MS, requestedMs));
+  const shared = useSharedHold ? recordBrokeredGithubRateLimitHold({
+    repository: key, retryAfterMs: delayMs, workspaceRoot, nowMs,
+  }) : null;
+  const untilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, shared?.untilMs || 0, nowMs + delayMs);
+  githubPrRateLimitBackoff.set(key, untilMs);
+  return githubPrRateLimitHold(owner, repo, prNumber, authority, untilMs);
+}
+
+export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch, workspaceRoot }) {
   let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
+  const key = `${String(owner).toLowerCase()}/${String(repo).toLowerCase()}`;
+  // Injected fetch tests must not touch an operator's Shared Workspace unless
+  // they provide their own test workspaceRoot. Production readers always share it.
+  const useSharedHold = fetchImpl === fetch || Boolean(workspaceRoot);
+  const sharedHold = useSharedHold ? readBrokeredGithubRateLimitHold({ repository: key, workspaceRoot }) : null;
+  const holdUntilMs = Math.max(githubPrRateLimitBackoff.get(key) || 0, sharedHold?.untilMs || 0);
+  if (holdUntilMs > Date.now()) {
+    return githubPrRateLimitHold(owner, repo, prNumber, activeAuth.authority, holdUntilMs);
+  }
+  if (holdUntilMs) githubPrRateLimitBackoff.delete(key);
   const request = async (candidateAuth) => fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers: githubHeaders(candidateAuth, 'stephanos-readonly-pr-evidence') });
   let prRes = await request(activeAuth);
-  if (prRes.status === 403 && activeAuth.authority !== 'gh-cli') { const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider }); if (ghAuth.configured) { activeAuth = ghAuth; prRes = await request(activeAuth); } }
+  let rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (rateLimit) return rateLimit;
+  if ([401, 403].includes(prRes.status) && activeAuth.authority !== 'gh-cli') {
+    const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+    if (ghAuth.configured) {
+      activeAuth = ghAuth;
+      prRes = await request(activeAuth);
+      rateLimit = await checkPrRateLimitResponse(prRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+      if (rateLimit) return rateLimit;
+    }
+  }
   if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, authAuthority: activeAuth.authority, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
   const pr = await prRes.json(); const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
-  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }); const files = filesRes.ok ? await filesRes.json() : [];
-  const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers }); const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
-  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }); const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
+  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
+  const filesHold = await checkPrRateLimitResponse(filesRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (filesHold) return filesHold;
+  const files = filesRes.ok ? await filesRes.json() : [];
+  const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
+  const checksHold = await checkPrRateLimitResponse(checksRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (checksHold) return checksHold;
+  const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
+  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers });
+  const commentsHold = await checkPrRateLimitResponse(commentsRes, key, owner, repo, prNumber, activeAuth.authority, workspaceRoot, useSharedHold);
+  if (commentsHold) return commentsHold;
+  const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
   const retrievedAt = new Date().toISOString(); const trustedOperatorApprovalReceipts = [];
   for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) { if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue; if (!asText(comment?.body).includes(PROTECTED_APPROVAL_MARKER)) continue; for (const candidate of extractJsonObjects(comment.body)) { const projection = projectProtectedApprovalReceiptForWorkspace(candidate, { nowUtc: retrievedAt }); if (projection.valid) trustedOperatorApprovalReceipts.push(projection.receipt); } }
   const checkRuns = asList(checksPayload?.check_runs?.map((run) => run?.conclusion || run?.status));

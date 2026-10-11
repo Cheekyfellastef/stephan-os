@@ -61,21 +61,31 @@ function workerPublication(worker = {}, {
     expectedRepositoryRoot,
     expectedHeadSha,
   });
-  const ready = projection.valid && projection.fresh;
+  const live = projection.valid && projection.fresh;
+  const ready = live && projection.lastTickAffirmative === true;
+  const degraded = live && projection.lastTickAffirmative === false;
   const stale = projection.valid && projection.stale;
   return {
-    status: ready ? BATTLE_BRIDGE_SERVICE_STATUS.READY : BATTLE_BRIDGE_SERVICE_STATUS.UNKNOWN,
-    reachable: ready,
+    status: ready
+      ? BATTLE_BRIDGE_SERVICE_STATUS.READY
+      : degraded
+        ? BATTLE_BRIDGE_SERVICE_STATUS.DEGRADED
+        : BATTLE_BRIDGE_SERVICE_STATUS.UNKNOWN,
+    reachable: live,
     usable: ready,
     browserCompatible: false,
     summary: ready
       ? `Mission Worker heartbeat is canonically valid and fresh (${projection.lastTickVerdict}).`
-      : stale
-        ? `Mission Worker heartbeat is canonically valid but stale (${projection.ageMs}ms).`
-        : `Mission Worker heartbeat failed canonical validation (${projection.errors.join(',') || projection.finalVerdict}).`,
+      : degraded
+        ? `Mission Worker is live but its last tick is degraded (${projection.lastTickVerdict}).`
+        : stale
+          ? `Mission Worker heartbeat is canonically valid but stale (${projection.ageMs}ms).`
+          : `Mission Worker heartbeat failed canonical validation (${projection.errors.join(',') || projection.finalVerdict}).`,
     exactNextAction: ready
       ? 'Continue polling the canonical Mission Worker heartbeat.'
-      : 'Use the existing Mission Worker watchdog/recovery route and require a fresh exact-repository/exact-head canonical heartbeat.',
+      : degraded
+        ? 'Keep the worker live and repair or retry the reported bounded execution defect.'
+        : 'Use the existing Mission Worker watchdog/recovery route and require a fresh exact-repository/exact-head canonical heartbeat.',
   };
 }
 

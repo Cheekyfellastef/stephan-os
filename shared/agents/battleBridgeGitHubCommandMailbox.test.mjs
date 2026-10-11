@@ -31,7 +31,7 @@ function command(overrides = {}) {
     requestId: 'req-1507-0001',
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2808,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',
@@ -146,6 +146,8 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CRITICAL_BACKLOG_STATUS',
     'READ_PROGRAMME_AUTHORITY_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'START_REMOTE_COMMANDER',
+    'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
     'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
     'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -434,6 +436,50 @@ test('projects allowlisted operation-specific owner validation blockers as termi
   assert.equal(selected.terminalRejections.length, 1);
   assert.equal(selected.terminalRejections[0].blocker, 'RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
   assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-mesh-missing-head');
+});
+
+test('current exact-head control work bypasses stale control generations before execution slots', () => {
+  const currentHead = 'c'.repeat(40);
+  const staleHead = 'b'.repeat(40);
+  const comments = [
+    comment(command({ requestId: 'req-stale-control-0001', expectedHead: staleHead }), { id: 1 }),
+    comment(command({ requestId: 'req-stale-control-0002', expectedHead: staleHead }), { id: 2 }),
+    comment(command({ requestId: 'req-stale-control-0003', expectedHead: staleHead }), { id: 3 }),
+    comment(command({ requestId: 'req-stale-control-0004', expectedHead: staleHead }), { id: 4 }),
+    comment(command({ requestId: 'req-current-control-0005', expectedHead: currentHead }), { id: 5 }),
+  ];
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { now, currentHead });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+  assert.deepEqual(batch.commands.map((entry) => entry.command.requestId), ['req-current-control-0005']);
+  assert.equal(batch.readyCount, 1);
+  assert.equal(batch.deferredCount, 0);
+  assert.deepEqual(batch.terminalRejections.map((entry) => entry.command.requestId), [
+    'req-stale-control-0001',
+    'req-stale-control-0002',
+    'req-stale-control-0003',
+    'req-stale-control-0004',
+  ]);
+  assert.ok(batch.terminalRejections.every((entry) => entry.blocker === 'COMMAND_EXPECTED_HEAD_SUPERSEDED'));
+});
+
+test('current-head pruning preserves observation commands while rejecting stale controls', () => {
+  const currentHead = 'd'.repeat(40);
+  const staleHead = 'e'.repeat(40);
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-stale-control-0010', expectedHead: staleHead }), { id: 10 }),
+    comment(command({
+      requestId: 'req-stale-observe-0011',
+      operation: 'READ_DEPLOYMENT_STATUS',
+      expectedHead: staleHead,
+    }), { id: 11 }),
+    comment(command({ requestId: 'req-current-control-0012', expectedHead: currentHead }), { id: 12 }),
+  ], { now, currentHead });
+  assert.deepEqual(batch.commands.map((entry) => entry.command.requestId), [
+    'req-stale-observe-0011',
+    'req-current-control-0012',
+  ]);
+  assert.equal(batch.terminalRejections.length, 1);
+  assert.equal(batch.terminalRejections[0].command.requestId, 'req-stale-control-0010');
 });
 
 test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
@@ -930,4 +976,101 @@ test('status receipt is explicitly read-only and has no reset authority', () => 
   assert.equal(receipt.readOnly, true);
   assert.equal(receipt.resetId, '');
   assert.equal(receipt.singlePressOnly, false);
+});
+
+
+test('control-plane repair requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'repair-control-plane-0001',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    repairControlPlane: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED',
+        taskCount: 7,
+        arbitraryTaskNameAllowed: false,
+        arbitraryShellAllowed: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED');
+  assert.equal(result.result.taskCount, 7);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
+});
+
+
+test('remote Commander start requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'start-remote-commander-0001',
+    operation: 'START_REMOTE_COMMANDER',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    startRemoteCommander: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'REMOTE_COMMANDER_STARTED',
+        commanderHealthy: true,
+        afterProcessCount: 1,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'REMOTE_COMMANDER_STARTED');
+  assert.equal(result.result.commanderHealthy, true);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });

@@ -24,7 +24,7 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     id: 'workerWatchdog',
     taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
     installerRelativePath: 'scripts/windows/install-battle-bridge-worker-watchdog.ps1',
-    intervalMinutes: 1,
+    intervalMinutes: 5,
   }),
   Object.freeze({
     id: 'githubCommandMailbox',
@@ -36,7 +36,7 @@ export const BATTLE_BRIDGE_CONTROL_PLANE_TASKS = Object.freeze([
     id: 'outboundHealthBeacon',
     taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
     installerRelativePath: 'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
-    intervalMinutes: 1,
+    intervalMinutes: 10,
   }),
 ]);
 
@@ -371,7 +371,7 @@ function validateWorkerWatchdogReceipt(payload) {
     && payload.taskName === 'Stephanos Mission Orchestrator Worker Watchdog'
     && payload.installed === true
     && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
+    && Number(payload.intervalMinutes) === 5
     && payload.atLogon === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
@@ -409,7 +409,7 @@ function validateOutboundHealthBeaconReceipt(payload) {
     && payload.taskName === 'Stephanos Battle Bridge Outbound Health Beacon'
     && payload.installed === true
     && payload.startedNow === true
-    && Number(payload.intervalMinutes) === 1
+    && Number(payload.intervalMinutes) === 10
     && payload.atLogon === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
@@ -482,23 +482,42 @@ export function reconcileBattleBridgeControlPlane({
   expectedHead = '',
   platform = process.platform,
   spawnSyncFn = spawnSync,
+  skipTaskIds = [],
 } = {}) {
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
+  const requestedSkipTaskIds = Array.isArray(skipTaskIds)
+    ? [...new Set(skipTaskIds.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+  const invalidSkipTaskId = requestedSkipTaskIds.find((taskId) => taskId !== 'githubCommandMailbox');
+  if (invalidSkipTaskId) {
+    return blocked('CONTROL_PLANE_SKIP_TASK_INVALID', {
+      invalidSkipTaskId,
+      skippedTaskIds: Object.freeze([]),
+    });
+  }
   const canonicalRoot = resolve(repoRoot);
   const identity = sourceIdentity({ repoRoot: canonicalRoot, expectedHead, spawnSyncFn });
   if (!identity.ok) return identity;
 
   const results = [];
   const installerFailures = [];
-  for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
+  const tasksToRepair = BATTLE_BRIDGE_CONTROL_PLANE_TASKS.filter((task) => !requestedSkipTaskIds.includes(task.id));
+  for (const task of tasksToRepair) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
-    const runInstaller = () => capture(spawnSyncFn, POWERSHELL_EXE, [
+    const installerArgs = [
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', installerPath,
       '-StartNow',
-    ], { cwd: canonicalRoot, timeout: 180_000 });
+      ...(task.id === 'recoveryMesh' ? ['-RecoveryMeshOnly'] : []),
+    ];
+    const runInstaller = () => capture(
+      spawnSyncFn,
+      POWERSHELL_EXE,
+      installerArgs,
+      { cwd: canonicalRoot, timeout: 180_000 },
+    );
 
     let command = runInstaller();
     let pinnedLauncherRestoreAttemptCount = 0;
@@ -582,6 +601,7 @@ export function reconcileBattleBridgeControlPlane({
       installerFailureCount: installerFailures.length,
       taskCount: results.length,
       tasks: Object.freeze(results),
+      skippedTaskIds: Object.freeze([...requestedSkipTaskIds]),
       workConservingRepairAttempted: true,
       independentFixedRepairContinued: true,
     });
@@ -600,7 +620,8 @@ export function reconcileBattleBridgeControlPlane({
     dirtSummary: identity.dirtSummary,
     taskCount: results.length,
     tasks: Object.freeze(results),
-    canonicalTaskNames: Object.freeze(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.taskName)),
+    canonicalTaskNames: Object.freeze(tasksToRepair.map((task) => task.taskName)),
+    skippedTaskIds: Object.freeze([...requestedSkipTaskIds]),
     arbitraryTaskNameAllowed: false,
     arbitraryExecutableAllowed: false,
     arbitraryShellAllowed: false,

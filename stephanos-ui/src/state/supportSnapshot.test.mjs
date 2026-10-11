@@ -5289,3 +5289,30 @@ test('Support Snapshot and Cockpit projection share canonical proof concierge in
   assert.match(snapshot, /Proof Concierge Rendered Next Proof: verify-proof/);
   assert.doesNotMatch(snapshot, /Operator Proof Concierge Next Proof: build-proof/);
 });
+
+test('Support Snapshot carries Shared Workspace learning summary without becoming memory authority', () => {
+  const snapshot = buildSupportSnapshot({
+    runtimeStatus: {
+      sharedWorkspaceLearning: {
+        state: 'ready',
+        lessonCount: 4,
+        latestLessonId: 'ai-chat-render-loop-prevention',
+        latestLessonSummary: 'Prevent semantic feedback loops.',
+      },
+    },
+    routeTruthView: {},
+    runtimeSessionTruth: {},
+    runtimeRouteTruth: {},
+    runtimeReachabilityTruth: {},
+    runtimeProviderTruth: {},
+    runtimeDiagnosticsTruth: {},
+    runtimeContext: {},
+    safeApiStatus: {},
+    statusSummary: {},
+    now: new Date('2026-09-27T12:00:00.000Z'),
+  });
+  assert.match(snapshot, /Shared Workspace Learning State: ready/);
+  assert.match(snapshot, /Shared Workspace Lesson Count: 4/);
+  assert.match(snapshot, /Shared Workspace Latest Lesson: ai-chat-render-loop-prevention/);
+  assert.match(snapshot, /Shared Workspace Latest Lesson Summary: Prevent semantic feedback loops\./);
+});

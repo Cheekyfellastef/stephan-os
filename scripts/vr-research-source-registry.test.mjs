@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 async function readJson(path) {
   return JSON.parse(await readFile(resolve(repoRoot, path), 'utf8'));
@@ -14,7 +15,7 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(registry.schema_version, '1.8');
   assert.equal(registry.domain, 'vr');
   assert.ok(Array.isArray(registry.sources));
-  assert.equal(registry.sources.length, 25);
+  assert.equal(registry.sources.length, 26);
 
   const sourceIds = registry.sources.map((source) => String(source.source_id || ''));
   assert.equal(sourceIds.every(Boolean), true);
@@ -27,6 +28,8 @@ test('canonical VR source registry is valid, unique and locally grounded', async
     assert.ok(String(source.promotion_rule || '').trim(), `${source.source_id}: promotion rule required`);
     if (source.local_manifest) await access(resolve(repoRoot, source.local_manifest));
     if (source.local_extraction) await access(resolve(repoRoot, source.local_extraction));
+    if (source.local_teaching_records) await access(resolve(repoRoot, source.local_teaching_records));
+    if (source.local_evidence_receipt) await access(resolve(repoRoot, source.local_evidence_receipt));
   }
 
   const headsetVr = registry.sources.find((source) => source.source_id === 'creator-headset-vr');
@@ -43,6 +46,29 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(betterVr?.local_manifest, 'VR-Research-Lab/knowledge-sources/botw-bettervr/source-manifest.json');
   assert.equal(betterVr?.local_extraction, 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md');
 
+
+  const mutar = registry.sources.find((source) => source.source_id === 'github-mutars-nomoreflat');
+  assert.equal(mutar?.alex7722_repository, 'Alex7722/starfield2vr');
+  assert.equal(mutar?.alex7722_snapshot_commit, 'e8860ef84368f9b443ca6f16953e3ca05cb32e9f');
+  assert.equal(mutar?.stability_repository, 'gsaw0/starfield2vr');
+  assert.equal(mutar?.local_reference_lock, 'VR-Research-Lab/reference-source-lock.json');
+
+  const lukeRoss = registry.sources.find((source) => source.source_id === 'official-luke-ross-real-vr');
+  assert.equal(lukeRoss?.secondary_historical_repository, 'LukeRoss00/nolf2-real-mod');
+  assert.equal(lukeRoss?.secondary_historical_snapshot_commit, 'b05774555af804749e9c913df262ec7e084ad1da');
+
+  const referenceLock = await readJson('VR-Research-Lab/reference-source-lock.json');
+  assert.equal(referenceLock.schema, 'stephanos.vr-reference-source-lock.v2');
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'alex7722-starfield2vr-experimental' && source.code_reuse_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'gsaw0-starfield2vr-stability' && source.code_reuse_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'luke-ross-gta5-real-mod' && source.code_reuse_allowed === false));
+  assert.equal(referenceLock.sources.filter((source) => source.local_cache_allowed).every((source) => ['permissive', 'copyleft-separate-component'].includes(source.reuse_class)), true);
+  assert.equal(referenceLock.sources.filter((source) => source.local_cache_allowed).every((source) => !/NOASSERTION|All rights reserved|proprietary/i.test(source.licence)), true);
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'cyberpunk-universal-hands-current' && source.licence === 'MIT' && source.local_cache_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'meta-quest-agentic-tools-current' && source.licence === 'Apache-2.0' && source.local_cache_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'rai-pal-current' && source.reuse_class === 'copyleft-separate-component'));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'uevr-current-analysis' && source.local_cache_allowed === false));
+
   const metaVrCli = registry.sources.find((source) => source.source_id === 'official-meta-vr-cli');
   assert.equal(metaVrCli?.snapshot_version, '1.3.2');
   assert.equal(metaVrCli?.status, 'registered-vendor-cli-research-only');
@@ -53,11 +79,12 @@ test('canonical VR source registry is valid, unique and locally grounded', async
 test('visible VR Lab workspace reports the same canonical source count', async () => {
   const workspace = await readJson('VR-Research-Lab/lab-workspace.json');
   assert.equal(workspace.schemaVersion, 'stephanos.vr-research-lab.workspace.v4');
-  assert.match(workspace.overview.join(' '), /25-source VR knowledge stack/);
-  assert.ok(workspace.knowledgeBuckets.includes('25-source canonical registry: provenance, revision, licence, freshness and promotion state'));
+  assert.match(workspace.overview.join(' '), /26-source VR knowledge stack/);
+  assert.ok(workspace.knowledgeBuckets.includes('26-source canonical registry: provenance, revision, licence, freshness and promotion state'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/witcher-3-vr-route/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/headset-vr/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md'));
+  assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/battle-bridge-installed-vr-corpus/knowledge-extraction.md'));
 });

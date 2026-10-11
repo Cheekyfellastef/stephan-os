@@ -16,6 +16,7 @@ import {
   mergeIgnoredRuntimeChildrenIntoStatus,
   runIgnitionHousekeep,
   scanIgnoredRuntimeAggregatePathsForBlockers,
+  resolveApprovedOpenClawAutostartTargets,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
@@ -604,6 +605,101 @@ function phaseRecord(id, overrides = {}) {
   return { id, state: 'pending', blockerId: '', nextOperatorAction: '', logPath: '', ...overrides };
 }
 
+async function settleOpenClawCompanionSpawn(child, { settleTimeoutMs = 250 } = {}) {
+  const observedPid = () => Number(child?.pid || 0) || null;
+  if (typeof child?.once !== 'function') {
+    return Object.freeze({ started: Boolean(observedPid()), pid: observedPid(), error: '' });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Object.freeze(result));
+    };
+    const timer = setTimeout(() => {
+      const pid = observedPid();
+      finish({ started: Boolean(pid), pid, error: pid ? '' : 'companion-spawn-unconfirmed' });
+    }, Math.max(0, settleTimeoutMs));
+
+    child.once('spawn', () => finish({ started: true, pid: observedPid(), error: '' }));
+    child.once('error', (error) => finish({
+      started: false,
+      pid: null,
+      error: error?.message || String(error),
+    }));
+  });
+}
+
+export async function launchOptionalOpenClawCompanionSurfaces({
+  env = process.env,
+  spawnFn = spawn,
+  cwd = defaultRepoRoot,
+  settleTimeoutMs = 250,
+} = {}) {
+  const targets = resolveApprovedOpenClawAutostartTargets({ env })
+    .filter((target) => target.id === 'chat' || target.id === 'dashboard');
+
+  const surfaces = await Promise.all(targets.map(async (target) => {
+    const configured = Boolean(String(env[target.envKey] || '').trim());
+    if (!target.available) {
+      return Object.freeze({
+        surface: target.id,
+        configured,
+        started: false,
+        rejected: configured,
+        reason: target.reason || 'approved-launch-command-missing',
+      });
+    }
+
+    try {
+      const child = spawnFn(target.command, target.commandArgs || [], {
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+        shell: false,
+        env: { ...env, STEPHANOS_OPENCLAW_AUTOSTART: 'runtime-surfaces-only' },
+      });
+      const outcome = await settleOpenClawCompanionSpawn(child, { settleTimeoutMs });
+      try { child?.unref?.(); } catch {}
+      if (!outcome.started) {
+        return Object.freeze({
+          surface: target.id,
+          configured: true,
+          started: false,
+          reason: 'companion-launch-failed',
+          error: outcome.error || 'companion-spawn-unconfirmed',
+          source: target.source || '',
+        });
+      }
+      return Object.freeze({
+        surface: target.id,
+        configured: true,
+        started: true,
+        pid: outcome.pid,
+        source: target.source || '',
+      });
+    } catch (error) {
+      return Object.freeze({
+        surface: target.id,
+        configured: true,
+        started: false,
+        reason: 'companion-launch-failed',
+        error: error?.message || String(error),
+      });
+    }
+  }));
+
+  return Object.freeze({
+    requiredForIgnition: false,
+    attempted: surfaces.some((surface) => surface.configured),
+    degraded: surfaces.some((surface) => surface.configured && !surface.started),
+    surfaces: Object.freeze(surfaces),
+  });
+}
+
 export function createBattleBridgeSupervisorStatus(overrides = {}) {
   return {
     schema: BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA,
@@ -615,7 +711,7 @@ export function createBattleBridgeSupervisorStatus(overrides = {}) {
     logPath: '',
     services: {
       backend8787: { state: 'pending', ready: false, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY },
-      openClaw18789: { state: 'pending', ready: false },
+      openClaw18789: { state: 'pending', ready: false, requiredForIgnition: false },
       stephanosUi4173: { state: 'pending', ready: false },
     },
     sharedWorkspaceFreshness: { state: 'pending', fresh: false, staleRecords: [] },
@@ -630,7 +726,10 @@ export function createBattleBridgeSupervisorStatus(overrides = {}) {
 function trafficLightFor(status) {
   if (status.blockerId) return 'red';
   if (Object.values(status.phases).some((phase) => phase.state === 'failed' || phase.state === 'blocked')) return 'red';
-  if (Object.values(status.phases).some((phase) => phase.state === 'degraded')) return 'amber';
+  const materialDegradation = Object.values(status.phases).some(
+    (phase) => phase.state === 'degraded' && phase.id !== 'OpenClaw gateway 18789',
+  );
+  if (materialDegradation) return 'amber';
   if (status.phases.ready?.state === 'ready') return 'green';
   return 'blue';
 }
@@ -646,9 +745,22 @@ function applyReadinessToStatus(status, report = {}) {
   const services = report.observedServices || {};
   const backendRepair = status.services.backend8787?.repair || null;
   const openClawStart = status.services.openClaw18789?.start || null;
+  const openClawDegradationId = status.services.openClaw18789?.degradationId || '';
+  const openClawRecoveryAction = status.services.openClaw18789?.recoveryAction || '';
+  const openClawCompanionSurfaces = status.services.openClaw18789?.companionSurfaces || null;
   const servedRuntimeProof = status.services.stephanosUi4173?.servedRuntimeProof || null;
+  const openClawReady = services['openclaw-gateway']?.ready === true;
   status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
-  status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'blocked', ready: services['openclaw-gateway']?.ready === true, evidence: services['openclaw-gateway']?.evidence || null, ...(openClawStart ? { start: openClawStart } : {}) };
+  status.services.openClaw18789 = {
+    state: openClawReady ? 'ready' : 'degraded',
+    ready: openClawReady,
+    requiredForIgnition: false,
+    evidence: services['openclaw-gateway']?.evidence || null,
+    ...(openClawStart ? { start: openClawStart } : {}),
+    ...(openClawCompanionSurfaces ? { companionSurfaces: openClawCompanionSurfaces } : {}),
+    ...(!openClawReady && openClawDegradationId ? { degradationId: openClawDegradationId } : {}),
+    ...(!openClawReady && openClawRecoveryAction ? { recoveryAction: openClawRecoveryAction } : {}),
+  };
   status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null, ...(servedRuntimeProof ? { servedRuntimeProof } : {}) };
   status.sharedWorkspaceFreshness = { state: (services['shared-workspace']?.ready && !(report.staleWorkspaceRecords || []).length) ? 'ready' : 'degraded', fresh: services['shared-workspace']?.ready === true && !(report.staleWorkspaceRecords || []).length, staleRecords: report.staleWorkspaceRecords || [] };
   status.runtimeOnlyDirtCaveat = (report.caveats || []).find((caveat) => caveat.id === 'runtime-only-dirt') || null;
@@ -767,18 +879,18 @@ function openClawHealthReady(payload = {}) {
   return payload?.ok === true || status === 'ok' || status === 'live';
 }
 
-async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = {}) {
+async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch, timeoutMs = 1500 } = {}) {
   const healthUrl = 'http://127.0.0.1:18789/health';
   const identityUrl = 'http://127.0.0.1:18789/identity';
-  const healthResponse = await fetchJson(healthUrl, { fetchFn });
+  const healthResponse = await fetchJson(healthUrl, { fetchFn, timeoutMs });
   let identity = null;
   if (healthResponse.ok && openClawHealthReady(healthResponse.json || {})) {
-    try { identity = await fetchJson(identityUrl, { fetchFn }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
+    try { identity = await fetchJson(identityUrl, { fetchFn, timeoutMs }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
   }
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, healthProbeTimeoutMs = 1500, waitForReady = true, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -801,7 +913,7 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: { ready: false, skipped: true, reason: target.reason } };
   }
   let existingProof = null;
-  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn, timeoutMs: healthProbeTimeoutMs }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
 `);
   if (existingProof.ready) {
@@ -861,10 +973,36 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     child.once('error', (error) => { exitState.error = error?.message || String(error); });
     child.once('exit', (code, signal) => { exitState.code = code; exitState.signal = signal; });
   }
+  if (!waitForReady) {
+    const deferredProof = {
+      ready: false,
+      deferred: true,
+      reason: 'optional-openclaw-health-proof-deferred',
+      healthUrl: 'http://127.0.0.1:18789/health',
+    };
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify(deferredProof, null, 2)}\n`);
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+    try { child?.unref?.(); } catch {}
+    return {
+      started: Boolean(child) && !exitState.error,
+      ready: false,
+      background: true,
+      exitCode: exitState.code,
+      exit: exitState,
+      error: exitState.error,
+      sourceHeadProof,
+      logs,
+      logPath,
+      target,
+      execution: safeExecution,
+      healthProof: deferredProof,
+      pid: Number(child?.pid || 0) || null,
+    };
+  }
   const deadline = Date.now() + Math.max(0, readyTimeoutMs);
   let proof = null;
   do {
-    try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+    try { proof = await probeOpenClawGateway18789Health({ fetchFn, timeoutMs: healthProbeTimeoutMs }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
@@ -933,12 +1071,30 @@ export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null
   };
 }
 
-async function fetchJson(url, { fetchFn = globalThis.fetch } = {}) {
-  const response = await fetchFn(url);
-  const text = await response.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch {}
-  return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+async function fetchJson(url, { fetchFn = globalThis.fetch, timeoutMs = 4000 } = {}) {
+  const boundedTimeoutMs = Math.max(1, Number(timeoutMs) || 4000);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      try { controller?.abort(); } catch {}
+      const error = new Error(`FETCH_TIMEOUT:${url}`);
+      error.code = 'FETCH_TIMEOUT';
+      reject(error);
+    }, boundedTimeoutMs);
+  });
+  try {
+    const response = await Promise.race([
+      fetchFn(url, controller ? { signal: controller.signal } : undefined),
+      timeoutPromise,
+    ]);
+    const text = await response.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function collectServedRuntimeExactHeadProof({ currentHead = getCurrentGitHead(), fetchFn = globalThis.fetch } = {}) {
@@ -968,7 +1124,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, cwd = defaultRepoRoot, environment = process.env, platform = process.platform, spawnSyncFn = spawnSync, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, openClawCompanionStartFn = launchOptionalOpenClawCompanionSurfaces, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, cwd = defaultRepoRoot, environment = process.env, platform = process.platform, spawnSyncFn = spawnSync, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -1062,7 +1218,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     const mutation = await runExactHeadBoundMutation({
       phase: 'OpenClaw gateway 18789',
       blockerId: 'ignition-exact-head-changed-before-openclaw-start',
-      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn }),
+      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn, waitForReady: false }),
     });
     if (!mutation.ok) return mutation.blockedResult;
     const startResult = mutation.value;
@@ -1075,15 +1231,32 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     if (!isReady(report, 'openclaw-gateway') || startResult?.ready !== true) {
       const exitCode = startResult?.exitCode ?? startResult?.exit?.code ?? null;
       const failedExit = Boolean(startResult?.error || startResult?.exit?.signal || (exitCode !== null && exitCode !== 0));
-      const blockerId = failedExit ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
+      const degradationId = failedExit ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
       const logPath = startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs/openclaw-gateway-18789-start';
-      const blocker = requiredServiceBlocker(blockerId, 'OpenClaw gateway 18789 startup must be proved by http://127.0.0.1:18789/health returning ok/status live; readonly adapter stubs are not accepted.', `Inspect OpenClaw gateway startup logs at ${logPath}; then rerun npm run stephanos:ignite.`, { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startResult, logPath });
-      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: failedExit ? 'failed' : 'blocked', blocker, logPath }); await persist();
-      stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-      return { ok: false, status, writes };
+      const recoveryAction = `Inspect OpenClaw gateway startup logs at ${logPath}; OpenClaw may recover and rejoin later. Stephanos startup does not wait on OpenClaw.`;
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'degraded', readinessReport: report, logPath });
+      status.services.openClaw18789 = {
+        ...status.services.openClaw18789,
+        state: 'degraded',
+        ready: false,
+        requiredForIgnition: false,
+        degradationId,
+        recoveryAction,
+      };
+      status.phases['OpenClaw gateway 18789'] = {
+        ...status.phases['OpenClaw gateway 18789'],
+        state: 'degraded',
+        blockerId: '',
+        nextOperatorAction: recoveryAction,
+        logPath,
+      };
+      await persist();
+    } else {
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
     }
+  } else {
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
   }
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
 
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
@@ -1150,9 +1323,9 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   const readySourceProof = reproveExpectedHead('ignition-exact-head-changed-before-ready');
   if (!readySourceProof.ok) return blockForSourceReproof(readySourceProof, 'browser/runtime proof');
   const exactHeadReady = servedRuntimeProof?.ready === true;
-  const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
+  const proofReady = !status.blockerId && isReady(proofReport, 'backend') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
   if (!proofReady) {
-    const missingPhase = !isReady(proofReport, 'backend') ? 'backend 8787' : (!isReady(proofReport, 'openclaw-gateway') ? 'OpenClaw gateway 18789' : (!isReady(proofReport, 'stephanos-ui') ? 'Stephanos UI 4173' : 'shared workspace publisher'));
+    const missingPhase = !isReady(proofReport, 'backend') ? 'backend 8787' : (!isReady(proofReport, 'stephanos-ui') ? 'Stephanos UI 4173' : 'shared workspace publisher');
     const staleRuntime = isReady(proofReport, 'stephanos-ui') && servedRuntimeProof && !servedRuntimeProof.ready;
     const blockerId = staleRuntime ? 'served-runtime-stale' : (status.blockerId || (missingPhase === 'backend 8787' ? 'backend-8787-missing' : (missingPhase === 'Stephanos UI 4173' ? 'stephanos-ui-4173-missing' : 'browser-runtime-proof-incomplete')));
     const detail = staleRuntime ? `Stephanos UI 4173 is alive but served runtime does not match current source HEAD ${servedRuntimeProof.currentHead}.` : 'Required Battle Bridge element is not ready; browser/runtime proof remains pending.';
@@ -1162,6 +1335,32 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
+
+  const companionMutation = await runExactHeadBoundMutation({
+    phase: 'browser/runtime proof',
+    blockerId: 'ignition-exact-head-changed-before-openclaw-companion-start',
+    mutate: async () => {
+      try {
+        return await openClawCompanionStartFn({
+          env: environment,
+          cwd,
+        });
+      } catch (error) {
+        return Object.freeze({
+          requiredForIgnition: false,
+          attempted: true,
+          degraded: true,
+          reason: 'companion-launch-adapter-failed',
+          error: error?.message || String(error),
+          surfaces: Object.freeze([]),
+        });
+      }
+    },
+  });
+  if (!companionMutation.ok) return companionMutation.blockedResult;
+  status.services.openClaw18789.companionSurfaces = companionMutation.value;
+  await persist();
+
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'ready', readinessReport: proofReport });
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'ready', phaseState: 'ready' });
   await persist();
