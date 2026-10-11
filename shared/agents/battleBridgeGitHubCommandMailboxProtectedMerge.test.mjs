@@ -341,5 +341,25 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
     ...options, currentHead: base,
   });
   assert.equal(strict.verdict, 'NO_COMMAND_READY');
-  assert.equal(strict.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(strict.terminalRejections[0].blocker, 'PROTECTED_MERGE_FIELD_NOT_ALLOWED');
+  const ordinary = {
+    schemaVersion: payload.schemaVersion,
+    requestId: 'strict-control-head-not-pr',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    repository: payload.repository,
+    issueNumber: payload.issueNumber,
+    branch: payload.branch,
+    operatorApproval: payload.operatorApproval,
+    expectedHead: head,
+    expiresAt: payload.expiresAt,
+  };
+  const ordinaryEntry = {
+    ...entry,
+    body: '```stephanos-battle-bridge-command\\n' + JSON.stringify(ordinary) + '\\n```',
+  };
+  const strictOrdinary = selectBattleBridgeGitHubCommandBatch([ordinaryEntry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(strictOrdinary.verdict, 'NO_COMMAND_READY');
+  assert.equal(strictOrdinary.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
