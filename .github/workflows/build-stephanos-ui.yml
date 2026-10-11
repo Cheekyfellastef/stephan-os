@@ -89,7 +89,9 @@ jobs:
             shared/runtime/stephanosHomeNode.test.mjs \
             shared/runtime/stephanosSessionMemory.test.mjs \
             stephanos-server/tests/runtime-status-model.test.js \
-            stephanos-server/tests/provider-routing.test.js
+            stephanos-server/tests/provider-routing.test.js \
+            stephanos-server/services/stephanosExecutiveChatBridgeService.test.js \
+            stephanos-server/tests/ollama-provider.test.js
 
   surface-ignition-tests:
     if: >-
