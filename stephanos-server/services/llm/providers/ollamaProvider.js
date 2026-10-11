@@ -99,6 +99,8 @@ function inferOllamaReasoningProfile(request = {}) {
     promptWordCount: userText ? userText.split(/\s+/).filter(Boolean).length : 0,
     explicitDeepReasoning,
     explicitLightweight,
+    evidenceDrivenEscalation,
+    sovereignRepairIntent,
     autoEscalate,
     preferredTier: explicitLightweight
       ? 'lightweight'
@@ -192,7 +194,7 @@ function chooseOllamaModel({
     prompt: String(latestUserMessage?.content || ''),
     forceHeavyModel: config?.forceHeavyModel === true
       || (String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase() === 'balanced'
-        && (evidenceDrivenEscalation || sovereignRepairIntent)),
+        && (profile.evidenceDrivenEscalation || profile.sovereignRepairIntent)),
     availableModels: available,
   });
 
