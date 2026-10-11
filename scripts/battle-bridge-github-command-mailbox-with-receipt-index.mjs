@@ -26,12 +26,14 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 const SELF_UPDATE_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
 
-// ACCEPTED ownership is heartbeat-assisted, but a single bounded Sovereign
-// remote call may occupy the worker for up to five minutes before JavaScript can
-// service another timer turn. The stale lease must therefore exceed that maximum
-// single-call window. Six minutes preserves a one-minute safety margin while
-// remaining well below the installed Scheduled Task's 15-minute execution ceiling.
-export const MAILBOX_ACCEPTED_LEASE_MS = 6 * 60 * 1000;
+// ACCEPTED ownership is heartbeat-assisted, but fixed Commander maintenance
+// can occupy the mailbox while its timer cannot advance. A remote plan can last
+// eight minutes and the outbox-guarded child can run for up to fifteen minutes.
+// Do not terminalize its accepted ownership while that child may still execute:
+// reclaim only after the guarded child's deadline plus a one-minute margin.
+// This is not a replay grant, and reconciliation still consumes the request
+// without authorizing a second writer or mutating the original source lease.
+export const MAILBOX_ACCEPTED_LEASE_MS = 16 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
 export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
 
