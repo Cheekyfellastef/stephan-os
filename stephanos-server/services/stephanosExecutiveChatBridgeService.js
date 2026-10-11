@@ -31,7 +31,7 @@ export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE = Object.freeze({
 });
 
 const PROJECT_RELEVANT =
-  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace)\b/i;
+  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace|over the line|#[1-9]\d*)\b/i;
 
 const EXPLICIT_ACTION_PATTERNS = Object.freeze([
   /^\s*(?:can|could|would|will)\s+we\s+(?:please\s+)?(?:build|fix|repair|restore|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
@@ -300,7 +300,7 @@ async function publishStephanosFlywheelDialogueReceiptV1({
       summary: 'Stephanos asked the Flywheel what should happen next from current scheduler and action-journal truth.',
       proofRefs,
     }),
-    dialogueSchemaVersion: 'stephanos.flywheel-dialogue-receipt.v1',
+    exchangeSchemaVersion: 'stephanos.flywheel-dialogue-receipt.v1',
     question: text(plan?.flywheel?.question),
     flywheelActionState: text(actionProjection?.state, 'UNKNOWN'),
     flywheelActionReceiptId: text(actionProjection?.receiptId),
