@@ -69,6 +69,50 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
   assert.equal(snapshot.unknownMeansGreen, false);
 });
 
+test('original r7 evidence remains read-only and strips raw queue records from visibility', () => {
+  const snapshot = buildSovereignVisibilitySnapshot({
+    originalR7Evidence: {
+      schemaVersion: 'stephanos.original-r7-worker-evidence.v1',
+      queueObserved: true,
+      inventoryComplete: true,
+      scannedFiles: 3,
+      matchingOriginalItems: 1,
+      exactBindingItems: 1,
+      exactResultPairCandidates: 1,
+      missingResultPairs: 0,
+      actionHashes: ['b'.repeat(64), 'C'.repeat(64)],
+      blocker: '',
+      readOnly: true,
+      rawPathsReturned: false,
+      rawRecordsReturned: false,
+      secretMaterialReturned: false,
+      writerInactivityProven: false,
+      canonicalTerminalExecutionReceiptProven: false,
+      leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      mergeAuthority: false,
+      privateResultPath: 'MUST_NOT_ESCAPE',
+    },
+  });
+  assert.equal(snapshot.originalR7Evidence.exactResultPairCandidates, 1);
+  assert.equal(snapshot.originalR7Evidence.writerInactivityProven, false);
+  assert.equal(snapshot.originalR7Evidence.canonicalTerminalExecutionReceiptProven, false);
+  assert.equal(snapshot.originalR7Evidence.leaseReleaseAuthority, false);
+  assert.deepEqual(snapshot.originalR7Evidence.actionHashes, ['b'.repeat(64)]);
+  assert.doesNotMatch(JSON.stringify(snapshot), /MUST_NOT_ESCAPE/);
+  assert.match(renderSovereignVisibilitySnapshotLine(snapshot), /originalR7Evidence/);
+});
+
+test('unknown original evidence cannot be presented as fully observed', () => {
+  const snapshot = buildSovereignVisibilitySnapshot({
+    originalR7Evidence: { schemaVersion: 'stephanos.original-r7-worker-evidence.v1', queueObserved: true, leaseReleaseAuthority: true },
+  });
+  assert.equal(snapshot.originalR7Evidence.queueObserved, false);
+  assert.equal(snapshot.originalR7Evidence.inventoryComplete, false);
+  assert.equal(snapshot.originalR7Evidence.blocker, 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE');
+  assert.equal(snapshot.originalR7Evidence.leaseReleaseAuthority, false);
+});
+
 test('stale core and degraded fast carrier remain visible rather than false green', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
     repository: { available: true, head: HEAD, branch: 'main', dirty: false, remoteMainAvailable: true, remoteMainHead: HEAD },
