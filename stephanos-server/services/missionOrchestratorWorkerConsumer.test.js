@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
@@ -263,6 +263,29 @@ test('claims each queue item exactly once', async () => {
   await publishMissionWorkerAction(created.state, options);
   assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
+});
+
+test('signed pickup racing cancellation cannot invoke a writer after queue rename', async () => {
+  const options = await runtime(); const missionId = 'critical-2962-elastic-goal';
+  const created = await createMissionRecord(intent(missionId), { ...options, env: {} });
+  const published = await publishMissionWorkerAction(created.state, { ...options, env: {} });
+  const record = await readMissionRecord(missionId, options);
+  const lockPath = join(options.root, missionId + '.lock');
+  await writeFile(lockPath, 'test holds the existing mission lock');
+  const claiming = claimNextMissionWorkerItem('openclaw-signed', options);
+  const processing = join(options.queueRoot, 'openclaw-signed', 'processing', published.action.actionId + '.json');
+  try {
+    let renamed = false;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (await access(processing).then(() => true, () => false)) { renamed = true; break; }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(renamed, true);
+    await writeFile(record.statePath, JSON.stringify({ ...record.state, cancelled: true,
+      currentPhase: 'CANCELLED', revision: record.state.revision + 1 }));
+  } finally { await unlink(lockPath); }
+  assert.equal(await claiming, null);
+  assert.deepEqual(await readdir(join(options.queueRoot, 'openclaw-signed', 'processing')), []);
 });
 
 test('agent handoff stays pending until atomic processing claim proves pickup', async () => {
