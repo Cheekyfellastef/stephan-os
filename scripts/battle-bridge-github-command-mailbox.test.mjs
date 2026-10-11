@@ -3182,3 +3182,107 @@ test('native programme proof fails closed for missing, unverifiable, mismatched 
     verifier: async () => { throw new Error('should-not-reach'); }});
   assert.equal(badHead.nativeCapacityReason, 'NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
 });
+
+
+test('native signed capacity survives double serialization and the bounded 9 KiB core receipt', () => {
+  const head = 'c'.repeat(40);
+  const original = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-overflow-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-overflow-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          programmeBlockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          nativeCapacityVerified: true,
+          nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+          nativeCapacityModel: 'qwen3.5:27b',
+          nativeCapacitySourceHead: head,
+          nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: 2600 + index,
+            continuityState: 'TRACKING',
+            title: 'bounded eligible source-goal '.repeat(10),
+            hostControllerTitle: 'Canonical builder worker '.repeat(8),
+            proofRefs: ['C:\\Users\\operator\\hidden\\key.txt'],
+          })),
+        },
+      },
+    },
+  };
+  const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+  const posted = serializeBoundedReceiptJson(checkpoint, 9 * 1024);
+  const result = JSON.parse(posted);
+  assert.equal(result.githubProjectionTruncated, true);
+  assert.equal(result.result.result.originalProgrammeLaneListOmitted, true);
+  assert.equal(result.result.result.programmeStatus, 'HOLD');
+  assert.equal(result.result.result.nativeCapacityVerified, true);
+  assert.equal(result.result.result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.result.result.nativeCapacitySourceHead, head);
+  assert.equal(result.result.result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.ok(Buffer.byteLength(posted, 'utf8') <= 9 * 1024);
+  assert.doesNotMatch(posted, /operator|hidden|key\.txt|hostControllerTitle/i);
+});
+
+test('native capacity public projection rejects unverifiable head and untrusted model paths', () => {
+  const head = 'c'.repeat(40);
+  const make = (native) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-negative-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-negative-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          ...native,
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: index + 2000, continuityState: 'TRACKING',
+            title: 'long text '.repeat(55), hostControllerTitle: 'private'.repeat(20),
+          })),
+        },
+      },
+    },
+  });
+  const baseline = {
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: 'qwen3.5:27b',
+    nativeCapacitySourceHead: head,
+    nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+  };
+  for (const mutation of [
+    { nativeCapacitySourceHead: 'd'.repeat(40) },
+    { nativeCapacityReceiptId: '' },
+    { nativeCapacityVerified: false },
+    { nativeCapacityModel: 'C:\\Users\\Operator\\private-model' },
+  ]) {
+    const original = make({ ...baseline, ...mutation });
+    const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+    const posted = JSON.parse(serializeBoundedReceiptJson(checkpoint, 9 * 1024));
+    assert.equal(posted.result.result.programmeStatus, 'HOLD');
+    assert.equal(posted.result.result.nativeCapacityVerified, false);
+    assert.equal(posted.result.result.nativeCapacityModel, '');
+    assert.equal(posted.result.result.nativeCapacitySourceHead, '');
+    assert.equal(posted.result.result.nativeCapacityReceiptId, '');
+    assert.doesNotMatch(JSON.stringify(posted), /Users|private-model/i);
+  }
+});
