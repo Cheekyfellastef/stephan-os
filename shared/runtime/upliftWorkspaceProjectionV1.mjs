@@ -1666,7 +1666,10 @@ function deriveFullSovereigntySeedGrowth(payload = {}) {
   ].filter(bound) : [];
   const latest = latestByTime(relevant);
   const proved = relevant.filter((record) =>
-    record !== heartbeat && isPositiveProofRecord(record) && proofRefs(record).length > 0);
+    record !== heartbeat
+      && record?.missionId === FULL_SOVEREIGNTY_MISSION_ID
+      && record?.relatedIssue === FULL_SOVEREIGNTY_ISSUE
+      && isPositiveProofRecord(record) && proofRefs(record).length > 0);
   // Phase completion is typed, exact-mission evidence, not a prose keyword.
   const rungProof = contract.growthRungs.map((rung) => proved.some((record) =>
     record.fullSovereigntyEvidence?.schemaVersion === 'stephanos.full-sovereignty-rung-proof.v1'
