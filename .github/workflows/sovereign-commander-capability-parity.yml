@@ -22,6 +22,8 @@ on:
       - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - 'scripts/sovereign-controller-lane-status.mjs'
+      - 'scripts/sovereign-controller-lane-status.test.mjs'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
   push:
     branches:
@@ -36,6 +38,7 @@ on:
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/battle-bridge-observation.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'scripts/sovereign-controller-lane-status.mjs'
 
 permissions:
   contents: read
@@ -58,6 +61,7 @@ jobs:
           node --check scripts/sovereign-commander-http.mjs
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
+          node --check scripts/sovereign-controller-lane-status.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
       - name: Focused parity regression tests
         run: |
@@ -71,3 +75,4 @@ jobs:
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
+          node --test scripts/sovereign-controller-lane-status.test.mjs
