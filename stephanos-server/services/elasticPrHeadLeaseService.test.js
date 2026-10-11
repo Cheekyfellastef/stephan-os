@@ -232,6 +232,34 @@ test('releases a parked exact lease and refills the same lease slot with the nex
   assert.equal(result.releasedLease.ok, true);
 });
 
+test('BLOCKED source owner cannot release a terminal receipt with idle queue without an original-writer fence', async () => {
+  const parked = mission(2962, 2987, HEAD_A, {
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete', resultId: 'critical-2962-elastic-goal-r7-123456789abc' },
+  });
+  const lease = leaseFor(parked);
+  const terminal = { state: 'completed', executionId: parked.dispatch.resultId, leaseKey: lease.leaseId,
+    sourceHead: lease.headSha, repository: lease.repository, issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber, branch: lease.branch };
+  let mutationCount = 0;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+    runWithMissionStatePrecondition: async (_id, _expected, operation) =>
+      ({ preconditionFailed: false, result: await operation(parked) }),
+    readOriginalSourceExecutionId: async () => parked.dispatch.resultId,
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [terminal], latestReceipt: terminal }),
+    originalMissionInFlightFn: async () => false,
+    releaseSourceMutationLease: async () => { mutationCount++; return { ok: true, released: true }; },
+    claimSourceMutationLease: async () => { mutationCount++; return { ok: true, claimed: true }; },
+    publishWorkerAction: async () => { mutationCount++; return { published: true }; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.held[0].reason, 'PARKED_ORIGINAL_AUTHENTICATED_FENCE_REQUIRED');
+  assert.equal(result.activeLease.leaseId, lease.leaseId);
+  assert.equal(mutationCount, 0);
+});
+
 test('a lease owned by another canonical lane blocks PR-head takeover without seizure', async () => {
   const candidate = mission(1802, 2096, HEAD_A);
   const foreign = {
@@ -618,7 +646,7 @@ test('canonical completed implementation dispatch in CHECK_PULL_REQUEST can rele
   assert.equal(released, 1);
 });
 
-test('cancelled original owner safely returns its expired rN lease only with terminal receipt and empty original queue', async () => {
+test('cancelled original source lease never releases on terminal receipt and empty queue without an authenticated fence', async () => {
   const baseMission = mission(2962, 2987, HEAD_A, {
     currentPhase: 'CANCELLED', revision: 8, cancelled: true,
     dispatch: { status: 'complete' },
@@ -651,21 +679,19 @@ test('cancelled original owner safely returns its expired rN lease only with ter
     },
   };
   const safe = await reconcileExpiredElasticReviewLeaseV1(args);
-  assert.equal(safe.released, true);
-  assert.equal(safe.classification, 'ELASTIC_CANCELLED_ORIGINAL_EXACT_LEASE_RELEASED');
-  assert.equal(safe.goalComplete, false);
+  assert.equal(safe.released, false);
+  assert.equal(safe.blocker, 'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED');
   assert.equal(safe.sourceMutationAllowed, false);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].leaseId, oldLease.leaseId);
+  assert.equal(calls.length, 0, 'no unfenced cancelled-source lease release');
   for (const [overrides, expected] of [
     [{ missionRecords: [{ ...baseMission, currentPhase: 'REPAIR_REQUIRED', cancelled: false }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
     [{ missionRecords: [{ ...baseMission, revision: 9 }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
     [{ missionRecords: [{ ...baseMission, storeMetadata: { lastEventId: 'forged', processedEventIds: ['forged'] } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
     [{ missionRecords: [{ ...baseMission, dispatch: { status: 'running' } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
-    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }) }, 'CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN'],
-    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [{ state: 'started' }], latestReceipt: { state: 'started' } }) }, 'CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN'],
-    [{ originalMissionInFlightFn: async () => true }, 'CANCELLED_SOURCE_WORK_STILL_IN_FLIGHT'],
-    [{ originalMissionInFlightFn: async () => { throw Error('unknown'); } }, 'CANCELLED_SOURCE_WORKER_QUEUE_UNOBSERVABLE'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }) }, 'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED'],
+    [{ readReceiptHistoryFn: async () => ({ ok: true, receipts: [{ state: 'started' }], latestReceipt: { state: 'started' } }) }, 'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED'],
+    [{ originalMissionInFlightFn: async () => true }, 'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED'],
+    [{ originalMissionInFlightFn: async () => { throw Error('unknown'); } }, 'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED'],
     [{ readLease: async () => ({ ...observation, validation: { ...observation.validation, active: true, stale: false } }) }, 'CANONICAL_LEASE_EXPIRED_STATE_NOT_PROVEN'],
     [{ missionRecords: [{ ...baseMission, git: { ...baseMission.git, branch: 'openclaw/unrelated' } }] }, 'REVIEW_LEASE_MISSION_REVISION_OR_HEAD_MISMATCH'],
   ]) {
@@ -673,7 +699,7 @@ test('cancelled original owner safely returns its expired rN lease only with ter
     assert.equal(denied.released, false);
     assert.equal(denied.blocker, expected);
   }
-  assert.equal(calls.length, 1, 'no unsafe release in any adversarial case');
+  assert.equal(calls.length, 0, 'no unsafe cancelled-source release in any case');
 });
 
 test('completed original r7 repair lease retires only with failed required checks and terminal exact worker proof', async () => {

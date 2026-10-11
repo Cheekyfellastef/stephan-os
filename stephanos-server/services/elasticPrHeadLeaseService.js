@@ -595,47 +595,9 @@ export async function reconcileExpiredElasticReviewLeaseV1({
         });
       } catch { return held('ORIGINAL_QUARANTINED_FENCE_OR_RELEASE_UNOBSERVABLE'); }
     }
-    if (!resolveMissionWorkerQueueRoot(env)) return held('CANONICAL_WORKER_QUEUE_UNAVAILABLE');
-    let history;
-    let actionInFlight;
-    try {
-      history = await readReceiptHistoryFn(paths.workspaceRoot, {
-        leaseKey: lease.leaseId, expectedHead: lease.headSha,
-      }, { repoRoot: paths.repoRoot });
-      if (history?.ok !== true
-          || !Array.isArray(history.receipts)
-          || history.receipts.length === 0
-          || !history.latestReceipt
-          || !TERMINAL_EXECUTION_RECEIPT_STATES.has(
-            text(history.latestReceipt.state).toLowerCase())) {
-        return held('CANCELLED_SOURCE_EXECUTION_TERMINAL_RECEIPT_UNPROVEN');
-      }
-      actionInFlight = await (typeof originalMissionInFlightFn === 'function'
-        ? originalMissionInFlightFn : originalMissionHasQueuedWork)({
-        missionId: identity.missionId, leaseId: lease.leaseId, env,
-      });
-    } catch {
-      return held('CANCELLED_SOURCE_WORKER_QUEUE_UNOBSERVABLE');
-    }
-    if (actionInFlight !== false) return held('CANCELLED_SOURCE_WORK_STILL_IN_FLIGHT');
-    const release = await releaseLease({
-      leaseId: lease.leaseId, laneId: lease.laneId, repository: lease.repository,
-      issueNumber: lease.issueNumber, prNumber: lease.prNumber,
-      branch: lease.branch, headSha: lease.headSha, ownerId: lease.ownerId, nowUtc,
-    }, { root: paths.workspaceRoot, repoRoot: paths.repoRoot, env });
-    if (release?.ok !== true || release.released !== true) {
-      return held('CANCELLED_SOURCE_LEASE_RELEASE_NOT_PROVEN');
-    }
-    return freeze({
-      ok: true, released: true,
-      classification: 'ELASTIC_CANCELLED_ORIGINAL_EXACT_LEASE_RELEASED',
-      originalMissionId: identity.missionId, originalLeaseId: lease.leaseId,
-      sourceHead: sourceRevision.toLowerCase(),
-      nextAction: 'REREAD_CANONICAL_PROGRAMME_AND_ADMIT_EXISTING_GOAL',
-      replacementAcceptanceProven: false, goalComplete: false,
-      leaseSeizureAllowed: false, sourceMutationAllowed: false,
-      mergeAuthority: false, dispatchAuthority: false, materialPickupProven: false,
-    });
+    // Queue emptiness and terminal receipts do not exclude detached source writers.
+    // No legacy fallback release is permitted without the authenticated fence.
+    return held('CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED');
   }
   // A completed original source execution may have already reached
   // REPAIR_REQUIRED because the *existing* PR's required checks failed.
@@ -929,6 +891,16 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         const originalInFlight = normalized.originalMissionInFlightFn ?? originalMissionHasQueuedWork;
         if (await originalInFlight({ missionId: currentLease.laneId, leaseId: currentLease.leaseId, env }) !== false) {
           return hold('PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT');
+        }
+        // BLOCKED/CANCELLED can leave detached source-writing descendants alive.
+        // Only the authenticated original-attempt fence can authorise release.
+        if (phaseOf(current) === 'BLOCKED' || phaseOf(current) === 'CANCELLED') {
+          if (!current?.storeMetadata?.originalSourceAttemptFence) {
+            return hold('PARKED_ORIGINAL_AUTHENTICATED_FENCE_REQUIRED');
+          }
+          if (await verifyOriginalSourceAttemptFence(current, currentLease, paths, env) !== true) {
+            return hold('PARKED_ORIGINAL_AUTHENTICATED_FENCE_UNVERIFIED');
+          }
         }
         return releaseLease({
           leaseId: currentLease.leaseId, laneId: currentLease.laneId,
