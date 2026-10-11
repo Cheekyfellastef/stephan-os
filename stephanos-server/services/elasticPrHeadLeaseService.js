@@ -270,8 +270,8 @@ function originalTerminalBindingMismatchCodes(item, filename, adapter, lease, mi
 // retained rN-1 worker history can mask a genuine exact rN result pair. Only
 // terminal folders are filtered; pending/processing inventory remains global.
 function isOlderBoundOriginalTerminal(item, filename, adapter, lease, missionId) {
-  const current = text(lease?.leaseId).match(/^(critical-[1-9]\\d*-elastic-goal)-r([1-9]\\d*)-lease$/);
-  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\\d*-elastic-goal)-r([1-9]\\d*)-lease$/);
+  const current = text(lease?.leaseId).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
+  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
   const binding = item?.executionBinding;
   return Boolean(current && prior
     && current[1] === missionId && prior[1] === missionId
