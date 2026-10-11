@@ -661,17 +661,31 @@ test('missing original r7 execution receipt is triaged against exact immutable t
 
     await writeFile(resultPath, JSON.stringify({ ...workerResult, actionId: 'forged-other-action' }));
     const forged = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
-    assert.equal(forged.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    assert.equal(forged.classification, 'ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID');
     assert.equal(forged.exactPairCount, 0);
     await rm(resultPath);
     const missing = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
-    assert.equal(missing.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    assert.equal(missing.classification, 'ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID');
     await writeFile(resultPath, JSON.stringify(workerResult));
     await writeFile(queuePath, JSON.stringify({
       ...item, executionBinding: { ...item.executionBinding, headSha: HEAD_C },
     }));
     const wrongHead = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
-    assert.equal(wrongHead.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    assert.equal(wrongHead.classification, 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN');
+    await writeFile(queuePath, JSON.stringify(item));
+    const secondActionId = 'original-r7-source-action-duplicate';
+    await writeFile(join(directory, secondActionId + '.json'), JSON.stringify({
+      ...item, actionId: secondActionId,
+      executionBinding: { ...item.executionBinding, executionId: secondActionId },
+    }));
+    await writeFile(join(directory, secondActionId + '.result.json'), JSON.stringify({
+      ...workerResult, actionId: secondActionId,
+    }));
+    const duplicates = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.equal(duplicates.classification, 'ORIGINAL_MULTIPLE_BOUND_TERMINAL_PAIRS');
+    assert.equal(duplicates.exactPairCount, 2);
+    assert.equal(duplicates.terminalExecutionReceiptProven, false);
+    assert.equal(duplicates.leaseReleaseAllowed, false);
     const unknownRoot = await inspectOriginalTerminalWorkerPairV1({
       lease, missionId, env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: join(root, 'unknown') },
     });
