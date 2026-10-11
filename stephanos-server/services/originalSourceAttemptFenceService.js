@@ -11,6 +11,8 @@ import {
 
 export const ORIGINAL_SOURCE_FENCE_SCHEMA = 'stephanos.original-source-attempt-fence.v1';
 const SHA256 = /^[a-f0-9]{64}$/;
+const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const WRITER_EXCLUSION_SCHEMA = 'stephanos.original-source-writer-exclusion.v1';
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = (value) => String(value ?? '').trim();
 const fail = (reason) => { throw new Error(reason); };
@@ -55,6 +57,14 @@ export async function assertOriginalSourceAttemptNotFenced(missionId, options = 
 export function originalSourceFenceBindsLease(fence, lease) {
   return Boolean(fence?.schemaVersion === ORIGINAL_SOURCE_FENCE_SCHEMA
     && fence.sourceWriterTerminalProven === true && fence.originalQueuesIdle === true
+    && fence.detachedSourceWritersExcluded === true
+    && fence.writerExclusionEvidence?.schemaVersion === WRITER_EXCLUSION_SCHEMA
+    && fence.writerExclusionEvidence?.missionId === lease.laneId
+    && fence.writerExclusionEvidence?.leaseId === lease.leaseId
+    && fence.writerExclusionEvidence?.leaseDigest === digest(lease)
+    && fence.writerExclusionEvidence?.verdict === 'NO_SOURCE_WRITING_DESCENDANTS'
+    && SHA256.test(fence.writerExclusionEvidenceDigest)
+    && fence.writerExclusionEvidenceDigest === digest(fence.writerExclusionEvidence)
     && fence.goalComplete === false && fence.leaseSeizureAllowed === false
     && fence.originalLeaseDigest === digest(lease)
     && fence.originalLeaseId === lease.leaseId && fence.missionId === lease.laneId
@@ -64,7 +74,7 @@ export function originalSourceFenceBindsLease(fence, lease) {
     && SHA256.test(fence.sourcePairDigest)
     && /^[a-f0-9]{40}$/.test(fence.operatorSourceRevision)
     && /^[a-z0-9._-]{8,127}$/.test(fence.commandId)
-    && /^[a-z0-9._:-]{8,127}$/.test(fence.operatorRequestId)
+    && /^[a-z0-9._:-]{8,120}$/.test(fence.operatorRequestId)
     && /^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-[a-f0-9]{12}-[1-9]\d*$/.test(fence.sourceReceiptId));
 }
 
@@ -122,8 +132,17 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
     : binding?.prNumber === terminal.prNumber && binding?.headSha === terminal.sourceHead;
   if (queue.item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
       || binding?.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1'
+      || queue.item?.actionGrant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+      || queue.item?.actionGrant?.missionId !== current.missionId
+      || queue.item?.actionGrant?.actionId !== sourceAction
+      || queue.item?.actionGrant?.missionRevision !== Number(revision)
+      || queue.item?.actionGrant?.repository !== terminal.repository
+      || queue.item?.actionGrant?.branch !== terminal.branch
+      || queue.item?.actionGrant?.issueNumber !== terminal.issueNumber
       || binding?.missionRevision !== Number(revision) || Number(revision) > current.revision
-      || queue.item?.adapter !== adapter || queue.result?.adapter !== adapter || !sourceHeadBound
+      || queue.item?.adapter !== adapter || queue.item?.actionGrant?.adapter !== adapter
+      || queue.result?.schemaVersion !== 'stephanos.mission-worker-consumption-result.v1'
+      || queue.result?.adapter !== adapter || !sourceHeadBound
       || queue.item?.missionId !== current.missionId || queue.item?.actionId !== sourceAction
       || queue.item?.executionBinding?.leaseKey !== terminal.leaseKey
       || queue.item?.executionBinding?.executionId !== sourceAction
@@ -133,10 +152,37 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       || queue.item?.executionBinding?.issueNumber !== terminal.issueNumber
       || queue.result?.processed !== true || queue.result?.success !== true
       || queue.result?.testsPassed !== true
+      || queue.result?.finalVerdict !== 'MISSION_WORKER_ITEM_COMPLETE'
       || queue.result?.actionId !== sourceAction || queue.result?.missionId !== current.missionId
       || !SHA256.test(queue.pairDigest)) fail('ORIGINAL_FENCE_TERMINAL_PAIR_UNPROVEN');
   const inFlight = options.originalMissionHasQueuedWork || originalMissionHasQueuedWork;
   if (await inFlight({ missionId: current.missionId, leaseId: lease.leaseId, env }) !== false) fail('ORIGINAL_FENCE_WORK_IN_FLIGHT_OR_UNKNOWN');
+  // A terminal direct child and empty queues say nothing about detached
+  // descendants. Only an existing authority adapter may authenticate positive,
+  // exact-identity writer-exclusion evidence. No local process inference or
+  // timestamp fallback is permitted here.
+  const authenticateExclusion = options.authenticateOriginalWriterExclusionEvidence;
+  if (typeof authenticateExclusion !== 'function') fail('ORIGINAL_FENCE_WRITER_EXCLUSION_UNAVAILABLE');
+  const exclusion = await authenticateExclusion(input.writerExclusionEvidence, {
+    missionId: current.missionId, sourceExecutionId: sourceAction,
+    leaseId: lease.leaseId, leaseDigest: digest(lease), repository: lease.repository,
+    branch: lease.branch, headSha: lease.headSha,
+  });
+  const exclusionEvidence = exclusion?.evidence;
+  if (exclusion?.authenticated !== true
+      || exclusionEvidence?.schemaVersion !== WRITER_EXCLUSION_SCHEMA
+      || exclusionEvidence?.missionId !== current.missionId
+      || exclusionEvidence?.sourceExecutionId !== sourceAction
+      || exclusionEvidence?.leaseId !== lease.leaseId
+      || exclusionEvidence?.leaseDigest !== digest(lease)
+      || exclusionEvidence?.repository !== lease.repository
+      || exclusionEvidence?.branch !== lease.branch
+      || exclusionEvidence?.headSha !== lease.headSha
+      || exclusionEvidence?.verdict !== 'NO_SOURCE_WRITING_DESCENDANTS'
+      || !text(exclusionEvidence?.authorityReceiptId)
+      || !SHA256.test(text(exclusionEvidence?.authorityReceiptSha256))) {
+    fail('ORIGINAL_FENCE_WRITER_EXCLUSION_UNPROVEN');
+  }
   // Whole-record compare immediately before committing the fence. Renewal and
   // old claim paths must consume canonical cancellation; release still uses
   // Programme Authority's own exact-lease operation guard after this transition.
@@ -150,6 +196,9 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
     headSha: lease.headSha, sourceReceiptId: terminal.receiptId,
     sourceExecutionId: sourceAction, sourcePairDigest: queue.pairDigest,
     sourceAdapter: adapter, heldExecutionCount,
+    detachedSourceWritersExcluded: true,
+    writerExclusionEvidence: Object.freeze({ ...exclusionEvidence }),
+    writerExclusionEvidenceDigest: digest(exclusionEvidence),
     commandId: text(input.commandId), operatorSourceRevision: text(input.operatorSourceRevision),
     operatorRequestId: text(input.operatorRequestId),
     sourceWriterTerminalProven: true, originalQueuesIdle: true,
@@ -161,16 +210,17 @@ export async function quarantineOriginalSourceAttempt(input, options = {}) {
   if (!SHA256.test(text(input.originalLeaseDigest)) || !text(input.originalLeaseId)
       || !/^[a-f0-9]{40}$/.test(text(input.operatorSourceRevision))
       || !/^[a-z0-9._-]{8,127}$/.test(text(input.commandId))
-      || !/^[a-z0-9._:-]{8,127}$/.test(text(input.operatorRequestId))
+      || !REQUEST_ID.test(text(input.operatorRequestId))
       || !Number.isSafeInteger(input.expectedMissionRevision) || input.expectedMissionRevision < 0
       || !/^critical-[1-9]\d*-elastic-goal$/.test(text(input.missionId))) fail('ORIGINAL_FENCE_COMMAND_INVALID');
+  const normalizedInput = { ...input, operatorRequestId: text(input.operatorRequestId).toLowerCase() };
   return appendMissionEvent(input.missionId, {
     eventId: `cancel-${input.commandId}`, eventType: 'MISSION_CANCELLED',
     expectedRevision: input.expectedMissionRevision, expectedCurrentPhase: 'REPAIR_REQUIRED',
     originalSourceQuarantineRequested: true,
     summary: input.reason,
   }, { ...options,
-    proveOriginalSourceQuarantine: (current) => proveOriginalSourceQuarantine(current, input, options),
+    proveOriginalSourceQuarantine: (current) => proveOriginalSourceQuarantine(current, normalizedInput, options),
     withOriginalSourceLeaseFenceGuard: (operation) => (options.withOriginalSourceLeaseFenceGuard
       || withOriginalSourceLeaseFenceGuard)(operation, {
       root: options.paths.workspaceRoot, repoRoot: options.paths.repoRoot, env: options.env,

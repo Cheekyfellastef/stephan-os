@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { createMissionRecord, readMissionRecord, appendMissionEvent } from './missionOrchestratorStore.js';
 import {
   proveOriginalSourceQuarantine, quarantineOriginalSourceAttempt,
@@ -26,14 +27,24 @@ function fixture() {
     branch: lease.branch, sourceHead: 'b'.repeat(40), issueNumber: 2962, prNumber: 0 };
   const pair = { item: { schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter: 'foundry-forge', missionId, actionId: action,
-    actionGrant: { sourceRevision: receipt.sourceHead }, executionBinding: {
+    actionGrant: { schemaVersion: 'stephanos.mission-worker-action-grant.v1', adapter: 'foundry-forge',
+      missionId, actionId: action, missionRevision: 1, repository: mission.repository,
+      branch: lease.branch, issueNumber: 2962, sourceRevision: receipt.sourceHead }, executionBinding: {
     schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1', missionRevision: 1,
     missionId, executionId: action, leaseKey: receipt.leaseKey, repository: receipt.repository,
     branch: receipt.branch, headSha: '', sourceRevision: receipt.sourceHead, issueNumber: 2962, prNumber: null } },
-    result: { adapter: 'foundry-forge', missionId, actionId: action, processed: true, success: true, testsPassed: true }, pairDigest: 'f'.repeat(64) };
+    result: { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', adapter: 'foundry-forge',
+      missionId, actionId: action, processed: true, success: true, testsPassed: true,
+      finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE' }, pairDigest: 'f'.repeat(64) };
+  const writerExclusionEvidence = { schemaVersion: 'stephanos.original-source-writer-exclusion.v1',
+    missionId, sourceExecutionId: action, leaseId: lease.leaseId, leaseDigest: digest(lease),
+    repository: lease.repository, branch: lease.branch, headSha: lease.headSha,
+    verdict: 'NO_SOURCE_WRITING_DESCENDANTS', authorityReceiptId: 'containment-receipt-2962',
+    authorityReceiptSha256: 'c'.repeat(64) };
   const input = { missionId, commandId: 'fence-original-2962-test', reason: 'Retire source attempt only.',
     operatorSourceRevision: 'd'.repeat(40), operatorRequestId: 'fence-original-2962-test-request',
-    expectedMissionRevision: 7, originalLeaseId: lease.leaseId, originalLeaseDigest: digest(lease) };
+    expectedMissionRevision: 7, originalLeaseId: lease.leaseId, originalLeaseDigest: digest(lease),
+    writerExclusionEvidence };
   const options = { env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/queue' },
     paths: { workspaceRoot: '/workspace', repoRoot: '/repo' },
     readSourceMutationLease: async ({ nowUtc }) => {
@@ -46,6 +57,10 @@ function fixture() {
       : { ok: true, receipts: [receipt], latestReceipt: receipt },
     readTerminalSourcePair: async () => pair,
     originalMissionHasQueuedWork: async () => false,
+    authenticateOriginalWriterExclusionEvidence: async (evidence, expected) => {
+      assert.equal(evidence.missionId, expected.missionId);
+      return { authenticated: true, evidence };
+    },
     withOriginalSourceLeaseFenceGuard: async (operation) => operation(),
   };
   return { mission, lease, receipt, pair, input, options };
@@ -57,6 +72,7 @@ test('authenticated older source completion can fence r7 without fabricating an 
   assert.equal(proof.sourceReceiptId, f.receipt.receiptId);
   assert.equal(proof.goalComplete, false);
   assert.equal(proof.leaseSeizureAllowed, false);
+  assert.equal(proof.detachedSourceWritersExcluded, true);
 });
 
 for (const [label, change] of [
@@ -66,6 +82,9 @@ for (const [label, change] of [
   ['wrong original source lease', f => { f.receipt.leaseKey = f.lease.leaseId; }],
   ['source receipt is active', f => { f.receipt.state = 'progress'; }],
   ['source result is not terminal', f => { f.pair.result.success = false; }],
+  ['source result schema mismatch', f => { f.pair.result.schemaVersion = 'legacy'; }],
+  ['source item schema mismatch', f => { f.pair.item.schemaVersion = 'legacy'; }],
+  ['source grant adapter mismatch', f => { f.pair.item.actionGrant.adapter = 'chatgpt-github'; }],
   ['source tests unproven', f => { f.pair.result.testsPassed = false; }],
   ['queue source head mismatch', f => { f.pair.item.executionBinding.headSha = 'c'.repeat(40); }],
   ['pre-PR source revision mismatch', f => { f.pair.item.executionBinding.sourceRevision = 'c'.repeat(40); }],
@@ -78,6 +97,69 @@ for (const [label, change] of [
 ]) test(`quarantine refuses ${label}`, async () => {
   const f = fixture(); change(f);
   await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options));
+});
+
+test('completed direct child and idle queues stay SAFE_HOLD without physical descendant exclusion', async () => {
+  const f = fixture();
+  delete f.options.authenticateOriginalWriterExclusionEvidence;
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options),
+    /WRITER_EXCLUSION_UNAVAILABLE/);
+});
+
+test('an actual detached Node descendant cannot be hidden by direct-child completion', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'detached-source-writer-'));
+  const marker = join(root, 'late-source-write');
+  const child = spawn(process.execPath, ['-e',
+    `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'mutated'), 30000)`],
+  { detached: true, stdio: 'ignore' });
+  child.unref();
+  try {
+    const f = fixture();
+    delete f.options.authenticateOriginalWriterExclusionEvidence;
+    await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options),
+      /WRITER_EXCLUSION_UNAVAILABLE/);
+  } finally {
+    try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGTERM'); } catch {}
+  }
+});
+
+test('detached descendant evidence must be authenticated and exactly mission, execution, and lease bound', async () => {
+  for (const mutate of [
+    evidence => { evidence.sourceExecutionId = 'detached-other-execution'; },
+    evidence => { evidence.leaseDigest = '0'.repeat(64); },
+    evidence => { evidence.missionId = 'critical-9999-elastic-goal'; },
+  ]) {
+    const f = fixture(); mutate(f.input.writerExclusionEvidence);
+    await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options),
+      /WRITER_EXCLUSION_UNPROVEN|AssertionError/);
+  }
+  const f = fixture();
+  f.options.authenticateOriginalWriterExclusionEvidence = async (_, expected) => ({
+    authenticated: false, evidence: { ...f.input.writerExclusionEvidence, missionId: expected.missionId },
+  });
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options),
+    /WRITER_EXCLUSION_UNPROVEN/);
+});
+
+test('writer exclusion is re-evaluated after an asynchronous race and before lease CAS', async () => {
+  const f = fixture(); let leaseReads = 0;
+  f.options.readSourceMutationLease = async () => ({ ok: true,
+    record: ++leaseReads === 1 ? f.lease : { ...f.lease, renewedAtUtc: 'race' },
+    validation: { valid: true, active: false, stale: true } });
+  await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options), /LEASE_CHANGED/);
+});
+
+test('mailbox-valid uppercase request ID is normalized only after admission', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-source-uppercase-'));
+  const created = await createMissionRecord({ missionId: f.mission.missionId,
+    repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+    worktreePath: '/worktree', operatorIntent: 'Repair original source.', intendedOutcome: 'Preserve same goal.',
+    allowedFiles: [], requiredTests: [], requiredEvidence: [] }, { root, env: {} });
+  await writeFile(created.statePath, JSON.stringify({ ...created.state, ...f.mission }));
+  f.input.operatorRequestId = 'Fence-Original-2962-Request';
+  const result = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+  assert.equal(result.state.storeMetadata.originalSourceAttemptFence.operatorRequestId,
+    'fence-original-2962-request');
 });
 
 test('lease renewal between proof reads prevents fencing', async () => {
