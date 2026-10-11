@@ -334,8 +334,10 @@ export function buildStephanosBuildTruth(status = {}) {
       currentPhase: text(lane?.lastMaterialAction || logical?.route || hostState, 160).toUpperCase(),
       lastMaterialProgressAtUtc: state === 'BUILDING' ? timestamp(lane?.lastMaterialActionAtUtc) : '',
       prNumber: integer(lane?.prNumber) || null,
+      // Per-goal truth must never inherit unrelated verified host proofs.
+      // materialPickupProven already confirms this exact lane ref is verified.
       proofRefs: Object.freeze(state === 'BUILDING'
-        ? [...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)
+        ? [text(lane?.proofRef, 220)]
         : []),
       blocker,
       nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
