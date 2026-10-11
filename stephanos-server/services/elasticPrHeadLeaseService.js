@@ -276,7 +276,7 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
         for (const entry of entries) {
           if (entry.isDirectory() || entry.isSymbolicLink()) throw Error('ORIGINAL_TERMINAL_QUEUE_UNSAFE_ENTRY');
           if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name.endsWith('.result.json')) continue;
-          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,150}\\.json$/.test(entry.name)) {
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,150}\.json$/.test(entry.name)) {
             throw Error('ORIGINAL_TERMINAL_QUEUE_UNSAFE_NAME');
           }
           const itemPath = resolve(directory, entry.name);
