@@ -2138,6 +2138,19 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     .map((item) => token(item))
     .filter(Boolean).slice(0, 16);
   const sources = (value) => token(value);
+  // The native publisher is independently signed and verified upstream. Keep
+  // that bounded evidence through the final 9 KiB public receipt, but never
+  // turn missing/mismatched proof into a green capacity claim.
+  const nativeSourceHead = safeTelemetrySha(inner?.nativeCapacitySourceHead);
+  const nativeReceiptId = safeTelemetryId(inner?.nativeCapacityReceiptId);
+  const candidateModel = safeTelemetryText(inner?.nativeCapacityModel, 120);
+  const nativeModel = /^[a-z0-9][a-z0-9._:-]{0,119}$/i.test(candidateModel)
+    ? candidateModel : '';
+  const nativeVerified = inner?.nativeCapacityVerified === true
+    && Boolean(nativeSourceHead)
+    && nativeSourceHead === safeTelemetrySha(receipt?.expectedHead)
+    && Boolean(nativeReceiptId)
+    && Boolean(nativeModel);
   return Object.freeze({
     programmeStatus: token(inner?.programmeStatus, 80),
     programmeFinalVerdict: token(inner?.programmeFinalVerdict),
@@ -2155,6 +2168,11 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),
     schedulerSelectedIssue: safeGoalIssue(inner?.schedulerSelectedIssue),
     elasticCapacityStatus: token(inner?.elasticCapacityStatus),
+    nativeCapacityVerified: nativeVerified,
+    nativeCapacityReason: token(inner?.nativeCapacityReason),
+    nativeCapacityModel: nativeVerified ? nativeModel : '',
+    nativeCapacitySourceHead: nativeVerified ? nativeSourceHead : '',
+    nativeCapacityReceiptId: nativeVerified ? nativeReceiptId : '',
     elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
     controllerValid: inner?.controllerValid === true,
