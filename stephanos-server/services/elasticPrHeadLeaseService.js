@@ -1,4 +1,4 @@
-import { access, readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import {
@@ -244,6 +244,91 @@ async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
   return false;
 }
 
+// Read-only forensic triage of an ORIGINAL terminal worker result pair.
+// The terminal queue pair can explain a lost execution receipt, but it is NOT
+// itself a canonical execution receipt and NEVER authorizes lease release.
+export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionId = '', env = process.env } = {}) {
+  const noAuthority = { readOnly: true, terminalExecutionReceiptProven: false,
+    leaseReleaseAllowed: false, sourceMutationAllowed: false };
+  const originalMissionId = text(missionId).toLowerCase();
+  const leaseId = text(lease.leaseId);
+  const root = resolveMissionWorkerQueueRoot(env);
+  if (!root || !originalMissionId || !leaseId) {
+    return freeze({ ...noAuthority, classification: 'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE' });
+  }
+  try { await access(root); } catch {
+    return freeze({ ...noAuthority, classification: 'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE' });
+  }
+  let exactPairs = 0;
+  let boundWithoutResult = 0;
+  let unboundOriginalItems = 0;
+  try {
+    for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
+      for (const stage of ['completed', 'failed']) {
+        const directory = resolve(root, adapter, stage);
+        let entries;
+        try { entries = await readdir(directory, { withFileTypes: true }); }
+        catch (error) {
+          if (error?.code === 'ENOENT') continue;
+          throw error;
+        }
+        if (entries.length > 512) throw Error('ORIGINAL_TERMINAL_QUEUE_UNBOUNDED');
+        for (const entry of entries) {
+          if (entry.isDirectory() || entry.isSymbolicLink()) throw Error('ORIGINAL_TERMINAL_QUEUE_UNSAFE_ENTRY');
+          if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name.endsWith('.result.json')) continue;
+          if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,150}\.json$/.test(entry.name)) {
+            throw Error('ORIGINAL_TERMINAL_QUEUE_UNSAFE_NAME');
+          }
+          const itemPath = resolve(directory, entry.name);
+          if ((await stat(itemPath)).size > 262144) throw Error('ORIGINAL_TERMINAL_QUEUE_ITEM_OVERSIZED');
+          const item = JSON.parse(await readFile(itemPath, 'utf8'));
+          if (text(item?.missionId).toLowerCase() !== originalMissionId) continue;
+          const binding = item.executionBinding;
+          const bound = item.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+            && text(item.adapter) === adapter
+            && text(item.actionId) === entry.name.slice(0, -5)
+            && binding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
+            && text(binding.leaseKey) === leaseId
+            && text(binding.missionId).toLowerCase() === originalMissionId
+            && text(binding.executionId) === text(item.actionId)
+            && text(binding.repository).toLowerCase() === text(lease.repository).toLowerCase()
+            && Number(binding.issueNumber) === Number(lease.issueNumber)
+            && Number(binding.prNumber) === Number(lease.prNumber)
+            && text(binding.branch) === text(lease.branch)
+            && text(binding.headSha).toLowerCase() === text(lease.headSha).toLowerCase();
+          if (!bound) { unboundOriginalItems += 1; continue; }
+          const resultPath = resolve(directory, entry.name.slice(0, -5) + '.result.json');
+          let result;
+          try {
+            if ((await stat(resultPath)).size > 262144) throw Error('ORIGINAL_TERMINAL_QUEUE_RESULT_OVERSIZED');
+            result = JSON.parse(await readFile(resultPath, 'utf8'));
+          } catch (error) {
+            if (error?.code !== 'ENOENT') throw error;
+            boundWithoutResult += 1;
+            continue;
+          }
+          const expected = stage === 'completed' ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED';
+          if (result?.schemaVersion === 'stephanos.mission-worker-consumption-result.v1'
+            && text(result.missionId).toLowerCase() === originalMissionId
+            && text(result.actionId) === text(item.actionId)
+            && text(result.adapter) === adapter
+            && text(result.finalVerdict) === expected) exactPairs += 1;
+          else boundWithoutResult += 1;
+        }
+      }
+    }
+  } catch {
+    return freeze({ ...noAuthority, classification: 'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE' });
+  }
+  const classification = exactPairs === 1 && boundWithoutResult === 0 && unboundOriginalItems === 0
+    ? 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
+    : (exactPairs > 1 || boundWithoutResult > 0 || unboundOriginalItems > 0)
+      ? 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE'
+      : 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND';
+  return freeze({ ...noAuthority, classification,
+    exactPairCount: exactPairs, incompleteOrUnboundCount: boundWithoutResult + unboundOriginalItems });
+}
+
 function exactOriginalCancellation(lease, mission) {
   const match = text(lease?.leaseId).match(/-r([1-9]\d*)-lease$/);
   const revision = Number(match?.[1]);
@@ -478,7 +563,14 @@ export async function reconcileExpiredElasticReviewLeaseV1({
         return held('REPAIR_ORIGINAL_EXECUTION_HISTORY_UNVERIFIED');
       }
       if (history.receipts.length === 0 || !history.latestReceipt) {
-        return held('REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+        // Inspect real immutable terminal queue evidence rather than looping on
+        // an opaque missing receipt. Even an exact result is NOT a release grant.
+        const triage = await inspectOriginalTerminalWorkerPairV1({ lease, missionId: identity.missionId, env });
+        return held(triage.classification === 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
+          ? 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING'
+          : triage.classification === 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE'
+            ? 'REPAIR_ORIGINAL_TERMINAL_PAIR_INCOMPLETE_OR_AMBIGUOUS'
+            : 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
       }
       if (!TERMINAL_EXECUTION_RECEIPT_STATES.has(
         text(history.latestReceipt.state).toLowerCase())) {
