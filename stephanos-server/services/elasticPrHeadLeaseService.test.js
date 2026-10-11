@@ -181,11 +181,11 @@ test('renews an exact running PR-head lease without publishing a duplicate actio
 test('releases a parked exact lease and refills the same lease slot with the next PR-head mission', async () => {
   const parked = mission(1802, 2096, HEAD_A, {
     currentPhase: 'AWAITING_OPERATOR_APPROVAL',
-    dispatch: { status: 'idle' },
+    dispatch: { status: 'complete', resultId: 'critical-1802-elastic-goal-r7-123456789abc' },
   });
   const next = mission(1899, 1920, HEAD_C);
   const parkedLease = leaseFor(parked);
-  const terminal = { state: 'completed', leaseKey: parkedLease.leaseId,
+  const terminal = { state: 'completed', executionId: parked.dispatch.resultId, leaseKey: parkedLease.leaseId,
     sourceHead: parkedLease.headSha, repository: parkedLease.repository,
     issueNumber: parkedLease.issueNumber, prNumber: parkedLease.prNumber, branch: parkedLease.branch };
   const calls = [];
@@ -208,6 +208,7 @@ test('releases a parked exact lease and refills the same lease slot with the nex
       throw new Error('renew must not run after parked lease release');
     },
     readExecutionReceiptHistory: async (_root, filters) => filters.leaseKey === parkedLease.leaseId
+      || filters.executionId === terminal.executionId
       ? { ok: true, receipts: [terminal], latestReceipt: terminal }
       : { ok: true, receipts: [], latestReceipt: null },
     appendExecutionReceipt: async () => ({ ok: true }),
@@ -294,15 +295,21 @@ test('parking or STOP cannot release an orphan lease, even when the worker is id
 });
 
 test('parked lease release holds on original identity, queue uncertainty, running writer or re-entry race', async () => {
-  const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'BLOCKED', dispatch: { status: 'complete' } });
+  const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete', resultId: 'critical-2962-elastic-goal-r7-123456789abc' } });
   const lease = leaseFor(parked);
-  const terminal = { state: 'failed', leaseKey: lease.leaseId, sourceHead: HEAD_A,
+  const terminal = { state: 'failed', executionId: parked.dispatch.resultId, leaseKey: lease.leaseId, sourceHead: HEAD_A,
     repository: REPOSITORY, issueNumber: 2962, prNumber: 2987, branch: lease.branch };
   const cases = [
     { receipt: { ...terminal, sourceHead: HEAD_C }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
     { receipt: { ...terminal, prNumber: 3000 }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
     { receipt: { ...terminal, leaseKey: lease.laneId + '-r6-lease' }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
     { receipt: { ...terminal, state: 'started' }, reason: 'PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN' },
+    { hiddenActive: true, reason: 'PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN' },
+    { missingOriginal: true, reason: 'PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN' },
+    { originalActive: true, reason: 'PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN' },
+    { originalMismatch: true, reason: 'PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN' },
+    { missingResultId: true, reason: 'PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN' },
     { inFlight: true, reason: 'PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT' },
     { inFlight: undefined, reason: 'PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT' },
     { queueThrows: true, reason: 'PARKED_ORIGINAL_WRITER_PROOF_UNOBSERVABLE' },
@@ -315,11 +322,23 @@ test('parked lease release holds on original identity, queue uncertainty, runnin
     const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked]), {
       now: NOW, paths: PATHS, sourceRevision: SOURCE,
       readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
-      readExecutionReceiptHistory: async () => ({ ok: true, receipts: [receipt], latestReceipt: receipt }),
+      readExecutionReceiptHistory: async (_root, filters) => {
+        if (filters.executionId) {
+          assert.equal(filters.executionId, parked.dispatch.resultId);
+          if (scenario.missingOriginal) return { ok: true, receipts: [], latestReceipt: null };
+          const original = scenario.originalActive ? { ...terminal, state: 'started' }
+            : scenario.originalMismatch ? { ...terminal, executionId: 'another-check' } : terminal;
+          return { ok: true, receipts: [original], latestReceipt: original };
+        }
+        const receipts = scenario.hiddenActive
+          ? [{ ...terminal, executionId: 'earlier-source-writer', state: 'started' }, receipt] : [receipt];
+        return { ok: true, receipts, latestReceipt: receipt };
+      },
       runWithMissionStatePrecondition: async (_id, _expected, operation) => scenario.resumed
         ? { preconditionFailed: true, result: null }
         : { preconditionFailed: false, result: await operation(scenario.running
-          ? { ...parked, dispatch: { status: 'running' } } : parked) },
+          ? { ...parked, dispatch: { status: 'running' } }
+          : scenario.missingResultId ? { ...parked, dispatch: { status: 'complete' } } : parked) },
       originalMissionInFlightFn: async () => {
         if (scenario.queueThrows) throw Error('unobservable');
         return Object.hasOwn(scenario, 'inFlight') ? scenario.inFlight : false;

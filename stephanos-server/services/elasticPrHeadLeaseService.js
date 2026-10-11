@@ -828,18 +828,51 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         const history = await readReceiptHistory(paths.workspaceRoot, {
           leaseKey: currentLease.leaseId, expectedHead: currentLease.headSha,
         }, receiptOptions);
-        const receipt = history?.latestReceipt;
-        if (history?.ok !== true || !history.receipts?.length || !receipt
-            || !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(receipt.state).toLowerCase())) {
+        if (history?.ok !== true || !Array.isArray(history.receipts) || !history.receipts.length) {
           return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
         }
-        if (text(receipt.leaseKey) !== currentLease.leaseId
-            || text(receipt.sourceHead).toLowerCase() !== currentLease.headSha.toLowerCase()
-            || text(receipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
-            || text(receipt.branch) !== currentLease.branch
-            || Number(receipt.issueNumber) !== currentLease.issueNumber
-            || Number(receipt.prNumber) !== currentLease.prNumber) {
-          return hold('PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH');
+        // Receipt publication for one action must never conceal a different
+        // unfinished execution using the same lease. The authenticated reader
+        // verifies each chain; require the last member of EVERY chain terminal.
+        const chains = new Map();
+        for (const receipt of history.receipts) {
+          if (!text(receipt.executionId)
+              || text(receipt.leaseKey) !== currentLease.leaseId
+              || text(receipt.sourceHead).toLowerCase() !== currentLease.headSha.toLowerCase()
+              || text(receipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
+              || text(receipt.branch) !== currentLease.branch
+              || Number(receipt.issueNumber) !== currentLease.issueNumber
+              || Number(receipt.prNumber) !== currentLease.prNumber) {
+            return hold('PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH');
+          }
+          chains.set(receipt.executionId, receipt);
+        }
+        if ([...chains.values()].some((receipt) =>
+          !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(receipt.state).toLowerCase()))) {
+          return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
+        }
+        // Canonical source dispatch retains its result ID independently of PR
+        // check actions. A check-only lease history cannot prove that writer
+        // finished. Older source revisions may precede this PR-head lease, so
+        // inspect that exact execution rather than replacing its source binding.
+        const sourceExecutionId = text(current?.dispatch?.resultId);
+        const actionPrefix = `${currentLease.laneId}-r`;
+        const sourceSuffix = sourceExecutionId.startsWith(actionPrefix)
+          ? sourceExecutionId.slice(actionPrefix.length) : '';
+        const sourceMatch = sourceSuffix.match(/^(0|[1-9]\d*)-[a-f0-9]{12}$/);
+        if (!sourceMatch) return hold('PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN');
+        const sourceHistory = await readReceiptHistory(paths.workspaceRoot, {
+          executionId: sourceExecutionId,
+        }, receiptOptions);
+        const sourceReceipt = sourceHistory?.latestReceipt;
+        if (sourceHistory?.ok !== true || !sourceHistory.receipts?.length || !sourceReceipt
+            || !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(sourceReceipt.state).toLowerCase())
+            || text(sourceReceipt.executionId) !== sourceExecutionId
+            || text(sourceReceipt.leaseKey) !== `${actionPrefix}${sourceMatch[1]}-lease`
+            || text(sourceReceipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
+            || text(sourceReceipt.branch) !== currentLease.branch
+            || Number(sourceReceipt.issueNumber) !== currentLease.issueNumber) {
+          return hold('PARKED_ORIGINAL_SOURCE_EXECUTION_UNPROVEN');
         }
         const originalInFlight = normalized.originalMissionInFlightFn ?? originalMissionHasQueuedWork;
         if (await originalInFlight({ missionId: currentLease.laneId, leaseId: currentLease.leaseId, env }) !== false) {
