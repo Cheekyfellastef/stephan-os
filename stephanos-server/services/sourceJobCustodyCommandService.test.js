@@ -80,6 +80,7 @@ test('source worker strips verifier paths, private keys and credentials before e
   const hostile = {
     PATH: '/trusted',
     SystemRoot: '/windows',
+    STEPHANOS_SOURCE_CUSTODY_GIT_EXE: '/trusted/git.exe',
     STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH: '/host/custody/public.pem',
     STEPHANOS_SOURCE_CUSTODY_VERIFIER_KEY_PATH: '/host/custody/legacy-secret',
     STEPHANOS_SOURCE_CUSTODY_SIGNING_KEY_PATH: '/host/custody/private.pem',
