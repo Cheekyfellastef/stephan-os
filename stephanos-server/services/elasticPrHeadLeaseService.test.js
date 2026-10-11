@@ -727,6 +727,98 @@ test('missing original r7 execution receipt is triaged against exact immutable t
   }
 });
 
+test('older bound terminal revisions cannot mask an exact original r7 pair or authorize lease release', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'original-worker-historical-triage-'));
+  const current = mission(2962, 2987, HEAD_A, {
+    currentPhase: 'REPAIR_REQUIRED',
+    dispatch: { status: 'complete' },
+    pullRequest: { number: 2987, headSha: HEAD_A,
+      checks: [{ required: true, status: 'failure' }] },
+    continuity: { parkingStatus: 'ACTIVE' },
+  });
+  const lease = leaseFor(current);
+  const adapter = 'forge-publication';
+  const directory = join(root, adapter, 'completed');
+  const env = { STEPHANOS_MISSION_WORKER_QUEUE_DIR: root };
+  const exactId = 'original-r7-source';
+  const olderId = 'historical-r6-source';
+  const binding = {
+    schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+    missionId: current.missionId, leaseKey: lease.leaseId,
+    repository: lease.repository, issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber, branch: lease.branch, headSha: lease.headSha,
+  };
+  const entry = (id, overrides = {}) => ({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter, actionId: id, missionId: current.missionId,
+    executionBinding: { ...binding, executionId: id, ...overrides },
+  });
+  const workerResult = (id) => ({
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    adapter, actionId: id, missionId: current.missionId,
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  });
+  const writePair = async (id, item) => {
+    await writeFile(join(directory, id + '.json'), JSON.stringify(item));
+    await writeFile(join(directory, id + '.result.json'), JSON.stringify(workerResult(id)));
+  };
+  let releases = 0;
+  const heldRecovery = () => reconcileExpiredElasticReviewLeaseV1({
+    now: NOW, paths: PATHS, sourceRevision: SOURCE, env,
+    missionRecords: [current],
+    readLease: async () => ({
+      ok: true, present: true, record: lease,
+      validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+    }),
+    readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    releaseLease: async () => { releases += 1; return { ok: true, released: true }; },
+  });
+  try {
+    await mkdir(directory, { recursive: true });
+    await writePair(olderId, entry(olderId, {
+      leaseKey: current.missionId + '-r6-lease', headSha: HEAD_C, prNumber: 2868,
+    }));
+    // An archived, correctly scoped terminal attempt from r6 must not
+    // impersonate a current r7 binding mismatch or grant r7 completion.
+    const historyOnly = await inspectOriginalTerminalWorkerPairV1({
+      lease, missionId: current.missionId, env,
+    });
+    assert.equal(historyOnly.classification, 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND');
+    assert.equal(historyOnly.olderBoundTerminalItems, 1);
+    assert.deepEqual(historyOnly.bindingMismatchCodes, []);
+    const before = await heldRecovery();
+    assert.equal(before.released, false);
+    assert.equal(before.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+
+    await writePair(exactId, entry(exactId));
+    const exact = await inspectOriginalTerminalWorkerPairV1({
+      lease, missionId: current.missionId, env,
+    });
+    assert.equal(exact.classification, 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT');
+    assert.equal(exact.exactPairCount, 1);
+    assert.equal(exact.olderBoundTerminalItems, 1);
+    assert.equal(exact.terminalExecutionReceiptProven, false);
+    const stillHeld = await heldRecovery();
+    assert.equal(stillHeld.blocker, 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING');
+    assert.equal(stillHeld.released, false);
+
+    // A CURRENT r7 item with a tampered head must still poison the evidence,
+    // even when older legitimate attempts exist.
+    await writePair(exactId, entry(exactId, { headSha: HEAD_C }));
+    const tampered = await inspectOriginalTerminalWorkerPairV1({
+      lease, missionId: current.missionId, env,
+    });
+    assert.equal(tampered.classification, 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN');
+    assert.deepEqual(tampered.bindingMismatchCodes, ['HEAD_SHA']);
+    const badRecovery = await heldRecovery();
+    assert.equal(badRecovery.blocker, 'REPAIR_ORIGINAL_BINDING_HEAD_SHA_MISMATCH');
+    assert.equal(badRecovery.released, false);
+    assert.equal(releases, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('real durable receipt writer accepts exact queued PR-head proof from original mission', async () => {
   const root = await mkdtemp(join(tmpdir(), 'elastic-pr-head-receipt-real-writer-'));
   const candidate = mission(1802, 2096, HEAD_A);
