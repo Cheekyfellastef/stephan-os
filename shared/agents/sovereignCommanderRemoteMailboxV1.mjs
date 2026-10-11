@@ -184,6 +184,55 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
+/**
+ * Publish only typed, bounded non-secret truth from the already local-only
+ * Sovereign HTTP /health guardian. A healthy MCP connection does not prove
+ * that the unattended repair cycle is running or repairing anything.
+ */
+export function projectSovereignContinuousRepairGuardianStatus(raw) {
+  const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
+  const count = (item) => Number.isSafeInteger(item) && item >= 0 && item <= 1_000_000_000
+    ? item : null;
+  const stamp = (item) => typeof item === 'string'
+    && item.length <= 40 && Number.isFinite(Date.parse(item))
+    ? new Date(item).toISOString() : '';
+  const verdict = (item) => typeof item === 'string'
+    && /^[A-Z0-9][A-Z0-9._:-]{0,159}$/.test(item) ? item : '';
+  const available = value !== null && typeof value.enabled === 'boolean';
+  const enabled = available ? value.enabled : null;
+  const running = available && typeof value.running === 'boolean' ? value.running : null;
+  const scheduled = available && typeof value.scheduled === 'boolean' ? value.scheduled : null;
+  const cycleCount = available ? count(value.cycleCount) : null;
+  const successCount = available ? count(value.successCount) : null;
+  const failureCount = available ? count(value.failureCount) : null;
+  const lastOk = available && typeof value.lastOk === 'boolean' ? value.lastOk : null;
+  return Object.freeze({
+    available,
+    enabled,
+    running,
+    scheduled,
+    cycleCount,
+    successCount,
+    failureCount,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk,
+    lastBlocker: available ? verdict(value.lastBlocker) : '',
+    lastFinalVerdict: available ? verdict(value.lastFinalVerdict) : '',
+    loopState: !available ? 'UNKNOWN'
+      : enabled === false ? 'DISABLED'
+      : cycleCount === null || running === null || scheduled === null ? 'UNKNOWN'
+      : cycleCount === 0 ? 'AWAITING_FIRST_CYCLE'
+      : running === false && scheduled === false ? 'NOT_SCHEDULED'
+      : 'CYCLES_OBSERVED',
+    // Loop execution and even reported successful maintenance must not be
+    // conflated with a real source edit, protected merge and live proof.
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
 function sovereignCommanderCompletionEnvelope(call = {}) {
   const result = call?.body?.result;
   if (result?.isError === true) return {};
@@ -2148,6 +2197,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       sourceHead: shape.expectedHead,
       healthReady: true,
       authenticatedMcpReady: true,
+      continuousRepairGuardian: projectSovereignContinuousRepairGuardianStatus(health.continuousRepairGuardian),
       implementation: 'stephanos-local-node',
       sourceControlledMaintenanceOnly: true,
       arbitraryUnboundedCommandAllowed: false,

@@ -15,6 +15,7 @@ import {
   createSanitizedMailboxReceiptProjection,
   createSanitizedCriticalBacklogStatusProjection,
   createSanitizedProgrammeAuthorityStatusProjection,
+  readNativeCapacityProgrammeTelemetry,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
@@ -3064,4 +3065,224 @@ test('second-pass Programme Authority packet is never reconstructed from an inco
   assert.equal(projection.result.result.programmeStatus, undefined);
   assert.equal(projection.result.result.programmeBlockers, undefined);
   assert.equal(projection.result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+});
+
+test('read-only programme receipt exposes observed original lease identity without dispatch authority', () => {
+  const packet = createSanitizedProgrammeAuthorityStatusProjection({
+    status: 'HOLD',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+    blockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+    mutationLease: { leaseId: 'critical-2956-elastic-goal-r6-lease' },
+    lane: { elasticMissionPhaseBinding: {
+      valid: false, blocker: 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+      observedUniqueOriginal: true, observedRevision: 7,
+      observedPhase: 'GITHUB_COMMIT', observedDispatchStatus: 'complete',
+      releaseLeaseAllowed: false, mutationAuthority: false,
+    } },
+  });
+  assert.equal(packet.elasticLeaseId, 'critical-2956-elastic-goal-r6-lease');
+  assert.equal(packet.elasticLeaseRevision, 6);
+  assert.equal(packet.elasticBindingValid, false);
+  assert.equal(packet.elasticOriginalMissionUnique, true);
+  assert.equal(packet.elasticObservedMissionRevision, 7);
+  assert.equal(packet.elasticObservedMissionPhase, 'GITHUB_COMMIT');
+  assert.equal(packet.elasticObservedDispatchStatus, 'COMPLETE');
+  assert.equal(Object.hasOwn(packet, 'releaseLeaseAllowed'), false);
+  assert.equal(Object.hasOwn(packet, 'mutationAuthority'), false);
+  const unknown = createSanitizedProgrammeAuthorityStatusProjection({});
+  assert.equal(unknown.elasticLeaseId, '');
+  assert.equal(unknown.elasticObservedMissionPhase, '');
+  assert.equal(unknown.elasticOriginalMissionUnique, false);
+});
+
+
+test('native programme proof checks the signed router and exposes only exact-head bounded truth', async () => {
+  const head = 'a'.repeat(40);
+  const observed = [];
+  const result = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: head,
+    nowUtc: '2026-10-11T00:00:00.000Z',
+    verifier: async (options) => {
+      observed.push(options);
+      return {
+        ok: true,
+        reason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+        candidate: {
+          repository: 'Cheekyfellastef/stephan-os',
+          sourceHead: head,
+          taskClass: 'FOCUSED_REPAIR',
+          model: 'qwen3.5:27b',
+          capacityReceiptId: 'native-capacity-valid-20261011',
+          sourceMutationAllowed: true,
+          mergeAuthority: false,
+          leaseSeizureAllowed: false,
+        },
+      };
+    },
+  });
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].sourceHead, head);
+  assert.equal(observed[0].taskClass, 'FOCUSED_REPAIR');
+  assert.equal(result.nativeCapacityVerified, true);
+  assert.equal(result.nativeCapacitySourceHead, head);
+  assert.equal(result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.equal(JSON.stringify(result).includes('privateKey'), false);
+
+  const packet = createSanitizedMailboxReceiptProjection({
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'native-capacity-verify-programme-0001',
+    state: 'DONE',
+    expectedHead: head,
+    result: { ok: true, result: {
+      ok: true,
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'HOLD',
+        programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+        sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+        sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+        ...result,
+      },
+    } },
+  });
+  assert.equal(packet.operationResult.nativeCapacityVerified, true);
+  assert.equal(packet.operationResult.nativeCapacitySourceHead, head);
+  assert.equal(packet.operationResult.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  // Native capacity verification must never turn a separately held source lease green.
+  assert.equal(packet.operationResult.programmeStatus, 'HOLD');
+});
+
+test('native programme proof fails closed for missing, unverifiable, mismatched and over-authorized capacity', async () => {
+  const head = 'b'.repeat(40);
+  const base = { repository: 'Cheekyfellastef/stephan-os', sourceHead: head,
+    taskClass: 'FOCUSED_REPAIR', model: 'qwen3.5:27b',
+    capacityReceiptId: 'native-capacity-valid-20261011',
+    sourceMutationAllowed: true, mergeAuthority: false, leaseSeizureAllowed: false };
+  const inputs = [
+    { ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', candidate: null },
+    { ok: true, candidate: { ...base, sourceHead: 'c'.repeat(40) } },
+    { ok: true, candidate: { ...base, mergeAuthority: true } },
+    { ok: true, candidate: { ...base, leaseSeizureAllowed: true } },
+    { ok: true, candidate: { ...base, sourceMutationAllowed: false } },
+  ];
+  for (const input of inputs) {
+    const observed = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+      verifier: async () => input });
+    assert.equal(observed.nativeCapacityVerified, false);
+    assert.equal(observed.nativeCapacityModel, '');
+    assert.equal(observed.nativeCapacityReceiptId, '');
+    assert.equal(observed.nativeCapacitySourceHead, '');
+  }
+  const thrown = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+    verifier: async () => { throw new Error('secret-error-path'); } });
+  assert.equal(thrown.nativeCapacityReason, 'NATIVE_CAPACITY_VERIFIER_FAILED');
+  assert.equal(JSON.stringify(thrown).includes('secret-error-path'), false);
+  const badHead = await readNativeCapacityProgrammeTelemetry({expectedHead: 'not-a-head',
+    verifier: async () => { throw new Error('should-not-reach'); }});
+  assert.equal(badHead.nativeCapacityReason, 'NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
+});
+
+
+test('native signed capacity survives double serialization and the bounded 9 KiB core receipt', () => {
+  const head = 'c'.repeat(40);
+  const original = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-overflow-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-overflow-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          programmeBlockers: ['LANE:ELASTIC-LEASE-EXPIRED-OR-NOT-ACTIVE'],
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          nativeCapacityVerified: true,
+          nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+          nativeCapacityModel: 'qwen3.5:27b',
+          nativeCapacitySourceHead: head,
+          nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: 2600 + index,
+            continuityState: 'TRACKING',
+            title: 'bounded eligible source-goal '.repeat(10),
+            hostControllerTitle: 'Canonical builder worker '.repeat(8),
+            proofRefs: ['C:\\Users\\operator\\hidden\\key.txt'],
+          })),
+        },
+      },
+    },
+  };
+  const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+  const posted = serializeBoundedReceiptJson(checkpoint, 9 * 1024);
+  const result = JSON.parse(posted);
+  assert.equal(result.githubProjectionTruncated, true);
+  assert.equal(result.result.result.originalProgrammeLaneListOmitted, true);
+  assert.equal(result.result.result.programmeStatus, 'HOLD');
+  assert.equal(result.result.result.nativeCapacityVerified, true);
+  assert.equal(result.result.result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.result.result.nativeCapacitySourceHead, head);
+  assert.equal(result.result.result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.ok(Buffer.byteLength(posted, 'utf8') <= 9 * 1024);
+  assert.doesNotMatch(posted, /operator|hidden|key\.txt|hostControllerTitle/i);
+});
+
+test('native capacity public projection rejects unverifiable head and untrusted model paths', () => {
+  const head = 'c'.repeat(40);
+  const make = (native) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'native-capacity-negative-proof-20261011',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE',
+    expectedHead: head, processSourceHead: head,
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'native-capacity-negative-proof-20261011',
+      result: { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head, programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'HOLD',
+          programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+          ...native,
+          logicalGoalLanes: Array.from({ length: 59 }, (_, index) => ({
+            issueNumber: index + 2000, continuityState: 'TRACKING',
+            title: 'long text '.repeat(55), hostControllerTitle: 'private'.repeat(20),
+          })),
+        },
+      },
+    },
+  });
+  const baseline = {
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: 'qwen3.5:27b',
+    nativeCapacitySourceHead: head,
+    nativeCapacityReceiptId: 'native-capacity-valid-20261011',
+  };
+  for (const mutation of [
+    { nativeCapacitySourceHead: 'd'.repeat(40) },
+    { nativeCapacityReceiptId: '' },
+    { nativeCapacityVerified: false },
+    { nativeCapacityModel: 'C:\\Users\\Operator\\private-model' },
+  ]) {
+    const original = make({ ...baseline, ...mutation });
+    const checkpoint = JSON.parse(serializeBoundedReceiptJson(original, 256 * 1024));
+    const posted = JSON.parse(serializeBoundedReceiptJson(checkpoint, 9 * 1024));
+    assert.equal(posted.result.result.programmeStatus, 'HOLD');
+    assert.equal(posted.result.result.nativeCapacityVerified, false);
+    assert.equal(posted.result.result.nativeCapacityModel, '');
+    assert.equal(posted.result.result.nativeCapacitySourceHead, '');
+    assert.equal(posted.result.result.nativeCapacityReceiptId, '');
+    assert.doesNotMatch(JSON.stringify(posted), /Users|private-model/i);
+  }
 });
