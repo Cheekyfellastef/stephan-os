@@ -395,7 +395,9 @@ async function currentWorkflowExecution(context) {
     ...execution.currentMismatches,
     ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
-    ...(transportActor === MAILBOX_TRANSPORT_ACTOR ? [] : ['transport-actor']),
+    // Owner comment provenance was validated by proveMailboxAuthorization.
+    // Compare to THAT run-bound carrier, not a deleted owner-only constant.
+    ...(transportActor === text(authorization.transportActor).toLowerCase() ? [] : ['transport-actor']),
   ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact mailbox-transported trusted-main execution.', {

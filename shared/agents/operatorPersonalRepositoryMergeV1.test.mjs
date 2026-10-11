@@ -2582,3 +2582,66 @@ test('base-versus-source mailbox regression stays within protected merge admissi
   assert.equal(ordinaryControl.verdict, 'NO_COMMAND_READY');
   assert.equal(ordinaryControl.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
+
+
+test('fixed bot and owner dispatches share one protected head/base replay domain', () => {
+  const priorRunId = runId + 10;
+  for (const [currentActor, previousActor] of [
+    ['Cheekyfellastef', 'github-actions[bot]'],
+    ['github-actions[bot]', 'Cheekyfellastef'],
+  ]) {
+    const mailboxAuthorization = {
+      authorizedAtUtc: '2026-09-20T11:55:03Z',
+      commentId: 5749628881,
+      operatorAuthor: 'Cheekyfellastef',
+      requestId: 'guarded-cross-carrier-replay-v1',
+      transportActor: currentActor,
+    };
+    const current = dispatchRun({ triggering_actor: { login: currentActor } });
+    const prior = dispatchRun({ id: priorRunId,
+      triggering_actor: { login: previousActor },
+      status: 'completed', conclusion: 'failure',
+    });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: current, priorRuns: [current, prior] }),
+      { ...expectedDispatchExecution, mailboxAuthorization },
+    );
+    assert.equal(blocked.valid, false, currentActor + ':' + previousActor);
+    assert.deepEqual(blocked.currentMismatches, [], currentActor);
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], currentActor);
+    assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'), currentActor);
+
+    const replayProof = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        run: current,
+        priorRuns: [current, prior],
+        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+      }),
+      { ...expectedDispatchExecution, mailboxAuthorization },
+    );
+    assert.equal(replayProof.valid, true, JSON.stringify(replayProof.blockers));
+    assert.deepEqual(replayProof.retryablePriorRunIds, [priorRunId]);
+  }
+});
+
+test('malformed or lookalike prior carrier cannot evade same-source replay via mismatch', () => {
+  const priorRunId = runId + 11;
+  for (const badActor of ['lookalike-operator', '', 'github-actions[bot]-other']) {
+    const prior = dispatchRun({
+      id: priorRunId, triggering_actor: { login: badActor },
+      status: 'completed', conclusion: 'failure',
+    });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ priorRuns: [dispatchRun(), prior] }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, badActor);
+    assert.ok(blocked.malformedPriorRunIds.includes(priorRunId), badActor);
+  }
+});
+
+test('merge executor compares current actor to proved owner-comment authorization without dead constant', () => {
+  const entry = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(entry, /transportActor === text\(authorization\.transportActor\)\.toLowerCase\(\)/);
+  assert.doesNotMatch(entry, /\bMAILBOX_TRANSPORT_ACTOR\b/);
+});
