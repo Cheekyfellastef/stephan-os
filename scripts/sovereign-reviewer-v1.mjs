@@ -85,50 +85,76 @@ function pinDirectory(path) {
   if (!stat.isDirectory()) throw new Error('SHARED_WORKSPACE_UNAVAILABLE');
   return Object.freeze({ path: absolute, dev: stat.dev, ino: stat.ino });
 }
-function revalidateDirectory(pin) {
-  const current = pinDirectory(pin.path);
-  if (current.dev !== pin.dev || current.ino !== pin.ino) throw new Error('SHARED_WORKSPACE_DIRECTORY_REPLACED');
+function openStableDirectory(path, platform = process.platform) {
+  if (platform !== 'linux' || !Number.isInteger(fs.constants.O_DIRECTORY)
+    || !Number.isInteger(fs.constants.O_NOFOLLOW)) {
+    throw new Error('STABLE_WORKSPACE_WRITER_UNAVAILABLE');
+  }
+  const pin = pinDirectory(path);
+  const fd = fs.openSync(pin.path, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  const opened = fs.fstatSync(fd);
+  if (opened.dev !== pin.dev || opened.ino !== pin.ino) {
+    fs.closeSync(fd);
+    throw new Error('SHARED_WORKSPACE_DIRECTORY_REPLACED');
+  }
+  return { fd, path: `/proc/self/fd/${fd}`, canonicalPath: pin.path, dev: opened.dev, ino: opened.ino };
 }
-function syncDirectory(path) {
-  const fd = fs.openSync(path, 'r');
-  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+function openStableChildDirectory(parent, name, canonicalPath = '') {
+  const childPath = join(parent.path, name);
+  const fd = fs.openSync(childPath, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+  const opened = fs.fstatSync(fd);
+  return { fd, path: `/proc/self/fd/${fd}`, canonicalPath, dev: opened.dev, ino: opened.ino };
 }
-function publishNoReplace(file, body, directoryPin) {
-  const temp = join(directoryPin.path, `.${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`);
+function assertStableDirectory(directory) {
+  const current = fs.lstatSync(directory.canonicalPath);
+  if (current.isSymbolicLink() || !current.isDirectory()
+    || current.dev !== directory.dev || current.ino !== directory.ino) {
+    throw new Error('SHARED_WORKSPACE_DIRECTORY_REPLACED');
+  }
+}
+function syncDirectory(directory) { fs.fsyncSync(directory.fd); }
+function publishNoReplace(name, body, directory, dependencies = {}) {
+  const tempName = `.${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`;
+  const temp = join(directory.path, tempName);
+  const file = join(directory.path, name);
   let fd;
   try {
+    dependencies.beforeStableOperation?.('proof-temp-open');
+    assertStableDirectory(directory);
     fd = fs.openSync(temp, 'wx', 0o600);
     fs.writeFileSync(fd, body, 'utf8');
     fs.fsyncSync(fd);
     fs.closeSync(fd); fd = undefined;
-    revalidateDirectory(directoryPin);
     fs.linkSync(temp, file);
-    syncDirectory(directoryPin.path);
+    syncDirectory(directory);
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     try { fs.unlinkSync(temp); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
   }
 }
-export function persistReview(result, env) {
+export function persistReview(result, env, dependencies = {}) {
   const workspace = text(env.STEPHANOS_SHARED_AGENT_WORKSPACE);
   if (!workspace) throw new Error('SHARED_WORKSPACE_REQUIRED');
   const root = resolve(workspace);
-  const rootPin = pinDirectory(root);
-  const statusPin = pinDirectory(join(root, 'status'));
+  const rootDirectory = openStableDirectory(root, dependencies.platform);
+  let statusDirectory;
+  let proofDirectory;
+  try {
+    statusDirectory = openStableChildDirectory(rootDirectory, 'status', join(root, 'status'));
   const evidence = result.candidateEvidence;
   const prNumber = evidence?.prNumber || Number(env.STEPHANOS_REVIEW_PR);
   const safePr = Number.isSafeInteger(prNumber) && prNumber > 0 && prNumber <= 999999999 ? prNumber : null;
   if (result.status === 'LOCAL_REVIEW_EVIDENCE_READY') {
-    const proofRoot = join(root, 'proofs');
-    revalidateDirectory(rootPin);
-    if (!fs.existsSync(proofRoot)) fs.mkdirSync(proofRoot, { mode: 0o700 });
-    const proofPin = pinDirectory(proofRoot);
-    const file = join(proofRoot, result.proofRef.split('/')[1]);
+    const proofRoot = join(rootDirectory.path, 'proofs');
+    try { fs.mkdirSync(proofRoot, { mode: 0o700 }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+    proofDirectory = openStableChildDirectory(rootDirectory, 'proofs', join(root, 'proofs'));
     // Immutable same-PR/head evidence. A later model run cannot rewrite
     // findings into a clean verdict, nor silently replace reviewer identity.
-    publishNoReplace(file, JSON.stringify(result, null, 2) + '\n', proofPin);
+    publishNoReplace(result.proofRef.split('/')[1], JSON.stringify(result, null, 2) + '\n', proofDirectory, dependencies);
   }
-  const statusPath = join(root, 'status', safePr ? `sovereign-review-pr-${safePr}.json` : 'sovereign-reviewer.json');
+  const statusName = safePr ? `sovereign-review-pr-${safePr}.json` : 'sovereign-reviewer.json';
+  const statusPath = join(statusDirectory.path, statusName);
   const record = {
     schemaVersion: 'stephanos.sovereign-review-status.v1',
     participantId: 'sovereign-reviewer',
@@ -138,42 +164,68 @@ export function persistReview(result, env) {
       ? 'LOCAL_EVIDENCE_PENDING_INDEPENDENT_ATTESTATION'
       : 'REVIEW_HELD',
     blocker: result.status === 'LOCAL_REVIEW_EVIDENCE_READY' ? '' : text(result.reason).slice(0, 120),
-    sourceHead: evidence?.sourceHead || (SHA.test(text(env.STEPHANOS_REVIEW_EXACT_HEAD)) ? text(env.STEPHANOS_REVIEW_EXACT_HEAD) : ''),
+    sourceHead: evidence?.sourceHead || result.reviewObservation?.sourceHead || '',
+    requestedSourceHead: result.reviewObservation?.requestedSourceHead || '',
     prNumber: safePr,
     proofRef: result.proofRef || '',
     verdict: evidence?.verdict || '',
     mergeAuthority: false,
     runtimeDeploymentProven: false,
   };
-  const lock = `${statusPath}.lock`;
+  const lock = join(statusDirectory.path, `${statusName}.lock`);
+  dependencies.beforeStableOperation?.('status-lock-create');
+  assertStableDirectory(statusDirectory);
   fs.mkdirSync(lock);
+  const lockDirectory = openStableChildDirectory(statusDirectory, `${statusName}.lock`);
+  let statusTemp = '';
   try {
-    revalidateDirectory(statusPin);
     let current = null;
     try { current = JSON.parse(fs.readFileSync(statusPath, 'utf8')); }
     catch (error) { if (error?.code !== 'ENOENT') throw error; }
-    const candidateTime = Date.parse(evidence?.timestampUtc || record.observedAtUtc);
+    const candidateTime = Date.parse(evidence?.timestampUtc || result.reviewObservation?.capturedAtUtc || '');
     const currentTime = Date.parse(current?.candidateObservedAtUtc || current?.observedAtUtc || '');
     if (Number.isFinite(currentTime) && (!Number.isFinite(candidateTime) || candidateTime <= currentTime)) {
       throw new Error('STALE_REVIEW_STATUS');
     }
     record.candidateObservedAtUtc = new Date(candidateTime).toISOString();
-    const temp = statusPath + `.${process.pid}.tmp`;
+    const temp = join(statusDirectory.path, `${statusName}.${process.pid}.tmp`);
+    statusTemp = temp;
+    dependencies.beforeStableOperation?.('status-temp-open');
+    assertStableDirectory(statusDirectory);
     fs.writeFileSync(temp, JSON.stringify(record, null, 2) + '\n', { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-    revalidateDirectory(statusPin);
     fs.renameSync(temp, statusPath);
-    syncDirectory(statusPin.path);
-  } finally { fs.rmdirSync(lock); }
+    syncDirectory(statusDirectory);
+  } finally {
+    try { if (statusTemp) fs.unlinkSync(statusTemp); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    dependencies.beforeStableOperation?.('status-lock-cleanup');
+    const lockStat = fs.lstatSync(lock);
+    if (lockStat.dev !== lockDirectory.dev || lockStat.ino !== lockDirectory.ino) {
+      fs.closeSync(lockDirectory.fd);
+      throw new Error('SHARED_WORKSPACE_LOCK_REPLACED');
+    }
+    fs.closeSync(lockDirectory.fd);
+    fs.rmdirSync(lock);
+  }
   return true;
+  } finally {
+    if (proofDirectory) fs.closeSync(proofDirectory.fd);
+    if (statusDirectory) fs.closeSync(statusDirectory.fd);
+    fs.closeSync(rootDirectory.fd);
+  }
 }
 
 export async function main(env = process.env, dependencies = {}) {
   const capture = dependencies.snapshot || ((input) => exactLocalSnapshot(input, dependencies));
   const invoke = dependencies.invokeModel || ((prompt) => localModel(prompt, env));
   const publish = dependencies.persist || persistReview;
+  const capturedAtUtc = new Date().toISOString();
+  const requestedSourceHead = SHA.test(text(env.STEPHANOS_REVIEW_EXACT_HEAD))
+    ? text(env.STEPHANOS_REVIEW_EXACT_HEAD).toLowerCase() : '';
   let result;
+  let snapshot;
   try {
-    result = await evaluateSovereignReviewSnapshot(capture(env), { invokeModel: invoke });
+    snapshot = capture(env);
+    result = await evaluateSovereignReviewSnapshot(snapshot, { invokeModel: invoke });
   } catch (error) {
     result = {
       status: 'SOVEREIGN_REVIEW_HELD',
@@ -181,7 +233,12 @@ export async function main(env = process.env, dependencies = {}) {
       mergeAuthority: false,
     };
   }
-  try { publish(result, env); }
+  result = { ...result, reviewObservation: {
+    capturedAtUtc: snapshot?.timestampUtc || capturedAtUtc,
+    sourceHead: SHA.test(text(snapshot?.sourceHead)) ? text(snapshot.sourceHead).toLowerCase() : '',
+    requestedSourceHead,
+  } };
+  try { publish(result, env, dependencies); }
   catch { result = { status: 'SOVEREIGN_REVIEW_HELD', reason: 'SHARED_WORKSPACE_PUBLICATION_FAILED', mergeAuthority: false }; }
   const summary = {
     status: result.status,

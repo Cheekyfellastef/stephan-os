@@ -87,6 +87,85 @@ test('older overlapping review cannot replace current status', (t) => {
   const status = JSON.parse(fs.readFileSync(path.join(root, 'status', 'sovereign-review-pr-3005.json'), 'utf8'));
   assert.equal(status.sourceHead, newer.candidateEvidence.sourceHead);
 });
+test('stable proof handle fails closed when proofs is substituted before the raw write', (t) => {
+  const root = workspace(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sovereign-reviewer-outside-'));
+  const detached = `${root}-detached-proofs`;
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(detached, { recursive: true, force: true }));
+  assert.throws(() => persistReview(candidate(), {
+    STEPHANOS_SHARED_AGENT_WORKSPACE: root, STEPHANOS_REVIEW_PR: '3005',
+  }, { beforeStableOperation(operation) {
+    if (operation !== 'proof-temp-open') return;
+    fs.renameSync(path.join(root, 'proofs'), detached);
+    fs.symlinkSync(outside, path.join(root, 'proofs'), process.platform === 'win32' ? 'junction' : 'dir');
+  } }), /SHARED_WORKSPACE_DIRECTORY_REPLACED/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('stable status and lock handles reject substitution without outside writes or cleanup', (t) => {
+  const root = workspace(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'sovereign-reviewer-outside-'));
+  const detached = `${root}-detached-status`;
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(detached, { recursive: true, force: true }));
+  assert.throws(() => persistReview(candidate(), {
+    STEPHANOS_SHARED_AGENT_WORKSPACE: root, STEPHANOS_REVIEW_PR: '3005',
+  }, { beforeStableOperation(operation) {
+    if (operation !== 'status-temp-open') return;
+    fs.renameSync(path.join(root, 'status'), detached);
+    fs.symlinkSync(outside, path.join(root, 'status'), process.platform === 'win32' ? 'junction' : 'dir');
+  } }), /SHARED_WORKSPACE_DIRECTORY_REPLACED/);
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test('lock cleanup refuses to remove a substituted lock owned by another participant', (t) => {
+  const root = workspace(t);
+  const lockName = 'sovereign-review-pr-3005.json.lock';
+  const displaced = path.join(root, 'status', `${lockName}.displaced`);
+  assert.throws(() => persistReview(candidate(), {
+    STEPHANOS_SHARED_AGENT_WORKSPACE: root, STEPHANOS_REVIEW_PR: '3005',
+  }, { beforeStableOperation(operation) {
+    if (operation !== 'status-lock-cleanup') return;
+    fs.renameSync(path.join(root, 'status', lockName), displaced);
+    fs.mkdirSync(path.join(root, 'status', lockName));
+  } }), /SHARED_WORKSPACE_LOCK_REPLACED/);
+  assert.equal(fs.statSync(path.join(root, 'status', lockName)).isDirectory(), true);
+});
+
+test('older held result retains capture head and time and cannot supersede a newer review', (t) => {
+  const root = workspace(t);
+  const env = { STEPHANOS_SHARED_AGENT_WORKSPACE: root, STEPHANOS_REVIEW_PR: '3005' };
+  persistReview(candidate('2026-10-10T15:00:00.000Z', 'c'.repeat(40)), env);
+  const held = {
+    status: 'SOVEREIGN_REVIEW_HELD', reason: 'LOCAL_MODEL_UNAVAILABLE', mergeAuthority: false,
+    reviewObservation: {
+      capturedAtUtc: '2026-10-10T14:00:00.000Z', sourceHead: 'd'.repeat(40), requestedSourceHead: 'd'.repeat(40),
+    },
+  };
+  assert.throws(() => persistReview(held, env), /STALE_REVIEW_STATUS/);
+  const status = JSON.parse(fs.readFileSync(path.join(root, 'status', 'sovereign-review-pr-3005.json'), 'utf8'));
+  assert.equal(status.sourceHead, 'c'.repeat(40));
+});
+
+test('capture errors preserve requested identity separately and never claim an observed head', async () => {
+  let published;
+  const requested = 'e'.repeat(40);
+  await main({ STEPHANOS_REVIEW_PR: '3005', STEPHANOS_REVIEW_EXACT_HEAD: requested }, {
+    snapshot: () => { throw new Error('LOCAL_GIT_PROOF_UNAVAILABLE'); },
+    persist: result => { published = result; },
+  });
+  assert.equal(published.reviewObservation.sourceHead, '');
+  assert.equal(published.reviewObservation.requestedSourceHead, requested);
+  assert.equal(Number.isFinite(Date.parse(published.reviewObservation.capturedAtUtc)), true);
+});
+
+test('publication fails closed where no admitted stable directory writer exists', (t) => {
+  const root = workspace(t);
+  assert.throws(() => persistReview(candidate(), {
+    STEPHANOS_SHARED_AGENT_WORKSPACE: root, STEPHANOS_REVIEW_PR: '3005',
+  }, { platform: 'win32' }), /STABLE_WORKSPACE_WRITER_UNAVAILABLE/);
+});
 test('offline local model is held and still published as a blocked status, never clean', async () => {
   let published;
   const result = await main({ STEPHANOS_REVIEW_PR: '3005' }, {
