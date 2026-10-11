@@ -418,6 +418,9 @@ test('projects one canonical Stephanos build truth record from physical and logi
   assert.equal(record.statusId, 'stephanos-build-truth-current');
   assert.equal(record.status, 'BUILDING');
   assert.equal(record.stephanosBuildTruth.goals[0].proofRefs.includes('proof/goal-2002-source'), true);
+  // Verified host proofs for unrelated goals cannot be attributed to #2002.
+  assert.deepEqual(truth.goals[0].proofRefs, ['proof/goal-2002-source']);
+  assert.deepEqual(record.stephanosBuildTruth.goals[0].proofRefs, ['proof/goal-2002-source']);
 });
 
 test('logical ACTIVE does not mean BUILDING when its host is working on another goal', () => {
