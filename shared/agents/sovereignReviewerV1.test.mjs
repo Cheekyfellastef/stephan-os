@@ -52,6 +52,29 @@ test('blocks specialist/high-risk changes before calling model', async () => {
   assert.equal(result.mergeAuthority, false);
 });
 
+test('routes goal conveyor, native execution, leases and escrow to qualified specialist', () => {
+  const executionPaths = [
+    'scripts/mission-orchestrator-worker.mjs',
+    'scripts/battle-bridge-goal-discovery-heartbeat.mjs',
+    'stephanos-server/services/providerNeutralSourceBuilderService.js',
+    'stephanos-server/services/missionOrchestratorWorkerConsumer.js',
+    'stephanos-server/services/sourceArtifactEscrowStore.js',
+    'stephanos-server/services/missionOrchestratorWorkerService.js',
+    'shared/agents/goalBuildExecutionLeaseV1.mjs',
+    'shared/agents/newProviderDispatcherV2.mjs',
+    'scripts/new-execution-runner.mjs',
+  ];
+  for (const path of executionPaths) {
+    const result = inspectSovereignReviewSnapshot({ ...sample, changedFiles: [path] });
+    assert.equal(result.status, 'SOVEREIGN_REVIEW_HELD', path);
+    assert.equal(result.reason, 'QUALIFIED_HIGH_RISK_SPECIALIST_REQUIRED', path);
+    assert.equal(result.riskTier, 'high', path);
+    assert.equal(result.mergeAuthority, false, path);
+    assert.equal(result.approvalAuthority, false, path);
+  }
+  assert.equal(inspectSovereignReviewSnapshot(sample).status, 'REVIEWABLE_STANDARD_RISK');
+});
+
 test('fails closed on an unreviewed path, contradictory model answer and invalid finding', async () => {
   for (const raw of [
     JSON.stringify({ verdict:'clean', reviewedPaths: [], findings: [] }),
