@@ -57,6 +57,8 @@ export async function assertOriginalSourceAttemptNotFenced(missionId, options = 
 export function originalSourceFenceBindsLease(fence, lease) {
   return Boolean(fence?.schemaVersion === ORIGINAL_SOURCE_FENCE_SCHEMA
     && fence.sourceWriterTerminalProven === true && fence.originalQueuesIdle === true
+    && typeof fence.worktreePath === 'string' && fence.worktreePath.length > 0
+    && fence.writerExclusionEvidence?.worktreePath === fence.worktreePath
     && fence.detachedSourceWritersExcluded === true
     && fence.writerExclusionEvidence?.schemaVersion === WRITER_EXCLUSION_SCHEMA
     && fence.writerExclusionEvidence?.missionId === lease.laneId
@@ -176,6 +178,7 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
     missionId: current.missionId, sourceExecutionId: sourceAction,
     leaseId: lease.leaseId, leaseDigest: digest(lease), repository: lease.repository,
     branch: lease.branch, headSha: lease.headSha,
+    worktreePath: current.git?.worktreePath,
   });
   const exclusionEvidence = exclusion?.evidence;
   if (exclusion?.authenticated !== true
@@ -187,6 +190,7 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       || exclusionEvidence?.repository !== lease.repository
       || exclusionEvidence?.branch !== lease.branch
       || exclusionEvidence?.headSha !== lease.headSha
+      || exclusionEvidence?.worktreePath !== current.git?.worktreePath
       || exclusionEvidence?.verdict !== 'NO_SOURCE_WRITING_DESCENDANTS'
       || !text(exclusionEvidence?.authorityReceiptId)
       || !SHA256.test(text(exclusionEvidence?.authorityReceiptSha256))) {
@@ -202,7 +206,8 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
     originalRevision: current.revision, originalLeaseId: lease.leaseId,
     originalLeaseDigest: digest(lease), repository: lease.repository,
     branch: lease.branch, issueNumber: lease.issueNumber, prNumber: lease.prNumber,
-    headSha: lease.headSha, sourceReceiptId: terminal.receiptId,
+    headSha: lease.headSha, worktreePath: current.git?.worktreePath,
+    sourceReceiptId: terminal.receiptId,
     sourceExecutionId: sourceAction, sourcePairDigest: queue.pairDigest,
     sourceAdapter: adapter, heldExecutionCount,
     detachedSourceWritersExcluded: true,
@@ -239,7 +244,9 @@ export async function quarantineOriginalSourceAttempt(input, options = {}) {
 
 export async function verifyOriginalSourceAttemptFence(mission, lease, paths, env) {
   const fence = mission.storeMetadata?.originalSourceAttemptFence;
-  if (!originalSourceFenceBindsLease(fence, lease) || mission.cancelled !== true
+  if (!originalSourceFenceBindsLease(fence, lease)
+      || fence.worktreePath !== mission.git?.worktreePath
+      || mission.cancelled !== true
       || mission.currentPhase !== 'CANCELLED' || mission.revision !== fence.originalRevision + 1) return false;
   const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
   const log = await readFile(record.eventPath, 'utf8');

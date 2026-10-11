@@ -16,7 +16,7 @@ function fixture() {
   const missionId = 'critical-2962-elastic-goal';
   const action = `${missionId}-r1-27828c3fdb2c`;
   const mission = { missionId, revision: 7, repository: 'Cheekyfellastef/stephan-os',
-    currentPhase: 'REPAIR_REQUIRED', git: { branch: 'openclaw/elastic-goal-2962' },
+    currentPhase: 'REPAIR_REQUIRED', git: { branch: 'openclaw/elastic-goal-2962', worktreePath: '/worktree' },
     pullRequest: { number: 2987, headSha: 'a'.repeat(40) },
     dispatch: { status: 'complete', adapter: 'foundry-forge', resultId: 'opaque-result' } };
   const lease = { leaseId: `${missionId}-r7-lease`, laneId: missionId,
@@ -42,6 +42,7 @@ function fixture() {
   const writerExclusionEvidence = { schemaVersion: 'stephanos.original-source-writer-exclusion.v1',
     missionId, sourceExecutionId: action, leaseId: lease.leaseId, leaseDigest: digest(lease),
     repository: lease.repository, branch: lease.branch, headSha: lease.headSha,
+    worktreePath: '/worktree',
     verdict: 'NO_SOURCE_WRITING_DESCENDANTS', authorityReceiptId: 'containment-receipt-2962',
     authorityReceiptSha256: 'c'.repeat(64) };
   const input = { missionId, commandId: 'fence-original-2962-test', reason: 'Retire source attempt only.',
@@ -141,6 +142,7 @@ test('detached descendant evidence must be authenticated and exactly mission, ex
     evidence => { evidence.sourceExecutionId = 'detached-other-execution'; },
     evidence => { evidence.leaseDigest = '0'.repeat(64); },
     evidence => { evidence.missionId = 'critical-9999-elastic-goal'; },
+    evidence => { evidence.worktreePath = '/other'; },
   ]) {
     const f = fixture(); mutate(f.input.writerExclusionEvidence);
     await assert.rejects(proveOriginalSourceQuarantine(f.mission, f.input, f.options),

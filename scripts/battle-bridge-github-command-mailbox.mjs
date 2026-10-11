@@ -17,6 +17,7 @@ import {
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
 import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
@@ -3320,7 +3321,12 @@ export async function cancelMissionOrchestratorMission(command = {}, {
         expectedMissionRevision: command.expectedMissionRevision,
         operatorSourceRevision: identity.sourceHead,
         operatorRequestId: command.requestId } : {}),
-    }, command.originalLeaseId ? { paths: resolveCriticalBacklogRuntimePaths({}) } : {});
+    }, command.originalLeaseId ? {
+      paths: resolveCriticalBacklogRuntimePaths({}),
+      // Trusted immutable issuer receipt only. Never use the public packet as
+      // custody evidence or supply a caller-selectable verifier.
+      authenticateOriginalWriterExclusionEvidence,
+    } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
     const cancelled = currentPhase === 'CANCELLED';
