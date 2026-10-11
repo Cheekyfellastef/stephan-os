@@ -331,7 +331,7 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
   const staleBase = selectBattleBridgeGitHubCommandBatch([entry], {
     ...options, currentHead: 'f'.repeat(40),
   });
-  assert.equal(staleBase.commands.length, 0);
+  assert.equal(staleBase.verdict, 'NO_COMMAND_READY');
   assert.equal(staleBase.terminalRejections.length, 1);
   assert.equal(staleBase.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 
@@ -340,6 +340,6 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
   const strict = selectBattleBridgeGitHubCommandBatch([normalEntry], {
     ...options, currentHead: base,
   });
-  assert.equal(strict.commands.length, 0);
+  assert.equal(strict.verdict, 'NO_COMMAND_READY');
   assert.equal(strict.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
