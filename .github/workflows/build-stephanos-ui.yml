@@ -42,6 +42,21 @@ permissions:
   id-token: write
 
 jobs:
+  source-custody-windows-proof:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: windows-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Actual Windows Job Object and source adapter integration proof
+        run: node --test scripts/windows/sourceJobCustody.test.mjs
   scheduler-tests:
     if: >-
       github.event_name != 'issue_comment' ||
