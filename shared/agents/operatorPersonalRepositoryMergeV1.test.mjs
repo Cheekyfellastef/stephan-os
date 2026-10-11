@@ -2555,6 +2555,7 @@ test('base-versus-source mailbox regression stays within protected merge admissi
   }];
   const now = new Date('2026-08-05T16:30:00.000Z');
   const accepted = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: mainHead });
+  assert.equal(accepted.verdict, 'COMMAND_BATCH_READY', JSON.stringify(accepted));
   assert.equal(accepted.commands.length, 1);
   assert.equal(accepted.commands[0].command.expectedHead, prHead);
   assert.equal(accepted.commands[0].command.expectedBase, mainHead);
