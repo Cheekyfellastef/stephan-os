@@ -244,6 +244,27 @@ async function originalMissionHasQueuedWork({ missionId, leaseId, env }) {
   return false;
 }
 
+// Only publish field *names*, never original or expected field values. The
+// mismatch set diagnoses the retained historical worker record and does not
+// create proof that the original source writer is inactive.
+function originalTerminalBindingMismatchCodes(item, filename, adapter, lease, missionId) {
+  const binding = item?.executionBinding;
+  return [
+    [item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1', 'ITEM_SCHEMA'],
+    [text(item?.adapter) === adapter, 'ADAPTER'],
+    [text(item?.actionId) === filename.slice(0, -5), 'ACTION_FILENAME'],
+    [binding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1', 'BINDING_SCHEMA'],
+    [text(binding?.leaseKey) === text(lease.leaseId), 'LEASE_KEY'],
+    [text(binding?.missionId).toLowerCase() === missionId, 'MISSION_ID'],
+    [text(binding?.executionId) === text(item?.actionId), 'EXECUTION_ID'],
+    [text(binding?.repository).toLowerCase() === text(lease.repository).toLowerCase(), 'REPOSITORY'],
+    [Number(binding?.issueNumber) === Number(lease.issueNumber), 'ISSUE_NUMBER'],
+    [Number(binding?.prNumber) === Number(lease.prNumber), 'PR_NUMBER'],
+    [text(binding?.branch) === text(lease.branch), 'BRANCH'],
+    [text(binding?.headSha).toLowerCase() === text(lease.headSha).toLowerCase(), 'HEAD_SHA'],
+  ].filter(([matched]) => !matched).map(([, code]) => code);
+}
+
 // Read-only forensic triage of an ORIGINAL terminal worker result pair.
 // The terminal queue pair can explain a lost execution receipt, but it is NOT
 // itself a canonical execution receipt and NEVER authorizes lease release.
@@ -262,6 +283,7 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
   let exactPairs = 0;
   let boundWithoutResult = 0;
   let unboundOriginalItems = 0;
+  const bindingMismatchCodes = new Set();
   try {
     for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
       for (const stage of ['completed', 'failed']) {
@@ -283,20 +305,14 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
           if ((await stat(itemPath)).size > 262144) throw Error('ORIGINAL_TERMINAL_QUEUE_ITEM_OVERSIZED');
           const item = JSON.parse(await readFile(itemPath, 'utf8'));
           if (text(item?.missionId).toLowerCase() !== originalMissionId) continue;
-          const binding = item.executionBinding;
-          const bound = item.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
-            && text(item.adapter) === adapter
-            && text(item.actionId) === entry.name.slice(0, -5)
-            && binding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
-            && text(binding.leaseKey) === leaseId
-            && text(binding.missionId).toLowerCase() === originalMissionId
-            && text(binding.executionId) === text(item.actionId)
-            && text(binding.repository).toLowerCase() === text(lease.repository).toLowerCase()
-            && Number(binding.issueNumber) === Number(lease.issueNumber)
-            && Number(binding.prNumber) === Number(lease.prNumber)
-            && text(binding.branch) === text(lease.branch)
-            && text(binding.headSha).toLowerCase() === text(lease.headSha).toLowerCase();
-          if (!bound) { unboundOriginalItems += 1; continue; }
+          const mismatchCodes = originalTerminalBindingMismatchCodes(
+            item, entry.name, adapter, lease, originalMissionId,
+          );
+          if (mismatchCodes.length > 0) {
+            unboundOriginalItems += 1;
+            for (const code of mismatchCodes) bindingMismatchCodes.add(code);
+            continue;
+          }
           const resultPath = resolve(directory, entry.name.slice(0, -5) + '.result.json');
           let result;
           try {
@@ -332,7 +348,11 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
           ? 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
           : 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND';
   return freeze({ ...noAuthority, classification,
-    exactPairCount: exactPairs, incompleteOrUnboundCount: boundWithoutResult + unboundOriginalItems });
+    exactPairCount: exactPairs,
+    incompleteOrUnboundCount: boundWithoutResult + unboundOriginalItems,
+    // Small, strictly enum-bound forensic report. Never return queue contents,
+    // action IDs, paths, observed hashes, file values or release authority.
+    bindingMismatchCodes: [...bindingMismatchCodes].sort().slice(0, 12) });
 }
 
 function exactOriginalCancellation(lease, mission) {
@@ -578,8 +598,29 @@ export async function reconcileExpiredElasticReviewLeaseV1({
           ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN: 'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
           ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID: 'REPAIR_ORIGINAL_BOUND_RESULT_MISSING_OR_INVALID',
         };
-        return held(reasonByEvidence[triage.classification]
-          || 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+        // One exact malformed field is actionable for the existing original
+        // owner. More than one mismatch remains a generic HOLD, never a lease
+        // release or evidence-rewriting permission.
+        const fieldReasons = {
+          ITEM_SCHEMA: 'REPAIR_ORIGINAL_QUEUE_ITEM_SCHEMA_MISMATCH',
+          ADAPTER: 'REPAIR_ORIGINAL_QUEUE_ADAPTER_MISMATCH',
+          ACTION_FILENAME: 'REPAIR_ORIGINAL_QUEUE_ACTION_FILENAME_MISMATCH',
+          BINDING_SCHEMA: 'REPAIR_ORIGINAL_BINDING_SCHEMA_MISMATCH',
+          LEASE_KEY: 'REPAIR_ORIGINAL_BINDING_LEASE_KEY_MISMATCH',
+          MISSION_ID: 'REPAIR_ORIGINAL_BINDING_MISSION_ID_MISMATCH',
+          EXECUTION_ID: 'REPAIR_ORIGINAL_BINDING_EXECUTION_ID_MISMATCH',
+          REPOSITORY: 'REPAIR_ORIGINAL_BINDING_REPOSITORY_MISMATCH',
+          ISSUE_NUMBER: 'REPAIR_ORIGINAL_BINDING_ISSUE_NUMBER_MISMATCH',
+          PR_NUMBER: 'REPAIR_ORIGINAL_BINDING_PR_NUMBER_MISMATCH',
+          BRANCH: 'REPAIR_ORIGINAL_BINDING_BRANCH_MISMATCH',
+          HEAD_SHA: 'REPAIR_ORIGINAL_BINDING_HEAD_SHA_MISMATCH',
+        };
+        const mismatches = triage.bindingMismatchCodes || [];
+        return held(triage.classification === 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN'
+          && mismatches.length === 1
+          ? (fieldReasons[mismatches[0]] || 'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN')
+          : reasonByEvidence[triage.classification]
+            || 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
       }
       if (!TERMINAL_EXECUTION_RECEIPT_STATES.has(
         text(history.latestReceipt.state).toLowerCase())) {
