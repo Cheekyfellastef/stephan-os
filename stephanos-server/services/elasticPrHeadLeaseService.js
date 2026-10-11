@@ -22,12 +22,14 @@ import {
   publishNextMissionWorkerAction,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
+import { runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
 const PARKED_OR_TERMINAL_PHASES = new Set([
+  'BLOCKED',
   'AWAITING_OPERATOR_APPROVAL',
   'MERGE_PULL_REQUEST',
   'COMPLETE',
@@ -271,7 +273,9 @@ function originalTerminalBindingMismatchCodes(item, filename, adapter, lease, mi
 // terminal folders are filtered; pending/processing inventory remains global.
 function isOlderBoundOriginalTerminal(item, filename, adapter, lease, missionId) {
   const current = text(lease?.leaseId).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
-  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
+  // Mission intake legitimately starts at r0. Keep canonical decimal syntax:
+  // r0 is historical, while r00/negative/future revisions remain unproven.
+  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r(0|[1-9]\d*)-lease$/);
   const binding = item?.executionBinding;
   return Boolean(current && prior
     && current[1] === missionId && prior[1] === missionId
@@ -806,17 +810,53 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     && leasedEntry
     && PARKED_OR_TERMINAL_PHASES.has(phaseOf(leasedEntry.mission))
   ) {
-    releasedLease = await releaseLease({
-      leaseId: currentLease.leaseId,
-      laneId: currentLease.laneId,
-      repository: currentLease.repository,
-      issueNumber: currentLease.issueNumber,
-      prNumber: currentLease.prNumber,
-      branch: currentLease.branch,
-      headSha: currentLease.headSha,
-      ownerId: currentLease.ownerId,
-      nowUtc,
-    }, serviceOptions);
+    // Parking/STOP changes scheduling intent, not original-writer liveness.
+    // All parked phases must retain the original lease until authentic exact
+    // terminal history and every original queue are proven safe. Serialize
+    // with mission dispatch/re-entry so a stale parked snapshot cannot release
+    // a lease after another cycle has resumed that mission.
+    const guarded = normalized.runWithMissionStatePrecondition ?? runWithMissionStatePrecondition;
+    try {
+      const outcome = await guarded(leasedEntry.identity.missionId, {
+        expectedRevision: leasedEntry.mission.revision,
+        expectedCurrentPhase: phaseOf(leasedEntry.mission),
+      }, async (current) => {
+        const hold = (reason) => ({ ok: false, released: false, reason });
+        if (text(current?.dispatch?.status).toLowerCase() === 'running') {
+          return hold('PARKED_ORIGINAL_DISPATCH_STILL_RUNNING');
+        }
+        const history = await readReceiptHistory(paths.workspaceRoot, {
+          leaseKey: currentLease.leaseId, expectedHead: currentLease.headSha,
+        }, receiptOptions);
+        const receipt = history?.latestReceipt;
+        if (history?.ok !== true || !history.receipts?.length || !receipt
+            || !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(receipt.state).toLowerCase())) {
+          return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
+        }
+        if (text(receipt.leaseKey) !== currentLease.leaseId
+            || text(receipt.sourceHead).toLowerCase() !== currentLease.headSha.toLowerCase()
+            || text(receipt.repository).toLowerCase() !== currentLease.repository.toLowerCase()
+            || text(receipt.branch) !== currentLease.branch
+            || Number(receipt.issueNumber) !== currentLease.issueNumber
+            || Number(receipt.prNumber) !== currentLease.prNumber) {
+          return hold('PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH');
+        }
+        const originalInFlight = normalized.originalMissionInFlightFn ?? originalMissionHasQueuedWork;
+        if (await originalInFlight({ missionId: currentLease.laneId, leaseId: currentLease.leaseId, env }) !== false) {
+          return hold('PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT');
+        }
+        return releaseLease({
+          leaseId: currentLease.leaseId, laneId: currentLease.laneId,
+          repository: currentLease.repository, issueNumber: currentLease.issueNumber,
+          prNumber: currentLease.prNumber, branch: currentLease.branch,
+          headSha: currentLease.headSha, ownerId: currentLease.ownerId, nowUtc,
+        }, serviceOptions);
+      }, { root: paths.orchestratorRoot, env });
+      releasedLease = outcome?.preconditionFailed === false ? outcome.result
+        : { ok: false, released: false, reason: 'PARKED_ORIGINAL_MISSION_STATE_CHANGED' };
+    } catch {
+      releasedLease = { ok: false, released: false, reason: 'PARKED_ORIGINAL_WRITER_PROOF_UNOBSERVABLE' };
+    }
     if (releasedLease?.ok !== true) {
       return baseResult({
         ok: false,

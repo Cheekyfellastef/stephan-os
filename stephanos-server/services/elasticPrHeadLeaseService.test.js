@@ -185,11 +185,16 @@ test('releases a parked exact lease and refills the same lease slot with the nex
   });
   const next = mission(1899, 1920, HEAD_C);
   const parkedLease = leaseFor(parked);
+  const terminal = { state: 'completed', leaseKey: parkedLease.leaseId,
+    sourceHead: parkedLease.headSha, repository: parkedLease.repository,
+    issueNumber: parkedLease.issueNumber, prNumber: parkedLease.prNumber, branch: parkedLease.branch };
   const calls = [];
   const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked, next], parked), {
     now: NOW,
     paths: PATHS,
     sourceRevision: SOURCE,
+    runWithMissionStatePrecondition: async (_id, _expected, operation) => ({ preconditionFailed: false, result: await operation(parked) }),
+    originalMissionInFlightFn: async () => false,
     readSourceMutationLease: async () => ({ ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: parkedLease }),
     releaseSourceMutationLease: async (input) => {
       calls.push(['release', input]);
@@ -202,7 +207,9 @@ test('releases a parked exact lease and refills the same lease slot with the nex
     renewSourceMutationLease: async () => {
       throw new Error('renew must not run after parked lease release');
     },
-    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    readExecutionReceiptHistory: async (_root, filters) => filters.leaseKey === parkedLease.leaseId
+      ? { ok: true, receipts: [terminal], latestReceipt: terminal }
+      : { ok: true, receipts: [], latestReceipt: null },
     appendExecutionReceipt: async () => ({ ok: true }),
     isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
@@ -258,6 +265,71 @@ test('a lease owned by another canonical lane blocks PR-head takeover without se
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(claimCount, 0);
   assert.equal(publishCount, 0);
+});
+
+test('parking or STOP cannot release an orphan lease, even when the worker is idle', async () => {
+  for (const phase of ['BLOCKED', 'CANCELLED', 'COMPLETE', 'AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']) {
+    const parked = mission(2962, 2987, HEAD_A, { currentPhase: phase, dispatch: { status: 'complete' } });
+    const lease = leaseFor(parked);
+    let mutations = 0;
+    const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked]), {
+      now: NOW, paths: PATHS, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+      runWithMissionStatePrecondition: async (_id, expected, operation) => {
+        assert.equal(expected.expectedRevision, 7);
+        assert.equal(expected.expectedCurrentPhase, phase);
+        return { preconditionFailed: false, result: await operation(parked) };
+      },
+      readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+      originalMissionInFlightFn: async () => false,
+      releaseSourceMutationLease: async () => { mutations++; },
+      claimSourceMutationLease: async () => { mutations++; },
+      publishWorkerAction: async () => { mutations++; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.held[0].reason, 'PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
+    assert.equal(result.activeLease.leaseId, lease.leaseId);
+    assert.equal(mutations, 0);
+  }
+});
+
+test('parked lease release holds on original identity, queue uncertainty, running writer or re-entry race', async () => {
+  const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'BLOCKED', dispatch: { status: 'complete' } });
+  const lease = leaseFor(parked);
+  const terminal = { state: 'failed', leaseKey: lease.leaseId, sourceHead: HEAD_A,
+    repository: REPOSITORY, issueNumber: 2962, prNumber: 2987, branch: lease.branch };
+  const cases = [
+    { receipt: { ...terminal, sourceHead: HEAD_C }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
+    { receipt: { ...terminal, prNumber: 3000 }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
+    { receipt: { ...terminal, leaseKey: lease.laneId + '-r6-lease' }, reason: 'PARKED_ORIGINAL_TERMINAL_IDENTITY_MISMATCH' },
+    { receipt: { ...terminal, state: 'started' }, reason: 'PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN' },
+    { inFlight: true, reason: 'PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT' },
+    { inFlight: undefined, reason: 'PARKED_ORIGINAL_WORK_STILL_IN_FLIGHT' },
+    { queueThrows: true, reason: 'PARKED_ORIGINAL_WRITER_PROOF_UNOBSERVABLE' },
+    { running: true, reason: 'PARKED_ORIGINAL_DISPATCH_STILL_RUNNING' },
+    { resumed: true, reason: 'PARKED_ORIGINAL_MISSION_STATE_CHANGED' },
+  ];
+  for (const scenario of cases) {
+    let releases = 0;
+    const receipt = scenario.receipt || terminal;
+    const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked]), {
+      now: NOW, paths: PATHS, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+      readExecutionReceiptHistory: async () => ({ ok: true, receipts: [receipt], latestReceipt: receipt }),
+      runWithMissionStatePrecondition: async (_id, _expected, operation) => scenario.resumed
+        ? { preconditionFailed: true, result: null }
+        : { preconditionFailed: false, result: await operation(scenario.running
+          ? { ...parked, dispatch: { status: 'running' } } : parked) },
+      originalMissionInFlightFn: async () => {
+        if (scenario.queueThrows) throw Error('unobservable');
+        return Object.hasOwn(scenario, 'inFlight') ? scenario.inFlight : false;
+      },
+      releaseSourceMutationLease: async () => { releases++; return { ok: true, released: true }; },
+      claimSourceMutationLease: async () => { throw Error('no refill permitted'); },
+    });
+    assert.equal(result.held[0].reason, scenario.reason);
+    assert.equal(releases, 0);
+  }
 });
 
 test('signed PR-head commit actions use the canonical openclaw-signed adapter', async () => {
@@ -742,6 +814,7 @@ test('older bound terminal revisions cannot mask an exact original r7 pair or au
   const env = { STEPHANOS_MISSION_WORKER_QUEUE_DIR: root };
   const exactId = 'original-r7-source';
   const olderId = 'historical-r6-source';
+  const intakeId = 'historical-r0-intake';
   const binding = {
     schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
     missionId: current.missionId, leaseKey: lease.leaseId,
@@ -778,13 +851,16 @@ test('older bound terminal revisions cannot mask an exact original r7 pair or au
     await writePair(olderId, entry(olderId, {
       leaseKey: current.missionId + '-r6-lease', headSha: HEAD_C, prNumber: 2868,
     }));
+    await writePair(intakeId, entry(intakeId, {
+      leaseKey: current.missionId + '-r0-lease', headSha: HEAD_C, prNumber: 2868,
+    }));
     // An archived, correctly scoped terminal attempt from r6 must not
     // impersonate a current r7 binding mismatch or grant r7 completion.
     const historyOnly = await inspectOriginalTerminalWorkerPairV1({
       lease, missionId: current.missionId, env,
     });
     assert.equal(historyOnly.classification, 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND');
-    assert.equal(historyOnly.olderBoundTerminalItems, 1);
+    assert.equal(historyOnly.olderBoundTerminalItems, 2);
     assert.deepEqual(historyOnly.bindingMismatchCodes, []);
     const before = await heldRecovery();
     assert.equal(before.released, false);
@@ -796,7 +872,7 @@ test('older bound terminal revisions cannot mask an exact original r7 pair or au
     });
     assert.equal(exact.classification, 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT');
     assert.equal(exact.exactPairCount, 1);
-    assert.equal(exact.olderBoundTerminalItems, 1);
+    assert.equal(exact.olderBoundTerminalItems, 2);
     assert.equal(exact.terminalExecutionReceiptProven, false);
     const stillHeld = await heldRecovery();
     assert.equal(stillHeld.blocker, 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING');
@@ -813,6 +889,14 @@ test('older bound terminal revisions cannot mask an exact original r7 pair or au
     const badRecovery = await heldRecovery();
     assert.equal(badRecovery.blocker, 'REPAIR_ORIGINAL_BINDING_HEAD_SHA_MISMATCH');
     assert.equal(badRecovery.released, false);
+    // Noncanonical zero padding is not a historical revision and must HOLD.
+    await writePair(intakeId, entry(intakeId, {
+      leaseKey: current.missionId + '-r00-lease', headSha: HEAD_C, prNumber: 2868,
+    }));
+    const malformed = await inspectOriginalTerminalWorkerPairV1({ lease, missionId: current.missionId, env });
+    assert.equal(malformed.classification, 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN');
+    assert.equal(malformed.incompleteOrUnboundCount, 2);
+    assert.equal((await heldRecovery()).released, false);
     assert.equal(releases, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
