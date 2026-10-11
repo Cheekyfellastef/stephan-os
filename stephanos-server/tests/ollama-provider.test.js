@@ -235,7 +235,7 @@ test('runOllamaProvider selects deep sovereign reasoning for natural Stephanos r
   try {
     const result = await runOllamaProvider({
       messages: [{ role: 'user', content: 'Can we get Stephanos AI to repair Stephanos now?' }],
-    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'performance' });
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
   } finally {
