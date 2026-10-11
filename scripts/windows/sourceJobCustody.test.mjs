@@ -27,6 +27,10 @@ test('Windows custodian has no issuer key / attestation path or public shell', a
   assert.match(source, /AssignProcessToJobObject/);
   assert.match(source, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
   assert.match(source, /JobObjectBasicAccountingInformation/);
+  assert.match(source, /JobMembersExited/);
+  assert.match(source, /WholeSourceWriterExclusionProven \{ get \{ return false; \} \}/);
+  assert.doesNotMatch(source, /result\.AllProcessesExited/);
+  assert.match(wrapper, /WMI/);
   assert.match(source, /TerminateJobObject/);
   assert.match(wrapper, /SOURCE_CUSTODY_OS_LIFETIME_UNPROVEN/);
   assert.doesNotMatch(wrapper, /hmac|privatekey|writefile/i);

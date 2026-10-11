@@ -1,5 +1,7 @@
 # Windows-only source process-tree custody prototype. It does not sign a receipt
 # and MUST NOT be used to release any existing source-mutation lease.
+# In-job exit does NOT exclude escaped out-of-job writers (for example WMI).
+# Only a privileged, separately isolated issuer can attest whole-worker custody.
 # The trusted caller supplies an allowlisted executable and a bounded argv JSON.
 [CmdletBinding()]
 param(
@@ -40,13 +42,14 @@ try {
     [string[]]$strings,
     [System.IO.Path]::GetFullPath($Worktree),
     $TimeoutSeconds * 1000)
-  if (-not $result.Completed -or -not $result.AllProcessesExited -or
+  if (-not $result.Completed -or -not $result.JobMembersExited -or
       -not $result.AssignedBeforeResume -or -not $result.KillOnJobClose -or
       $result.BreakawayPermitted -or -not $result.JobClosed -or
       $result.LastActiveProcessCount -ne 0) {
     throw 'SOURCE_CUSTODY_OS_LIFETIME_UNPROVEN'
   }
   # This is a per-command bounded execution result, never an issuer signature.
+  # WholeSourceWriterExclusionProven remains false by construction.
   # Keep stderr and stdout free of a fake original-writer attestation.
   exit $result.ExitCode
 } catch {

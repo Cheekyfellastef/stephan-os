@@ -1,16 +1,20 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
-export const ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA = 'stephanos.original-source-writer-custody.v1';
+// V2 deliberately rejects all V1 shared-HMAC receipts. The source worker and
+// verifier hold only a public key, never the privileged issuer's signing key.
+export const ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA = 'stephanos.original-source-writer-custody.v2';
+export const ORIGINAL_WRITER_CUSTODY_SIGNATURE_DOMAIN = 'stephanos.original-source-writer-custody.v2\0';
 const EXCLUSION_SCHEMA = 'stephanos.original-source-writer-exclusion.v1';
 const ISSUER_ID = 'stephanos-windows-job-custody-service';
 const EXECUTION_ID = /^critical-[1-9][0-9]*-elastic-goal-r(?:0|[1-9][0-9]*)-[a-f0-9]{12}$/;
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA64 = /^[a-f0-9]{64}$/;
 const RECEIPT_ID = /^[a-z0-9][a-z0-9._:-]{7,119}$/;
+const SID = /^S-1-[1-9][0-9]*(?:-[0-9]+){2,15}$/;
 const MAX_RECEIPT_BYTES = 16 * 1024;
-const MAX_KEY_BYTES = 4096;
+const MAX_PUBLIC_KEY_BYTES = 4096;
 const MAX_AGE_MS = 5 * 60 * 1000;
 const text = (x) => String(x ?? '').trim();
 
@@ -27,12 +31,18 @@ async function readBoundedRegularFile(path, maxBytes) {
   const item = await lstat(path);
   if (!item.isFile() || item.isSymbolicLink() || item.size < 1 || item.size > maxBytes) return null;
   const bytes = await readFile(path);
-  return bytes.length && bytes.length <= maxBytes ? bytes : null;
+  return bytes.length > 0 && bytes.length <= maxBytes ? bytes : null;
 }
 
-// This verifier never creates custody attestations, opens processes, or signs
-// receipts. Only an independently permission-isolated Windows Job Object
-// custodian can produce the positive proof; missing legacy receipts fail shut.
+function signedPayload(claims) {
+  return Buffer.from(ORIGINAL_WRITER_CUSTODY_SIGNATURE_DOMAIN + JSON.stringify(claims), 'utf8');
+}
+
+// This is a verifier, NOT the OS custody issuer. A Job Object can lose writers
+// created via WMI Win32_Process.Create or other out-of-job mechanisms. A
+// separately privileged issuer must prove denied external process creation,
+// worktree ACL isolation, and custody of the *whole* source worker lifetime.
+// With no such issuer and no authentic historic receipt, fail-closed SAFE_HOLD.
 export async function authenticateOriginalWriterExclusionEvidence(
   _untrustedPublicEvidence,
   expected = {},
@@ -41,16 +51,20 @@ export async function authenticateOriginalWriterExclusionEvidence(
   try {
     const id = text(expected.sourceExecutionId);
     const receiptRoot = text(env.STEPHANOS_SOURCE_CUSTODY_RECEIPTS_DIR);
-    const keyPath = text(env.STEPHANOS_SOURCE_CUSTODY_VERIFIER_KEY_PATH);
+    const publicKeyPath = text(env.STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH);
+    const expectedPublicKeySha256 = text(env.STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256).toLowerCase();
     const worktree = text(expected.worktreePath);
-    if (!EXECUTION_ID.test(id) || !receiptRoot || !keyPath || !worktree
-      || !isAbsolute(receiptRoot) || !isAbsolute(keyPath) || !isAbsolute(worktree)
+    if (!EXECUTION_ID.test(id) || !receiptRoot || !publicKeyPath || !SHA64.test(expectedPublicKeySha256) || !worktree
+      || !isAbsolute(receiptRoot) || !isAbsolute(publicKeyPath) || !isAbsolute(worktree)
       || !SHA40.test(text(expected.headSha)) || !SHA64.test(text(expected.leaseDigest))) return fail();
 
     const root = resolve(receiptRoot);
     const authenticRoot = await realpath(root);
-    const key = await readBoundedRegularFile(resolve(keyPath), MAX_KEY_BYTES);
-    if (!key || key.length < 32 || key.length > 128) return fail();
+    const keyBytes = await readBoundedRegularFile(resolve(publicKeyPath), MAX_PUBLIC_KEY_BYTES);
+    if (!keyBytes || createHash('sha256').update(keyBytes).digest('hex') !== expectedPublicKeySha256) return fail();
+    const key = createPublicKey(keyBytes);
+    if (key.type !== 'public' || key.asymmetricKeyType !== 'ed25519') return fail();
+
     const receiptPath = resolve(join(root, id + '.json'));
     if (!withinDirectory(root, receiptPath)) return fail();
     const realReceipt = await realpath(receiptPath);
@@ -59,14 +73,13 @@ export async function authenticateOriginalWriterExclusionEvidence(
     if (!bytes) return fail();
     const record = JSON.parse(bytes.toString('utf8'));
     const claims = record?.claims;
-    const signature = text(record?.hmacSha256).toLowerCase();
+    const signatureBase64 = text(record?.signatureBase64);
+    const signature = Buffer.from(signatureBase64, 'base64');
     if (record?.schemaVersion !== ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA
-      || record?.issuer !== ISSUER_ID || !SHA64.test(signature)
-      || !claims || typeof claims !== 'object' || Array.isArray(claims)) return fail();
-
-    const actual = createHmac('sha256', key).update(JSON.stringify(claims), 'utf8').digest();
-    const supplied = Buffer.from(signature, 'hex');
-    if (supplied.length !== actual.length || !timingSafeEqual(supplied, actual)) return fail();
+      || record?.issuer !== ISSUER_ID || record?.algorithm !== 'Ed25519'
+      || !claims || typeof claims !== 'object' || Array.isArray(claims)
+      || signature.length !== 64 || signature.toString('base64') !== signatureBase64
+      || !verify(null, signedPayload(claims), key, signature)) return fail();
 
     const signedAt = Date.parse(text(claims.signedAtUtc));
     const start = Date.parse(text(claims.processStartedAtUtc));
@@ -76,9 +89,9 @@ export async function authenticateOriginalWriterExclusionEvidence(
       || start > end || end > signedAt || signedAt > clock
       || clock - signedAt > MAX_AGE_MS) return fail();
 
-    // None of these assertions may originate in the command packet. HMAC alone
-    // is not OS proof; the separately protected issuer must bind the entire
-    // non-breakaway Windows job lifecycle before signing these assertions.
+    // Job member count alone never proves absence of WMI/COM-launched writers.
+    // These additional positive assertions must come from the privileged
+    // issuer's *independent OS principal*, not Node tests or the mailbox.
     if (claims.missionId !== expected.missionId
       || claims.sourceExecutionId !== id
       || claims.leaseId !== expected.leaseId
@@ -92,9 +105,15 @@ export async function authenticateOriginalWriterExclusionEvidence(
       || claims.assignedBeforeResume !== true
       || claims.killOnJobClose !== true
       || claims.breakawayPermitted !== false
-      || claims.jobClosed === true
+      || claims.jobClosed !== true
       || claims.allProcessesExited !== true
       || claims.activeProcessCount !== 0
+      || claims.externalProcessCreationDenied !== true
+      || claims.worktreeAclIsolated !== true
+      || claims.wholeWorkerLifetimeCovered !== true
+      || claims.issuerObservedNoExternalWriters !== true
+      || !SID.test(text(claims.isolatedWriterPrincipalSid))
+      || !SHA64.test(text(claims.isolationPolicySha256))
       || !Number.isSafeInteger(claims.rootPid) || claims.rootPid < 1
       || !RECEIPT_ID.test(text(claims.authorityReceiptId))) return fail();
 
@@ -110,7 +129,7 @@ export async function authenticateOriginalWriterExclusionEvidence(
       worktreePath: resolve(worktree),
       verdict: 'NO_SOURCE_WRITING_DESCENDANTS',
       authorityReceiptId: claims.authorityReceiptId,
-      authorityReceiptSha256: signature,
+      authorityReceiptSha256: createHash('sha256').update(bytes).digest('hex'),
     });
     return Object.freeze({ authenticated: true, evidence });
   } catch {

@@ -10,7 +10,9 @@ using System.Threading;
 namespace Stephanos.SourceCustody {
   public sealed class Result {
     public bool Completed;
-    public bool AllProcessesExited;
+    // Only in-job members. WMI/COM can create source writers outside this job.
+    public bool JobMembersExited;
+    public bool WholeSourceWriterExclusionProven { get { return false; } }
     public bool JobClosed;
     public bool AssignedBeforeResume;
     public bool KillOnJobClose;
@@ -193,7 +195,7 @@ namespace Stephanos.SourceCustody {
           Thread.Sleep(50);
         }
         if (!allExited) throw new TimeoutException("SOURCE_CUSTODY_DESCENDANTS_STILL_ACTIVE");
-        result.AllProcessesExited = true;
+        result.JobMembersExited = true;
         result.Completed = true;
         return result;
       } finally {

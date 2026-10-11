@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createRequiredSourceJobCommandRunner, sourceJobCustodyRequired } from './sourceJobCustodyCommandService.js';
+import { createRequiredSourceJobCommandRunner, sanitizeSourceCustodyChildEnvironment, sourceJobCustodyRequired } from './sourceJobCustodyCommandService.js';
 
 const env = Object.freeze({
   SystemRoot: '/windows',
@@ -73,4 +73,36 @@ test('real source executor selects native custody in strict mode even with a run
   assert.match(source, /sourceJobCustodyRequired\(options\.env \|\| process\.env\)/);
   assert.match(source, /createRequiredSourceJobCommandRunner\(\{ env: options\.env \|\| process\.env \}\)/);
   assert.match(source, /: options\.runCommand \|\| defaultRun;/);
+});
+
+
+test('source worker strips verifier paths, private keys and credentials before executing untrusted tests', () => {
+  const hostile = {
+    PATH: '/trusted',
+    SystemRoot: '/windows',
+    STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH: '/host/custody/public.pem',
+    STEPHANOS_SOURCE_CUSTODY_VERIFIER_KEY_PATH: '/host/custody/legacy-secret',
+    STEPHANOS_SOURCE_CUSTODY_SIGNING_KEY_PATH: '/host/custody/private.pem',
+    STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH: '/host/secret/gh.pem',
+    GH_TOKEN: 'forbidden',
+    OPENAI_API_KEY: 'forbidden',
+    CUSTOM_SECRET: 'forbidden',
+    STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED: '1',
+  };
+  const safe = sanitizeSourceCustodyChildEnvironment(hostile);
+  assert.equal(safe.PATH, '/trusted');
+  assert.equal(safe.SystemRoot, '/windows');
+  assert.equal(safe.STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED, '1');
+  for (const name of Object.keys(hostile).filter(k => k !== 'PATH' && k !== 'SystemRoot'
+    && k !== 'STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED')) {
+    assert.equal(Object.hasOwn(safe, name), false, name);
+  }
+  const seen = [];
+  const run = createRequiredSourceJobCommandRunner({ ...context,
+    env: hostile,
+    spawnSync: (_, __, options) => { seen.push(options.env); return { status: 0 }; },
+  });
+  assert.equal(run('node.exe', ['-e', 'process.exit(0)'], { cwd: '/worktree' }).status, 0);
+  assert.deepEqual(seen, [safe]);
+  assert.equal(hostile.GH_TOKEN, 'forbidden'); // no caller-visible env mutation
 });

@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign as ed25519Sign } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   authenticateOriginalWriterExclusionEvidence,
   ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA,
+  ORIGINAL_WRITER_CUSTODY_SIGNATURE_DOMAIN,
 } from './originalSourceWriterCustodyService.js';
 
 const NOW = Date.parse('2026-10-11T21:00:00.000Z');
@@ -28,11 +29,12 @@ async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'custody-verifier-'));
   const receipts = join(dir, 'receipts');
   const worktreePath = join(dir, 'isolated-source-worktree');
-  const keyPath = join(dir, 'verification-key');
+  const keyPath = join(dir, 'public-verification-key.pem');
   await mkdir(receipts);
   await mkdir(worktreePath);
-  const key = Buffer.from('synthetic-test-only-issuer-key-32-bytes-minimum!!!!');
-  await writeFile(keyPath, key);
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  const publicPem = publicKey.export({ format: 'pem', type: 'spki' });
+  await writeFile(keyPath, publicPem);
   const identity = expected(worktreePath);
   const claims = {
     ...identity,
@@ -44,7 +46,13 @@ async function fixture() {
     assignedBeforeResume: true,
     killOnJobClose: true,
     breakawayPermitted: false,
-    jobClosed: false,
+    jobClosed: true,
+    externalProcessCreationDenied: true,
+    worktreeAclIsolated: true,
+    wholeWorkerLifetimeCovered: true,
+    issuerObservedNoExternalWriters: true,
+    isolatedWriterPrincipalSid: 'S-1-5-21-100-200-300-400',
+    isolationPolicySha256: 'd'.repeat(64),
     allProcessesExited: true,
     activeProcessCount: 0,
     rootPid: 12345,
@@ -52,26 +60,29 @@ async function fixture() {
   };
   const env = {
     STEPHANOS_SOURCE_CUSTODY_RECEIPTS_DIR: receipts,
-    STEPHANOS_SOURCE_CUSTODY_VERIFIER_KEY_PATH: keyPath,
+    STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH: keyPath,
+    STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256: createHash('sha256').update(publicPem).digest('hex'),
   };
   const receiptPath = join(receipts, EXECUTION + '.json');
-  const sign = async (contents = claims, keyBytes = key) => {
+  const sign = async (contents = claims, signingKey = privateKey) => {
     const record = {
       schemaVersion: ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA,
       issuer: 'stephanos-windows-job-custody-service',
       claims: contents,
-      hmacSha256: createHmac('sha256', keyBytes)
-        .update(JSON.stringify(contents), 'utf8').digest('hex'),
+      algorithm: 'Ed25519',
+      signatureBase64: ed25519Sign(null,
+        Buffer.from(ORIGINAL_WRITER_CUSTODY_SIGNATURE_DOMAIN + JSON.stringify(contents), 'utf8'),
+        signingKey).toString('base64'),
     };
     await writeFile(receiptPath, JSON.stringify(record));
   };
   const authenticate = (input, opts = {}) => authenticateOriginalWriterExclusionEvidence(input, identity, {
     env: opts.env || env, now: opts.now || (() => NOW),
   });
-  return { dir, identity, claims, env, sign, authenticate, receipts, receiptPath, keyPath };
+  return { dir, identity, claims, env, sign, authenticate, receipts, receiptPath, keyPath, privateKey };
 }
 
-test('test-only synthetic OS claim validates exact identity and HMAC with no public control over evidence', async () => {
+test('synthetic isolated-issuer Ed25519 fixture validates exact identity without public control over evidence', async () => {
   const f = await fixture();
   try {
     await f.sign();
@@ -97,7 +108,7 @@ test('no configured separate issuer root and key means no automatic historical a
   try {
     await f.sign();
     for (const env of [{}, { STEPHANOS_SOURCE_CUSTODY_RECEIPTS_DIR: f.receipts },
-      { STEPHANOS_SOURCE_CUSTODY_VERIFIER_KEY_PATH: f.keyPath }]) {
+      { STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH: f.keyPath }]) {
       const result = await f.authenticate(null, { env });
       assert.equal(result.authenticated, false);
     }
@@ -111,7 +122,8 @@ test('tampering claims after signing or substituting issuer key fails closed', a
     let raw = await (await import('node:fs/promises')).readFile(f.receiptPath, 'utf8');
     await writeFile(f.receiptPath, raw.replace('12345', '12346'));
     assert.equal((await f.authenticate(null)).authenticated, false);
-    await f.sign(f.claims, Buffer.from('untrusted-different-issuer-key-for-negative-test'));
+    const impostor = generateKeyPairSync('ed25519');
+    await f.sign(f.claims, impostor.privateKey);
     assert.equal((await f.authenticate(null)).authenticated, false);
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });
@@ -137,7 +149,13 @@ test('job lifecycle violations, PID ambiguity and premature job close never yiel
     for (const changed of [
       { createdSuspended: false }, { assignedBeforeResume: false },
       { killOnJobClose: false }, { breakawayPermitted: true },
-      { jobClosed: true }, { allProcessesExited: false },
+      { jobClosed: false }, { allProcessesExited: false },
+      { externalProcessCreationDenied: false },
+      { worktreeAclIsolated: false },
+      { wholeWorkerLifetimeCovered: false },
+      { issuerObservedNoExternalWriters: false },
+      { isolatedWriterPrincipalSid: '' },
+      { isolationPolicySha256: '' },
       { activeProcessCount: 1 }, { rootPid: 0 },
       { processExitedAtUtc: new Date(NOW - 5000).toISOString() },
     ]) {
@@ -172,7 +190,7 @@ test('symlinked receipt and path traversal never become a trusted custody issuer
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });
 
-test('invalid issuer schema, oversized JSON and invalid HMAC are terminal refusals', async () => {
+test('invalid issuer schema, oversized JSON and invalid Ed25519 signatures are terminal refusals', async () => {
   const f = await fixture();
   try {
     await f.sign();
@@ -182,6 +200,70 @@ test('invalid issuer schema, oversized JSON and invalid HMAC are terminal refusa
     await writeFile(f.receiptPath, 'x'.repeat(17000));
     assert.equal((await f.authenticate(null)).authenticated, false);
     await writeFile(f.receiptPath, '{invalid');
+    assert.equal((await f.authenticate(null)).authenticated, false);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+
+test('old symmetric-HMAC receipt schema is never accepted even with otherwise matching claims', async () => {
+  const f = await fixture();
+  try {
+    await f.sign();
+    const data = JSON.parse(await (await import('node:fs/promises')).readFile(f.receiptPath, 'utf8'));
+    data.schemaVersion = 'stephanos.original-source-writer-custody.v1';
+    data.hmacSha256 = 'a'.repeat(64);
+    await writeFile(f.receiptPath, JSON.stringify(data));
+    assert.equal((await f.authenticate(null)).authenticated, false);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test('Job Object zero count never substitutes for separately signed external-writer exclusion', async () => {
+  const f = await fixture();
+  try {
+    for (const removed of [
+      'externalProcessCreationDenied', 'worktreeAclIsolated',
+      'wholeWorkerLifetimeCovered', 'issuerObservedNoExternalWriters',
+      'isolatedWriterPrincipalSid', 'isolationPolicySha256',
+    ]) {
+      const claims = { ...f.claims };
+      delete claims[removed];
+      await f.sign(claims);
+      const proof = await f.authenticate({ authenticated: true, verdict: 'NO_SOURCE_WRITING_DESCENDANTS' });
+      assert.equal(proof.authenticated, false, removed);
+    }
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test('public verifier key alone cannot mint a receipt without independently isolated Ed25519 private key', async () => {
+  const f = await fixture();
+  try {
+    const publicPem = await (await import('node:fs/promises')).readFile(f.keyPath);
+    await f.sign();
+    const valid = JSON.parse(await (await import('node:fs/promises')).readFile(f.receiptPath, 'utf8'));
+    assert.equal((await f.authenticate(null)).authenticated, true);
+    valid.claims.activeProcessCount = 1;
+    await writeFile(f.receiptPath, JSON.stringify(valid));
+    assert.equal((await f.authenticate(null)).authenticated, false);
+    const attacker = generateKeyPairSync('ed25519');
+    await f.sign(f.claims, attacker.privateKey);
+    assert.equal((await f.authenticate(null)).authenticated, false);
+    assert.match(publicPem.toString(), /BEGIN PUBLIC KEY/);
+    assert.doesNotMatch(publicPem.toString(), /PRIVATE KEY/);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+
+test('public-key fingerprint is a separate expected trust anchor, not a replaceable receipt-side key', async () => {
+  const f = await fixture();
+  try {
+    await f.sign();
+    const altered = { ...f.env, STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256: '0'.repeat(64) };
+    assert.equal((await f.authenticate(null, { env: altered })).authenticated, false);
+    const omitted = { ...f.env };
+    delete omitted.STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256;
+    assert.equal((await f.authenticate(null, { env: omitted })).authenticated, false);
+    const other = generateKeyPairSync('ed25519').publicKey.export({ format: 'pem', type: 'spki' });
+    await writeFile(f.keyPath, other);
     assert.equal((await f.authenticate(null)).authenticated, false);
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });

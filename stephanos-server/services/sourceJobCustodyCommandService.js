@@ -11,6 +11,17 @@ const blocked = (reason) => ({
   stdout: '', stderr: ERROR_PREFIX + reason,
 });
 
+// Source code and Node tests run at a lower trust tier than the custody
+// verifier and never inherit issuer/verifier key locations or cloud tokens.
+export function sanitizeSourceCustodyChildEnvironment(env = {}) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => {
+    const key = String(name).toUpperCase();
+    return !key.startsWith('STEPHANOS_SOURCE_CUSTODY_')
+      && !key.startsWith('STEPHANOS_GITHUB_AUTH_')
+      && !/(?:^|_)(?:PRIVATE_KEY|SIGNING_KEY|API_KEY|SECRET|TOKEN|CREDENTIAL)(?:_|$)/.test(key);
+  }));
+}
+
 export function sourceJobCustodyRequired(env = process.env) {
   return env.STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED === REQUIRED;
 }
@@ -54,7 +65,7 @@ export function createRequiredSourceJobCommandRunner(options = {}) {
     const result = execute(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', script, '-Executable', path, '-Worktree', cwd,
       '-ArgumentsBase64', encoded, '-TimeoutSeconds', String(Math.ceil(timeoutMs / 1000))], {
-      cwd, env: commandOptions.env || hostEnv, shell: false, windowsHide: true,
+      cwd, env: sanitizeSourceCustodyChildEnvironment(commandOptions.env || hostEnv), shell: false, windowsHide: true,
       encoding: Object.hasOwn(commandOptions, 'encoding') ? commandOptions.encoding : 'utf8',
       maxBuffer: 2 * 1024 * 1024, timeout: timeoutMs + 30000,
     });
