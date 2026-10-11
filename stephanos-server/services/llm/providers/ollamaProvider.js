@@ -190,7 +190,9 @@ function chooseOllamaModel({
     ollamaLoadMode: String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase(),
     requestedModel: selectedModel,
     prompt: String(latestUserMessage?.content || ''),
-    forceHeavyModel: config?.forceHeavyModel === true,
+    forceHeavyModel: config?.forceHeavyModel === true
+      || (String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase() === 'balanced'
+        && (evidenceDrivenEscalation || sovereignRepairIntent)),
     availableModels: available,
   });
 
