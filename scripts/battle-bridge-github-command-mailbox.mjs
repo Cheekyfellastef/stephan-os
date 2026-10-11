@@ -2087,6 +2087,29 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       finalVerdict: snapshot.headSync.finalVerdict,
     }) : null,
     services: serviceHeadline,
+    // Keep original-worker forensic truth visible even when the public
+    // receipt is compacted into its normal 9 KiB visibility headline.
+    // Counts are observations, never worker-idle or lease-release proof.
+    originalR7Evidence: snapshot.originalR7Evidence ? Object.freeze({
+      queueObserved: snapshot.originalR7Evidence.queueObserved === true,
+      inventoryComplete: snapshot.originalR7Evidence.inventoryComplete === true,
+      scannedFiles: snapshot.originalR7Evidence.scannedFiles,
+      matchingOriginalItems: snapshot.originalR7Evidence.matchingOriginalItems,
+      exactBindingItems: snapshot.originalR7Evidence.exactBindingItems,
+      mismatchedOriginalItems: snapshot.originalR7Evidence.mismatchedOriginalItems,
+      pendingOriginalItems: snapshot.originalR7Evidence.pendingOriginalItems,
+      processingOriginalItems: snapshot.originalR7Evidence.processingOriginalItems,
+      completedOriginalItems: snapshot.originalR7Evidence.completedOriginalItems,
+      failedOriginalItems: snapshot.originalR7Evidence.failedOriginalItems,
+      exactResultPairCandidates: snapshot.originalR7Evidence.exactResultPairCandidates,
+      missingResultPairs: snapshot.originalR7Evidence.missingResultPairs,
+      blocker: snapshot.originalR7Evidence.blocker,
+      writerInactivityProven: false,
+      canonicalTerminalExecutionReceiptProven: false,
+      leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      readOnly: true,
+    }) : null,
     core: snapshot.core ? Object.freeze({
       available: snapshot.core.available === true,
       daemonHealthy: snapshot.core.daemonHealthy === true,
