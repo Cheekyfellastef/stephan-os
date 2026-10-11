@@ -93,6 +93,17 @@ test('actual Windows source-builder adapter invokes contained node and refuses r
     const gitExe = located.stdout.split(/\r?\n/).map(x => x.trim())
       .find(x => x.toLowerCase().endsWith('git.exe'));
     assert.ok(gitExe, 'Git executable path not found');
+    // The production gate is fail-closed for arbitrary/non-Git worktrees.
+    // Build a safe, credential-free local checkout fixture for integration.
+    const initialized = spawnSync(gitExe, ['init', '-q', worktree], {
+      encoding: 'utf8', windowsHide: true, timeout: 10000,
+    });
+    assert.equal(initialized.status, 0, 'git init fixture: ' + initialized.stderr);
+    const remoteAdded = spawnSync(gitExe, ['-C', worktree, 'remote', 'add', 'origin',
+      'https://github.com/Cheekyfellastef/stephan-os.git'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10000,
+    });
+    assert.equal(remoteAdded.status, 0, 'git remote fixture: ' + remoteAdded.stderr);
     const ambient = {
       ...process.env,
       STEPHANOS_SOURCE_CUSTODY_GIT_EXE: gitExe,
@@ -113,6 +124,18 @@ test('actual Windows source-builder adapter invokes contained node and refuses r
     });
     assert.equal(good.status, 0, 'stderr=' + good.stderr);
     assert.match(good.stdout, /custody-adapter-pass/);
+    const poison = spawnSync(gitExe, ['-C', worktree, 'config', '--local',
+      'http.https://github.com/.extraheader', 'AUTHORIZATION: basic synthetic-not-secret'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10000,
+    });
+    assert.equal(poison.status, 0, 'config hostile fixture: ' + poison.stderr);
+    const blockedLocal = run('node.exe', ['-e', 'process.stdout.write("unsafe")'], {
+      cwd: worktree, env: ambient,
+    });
+    assert.equal(blockedLocal.status, null);
+    assert.match(blockedLocal.error?.message || '', /LOCAL_GIT_CONFIG_UNSAFE/);
+    assert.equal(blockedLocal.stdout, '');
+
     const denied = run('powershell.exe', ['-Command', 'exit 0'], { cwd: worktree });
     assert.ok(denied.error instanceof Error);
     assert.match(denied.error.message, /EXECUTABLE_NOT_ALLOWLISTED/);

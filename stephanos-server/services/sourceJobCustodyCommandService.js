@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inspectSourceCustodyLocalGitConfig } from './sourceJobCustodyLocalGitConfigService.js';
 
 const SCRIPT = resolve(fileURLToPath(new URL('../../scripts/windows/Invoke-StephanosSourceJobCustody.ps1', import.meta.url)));
 const REQUIRED = '1';
@@ -83,12 +84,33 @@ export function createRequiredSourceJobCommandRunner(options = {}) {
   const makeHome = options.mkdtempSync || mkdtempSync;
   const createDirectory = options.mkdirSync || mkdirSync;
   const removeHome = options.rmSync || rmSync;
+  const inspectGitConfig = options.inspectLocalGitConfig || inspectSourceCustodyLocalGitConfig;
   return function runSourceCommand(executable, args, commandOptions = {}) {
     const cwd = commandOptions.cwd;
     if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
     if (!isAbsolute(String(cwd || '')) || !isPresent(cwd)) return blocked('WORKTREE_UNPROVEN');
     if (!Array.isArray(args) || args.length > 128 || args.some(x => typeof x !== 'string' || x.includes('\0'))) {
       return blocked('ARGV_INVALID');
+    }
+    // Do not let a seemingly safe worktree audit precede Git -C to another
+    // repository, or let a caller inject a new credential/helper config layer.
+    if (String(executable || '').toLowerCase() === 'git.exe') {
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        const low = arg.toLowerCase();
+        if (arg === '-c' || low === '--config-env' || low.startsWith('--config-env=')
+          || low.startsWith('--git-dir') || low.startsWith('--work-tree')
+          || low.startsWith('--exec-path') || arg.startsWith('-c=')
+          || (arg.startsWith('-c') && arg.length > 2)
+        ) return blocked('GIT_CONFIG_OVERRIDE_DENIED');
+        if (arg === '-C') {
+          if (i + 1 >= args.length
+            || resolve(args[i + 1]).toLowerCase() !== resolve(cwd).toLowerCase()) {
+            return blocked('GIT_WORKTREE_REDIRECT_DENIED');
+          }
+          i++;
+        } else if (arg.startsWith('-C')) return blocked('GIT_WORKTREE_REDIRECT_DENIED');
+      }
     }
     const requested = String(executable || '').toLowerCase();
     let path;
@@ -119,6 +141,7 @@ export function createRequiredSourceJobCommandRunner(options = {}) {
     let result;
     let setupFailed = false;
     let cleanupFailed = false;
+    let unsafeLocalGitConfig = false;
     try {
       home = makeHome(join(tmpdir(), 'stephanos-source-custody-'));
       for (const folder of ['Roaming', 'Local', 'xdg-config', 'xdg-cache', 'xdg-data']) {
@@ -127,6 +150,14 @@ export function createRequiredSourceJobCommandRunner(options = {}) {
       const isolated = sanitizeSourceCustodyChildEnvironment(commandOptions.env || hostEnv, home, {
         systemRoot, nodePath: options.nodePath || process.execPath, gitPath,
       });
+      // All source commands, including Node tests which might spawn Git,
+      // are blocked if the active repository-local config contains auth
+      // channels, include directives, unknown executors or unsafe remotes.
+      const gitConfig = inspectGitConfig(cwd, gitPath, isolated);
+      if (gitConfig?.ok !== true) {
+        unsafeLocalGitConfig = true;
+        throw new Error('LOCAL_GIT_CONFIG_NOT_SAFE');
+      }
       result = execute(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
         '-File', script, '-Executable', path, '-Worktree', cwd,
         '-ArgumentsBase64', encoded, '-TimeoutSeconds', String(Math.ceil(timeoutMs / 1000))], {
@@ -143,6 +174,7 @@ export function createRequiredSourceJobCommandRunner(options = {}) {
       }
     }
     if (cleanupFailed) return blocked('DISPOSABLE_PROFILE_CLEANUP_FAILED');
+    if (unsafeLocalGitConfig) return blocked('LOCAL_GIT_CONFIG_UNSAFE');
     if (setupFailed || !result) return blocked('DISPOSABLE_PROFILE_UNAVAILABLE');
     return result;
   };

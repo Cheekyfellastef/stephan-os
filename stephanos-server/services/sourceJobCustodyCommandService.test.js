@@ -13,6 +13,7 @@ const context = {
   nodePath: '/trusted/node.exe',
   script: '/runner/Invoke-StephanosSourceJobCustody.ps1',
   existsSync: () => true,
+  inspectLocalGitConfig: () => ({ ok: true }),
 };
 test('custody is opt-in and exact flag value only', () => {
   assert.equal(sourceJobCustodyRequired({}), false);
@@ -188,4 +189,75 @@ test('disposable source profile cleanup failure is an explicit blocked outcome',
   assert.notEqual(result.status, 0);
   assert.match(result.error.message, /DISPOSABLE_PROFILE_CLEANUP_FAILED/);
   assert.equal(result.stdout, '');
+});
+
+
+test('strict source runner refuses credential-bearing local Git configuration before Node or Git execution', () => {
+  const removed = [];
+  let invoked = 0;
+  const run = createRequiredSourceJobCommandRunner({
+    ...context,
+    inspectLocalGitConfig: () => ({ ok: false, reason: 'LOCAL_GIT_CONFIG_UNKNOWN_OR_CREDENTIAL_CAPABLE_KEY' }),
+    mkdtempSync: () => '/tmp/isolated-source-custody',
+    mkdirSync: () => {},
+    rmSync: value => removed.push(value),
+    spawnSync: () => { invoked++; return { status: 0 }; },
+  });
+  for (const executable of ['node.exe', 'git.exe']) {
+    const rejected = run(executable, ['--version'], { cwd: '/worktree' });
+    assert.equal(rejected.status, null);
+    assert.match(rejected.error.message, /LOCAL_GIT_CONFIG_UNSAFE/);
+  }
+  assert.equal(invoked, 0);
+  assert.deepEqual(removed, ['/tmp/isolated-source-custody', '/tmp/isolated-source-custody']);
+});
+
+test('strict source runner passes only its isolated environment to trusted local Git inspection', () => {
+  const observed = [];
+  const env = {
+    ...context.env,
+    GIT_ASKPASS: 'attacker.exe',
+    API_PASSWORD: 'attacker',
+    GH_TOKEN: 'attacker',
+  };
+  const run = createRequiredSourceJobCommandRunner({
+    ...context,
+    env,
+    inspectLocalGitConfig: (cwd, git, isolated) => {
+      observed.push({ cwd, git, isolated });
+      return { ok: true };
+    },
+    spawnSync: () => ({ status: 0, stdout: 'safe', stderr: '' }),
+  });
+  assert.equal(run('node.exe', ['-e', 'console.log("safe")'], { cwd: '/worktree' }).status, 0);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].cwd, '/worktree');
+  assert.equal(observed[0].git, '/trusted/git.exe');
+  assert.equal(observed[0].isolated.GIT_ASKPASS, undefined);
+  assert.equal(observed[0].isolated.API_PASSWORD, undefined);
+  assert.equal(observed[0].isolated.GH_TOKEN, undefined);
+});
+
+
+test('source command rejects an alternate -C worktree and attacker-supplied Git config override', () => {
+  const invoked = [];
+  const run = createRequiredSourceJobCommandRunner({
+    ...context,
+    spawnSync: (_, args) => { invoked.push(args); return { status: 0 }; },
+  });
+  for (const args of [
+    ['-C', '/another-worktree', 'status'],
+    ['-C/another-worktree', 'status'],
+    ['-c', 'credential.helper=!steal', 'status'],
+    ['--config-env=credential.helper=STEAL', 'status'],
+    ['--git-dir=/another-worktree/.git', 'status'],
+    ['--work-tree=/another-worktree', 'status'],
+  ]) {
+    const outcome = run('git.exe', args, { cwd: '/worktree' });
+    assert.notEqual(outcome.status, 0, JSON.stringify(args));
+    assert.equal(outcome.stdout, '', JSON.stringify(args));
+  }
+  assert.equal(invoked.length, 0);
+  assert.equal(run('git.exe', ['-C', '/worktree', 'status'], { cwd: '/worktree' }).status, 0);
+  assert.equal(invoked.length, 1);
 });
