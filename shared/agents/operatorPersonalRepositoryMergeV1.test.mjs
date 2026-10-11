@@ -1683,7 +1683,7 @@ test('unrelated source title is ignored, but matching-source lookalike transport
   assert.equal(blocked.valid, false);
   assert.deepEqual(blocked.replayRunIds, []);
   assert.deepEqual(blocked.malformedPriorRunIds, [runId + 13]);
-  assert.ok(blocked.blockers.includes('personal-repository-prior-run-identity-invalid'));
+  assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-invalid'));
 });
 
 test('all seven universally applicable exact-head workflow identities must be active and successful', () => {
