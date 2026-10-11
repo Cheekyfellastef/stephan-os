@@ -130,6 +130,9 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       && binding?.sourceRevision === terminal.sourceHead
       && queue.item?.actionGrant?.sourceRevision === terminal.sourceHead
     : binding?.prNumber === terminal.prNumber && binding?.headSha === terminal.sourceHead;
+  // The terminal pair comes from processNextProviderNeutralSourceBuild,
+  // not mission-worker-consumption-result. Preserve its exact source escrow
+  // and offline outbox identity before accepting source-writer completion.
   if (queue.item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
       || binding?.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1'
       || queue.item?.actionGrant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
@@ -141,8 +144,10 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       || queue.item?.actionGrant?.issueNumber !== terminal.issueNumber
       || binding?.missionRevision !== Number(revision) || Number(revision) > current.revision
       || queue.item?.adapter !== adapter || queue.item?.actionGrant?.adapter !== adapter
-      || queue.result?.schemaVersion !== 'stephanos.mission-worker-consumption-result.v1'
-      || queue.result?.adapter !== adapter || !sourceHeadBound
+      || queue.result?.schemaVersion !== 'stephanos.provider-neutral-source-builder.v1'
+      || queue.result?.adapter !== adapter || queue.result?.providerAdapter !== adapter
+      || queue.result?.providerInvoked !== true || queue.result?.providerCompleted !== true
+      || queue.result?.failureStage !== '' || !sourceHeadBound
       || queue.item?.missionId !== current.missionId || queue.item?.actionId !== sourceAction
       || queue.item?.executionBinding?.leaseKey !== terminal.leaseKey
       || queue.item?.executionBinding?.executionId !== sourceAction
@@ -152,7 +157,11 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       || queue.item?.executionBinding?.issueNumber !== terminal.issueNumber
       || queue.result?.processed !== true || queue.result?.success !== true
       || queue.result?.testsPassed !== true
-      || queue.result?.finalVerdict !== 'MISSION_WORKER_ITEM_COMPLETE'
+      || !Array.isArray(queue.result?.changedFiles) || queue.result.changedFiles.length === 0
+      || !text(queue.result?.sourceArtifactRef)
+      || !text(queue.result?.offlinePublicationOutboxId)
+      || queue.result?.preservationVerdict !== 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION'
+      || queue.result?.finalVerdict !== 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
       || queue.result?.actionId !== sourceAction || queue.result?.missionId !== current.missionId
       || !SHA256.test(queue.pairDigest)) fail('ORIGINAL_FENCE_TERMINAL_PAIR_UNPROVEN');
   const inFlight = options.originalMissionHasQueuedWork || originalMissionHasQueuedWork;
