@@ -2551,7 +2551,7 @@ test('base-versus-source mailbox regression stays within protected merge admissi
     id: 12,
     created_at: '2026-08-05T16:29:00.000Z',
     user: { login: 'Cheekyfellastef' },
-    body: '```stephanos-battle-bridge-command\\n' + JSON.stringify(value) + '\\n```',
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(value) + '\n```',
   }];
   const now = new Date('2026-08-05T16:30:00.000Z');
   const accepted = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: mainHead });
