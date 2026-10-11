@@ -672,6 +672,37 @@ test('missing original r7 execution receipt is triaged against exact immutable t
     }));
     const wrongHead = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
     assert.equal(wrongHead.classification, 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN');
+    assert.deepEqual(wrongHead.bindingMismatchCodes, ['HEAD_SHA']);
+    assert.equal(wrongHead.terminalExecutionReceiptProven, false);
+    assert.equal(wrongHead.leaseReleaseAllowed, false);
+    const wrongHeadRecovery = await reconcileExpiredElasticReviewLeaseV1({
+      now: NOW, paths: PATHS, sourceRevision: SOURCE, env,
+      missionRecords: [repairing],
+      readLease: async () => ({
+        ok: true, present: true, record: lease,
+        validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+      }),
+      readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+      releaseLease: async () => { leaseReleaseCalls += 1; return { ok: true, released: true }; },
+    });
+    assert.equal(wrongHeadRecovery.blocker, 'REPAIR_ORIGINAL_BINDING_HEAD_SHA_MISMATCH');
+    assert.equal(wrongHeadRecovery.released, false);
+    assert.equal(leaseReleaseCalls, 0);
+    await writeFile(queuePath, JSON.stringify({
+      ...item, executionBinding: { ...item.executionBinding, leaseKey: 'unrelated-lease' },
+    }));
+    const wrongLease = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.deepEqual(wrongLease.bindingMismatchCodes, ['LEASE_KEY']);
+    assert.equal(wrongLease.leaseReleaseAllowed, false);
+    await writeFile(queuePath, JSON.stringify({
+      ...item, executionBinding: {
+        ...item.executionBinding, leaseKey: 'unrelated-lease', headSha: HEAD_C,
+      },
+    }));
+    const multiMismatch = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.deepEqual(multiMismatch.bindingMismatchCodes, ['HEAD_SHA', 'LEASE_KEY']);
+    assert.equal(multiMismatch.leaseReleaseAllowed, false);
+    assert.equal(JSON.stringify(multiMismatch).includes('unrelated-lease'), false);
     await writeFile(queuePath, JSON.stringify(item));
     const secondActionId = 'original-r7-source-action-duplicate';
     await writeFile(join(directory, secondActionId + '.json'), JSON.stringify({
