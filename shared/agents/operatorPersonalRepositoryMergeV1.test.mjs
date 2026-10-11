@@ -2566,5 +2566,19 @@ test('base-versus-source mailbox regression stays within protected merge admissi
     ...cmd, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   }), { now, currentHead: mainHead });
   assert.equal(unsafeWiden.verdict, 'NO_COMMAND_READY');
-  assert.equal(unsafeWiden.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(unsafeWiden.terminalRejections[0].blocker, 'PROTECTED_MERGE_FIELD_NOT_ALLOWED');
+  const ordinary = {
+    schemaVersion: cmd.schemaVersion,
+    requestId: 'ordinary-control-main-head-regression',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    repository: cmd.repository,
+    issueNumber: cmd.issueNumber,
+    branch: cmd.branch,
+    operatorApproval: cmd.operatorApproval,
+    expectedHead: prHead,
+    expiresAt: cmd.expiresAt,
+  };
+  const ordinaryControl = selectBattleBridgeGitHubCommandBatch(makeComment(ordinary), { now, currentHead: mainHead });
+  assert.equal(ordinaryControl.verdict, 'NO_COMMAND_READY');
+  assert.equal(ordinaryControl.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
