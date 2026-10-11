@@ -81,6 +81,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Run bounded original-source custody/fence tests (temporary PR verification)
+        run: |
+          node --test --test-concurrency=1 \
+            stephanos-server/services/originalSourceWriterCustodyService.test.js \
+            stephanos-server/services/originalSourceAttemptFenceService.test.js \
+            shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
       - name: Run runtime guardrail and provider tests
         run: |
           node --test --test-concurrency=1 \
