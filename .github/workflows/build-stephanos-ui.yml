@@ -81,6 +81,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Run guarded Windows custody command adapter tests (temporary PR proof)
+        run: node --test stephanos-server/services/sourceJobCustodyCommandService.test.js
       - name: Run runtime guardrail and provider tests
         run: |
           node --test --test-concurrency=1 \
