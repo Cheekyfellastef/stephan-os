@@ -17,6 +17,7 @@ import {
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
@@ -1537,6 +1538,15 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     programmeBlockers: Array.isArray(packet?.programmeBlockers)
       ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
       : [],
+    // Existing authoritative lease-phase projection; diagnosis only.
+    elasticLeaseId: safeTelemetryId(packet?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(packet?.elasticLeaseRevision),
+    elasticBindingValid: packet?.elasticBindingValid === true,
+    elasticBindingBlocker: safeTelemetryText(packet?.elasticBindingBlocker, 120).toUpperCase(),
+    elasticOriginalMissionUnique: packet?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(packet?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: safeTelemetryText(packet?.elasticObservedMissionPhase, 80).toUpperCase(),
+    elasticObservedDispatchStatus: safeTelemetryText(packet?.elasticObservedDispatchStatus, 60).toUpperCase(),
     sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
     schedulerFailClosed: packet?.schedulerFailClosed === true,
     schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
@@ -1564,6 +1574,12 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
       ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
       : [],
     elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    // Signed local-native capacity is a distinct proof from the elastic scheduler's RUNNING flag.
+    nativeCapacityVerified: packet?.nativeCapacityVerified === true,
+    nativeCapacityReason: safeTelemetryText(packet?.nativeCapacityReason, 160).toUpperCase(),
+    nativeCapacityModel: safeTelemetryText(packet?.nativeCapacityModel, 120),
+    nativeCapacitySourceHead: safeTelemetrySha(packet?.nativeCapacitySourceHead),
+    nativeCapacityReceiptId: safeTelemetryId(packet?.nativeCapacityReceiptId),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -1592,10 +1608,21 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
   const capacity = scheduler?.elasticCapacity || {};
   const decision = scheduler?.decisionReceipt || {};
   const sourceReads = projection?.sourceReads || {};
+  const phaseBinding = projection?.lane?.elasticMissionPhaseBinding || null;
+  const leaseId = String(projection?.mutationLease?.leaseId || '');
+  const leaseRevisionMatch = /^critical-[1-9]\d*-elastic-goal-r([1-9]\d*)-lease$/.exec(leaseId);
   return sanitizeProgrammeAuthorityPacket({
     programmeStatus: projection?.status,
     programmeFinalVerdict: projection?.finalVerdict,
     programmeBlockers: projection?.blockers,
+    elasticLeaseId: leaseId,
+    elasticLeaseRevision: leaseRevisionMatch ? Number(leaseRevisionMatch[1]) : null,
+    elasticBindingValid: phaseBinding?.valid === true,
+    elasticBindingBlocker: phaseBinding?.blocker,
+    elasticOriginalMissionUnique: phaseBinding?.observedUniqueOriginal === true,
+    elasticObservedMissionRevision: phaseBinding?.observedRevision,
+    elasticObservedMissionPhase: phaseBinding?.observedPhase,
+    elasticObservedDispatchStatus: phaseBinding?.observedDispatchStatus,
     sourceConstructionMode: projection?.sourceConstructionMode,
     schedulerFailClosed: scheduler?.failClosed,
     schedulerProgrammeStatus: scheduler?.programmeStatus,
@@ -2111,15 +2138,41 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     .map((item) => token(item))
     .filter(Boolean).slice(0, 16);
   const sources = (value) => token(value);
+  // The native publisher is independently signed and verified upstream. Keep
+  // that bounded evidence through the final 9 KiB public receipt, but never
+  // turn missing/mismatched proof into a green capacity claim.
+  const nativeSourceHead = safeTelemetrySha(inner?.nativeCapacitySourceHead);
+  const nativeReceiptId = safeTelemetryId(inner?.nativeCapacityReceiptId);
+  const candidateModel = safeTelemetryText(inner?.nativeCapacityModel, 120);
+  const nativeModel = /^[a-z0-9][a-z0-9._:-]{0,119}$/i.test(candidateModel)
+    ? candidateModel : '';
+  const nativeVerified = inner?.nativeCapacityVerified === true
+    && Boolean(nativeSourceHead)
+    && nativeSourceHead === safeTelemetrySha(receipt?.expectedHead)
+    && Boolean(nativeReceiptId)
+    && Boolean(nativeModel);
   return Object.freeze({
     programmeStatus: token(inner?.programmeStatus, 80),
     programmeFinalVerdict: token(inner?.programmeFinalVerdict),
     programmeBlockers: Object.freeze(blockers),
+    elasticLeaseId: safeTelemetryId(inner?.elasticLeaseId),
+    elasticLeaseRevision: safeOptionalNonNegativeInteger(inner?.elasticLeaseRevision),
+    elasticBindingValid: inner?.elasticBindingValid === true,
+    elasticBindingBlocker: token(inner?.elasticBindingBlocker),
+    elasticOriginalMissionUnique: inner?.elasticOriginalMissionUnique === true,
+    elasticObservedMissionRevision: safeOptionalNonNegativeInteger(inner?.elasticObservedMissionRevision),
+    elasticObservedMissionPhase: token(inner?.elasticObservedMissionPhase),
+    elasticObservedDispatchStatus: token(inner?.elasticObservedDispatchStatus),
     schedulerFailClosed: inner?.schedulerFailClosed === true,
     schedulerProgrammeStatus: token(inner?.schedulerProgrammeStatus),
     schedulerDecisionStatus: token(inner?.schedulerDecisionStatus),
     schedulerSelectedIssue: safeGoalIssue(inner?.schedulerSelectedIssue),
     elasticCapacityStatus: token(inner?.elasticCapacityStatus),
+    nativeCapacityVerified: nativeVerified,
+    nativeCapacityReason: token(inner?.nativeCapacityReason),
+    nativeCapacityModel: nativeVerified ? nativeModel : '',
+    nativeCapacitySourceHead: nativeVerified ? nativeSourceHead : '',
+    nativeCapacityReceiptId: nativeVerified ? nativeReceiptId : '',
     elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
     controllerValid: inner?.controllerValid === true,
@@ -3072,6 +3125,58 @@ function programmeAuthorityPacketReady(packet = {}) {
   );
 }
 
+// Reuse the native capacity router's authenticated signature, authority and freshness
+// gates. No raw Shared Workspace records, paths, keys or signed payloads leave this
+// read-only programme status route. A missing proof must stay explicitly non-green.
+export async function readNativeCapacityProgrammeTelemetry({
+  expectedHead = '',
+  nowUtc = new Date().toISOString(),
+  verifier = readVerifiedStephanosNativeRoutingCandidate,
+} = {}) {
+  const sourceHead = safeTelemetrySha(expectedHead);
+  const unknown = (reason) => Object.freeze({
+    nativeCapacityVerified: false,
+    nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
+    nativeCapacityModel: '',
+    nativeCapacitySourceHead: '',
+    nativeCapacityReceiptId: '',
+  });
+  if (!sourceHead) return unknown('NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
+  let verified;
+  try {
+    verified = await verifier({
+      nowUtc,
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      sourceHead,
+      taskClass: 'FOCUSED_REPAIR',
+      root: sharedWorkspaceRoot,
+      repoRoot,
+      env: process.env,
+    });
+  } catch {
+    return unknown('NATIVE_CAPACITY_VERIFIER_FAILED');
+  }
+  const candidate = verified?.candidate;
+  if (verified?.ok !== true) {
+    return unknown(verified?.reason || 'NATIVE_CAPACITY_UNVERIFIED');
+  }
+  if (!candidate || candidate.sourceHead !== sourceHead
+      || candidate.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
+      || candidate.taskClass !== 'FOCUSED_REPAIR'
+      || candidate.sourceMutationAllowed !== true
+      || candidate.mergeAuthority !== false
+      || candidate.leaseSeizureAllowed !== false) {
+    return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
+  }
+  return Object.freeze({
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: safeTelemetryText(candidate.model, 120),
+    nativeCapacitySourceHead: sourceHead,
+    nativeCapacityReceiptId: safeTelemetryId(candidate.capacityReceiptId),
+  });
+}
+
 async function readProgrammeAuthorityStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -3080,7 +3185,14 @@ async function readProgrammeAuthorityStatus(command = {}) {
     repoRoot,
     nowUtc: new Date().toISOString(),
   });
-  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const nativeCapacity = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: command.expectedHead,
+    nowUtc: new Date().toISOString(),
+  });
+  const programmeAuthority = Object.freeze({
+    ...createSanitizedProgrammeAuthorityStatusProjection(projection),
+    ...nativeCapacity,
+  });
   const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
   return {
     ...identity,

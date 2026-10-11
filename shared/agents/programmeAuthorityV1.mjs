@@ -371,6 +371,9 @@ export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords
   );
   const matched = candidates.filter(sameIdentity);
   const valid = candidates.length === 1 && matched.length === 1;
+  // Observation is separate from authority: a unique persisted original may
+  // reveal revision drift without ever satisfying the exact lease binding.
+  const observed = candidates.length === 1 ? candidates[0] : null;
   const phase = valid ? text(matched[0].currentPhase).toUpperCase() : 'UNKNOWN';
   const reviewOnly = valid && phase === 'CHECK_PULL_REQUEST';
   const materialImplementation = valid && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(phase);
@@ -381,6 +384,10 @@ export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords
     missionId: valid ? expectedId : '',
     revision: valid ? revision : null,
     blocker: valid ? '' : 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+    observedUniqueOriginal: Boolean(observed),
+    observedRevision: observed && Number.isSafeInteger(observed.revision) ? observed.revision : null,
+    observedPhase: observed ? text(observed.currentPhase).toUpperCase() : 'UNKNOWN',
+    observedDispatchStatus: observed ? text(observed.dispatch?.status).toUpperCase() : 'UNKNOWN',
     releaseLeaseAllowed: false, replaceWriterAllowed: false,
     mutationAuthority: false, mergeAuthority: false,
   });
