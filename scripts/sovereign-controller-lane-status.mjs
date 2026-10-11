@@ -293,6 +293,34 @@ export function buildSovereignControllerLaneStatus({
 }
 
 
+// The canonical Shared Workspace retains the complete goal/controller roster.
+// The remote stdout carrier is bounded, so expose only the fields consumed by
+// its fixed read-only validator. The full 63+ logical records must never make
+// this public diagnostic undecodable or silently appear as a failed worker.
+export function projectSovereignControllerLaneRemoteReceipt(status = {}) {
+  const controllers = Array.isArray(status?.physical?.controllers) ? status.physical.controllers : [];
+  const physical = Object.freeze({
+    ...status.physical,
+    controllers: Object.freeze(controllers.slice(0, CANONICAL_CONTROLLER_FLEET.length).map((controller) => Object.freeze({
+      controllerId: controller.controllerId,
+      title: controller.title,
+      freshness: controller.freshness,
+      activityState: controller.activityState,
+      trafficLight: controller.trafficLight,
+      materialLaneCount: controller.materialLaneCount,
+      activeLaneCount: controller.activeLaneCount,
+      parkedLaneCount: controller.parkedLaneCount,
+      safeEligibleWorkRemaining: controller.safeEligibleWorkRemaining,
+      blocker: controller.blocker,
+    }))),
+  });
+  return Object.freeze({
+    ...status,
+    physical,
+    logical: Object.freeze({ ...status.logical, controllers: Object.freeze([]) }),
+  });
+}
+
 export function buildStephanosBuildTruth(status = {}) {
   const physicalControllers = Array.isArray(status?.physical?.controllers) ? status.physical.controllers : [];
   const logicalControllers = Array.isArray(status?.logical?.controllers) ? status.logical.controllers : [];
@@ -595,7 +623,7 @@ export async function runSovereignControllerLaneStatus(options = {}) {
   const status = await collectSovereignControllerLaneStatus(options);
   await publishSharedWorkspaceControllerLaneStatus(status, options);
   await publishSharedWorkspaceStephanosBuildTruth(buildStephanosBuildTruth(status), options);
-  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(projectSovereignControllerLaneRemoteReceipt(status))}\n`);
   return status;
 }
 
