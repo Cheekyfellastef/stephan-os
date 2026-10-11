@@ -265,6 +265,27 @@ function originalTerminalBindingMismatchCodes(item, filename, adapter, lease, mi
   ].filter(([matched]) => !matched).map(([, code]) => code);
 }
 
+// A terminal item from a strictly older, correctly bound revision is not
+// evidence for (or against) the current rN source lease. Without this filter,
+// retained rN-1 worker history can mask a genuine exact rN result pair. Only
+// terminal folders are filtered; pending/processing inventory remains global.
+function isOlderBoundOriginalTerminal(item, filename, adapter, lease, missionId) {
+  const current = text(lease?.leaseId).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
+  const prior = text(item?.executionBinding?.leaseKey).match(/^(critical-[1-9]\d*-elastic-goal)-r([1-9]\d*)-lease$/);
+  const binding = item?.executionBinding;
+  return Boolean(current && prior
+    && current[1] === missionId && prior[1] === missionId
+    && Number(prior[2]) < Number(current[2])
+    && item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && text(item?.adapter) === adapter
+    && text(item?.actionId) === filename.slice(0, -5)
+    && binding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
+    && text(binding?.missionId).toLowerCase() === missionId
+    && text(binding?.executionId) === text(item?.actionId)
+    && text(binding?.repository).toLowerCase() === text(lease?.repository).toLowerCase()
+    && Number(binding?.issueNumber) === Number(lease?.issueNumber));
+}
+
 // Read-only forensic triage of an ORIGINAL terminal worker result pair.
 // The terminal queue pair can explain a lost execution receipt, but it is NOT
 // itself a canonical execution receipt and NEVER authorizes lease release.
@@ -283,6 +304,7 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
   let exactPairs = 0;
   let boundWithoutResult = 0;
   let unboundOriginalItems = 0;
+  let olderBoundTerminalItems = 0;
   const bindingMismatchCodes = new Set();
   try {
     for (const adapter of ORIGINAL_SOURCE_QUEUE_ADAPTERS) {
@@ -305,6 +327,10 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
           if ((await stat(itemPath)).size > 262144) throw Error('ORIGINAL_TERMINAL_QUEUE_ITEM_OVERSIZED');
           const item = JSON.parse(await readFile(itemPath, 'utf8'));
           if (text(item?.missionId).toLowerCase() !== originalMissionId) continue;
+          if (isOlderBoundOriginalTerminal(item, entry.name, adapter, lease, originalMissionId)) {
+            olderBoundTerminalItems += 1;
+            continue;
+          }
           const mismatchCodes = originalTerminalBindingMismatchCodes(
             item, entry.name, adapter, lease, originalMissionId,
           );
@@ -350,6 +376,7 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
   return freeze({ ...noAuthority, classification,
     exactPairCount: exactPairs,
     incompleteOrUnboundCount: boundWithoutResult + unboundOriginalItems,
+    olderBoundTerminalItems,
     // Small, strictly enum-bound forensic report. Never return queue contents,
     // action IDs, paths, observed hashes, file values or release authority.
     bindingMismatchCodes: [...bindingMismatchCodes].sort().slice(0, 12) });
