@@ -292,6 +292,30 @@ test('explicit action without any Knowledge Twin alignment evidence fails closed
   assert.equal(harness.wakeCalls.length, 0);
 });
 
+test('Stephanos repair phrasing becomes an action without classifying read-only updates as work', () => {
+  const actions = [
+    'Can we get Stephanos AI up to the level of ChatGPT or above and use it to repair Stephanos?',
+    'Can we repair the goal builder now?',
+    'Can we get the workers building?',
+    'Can we get #2962 over the line?',
+    'Could we get the daemon to fix Stephanos?',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+  }
+  const readOnly = [
+    'Can we get a status report on repairs?',
+    'Can we get a report on what was merged?',
+    'Why are the repairs blocked?',
+  ];
+  for (const prompt of readOnly) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
+});
+
 test('classifier keeps natural questions separate from explicit action requests', () => {
   const question = classifyStephanosExecutiveChatIntent('Why is the repair blocked on the current goal?');
   const action = classifyStephanosExecutiveChatIntent('Please repair the current goal and keep going.');
