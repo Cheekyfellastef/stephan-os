@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile, mkdtemp, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createRequiredSourceJobCommandRunner } from '../../stephanos-server/services/sourceJobCustodyCommandService.js';
 
 const powershell = 'powershell.exe';
 const script = resolve('scripts/windows/Invoke-StephanosSourceJobCustody.ps1');
@@ -73,5 +74,24 @@ test('Windows Job Object refuses unallowlisted executables without launching a s
       join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'));
     assert.equal(denied.status, 125);
     assert.match(denied.stderr, /SOURCE_CUSTODY_EXECUTABLE_NOT_ALLOWLISTED/);
+  } finally { await rm(worktree, { recursive: true, force: true }); }
+});
+
+test('actual Windows source-builder adapter invokes contained node and refuses raw fallback', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const worktree = await mkdtemp(join(tmpdir(), 'source-job-adapter-integrated-'));
+  try {
+    const run = createRequiredSourceJobCommandRunner({
+      env: process.env, timeoutMs: 15000,
+    });
+    const good = run('node.exe', ['-e', 'process.stdout.write("custody-adapter-pass")'], {
+      cwd: worktree, env: process.env,
+    });
+    assert.equal(good.status, 0, 'stderr=' + good.stderr);
+    assert.match(good.stdout, /custody-adapter-pass/);
+    const denied = run('powershell.exe', ['-Command', 'exit 0'], { cwd: worktree });
+    assert.ok(denied.error instanceof Error);
+    assert.match(denied.error.message, /EXECUTABLE_NOT_ALLOWLISTED/);
   } finally { await rm(worktree, { recursive: true, force: true }); }
 });
