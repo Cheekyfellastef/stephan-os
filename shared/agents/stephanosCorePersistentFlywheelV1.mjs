@@ -303,12 +303,13 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     ? Math.max(0, gapClosureSummary.gapClosureUnresolvedOwnerCount) : 0;
 
   let verdict = 'WAITING';
-  if (materialActions > 0) verdict = 'BUILDING';
+  // A material action on a resource-disjoint lane must never hide a global
+  // programme HOLD or a degraded refill. Both still require the existing
+  // guarded Core -> Sovereign repair continuation. Retain the action count
+  // separately, but do not let it short-circuit repair of the blocked conveyor.
+  if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (degraded) verdict = 'DEGRADED';
-  // HOLD and stranded parked lanes must wake the existing guarded Sovereign
-  // repair flow. Checking idle first suppressed repair when the goal conveyor
-  // truthfully reported zero runnable work because everything was blocked.
-  else if (programmeHeld) verdict = 'PROGRAMME_HOLD';
+  else if (materialActions > 0) verdict = 'BUILDING';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
   else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
   else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';

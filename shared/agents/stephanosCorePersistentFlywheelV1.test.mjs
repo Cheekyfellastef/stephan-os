@@ -343,6 +343,35 @@ test('canonical programme HOLD wakes bounded Sovereign repair instead of looking
   assert.equal(wake.reason, 'OCTOPUS_SELF_HEAL_REQUIRED');
 });
 
+test('Core daemon keeps programme HOLD in the repair loop despite unrelated material progress', () => {
+  const refill = summarizePersistentRefillSweep({
+    ok: true,
+    materialActionsSucceeded: 1,
+    sweepAttemptCount: 2,
+    conveyorResult: { programmeStatus: 'HOLD', programmeBlockers: ['original-receipt-missing'] },
+    cycleDecision: { safeEligibleWorkRemaining: 0, provenSafeFreeLanes: 0 },
+    finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
+  });
+  const summary = summarizeOctopusBuildProductivity(refill);
+  assert.equal(summary.octopusMaterialActionsLastCycle, 1);
+  assert.equal(summary.octopusProgrammeHeld, true);
+  assert.equal(summary.octopusBuildVerdict, 'PROGRAMME_HOLD');
+  assert.equal(summary.octopusNeedsRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(summary, { nowMs: 1_000 }).shouldRepair, true);
+});
+
+test('Core daemon does not mistake material progress before a degraded refill for recovery', () => {
+  const summary = summarizeOctopusBuildProductivity({
+    refillStatus: 'DEGRADED',
+    refillMaterialActionsSucceeded: 2,
+    refillCanonicalProgrammeHeld: false,
+  });
+  assert.equal(summary.octopusMaterialActionsLastCycle, 2);
+  assert.equal(summary.octopusBuildVerdict, 'DEGRADED');
+  assert.equal(summary.octopusNeedsRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(summary, { nowMs: 1_000 }).shouldRepair, true);
+});
+
 test('all parked work is repair pressure even when zero runnable work was observed', () => {
   const summary = summarizeOctopusBuildProductivity({
     refillStatus: 'READY',
