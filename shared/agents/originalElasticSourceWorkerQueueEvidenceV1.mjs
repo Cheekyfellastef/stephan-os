@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { resolveMissionWorkerQueueRoot } from '../../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { ORIGINAL_SOURCE_QUEUE_ADAPTERS } from '../../stephanos-server/services/elasticPrHeadLeaseService.js';
@@ -87,7 +87,7 @@ function summary(values = {}) {
     failedOriginalItems: numeric(values.failedOriginalItems),
     exactResultPairCandidates: numeric(values.exactResultPairCandidates),
     missingResultPairs: numeric(values.missingResultPairs),
-    actionHashes: Object.freeze((Array.isArray(values.actionHashes) ? values.actionHashes : []).slice(0, 8)),
+    actionHashes: Object.freeze((Array.isArray(values.actionHashes) ? values.actionHashes : []).slice(0, 4)),
     blocker: ['ORIGINAL_QUEUE_ROOT_UNAVAILABLE', 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
       'ORIGINAL_QUEUE_SCAN_LIMIT_REACHED', 'ORIGINAL_QUEUE_IDENTITY_UNVERIFIED',
       'ORIGINAL_QUEUE_RESULT_NOT_PROVEN', ''].includes(values.blocker) ? values.blocker : 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
