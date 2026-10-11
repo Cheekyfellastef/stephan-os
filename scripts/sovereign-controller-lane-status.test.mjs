@@ -347,7 +347,7 @@ test('projects one canonical Stephanos build truth record from physical and logi
     ? {
       ...item,
       lastMaterialActionAtUtc: '2026-10-02T14:29:45.000Z',
-      proofRefs: ['proof/controller-1-pass'],
+      proofRefs: ['proof/controller-1-pass', 'proof/goal-2002-source'],
       exactNextAction: 'Continue implementation.',
       materialLanes: [{
         laneId: 'lane-1',
@@ -496,10 +496,50 @@ test('logical ACTIVE without worker-bound same-goal proof stays QUEUED, not gree
   assert.equal(truth.goals[0].autonomyTruth, 'UNPROVEN');
 });
 
+test('a same-goal lane with an unverified proof ref cannot borrow host PASS proof', () => {
+  const controllers = fleet().controllers.map((item, index) => ({
+    ...item,
+    proofRefs: index === 0 ? ['proof/other-goal-verified'] : [],
+    materialLanes: index === 0 ? [{
+      laneId: 'goal-lane-unverified-ref',
+      goalId: '#2002',
+      workerId: 'mission-worker-1',
+      proofRef: 'proof/goal-2002-unverified',
+      lastMaterialActionAtUtc: '2026-10-02T14:29:45.000Z',
+    }] : [],
+    activityState: index === 0 ? 'BUILDING' : 'IDLE_NO_ELIGIBLE_WORK',
+  }));
+  const fabric = logical({
+    controllers: [{
+      logicalControllerId: 'logical-goal-2002',
+      goalIssueNumber: 2002,
+      goalRef: '#2002',
+      goalTitle: 'Goal Building Agent',
+      continuityState: 'ACTIVE',
+      selectedForAdmission: true,
+      hostControllerId: 'controller-1',
+      hostControllerTitle: 'Controller 1',
+    }],
+    logicalControllerCount: 1,
+  });
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({ controllers, counts: { building: 1, amber: 0, red: 0, unknown: 0 } }),
+    logicalFabric: fabric,
+    now: NOW,
+  });
+  const truth = buildStephanosBuildTruth(status);
+  assert.equal(truth.buildingGoalCount, 0);
+  assert.equal(truth.goals[0].state, 'QUEUED');
+  assert.equal(truth.goals[0].lastMaterialProgressAtUtc, '');
+  assert.deepEqual(truth.goals[0].proofRefs, []);
+  assert.equal(truth.goals[0].autonomyTruth, 'UNPROVEN');
+});
+
 test('build truth never claims autonomy from a controller title or lane without provenance', () => {
   const controllers = fleet().controllers.map((item, index) => index === 0
     ? {
       ...item,
+      proofRefs: ['proof/goal-2002-source'],
       materialLanes: [{
         laneId: 'lane-assisted',
         goalId: '#2002',
