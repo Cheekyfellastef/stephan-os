@@ -17,6 +17,11 @@ const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$/;
 const PATH = /^(?:[a-z0-9]|\.[a-z0-9])[a-z0-9._/-]{0,240}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._-]{0,100}$/i;
 const HIGH_RISK_PATH = /^(?:\.github\/|AGENTS\.md$|shared\/agents\/(?:operator|qualified|providerNeutralReview|elasticIndependentReview|sovereignReviewer|windowsAuthority|exactHeadReview|openClaw|githubObservationBroker|sovereignCommander)|scripts\/(?:operator|independent|sovereign|github|exact-head-review)|stephanos-server\/services\/(?:githubAuth|githubPrEvidence))|(?:secret|credential|permission|approval|token|authority|security|protected-merge)/i;
+// Paths that can execute work, allocate source leases, dispatch a provider, or
+// mutate source-artifact escrow must never be qualified by a local model.
+// Keep this conservative for newly introduced workers/dispatchers as well as
+// the currently known goal conveyor services.
+const EXECUTION_BEARING_PATH = /(?:worker|lease|escrow|source.?builder|goal.?builder|mission.?orchestrator|goal.?discovery|source.?artifact|execution|dispatch|scheduler|runner)/i;
 
 const text = value => String(value ?? '').trim();
 const validId = value => SAFE_ID.test(text(value));
@@ -55,7 +60,7 @@ export function inspectSovereignReviewSnapshot(input = {}) {
     || !validId(input.reviewerSessionId)) return blocked('INVALID_REVIEW_IDENTITIES');
   if (input.implementerProvider === 'sovereign-local-ollama'
     && input.implementerSessionId === input.reviewerSessionId) return blocked('REVIEWER_NOT_INDEPENDENT');
-  if (changedFiles.some(path => HIGH_RISK_PATH.test(path))) {
+  if (changedFiles.some(path => HIGH_RISK_PATH.test(path) || EXECUTION_BEARING_PATH.test(path))) {
     return blocked('QUALIFIED_HIGH_RISK_SPECIALIST_REQUIRED', {
       riskTier: 'high',
       changedFiles: Object.freeze([...changedFiles]),
