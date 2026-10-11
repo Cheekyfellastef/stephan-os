@@ -17,6 +17,7 @@ import {
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
@@ -1573,6 +1574,12 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
       ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
       : [],
     elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    // Signed local-native capacity is a distinct proof from the elastic scheduler's RUNNING flag.
+    nativeCapacityVerified: packet?.nativeCapacityVerified === true,
+    nativeCapacityReason: safeTelemetryText(packet?.nativeCapacityReason, 160).toUpperCase(),
+    nativeCapacityModel: safeTelemetryText(packet?.nativeCapacityModel, 120),
+    nativeCapacitySourceHead: safeTelemetrySha(packet?.nativeCapacitySourceHead),
+    nativeCapacityReceiptId: safeTelemetryId(packet?.nativeCapacityReceiptId),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -3100,6 +3107,58 @@ function programmeAuthorityPacketReady(packet = {}) {
   );
 }
 
+// Reuse the native capacity router's authenticated signature, authority and freshness
+// gates. No raw Shared Workspace records, paths, keys or signed payloads leave this
+// read-only programme status route. A missing proof must stay explicitly non-green.
+export async function readNativeCapacityProgrammeTelemetry({
+  expectedHead = '',
+  nowUtc = new Date().toISOString(),
+  verifier = readVerifiedStephanosNativeRoutingCandidate,
+} = {}) {
+  const sourceHead = safeTelemetrySha(expectedHead);
+  const unknown = (reason) => Object.freeze({
+    nativeCapacityVerified: false,
+    nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
+    nativeCapacityModel: '',
+    nativeCapacitySourceHead: '',
+    nativeCapacityReceiptId: '',
+  });
+  if (!sourceHead) return unknown('NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
+  let verified;
+  try {
+    verified = await verifier({
+      nowUtc,
+      repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      sourceHead,
+      taskClass: 'FOCUSED_REPAIR',
+      root: sharedWorkspaceRoot,
+      repoRoot,
+      env: process.env,
+    });
+  } catch {
+    return unknown('NATIVE_CAPACITY_VERIFIER_FAILED');
+  }
+  const candidate = verified?.candidate;
+  if (verified?.ok !== true) {
+    return unknown(verified?.reason || 'NATIVE_CAPACITY_UNVERIFIED');
+  }
+  if (!candidate || candidate.sourceHead !== sourceHead
+      || candidate.repository !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY
+      || candidate.taskClass !== 'FOCUSED_REPAIR'
+      || candidate.sourceMutationAllowed !== true
+      || candidate.mergeAuthority !== false
+      || candidate.leaseSeizureAllowed !== false) {
+    return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
+  }
+  return Object.freeze({
+    nativeCapacityVerified: true,
+    nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+    nativeCapacityModel: safeTelemetryText(candidate.model, 120),
+    nativeCapacitySourceHead: sourceHead,
+    nativeCapacityReceiptId: safeTelemetryId(candidate.capacityReceiptId),
+  });
+}
+
 async function readProgrammeAuthorityStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -3108,7 +3167,14 @@ async function readProgrammeAuthorityStatus(command = {}) {
     repoRoot,
     nowUtc: new Date().toISOString(),
   });
-  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const nativeCapacity = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: command.expectedHead,
+    nowUtc: new Date().toISOString(),
+  });
+  const programmeAuthority = Object.freeze({
+    ...createSanitizedProgrammeAuthorityStatusProjection(projection),
+    ...nativeCapacity,
+  });
   const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
   return {
     ...identity,
