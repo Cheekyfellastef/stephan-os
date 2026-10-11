@@ -204,7 +204,9 @@ async function defaultActionInFlight({ adapter, actionId, env }) {
 // durable cancellation, a fully terminal original execution and observation of
 // EVERY pending/processing worker adapter. Unknown roots/items fail closed.
 // This checks source responsibility, not replacement-goal acceptance.
-const ORIGINAL_SOURCE_QUEUE_ADAPTERS = Object.freeze([
+// Shared with the fixed, read-only original-r7 queue evidence observer.
+// This export adds no queue, execution, release or mutation authority.
+export const ORIGINAL_SOURCE_QUEUE_ADAPTERS = Object.freeze([
   'openclaw-signed', 'openclaw-github-readonly', 'codex',
   'openclaw-standalone', 'openclaw-local', 'chatgpt-github',
   'foundry-forge', 'forge-publication', 'desktop-commander',
