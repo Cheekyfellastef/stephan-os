@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readExecutionReceiptHistory, validateExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
@@ -9,6 +9,7 @@ import { dispatchElasticGoalBuildsFromCanonicalMain } from './criticalBacklogCon
 import {
   dispatchElasticPrHeadBuildsFromCanonicalLease,
   exactElasticPrHeadIdentity,
+  inspectOriginalTerminalWorkerPairV1,
   reconcileExpiredElasticReviewLeaseV1,
 } from './elasticPrHeadLeaseService.js';
 
@@ -598,6 +599,87 @@ test('completed original r7 repair lease retires only with failed required check
     assert.equal(result.leaseSeizureAllowed, false);
   }
   assert.equal(releases, 1, 'only the fully grounded original exact lease may be released');
+});
+
+test('missing original r7 execution receipt is triaged against exact immutable terminal queue pair without releasing lease', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'original-worker-r7-triage-'));
+  const repairing = mission(2962, 2987, HEAD_A, {
+    currentPhase: 'REPAIR_REQUIRED',
+    dispatch: { status: 'complete' },
+    pullRequest: { number: 2987, headSha: HEAD_A,
+      checks: [{ required: true, status: 'failure' }] },
+    continuity: { parkingStatus: 'ACTIVE' },
+  });
+  const lease = leaseFor(repairing);
+  const missionId = repairing.missionId;
+  const actionId = 'original-r7-source-action';
+  const adapter = 'forge-publication';
+  const directory = join(root, adapter, 'completed');
+  const env = { STEPHANOS_MISSION_WORKER_QUEUE_DIR: root };
+  const queuePath = join(directory, actionId + '.json');
+  const resultPath = join(directory, actionId + '.result.json');
+  const item = {
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter, actionId, missionId,
+    executionBinding: {
+      schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId, missionId, leaseKey: lease.leaseId,
+      repository: lease.repository, issueNumber: lease.issueNumber,
+      prNumber: lease.prNumber, branch: lease.branch, headSha: lease.headSha,
+    },
+  };
+  const workerResult = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    adapter, actionId, missionId,
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  };
+  let leaseReleaseCalls = 0;
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(queuePath, JSON.stringify(item));
+    await writeFile(resultPath, JSON.stringify(workerResult));
+    const triage = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.equal(triage.classification, 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT');
+    assert.equal(triage.exactPairCount, 1);
+    assert.equal(triage.terminalExecutionReceiptProven, false);
+    assert.equal(triage.leaseReleaseAllowed, false);
+
+    const reconciled = await reconcileExpiredElasticReviewLeaseV1({
+      now: NOW, paths: PATHS, sourceRevision: SOURCE, env,
+      missionRecords: [repairing],
+      readLease: async () => ({
+        ok: true, present: true, record: lease,
+        validation: { valid: true, active: false, stale: true, finalVerdict: 'SOURCE_MUTATION_LEASE_STALE' },
+      }),
+      readReceiptHistoryFn: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+      releaseLease: async () => { leaseReleaseCalls += 1; return { ok: true, released: true }; },
+    });
+    assert.equal(reconciled.blocker, 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING');
+    assert.equal(reconciled.released, false);
+    assert.equal(reconciled.sourceMutationAllowed, false);
+    assert.equal(leaseReleaseCalls, 0);
+
+    await writeFile(resultPath, JSON.stringify({ ...workerResult, actionId: 'forged-other-action' }));
+    const forged = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.equal(forged.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    assert.equal(forged.exactPairCount, 0);
+    await rm(resultPath);
+    const missing = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.equal(missing.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    await writeFile(resultPath, JSON.stringify(workerResult));
+    await writeFile(queuePath, JSON.stringify({
+      ...item, executionBinding: { ...item.executionBinding, headSha: HEAD_C },
+    }));
+    const wrongHead = await inspectOriginalTerminalWorkerPairV1({ lease, missionId, env });
+    assert.equal(wrongHead.classification, 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE');
+    const unknownRoot = await inspectOriginalTerminalWorkerPairV1({
+      lease, missionId, env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: join(root, 'unknown') },
+    });
+    assert.equal(unknownRoot.classification, 'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE');
+    assert.equal(leaseReleaseCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('real durable receipt writer accepts exact queued PR-head proof from original mission', async () => {
