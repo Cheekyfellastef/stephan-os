@@ -45,4 +45,3 @@ Under the per-PR lock, status compares that capture time with the currently
 published capture time. An older run cannot become newer merely because it
 finished or attempted publication later, and environment values never replace
 the captured head identity.
-
