@@ -2560,11 +2560,11 @@ test('base-versus-source mailbox regression stays within protected merge admissi
   assert.equal(accepted.commands[0].command.expectedHead, prHead);
   assert.equal(accepted.commands[0].command.expectedBase, mainHead);
   const rejected = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: 'e'.repeat(40) });
-  assert.equal(rejected.commands.length, 0);
+  assert.equal(rejected.verdict, 'NO_COMMAND_READY');
   assert.equal(rejected.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
   const unsafeWiden = selectBattleBridgeGitHubCommandBatch(makeComment({
     ...cmd, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   }), { now, currentHead: mainHead });
-  assert.equal(unsafeWiden.commands.length, 0);
+  assert.equal(unsafeWiden.verdict, 'NO_COMMAND_READY');
   assert.equal(unsafeWiden.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
