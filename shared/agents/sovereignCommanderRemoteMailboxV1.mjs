@@ -841,6 +841,62 @@ function safeControllerLaneStatusProjection(value = {}, processId = '') {
   });
 }
 
+function safeOriginalR7EvidenceProjection(value = {}) {
+  if (!value || value.schemaVersion !== 'stephanos.original-r7-worker-evidence.v1'
+    || value.readOnly !== true || value.rawPathsReturned !== false
+    || value.rawRecordsReturned !== false || value.secretMaterialReturned !== false
+    || value.writerInactivityProven !== false
+    || value.canonicalTerminalExecutionReceiptProven !== false
+    || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false || value.mergeAuthority !== false) return null;
+  const count = (key) => {
+    const candidate = value[key];
+    return Number.isSafeInteger(candidate) && candidate >= 0 && candidate <= 1_000_000 ? candidate : null;
+  };
+  const acceptedBlockers = new Set([
+    '', 'ORIGINAL_QUEUE_ROOT_UNAVAILABLE', 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    'ORIGINAL_QUEUE_SCAN_LIMIT_REACHED', 'ORIGINAL_QUEUE_IDENTITY_UNVERIFIED',
+    'ORIGINAL_QUEUE_RESULT_NOT_PROVEN',
+  ]);
+  const originalBlocker = text(value.blocker);
+  const hashes = Object.freeze((Array.isArray(value.actionHashes) ? value.actionHashes : [])
+    .filter((hash) => typeof hash === 'string' && PROOF_HASH_PATTERN.test(hash)).slice(0, 4));
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-r7-worker-evidence.v1',
+    originalOwner: '#2961',
+    originalMission: '#2962',
+    originalLeaseKey: 'critical-2962-elastic-goal-r7-lease',
+    originalPrNumber: 2987,
+    sourceHead: '4e5023eef829b285095db4eeb09d6f2b365e33e4',
+    queueObserved: value.queueObserved === true,
+    inventoryComplete: value.inventoryComplete === true,
+    inspectedAdapterDirectories: count('inspectedAdapterDirectories'),
+    missingAdapterDirectories: count('missingAdapterDirectories'),
+    scannedFiles: count('scannedFiles'),
+    matchingOriginalItems: count('matchingOriginalItems'),
+    exactBindingItems: count('exactBindingItems'),
+    mismatchedOriginalItems: count('mismatchedOriginalItems'),
+    pendingOriginalItems: count('pendingOriginalItems'),
+    processingOriginalItems: count('processingOriginalItems'),
+    completedOriginalItems: count('completedOriginalItems'),
+    failedOriginalItems: count('failedOriginalItems'),
+    exactResultPairCandidates: count('exactResultPairCandidates'),
+    missingResultPairs: count('missingResultPairs'),
+    actionHashes: hashes,
+    blocker: acceptedBlockers.has(originalBlocker)
+      ? originalBlocker : 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    readOnly: true,
+    rawPathsReturned: false,
+    rawRecordsReturned: false,
+    secretMaterialReturned: false,
+    writerInactivityProven: false,
+    canonicalTerminalExecutionReceiptProven: false,
+    leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+  });
+}
+
 function safeVisibilitySnapshotProjection(value = {}, processId = '') {
   if (processId !== 'visibility-snapshot') return null;
   const stdout = String(value?.structuredContent?.stdout || '');
@@ -1100,6 +1156,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     laneRefill: safeLight(parsed?.health?.laneRefill),
     transport: safeLight(parsed?.health?.transport),
   });
+  const originalR7Evidence = safeOriginalR7EvidenceProjection(parsed?.originalR7Evidence);
   const capturedAtUtc = safeTime(parsed.capturedAtUtc);
   const finalVerdict = safeState(parsed.finalVerdict, 120);
   if (!capturedAtUtc
@@ -1124,6 +1181,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     controllers,
     meters,
     relay,
+    ...(originalR7Evidence ? { originalR7Evidence } : {}),
     health,
     readOnly: true,
     sourceMutationAllowed: false,
