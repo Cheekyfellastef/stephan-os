@@ -371,6 +371,9 @@ export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords
   );
   const matched = candidates.filter(sameIdentity);
   const valid = candidates.length === 1 && matched.length === 1;
+  // Observation is separate from authority: a unique persisted original may
+  // reveal revision drift without ever satisfying the exact lease binding.
+  const observed = candidates.length === 1 ? candidates[0] : null;
   const phase = valid ? text(matched[0].currentPhase).toUpperCase() : 'UNKNOWN';
   const reviewOnly = valid && phase === 'CHECK_PULL_REQUEST';
   const materialImplementation = valid && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(phase);
@@ -381,6 +384,10 @@ export function projectElasticMissionPhaseBindingV1(lease = null, missionRecords
     missionId: valid ? expectedId : '',
     revision: valid ? revision : null,
     blocker: valid ? '' : 'ELASTIC_MISSION_REVISION_BINDING_NOT_PROVEN',
+    observedUniqueOriginal: Boolean(observed),
+    observedRevision: observed && Number.isSafeInteger(observed.revision) ? observed.revision : null,
+    observedPhase: observed ? text(observed.currentPhase).toUpperCase() : 'UNKNOWN',
+    observedDispatchStatus: observed ? text(observed.dispatch?.status).toUpperCase() : 'UNKNOWN',
     releaseLeaseAllowed: false, replaceWriterAllowed: false,
     mutationAuthority: false, mergeAuthority: false,
   });
@@ -1426,7 +1433,40 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
 
   const conveyor = input.criticalBacklog;
   if (!conveyor || typeof conveyor !== 'object') blockers.push('critical-backlog-source-missing');
-  if (lane?.active) {
+
+  // Elastic source work is admitted by the canonical scheduler, not by the
+  // separate legacy critical-backlog mission slot. Only a fully bound, live
+  // material-phase lease with affirmative parked/complete legacy capacity
+  // may skip the legacy active-mission identity checks. The controller,
+  // execution-receipt, scheduler, and source-lease gates above still apply.
+  const independentlyScheduledElasticActiveLane = Boolean(
+    lane?.active === true
+    && lane?.valid === true
+    && lane?.elasticMissionPhaseBinding?.valid === true
+    && lane?.elasticMissionPhaseBinding?.materialImplementation === true
+    && lane?.elasticMissionPhaseBinding?.issueNumber === lane?.issueNumber
+    && lane?.mutationLeaseIdentity?.active === true
+    && lane?.mutationLeaseIdentity?.stale === false
+    && lease?.leaseId === lane?.mutationLeaseIdentity?.leaseId
+    && lease?.issueNumber === lane?.issueNumber
+    && lease?.prNumber === lane?.prNumber
+    && sha(lease?.headSha) === lane?.headSha
+    && text(lease?.branch) === lane?.branch
+    && text(lease?.repository).toLowerCase() === text(lane?.repository).toLowerCase()
+    && conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission
+  );
+  if (lane?.active && !independentlyScheduledElasticActiveLane) {
     if (!['WAIT_ACTIVE_MISSION', 'WAIT_EXTERNAL_ACTIVE_MISSION'].includes(conveyor?.decision)) {
       blockers.push('critical-backlog-active-lane-status-mismatch');
     }

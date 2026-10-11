@@ -49,6 +49,34 @@ jobs:
       issues: write
       pull-requests: read
     steps:
+      - name: Gate hosted review on its own GitHub installation API budget
+        id: github_budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GET /rate_limit does not spend primary/core quota. It can count
+          # against secondary limits, so fail closed if it cannot be read.
+          if ! quota="$(gh api rate_limit 2>/dev/null)"; then
+            echo "::error::GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN"
+            exit 1
+          fi
+          limit="$(jq -er '.resources.core.limit | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          remaining="$(jq -er '.resources.core.remaining | select(type == "number" and . >= 0)' <<< "$quota")" || exit 1
+          reset="$(jq -er '.resources.core.reset | select(type == "number" and . > 0)' <<< "$quota")" || exit 1
+          reserve=$(( (limit + 4) / 5 ))
+          if (( reserve < 50 )); then reserve=50; fi
+          echo "limit=$limit" >> "$GITHUB_OUTPUT"
+          echo "remaining=$remaining" >> "$GITHUB_OUTPUT"
+          echo "reset_epoch=$reset" >> "$GITHUB_OUTPUT"
+          echo "reserve=$reserve" >> "$GITHUB_OUTPUT"
+          if (( remaining <= reserve )); then
+            echo "::warning::GITHUB_HOSTED_REVIEW_BUDGET_HOLD remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
+            echo "GitHub hosted review is held: installation core REST budget under 20% reserve." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "GITHUB_HOSTED_REVIEW_BUDGET_READY remaining=$remaining limit=$limit reserve=$reserve reset_epoch=$reset"
       - name: Check out trusted exact-base reviewer
         if: github.event_name == 'pull_request_target'
         uses: actions/checkout@v4
@@ -120,7 +148,7 @@ jobs:
 
       - name: Upload the exact-run immutable independent review result
         id: independent-review-artifact
-        if: ${{ always() }}
+        if: ${{ always() && steps.github_budget.outcome == 'success' }}
         timeout-minutes: 4
         uses: actions/upload-artifact@v4
         with:
@@ -133,7 +161,7 @@ jobs:
 
       - name: Surface terminal exact-head findings or pre-artifact failure
         id: terminal_findings
-        if: ${{ always() }}
+        if: ${{ always() && steps.github_budget.outcome == 'success' }}
         timeout-minutes: 4
         env:
           GITHUB_TOKEN: ${{ github.token }}
