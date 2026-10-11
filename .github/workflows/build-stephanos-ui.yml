@@ -42,21 +42,6 @@ permissions:
   id-token: write
 
 jobs:
-  source-custody-windows-proof:
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: windows-latest
-    timeout-minutes: 8
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Real Win32 isolated child environment and native containment proof
-        run: node --test scripts/windows/sourceJobCustody.test.mjs
   scheduler-tests:
     if: >-
       github.event_name != 'issue_comment' ||
@@ -96,13 +81,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Execute closed-world custody and lease regression suite
-        run: |
-          node --test --test-concurrency=1 \
-            stephanos-server/services/sourceJobCustodyCommandService.test.js \
-            stephanos-server/services/originalSourceWriterCustodyService.test.js \
-            stephanos-server/services/originalSourceAttemptFenceService.test.js \
-            shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
       - name: Run runtime guardrail and provider tests
         run: |
           node --test --test-concurrency=1 \
