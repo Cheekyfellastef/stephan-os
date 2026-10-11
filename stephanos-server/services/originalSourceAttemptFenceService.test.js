@@ -24,17 +24,22 @@ function fixture() {
   const receipt = { state: 'completed', executionId: action,
     receiptId: `${action}-5`, leaseKey: `${missionId}-r1-lease`, repository: mission.repository,
     branch: lease.branch, sourceHead: 'b'.repeat(40), issueNumber: 2962, prNumber: 0 };
-  const pair = { item: { missionId, actionId: action, executionBinding: {
+  const pair = { item: { schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'foundry-forge', missionId, actionId: action,
+    actionGrant: { sourceRevision: receipt.sourceHead }, executionBinding: {
+    schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1', missionRevision: 1,
     missionId, executionId: action, leaseKey: receipt.leaseKey, repository: receipt.repository,
-    branch: receipt.branch, headSha: receipt.sourceHead, issueNumber: 2962, prNumber: 0 } },
-    result: { missionId, actionId: action, processed: true, success: true, testsPassed: true }, pairDigest: 'f'.repeat(64) };
+    branch: receipt.branch, headSha: '', sourceRevision: receipt.sourceHead, issueNumber: 2962, prNumber: null } },
+    result: { adapter: 'foundry-forge', missionId, actionId: action, processed: true, success: true, testsPassed: true }, pairDigest: 'f'.repeat(64) };
   const input = { missionId, commandId: 'fence-original-2962-test', reason: 'Retire source attempt only.',
     operatorSourceRevision: 'd'.repeat(40), operatorRequestId: 'fence-original-2962-test-request',
     expectedMissionRevision: 7, originalLeaseId: lease.leaseId, originalLeaseDigest: digest(lease) };
   const options = { env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: '/queue' },
     paths: { workspaceRoot: '/workspace', repoRoot: '/repo' },
-    readSourceMutationLease: async () => ({ ok: true, record: lease,
-      validation: { valid: true, active: false, stale: true } }),
+    readSourceMutationLease: async ({ nowUtc }) => {
+      assert.equal(Number.isFinite(Date.parse(nowUtc)), true);
+      return { ok: true, record: lease, validation: { valid: true, active: false, stale: true } };
+    },
     readOriginalSourceExecutionId: async () => action,
     readExecutionReceiptHistory: async (_root, filter) => filter.leaseKey
       ? { ok: true, receipts: [], latestReceipt: null }
@@ -63,6 +68,8 @@ for (const [label, change] of [
   ['source result is not terminal', f => { f.pair.result.success = false; }],
   ['source tests unproven', f => { f.pair.result.testsPassed = false; }],
   ['queue source head mismatch', f => { f.pair.item.executionBinding.headSha = 'c'.repeat(40); }],
+  ['pre-PR source revision mismatch', f => { f.pair.item.executionBinding.sourceRevision = 'c'.repeat(40); }],
+  ['pre-PR source rewritten to held r7 PR', f => { f.pair.item.executionBinding.prNumber = f.lease.prNumber; }],
   ['current lease digest mismatch', f => { f.input.originalLeaseDigest = 'e'.repeat(64); }],
   ['queue activity', f => { f.options.originalMissionHasQueuedWork = async () => true; }],
   ['queue nonactivity unknown', f => { f.options.originalMissionHasQueuedWork = async () => null; }],
@@ -103,7 +110,7 @@ test('durable cancellation and fence commit share the existing mission and lease
     insideLeaseLock = true; try { return await operation(); } finally { insideLeaseLock = false; }
   };
   const originalRead = f.options.readSourceMutationLease;
-  f.options.readSourceMutationLease = async () => { assert.equal(insideLeaseLock, true); return originalRead(); };
+  f.options.readSourceMutationLease = async (input) => { assert.equal(insideLeaseLock, true); return originalRead(input); };
   const result = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
   assert.equal(result.state.currentPhase, 'CANCELLED');
   assert.equal(result.state.revision, 8);

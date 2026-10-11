@@ -4,7 +4,7 @@
 
 The original #2962 r7 lease has no authentic r7 execution receipt or exact r7 terminal queue pair. Historical intake revision r0 was incorrectly classified as a current-attempt binding mismatch. Recognizing canonical r0 yields five historical terminal records and ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND; it grants no release authority. STOP on PR #2987 and an idle supervised worker do not prove detached-writer nonactivity.
 
-The canonical consumed AGENT_RESULT_RECEIVED event instead identifies the actual original source action. Its authentic completed r1 receipt retains its original head, PR 0 and r1 lease. Those identities must never be rewritten to resemble the later r7 PR-head lease. Provider result IDs remain opaque. Missing, duplicate or unprocessed consumed events HOLD.
+The canonical consumed AGENT_RESULT_RECEIVED event instead identifies the actual original source action. Its authentic completed r1 receipt retains its original head, PR 0 and r1 lease. The pre-PR queue schema carries a null PR, empty PR head and an exact sourceRevision; the authentic receipt encodes that same pre-PR identity as PR 0 and sourceHead. Both representations are checked explicitly. Those identities must never be rewritten to resemble the later r7 PR-head lease. Provider result IDs remain opaque. Missing, duplicate or unprocessed consumed events HOLD.
 
 ## Existing authority, one bounded transition
 

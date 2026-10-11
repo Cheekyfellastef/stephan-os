@@ -73,9 +73,10 @@ export function originalSourceFenceBindsLease(fence, lease) {
 export async function proveOriginalSourceQuarantine(current, input, options = {}) {
   const env = options.env || process.env;
   const paths = options.paths;
+  const nowUtc = (options.now instanceof Date ? options.now : new Date()).toISOString();
   if (!paths?.workspaceRoot || !paths.repoRoot) fail('ORIGINAL_FENCE_CANONICAL_PATHS_UNPROVEN');
   const readLease = options.readSourceMutationLease || readSourceMutationLease;
-  const leaseRead = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot });
+  const leaseRead = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc });
   const lease = leaseRead.record;
   const identity = exactElasticPrHeadIdentity(current);
   if (leaseRead.ok !== true || leaseRead.validation?.valid !== true
@@ -110,15 +111,26 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
   if (!['foundry-forge', 'chatgpt-github', 'sovereign-commander'].includes(adapter)) fail('ORIGINAL_FENCE_SOURCE_ADAPTER_UNPROVEN');
   const queue = options.readTerminalSourcePair ? await options.readTerminalSourcePair()
     : await readTerminalSourcePair(queueRoot, adapter, sourceAction);
-  if (queue.item?.missionId !== current.missionId || queue.item?.actionId !== sourceAction
+  const binding = queue.item?.executionBinding;
+  // Canonical pre-PR queue binding has null PR/headSha and sourceRevision;
+  // createExecutionReceipt encodes that same identity as PR 0/sourceHead.
+  // Preserve that explicit schema state, without rebinding it to r7's PR head.
+  const sourceHeadBound = terminal.prNumber === 0
+    ? binding?.prNumber === null && binding?.headSha === ''
+      && binding?.sourceRevision === terminal.sourceHead
+      && queue.item?.actionGrant?.sourceRevision === terminal.sourceHead
+    : binding?.prNumber === terminal.prNumber && binding?.headSha === terminal.sourceHead;
+  if (queue.item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || binding?.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1'
+      || binding?.missionRevision !== Number(revision) || Number(revision) > current.revision
+      || queue.item?.adapter !== adapter || queue.result?.adapter !== adapter || !sourceHeadBound
+      || queue.item?.missionId !== current.missionId || queue.item?.actionId !== sourceAction
       || queue.item?.executionBinding?.leaseKey !== terminal.leaseKey
       || queue.item?.executionBinding?.executionId !== sourceAction
       || queue.item?.executionBinding?.missionId !== current.missionId
       || queue.item?.executionBinding?.repository !== terminal.repository
       || queue.item?.executionBinding?.branch !== terminal.branch
-      || queue.item?.executionBinding?.headSha !== terminal.sourceHead
       || queue.item?.executionBinding?.issueNumber !== terminal.issueNumber
-      || queue.item?.executionBinding?.prNumber !== terminal.prNumber
       || queue.result?.processed !== true || queue.result?.success !== true
       || queue.result?.testsPassed !== true
       || queue.result?.actionId !== sourceAction || queue.result?.missionId !== current.missionId
@@ -128,7 +140,7 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
   // Whole-record compare immediately before committing the fence. Renewal and
   // old claim paths must consume canonical cancellation; release still uses
   // Programme Authority's own exact-lease operation guard after this transition.
-  const again = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot });
+  const again = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc });
   if (again.ok !== true || digest(again.record) !== input.originalLeaseDigest) fail('ORIGINAL_FENCE_LEASE_CHANGED');
   return Object.freeze({
     schemaVersion: ORIGINAL_SOURCE_FENCE_SCHEMA, missionId: current.missionId,
