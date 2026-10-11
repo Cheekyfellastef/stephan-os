@@ -153,6 +153,74 @@ function sanitizeEventForLog(event) {
   return sanitized;
 }
 
+
+const PENDING_QUARANTINE_AUDIT_SCHEMA = 'stephanos.pending-quarantine-audit.v1';
+const MAX_QUARANTINE_AUDIT_BYTES = 128 * 1024;
+const MAX_MISSION_AUDIT_BYTES = 2 * 1024 * 1024;
+
+// The quarantine state replacement and its NDJSON event are separate files.
+// Record the exact sanitised audit event inside the atomic state first. A
+// process crash after state replacement can then replay only these bytes under
+// the existing mission lock, never infer or synthesize a second cancellation.
+async function reconcilePendingQuarantineAudit(state, paths, options = {}) {
+  const pending = state?.storeMetadata?.pendingQuarantineAuditEvent;
+  if (pending === undefined) return state;
+  const event = pending?.event;
+  const serial = JSON.stringify(event);
+  const fail = (reason) => { throw new Error(reason); };
+  if (pending?.schemaVersion !== PENDING_QUARANTINE_AUDIT_SCHEMA
+      || !serial || Buffer.byteLength(serial) > MAX_QUARANTINE_AUDIT_BYTES
+      || pending.eventId !== state.storeMetadata?.lastEventId
+      || !state.storeMetadata?.processedEventIds?.includes(pending.eventId)
+      || event?.eventId !== pending.eventId || event?.missionId !== state.missionId
+      || event?.eventType !== 'MISSION_CANCELLED'
+      || event?.originalSourceQuarantineRequested !== true
+      || !state.storeMetadata?.originalSourceAttemptFence
+      || sha256(JSON.stringify(event.originalSourceAttemptFence))
+        !== sha256(JSON.stringify(state.storeMetadata.originalSourceAttemptFence))
+      || pending.eventSha256 !== sha256(serial)) {
+    fail('ORIGINAL_QUARANTINE_AUDIT_JOURNAL_INVALID');
+  }
+  const log = await readFile(paths.eventPath, 'utf8');
+  if (Buffer.byteLength(log) > MAX_MISSION_AUDIT_BYTES) {
+    fail('ORIGINAL_QUARANTINE_AUDIT_LOG_UNBOUNDED');
+  }
+  const validLength = log.lastIndexOf('\n') + 1;
+  const suffix = log.slice(validLength);
+  const lines = log.slice(0, validLength).split('\n').filter(Boolean);
+  if (lines.length > 2048) fail('ORIGINAL_QUARANTINE_AUDIT_LOG_UNBOUNDED');
+  let matching = 0;
+  for (const line of lines) {
+    let parsed;
+    try { parsed = JSON.parse(line); } catch { fail('ORIGINAL_QUARANTINE_AUDIT_LOG_CORRUPT'); }
+    if (parsed?.eventId === pending.eventId) {
+      if (line !== serial) fail('ORIGINAL_QUARANTINE_AUDIT_EVENT_CONFLICT');
+      matching += 1;
+    }
+  }
+  if (matching > 1 || (matching === 1 && suffix)) {
+    fail('ORIGINAL_QUARANTINE_AUDIT_EVENT_DUPLICATE');
+  }
+  if (matching === 0) {
+    if (suffix) {
+      // A torn write is recoverable only if every trailing byte is an exact
+      // prefix of this one persisted, hash-bound canonical event.
+      if (!serial.startsWith(suffix)) fail('ORIGINAL_QUARANTINE_AUDIT_LOG_CORRUPT');
+      const handle = await open(paths.eventPath, 'r+');
+      try {
+        await handle.truncate(Buffer.byteLength(log.slice(0, validLength)));
+        await handle.sync();
+      } finally { await handle.close(); }
+    }
+    const appendAudit = options.appendMissionAuditFile || appendFile;
+    await appendAudit(paths.eventPath, serial + '\n', 'utf8');
+  }
+  const clean = structuredClone(state);
+  delete clean.storeMetadata.pendingQuarantineAuditEvent;
+  await atomicWriteJson(paths.statePath, clean);
+  return clean;
+}
+
 function withStoreMetadata(state, additions = {}) {
   return {
     ...state,
@@ -259,7 +327,8 @@ export async function runWithMissionStatePrecondition(
   await mkdir(paths.root, { recursive: true });
   const lockHandle = await acquireLock(paths.lockPath);
   try {
-    const current = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    const stored = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    const current = await reconcilePendingQuarantineAudit(stored, paths, options);
     if (missionStatePreconditionFailed(current, precondition)) {
       return {
         state: current,
@@ -286,7 +355,8 @@ export async function appendMissionEvent(missionId, event, options = {}) {
   await mkdir(paths.root, { recursive: true });
   const lockHandle = await acquireLock(paths.lockPath);
   try {
-    const current = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    const stored = JSON.parse(await readFile(paths.statePath, 'utf8'));
+    const current = await reconcilePendingQuarantineAudit(stored, paths, options);
     const eventId = safeEventId(event.eventId);
     const processedEventIds = Array.isArray(current.storeMetadata?.processedEventIds)
       ? current.storeMetadata.processedEventIds
@@ -323,15 +393,28 @@ export async function appendMissionEvent(missionId, event, options = {}) {
         originalSourceAttemptFence = await options.proveOriginalSourceQuarantine(current);
         preparedEvent.originalSourceAttemptFence = originalSourceAttemptFence;
       }
+      const quarantine = preparedEvent.originalSourceQuarantineRequested === true;
+      const logEvent = sanitizeEventForLog(preparedEvent);
+      const serial = JSON.stringify(logEvent);
+      if (quarantine && Buffer.byteLength(serial) > MAX_QUARANTINE_AUDIT_BYTES) {
+        throw new Error('ORIGINAL_QUARANTINE_AUDIT_EVENT_UNBOUNDED');
+      }
       const next = withStoreMetadata(applyMissionOrchestratorEvent(current, preparedEvent, options), {
         ...(originalSourceAttemptFence ? { originalSourceAttemptFence } : {}),
         processedEventIds: [...processedEventIds, eventId].slice(-1000),
         lastEventId: eventId,
+        ...(quarantine ? { pendingQuarantineAuditEvent: {
+          schemaVersion: PENDING_QUARANTINE_AUDIT_SCHEMA,
+          eventId, eventSha256: sha256(serial), event: logEvent,
+        } } : {}),
       });
       await atomicWriteJson(paths.statePath, next);
-      await appendFile(paths.eventPath, `${JSON.stringify(sanitizeEventForLog(preparedEvent))}\n`, 'utf8');
-      const snapshot = await publishSnapshot(next, options.snapshotRoot || resolveMissionOperationsSnapshotRoot(options.env || process.env));
-      return { state: next, duplicate: false, eventId, snapshot };
+      const completed = quarantine
+        ? await reconcilePendingQuarantineAudit(next, paths, options)
+        : next;
+      if (!quarantine) await appendFile(paths.eventPath, serial + '\n', 'utf8');
+      const snapshot = await publishSnapshot(completed, options.snapshotRoot || resolveMissionOperationsSnapshotRoot(options.env || process.env));
+      return { state: completed, duplicate: false, eventId, snapshot };
     };
     if (preparedEvent.originalSourceQuarantineRequested === true) {
       if (typeof options.withOriginalSourceLeaseFenceGuard !== 'function') {

@@ -221,6 +221,63 @@ test('durable cancellation and fence commit share the existing mission and lease
   assert.equal(duplicate.state.revision, 8);
 });
 
+test('quarantine audit repairs persisted state after a failed append, exactly once on duplicate retry', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-source-audit-replay-'));
+  const created = await createMissionRecord({ missionId: f.mission.missionId,
+    repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+    worktreePath: '/worktree', operatorIntent: 'Repair source.', intendedOutcome: 'Retain one fence.',
+    allowedFiles: [], requiredTests: [], requiredEvidence: [] }, { root, env: {} });
+  await writeFile(created.statePath, JSON.stringify({ ...created.state, ...f.mission }));
+  const failOptions = { ...f.options, root,
+    appendMissionAuditFile: async () => { throw new Error('SIMULATED_AUDIT_APPEND_FAILURE'); } };
+  await assert.rejects(quarantineOriginalSourceAttempt(f.input, failOptions),
+    /SIMULATED_AUDIT_APPEND_FAILURE/);
+  const stranded = await readMissionRecord(f.mission.missionId, { root });
+  assert.equal(stranded.state.currentPhase, 'CANCELLED');
+  assert.equal(stranded.state.revision, 8);
+  assert.equal(stranded.state.storeMetadata.pendingQuarantineAuditEvent.eventId,
+    'cancel-fence-original-2962-test');
+  const repaired = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+  assert.equal(repaired.duplicate, true);
+  assert.equal(repaired.state.revision, 8);
+  assert.equal(repaired.state.storeMetadata.pendingQuarantineAuditEvent, undefined);
+  const log = (await readFile(created.eventPath, 'utf8')).split('\n').filter(Boolean);
+  assert.equal(log.filter(line => JSON.parse(line).eventId === 'cancel-fence-original-2962-test').length, 1);
+  assert.equal(originalSourceFenceBindsLease(repaired.state.storeMetadata.originalSourceAttemptFence, f.lease), true);
+  const duplicate = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+  assert.equal(duplicate.duplicate, true);
+  const again = (await readFile(created.eventPath, 'utf8')).split('\n').filter(Boolean);
+  assert.equal(again.filter(line => JSON.parse(line).eventId === 'cancel-fence-original-2962-test').length, 1);
+});
+
+test('quarantine audit safely replays torn matching tail but holds a conflicting tail', async () => {
+  for (const torn of [true, false]) {
+    const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-source-audit-tail-'));
+    const created = await createMissionRecord({ missionId: f.mission.missionId,
+      repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+      worktreePath: '/worktree', operatorIntent: 'Repair source.', intendedOutcome: 'Retain fence.',
+      allowedFiles: [], requiredTests: [], requiredEvidence: [] }, { root, env: {} });
+    await writeFile(created.statePath, JSON.stringify({ ...created.state, ...f.mission }));
+    const options = { ...f.options, root, appendMissionAuditFile: async () => { throw Error('AUDIT_WRITE_INTERRUPTED'); } };
+    await assert.rejects(quarantineOriginalSourceAttempt(f.input, options), /AUDIT_WRITE_INTERRUPTED/);
+    const pending = (await readMissionRecord(f.mission.missionId, { root })).state
+      .storeMetadata.pendingQuarantineAuditEvent;
+    const prefix = torn ? JSON.stringify(pending.event).slice(0, 53) : '{"eventId":"not-our-event"';
+    await writeFile(created.eventPath, (await readFile(created.eventPath, 'utf8')) + prefix);
+    if (!torn) {
+      await assert.rejects(quarantineOriginalSourceAttempt(f.input, { ...f.options, root }),
+        /ORIGINAL_QUARANTINE_AUDIT_LOG_CORRUPT/);
+      assert.equal((await readMissionRecord(f.mission.missionId, { root })).state
+        .storeMetadata.pendingQuarantineAuditEvent.eventId, pending.eventId);
+    } else {
+      const fixed = await quarantineOriginalSourceAttempt(f.input, { ...f.options, root });
+      assert.equal(fixed.duplicate, true);
+      const events = (await readFile(created.eventPath, 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
+      assert.equal(events.filter(x => x.eventId === pending.eventId).length, 1);
+    }
+  }
+});
+
 test('plain cancellation cannot fabricate a quarantine fence', async () => {
   const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'unproved-source-fence-'));
   await createMissionRecord({ missionId: f.mission.missionId, operatorIntent: 'Test cancellation.',
