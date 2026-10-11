@@ -4,6 +4,7 @@ import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createRequiredSourceJobCommandRunner, sourceJobCustodyRequired } from './sourceJobCustodyCommandService.js';
 
 import {
   appendMissionWorkerExecutionReceiptTransition,
@@ -904,7 +905,12 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   }
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
-  const run = options.runCommand || defaultRun;
+  // Opt-in required containment for every git/node command of this worker.
+  // A missing native Windows custodian must block, never fall back to raw
+  // spawnSync or an injected runCommand. This confers no lease-release proof.
+  const run = sourceJobCustodyRequired(options.env || process.env)
+    ? createRequiredSourceJobCommandRunner({ env: options.env || process.env })
+    : options.runCommand || defaultRun;
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
