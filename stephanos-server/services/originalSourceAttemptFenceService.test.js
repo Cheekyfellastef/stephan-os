@@ -5,7 +5,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { createMissionRecord, readMissionRecord, appendMissionEvent } from './missionOrchestratorStore.js';
+import { createMissionRecord, readMissionRecord, appendMissionEvent, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import {
   proveOriginalSourceQuarantine, quarantineOriginalSourceAttempt,
   originalSourceFenceBindsLease, assertOriginalSourceAttemptNotFenced,
@@ -276,6 +276,50 @@ test('quarantine audit safely replays torn matching tail but holds a conflicting
       assert.equal(events.filter(x => x.eventId === pending.eventId).length, 1);
     }
   }
+});
+
+test('quarantine audit journal self-repairs within the canonical lease-release precondition lock', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-fence-release-journal-'));
+  const created = await createMissionRecord({ missionId: f.mission.missionId,
+    repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+    worktreePath: '/worktree', operatorIntent: 'Keep original source safe.',
+    intendedOutcome: 'One release authority.', allowedFiles: [], requiredTests: [],
+    requiredEvidence: [] }, { root, env: {} });
+  await writeFile(created.statePath, JSON.stringify({ ...created.state, ...f.mission }));
+  await assert.rejects(quarantineOriginalSourceAttempt(f.input, { ...f.options, root,
+    appendMissionAuditFile: async () => { throw Error('SIMULATED_LOG_APPEND_LOST'); } }),
+  /SIMULATED_LOG_APPEND_LOST/);
+  const result = await runWithMissionStatePrecondition(f.mission.missionId, {
+    expectedRevision: 8, expectedCurrentPhase: 'CANCELLED',
+  }, async (mission) => {
+    assert.equal(mission.storeMetadata.pendingQuarantineAuditEvent, undefined);
+    assert.equal(originalSourceFenceBindsLease(mission.storeMetadata.originalSourceAttemptFence, f.lease), true);
+    const lines = (await readFile(created.eventPath, 'utf8')).split('\n').filter(Boolean);
+    assert.equal(lines.filter(line => JSON.parse(line).eventId === 'cancel-fence-original-2962-test').length, 1);
+    return 'RECOVERED_BEFORE_PRECONDITION';
+  }, { root });
+  assert.equal(result.preconditionFailed, false);
+  assert.equal(result.result, 'RECOVERED_BEFORE_PRECONDITION');
+});
+
+test('quarantine journal fails closed on mutation of the persisted hash-bound event', async () => {
+  const f = fixture(); const root = await mkdtemp(join(tmpdir(), 'original-fence-journal-tamper-'));
+  const created = await createMissionRecord({ missionId: f.mission.missionId,
+    repository: f.mission.repository, repositoryRoot: '/repo', branch: f.mission.git.branch,
+    worktreePath: '/worktree', operatorIntent: 'Keep original source safe.',
+    intendedOutcome: 'No forged audit.', allowedFiles: [], requiredTests: [],
+    requiredEvidence: [] }, { root, env: {} });
+  await writeFile(created.statePath, JSON.stringify({ ...created.state, ...f.mission }));
+  await assert.rejects(quarantineOriginalSourceAttempt(f.input, { ...f.options, root,
+    appendMissionAuditFile: async () => { throw Error('SIMULATED_CRASH'); } }), /SIMULATED_CRASH/);
+  const stranded = (await readMissionRecord(f.mission.missionId, { root })).state;
+  stranded.storeMetadata.pendingQuarantineAuditEvent.event.originalSourceAttemptFence.prNumber = 99999;
+  await writeFile(created.statePath, JSON.stringify(stranded));
+  await assert.rejects(runWithMissionStatePrecondition(f.mission.missionId, {
+    expectedRevision: 8, expectedCurrentPhase: 'CANCELLED',
+  }, async () => assert.fail('no source authority after tampered journal'), { root }),
+  /ORIGINAL_QUARANTINE_AUDIT_JOURNAL_INVALID/);
+  assert.equal((await readFile(created.eventPath, 'utf8')).includes('cancel-fence-original-2962-test'), false);
 });
 
 test('plain cancellation cannot fabricate a quarantine fence', async () => {
