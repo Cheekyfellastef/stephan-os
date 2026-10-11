@@ -86,11 +86,30 @@ test('actual Windows source-builder adapter invokes contained node and refuses r
 }, async () => {
   const worktree = await mkdtemp(join(tmpdir(), 'source-job-adapter-integrated-'));
   try {
-    const run = createRequiredSourceJobCommandRunner({
-      env: process.env, timeoutMs: 15000,
+    const located = spawnSync('where.exe', ['git.exe'], {
+      encoding: 'utf8', windowsHide: true, timeout: 10000,
     });
-    const good = run('node.exe', ['-e', 'process.stdout.write("custody-adapter-pass")'], {
-      cwd: worktree, env: process.env,
+    assert.equal(located.status, 0, 'required trusted Git executable not located');
+    const gitExe = located.stdout.split(/\r?\n/).map(x => x.trim())
+      .find(x => x.toLowerCase().endsWith('git.exe'));
+    assert.ok(gitExe, 'Git executable path not found');
+    const ambient = {
+      ...process.env,
+      STEPHANOS_SOURCE_CUSTODY_GIT_EXE: gitExe,
+      API_PASSWORD: 'synthetic-hostile-password',
+      GIT_ASKPASS: 'synthetic-hostile-helper',
+      GOOGLE_APPLICATION_CREDENTIALS: 'synthetic-hostile-cloud-file',
+      GH_TOKEN: 'synthetic-hostile-gh-token',
+    };
+    const run = createRequiredSourceJobCommandRunner({ env: ambient, timeoutMs: 15000 });
+    const good = run('node.exe', ['-e', [
+      'const assert=require("node:assert/strict");',
+      'for(const k of ["API_PASSWORD","GIT_ASKPASS","GOOGLE_APPLICATION_CREDENTIALS","GH_TOKEN"])',
+      '  assert.equal(process.env[k],undefined,k);',
+      'assert.ok(process.env.HOME.includes("stephanos-source-custody-"));',
+      'process.stdout.write("custody-adapter-pass");',
+    ].join('')], {
+      cwd: worktree, env: ambient,
     });
     assert.equal(good.status, 0, 'stderr=' + good.stderr);
     assert.match(good.stdout, /custody-adapter-pass/);

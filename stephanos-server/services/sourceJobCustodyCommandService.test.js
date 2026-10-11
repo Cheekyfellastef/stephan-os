@@ -89,20 +89,102 @@ test('source worker strips verifier paths, private keys and credentials before e
     CUSTOM_SECRET: 'forbidden',
     STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED: '1',
   };
-  const safe = sanitizeSourceCustodyChildEnvironment(hostile);
-  assert.equal(safe.PATH, '/trusted');
-  assert.equal(safe.SystemRoot, '/windows');
-  assert.equal(safe.STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED, '1');
-  for (const name of Object.keys(hostile).filter(k => k !== 'PATH' && k !== 'SystemRoot'
-    && k !== 'STEPHANOS_SOURCE_JOB_CUSTODY_REQUIRED')) {
-    assert.equal(Object.hasOwn(safe, name), false, name);
-  }
   const seen = [];
   const run = createRequiredSourceJobCommandRunner({ ...context,
     env: hostile,
     spawnSync: (_, __, options) => { seen.push(options.env); return { status: 0 }; },
   });
   assert.equal(run('node.exe', ['-e', 'process.exit(0)'], { cwd: '/worktree' }).status, 0);
-  assert.deepEqual(seen, [safe]);
+  assert.equal(seen.length, 1);
+  const safe = seen[0];
+  assert.equal(safe.SystemRoot, '/windows');
+  assert.equal(safe.OS, 'Windows_NT');
+  assert.match(safe.USERPROFILE, /stephanos-source-custody-/);
+  assert.equal(safe.HOME, safe.USERPROFILE);
+  assert.equal(safe.TEMP, safe.USERPROFILE);
+  assert.equal(safe.APPDATA, safe.USERPROFILE + '/Roaming');
+  assert.equal(safe.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(safe.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(safe.GIT_CONFIG_GLOBAL, safe.HOME + '/nonexistent-git-config');
+  assert.equal(safe.NODE_OPTIONS, '');
+  for (const name of Object.keys(hostile).filter(k => k !== 'SystemRoot' && k !== 'PATH')) {
+    assert.equal(Object.hasOwn(safe, name), false, name);
+  }
   assert.equal(hostile.GH_TOKEN, 'forbidden'); // no caller-visible env mutation
+});
+
+
+test('child environment is closed-world against unconventionally named password and config channels', () => {
+  const hostile = {
+    SystemRoot: '/windows',
+    HOME: '/Users/operator',
+    USERPROFILE: '/Users/operator',
+    SSH_AUTH_SOCK: '\\\\.\\pipe\\ssh-agent',
+    GIT_ASKPASS: '/Users/operator/helper.sh',
+    API_PASSWORD: 'password',
+    GOOGLE_APPLICATION_CREDENTIALS: '/Users/operator/auth.json',
+    AWS_SHARED_CREDENTIALS_FILE: '/Users/operator/.aws/credentials',
+    GH_TOKEN: 'secret',
+    GITHUB_TOKEN: 'secret',
+    NPM_CONFIG_USERCONFIG: '/Users/operator/.npmrc',
+    GIT_CONFIG_GLOBAL: '/Users/operator/.gitconfig',
+    NODE_OPTIONS: '--require /Users/operator/steal.js',
+    CUSTOM_OAUTH_REFRESH: 'secret',
+    MY_RANDOM_AUTH_CHANNEL: 'secret',
+    PATH: '/Users/operator/bin',
+  };
+  const safe = sanitizeSourceCustodyChildEnvironment(hostile, '/isolated/home', {
+    systemRoot: '/windows', nodePath: '/trusted/node.exe', gitPath: '/trusted/git.exe',
+  });
+  for (const key of [
+    'SSH_AUTH_SOCK', 'GIT_ASKPASS', 'API_PASSWORD', 'GOOGLE_APPLICATION_CREDENTIALS',
+    'AWS_SHARED_CREDENTIALS_FILE', 'GH_TOKEN', 'GITHUB_TOKEN',
+    'CUSTOM_OAUTH_REFRESH', 'MY_RANDOM_AUTH_CHANNEL',
+  ]) assert.equal(Object.hasOwn(safe, key), false, key);
+  assert.equal(safe.USERPROFILE, '/isolated/home');
+  assert.equal(safe.HOME, '/isolated/home');
+  assert.equal(safe.GIT_TERMINAL_PROMPT, '0');
+  assert.equal(safe.NODE_OPTIONS, '');
+  assert.equal(safe.PATH.includes('/Users/operator'), false);
+  assert.equal(JSON.stringify(safe).includes('secret'), false);
+  assert.equal(JSON.stringify(safe).includes('password'), false);
+});
+
+test('closed-world child environment rejects absent trusted roots, not inherited fallbacks', () => {
+  for (const roots of [
+    { systemRoot: '', nodePath: '/trusted/node.exe', gitPath: '/trusted/git.exe' },
+    { systemRoot: '/windows', nodePath: '', gitPath: '/trusted/git.exe' },
+    { systemRoot: '/windows', nodePath: '/trusted/node.exe', gitPath: '' },
+  ]) {
+    assert.throws(() => sanitizeSourceCustodyChildEnvironment({ API_PASSWORD: 'secret' },
+      '/sandbox', roots), /SOURCE_CUSTODY_ENVIRONMENT_ROOTS_UNPROVEN/);
+  }
+});
+
+test('temporary profile is cleaned after subprocess failure without raw retry', () => {
+  const removed = [];
+  const run = createRequiredSourceJobCommandRunner({ ...context,
+    mkdtempSync: () => '/transient/source-home',
+    mkdirSync: () => {},
+    rmSync: (path) => { removed.push(path); },
+    spawnSync: () => ({ status: 125, stderr: 'SOURCE_CUSTODY_BLOCKED' }),
+  });
+  const result = run('node.exe', ['--test', 'test.mjs'], { cwd: '/worktree' });
+  assert.equal(result.status, 125);
+  assert.deepEqual(removed, ['/transient/source-home']);
+});
+
+
+test('disposable source profile cleanup failure is an explicit blocked outcome', () => {
+  const run = createRequiredSourceJobCommandRunner({
+    ...context,
+    mkdtempSync: () => '/transient/source-home',
+    mkdirSync: () => {},
+    rmSync: () => { throw new Error('mock cleanup denied'); },
+    spawnSync: () => ({ status: 0, stdout: 'untrusted-success' }),
+  });
+  const result = run('node.exe', ['--test', 'test.mjs'], { cwd: '/worktree' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.error.message, /DISPOSABLE_PROFILE_CLEANUP_FAILED/);
+  assert.equal(result.stdout, '');
 });
