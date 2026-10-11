@@ -355,7 +355,7 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
   };
   const ordinaryEntry = {
     ...entry,
-    body: '```stephanos-battle-bridge-command\\n' + JSON.stringify(ordinary) + '\\n```',
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(ordinary) + '\n```',
   };
   const strictOrdinary = selectBattleBridgeGitHubCommandBatch([ordinaryEntry], {
     ...options, currentHead: base,
