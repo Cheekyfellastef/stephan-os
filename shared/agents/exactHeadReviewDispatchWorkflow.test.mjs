@@ -59,7 +59,7 @@ test('pull-request planning succeeds neutrally without entering the real planner
     /^      - name: Discover canonical PR targets without mutation\n[\s\S]*$/m,
   )?.[0] || '';
 
-  assert.match(plan, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(plan, /^  plan:\n(?:    #[^\n]*\n)*    if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\n    runs-on: ubuntu-latest/m);
   assert.match(neutral, /if: github\.event_name == 'pull_request'/);
   assert.match(neutral, /Progress: `PULL_REQUEST_PLAN_NEUTRAL`/);
   assert.doesNotMatch(neutral, /uses:|GITHUB_TOKEN|STEPHANOS_|node |gh |curl |workflow_dispatch|pull-requests: write|issues: write/);
