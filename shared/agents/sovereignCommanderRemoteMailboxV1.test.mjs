@@ -2679,6 +2679,35 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
       finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY',
       token: 'MUST_NOT_ESCAPE',
     },
+    originalR7Evidence: {
+      schemaVersion: 'stephanos.original-r7-worker-evidence.v1',
+      queueObserved: true,
+      inventoryComplete: true,
+      inspectedAdapterDirectories: 10,
+      missingAdapterDirectories: 42,
+      scannedFiles: 23,
+      matchingOriginalItems: 1,
+      exactBindingItems: 1,
+      mismatchedOriginalItems: 0,
+      pendingOriginalItems: 0,
+      processingOriginalItems: 0,
+      completedOriginalItems: 1,
+      failedOriginalItems: 0,
+      exactResultPairCandidates: 1,
+      missingResultPairs: 0,
+      actionHashes: ['e'.repeat(64)],
+      blocker: '',
+      readOnly: true,
+      rawPathsReturned: false,
+      rawRecordsReturned: false,
+      secretMaterialReturned: false,
+      writerInactivityProven: false,
+      canonicalTerminalExecutionReceiptProven: false,
+      leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      mergeAuthority: false,
+      originalRawResult: 'MUST_NOT_ESCAPE',
+    },
     health: { repository: 'GREEN', core: 'GREEN', headSync: 'GREEN', services: 'GREEN', laneRefill: 'GREEN', transport: 'GREEN' },
     readOnly: true,
     sourceMutationAllowed: false,
@@ -2731,6 +2760,10 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   assert.equal(result.visibilitySnapshot.controllers.lanes.activeMaterialLaneCount, 15);
   assert.equal(result.visibilitySnapshot.relay.deliveryState, 'FAST_ACTIVE');
   assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
+  assert.equal(result.visibilitySnapshot.originalR7Evidence.exactResultPairCandidates, 1);
+  assert.equal(result.visibilitySnapshot.originalR7Evidence.leaseReleaseAuthority, false);
+  assert.equal(result.visibilitySnapshot.originalR7Evidence.writerInactivityProven, false);
+  assert.equal('originalRawResult' in result.visibilitySnapshot.originalR7Evidence, false);
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|privateRemote|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
 });
