@@ -15,6 +15,7 @@ import {
   createSanitizedMailboxReceiptProjection,
   createSanitizedCriticalBacklogStatusProjection,
   createSanitizedProgrammeAuthorityStatusProjection,
+  readNativeCapacityProgrammeTelemetry,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
@@ -3092,4 +3093,92 @@ test('read-only programme receipt exposes observed original lease identity witho
   assert.equal(unknown.elasticLeaseId, '');
   assert.equal(unknown.elasticObservedMissionPhase, '');
   assert.equal(unknown.elasticOriginalMissionUnique, false);
+});
+
+
+test('native programme proof checks the signed router and exposes only exact-head bounded truth', async () => {
+  const head = 'a'.repeat(40);
+  const observed = [];
+  const result = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: head,
+    nowUtc: '2026-10-11T00:00:00.000Z',
+    verifier: async (options) => {
+      observed.push(options);
+      return {
+        ok: true,
+        reason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
+        candidate: {
+          repository: 'Cheekyfellastef/stephan-os',
+          sourceHead: head,
+          taskClass: 'FOCUSED_REPAIR',
+          model: 'qwen3.5:27b',
+          capacityReceiptId: 'native-capacity-valid-20261011',
+          sourceMutationAllowed: true,
+          mergeAuthority: false,
+          leaseSeizureAllowed: false,
+        },
+      };
+    },
+  });
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].sourceHead, head);
+  assert.equal(observed[0].taskClass, 'FOCUSED_REPAIR');
+  assert.equal(result.nativeCapacityVerified, true);
+  assert.equal(result.nativeCapacitySourceHead, head);
+  assert.equal(result.nativeCapacityModel, 'qwen3.5:27b');
+  assert.equal(result.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  assert.equal(JSON.stringify(result).includes('privateKey'), false);
+
+  const packet = createSanitizedMailboxReceiptProjection({
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'native-capacity-verify-programme-0001',
+    state: 'DONE',
+    expectedHead: head,
+    result: { ok: true, result: {
+      ok: true,
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'HOLD',
+        programmeFinalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD',
+        sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+        sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+        ...result,
+      },
+    } },
+  });
+  assert.equal(packet.operationResult.nativeCapacityVerified, true);
+  assert.equal(packet.operationResult.nativeCapacitySourceHead, head);
+  assert.equal(packet.operationResult.nativeCapacityReceiptId, 'native-capacity-valid-20261011');
+  // Native capacity verification must never turn a separately held source lease green.
+  assert.equal(packet.operationResult.programmeStatus, 'HOLD');
+});
+
+test('native programme proof fails closed for missing, unverifiable, mismatched and over-authorized capacity', async () => {
+  const head = 'b'.repeat(40);
+  const base = { repository: 'Cheekyfellastef/stephan-os', sourceHead: head,
+    taskClass: 'FOCUSED_REPAIR', model: 'qwen3.5:27b',
+    capacityReceiptId: 'native-capacity-valid-20261011',
+    sourceMutationAllowed: true, mergeAuthority: false, leaseSeizureAllowed: false };
+  const inputs = [
+    { ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', candidate: null },
+    { ok: true, candidate: { ...base, sourceHead: 'c'.repeat(40) } },
+    { ok: true, candidate: { ...base, mergeAuthority: true } },
+    { ok: true, candidate: { ...base, leaseSeizureAllowed: true } },
+    { ok: true, candidate: { ...base, sourceMutationAllowed: false } },
+  ];
+  for (const input of inputs) {
+    const observed = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+      verifier: async () => input });
+    assert.equal(observed.nativeCapacityVerified, false);
+    assert.equal(observed.nativeCapacityModel, '');
+    assert.equal(observed.nativeCapacityReceiptId, '');
+    assert.equal(observed.nativeCapacitySourceHead, '');
+  }
+  const thrown = await readNativeCapacityProgrammeTelemetry({ expectedHead: head,
+    verifier: async () => { throw new Error('secret-error-path'); } });
+  assert.equal(thrown.nativeCapacityReason, 'NATIVE_CAPACITY_VERIFIER_FAILED');
+  assert.equal(JSON.stringify(thrown).includes('secret-error-path'), false);
+  const badHead = await readNativeCapacityProgrammeTelemetry({expectedHead: 'not-a-head',
+    verifier: async () => { throw new Error('should-not-reach'); }});
+  assert.equal(badHead.nativeCapacityReason, 'NATIVE_CAPACITY_EXPECTED_HEAD_INVALID');
 });
