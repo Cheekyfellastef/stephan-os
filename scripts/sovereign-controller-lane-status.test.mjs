@@ -9,6 +9,7 @@ import {
   buildSharedWorkspaceStephanosBuildTruthRecord,
   buildStephanosBuildTruth,
   buildSovereignControllerLaneStatus,
+  projectSovereignControllerLaneRemoteReceipt,
   SOVEREIGN_CONTROLLER_LANE_STATUS_FILE,
   writeControllerLaneSpecializedStatus,
 } from './sovereign-controller-lane-status.mjs';
@@ -74,6 +75,45 @@ function logical(overrides = {}) {
     ...overrides,
   };
 }
+
+test('remote controller-status receipt stays bounded with 63 logical controllers without changing stored truth', () => {
+  const logicalControllers = Array.from({ length: 63 }, (_, index) => ({
+    logicalControllerId: `logical-goal-${index + 2000}`,
+    goalIssueNumber: index + 2000,
+    goalRef: `#${index + 2000}`,
+    goalTitle: 'Goal with substantial original evidence and ownership '.repeat(3),
+    lifecycle: 'READY', continuityState: 'TRACKING',
+    hostControllerId: `controller-${(index % 5) + 1}`,
+    hostControllerTitle: `Controller ${(index % 5) + 1}`,
+    executionOwner: 'canonical-mission-scheduler-and-mission-worker',
+    selectedForAdmission: index < 14,
+    retired: false,
+  }));
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet(),
+    logicalFabric: logical({ controllers: logicalControllers, logicalControllerCount: 63,
+      trackingLogicalControllerCount: 63, activeLogicalControllerCount: 0, parkedLogicalControllerCount: 0 }),
+    now: NOW,
+  });
+  const remote = projectSovereignControllerLaneRemoteReceipt(status);
+  assert.equal(status.logical.controllers.length, 63);
+  assert.equal(status.logical.selectedForAdmission, 14);
+  assert.ok(Buffer.byteLength(JSON.stringify(status), 'utf8') > 4096);
+  assert.ok(Buffer.byteLength(JSON.stringify(remote), 'utf8') < 4096);
+  assert.equal(remote.logical.controllers.length, 0);
+  assert.equal(remote.logical.total, 63);
+  assert.equal(remote.logical.selectedForAdmission, 14);
+  assert.deepEqual(remote.logical.hostLoads, status.logical.hostLoads);
+  assert.equal(remote.finalVerdict, status.finalVerdict);
+  assert.deepEqual(remote.lanes, status.lanes);
+  assert.equal(remote.readOnly, true);
+  assert.equal(remote.sourceMutationAllowed, false);
+  assert.equal(remote.mergeAuthority, false);
+  assert.equal(remote.unknownMeansGreen, false);
+  assert.equal(remote.physical.controllers.length, 5);
+  assert.equal(remote.physical.controllers[0].materialLanes, undefined);
+  assert.ok(status.physical.controllers[0].materialLanes.length > 0);
+});
 
 test('reports physical and logical controller posture without inventing fifteen active lanes', () => {
   const result = buildSovereignControllerLaneStatus({
