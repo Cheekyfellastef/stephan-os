@@ -320,11 +320,17 @@ export async function inspectOriginalTerminalWorkerPairV1({ lease = {}, missionI
   } catch {
     return freeze({ ...noAuthority, classification: 'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE' });
   }
-  const classification = exactPairs === 1 && boundWithoutResult === 0 && unboundOriginalItems === 0
-    ? 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
-    : (exactPairs > 1 || boundWithoutResult > 0 || unboundOriginalItems > 0)
-      ? 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE'
-      : 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND';
+  // Distinguish the exact missing proof instead of sending the original owner
+  // through another opaque repair retry. Mixed/duplicate estates still HOLD.
+  const classification = exactPairs > 1
+    ? 'ORIGINAL_MULTIPLE_BOUND_TERMINAL_PAIRS'
+    : unboundOriginalItems > 0
+      ? 'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN'
+      : boundWithoutResult > 0
+        ? 'ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID'
+        : exactPairs === 1
+          ? 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
+          : 'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND';
   return freeze({ ...noAuthority, classification,
     exactPairCount: exactPairs, incompleteOrUnboundCount: boundWithoutResult + unboundOriginalItems });
 }
@@ -566,11 +572,14 @@ export async function reconcileExpiredElasticReviewLeaseV1({
         // Inspect real immutable terminal queue evidence rather than looping on
         // an opaque missing receipt. Even an exact result is NOT a release grant.
         const triage = await inspectOriginalTerminalWorkerPairV1({ lease, missionId: identity.missionId, env });
-        return held(triage.classification === 'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT'
-          ? 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING'
-          : triage.classification === 'ORIGINAL_TERMINAL_PAIR_AMBIGUOUS_OR_INCOMPLETE'
-            ? 'REPAIR_ORIGINAL_TERMINAL_PAIR_INCOMPLETE_OR_AMBIGUOUS'
-            : 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+        const reasonByEvidence = {
+          ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT: 'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING',
+          ORIGINAL_MULTIPLE_BOUND_TERMINAL_PAIRS: 'REPAIR_ORIGINAL_TERMINAL_QUEUE_DUPLICATE_PAIRS',
+          ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN: 'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+          ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID: 'REPAIR_ORIGINAL_BOUND_RESULT_MISSING_OR_INVALID',
+        };
+        return held(reasonByEvidence[triage.classification]
+          || 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
       }
       if (!TERMINAL_EXECUTION_RECEIPT_STATES.has(
         text(history.latestReceipt.state).toLowerCase())) {
