@@ -30,6 +30,7 @@ import {
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
   auditCoreLoopClosureV1,
+  planCoreLoopCheckerEscalationsV1,
   projectOctopusFailedRepairLearningEventV1,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
@@ -628,6 +629,7 @@ function persistentFlywheelStatus() {
     flywheelSingleFlight: true,
     flywheelCycleRunning,
     flywheelFallbackIntervalMs: FLYWHEEL_FALLBACK_MS,
+    loopClosureGapEventPublicationVerdict: lastLoopGapEventPublicationVerdict,
     flywheelLastCycleStartedAtUtc: lastFlywheelCycleStartedAtUtc,
     flywheelLastCycleFinishedAtUtc: lastFlywheelCycleFinishedAtUtc,
     flywheelLastStatus: lastFlywheelSummary.status,
@@ -798,6 +800,9 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     worker: loopEvidence.worker, lease: loopEvidence.lease,
   });
 
+  const checkerEscalationPlan = planCoreLoopCheckerEscalationsV1(loopClosureAudit, {
+    sourceHead: state.sourceHead, observedAtUtc: timestampUtc,
+  });
   const failedRepairGap = projectOctopusFailedRepairLearningEventV1({
     sourceHead: state.sourceHead,
     attemptAtUtc: lastOctopusSelfHealAtUtc,
@@ -829,6 +834,10 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     duplicateControllerFabricAllowed: false,
     ...flywheel,
     loopClosureAudit,
+    checkerEscalationPlan,
+    checkerEscalationCandidateCount: checkerEscalationPlan.candidates.length,
+    checkerUnprovenHandoffCount: checkerEscalationPlan.needsProofEdgeCount,
+    checkerMeasuredGapCount: checkerEscalationPlan.measuredGapEdgeCount,
     failedOctopusRepairGapPressure: failedRepairGap.publish ? failedRepairGap.reason : '',
     failedOctopusRepairGapOwner: failedRepairGap.publish ? failedRepairGap.ownerIssue : '',
     loopClosureAuditSchemaVersion: loopClosureAudit.schemaVersion,
@@ -921,99 +930,73 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
         specificGapPublished = true;
       }
     }
-    const observedGaps = specificGapPublished ? [] : loopClosureAudit.edges.filter((edge) => edge.state === 'GAP');
-    for (const gap of observedGaps) {
-      const edgeKey = gap.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      const eventId = 'core-loop-gap-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;
-      const segments = ['events', eventId + '.json'];
-      const exists = await readJsonIfPresent(resolve(workspaceRoot, ...segments));
-      if (exists) continue;
-      const capabilityId = 'core-loop-closure-' + edgeKey;
-      const event = {
-        ...createSharedWorkspaceEventRecord({
-          eventId,
-          participantId: 'stephanos-core',
-          timestampUtc,
-          eventKind: 'goal-conveyor-incident',
-          summary: 'Core loop closure audit: ' + gap.reason + '. Existing owner: ' + gap.ownerIssue,
-          capabilityFailure: {
-            failureClass: 'CAPABILITY_GAP',
-            genuineCapabilityFailure: true,
-            capabilityId,
-            targetRefs: ['goal:' + gap.ownerIssue],
-            teacherHint: 'stephanos-core',
-            observedAtUtc: timestampUtc,
-          },
-        }),
-        missionId: 'goal-conveyor-fleet-care',
-        relatedIssue: gap.ownerIssue,
-        rootGapId: capabilityId,
-        capabilityId,
-        proofRefs: ['proof/stephanos-core-daemon-current.json'],
-        loopClosureEdgeId: gap.id,
-        canonicalOwner: gap.ownerIssue,
-        createsReplacementScheduler: false,
-        sourceMutationAuthority: false,
-        mergeAuthority: false,
-      };
-      const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
-      if (write.ok !== true) {
-        throw new Error('CORE_LOOP_CLOSURE_GAP_EVENT_WRITE_FAILED:' + String(write.reason || 'UNKNOWN'));
-      }
-      lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_GAP_EVENT_PUBLISHED';
-      break; // At most one new gap event per heartbeat.
-    }
-
-    // When there is no measured GAP and reconciliation is fresh, UNKNOWN
-    // handoffs still need evidence-gathering pressure. Route one immutable,
-    // issue-owned proof request through the existing Flywheel intake, not a
-    // capability-failure report or a replacement scheduler. Missing evidence
-    // must never be promoted to FAILED or CLOSED.
-    const reconciled = loopClosureAudit.edges.some(
-      (edge) => edge.id === 'WATCH_TO_RECONCILIATION' && edge.state === 'CLOSED',
-    );
-    if (!specificGapPublished && observedGaps.length === 0 && reconciled
-        && state.gamingActive !== true) {
-      for (const edge of loopClosureAudit.edges.filter((item) => item.state === 'UNKNOWN')) {
-        const edgeKey = edge.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        const eventId = 'core-loop-proof-needed-' + state.sourceHead.slice(0, 12) + '-' + edgeKey;
-        const segments = ['events', eventId + '.json'];
+    // Exhaust the entire 12-edge checker plan over bounded heartbeats, not
+    // just the first repeated GAP. GAPs outrank UNKNOWN evidence requests,
+    // but already-published GAPs must never starve independent UNKNOWNs.
+    // Every unresolved edge re-enters the same canonical owner's intake once
+    // per six-hour observation window, without opening new scope or sending
+    // a GitHub command from this read-only checker.
+    if (!specificGapPublished && state.gamingActive !== true) {
+      for (const candidate of checkerEscalationPlan.candidates) {
+        const segments = ['events', candidate.eventId + '.json'];
         if (await readJsonIfPresent(resolve(workspaceRoot, ...segments))) continue;
-        const canonicalOwner = edge.ownerIssue === '#2670' ? '#2972' : edge.ownerIssue;
-        const capabilityId = 'core-loop-evidence-' + edgeKey;
+        const isMeasuredGap = candidate.state === 'GAP';
+        const ownerIssue = candidate.ownerIssue;
+        const capabilityId = 'core-loop-closure-' + candidate.edgeId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
         const event = {
           ...createSharedWorkspaceEventRecord({
-            eventId,
+            eventId: candidate.eventId,
             participantId: 'stephanos-core',
             timestampUtc,
-            eventKind: 'goal-conveyor-proof-needed',
-            summary: 'Core handoff proof unavailable: ' + edge.reason + '. Existing owner: ' + canonicalOwner,
-            learningCandidate: {
-              capabilityId,
-              requiresExistingGoalSearch: true,
-              repairReplayRequired: false,
-              componentAndOwnerRefs: [canonicalOwner],
-              existingGoalCandidates: [canonicalOwner],
-              proofRequired: true,
-              observedState: 'UNKNOWN',
-            },
+            eventKind: isMeasuredGap ? 'goal-conveyor-incident' : 'goal-conveyor-proof-needed',
+            summary: (isMeasuredGap
+              ? 'Core loop gap persists: '
+              : 'Core handoff remains unproven: ') + candidate.reason
+              + '. Existing owner: ' + ownerIssue,
+            ...(isMeasuredGap ? {
+              capabilityFailure: {
+                failureClass: 'CAPABILITY_GAP',
+                genuineCapabilityFailure: true,
+                capabilityId,
+                targetRefs: ['goal:' + ownerIssue],
+                teacherHint: 'stephanos-core',
+                observedAtUtc: timestampUtc,
+              },
+            } : {
+              learningCandidate: {
+                capabilityId: 'core-loop-evidence-' + candidate.edgeId.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                requiresExistingGoalSearch: true,
+                repairReplayRequired: false,
+                componentAndOwnerRefs: [ownerIssue],
+                existingGoalCandidates: [ownerIssue],
+                proofRequired: true,
+                observedState: 'UNKNOWN',
+              },
+            }),
           }),
           missionId: 'goal-conveyor-fleet-care',
-          relatedIssue: canonicalOwner,
-          loopClosureEdgeId: edge.id,
-          evidenceTruth: 'UNKNOWN',
-          requestedProofReason: edge.reason,
+          relatedIssue: ownerIssue,
+          loopClosureEdgeId: candidate.edgeId,
+          checkerWindowId: checkerEscalationPlan.windowId,
+          evidenceTruth: candidate.state,
+          requestedProofReason: candidate.reason,
+          ...(isMeasuredGap ? { rootGapId: capabilityId, capabilityId } : {}),
           proofRefs: ['proof/stephanos-core-daemon-current.json'],
-          canonicalOwner,
+          canonicalOwner: ownerIssue,
           createsReplacementScheduler: false,
           newGoalScopeAuthorized: false,
           sourceMutationAuthority: false,
+          leaseOverrideAllowed: false,
           mergeAuthority: false,
         };
         const write = await writeAtomicJson(workspaceRoot, segments, event, { repoRoot });
-        if (write.ok !== true) throw new Error('CORE_LOOP_EVIDENCE_REQUEST_WRITE_FAILED');
-        lastLoopGapEventPublicationVerdict = 'CANONICAL_FLYWHEEL_PROOF_REQUEST_PUBLISHED';
-        break; // At most one proof request per heartbeat.
+        if (write.ok !== true) {
+          throw new Error('CORE_LOOP_CHECKER_EVENT_WRITE_FAILED:' + String(write.reason || 'UNKNOWN'));
+        }
+        lastLoopGapEventPublicationVerdict = isMeasuredGap
+          ? 'CANONICAL_FLYWHEEL_GAP_EVENT_PUBLISHED'
+          : 'CANONICAL_FLYWHEEL_PROOF_REQUEST_PUBLISHED';
+        break; // Never more than one escalation from the plan per heartbeat.
       }
     }
     } catch (error) {

@@ -303,12 +303,13 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
     ? Math.max(0, gapClosureSummary.gapClosureUnresolvedOwnerCount) : 0;
 
   let verdict = 'WAITING';
-  if (materialActions > 0) verdict = 'BUILDING';
+  // A material action on a resource-disjoint lane must never hide a global
+  // programme HOLD or a degraded refill. Both still require the existing
+  // guarded Core -> Sovereign repair continuation. Retain the action count
+  // separately, but do not let it short-circuit repair of the blocked conveyor.
+  if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (degraded) verdict = 'DEGRADED';
-  // HOLD and stranded parked lanes must wake the existing guarded Sovereign
-  // repair flow. Checking idle first suppressed repair when the goal conveyor
-  // truthfully reported zero runnable work because everything was blocked.
-  else if (programmeHeld) verdict = 'PROGRAMME_HOLD';
+  else if (materialActions > 0) verdict = 'BUILDING';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
   else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
   else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
@@ -364,6 +365,57 @@ export function projectOctopusFailedRepairLearningEventV1({
 // distinguishes a live controller from a proven, closed goal-to-live loop.
 // Missing producer evidence stays UNKNOWN and can never turn the dashboard green.
 export const STEPHANOS_CORE_LOOP_CLOSURE_AUDIT_SCHEMA_V1 = 'stephanos.core-loop-closure-audit.v1';
+
+// The existing Core Daemon is the sole checker-of-checkers. Each audit must
+// independently inspect every handoff; no known GAP may prevent UNKNOWN
+// handoffs from receiving their own owner-linked evidence requests. Reopen
+// unresolved cases once per bounded window, not once forever per Git head.
+export const CORE_LOOP_CHECKER_RECHECK_MS = 6 * 60 * 60 * 1000;
+
+export function planCoreLoopCheckerEscalationsV1(audit = {}, {
+  sourceHead = audit?.sourceHead,
+  observedAtUtc = audit?.observedAtUtc,
+} = {}) {
+  const head = String(sourceHead || '').trim().toLowerCase();
+  const observedAtMs = Date.parse(String(observedAtUtc || ''));
+  const valid = /^[0-9a-f]{40}$/.test(head) && Number.isFinite(observedAtMs);
+  const windowId = valid ? Math.floor(observedAtMs / CORE_LOOP_CHECKER_RECHECK_MS) : null;
+  const candidates = valid && Array.isArray(audit?.edges)
+    ? audit.edges.filter((edge) =>
+      ['GAP', 'UNKNOWN'].includes(edge?.state)
+      && /^[A-Z][A-Z0-9_]{3,80}$/.test(String(edge?.id || ''))
+      && /^#[1-9][0-9]{0,8}$/.test(String(edge?.ownerIssue || '')),
+    ).sort((left, right) =>
+      Number(left.state !== 'GAP') - Number(right.state !== 'GAP'),
+    )
+    : [];
+  return Object.freeze({
+    schemaVersion: 'stephanos.core-loop-checker-escalation-plan.v1',
+    sourceHead: valid ? head : '',
+    windowId,
+    totalAuditedEdgeCount: Array.isArray(audit?.edges) ? audit.edges.length : 0,
+    needsProofEdgeCount: candidates.filter((edge) => edge.state === 'UNKNOWN').length,
+    measuredGapEdgeCount: candidates.filter((edge) => edge.state === 'GAP').length,
+    // The publisher checks every candidate against the immutable events store,
+    // writing no more than one new record per heartbeat. The full plan is
+    // stable within one window and reopens if the gap remains on a later one.
+    candidates: Object.freeze(candidates.map((edge) => Object.freeze({
+      edgeId: edge.id,
+      state: edge.state,
+      // #2670 is a whole-system parent filtered from direct Flywheel
+      // owner attachments. Escalate its edge via existing concrete #2972;
+      // keep the original audit owner visible for traceability.
+      ownerIssue: edge.ownerIssue === '#2670' ? '#2972' : edge.ownerIssue,
+      auditOwnerIssue: edge.ownerIssue,
+      reason: edge.reason,
+      eventId: `core-loop-${edge.state === 'GAP' ? 'gap' : 'proof-needed'}-${head.slice(0, 12)}-${edge.id.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-w${windowId}`,
+    }))),
+    noDuplicateController: true,
+    noNewGoalScopeAuthority: true,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  });
+}
 
 export function auditCoreLoopClosureV1({
   coreState = {}, flywheel = {}, worker = {}, lease = {},
@@ -448,8 +500,13 @@ export function auditCoreLoopClosureV1({
         : physicalPickup ? 'FRESH_EXACT_HEAD_WORKER_EXECUTION_RECEIPT' : 'PHYSICAL_PICKUP_NOT_PROVEN',
     '#2961', physicalPickup ? 'status/mission-orchestrator-worker-heartbeat.json' : '');
 
-  const leaseActive = lease?.active === true;
-  const leaseExpired = leaseActive && timestamp(lease?.expiresAtUtc) !== null && Date.parse(lease.expiresAtUtc) < now;
+  // Persisted lease records carry status=ACTIVE, not a computed .active flag.
+  // Observing an expired on-disk lease is a GAP even when the runtime
+  // validation correctly reports that it no longer grants mutation authority.
+  const leasePresent = (typeof lease?.leaseId === 'string' && lease.leaseId.length > 0
+    && lease?.status !== 'RELEASED') || lease?.active === true;
+  const leaseExpiry = timestamp(lease?.expiresAtUtc);
+  const leaseExpired = leasePresent && leaseExpiry !== null && leaseExpiry < now;
   add('PICKUP_TO_EXECUTION',
     leaseExpired ? 'GAP' : physicalPickup ? 'IN_PROGRESS' : 'UNKNOWN',
     leaseExpired ? 'ACTIVE_SOURCE_MUTATION_LEASE_EXPIRED'
@@ -462,7 +519,13 @@ export function auditCoreLoopClosureV1({
   add('PROOF_TO_PROTECTED_MERGE', 'UNKNOWN', 'EXACT_HEAD_APPROVAL_AND_MERGE_RECEIPT_NOT_OBSERVED', '#2670');
   add('MERGE_TO_LIVE_ACCEPTANCE', 'UNKNOWN', 'POST_MERGE_RUNTIME_ACCEPTANCE_NOT_OBSERVED', '#2972');
   add('LIVE_TO_REGRESSION_RESCAN', 'UNKNOWN', 'UNATTENDED_REGRESSION_RESCAN_NOT_OBSERVED', '#2972');
-  add('GAP_TO_GOAL_AND_RETRY', 'UNKNOWN', 'EVIDENCED_GAP_DEDUPE_ADMISSION_AND_RETRY_NOT_OBSERVED', '#2670');
+  const eventPublicationBlocked = String(flywheel?.loopClosureGapEventPublicationVerdict || '')
+    .startsWith('CANONICAL_FLYWHEEL_GAP_EVENT_BLOCKED:');
+  add('GAP_TO_GOAL_AND_RETRY',
+    eventPublicationBlocked ? 'GAP' : 'UNKNOWN',
+    eventPublicationBlocked ? 'CANONICAL_FLYWHEEL_GAP_PUBLICATION_FAILED'
+      : 'EVIDENCED_GAP_DEDUPE_ADMISSION_AND_RETRY_NOT_OBSERVED',
+    '#2670');
 
   const gaps = edges.filter((edge) => edge.state === 'GAP');
   const unproven = edges.filter((edge) => edge.state === 'UNKNOWN');

@@ -30,12 +30,13 @@ const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
 const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {

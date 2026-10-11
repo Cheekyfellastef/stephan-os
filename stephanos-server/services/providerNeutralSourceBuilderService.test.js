@@ -508,6 +508,39 @@ test('local Forge builder applies exact structured edits and escrows the resulti
   );
 });
 
+test('Forge rejects a late import before escrow and rolls back a generated structured edit', async () => {
+  const fx = await fixture();
+  const collected = [];
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/example.mjs',
+        old: 'export const value = 1;\n',
+        new: "export const value = 2;\nimport { readFileSync } from 'node:fs';\n",
+      }],
+      summary: 'Malformed generated module should never be published.',
+    }),
+    collectAgentWorkerResult: async (record) => { collected.push(record); return { state: { revision: 1 } }; },
+  });
+  assert.equal(result.processed, true);
+  assert.equal(result.success, false);
+  assert.equal(result.failureStage, 'SOURCE_OR_TEST');
+  assert.match(result.error, /PROVIDER_NEUTRAL_IMPORT_STRUCTURE_INVALID:shared\/agents\/example\.mjs:import not at top/);
+  assert.equal(collected.length, 1);
+  assert.equal(collected[0].success, false);
+  assert.equal(collected[0].sourceArtifactEscrow, undefined);
+  assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')), 'export const value = 1;\n');
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout.trim(), '');
+});
+
 test('local Forge builder creates a bounded new file through structured edits', async () => {
   const fx = await fixture(['node --check shared/agents/new-file.mjs']);
   const result = await processNextProviderNeutralSourceBuild({

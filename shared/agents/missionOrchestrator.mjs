@@ -604,7 +604,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     const adapter = text(event.adapter, inferredAdapter).toLowerCase();
     const allowedAdapters = state.missionKind === 'live-runtime-investigation'
       ? new Set(['openclaw-readonly'])
-      : new Set(['codex', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+      : new Set(['codex', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
     const agentMatches = eventAgent === adapter
       || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly')
       || (eventAgent === 'stephanos-scout-coder' && adapter === 'openclaw-local');

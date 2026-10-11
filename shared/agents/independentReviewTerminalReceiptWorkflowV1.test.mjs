@@ -52,13 +52,13 @@ test('trusted review workflow retains the current one-job checkout and least-aut
   assert.equal([...source.matchAll(/^    permissions:\s*$/gm)].length, 1);
 });
 
-test('terminal publisher remains after immutable result upload and both remain always-run bounded steps', () => {
+test('terminal publisher and immutable upload run after genuine review failures but not installation budget holds', () => {
   const source = workflowText();
   const upload = stepBody(source, 'Upload the exact-run immutable independent review result', 'Surface terminal exact-head findings or pre-artifact failure');
   const publish = stepBody(source, 'Surface terminal exact-head findings or pre-artifact failure');
-  assert.match(upload, /if: \$\{\{ always\(\) \}\}/);
+  assert.ok(upload.includes("if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
   assert.match(upload, /timeout-minutes: 4/);
-  assert.match(publish, /if: \$\{\{ always\(\) \}\}/);
+  assert.ok(publish.includes("if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
   assert.match(publish, /timeout-minutes: 4/);
   assert.match(publish, /STEPHANOS_TERMINAL_REVIEW_HEAD:/);
   assert.match(publish, /STEPHANOS_TERMINAL_REVIEW_BASE:/);

@@ -381,9 +381,9 @@ test('trusted workflow serializes every bounded retry under the same PR authorit
 test('pull-request planning remains a successful read-only neutral gate', () => {
   const planJob = COORDINATOR_WORKFLOW.match(/^  plan:\n[\s\S]*?^  coordinate:/m)?.[0] || '';
   const neutralStep = planJob.match(
-    /^      - name: Publish pull-request neutral planning truth\n[\s\S]*?^      - name: Check out trusted default-branch planner/m,
+    /^      - name: Publish pull-request neutral planning truth\n[\s\S]*?^      - name: Gate hosted review on its own GitHub installation API budget/m,
   )?.[0] || '';
-  assert.match(planJob, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(planJob, /^  plan:\n(?:    #[^\n]*\n)*    if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\n    runs-on: ubuntu-latest/m);
   assert.match(neutralStep, /if: github\.event_name == 'pull_request'/);
   assert.doesNotMatch(neutralStep, /GITHUB_TOKEN|STEPHANOS_|actions: write|issues: write|pull-requests: write/);
   assert.match(
