@@ -81,6 +81,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Verify exact protected owner/bot transport and shared replay tests (temporary PR proof)
+        run: |
+          node --test --test-concurrency=1 \
+            shared/agents/operatorPersonalRepositoryMergeV1.test.mjs \
+            shared/agents/battleBridgeGitHubCommandMailboxProtectedMerge.test.mjs
       - name: Run runtime guardrail and provider tests
         run: |
           node --test --test-concurrency=1 \
