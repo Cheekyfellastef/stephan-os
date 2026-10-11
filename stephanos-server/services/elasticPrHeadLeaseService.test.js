@@ -398,7 +398,7 @@ test('canonical consumed action binds opaque provider result IDs to the original
       { missingLog: true, releases: 0 },
     ]) {
       const resultId = scenario.providerResultId || `stephanos-native-${originalActionId}`;
-      const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'BLOCKED',
+      const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'MERGE_PULL_REQUEST',
         dispatch: { adapter: 'stephanos-native', status: 'complete', resultId },
         storeMetadata: { processedEventIds: scenario.unprocessed ? [] : [eventId] } });
       const lease = leaseFor(parked);
