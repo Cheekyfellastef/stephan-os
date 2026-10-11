@@ -312,6 +312,8 @@ export function buildStephanosBuildTruth(status = {}) {
       lane
       && text(lane.workerId, 120)
       && text(lane.proofRef, 220)
+      && Array.isArray(host.proofRefs)
+      && host.proofRefs.includes(text(lane.proofRef, 220))
       && timestamp(lane.lastMaterialActionAtUtc)
     );
     let state = continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
