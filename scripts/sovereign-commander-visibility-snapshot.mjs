@@ -7,6 +7,7 @@ import { collectBattleBridgeObservation } from './battle-bridge-observation.mjs'
 import { collectSovereignControllerLaneStatus } from './sovereign-controller-lane-status.mjs';
 import { collectSovereignMeterStatus } from './sovereign-meter-status.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import { inspectOriginalR7QueueEvidenceV1, ORIGINAL_R7_QUEUE_EVIDENCE_SCHEMA } from '../shared/agents/originalElasticSourceWorkerQueueEvidenceV1.mjs';
 
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_SCHEMA = 'stephanos.sovereign-visibility-snapshot.v1';
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_MARKER = 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=';
@@ -434,6 +435,53 @@ function compactMeters(meters = {}) {
   });
 }
 
+function compactOriginalR7Evidence(value = {}) {
+  const valid = value?.schemaVersion === ORIGINAL_R7_QUEUE_EVIDENCE_SCHEMA
+    && value.readOnly === true && value.rawPathsReturned === false
+    && value.rawRecordsReturned === false && value.secretMaterialReturned === false
+    && value.writerInactivityProven === false
+    && value.canonicalTerminalExecutionReceiptProven === false
+    && value.leaseReleaseAuthority === false
+    && value.sourceMutationAuthority === false
+    && value.mergeAuthority === false;
+  const source = valid ? value : {};
+  const safeCount = (key) => integer(source[key], 1_000_000) ?? 0;
+  const blockers = new Set([
+    '', 'ORIGINAL_QUEUE_ROOT_UNAVAILABLE', 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    'ORIGINAL_QUEUE_SCAN_LIMIT_REACHED', 'ORIGINAL_QUEUE_IDENTITY_UNVERIFIED',
+    'ORIGINAL_QUEUE_RESULT_NOT_PROVEN',
+  ]);
+  return Object.freeze({
+    schemaVersion: ORIGINAL_R7_QUEUE_EVIDENCE_SCHEMA,
+    queueObserved: valid && source.queueObserved === true,
+    inventoryComplete: valid && source.inventoryComplete === true,
+    inspectedAdapterDirectories: safeCount('inspectedAdapterDirectories'),
+    missingAdapterDirectories: safeCount('missingAdapterDirectories'),
+    scannedFiles: safeCount('scannedFiles'),
+    matchingOriginalItems: safeCount('matchingOriginalItems'),
+    exactBindingItems: safeCount('exactBindingItems'),
+    mismatchedOriginalItems: safeCount('mismatchedOriginalItems'),
+    pendingOriginalItems: safeCount('pendingOriginalItems'),
+    processingOriginalItems: safeCount('processingOriginalItems'),
+    completedOriginalItems: safeCount('completedOriginalItems'),
+    failedOriginalItems: safeCount('failedOriginalItems'),
+    exactResultPairCandidates: safeCount('exactResultPairCandidates'),
+    missingResultPairs: safeCount('missingResultPairs'),
+    actionHashes: Object.freeze((Array.isArray(source.actionHashes) ? source.actionHashes : [])
+      .filter((hash) => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)).slice(0, 4)),
+    blocker: valid && blockers.has(source.blocker) ? source.blocker : 'ORIGINAL_QUEUE_INVENTORY_UNOBSERVABLE',
+    readOnly: true,
+    rawPathsReturned: false,
+    rawRecordsReturned: false,
+    secretMaterialReturned: false,
+    writerInactivityProven: false,
+    canonicalTerminalExecutionReceiptProven: false,
+    leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+  });
+}
+
 export function buildSovereignVisibilitySnapshot({
   capturedAtUtc = new Date().toISOString(),
   repository = {},
@@ -443,6 +491,7 @@ export function buildSovereignVisibilitySnapshot({
   controllers = {},
   meters = {},
   relay = {},
+  originalR7Evidence = {},
 } = {}) {
   const compactObservationValue = compactObservation(observation);
   const compactControllersValue = compactControllers(controllers);
@@ -493,6 +542,7 @@ export function buildSovereignVisibilitySnapshot({
     controllers: compactControllersValue,
     meters: compactMetersValue,
     relay,
+    originalR7Evidence: compactOriginalR7Evidence(originalR7Evidence),
     health: Object.freeze({
       repository: repositoryLight,
       core: coreLight,
@@ -524,14 +574,16 @@ export async function collectSovereignVisibilitySnapshot({
   battleBridgeCollector = collectBattleBridgeObservation,
   controllerCollector = collectSovereignControllerLaneStatus,
   meterCollector = collectSovereignMeterStatus,
+  originalR7EvidenceCollector = inspectOriginalR7QueueEvidenceV1,
 } = {}) {
   const current = now();
-  const [observation, controllers, meters, selfHeal, relay] = await Promise.all([
+  const [observation, controllers, meters, selfHeal, relay, originalR7Evidence] = await Promise.all([
     battleBridgeCollector({ spawnSyncFn, env, now: () => current }),
     controllerCollector({ env, now: () => current }),
     meterCollector({ env, spawnSyncFn, now: () => current }),
     collectSelfHealVisibility({ env, readFileFn, now: current }),
     collectRelayVisibility({ env, readFileFn, now: current }),
+    originalR7EvidenceCollector({ env }),
   ]);
   const repository = collectRepositoryVisibility({ spawnSyncFn });
   const core = collectCoreDaemonVisibility({ spawnSyncFn });
@@ -544,6 +596,7 @@ export async function collectSovereignVisibilitySnapshot({
     controllers,
     meters,
     relay,
+    originalR7Evidence,
   });
 }
 
