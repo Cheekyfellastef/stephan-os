@@ -1658,24 +1658,32 @@ test('malformed source-matching prior run blocks instead of evading replay proof
   assert.ok(invalidContainer.blockers.includes('personal-repository-prior-runs-invalid'));
 });
 
-test('wrong actor or source title cannot become an exact prior operator replay', () => {
+test('unrelated source title is ignored, but matching-source lookalike transport is malformed', () => {
+  const unrelated = dispatchRun({
+    id: runId + 14,
+    name: `Protected operator merge ${'9'.repeat(40)}`,
+    display_title: `Protected operator merge ${'9'.repeat(40)}`,
+  });
   const ready = validatePersonalRepositoryDispatchExecution(
-    dispatchExecutionInput({
-      priorRuns: [
-        dispatchRun(),
-        dispatchRun({ id: runId + 13, triggering_actor: { login: 'lookalike-operator' } }),
-        dispatchRun({
-          id: runId + 14,
-          name: `Protected operator merge ${'9'.repeat(40)}`,
-          display_title: `Protected operator merge ${'9'.repeat(40)}`,
-        }),
-      ],
-    }),
+    dispatchExecutionInput({ priorRuns: [dispatchRun(), unrelated] }),
     expectedDispatchExecution,
   );
   assert.equal(ready.valid, true);
   assert.deepEqual(ready.replayRunIds, []);
   assert.deepEqual(ready.malformedPriorRunIds, []);
+
+  const blocked = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ priorRuns: [
+      dispatchRun(),
+      dispatchRun({ id: runId + 13, triggering_actor: { login: 'lookalike-operator' } }),
+      unrelated,
+    ] }),
+    expectedDispatchExecution,
+  );
+  assert.equal(blocked.valid, false);
+  assert.deepEqual(blocked.replayRunIds, []);
+  assert.deepEqual(blocked.malformedPriorRunIds, [runId + 13]);
+  assert.ok(blocked.blockers.includes('personal-repository-prior-run-identity-invalid'));
 });
 
 test('all seven universally applicable exact-head workflow identities must be active and successful', () => {
