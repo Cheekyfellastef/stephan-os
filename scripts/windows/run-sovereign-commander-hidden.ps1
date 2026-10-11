@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-11-private-inspection-parity-v5',
+    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
     [switch]$SkipCoreDaemonLifecycle,
     [switch]$SkipDesktopCommanderCrossHeal
 )
