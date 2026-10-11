@@ -180,7 +180,7 @@ test('flywheel question stays non-executing but writes a provenance-bound dialog
   const receipt = harness.writes[0].record;
   const validation = validateSharedWorkspaceRecord(receipt, { nowMs: Date.parse(NOW) });
   assert.equal(validation.valid, true, validation.errors.join(', '));
-  assert.equal(receipt.dialogueSchemaVersion, 'stephanos.flywheel-dialogue-receipt.v1');
+  assert.equal(receipt.exchangeSchemaVersion, 'stephanos.flywheel-dialogue-receipt.v1');
   assert.equal(receipt.receivedRecordId, 'durable-flywheel-20260925175500000');
   assert.deepEqual(receipt.flywheelCreatedCanonicalGoals, [2999]);
   assert.equal(receipt.authority.mergeAuthorityAdded, false);
