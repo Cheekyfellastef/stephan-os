@@ -22,7 +22,7 @@ import {
   publishNextMissionWorkerAction,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
-import { runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
+import { readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
@@ -38,6 +38,28 @@ const PARKED_OR_TERMINAL_PHASES = new Set([
 const SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress', 'stalled']);
 const TERMINAL_EXECUTION_RECEIPT_STATES = new Set(['completed', 'failed', 'cancelled']);
+
+// Provider result IDs and queue action IDs are different namespaces. Resolve
+// their relationship from the canonical consumed result event, never by
+// stripping a provider prefix. Caller holds the mission-state precondition
+// lock, preventing a concurrent result or retry from replacing this identity.
+async function readOriginalSourceExecutionIdV1(mission, paths, env) {
+  const resultId = text(mission?.dispatch?.resultId);
+  if (!resultId) return '';
+  const record = await readMissionRecord(mission.missionId, { root: paths.orchestratorRoot, env });
+  if ((await stat(record.eventPath)).size > 2097152) return '';
+  const lines = (await readFile(record.eventPath, 'utf8')).split('\n').filter(Boolean);
+  if (lines.length > 2048) return '';
+  const processed = new Set(mission?.storeMetadata?.processedEventIds || []);
+  const matches = lines.map((line) => JSON.parse(line)).filter((event) =>
+    event?.eventType === 'AGENT_RESULT_RECEIVED'
+    && text(event.missionId) === text(mission.missionId)
+    && text(event.resultId) === resultId
+    && processed.has(text(event.eventId)));
+  if (matches.length !== 1) return '';
+  const eventId = text(matches[0].eventId);
+  return eventId.startsWith('result-') ? eventId.slice('result-'.length) : '';
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -851,11 +873,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
           !TERMINAL_EXECUTION_RECEIPT_STATES.has(text(receipt.state).toLowerCase()))) {
           return hold('PARKED_ORIGINAL_TERMINAL_EXECUTION_UNPROVEN');
         }
-        // Canonical source dispatch retains its result ID independently of PR
-        // check actions. A check-only lease history cannot prove that writer
-        // finished. Older source revisions may precede this PR-head lease, so
-        // inspect that exact execution rather than replacing its source binding.
-        const sourceExecutionId = text(current?.dispatch?.resultId);
+        // Resolve the canonical consumed source action independently of the
+        // provider result namespace and later PR checks. Older source revisions
+        // can predate this lease; preserve their original receipt binding.
+        const resolveSourceExecutionId = normalized.readOriginalSourceExecutionId
+          ?? readOriginalSourceExecutionIdV1;
+        const sourceExecutionId = text(await resolveSourceExecutionId(current, paths, env));
         const actionPrefix = `${currentLease.laneId}-r`;
         const sourceSuffix = sourceExecutionId.startsWith(actionPrefix)
           ? sourceExecutionId.slice(actionPrefix.length) : '';

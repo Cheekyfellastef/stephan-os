@@ -194,6 +194,7 @@ test('releases a parked exact lease and refills the same lease slot with the nex
     paths: PATHS,
     sourceRevision: SOURCE,
     runWithMissionStatePrecondition: async (_id, _expected, operation) => ({ preconditionFailed: false, result: await operation(parked) }),
+    readOriginalSourceExecutionId: async (current) => current.dispatch.resultId,
     originalMissionInFlightFn: async () => false,
     readSourceMutationLease: async () => ({ ok: true, present: true, reason: 'SOURCE_MUTATION_LEASE_ACTIVE', record: parkedLease }),
     releaseSourceMutationLease: async (input) => {
@@ -334,6 +335,7 @@ test('parked lease release holds on original identity, queue uncertainty, runnin
           ? [{ ...terminal, executionId: 'earlier-source-writer', state: 'started' }, receipt] : [receipt];
         return { ok: true, receipts, latestReceipt: receipt };
       },
+      readOriginalSourceExecutionId: async (current) => current.dispatch.resultId,
       runWithMissionStatePrecondition: async (_id, _expected, operation) => scenario.resumed
         ? { preconditionFailed: true, result: null }
         : { preconditionFailed: false, result: await operation(scenario.running
@@ -349,6 +351,61 @@ test('parked lease release holds on original identity, queue uncertainty, runnin
     assert.equal(result.held[0].reason, scenario.reason);
     assert.equal(releases, 0);
   }
+});
+
+test('canonical consumed action binds opaque provider result IDs to the original receipt across lease revisions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'parked-source-action-binding-'));
+  const originalActionId = 'critical-2962-elastic-goal-r1-123456789abc';
+  const checkActionId = 'critical-2962-elastic-goal-r7-abcdef123456';
+  const eventId = `result-${originalActionId}`;
+  try {
+    for (const scenario of [
+      { providerResultId: `stephanos-native-${originalActionId}`, releases: 1 },
+      { providerResultId: 'provider-opaque-result-001', releases: 1 },
+      { duplicate: true, releases: 0 },
+      { unprocessed: true, releases: 0 },
+      { otherMission: true, releases: 0 },
+      { wrongResult: true, releases: 0 },
+      { malformedAction: true, releases: 0 },
+      { missingLog: true, releases: 0 },
+    ]) {
+      const resultId = scenario.providerResultId || `stephanos-native-${originalActionId}`;
+      const parked = mission(2962, 2987, HEAD_A, { currentPhase: 'BLOCKED',
+        dispatch: { adapter: 'stephanos-native', status: 'complete', resultId },
+        storeMetadata: { processedEventIds: scenario.unprocessed ? [] : [eventId] } });
+      const lease = leaseFor(parked);
+      const terminal = { state: 'completed', executionId: checkActionId, leaseKey: lease.leaseId,
+        sourceHead: HEAD_A, repository: REPOSITORY, issueNumber: 2962, prNumber: 2987, branch: lease.branch };
+      const original = { ...terminal, executionId: originalActionId,
+        leaseKey: 'critical-2962-elastic-goal-r1-lease', sourceHead: SOURCE, prNumber: 0 };
+      const event = { eventId: scenario.malformedAction ? 'result-unknown-action' : eventId,
+        eventType: 'AGENT_RESULT_RECEIVED', missionId: scenario.otherMission ? 'other-mission' : parked.missionId,
+        resultId: scenario.wrongResult ? 'another-provider-result' : resultId };
+      if (scenario.malformedAction) parked.storeMetadata.processedEventIds = [event.eventId];
+      const eventPath = join(root, `${parked.missionId}.events.ndjson`);
+      await writeFile(join(root, `${parked.missionId}.state.json`), JSON.stringify(parked));
+      if (scenario.missingLog) await rm(eventPath, { force: true });
+      else await writeFile(eventPath, `${JSON.stringify(event)}\n${scenario.duplicate ? JSON.stringify(event) + '\n' : ''}`);
+      let releases = 0;
+      const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([parked]), {
+        now: NOW, paths: { ...PATHS, orchestratorRoot: root }, sourceRevision: SOURCE,
+        readSourceMutationLease: async () => ({ ok: true, present: true, record: lease }),
+        readExecutionReceiptHistory: async (_root, filters) => {
+          if (filters.executionId) {
+            assert.equal(filters.executionId, originalActionId);
+            return { ok: true, receipts: [original], latestReceipt: original };
+          }
+          return { ok: true, receipts: [terminal], latestReceipt: terminal };
+        },
+        originalMissionInFlightFn: async () => false,
+        releaseSourceMutationLease: async () => { releases++; return { ok: true, released: true }; },
+        claimSourceMutationLease: async () => assert.fail('parked goal must not refill itself'),
+        publishWorkerAction: async () => assert.fail('parked goal must not re-dispatch'),
+      });
+      assert.equal(releases, scenario.releases, JSON.stringify(scenario));
+      assert.equal(result.ok, scenario.releases === 1);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('signed PR-head commit actions use the canonical openclaw-signed adapter', async () => {
