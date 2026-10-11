@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { selectBattleBridgeGitHubCommandBatch } from './battleBridgeGitHubCommandMailbox.mjs';
 import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
@@ -2519,4 +2520,50 @@ test('protected workflow treats GitHub Actions as transport only and still prove
   assert.match(workflow, /Mark exact authorized pull request ready and publish lifecycle proof/);
   // The separate ready path is unchanged and still requires the owner actor.
   assert.match(workflow, /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
+});
+
+test('base-versus-source mailbox regression stays within protected merge admission only', () => {
+  const prHead = 'a'.repeat(40), mainHead = 'b'.repeat(40);
+  const cmd = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: 'protected-merge-source-base-regression',
+    operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: prHead,
+    expiresAt: '2026-08-05T18:00:00.000Z',
+    prNumber: 2990,
+    expectedBase: mainHead,
+    reviewRunId: 38158830639,
+    reviewRunAttempt: 2,
+    reviewJobId: 114527934835,
+    reviewArtifactId: 11709144337,
+    reviewArtifactDigest: `sha256:${'c'.repeat(64)}`,
+    reviewPayloadSha256: 'd'.repeat(64),
+    reviewMode: 'qualified-operator-bootstrap',
+    reviewFindingCode: 'approval-boundary-v2-self-change-requires-qualified-review',
+    mergeMethod: 'squash',
+    mergeApprovalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:2990:${prHead}`,
+  };
+  const makeComment = (value) => [{
+    id: 12,
+    created_at: '2026-08-05T16:29:00.000Z',
+    user: { login: 'Cheekyfellastef' },
+    body: '```stephanos-battle-bridge-command\\n' + JSON.stringify(value) + '\\n```',
+  }];
+  const now = new Date('2026-08-05T16:30:00.000Z');
+  const accepted = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: mainHead });
+  assert.equal(accepted.commands.length, 1);
+  assert.equal(accepted.commands[0].command.expectedHead, prHead);
+  assert.equal(accepted.commands[0].command.expectedBase, mainHead);
+  const rejected = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: 'e'.repeat(40) });
+  assert.equal(rejected.commands.length, 0);
+  assert.equal(rejected.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  const unsafeWiden = selectBattleBridgeGitHubCommandBatch(makeComment({
+    ...cmd, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+  }), { now, currentHead: mainHead });
+  assert.equal(unsafeWiden.commands.length, 0);
+  assert.equal(unsafeWiden.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
