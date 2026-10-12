@@ -408,6 +408,40 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
   });
 }
 
+function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
+  if (processId !== 'prove-stephanos-ai-commander') return null;
+  const raw = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_AI_CHAT_ACCEPTANCE_RESULT=';
+  const line = raw.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  let observed = null;
+  try { observed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
+  const proofHash = text(observed?.proofHash).toLowerCase();
+  if (!observed || observed.schemaVersion !== 'stephanos.sovereign-ai-commander-acceptance.v1'
+    || observed.ok !== true || observed.toolCalled !== true
+    || observed.healthAvailable !== true
+    || observed.backendRoute !== 'system'
+    || observed.finalVerdict !== 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN'
+    || observed.readOnly !== true || observed.localLoopbackOnly !== true
+    || observed.remoteCommanderRequired !== false
+    || observed.arbitraryShellAllowed !== false
+    || observed.sourceMutationAllowed !== false || observed.mergeAuthority !== false
+    || observed.coreAwakeProven !== false || observed.physicalWorkerPickupProven !== false
+    || !PROOF_HASH_PATTERN.test(proofHash)) return null;
+  const count = observed.guardianCycleCount;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-ai-commander-acceptance.v1',
+    toolCalled: true,
+    healthAvailable: true,
+    guardianCycleCount: Number.isSafeInteger(count) && count >= 0 && count <= 1_000_000 ? count : null,
+    proofHash,
+    finalVerdict: 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN',
+    readOnly: true, localLoopbackOnly: true,
+    remoteCommanderRequired: false,
+    arbitraryShellAllowed: false, sourceMutationAllowed: false,
+    mergeAuthority: false, coreAwakeProven: false, physicalWorkerPickupProven: false,
+  });
+}
+
 function safeRuntimeProofProjection(value = {}, processId = '') {
   const proofContract = processId === 'prove-vr-atlas-runtime'
     ? Object.freeze({
@@ -1535,6 +1569,7 @@ function safeMaintenanceProjection(value = {}) {
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(source, processId),
+    aiCommanderAcceptance: safeAiCommanderAcceptanceProjection(source, processId),
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
     controllerLaneStatus: safeControllerLaneStatusProjection(source, processId),
@@ -2514,6 +2549,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       }
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
+      const aiProofRequired = actionId === 'prove-stephanos-ai-commander';
       const runtimeProofComplete = !runtimeProofRequired
         || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
@@ -2521,7 +2557,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
         && projection.status === 0
-        && runtimeProofComplete;
+        && runtimeProofComplete
+        && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
@@ -2545,6 +2582,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         status: projection.status,
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
+        aiCommanderAcceptance: projection.aiCommanderAcceptance,
       }));
     }
 
@@ -3166,6 +3204,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   }
 
   const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
+  const aiProofRequired = shape.command.remoteAction === 'prove-stephanos-ai-commander';
   const runtimeProofComplete = !runtimeProofRequired
     || runtimeProofCompleteForAction(shape.command.remoteAction, projection.runtimeProof, shape.expectedHead);
   const observationRequired = shape.command.remoteAction === 'battle-bridge-observe';
@@ -3184,7 +3223,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && projection.processId === shape.command.remoteAction
     && projection.status === 0
     && runtimeProofComplete
-    && observationComplete;
+    && observationComplete
+    && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
@@ -3208,6 +3248,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     status: projection.status,
     errorCode: projection.errorCode,
     runtimeProof: projection.runtimeProof,
+    aiCommanderAcceptance: projection.aiCommanderAcceptance,
     observation: projection.observation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
