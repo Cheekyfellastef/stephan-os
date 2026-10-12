@@ -1780,6 +1780,11 @@ function safeCoreDaemonStatusProjection(value = {}) {
       ? Number(parsed.processCount)
       : null,
     daemonHealthy: parsed.daemonHealthy === true,
+    singleInstanceProven: parsed.singleInstanceProven === true && Number(parsed.processCount) === 1,
+    bridgeContractCurrent: parsed.bridgeContractCurrent === true,
+    outerBridgeRunCount: Number.isSafeInteger(parsed.outerBridgeRunCount)
+      && parsed.outerBridgeRunCount >= 0 && parsed.outerBridgeRunCount <= 1_000_000
+      ? parsed.outerBridgeRunCount : null,
     readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
     wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
     awake: parsed.awake === true,
@@ -2685,6 +2690,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const coreHealthy = coreDaemonStatus?.available === true
       && coreDaemonStatus?.ok === true
       && coreDaemonStatus?.daemonHealthy === true
+      && coreDaemonStatus?.singleInstanceProven === true
+      && coreDaemonStatus?.bridgeContractCurrent === true
       && (coreDaemonStatus?.heartbeatFresh === true || coreDaemonStatus?.busyGraceActive === true)
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
