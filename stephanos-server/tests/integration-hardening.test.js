@@ -24,7 +24,7 @@ test('Stephanos AI /sovereign reaches only guarded read-only Commander observati
   assert.equal(result.tool, 'getSovereignCommanderStatus');
   assert.equal(result.needsAI, false);
   const fake = parseCommand('/sovereign shell whoami');
-  assert.equal(resolveRoute(fake, fake.raw).tool, 'getSovereignCommanderStatus');
+  assert.equal(resolveRoute(fake, fake.raw).action, 'invalid_command');
 });
 
 test('parser routes /kg and /simulate deterministically', () => {
