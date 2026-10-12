@@ -208,8 +208,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     status,
     runNow,
     beginCpuProbe: () => {
-      if (!cpuProbeAdmissionHold || state.cpuProbeAdmissionExpired
-        || state.cpuProbeSampling || state.running || child) return false;
+      if (state.cpuProbeAdmissionExpired || state.cpuProbeSampling
+        || state.running || child) return false;
       // Every admitted CPU sample owns its own guard. Pause a pending normal
       // cycle; never sample while a repair child is running.
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
@@ -222,7 +222,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     endCpuProbe: () => {
       if (!state.cpuProbeSampling) return false;
       state.cpuProbeSampling = false;
-      schedule(startDelayMs);
+      // Keep normal guardian cadence after prior repair cycles; first-cycle
+      // bootstrap remains prompt once the diagnostic has completed.
+      schedule(state.cycleCount === 0 ? startDelayMs : intervalMs);
       return true;
     },
     stop: () => {
@@ -546,7 +548,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       const cpuProbeAction = message.method === 'tools/call'
         && message.params?.name === 'maintenance_action'
         && message.params?.arguments?.actionId === 'cpu-pressure-snapshot';
-      if (options.cpuProbeAdmissionHold === true && cpuProbeAction) {
+      if (cpuProbeAction && continuousRepairGuardian) {
         // Only a fully initialized authenticated MCP session which proved the
         // fixed action surface can claim this one-time startup isolation.
         if (!initializedSessions.has(sessionId) || !cpuToolListedSessions.has(sessionId)) {
@@ -569,7 +571,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           transportAuthenticated: true,
         });
       } finally {
-        if (options.cpuProbeAdmissionHold === true && cpuProbeAction) continuousRepairGuardian?.endCpuProbe();
+        if (cpuProbeAction) continuousRepairGuardian?.endCpuProbe();
       }
       if (initializing) sessions.set(sessionId, handler);
       if (message.method === 'notifications/initialized' && result === undefined) {
