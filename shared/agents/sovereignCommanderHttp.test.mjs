@@ -84,12 +84,18 @@ test('CPU action admission defers guardian work through sampler and resumes afte
   let cpuCalls = 0;
   const handlerFactory = () => async (method, _params) => {
     if (method === 'initialize') return { protocolVersion: '2025-11-25', capabilities: { tools: {} } };
+    if (method === 'notifications/initialized') return undefined;
+    if (method === 'tools/list') return {
+      tools: [{ name: 'maintenance_action', inputSchema: {
+        properties: { actionId: { enum: ['cpu-pressure-snapshot'] } },
+      } }],
+    };
     if (method === 'tools/call') {
       cpuCalls += 1;
-      if (cpuCalls === 1) assert.equal(created.continuousRepairStatus().cpuProbeSampling, true);
+      assert.equal(created.continuousRepairStatus().cpuProbeSampling, true);
       return { ok: true };
     }
-    return { tools: [] };
+    return {};
   };
   created = await createSovereignCommanderHttpServer({
     token: TOKEN,
@@ -136,6 +142,19 @@ test('CPU action admission defers guardian work through sampler and resumes afte
       jsonrpc: '2.0', id: 2, method: 'tools/call',
       params: { name: 'maintenance_action', arguments: { actionId: 'cpu-pressure-snapshot' } },
     };
+    const premature = await send(cpu, sessionId);
+    assert.equal(premature.status, 409, 'uninitialized session cannot consume the hold');
+    assert.equal(cancelled.length, 0);
+    assert.equal(created.continuousRepairStatus().cpuProbeAdmissionPending, true);
+    const ready = await send({
+      jsonrpc: '2.0', method: 'notifications/initialized', params: {},
+    }, sessionId);
+    assert.equal(ready.status, 202);
+    const stillPremature = await send(cpu, sessionId);
+    assert.equal(stillPremature.status, 409, 'tools/list proof is required');
+    assert.equal(cancelled.length, 0);
+    const listed = await send({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} }, sessionId);
+    assert.equal(listed.status, 200);
     const first = await send(cpu, sessionId);
     assert.equal(first.status, 200);
     assert.equal(cpuCalls, 1);
@@ -147,6 +166,9 @@ test('CPU action admission defers guardian work through sampler and resumes afte
     const second = await send({ ...cpu, id: 3 }, sessionId);
     assert.equal(second.status, 200, 'subsequent read-only snapshots remain available');
     assert.equal(cpuCalls, 2);
+    assert.equal(cancelled.length, 2, 'second sample also isolates pending guardian work');
+    assert.equal(timers[2].ms, 5000);
+    assert.equal(created.continuousRepairStatus().cpuProbeSampling, false);
   } finally {
     await new Promise((resolve) => created.server.close(resolve));
   }
