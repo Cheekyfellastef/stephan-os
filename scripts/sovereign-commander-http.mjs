@@ -165,6 +165,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (ok) state.successCount += 1;
       else state.failureCount += 1;
       child = null;
+      // Expiration blocks only the in-flight takeover repair, never every
+      // future CPU diagnosis on an otherwise healthy long-lived Commander.
+      state.cpuProbeAdmissionExpired = false;
       schedule(intervalMs);
     };
 
