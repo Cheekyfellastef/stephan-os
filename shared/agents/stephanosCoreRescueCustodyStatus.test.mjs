@@ -20,6 +20,9 @@ test('Core status fails closed on ambiguous process and lock writer custody', ()
   assert.match(status, /\$status\.PSObject\.Properties\['outerBridgeLastStage'\]/);
   assert.match(status, /STEPHANOS_CORE_DAEMON_OWNER_CUSTODY_UNPROVEN/);
   assert.match(status, /STEPHANOS_CORE_DAEMON_RESCUE_GENERATION_UNPROVEN/);
+  assert.match(status, /\$stage -cmatch/);
+  assert.match(status, /\$rescueGenerationPresent = \$true/);
+  assert.match(status, /\[int\]::TryParse\(\[string\]\$status\.outerBridgeRunCount/);
   assert.doesNotMatch(status, /\$processes\.Count -ge 1 -and/);
 });
 
@@ -38,6 +41,15 @@ test('Sovereign watchdog never blanket-recycles ambiguous Core process matches',
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -eq 1 -and \$coreHealthAfter\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreObserved\.Count -eq 1 -and \$coreObservedHealth\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.doesNotMatch(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -ge 1/);
+  assert.match(watchdog, /\$coreDaemonLockPath = Join-Path/);
+  assert.match(watchdog, /\$writerCustodyProven = \[bool\]\(/);
+  assert.match(watchdog, /\$lockOwnerPid -eq \$writerPid/);
+  assert.match(watchdog, /\$rescueGenerationProven = \[bool\]\(/);
+  const healthStart = watchdog.indexOf('function Get-StephanosCoreDaemonHealth {');
+  const healthEnd = watchdog.indexOf('function Get-SovereignRelayDaemonProcesses {', healthStart);
+  const coreHealthOnly = watchdog.slice(healthStart, healthEnd);
+  assert.match(coreHealthOnly, /\$writerCustodyProven -and \$rescueGenerationProven -and/g);
+  assert.ok((coreHealthOnly.match(/\$writerCustodyProven -and \$rescueGenerationProven -and/g) || []).length >= 2);
 });
 
 test('Custody observations remain read-only and do not directly seize lease or kill processes', () => {
