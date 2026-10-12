@@ -10,6 +10,8 @@ import {
 import {
   compileSovereignCommanderCapabilityPlanV1,
 } from '../shared/agents/sovereignCommanderCapabilityCompilerV1.mjs';
+import { extractSovereignNativeCapabilityGapsV1 } from '../shared/agents/sovereignCommanderNativeGapIntakeV1.mjs';
+import { readSharedWorkspaceRecordDirectory } from '../shared/agents/shared-workspace-dashboard-feed.mjs';
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from '../shared/agents/flywheelLearningFabricV1.mjs';
@@ -57,6 +59,7 @@ export async function reconcileSovereignCommanderCapabilityParity({
   env = process.env,
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   readQueue = readMissionWorkerQueue,
+  readNativeEvents = readSharedWorkspaceRecordDirectory,
   readPrior = readJsonIfPresent,
   writeStatus = writeAtomicJson,
   writeEvent = writeAtomicJson,
@@ -77,7 +80,28 @@ export async function reconcileSovereignCommanderCapabilityParity({
       priorLedger,
       nowUtc: timestampUtc,
     });
-    const capabilityCompiler = compileSovereignCommanderCapabilityPlanV1(ledger);
+    // Use the same validated event reader as the existing Flywheel. Malformed
+    // or inaccessible histories cannot silently become new skill proposals.
+    // Native intake is advisory only: a bad event store never blocks the
+    // existing canonical Remote Commander parity reconciliation.
+    let nativeEvents = { records: [], errors: [] };
+    try {
+      nativeEvents = await readNativeEvents(paths.workspaceRoot, 'events', {
+        repoRoot: paths.repoRoot,
+        nowMs: Date.parse(timestampUtc),
+      });
+    } catch {
+      nativeEvents = { records: [], errors: ['NATIVE_EVENT_STORE_READ_FAILED'] };
+    }
+    const nativeIntakeBlocked = !Array.isArray(nativeEvents?.records)
+      || (Array.isArray(nativeEvents?.errors) && nativeEvents.errors.length > 0);
+    const nativeGapIntake = extractSovereignNativeCapabilityGapsV1(
+      nativeIntakeBlocked ? [] : nativeEvents.records,
+      { nowUtc: timestampUtc },
+    );
+    const capabilityCompiler = compileSovereignCommanderCapabilityPlanV1(ledger, {
+      nativeGaps: nativeGapIntake.gaps,
+    });
     const flywheelEventPublications = [];
     for (const candidate of capabilityCompiler.learningCandidates) {
       const eventId = `sovereign-capability-${String(candidate.recordKey || 'parity').slice(0, 48)}-proven`.slice(0, 80);
@@ -135,6 +159,7 @@ export async function reconcileSovereignCommanderCapabilityParity({
       }),
       capabilityParity: ledger,
       capabilityCompiler,
+      nativeGapIntake: Object.freeze({ ...nativeGapIntake, sourceHealth: nativeIntakeBlocked ? 'DEGRADED' : 'VALIDATED', sourceErrorCount: nativeIntakeBlocked ? Math.max(1, nativeEvents.errors?.length || 0) : 0 }),
       flywheelLearning,
       flywheelEventPublicationCount: flywheelEventPublications.filter((item) => item?.ok === true).length,
       canonicalOwnerGoal: ledger.canonicalOwnerGoal,
@@ -167,6 +192,8 @@ export async function reconcileSovereignCommanderCapabilityParity({
       newlyProvenParityCount: ledger.newlyProvenParityCount,
       buildableGapCount: ledger.buildableGapCount,
       capabilityCompiler,
+      nativeGapIntake,
+      nativeGapSourceHealth: nativeIntakeBlocked ? 'DEGRADED' : 'VALIDATED',
       flywheelLearning,
       flywheelEventPublications: Object.freeze(flywheelEventPublications),
       boundaryHoldCount: ledger.boundaryHoldCount,
