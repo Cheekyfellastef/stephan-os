@@ -415,26 +415,50 @@ function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
   const line = raw.split(/\r?\n/).find((entry) => entry.startsWith(marker));
   let observed = null;
   try { observed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
-  const proofHash = text(observed?.proofHash).toLowerCase();
-  if (!observed || observed.schemaVersion !== 'stephanos.sovereign-ai-commander-acceptance.v1'
-    || observed.ok !== true || observed.toolCalled !== true
-    || observed.healthAvailable !== true
-    || observed.backendRoute !== 'system'
-    || observed.finalVerdict !== 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN'
+  if (!observed || typeof observed !== 'object' || Array.isArray(observed)) return null;
+  const proofHash = text(observed.proofHash).toLowerCase();
+  const { proofHash: _claimedProofHash, ...signed } = observed;
+  const computedProofHash = createHash('sha256').update(JSON.stringify(signed)).digest('hex');
+  const passed = observed.ok === true;
+  const expectedVerdict = passed
+    ? 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN'
+    : 'STEPHANOS_AI_COMMANDER_TOOL_CALL_BLOCKED';
+  const blocker = text(observed.blocker);
+  const typedBlocker = [
+    'AI_COMMANDER_CHAT_ENDPOINT_UNAVAILABLE',
+    'AI_COMMANDER_CHAT_RESPONSE_TOO_LARGE',
+    'AI_COMMANDER_CHAT_TOOL_CALL_NOT_PROVEN',
+    'AI_COMMANDER_TOOL_GUARDRAILS_NOT_PROVEN',
+    'AI_COMMANDER_HEALTH_OBSERVED_BUT_HELD',
+    'AI_COMMANDER_CHAT_REQUEST_FAILED',
+  ].includes(blocker) || /^AI_COMMANDER_CHAT_HTTP_(?:4\d\d|5\d\d)$/.test(blocker);
+  if (observed.schemaVersion !== 'stephanos.sovereign-ai-commander-acceptance.v1'
+    || observed.finalVerdict !== expectedVerdict
     || observed.readOnly !== true || observed.localLoopbackOnly !== true
     || observed.remoteCommanderRequired !== false
     || observed.arbitraryShellAllowed !== false
     || observed.sourceMutationAllowed !== false || observed.mergeAuthority !== false
     || observed.coreAwakeProven !== false || observed.physicalWorkerPickupProven !== false
-    || !PROOF_HASH_PATTERN.test(proofHash)) return null;
-  const count = observed.guardianCycleCount;
+    || typeof observed.toolCalled !== 'boolean'
+    || typeof observed.healthAvailable !== 'boolean'
+    || !['system', 'UNKNOWN'].includes(observed.backendRoute)
+    || !(observed.guardianCycleCount === null
+      || (Number.isSafeInteger(observed.guardianCycleCount)
+        && observed.guardianCycleCount >= 0 && observed.guardianCycleCount <= 1_000_000))
+    || (passed && (!observed.toolCalled || !observed.healthAvailable || observed.backendRoute !== 'system' || blocker))
+    || (!passed && !typedBlocker)
+    || !PROOF_HASH_PATTERN.test(proofHash)
+    || proofHash !== computedProofHash) return null;
   return Object.freeze({
     schemaVersion: 'stephanos.sovereign-ai-commander-acceptance.v1',
-    toolCalled: true,
-    healthAvailable: true,
-    guardianCycleCount: Number.isSafeInteger(count) && count >= 0 && count <= 1_000_000 ? count : null,
+    ok: passed,
+    toolCalled: observed.toolCalled,
+    healthAvailable: observed.healthAvailable,
+    guardianCycleCount: observed.guardianCycleCount,
+    backendRoute: observed.backendRoute,
+    blocker: passed ? '' : blocker,
     proofHash,
-    finalVerdict: 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN',
+    finalVerdict: expectedVerdict,
     readOnly: true, localLoopbackOnly: true,
     remoteCommanderRequired: false,
     arbitraryShellAllowed: false, sourceMutationAllowed: false,
@@ -3205,6 +3229,41 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
   const aiProofRequired = shape.command.remoteAction === 'prove-stephanos-ai-commander';
+  if (aiProofRequired) {
+    const acceptance = projection.aiCommanderAcceptance;
+    const actionEnvelopeComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0;
+    if (!actionEnvelopeComplete || !acceptance) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        typedAcceptancePresent: Boolean(acceptance),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    // A fixed read-only probe can execute successfully while the observed AI
+    // route is offline or incorrectly wired. Preserve its precise sanitised
+    // blocker without claiming the action or the Commander is healthy.
+    if (acceptance.ok !== true) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED', {
+        remoteAction: shape.command.remoteAction,
+        acceptanceBlocker: acceptance.blocker,
+        toolCalled: acceptance.toolCalled,
+        healthAvailable: acceptance.healthAvailable,
+        acceptanceProofHash: acceptance.proofHash,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+  }
+
+
   const runtimeProofComplete = !runtimeProofRequired
     || runtimeProofCompleteForAction(shape.command.remoteAction, projection.runtimeProof, shape.expectedHead);
   const observationRequired = shape.command.remoteAction === 'battle-bridge-observe';
