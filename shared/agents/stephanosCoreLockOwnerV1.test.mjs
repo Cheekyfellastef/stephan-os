@@ -30,14 +30,14 @@ test('Core acquisition and release stay fail-closed when lock owner changed',asy
   const code=await readFile(new URL('../../scripts/stephanos-core-daemon.mjs',import.meta.url),'utf8');
   assert.match(code,/import \{ CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 \}/);
   assert.match(code,/if \(!\(await readExactCurrentLock\(identity\)\)\)/);
-  assert.match(code,/if \(await processAlive\(existing\.pid\)\) return null/);
-  assert.match(code,/if \(\(await readFile\(lockPath, 'utf8'\)\) !== existingRaw\) return null/);
   assert.match(code,/if \(!\(await readExactCurrentLock\(ownedLock\.identity\)\)\)/);
   assert.match(code,/STEPHANOS_CORE_OWNER_LOCK_CHANGED_HELD/);
   assert.match(code,/if \(await readExactCurrentLock\(ownedLock\.identity\)\) \{/);
   assert.doesNotMatch(code,/if \(Number\(current\?\.pid\) === process\.pid\) await unlink\(lockPath\)/);
   assert.doesNotMatch(code,/let stale = true/);
-  assert.match(code,/return error\?\.code !== 'ESRCH'/);
-  assert.match(code,/if \(!exactCoreLockOwnerV1\(existing, existing\)\) return null/);
+  const acquire = code.slice(code.indexOf('async function acquireSingleInstance'),code.indexOf('async function probe'));
+  assert.match(acquire,/if \(error\?\.code === 'EEXIST'\) return null/);
+  assert.doesNotMatch(acquire,/unlink\(lockPath\)|rename\(lockPath/);
+  assert.doesNotMatch(acquire,/processAlive|dead-owner|stale.*unlink/i);
   assert.match(code,/return Object\.freeze\(\{ handle, identity \}\)/);
 });
