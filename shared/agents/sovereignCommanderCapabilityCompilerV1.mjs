@@ -22,6 +22,7 @@ export const SOVEREIGN_COMMANDER_SKILL_CONJURER_SCHEMA =
   'stephanos.sovereign-commander-skill-conjurer.v1';
 export const SOVEREIGN_COMMANDER_SKILL_PACKET_SCHEMA =
   'stephanos.sovereign-capability-skill-packet.v1';
+export const SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT = 3;
 
 
 function text(value, fallback = '') {
@@ -255,9 +256,14 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}) {
   const capabilityById = new Map(buildable.map((capability) => [
     capabilityId(capability?.capabilityId), capability,
   ]));
-  const skillForgeCandidates = Object.freeze(plans.map((plan) =>
-    skillPacketFromPlan(plan, capabilityById.get(plan.capabilityId), timestampUtc),
-  ));
+  // Shared Workspace status records are capped at 16 KiB. Never let a surge
+  // of parity gaps turn the canonical reconcile operation into a failed write.
+  // Retain all gap identities in the existing plans; publish only bounded drafts.
+  const skillForgeCandidates = Object.freeze(
+    plans.slice(0, SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT).map((plan) =>
+      skillPacketFromPlan(plan, capabilityById.get(plan.capabilityId), timestampUtc),
+    ),
+  );
   const blockedSkillCount = skillForgeCandidates.filter((skill) => skill.blockedByPolicy).length;
 
   const learningCandidates = capabilities
@@ -280,6 +286,9 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}) {
     plans: Object.freeze(plans),
     skillConjurerSchema: SOVEREIGN_COMMANDER_SKILL_CONJURER_SCHEMA,
     skillForgeCandidateCount: skillForgeCandidates.length,
+    skillForgeCandidateTotalCount: plans.length,
+    skillForgeCandidateLimit: SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT,
+    skillForgeCandidatesTruncated: plans.length > skillForgeCandidates.length,
     blockedSkillCount,
     skillForgeCandidates,
     skillForgeActivationAllowed: false,
