@@ -82,6 +82,8 @@ const ALLOWED_FIELDS = new Set([
   'controllerActivity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
+const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -298,7 +300,6 @@ function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_R
 // session. Use the existing guarded, fixed-capability ignition preflight only;
 // read-only/status commands never gain service-recycle authority.
 const COMMANDER_RUNTIME_PREFLIGHT_ACTIONS = new Set([
-  'cpu-pressure-snapshot',
   'repair-stephanos',
   'repair-goal-builder-flow',
   'fleet-goal-supervisor',
@@ -2113,6 +2114,68 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+  // The canonical owner-attested GitHub mailbox already supplies fixed authority.
+  // Sample directly in this existing process, not by recycling the long-lived
+  // Commander: diagnostic observation must never start a repair guardian.
+  if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
+    const cleanWorking = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'diff', '--quiet', '--', CPU_SNAPSHOT_SCRIPT,
+    ], { timeout: 10_000 });
+    const cleanIndex = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'diff', '--cached', '--quiet', '--', CPU_SNAPSHOT_SCRIPT,
+    ], { timeout: 10_000 });
+    if (!cleanWorking.ok || !cleanIndex.ok) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_SCRIPT_NOT_CANONICAL', {
+        remoteAction: 'cpu-pressure-snapshot',
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', resolve(repositoryRoot, CPU_SNAPSHOT_SCRIPT),
+    ], { timeout: 25_000, maxBuffer: 32 * 1024 });
+    const cpuPressure = sampled.ok
+      ? safeCpuPressureSnapshotProjection({
+        structuredContent: { stdout: sampled.stdout },
+      }, 'cpu-pressure-snapshot')
+      : null;
+    if (!cpuPressure) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', {
+        remoteAction: 'cpu-pressure-snapshot',
+        sampleStatus: sampled.status,
+        readOnly: true,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE',
+      remoteAction: 'cpu-pressure-snapshot',
+      sourceHead: shape.expectedHead,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, cpuPressure }))
+        .digest('hex'),
+      cpuPressure,
+      executionSurface: 'canonical-sovereign-mailbox-fixed-sampler',
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
+    });
+  }
+
   // repair-stephanos may need to recycle a stale Commander capability. Do that
   // from the mailbox process before opening an MCP session so the repair cannot
   // terminate the HTTP process that is carrying its own in-flight request.
@@ -2263,18 +2326,6 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     || !tools.includes('maintenance_action')
     || (shape.command.remoteAction === 'search-project' && !tools.includes('search_project'))) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
-  }
-  // A synced main commit does not prove the pre-merge MCP server loaded its new actions.
-  const maintenanceTool = Array.isArray(listed.body?.result?.tools)
-    ? listed.body.result.tools.find((tool) => text(tool?.name) === 'maintenance_action')
-    : null;
-  const runtimeActions = maintenanceTool?.inputSchema?.properties?.actionId?.enum;
-  if (shape.command.remoteAction === 'cpu-pressure-snapshot'
-    && (!Array.isArray(runtimeActions) || !runtimeActions.includes('cpu-pressure-snapshot'))) {
-    return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_ACTION_STALE_RUNTIME', {
-      publicReceiptSafe: true,
-      secretMaterialReturned: false,
-    });
   }
 
   const configCall = await callMcp({
