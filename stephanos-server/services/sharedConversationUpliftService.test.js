@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createStephanosSharedConversationTurnRecord } from '../../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import {
   deriveSharedConversationUpliftV1,
   readSharedConversationUpliftV1,
@@ -10,18 +11,20 @@ import {
 
 const NOW = '2026-10-12T14:00:00.000Z';
 function turn(id, message, role = 'operator') {
-  return {
-    channel: 'shared-stephanos-chat',
-    recordSubtype: 'conversation-turn',
-    correlationId: 'shared-operator-primary',
+  const built = createStephanosSharedConversationTurnRecord({
+    threadId: 'shared-operator-primary',
+    turnId: id,
+    senderParticipantId: role,
+    replyToTurnId: '',
+    text: message,
     timestampUtc: NOW,
-    body: JSON.stringify({
-      threadId: 'shared-operator-primary',
-      turnId: id,
-      senderParticipantId: role,
-      text: message,
-    }),
-  };
+  }, {
+    relatedIssue: '#2434',
+    proofRefs: ['proof/' + id],
+    workspaceValidationOptions: { nowMs: Date.parse(NOW) },
+  });
+  assert.equal(built.valid, true, built.errors.join(', '));
+  return built.record;
 }
 
 test('only repeated conversation requests produce investigation candidates, never proofs', () => {
@@ -29,7 +32,6 @@ test('only repeated conversation requests produce investigation candidates, neve
     turn('turn-1', 'Can we fix the logical controllers and autonomous build pickup?'),
     turn('turn-2', 'Please repair autonomous build pickup and the stuck lease.'),
     turn('turn-3', 'Autonomous build pickup has been fixed.', 'stephanos'),
-    turn('turn-2', 'Please repair autonomous build pickup and the stuck lease.'),
   ], { nowMs: Date.parse(NOW) });
   const candidate = result.candidates.find(row => row.id === 'autonomous-build-conveyor');
   assert.equal(result.turnCount, 3);
@@ -39,6 +41,28 @@ test('only repeated conversation requests produce investigation candidates, neve
   assert.equal(candidate.authorityGranted, false);
   assert.equal(result.completedBuilds, 0);
   assert.equal(JSON.stringify(result).includes('stuck lease'), false);
+});
+
+test('canonical decoder rejects tampering and duplicate identities before any suggestion is actionable', () => {
+  const goodA = turn('turn-a', 'Can we fix the autonomous build pickup?');
+  const goodB = turn('turn-b', 'Please repair autonomous build pickup.');
+  const tampered = { ...turn('turn-c', 'Please repair autonomous build pickup.'), mergeAllowed: true };
+  const decoded = deriveSharedConversationUpliftV1([goodA, goodB, tampered], { nowMs: Date.parse(NOW) });
+  assert.equal(decoded.state, 'partial');
+  assert.equal(decoded.rejectedTurnCount, 1);
+  assert.equal(decoded.candidates[0].eligibleForBoundedInvestigation, false);
+
+  const duplicate = deriveSharedConversationUpliftV1([goodA, goodB, goodA], { nowMs: Date.parse(NOW) });
+  assert.equal(duplicate.state, 'partial');
+  assert.equal(duplicate.rejectedTurnCount, 1);
+});
+
+test('repeated healthy status narration is not a request for repair', () => {
+  const result = deriveSharedConversationUpliftV1([
+    turn('turn-a', 'The autonomous build pickup is healthy.'),
+    turn('turn-b', 'The autonomous build pickup is healthy.'),
+  ], { nowMs: Date.parse(NOW) });
+  assert.equal(result.candidates.length, 0);
 });
 
 test('the full canonical inbox is indexed beyond the legacy 256-turn loading limit', async () => {
