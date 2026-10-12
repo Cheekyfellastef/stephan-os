@@ -85,6 +85,7 @@ function Get-StephanosCoreDaemonHealth {
             [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
         }
         $lockOwnerPid = 0
+        $lock = $null
         if (Test-Path -LiteralPath $coreDaemonLockPath -PathType Leaf) {
             try {
                 $lock = Get-Content -LiteralPath $coreDaemonLockPath -Raw | ConvertFrom-Json
@@ -92,11 +93,27 @@ function Get-StephanosCoreDaemonHealth {
             } catch {}
         }
         $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
-        $writerCustodyProven = [bool](
-            $coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
-            $lockOwnerPid -eq $writerPid -and
-            @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid }).Count -eq 1
-        )
+        $writerCustodyProven = $false
+        if ($coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+            $lockOwnerPid -eq $writerPid -and $null -ne $lock -and
+            [string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+            [string]$lock.sourceHead -cmatch '^[0-9a-f]{40}$' -and
+            [string]::Equals([string]$lock.sourceHead, [string]$status.sourceHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                $writerProcess = @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid })
+                if ($writerProcess.Count -eq 1 -and $null -ne $writerProcess[0].CreationDate) {
+                    $lockStart = [DateTimeOffset]::Parse([string]$lock.startedAtUtc)
+                    $writerCreated = [DateTimeOffset]::new([datetime]$writerProcess[0].CreationDate)
+                    $heartbeatAt = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+                    $startupLagSeconds = ($lockStart.ToUniversalTime() - $writerCreated.ToUniversalTime()).TotalSeconds
+                    $writerCustodyProven = [bool](
+                        $lockStart.Offset -eq [TimeSpan]::Zero -and
+                        $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+                        $lockStart -le $heartbeatAt
+                    )
+                }
+            } catch { $writerCustodyProven = $false }
+        }
         $rescueCount = 0
         $rescueStage = if ($status.PSObject.Properties['outerBridgeLastStage']) {
             [string]$status.outerBridgeLastStage
