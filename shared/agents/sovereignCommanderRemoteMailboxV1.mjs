@@ -10,6 +10,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REM
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
 export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status',
+  'private-mcp-parity-proof',
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
@@ -2414,6 +2415,98 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const config = mcpStructuredPayload(configCall);
   if (!configCall.ok || !isBoundedCommanderConfig(config)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+  }
+
+  if (shape.command.remoteAction === 'private-mcp-parity-proof') {
+    // The owner-approved public command only selects a *fixed* read-only test.
+    // The private authenticated MCP session, token and local paths never leave
+    // the Battle Bridge. Never project result content or input paths publicly.
+    const filePath = resolve(repositoryRoot, 'scripts', 'sovereign-commander-mcp.mjs');
+    const batchSchema = listed.body?.result?.tools?.find((tool) => tool?.name === 'read_multiple_files');
+    const metadataSchema = listed.body?.result?.tools?.find((tool) => tool?.name === 'get_file_info');
+    const advertised = batchSchema?.annotations?.readOnlyHint === true
+      && batchSchema?.annotations?.destructiveHint === false
+      && batchSchema?.inputSchema?.properties?.paths?.maxItems === 8
+      && batchSchema?.inputSchema?.properties?.length?.maximum === 200
+      && metadataSchema?.annotations?.readOnlyHint === true
+      && metadataSchema?.annotations?.destructiveHint === false
+      && metadataSchema?.inputSchema?.required?.length === 1
+      && metadataSchema?.inputSchema?.required?.[0] === 'path';
+    if (!advertised) {
+      return fail('SOVEREIGN_PRIVATE_MCP_CAPABILITIES_NOT_ADVERTISED', {
+        batchReadAdvertised: Boolean(batchSchema),
+        metadataAdvertised: Boolean(metadataSchema),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const metadataCall = await callMcp({
+      jsonrpc: '2.0', id: 4, method: 'tools/call',
+      params: { name: 'get_file_info', arguments: { path: filePath } },
+    }, sessionId, 15_000);
+    const metadataEnvelope = sovereignCommanderCompletionEnvelope(metadataCall);
+    const metadata = mcpStructuredPayload(metadataCall);
+    const metadataProven = metadataCall.ok
+      && metadataEnvelope.ok === true
+      && PROOF_HASH_PATTERN.test(text(metadataEnvelope.proofHash))
+      && metadata.type === 'FILE'
+      && Number.isSafeInteger(metadata.bytes) && metadata.bytes > 0
+      && text(metadata.path) === filePath;
+    if (!metadataProven) return fail('SOVEREIGN_PRIVATE_MCP_METADATA_CALL_UNPROVEN', {
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    const batchCall = await callMcp({
+      jsonrpc: '2.0', id: 5, method: 'tools/call',
+      params: { name: 'read_multiple_files', arguments: { paths: [filePath], offset: 0, length: 1 } },
+    }, sessionId, 15_000);
+    const batchEnvelope = sovereignCommanderCompletionEnvelope(batchCall);
+    const batch = mcpStructuredPayload(batchCall);
+    const batchProven = batchCall.ok
+      && batchEnvelope.ok === true
+      && PROOF_HASH_PATTERN.test(text(batchEnvelope.proofHash))
+      && batch.totalFiles === 1
+      && Array.isArray(batch.files) && batch.files.length === 1
+      && batch.files[0]?.path === filePath
+      && batch.files[0]?.content === '#!/usr/bin/env node'
+      && batch.files[0]?.truncated === false
+      && batch.files[0]?.offset === 0
+      && batch.files[0]?.length === 1;
+    if (!batchProven) return fail('SOVEREIGN_PRIVATE_MCP_BATCH_READ_CALL_UNPROVEN', {
+      metadataCallProven: true, readOnly: true,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    const outcome = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_PRIVATE_MCP_PARITY_PROVEN',
+      remoteAction: 'private-mcp-parity-proof',
+      sourceHead: shape.expectedHead,
+      toolListProven: true,
+      metadataCallProven: true,
+      batchReadCallProven: true,
+      toolCount: tools.length,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        head: shape.expectedHead,
+        metadataProofHash: text(metadataEnvelope.proofHash),
+        batchProofHash: text(batchEnvelope.proofHash),
+        capabilityVersion: text(health.capabilityVersion),
+      })).digest('hex'),
+      localAuthenticatedMcp: true,
+      readOnly: true,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+      privateFileContentReturned: false,
+      privateFilePathReturned: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      sourceMutationAllowed: false,
+      vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...outcome, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result: outcome,
+    });
   }
 
   if (shape.command.remoteAction === 'status') {
