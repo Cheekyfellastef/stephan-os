@@ -181,6 +181,30 @@ test('GitHub telemetry cache is partitioned by non-secret credential fingerprint
   assert.equal(calls.length, 6);
 });
 
+test('concurrent Goal Dashboard refreshes share a single GitHub request flight', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (url.includes('/pulls?')) return okJson([{ number: 22, title: 'Concurrent PR' }]);
+    if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+    if (url.includes('/notifications')) return okJson([]);
+    throw new Error('unexpected request');
+  };
+  const args = {
+    env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/single-flight-repo', GITHUB_TOKEN: 'single-flight-token' },
+    secretStoreToken: '', fetchImpl, cacheEnabled: true,
+  };
+  const [one, two, three] = await Promise.all([
+    readGithubTelemetry(args), readGithubTelemetry(args), readGithubTelemetry(args),
+  ]);
+  assert.equal(one.status, 'live');
+  assert.equal(two.status, 'live');
+  assert.equal(three.status, 'live');
+  assert.equal(calls.length, 3, 'one 3-endpoint sequence across three concurrent consumers');
+  assert.equal(one.pullRequests.length, 1);
+});
+
 test('rate-limited telemetry shares a durable HOLD with other Battle Bridge workers and skips fallback', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-telemetry-rate-limit-'));
   let calls = 0;
@@ -207,7 +231,7 @@ test('rate-limited telemetry shares a durable HOLD with other Battle Bridge work
     assert.deepEqual(first.blockers, ['github_rate_limit_backoff']);
     assert.equal(first.rateLimitHold.reasonCode, 'GITHUB_RATE_LIMIT_BACKOFF');
     assert.equal(repeated.rateLimitHold.retryAfterUtc, first.rateLimitHold.retryAfterUtc);
-    assert.equal(calls, 3, 'one three-endpoint batch, not a retry storm');
+    assert.equal(calls, 1, 'stop at the first rate-limited endpoint; do not launch the other two');
     assert.equal(fallbackAttempts, 0);
     assert.equal(first.adapterAvailable, false);
     assert.equal(first.pullRequests.length, 0);
