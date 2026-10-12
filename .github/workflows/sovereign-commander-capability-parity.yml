@@ -24,6 +24,8 @@ on:
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
       - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/run-sovereign-commander-hidden.ps1'
+      - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
   push:
@@ -39,6 +41,9 @@ on:
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/battle-bridge-observation.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'scripts/windows/run-sovereign-commander-hidden.ps1'
+      - 'shared/agents/sovereignCommanderWindows.test.mjs'
+      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
 
 permissions:
   contents: read
