@@ -666,18 +666,10 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     if (seenRequestIds.has(validated.command.requestId)) continue;
     const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
     const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
-    // Protected squash merges have two independent SHA authorities: the PR's
-    // exact source head and the currently deployed main/base. Stale-work
-    // admission compares ONLY expectedBase to main for this one already
-    // allowlisted operation; the protected executor still verifies the exact
-    // PR source head, immutable independent review and owner approval.
-    const expectedMainHead = validated.command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION
-      ? String(validated.command.expectedBase || '').trim().toLowerCase()
-      : expectedHead;
     if (normalizedCurrentHead
       && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
-      && SHA_PATTERN.test(expectedMainHead)
-      && expectedMainHead !== normalizedCurrentHead) {
+      && SHA_PATTERN.test(expectedHead)
+      && expectedHead !== normalizedCurrentHead) {
       seenRequestIds.add(validated.command.requestId);
       const superseded = Object.freeze({
         ok: false,
