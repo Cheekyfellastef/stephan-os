@@ -145,16 +145,21 @@ export async function reconcileSovereignCommanderCapabilityParity({
         });
       }
     }
+    const combinedVerdict = nativeGapIntake.candidateCount > 0
+      ? 'SOVEREIGN_COMMANDER_NATIVE_CAPABILITY_GAPS_TRACKED'
+      : ledger.finalVerdict;
     const statusRecord = Object.freeze({
       ...createSharedWorkspaceStatusRecord({
         statusId: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID,
         participantId: 'sovereign-commander',
         timestampUtc,
         relatedIssue: '#2573',
-        status: ledger.finalVerdict,
+        status: combinedVerdict,
         summary: ledger.buildableGapCount > 0
           ? `Sovereign Commander retains ${ledger.buildableGapCount} buildable Remote Commander parity gap(s) under #2573.`
-          : 'Sovereign Commander Remote Commander capability parity is green.',
+          : nativeGapIntake.candidateCount > 0
+            ? `Sovereign Commander has ${nativeGapIntake.candidateCount} native skill proposals; Remote Commander parity remains green.`
+            : 'Sovereign Commander Remote Commander capability parity is green.',
         proofRefs: [],
       }),
       capabilityParity: ledger,
@@ -198,7 +203,7 @@ export async function reconcileSovereignCommanderCapabilityParity({
       flywheelEventPublications: Object.freeze(flywheelEventPublications),
       boundaryHoldCount: ledger.boundaryHoldCount,
       ...boundary(),
-      finalVerdict: ledger.finalVerdict,
+      finalVerdict: combinedVerdict,
     });
   } catch (error) {
     return Object.freeze({
