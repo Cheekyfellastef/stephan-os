@@ -133,6 +133,7 @@ const TOOLS = Object.freeze([
             'meter-status',
             'controller-lane-status',
             'visibility-snapshot',
+            'cpu-pressure-snapshot',
             'publish-controller-activity',
             'repair-ui-4173',
             'restart-stephanos-runtime',
