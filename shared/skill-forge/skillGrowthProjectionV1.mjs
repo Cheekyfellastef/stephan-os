@@ -87,6 +87,32 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
         proofRefs: evidenceRefs(learning.verification?.proofRefs),
       });
     });
+  // Read-only conjuration: typed capability gaps become *reviewable drafts*,
+  // not code, installed skills or an automatic privilege escalation.
+  const learnedDrafts = [...new Map(learningEvents.map(event => [event.capability, Object.freeze({
+    id: 'learned-' + event.capability.replace(/[^a-z0-9-]/g, '-').slice(0, 70),
+    name: 'Conjure skill: ' + event.capability,
+    category: 'Closed-loop capability draft',
+    status: 'DRAFT',
+    riskLevel: 'MEDIUM',
+    permissionLevel: 'PROPOSE_ONLY',
+    plainEnglishSummary: 'Proposed reusable method for ' + event.capability + '.',
+    whySuggested: event.summary + ' · Teacher: ' + event.teacher,
+    allowedTouches: ['Knowledge proposal and proof review only'],
+    forbiddenTouches: [
+      'No direct execution, installs, shell access, deployments, merges or new tool grants.',
+      'No publishing to another agent without target-specific proof and operator review.',
+    ],
+    rollbackPath: 'Discard the draft; existing runtime state is unchanged.',
+    evidence: event.proofRefs.map(ref => ({ type: 'closed-loop-proof', summary: ref })),
+    tags: ['openclaw-related', 'troubleshooting'],
+    provenance: 'LEARNING_DRAFT_NOT_INSTALLED',
+    learningState: event.learningState,
+  })])).values()];
+  const skillCandidates = [
+    ...rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
+    ...learnedDrafts,
+  ];
   const publishedSkills = skillRecords.map(record => ({
     id: record.skillForge.skillId,
     name: text(record.skillForge.name, record.skillForge.skillId),
@@ -123,11 +149,11 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     sourceTruth: !feedReadable ? 'UNAVAILABLE' : feed.state === 'stale' ? 'STALE' : 'REPORTED',
     reason: text(feed.reason, 'No verified Shared Workspace response'),
     nextAction: text(feed.exactNextAction, 'Verify the Shared Workspace backend connection.'),
-    skillCandidates: rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
+    skillCandidates,
     publishedSkills, learningEvents, stages, observedActors,
     timeline: learningEvents.slice(0, 16),
     summary: Object.freeze({
-      proposals: rows(seedSkills).length,
+      proposals: skillCandidates.length,
       witnessedLearning: learningEvents.length,
       verifiedLessons: learningEvents.filter(event => event.verified).length,
       publishedSkillRecords: publishedSkills.length,
