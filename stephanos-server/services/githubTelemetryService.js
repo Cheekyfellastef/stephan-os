@@ -9,6 +9,8 @@ export const DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS = 3_000;
 export const DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS = 60_000;
 const MAX_GITHUB_TELEMETRY_CACHE_TTL_MS = 5 * 60 * 1000;
 const githubTelemetryCache = new Map();
+// Single-flight for concurrent dashboard refreshes sharing one credential.
+const githubTelemetryInFlight = new Map();
 const GITHUB_TELEMETRY_RATE_LIMIT_DEFAULT_MS = 120_000;
 const GITHUB_TELEMETRY_RATE_LIMIT_MIN_MS = 30_000;
 const GITHUB_TELEMETRY_RATE_LIMIT_MAX_MS = 65 * 60_000;
@@ -210,11 +212,11 @@ async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
     fetchImpl: options.fetchImpl || fetch,
     requestTimeoutMs: options.requestTimeoutMs,
   };
-  const [notifications, prs, workflowRuns] = await Promise.all([
-    githubJson('https://api.github.com/notifications?all=false&participating=false', auth, requestOptions),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, requestOptions),
-    githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, requestOptions),
-  ]);
+  // Serial, deliberately: one exhausted endpoint must not dispatch two more
+  // doomed requests before the shared rate-limit HOLD can be recorded.
+  const prs = await githubJson(`https://api.github.com/repos/${owner}/${repo}/pulls?state=open&per_page=100`, auth, requestOptions);
+  const workflowRuns = await githubJson(`https://api.github.com/repos/${owner}/${repo}/actions/runs?per_page=50`, auth, requestOptions);
+  const notifications = await githubJson('https://api.github.com/notifications?all=false&participating=false', auth, requestOptions);
   return normalizeGithubTelemetry({ available: true, source: 'github-api', authAuthority: auth.authority, repository: repoConfig, notifications, pullRequests: prs, workflows: workflowRuns.workflow_runs || [] }, options);
 }
 export async function readGithubTelemetry(options = {}) {
@@ -245,6 +247,13 @@ export async function readGithubTelemetry(options = {}) {
     if (cached && nowMs - cached.cachedAtMs >= 0 && nowMs - cached.cachedAtMs < cacheTtlMs) return cached.telemetry;
   }
 
+  // The cache only contains completed observations. Deduplicate refreshes
+  // currently in progress as well, or concurrent UI clients would each launch
+  // their own entire GitHub request sequence.
+  if (cacheEnabled && githubTelemetryInFlight.has(cacheKey)) {
+    return githubTelemetryInFlight.get(cacheKey);
+  }
+  const flight = (async () => {
   try {
     const telemetry = await readGithubTelemetryWithAuth(repoConfig, auth, options);
     if (cacheEnabled) githubTelemetryCache.set(cacheKey, { cachedAtMs: nowMs, telemetry });
@@ -275,6 +284,13 @@ export async function readGithubTelemetry(options = {}) {
       return heldGithubTelemetry(repoConfig, auth.authority, options, { retryAfterUtc });
     }
     return { ...normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options), status: 'adapter_error', blockers: [`github_adapter_error:${error?.message || 'unknown'}`] };
+  }
+  })();
+  if (cacheEnabled) githubTelemetryInFlight.set(cacheKey, flight);
+  try {
+    return await flight;
+  } finally {
+    if (githubTelemetryInFlight.get(cacheKey) === flight) githubTelemetryInFlight.delete(cacheKey);
   }
 }
 export function buildExecutionChains({ goals = [], githubTelemetry = {} } = {}) {
