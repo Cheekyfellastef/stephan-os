@@ -48,3 +48,73 @@ test('a claimed ACTIVE record does not count as installed without recipient exac
   assert.equal(proven.summary.provenActiveTargets, 1);
   assert.equal(proven.observedActors.find(a => a.id === 'openclaw-standalone').skillCount, 1);
 });
+
+
+test('deluxe Skill Forge includes canonical Sovereign Conjurer draft packets as non-installed proposals', () => {
+  const draft = {
+    schemaVersion: 'stephanos.sovereign-capability-skill-packet.v1',
+    id: 'sovereign-skill-windows-service-ownership',
+    name: 'Sovereign capability: windows-service-ownership',
+    plainEnglishSummary: 'Build a guarded service inspector.',
+    whySuggested: 'Validated Sovereign learning event, not runtime proof.',
+    status: 'DRAFT', riskLevel: 'HIGH', permissionLevel: 'NEEDS_OPERATOR_APPROVAL',
+    canonicalOwnerGoal: '#2573', activationAllowed: false,
+    executionAllowed: false, constructionAdmissionAllowed: false, mergeAuthority: false,
+    localPath: 'C:/private/operator',
+  };
+  const status = {
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'sovereign-commander-capability-parity-current',
+    canonicalOwnerGoal: '#2573',
+    timestampUtc: '2026-10-12T11:35:00Z',
+    capabilityParity: { buildableGapCount: 3 },
+    capabilityCompiler: {
+      schemaVersion: 'stephanos.sovereign-commander-capability-compiler.v1',
+      skillConjurerSchema: 'stephanos.sovereign-commander-skill-conjurer.v1',
+      skillForgeActivationAllowed: false,
+      automaticCapabilityConstructionAllowed: false,
+      nativeGapCandidateCount: 1,
+      skillForgeCandidates: [draft],
+    },
+  };
+  const payload = { state: 'ready', records: { statusRecords: [status] } };
+  const view = deriveSkillGrowthObservatoryV1({ payload, nowUtc: '2026-10-12T11:36:00Z' });
+  assert.equal(view.summary.sovereignDrafts, 1);
+  assert.equal(view.summary.sovereignNativeGaps, 1);
+  assert.equal(view.summary.sovereignParityGaps, 3);
+  assert.equal(view.summary.sovereignStatusTruth, 'CURRENT');
+  const skill = view.skillCandidates.find(item => item.id === draft.id);
+  assert.equal(skill.status, 'DRAFT');
+  assert.equal(skill.provenance, 'SOVEREIGN_GUARDED_DRAFT_NOT_INSTALLED');
+  assert.equal(view.summary.provenActiveTargets, 0);
+  assert.equal(JSON.stringify(view).includes('C:/private/operator'), false);
+});
+
+test('deluxe Skill Forge never labels stale or self-authorising proposals as installed', () => {
+  const safe = {
+    schemaVersion: 'stephanos.sovereign-capability-skill-packet.v1',
+    id: 'sovereign-skill-bounded-probe', status: 'DRAFT', canonicalOwnerGoal: '#2573',
+    activationAllowed: false, executionAllowed: false, constructionAdmissionAllowed: false, mergeAuthority: false,
+  };
+  const status = {
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'sovereign-commander-capability-parity-current',
+    canonicalOwnerGoal: '#2573',
+    timestampUtc: '2026-10-12T10:00:00Z',
+    capabilityCompiler: {
+      schemaVersion: 'stephanos.sovereign-commander-capability-compiler.v1',
+      skillConjurerSchema: 'stephanos.sovereign-commander-skill-conjurer.v1',
+      skillForgeActivationAllowed: false,
+      automaticCapabilityConstructionAllowed: false,
+      skillForgeCandidates: [safe, {...safe, id:'sovereign-skill-unsafe', activationAllowed: true}],
+    },
+  };
+  const payload = {state:'ready',records:{statusRecords:[status]}};
+  const stale = deriveSkillGrowthObservatoryV1({ payload, nowUtc: '2026-10-12T11:36:00Z' });
+  assert.equal(stale.summary.sovereignStatusTruth, 'STALE');
+  assert.equal(stale.summary.sovereignDrafts, 1);
+  assert.equal(stale.skillCandidates.find(x=>x.id===safe.id).provenance, 'SOVEREIGN_STALE_DRAFT_NOT_INSTALLED');
+  const invalid = structuredClone(payload);
+  invalid.records.statusRecords[0].capabilityCompiler.skillForgeActivationAllowed = true;
+  assert.equal(deriveSkillGrowthObservatoryV1({payload:invalid,nowUtc:'2026-10-12T10:01:00Z'}).summary.sovereignDrafts, 0);
+});
