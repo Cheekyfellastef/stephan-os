@@ -133,13 +133,13 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     return () => window.clearTimeout(timeoutId);
   }, [shouldRenderCockpit, cockpitModel?.continuitySnapshot?.lastContinuityEventAt]);
 
-  // Positive health proof expires even when the browser governor suspends
+  // Positive and negative health proof expires even when the browser governor suspends
   // polling. A single deadline-based tick invalidates the memoized Cockpit
   // model; no background polling loop or additional backend request is added.
   useEffect(() => {
     if (!shouldRenderCockpit || typeof window === 'undefined') return undefined;
     const checkedAt = Date.parse(String(apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt || ''));
-    if (!Number.isFinite(checkedAt) || !apiStatus?.backendReachable) return undefined;
+    if (!Number.isFinite(checkedAt) || typeof apiStatus?.backendReachable !== 'boolean') return undefined;
     const expiresInMs = (checkedAt + 120_000 + 50) - Date.now();
     if (expiresInMs <= 0) return undefined;
     const timeoutId = window.setTimeout(() => {
