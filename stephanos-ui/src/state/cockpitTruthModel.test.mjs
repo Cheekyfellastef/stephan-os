@@ -341,7 +341,7 @@ test('hosted cockpit reports backend dead only when a fresh backend health proof
       executedProvider: 'unknown',
       selectedProvider: 'groq',
     },
-    apiStatus: { backendReachable: false },
+    apiStatus: { backendReachable: false, lastCheckedAt: new Date().toISOString(), runtimeContext: { healthProbeTruth: { lastBackendHealthProbeAt: new Date().toISOString(), lastBackendHealthProbeResult: 'ok:false:error' } } },
     commandHistory: [],
     telemetryEntries: [],
   });
@@ -511,4 +511,19 @@ test('Cockpit invalidates a cached verified backend health receipt at the same d
   assert.match(source, /setBackendHealthExpiryTick\(value => value \+ 1\)/);
   assert.match(source, /telemetryEntries, activityExpiryTick, backendHealthExpiryTick/);
   assert.match(source, /window\.clearTimeout\(timeoutId\)/);
+});
+
+test('Cockpit refuses stale negative backend service proof rather than retaining red after standby', () => {
+  const at = '2026-10-12T19:00:00.000Z';
+  const apiStatus = {
+    backendReachable: false,
+    lastCheckedAt: at,
+    runtimeContext: { healthProbeTruth: { lastBackendHealthProbeAt: at, lastBackendHealthProbeResult: 'ok:false:error' } },
+  };
+  const routeTruthView = { backendReachableState: 'no', currentBackendHealthFresh: 'yes' };
+  assert.equal(deriveBackendServiceState({ apiStatus, routeTruthView, nowMs: Date.parse(at) + 1000 }), 'dead');
+  assert.equal(deriveBackendServiceState({ apiStatus, routeTruthView, nowMs: Date.parse(at) + 120100 }), 'unknown');
+  const componentSource = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/CockpitPanel.jsx'), 'utf8');
+  assert.match(componentSource, /typeof apiStatus\?\.backendReachable !== 'boolean'/);
+  assert.doesNotMatch(componentSource, /!apiStatus\?\.backendReachable\) return undefined/);
 });
