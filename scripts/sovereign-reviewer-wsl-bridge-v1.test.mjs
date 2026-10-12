@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { planWindowsSovereignReviewerV1, runWindowsSovereignReviewerV1 } from './sovereign-reviewer-wsl-bridge-v1.mjs';
 
 const ROOT = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
@@ -54,9 +55,10 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.approvalAuthority, false);
   assert.equal(calls.length, 3);
-  assert.equal(calls.every(x => x.command === 'C:\Windows\System32\wsl.exe' && x.args[0] === '--exec' && x.options.shell === false), true);
+  assert.equal(calls.every(x => x.command === path.win32.resolve('C:/Windows/System32/wsl.exe') && x.args[0] === '--exec' && x.options.shell === false), true);
   assert.equal(calls.every(x => x.options.env.WSLENV === ''), true);
   assert.equal(calls.every(x => x.command !== 'wsl.exe'), true, 'never resolve executable from cwd or PATH');
+  assert.equal(calls.every(x => path.win32.isAbsolute(x.command)), true, 'absolute Windows executable required');
   assert.deepEqual(calls[2].args.slice(0, 6), ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp', 'STEPHANOS_REVIEW_EXACT_HEAD=' + 'a'.repeat(40)]);
   assert.equal(calls[2].args.includes('/usr/bin/node'), true);
   assert.equal(calls[2].args.some(x => x === 'STEPHANOS_SHARED_AGENT_WORKSPACE=/mnt/c/Users/Operator/Documents/Stephanos-openclaw-workspace'), true);
