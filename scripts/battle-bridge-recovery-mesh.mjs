@@ -20,6 +20,7 @@ import {
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { reconcileBattleBridgeGitHubSyncTask } from '../shared/agents/battleBridgeGitHubSyncSelfRepairV1.mjs';
 import { runCompletionGuardian } from './completion-guardian.mjs';
+import { runTemporarySovereignRescueObservationV1 } from './temporary-sovereign-lease-rescue.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import {
   appendWorkspaceJsonl,
@@ -532,23 +533,13 @@ async function writeStateAtomically(statePath, value) {
 
 // No caller-supplied commands or output paths. Read ONLY the bounded
 // known result marker from the fixed child and preserve fail-closed telemetry.
-export function projectRecoveryMeshTemporaryRescueChildV1(child = {}) {
+// No second process, shell, scheduler or mutation authority. Recovery Mesh
+// already owns the guarded Windows mutex and normal completion lifecycle.
+export function projectRecoveryMeshTemporaryRescueObservationV1(result = {}) {
   const denied = (blocker) => Object.freeze({
     observed: false, blocker,
     canonicalLeaseReleaseProven: false, physicalPickupProven: false,
   });
-  if (child?.status !== 0 || child?.error || typeof child?.stdout !== 'string'
-      || Buffer.byteLength(child.stdout, 'utf8') > 64 * 1024) {
-    return denied('RESCUE_CHILD_UNVERIFIED');
-  }
-  const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
-  const lines = child.stdout.split(/\r?\n/).filter(line => line.startsWith(marker));
-  if (lines.length !== 1 || lines[0].length > 16 * 1024) {
-    return denied('RESCUE_CHILD_RESULT_UNVERIFIED');
-  }
-  let result;
-  try { result = JSON.parse(lines[0].slice(marker.length)); }
-  catch { return denied('RESCUE_CHILD_RESULT_MALFORMED'); }
   const knownModes = new Set([
     'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
     'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
@@ -559,18 +550,16 @@ export function projectRecoveryMeshTemporaryRescueChildV1(child = {}) {
       || result?.leaseSeizureAllowed !== false
       || result?.newWriterAllowed !== false
       || result?.physicalPickupProven !== false) {
-    return denied('RESCUE_CHILD_RESULT_UNVERIFIED');
+    return denied('RESCUE_OBSERVATION_UNVERIFIED');
   }
   return Object.freeze({
     observed: true, mode: result.mode,
     blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(result.blocker))
       ? result.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
-    // Observation of the child's report is not independent post-release proof.
     canonicalLeaseReleaseProven: result.canonicalLeaseReleaseProven === true,
     physicalPickupProven: false,
   });
 }
-
 export async function runBattleBridgeRecoveryMesh({
   env = process.env,
   now = new Date(),
@@ -742,30 +731,25 @@ export async function runBattleBridgeRecoveryMesh({
       }
     }
     const completionGuardianHealthy = completionGuardian?.ok === true;
-    // Emergency #2961 out-of-band rescue piggybacks on the ALREADY supervised
-    // Recovery Mesh Windows Task, outside blocked elastic goal admission.
-    // Its child invokes only the pre-existing canonical exact-lease reconciler.
-    // Do not make core Recovery Mesh health depend on optional forensic work.
-    // The existing Recovery Mesh mutex prevents concurrent sidecar invocations.
+    // Emergency #2961 observes and reconciles ONLY through the canonical
+    // exact-bound guard. It runs inside the existing mutex-protected
+    // Recovery Mesh task, not through a dynamically spawned child.
+    // Core Recovery Mesh health does not depend on optional lease forensics.
     let temporaryLeaseRescue = Object.freeze({
       observed: false, blocker: 'RESCUE_NOT_ELIGIBLE',
       canonicalLeaseReleaseProven: false, physicalPickupProven: false,
     });
     if (process.platform === 'win32' && completionGuardianEligible) {
       try {
-        const fixedRescueScript = path.resolve(
-          paths.repoRoot, 'scripts', 'temporary-sovereign-lease-rescue.mjs');
-        const child = spawnSync(process.execPath, [fixedRescueScript, '--once'], {
-          cwd: paths.repoRoot,
-          env,
-          encoding: 'utf8', shell: false, windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 12_000, maxBuffer: 64 * 1024,
+        const observation = await runTemporarySovereignRescueObservationV1({
+          env, now,
+          paths: { repoRoot: paths.repoRoot, workspaceRoot: paths.workspaceRoot },
+          sourceHead: syncRepairExpectedHead,
         });
-        temporaryLeaseRescue = projectRecoveryMeshTemporaryRescueChildV1(child);
+        temporaryLeaseRescue = projectRecoveryMeshTemporaryRescueObservationV1(observation);
       } catch {
         temporaryLeaseRescue = Object.freeze({
-          observed: false, blocker: 'RESCUE_CHILD_EXCEPTION',
+          observed: false, blocker: 'RESCUE_OBSERVATION_EXCEPTION',
           canonicalLeaseReleaseProven: false, physicalPickupProven: false,
         });
       }
