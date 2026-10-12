@@ -16,6 +16,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
   'restart-stephanos-runtime',
@@ -838,6 +839,93 @@ function safeControllerLaneStatusProjection(value = {}, processId = '') {
     secretMaterialIncluded: false,
     unknownMeansGreen: false,
     finalVerdict,
+  });
+}
+
+
+const CPU_SNAPSHOT_PROCESS_NAMES = new Set(['powershell','pwsh','node','msmpeng','ollama','llama-server']);
+const CPU_SNAPSHOT_SCRIPT_NAMES = new Set([
+  'run-vr-resource-governor.ps1',
+  'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+  'run-battle-bridge-recovery-lifeboat-bank-v1.ps1',
+  'battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+  'Launch-Stephanos-Local.ps1',
+  'Invoke-Stephanos-Ignite-With-Approval.ps1',
+  'start-mission-orchestrator-worker.ps1',
+  'stephanos-core-daemon.mjs',
+  'mission-orchestrator-worker-supervised.mjs',
+  'sovereign-commander-mcp.mjs',
+  'serve-stephanos-dist.mjs',
+  'battle-bridge-sovereign-relay-daemon.mjs',
+].map((name) => name.toLowerCase()));
+
+export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
+  if (processId !== 'cpu-pressure-snapshot') return null;
+  const stdout = String(value?.structuredContent?.stdout || '').trim();
+  if (!stdout || stdout.length > 16_000) return null;
+  let parsed;
+  try { parsed = JSON.parse(stdout); } catch { return null; }
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.battle-bridge-cpu-pressure.v1'
+    || parsed.readOnly !== true
+    || parsed.sourceMutationAllowed !== false
+    || parsed.processTerminationAllowed !== false
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.arbitraryProcessInspectionAllowed !== false
+    || parsed.rawCommandLinesReturned !== false
+    || parsed.rawPathsReturned !== false
+    || parsed.secretMaterialIncluded !== false
+    || parsed.unknownMeansGreen !== false
+    || parsed.finalVerdict !== 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED') return null;
+  const sampleSeconds = Number(parsed.sampleSeconds);
+  const processorCount = Number(parsed.processorCount);
+  const capturedAt = text(parsed.capturedAtUtc);
+  if (!Number.isFinite(Date.parse(capturedAt))
+    || !Number.isFinite(sampleSeconds) || sampleSeconds < 4 || sampleSeconds > 20
+    || !Number.isSafeInteger(processorCount) || processorCount < 1 || processorCount > 256
+    || !Array.isArray(parsed.rows) || parsed.rows.length > 20) return null;
+  const safeRows = [];
+  for (const row of parsed.rows) {
+    const pid = Number(row?.pid);
+    const parentPid = Number(row?.parentPid);
+    const processName = text(row?.processName);
+    const startedAtUtc = text(row?.startedAtUtc);
+    const script = text(row?.script);
+    const cpuPercent = row?.cpuPercent === null ? null : Number(row?.cpuPercent);
+    if (!Number.isSafeInteger(pid) || pid < 1 || pid > 2_147_483_647
+      || !Number.isSafeInteger(parentPid) || parentPid < 0 || parentPid > 2_147_483_647
+      || !CPU_SNAPSHOT_PROCESS_NAMES.has(processName.toLowerCase())
+      || (startedAtUtc && !Number.isFinite(Date.parse(startedAtUtc)))
+      || (script && !CPU_SNAPSHOT_SCRIPT_NAMES.has(script.toLowerCase()))
+      || (cpuPercent !== null && (!Number.isFinite(cpuPercent) || cpuPercent < 0 || cpuPercent > 100))
+      || typeof row?.sampleMatched !== 'boolean') return null;
+    safeRows.push(Object.freeze({
+      pid,
+      processName,
+      parentPid,
+      startedAtUtc: startedAtUtc ? new Date(startedAtUtc).toISOString() : '',
+      script,
+      cpuPercent,
+      sampleMatched: row.sampleMatched === true && cpuPercent !== null,
+    }));
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
+    capturedAtUtc: new Date(capturedAt).toISOString(),
+    sampleSeconds,
+    processorCount,
+    metadataAvailable: parsed.metadataAvailable === true,
+    rows: Object.freeze(safeRows),
+    readOnly: true,
+    processTerminationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    sourceMutationAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED',
   });
 }
 
@@ -1790,6 +1878,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'battle-bridge-observe'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
+      || actionId === 'cpu-pressure-snapshot'
       || actionId === 'publish-controller-activity'
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
@@ -2573,6 +2662,47 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: convergenceResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
+    const cpuPressure = safeCpuPressureSnapshotProjection(rawMaintenance, projection.processId);
+    if (projection.ok !== true
+      || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection.proofHash)
+      || projection.processId !== shape.command.remoteAction
+      || projection.status !== 0
+      || !cpuPressure) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      cpuPressure,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
