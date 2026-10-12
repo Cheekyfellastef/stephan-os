@@ -120,6 +120,13 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     status: text(record.skillForge.status, 'UNKNOWN'),
     provenanceRefs: evidenceRefs(record.skillForge.proofRefs),
     allowedTargets: rows(record.skillForge.allowedTargets),
+    targetRuntimeProofs: rows(record.skillForge.targetRuntimeProofs).map(proof => ({
+      actorId: text(proof?.actorId),
+      passed: proof?.passed === true,
+      installedRevision: text(proof?.installedRevision),
+      operatorApprovalRef: text(proof?.operatorApprovalRef),
+      proofRefs: evidenceRefs(proof?.proofRefs),
+    })),
     timestampUtc: text(record.timestampUtc, 'UNKNOWN'),
   }));
   const stages = SKILL_STAGES.map(stage => ({
@@ -130,10 +137,14 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
   const observedActors = SKILL_TRANSFER_ACTORS.map(actor => {
     const heartbeat = actorRecord(statusRecords, actor.id);
     const actorProof = publishedSkills.filter(skill => skill.allowedTargets.includes(actor.id)
-      && skill.provenanceRefs.length > 0 && skill.status === 'ACTIVE');
+      && skill.provenanceRefs.length > 0
+      && skill.status === 'ACTIVE'
+      && skill.targetRuntimeProofs.some(proof => proof.actorId === actor.id
+        && proof.passed && proof.installedRevision && proof.operatorApprovalRef
+        && proof.proofRefs.length > 0));
     return Object.freeze({
       ...actor,
-      runtime: heartbeat ? text(heartbeat.status || heartbeat.state, 'UNKNOWN') : 'UNKNOWN',
+      runtime: heartbeat ? text(heartbeat.runtimeState || heartbeat.processState, 'UNPROVEN') : 'UNKNOWN',
       evidenceAt: heartbeat ? text(heartbeat.timestampUtc, 'UNKNOWN') : 'UNKNOWN',
       skillCount: actorProof.length,
       skillProof: actorProof.map(skill => skill.id),
