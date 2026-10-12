@@ -148,3 +148,64 @@ test('fleet care marker stays asserted in the existing trusted UI test suite', a
   assert.match(source, /goal-conveyor-fleet-care/);
   assert.match(source, /Conveyor & Fleet Care/);
 });
+
+
+const skillForgeUrl = new URL('./SkillForgeTile.jsx', import.meta.url);
+const skillForgeStylesUrl = new URL('./SkillForgeObservatory.css', import.meta.url);
+const stephanosOverviewUrl = new URL('./StephanosCommandObservatory.jsx', import.meta.url);
+const stephanosOverviewStylesUrl = new URL('./StephanosCommandObservatory.css', import.meta.url);
+const skillForgeModelUrl = new URL('../../../shared/skill-forge/skillGrowthProjectionV1.mjs', import.meta.url);
+
+test('dedicated Skill Forge workspace and parent Stephanos command observatory are truth-linked', async () => {
+  const [app, forge, forgeCss, overview, overviewCss, model] = await Promise.all([
+    readFile(appUrl, 'utf8'),
+    readFile(skillForgeUrl, 'utf8'),
+    readFile(skillForgeStylesUrl, 'utf8'),
+    readFile(stephanosOverviewUrl, 'utf8'),
+    readFile(stephanosOverviewStylesUrl, 'utf8'),
+    readFile(skillForgeModelUrl, 'utf8'),
+  ]);
+  assert.match(app, /if \(skillForgeSurfaceMode\)/);
+  assert.match(app, /SKILL FORGE SURFACE/);
+  assert.match(app, /<SkillForgeTile[\s\S]*forcePanelOpen/);
+  assert.match(app, /<StephanosCommandObservatory/);
+  assert.match(forge, /dashboard-feed\?scope=full-history/);
+  assert.match(forge, /Capability Genesis Observatory/);
+  assert.match(forge, /Cross-agent qualification gate/);
+  assert.match(forge, /Skill blueprint vault/);
+  assert.match(forge, /forcePanelOpen/);
+  assert.match(forgeCss, /\.skill-observatory__hero/);
+  assert.match(overview, /Command Observatory/);
+  assert.match(overview, /Shared Workspace/);
+  assert.match(overview, /Skill Forge/);
+  assert.match(overviewCss, /\.stephanos-ops-metrics/);
+  assert.match(model, /autoGrant: false/);
+  assert.match(model, /activated: false/);
+});
+
+test('skill provenance never infers activation from an exam or static seed', async () => {
+  const { deriveSkillGrowthObservatoryV1, buildSkillTransferAssessmentV1 } = await import(skillForgeModelUrl);
+  const lesson = {
+    schemaVersion:'stephanos.closed-loop-learning.v1',
+    eventId:'capability-diagnostic',
+    capabilityId:'diagnostics',
+    teacherId:'openclaw-local',
+    state:'RETRY_READY',
+    learningCandidate:{lessonId:'diagnostics'},
+    exam:{passed:true,proofRefs:['exam:1']},
+    verification:{passed:true,proofRefs:['runtime:1']},
+  };
+  const view = deriveSkillGrowthObservatoryV1({
+    seedSkills:[{id:'seed',status:'ACTIVE'}],
+    payload:{state:'ready',records:{eventRecords:[{eventId:'capability-diagnostic',closedLoopLearning:lesson}]}}
+  });
+  assert.equal(view.summary.proposals, 1);
+  assert.equal(view.summary.verifiedLessons, 1);
+  assert.equal(view.summary.provenActiveTargets, 0);
+  const transfer = buildSkillTransferAssessmentV1({
+    learning:lesson,sourceActor:'openclaw-local',targetActor:'openclaw-standalone',
+  });
+  assert.equal(transfer.activated,false);
+  assert.equal(transfer.eligibleForExistingApprovedActivationRoute,false);
+  assert.ok(transfer.blockers.includes('operatorApprovalPresent'));
+});
