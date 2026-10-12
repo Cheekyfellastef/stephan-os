@@ -185,7 +185,7 @@ function reviewRunner(source, path, findings) {
     /^\s*\$age\s*=\s*\[math\]::Max\(0,\s*\[int\]\(\[DateTimeOffset\]::UtcNow\s*-\s*\$heartbeat\)\.TotalSeconds\)\s*$/m,
     'core-daemon-runner-relay-heartbeat-age-not-derived', path);
   requirePattern(findings, relayHealthSource,
-    /healthy\s*=\s*\[bool\]\(\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30\)/,
+    /healthy\s*=\s*\[bool\]\(\s*\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30(?:\s+-and\s+\$sourceHeadMatchesLive)?\s*\)/,
     'core-daemon-runner-relay-health-proof-not-bounded', path);
   if ((relayHealthSource.match(/^\s*\$heartbeat\s*=/gmi) || []).length !== 1) {
     findings.push(finding('core-daemon-runner-relay-heartbeat-reassigned', path));
@@ -203,10 +203,22 @@ function reviewRunner(source, path, findings) {
     findings.push(finding('core-daemon-runner-process-executable-widened', path));
   }
 
+  // The existing desktop Commander watchdog may wake its fixed registered
+  // task, but must not gain a general task control surface.
+  const taskStartLines = activeSource.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /\bStart-ScheduledTask\b/i.test(line));
+  if (taskStartLines.length > 1
+      || taskStartLines.some((line) => line !== 'Start-ScheduledTask -TaskName $desktopCommanderTaskName')
+      || (taskStartLines.length === 1
+          && !activeSource.includes("$desktopCommanderTaskName = 'Stephanos Commander Watchdog'"))) {
+    findings.push(finding('core-daemon-runner-fixed-task-wake-only', path));
+  }
+
   for (const [pattern, code] of [
     [/Stop-Process\s+-Name/i, 'core-daemon-runner-name-based-kill-forbidden'],
     [/Invoke-Expression|\biex\b|cmd\.exe|Restart-Computer|shutdown\.exe/i, 'core-daemon-runner-dynamic-or-pc-authority-forbidden'],
-    [/\b(?:Register|New|Start)-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'core-daemon-runner-task-mutation-forbidden'],
+    [/\b(?:Register|New)-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'core-daemon-runner-task-mutation-forbidden'],
     [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'core-daemon-runner-git-mutation-forbidden'],
     [/\$env:[A-Z0-9_]+_COMMAND\b/i, 'core-daemon-runner-command-env-forbidden'],
     [/\[(?:string|object)\]\s*\$(?:CoreDaemonScript|CoreDaemonStatusPath|Executable|Command|Arguments)\b/i, 'core-daemon-runner-caller-authority-forbidden'],
@@ -227,6 +239,7 @@ function reviewStatus(source, path, findings) {
     ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-status-process-creation-fence-absent'],
     ["$lockStart -le $heartbeatAt", 'core-daemon-status-heartbeat-lock-order-proof-absent'],
     ["[string]$lockRecord.sourceHead", 'core-daemon-status-source-binding-absent'],
+    ["$gitExe = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'core-daemon-status-git-observer-not-fixed'],
     ["schemaVersion = 'stephanos.core-daemon-status.v1'", 'core-daemon-status-schema-absent'],
     ['uiRequired = $false', 'core-daemon-status-ui-independence-absent'],
     ['sourceMutationAllowed = $false', 'core-daemon-status-source-denial-absent'],
@@ -243,7 +256,7 @@ function reviewStatus(source, path, findings) {
     [/Invoke-Expression|\biex\b|cmd\.exe|Restart-Computer|shutdown\.exe/i, 'core-daemon-status-dynamic-or-pc-authority-forbidden'],
     [/\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b/i, 'core-daemon-status-filesystem-mutation-forbidden'],
     [/Invoke-RestMethod|Invoke-WebRequest|System\.Net\.Http/i, 'core-daemon-status-network-authority-forbidden'],
-    [/\bgit(?:\.exe)?\b/i, 'core-daemon-status-git-authority-forbidden'],
+    [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b|\$gitExe[^\r\n]{0,160}\s(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'core-daemon-status-git-mutation-forbidden'],
     [/(^|\r?\n)\s*exit\s+[1-9]\d*\b/im, 'core-daemon-status-failing-diagnostic-forbidden'],
   ]) forbidPattern(findings, source, pattern, code, path);
 }
