@@ -47,10 +47,12 @@ admission. It is not an alternate source writer.
   Battle Bridge merely because this PR exists or CI passes.
 - The `--watch` mode itself does not provide Windows boot persistence or
   single-instance OS supervision. The source integration in the existing
-  Windows Recovery Mesh calls the fixed `--once` child only after canonical
-  Recovery Mesh task, path, mutex, source and healthy-control-plane guards
-  pass. It is bounded to twelve seconds, reports failures independently and
-  does not change Recovery Mesh's own protected repair status. This attaches
+  Windows Recovery Mesh calls the original guarded observer **in process**
+  only after canonical task, path, mutex, source and healthy-control-plane
+  checks pass. It uses no second process, shell, scheduler or new lease.
+  Failure reports remain independent of Recovery Mesh's protected status.
+  The existing Recovery Mesh task supervisor remains responsible for overall
+  runtime deadlines; no abortable in-process deadline is claimed. This attaches
   to an *existing task*, not a new daemon or Scheduled Task.
 - As with all source changes, the new Recovery Mesh attachment does **not**
   become live merely when CI passes. Protected merge, Battle Bridge source
@@ -62,9 +64,9 @@ admission. It is not an alternate source writer.
    and relevant lease authority tests; independently review the exact PR head.
 2. Protected merge and source-head-safe deployment to Battle Bridge.
 3. After protected merge and deployment, prove that the **existing**
-   Recovery Mesh Scheduled Task invokes the source-attached bounded observer
-   on an eligible Windows cycle; prove single-flight, timeout fail-close and
-   restart endurance. Do not separately start `--watch` as a second owner.
+   Recovery Mesh Scheduled Task invokes the source-attached guarded observer
+   on an eligible Windows cycle; prove single-flight, fault containment and
+   task-supervised restart endurance. Do not separately start `--watch` as a second owner.
 4. Obtain fresh status for the real #2962 r7 original; reconcile only exact
    terminal/original-owner evidence. If it remains mismatched, repair the
    original source chain using an isolated reviewed branch (PR #3023)
