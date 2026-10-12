@@ -179,6 +179,10 @@ test('Commander-only CPU preflight skips unrelated desktop, VR, core and relay m
   assert.match(runner, /if \(\$CommanderOnly\) \{\s*\$relayDaemonBlocker = 'SOVEREIGN_COMMANDER_RELAY_SKIPPED_COMMANDER_ONLY'/);
   assert.match(runner, /\$overallOk = \[bool\]\(\$ok -and \(\$CommanderOnly -or/);
   assert.match(runner, /if \(-not \$CommanderOnly -and -not \$vrGovernorOk\) \{ exit 4 \}/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_COMMANDER_ONLY_HEALTHY/);
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP/);
+  assert.match(runner, /SetEnvironmentVariable\(\$cpuProbeEnvName, '1', 'Process'\)/);
+  assert.match(runner, /SetEnvironmentVariable\(\$cpuProbeEnvName, \$cpuProbePrevious, 'Process'\)/);
 });
 
 test('capability probing is StrictMode-safe when an old daemon omits capabilityVersion', () => {
