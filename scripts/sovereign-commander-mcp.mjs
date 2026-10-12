@@ -27,7 +27,7 @@ export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
   'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status',
   'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
-  'gaming-resource-status', 'starfield-vr-performance-diagnosis',
+  'starfield-vr-performance-diagnosis',
 ]);
 
 const TOOLS = Object.freeze([
