@@ -216,6 +216,33 @@ test('runOllamaProvider escalates to qwen3.5:27b for deep reasoning prompts', as
   }
 });
 
+test('runOllamaProvider selects deep sovereign reasoning for natural Stephanos repair requests', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen3.5:27b' }] }),
+      };
+    }
+    const requested = JSON.parse(String(options.body || '{}')).model;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: requested, message: { content: 'repair diagnosis prepared' } }),
+    };
+  };
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Can we get Stephanos AI to repair Stephanos now?' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('runOllamaProvider uses Flywheel evidence pressure to wake qwen3.5:27b without prompt magic words', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {
