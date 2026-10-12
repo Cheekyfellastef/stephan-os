@@ -12,6 +12,8 @@ export const VERIFICATION_HARNESS_SCHEMA_VERSION = 'verification-harness.v1';
 export const VERIFICATION_RESULT_KIND = 'stephanos.verification.result';
 export const VERIFIER_RUNNER_VERSION = 'verification-runner.v1';
 export const BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND = 'node --test shared/agents/verificationHarness*.test.mjs shared/agents/*Verifier*.test.mjs';
+export const OPENCLAW_EXECUTABLE_GATEWAY_PORT = 18789;
+export const OPENCLAW_READONLY_ADAPTER_PORT = 8790;
 
 export const VERIFICATION_STATUS = Object.freeze({
   PASS: 'PASS',
@@ -52,6 +54,19 @@ export const OPENCLAW_GATEWAY_VERDICTS = Object.freeze({
   UNVERIFIED_OWNER: 'OPENCLAW_GATEWAY_UNVERIFIED_OWNER',
   MISSING: 'OPENCLAW_GATEWAY_MISSING',
   UNSAFE_RESTART_TARGET: 'OPENCLAW_GATEWAY_UNSAFE_RESTART_TARGET',
+  WRONG_ENDPOINT: 'OPENCLAW_GATEWAY_WRONG_ENDPOINT',
+});
+
+export const WORKER_VERDICTS = Object.freeze({
+  NOT_CONFIGURED: 'WORKER_NOT_CONFIGURED',
+  CONFIGURED_STOPPED: 'WORKER_CONFIGURED_STOPPED',
+  RUNNING: 'WORKER_RUNNING',
+});
+
+export const PLUGIN_VERDICTS = Object.freeze({
+  RUNTIME_MISSING: 'PLUGIN_RUNTIME_MISSING',
+  INSTALLED_NOT_LOADED: 'PLUGIN_INSTALLED_NOT_LOADED',
+  RUNTIME_LOADED: 'PLUGIN_RUNTIME_LOADED',
 });
 
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
@@ -427,9 +442,9 @@ export const VerifierFactories = Object.freeze({
   BuildVerifier: packetVerifier({ verifierType: 'BuildVerifier', checkId: 'build-proof', target: 'source-build', passField: 'buildPassed', evidenceFields: ['buildPassed', 'script', 'artifactScope'], passVerdict: 'BUILD_VERIFIER_PASS', failVerdict: 'BUILD_VERIFIER_BLOCKED' }),
   BackendVerifier: packetVerifier({ verifierType: 'BackendVerifier', checkId: 'backend-proof', target: 'stephanos-backend', passField: 'backendHealthy', evidenceFields: ['backendHealthy', 'httpStatus', 'endpoint'], passVerdict: 'BACKEND_VERIFIER_PASS', failVerdict: 'BACKEND_VERIFIER_BLOCKED' }),
   FrontendVerifier: packetVerifier({ verifierType: 'FrontendVerifier', checkId: 'frontend-proof', target: 'stephanos-frontend', passField: 'frontendHealthy', evidenceFields: ['frontendHealthy', 'uiReality', 'browserProof'], passVerdict: 'FRONTEND_VERIFIER_PASS', failVerdict: 'FRONTEND_VERIFIER_BLOCKED' }),
-  WorkerVerifier: packetVerifier({ verifierType: 'WorkerVerifier', checkId: 'worker-proof', target: 'mission-worker', passField: 'workerRunning', evidenceFields: ['workerRunning', 'workerMode', 'taskState'], passVerdict: 'WORKER_VERIFIER_PASS', failVerdict: 'WORKER_VERIFIER_BLOCKED' }),
+  WorkerVerifier: (packet = {}, options = {}) => createWorkerVerifierResult(packet, options),
   FileVerifier: packetVerifier({ verifierType: 'FileVerifier', checkId: 'file-proof', target: 'required-files', passField: 'filesPresent', evidenceFields: ['filesPresent', 'sourcePresent', 'targetPluginSourcePresent'], passVerdict: 'FILE_VERIFIER_PASS', failVerdict: 'FILE_VERIFIER_BLOCKED' }),
-  PluginVerifier: packetVerifier({ verifierType: 'PluginVerifier', checkId: 'plugin-proof', target: 'plugin-runtime', passField: 'pluginRuntimePresent', evidenceFields: ['pluginRuntimePresent', 'targetPluginSourcePresent'], passVerdict: 'PLUGIN_VERIFIER_PASS', failVerdict: 'PLUGIN_VERIFIER_BLOCKED' }),
+  PluginVerifier: (packet = {}, options = {}) => createPluginVerifierResult(packet, options),
   TaskVerifier: packetVerifier({ verifierType: 'TaskVerifier', checkId: 'task-proof', target: 'stephanos-backend-task', passField: 'taskReady', evidenceFields: ['taskReady', 'stephanosBackendTask'], passVerdict: 'TASK_VERIFIER_PASS', failVerdict: 'TASK_VERIFIER_BLOCKED' }),
   OpenClawGatewayVerifier: (packet = {}, options = {}) => createOpenClawGatewayVerifierResult(packet, options),
   SharedWorkspaceVerifier: (packet = {}, options = {}) => createWorkspaceRecordVerifierResult(packet, options),
@@ -441,16 +456,59 @@ export const VerifierFactories = Object.freeze({
   PRPublicationVerifier: (packet = {}, options = {}) => createPRPublicationVerifierResult(packet, options),
 });
 
+export function createWorkerVerifierResult(packet = {}, options = {}) {
+  const configured = packet.workerConfigured === true || packet.configured === true || packet.workerRunning === true;
+  const running = packet.workerRunning === true;
+  const finalVerdict = running ? WORKER_VERDICTS.RUNNING : (configured ? WORKER_VERDICTS.CONFIGURED_STOPPED : WORKER_VERDICTS.NOT_CONFIGURED);
+  const reason = running ? '' : (configured ? 'worker configured but stopped' : 'worker not configured');
+  return createVerifierResult({
+    checkId: 'worker-proof',
+    verifierType: 'WorkerVerifier',
+    status: running ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL,
+    target: packet.target || 'mission-worker',
+    evidence: [proofEvidence('workerConfigured', configured), proofEvidence('workerRunning', running), proofEvidence('workerMode', packet.workerMode || 'unknown'), proofEvidence('taskState', packet.taskState || 'unknown')],
+    reason,
+    durationMs: options.durationMs ?? 0,
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict,
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
+export function createPluginVerifierResult(packet = {}, options = {}) {
+  const installed = packet.pluginInstalled === true || packet.targetPluginSourcePresent === true;
+  const loaded = packet.pluginRuntimeLoaded === true || packet.pluginRuntimePresent === true;
+  const finalVerdict = loaded ? PLUGIN_VERDICTS.RUNTIME_LOADED : (installed ? PLUGIN_VERDICTS.INSTALLED_NOT_LOADED : PLUGIN_VERDICTS.RUNTIME_MISSING);
+  const reason = loaded ? '' : (installed ? 'plugin installed but runtime not loaded' : 'plugin runtime missing');
+  return createVerifierResult({
+    checkId: 'plugin-proof',
+    verifierType: 'PluginVerifier',
+    status: loaded ? VERIFICATION_STATUS.PASS : VERIFICATION_STATUS.FAIL,
+    target: packet.target || 'plugin-runtime',
+    evidence: [proofEvidence('pluginInstalled', installed), proofEvidence('pluginRuntimeLoaded', loaded), proofEvidence('pluginRuntimePresent', packet.pluginRuntimePresent === true), proofEvidence('targetPluginSourcePresent', packet.targetPluginSourcePresent === true)],
+    reason,
+    durationMs: options.durationMs ?? 0,
+    timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
+    finalVerdict,
+    proofRefs: packet.proofRefs || [],
+  });
+}
+
 export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {
   const requiresExecution = packet.requiresExecution !== false;
   const endpointIdentity = asText(packet.endpointIdentity, 'unknown');
+  const endpoint = asText(packet.endpoint, '');
+  const endpointPort = asInteger(packet.endpointPort, null) ?? asInteger(endpoint.match(/:(\d+)(?:\/|$)/)?.[1], null);
   const command = asText(packet.command, '');
-  const executableGateway = endpointIdentity !== 'openclaw-readonly-adapter-stub' && packet.httpStatus === 200 && packet.canExecute === true && /openclaw.*gateway/i.test(command);
+  const executableGateway = endpointPort === OPENCLAW_EXECUTABLE_GATEWAY_PORT && endpointIdentity !== 'openclaw-readonly-adapter-stub' && packet.httpStatus === 200 && packet.canExecute === true && /openclaw.*gateway/i.test(command);
   let finalVerdict = OPENCLAW_GATEWAY_VERDICTS.MISSING;
   let reason = 'OpenClaw gateway missing';
-  if (endpointIdentity === 'openclaw-readonly-adapter-stub' || packet.mode === 'readonly_status_only') {
+  if (endpointPort === OPENCLAW_READONLY_ADAPTER_PORT || endpointIdentity === 'openclaw-readonly-adapter-stub' || packet.mode === 'readonly_status_only') {
     finalVerdict = OPENCLAW_GATEWAY_VERDICTS.READONLY_ADAPTER_ONLY;
     reason = 'OpenClaw readonly adapter cannot prove executable gateway readiness';
+  } else if (endpointPort !== OPENCLAW_EXECUTABLE_GATEWAY_PORT) {
+    finalVerdict = OPENCLAW_GATEWAY_VERDICTS.WRONG_ENDPOINT;
+    reason = `OpenClaw executable gateway must be verified on endpoint ${OPENCLAW_EXECUTABLE_GATEWAY_PORT}`;
   } else if (packet.safeRestartTarget && packet.safeRestartTarget !== 'none' && packet.safeRestartTargetVerified !== true) {
     finalVerdict = OPENCLAW_GATEWAY_VERDICTS.UNSAFE_RESTART_TARGET;
     reason = 'OpenClaw restart target is not verified safe';
@@ -466,7 +524,7 @@ export function createOpenClawGatewayVerifierResult(packet = {}, options = {}) {
     verifierType: 'OpenClawGatewayVerifier',
     status: finalVerdict === OPENCLAW_GATEWAY_VERDICTS.VERIFIED ? 'PASS' : 'FAIL',
     target: packet.endpoint || 'openclaw-gateway',
-    evidence: [proofEvidence('httpStatus', packet.httpStatus), proofEvidence('endpointIdentity', endpointIdentity), proofEvidence('canExecute', packet.canExecute), proofEvidence('safeRestartTarget', packet.safeRestartTarget || 'none')],
+    evidence: [proofEvidence('httpStatus', packet.httpStatus), proofEvidence('endpoint', endpoint || packet.endpointPort || 'unknown'), proofEvidence('endpointPort', endpointPort), proofEvidence('endpointIdentity', endpointIdentity), proofEvidence('canExecute', packet.canExecute), proofEvidence('safeRestartTarget', packet.safeRestartTarget || 'none')],
     reason,
     durationMs: options.durationMs ?? 0,
     timestampUtc: options.timestampUtc || packet.timestampUtc || 'pending',
