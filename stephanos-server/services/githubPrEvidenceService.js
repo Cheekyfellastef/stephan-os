@@ -334,11 +334,25 @@ export async function closeGithubGoalIssue({
   return issue;
 }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now, workspaceRoot } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
   const rawNowMs = Number(typeof nowMs === 'function' ? nowMs() : nowMs); const observedNowMs = Number.isFinite(rawNowMs) ? rawNowMs : Date.now();
+  // All production goal discovery uses the same durable rate-limit HOLD as
+  // dashboard telemetry, PR evidence and the gh observation broker. Injected
+  // fetch tests use only an explicitly provided test workspace.
+  const useSharedHold = fetchImpl === fetch || Boolean(workspaceRoot);
+  const repoHold = useSharedHold
+    ? readBrokeredGithubRateLimitHold({ repository, workspaceRoot, nowMs: observedNowMs })
+    : null;
+  if (repoHold) return Object.freeze({
+    status: 'error', source: 'github-api', repository,
+    issues: Object.freeze([]), discoveredIssues: Object.freeze([]),
+    reasonCode: 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF',
+    retryAfterUtc: repoHold.retryAfterUtc, rateLimitHold: repoHold,
+    recommendedNextAction: 'GitHub quota is held. Do not refresh or admit goal evidence until the shared retry deadline.',
+  });
   const boundedCacheTtlMs = Math.min(Math.max(Number(cacheTtlMs) || GITHUB_GOAL_ESTATE_CACHE_TTL_MS, 15_000), GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS);
   const boundedFailureBackoffMs = Math.min(Math.max(Number(failureBackoffMs) || GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, 5_000), 5 * 60 * 1000);
   const boundedRequestTimeoutMs = Math.min(Math.max(Number(requestTimeoutMs) || GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, 1_000), 30_000);
@@ -358,18 +372,48 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   observationTimer.unref?.();
   const finishFailure = (result) => { clearTimeout(observationTimer); return cacheFailure(result); };
 
+  const throwIfQuotaLimited = async (response) => {
+    if (![403, 429].includes(response?.status)) return;
+    const remaining = String(response.headers?.get?.('x-ratelimit-remaining') ?? '');
+    let message = '';
+    try { message = String((await response.json())?.message ?? ''); } catch {}
+    if (response.status !== 429 && remaining !== '0'
+        && !/(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message)) return;
+    const now = Date.now();
+    const retrySeconds = Number(response.headers?.get?.('retry-after'));
+    const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
+    const requestedMs = Number.isFinite(retrySeconds) && retrySeconds > 0
+      ? retrySeconds * 1000
+      : Number.isFinite(resetSeconds) && resetSeconds > 0
+        ? resetSeconds * 1000 - now + 5_000
+        : 120_000;
+    const delayMs = Math.min(65 * 60_000, Math.max(30_000, requestedMs));
+    const recorded = useSharedHold ? recordBrokeredGithubRateLimitHold({
+      repository, workspaceRoot, nowMs: now, retryAfterMs: delayMs,
+    }) : null;
+    const error = new Error('GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF');
+    error.code = 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF';
+    error.retryAfterUtc = recorded?.retryAfterUtc || new Date(now + delayMs).toISOString();
+    throw error;
+  };
+
   const requestWithFallback = async (url, userAgent) => {
     const request = (candidateAuth) => fetchImpl(url, { headers: githubHeaders(candidateAuth, userAgent), signal: observationController.signal });
     let response;
     try { response = await request(activeAuth); } catch (error) { return { ok: false, status: error?.name === 'AbortError' ? 408 : 0 }; }
+    // Stop the entire paginated goal scan at its first actual quota error.
+    // A permission-only 403 retains its existing authenticated fallback.
+    await throwIfQuotaLimited(response);
     if ([401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli' && !observationController.signal.aborted) {
       const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
       if (ghAuth.configured) { activeAuth = ghAuth; try { response = await request(activeAuth); } catch (error) { return { ok: false, status: error?.name === 'AbortError' ? 408 : 0 }; } }
     }
+    await throwIfQuotaLimited(response);
     return response;
   };
 
   const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const eventPageLimit = Math.min(Math.max(Number(maxEventPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
+  try {
   for (let page = 1; page <= pageLimit; page += 1) {
     const response = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`, 'stephanos-readonly-goal-estate');
     if (!response.ok) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` }));
@@ -437,6 +481,16 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     }
     if (payload.length < 100) break;
   }
+  } catch (error) {
+    if (error?.code !== 'GITHUB_GOAL_ESTATE_RATE_LIMIT_BACKOFF') throw error;
+    return finishFailure(Object.freeze({
+      status: 'error', source: 'github-api', repository,
+      authAuthority: activeAuth.authority, issues: Object.freeze([]),
+      discoveredIssues: Object.freeze([]), retrievedAt,
+      reasonCode: error.code, retryAfterUtc: error.retryAfterUtc,
+      recommendedNextAction: 'GitHub goal-estate quota exhausted: hold the complete scan until retry; do not infer missing admission evidence.',
+    }));
+  }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
@@ -472,7 +526,7 @@ async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, au
   try { message = String((await response.json())?.message ?? ''); } catch {}
   const limited = response.status === 429
     || remaining === '0'
-    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message);
+    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message);
   if (!limited) return null;
   const nowMs = Date.now();
   const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));

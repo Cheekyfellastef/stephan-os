@@ -275,3 +275,27 @@ test('a permissions 403 is not misclassified as GitHub rate limiting', async () 
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
+test('GitHub broker recognizes secondary-limit phrasing even with remaining core quota', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-github-secondary-'));
+  let upstreamCalls = 0;
+  try {
+    const observed = readBrokeredGithubJson({
+      key: 'secondary-observation',
+      endpoint: 'repos/secondary-owner/secondary-repo/issues/19',
+      workspaceRoot,
+      nowMs: Date.now(),
+      spawnSyncFn: () => {
+        upstreamCalls++;
+        return { status: 1, stdout: '', stderr: 'HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes.' };
+      },
+    });
+    assert.equal(observed.reason, 'GITHUB_RATE_LIMIT_BACKOFF');
+    const held = readBrokeredGithubRateLimitHold({
+      repository: 'secondary-owner/secondary-repo', workspaceRoot,
+    });
+    assert.equal(held?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
+    assert.equal(upstreamCalls, 1);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
