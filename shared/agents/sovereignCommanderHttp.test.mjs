@@ -215,6 +215,51 @@ test('expired startup hold rejects during takeover, then admits CPU sampling aft
   }
 });
 
+test('timed-out repair kill cannot reopen CPU probes until child close is observed', () => {
+  const timers = [];
+  let child;
+  let kills = 0;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    cpuProbeAdmissionHold: true,
+    maxRuntimeMs: 240_000,
+    setTimeoutImpl: (callback, ms) => {
+      const timer = { callback, ms, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: () => {},
+    spawnImpl: () => {
+      child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => { kills += 1; return true; };
+      return child;
+    },
+  });
+  try {
+    timers[0].callback();
+    assert.equal(guardian.status().running, true);
+    assert.equal(guardian.beginCpuProbe(), false);
+    const deadline = timers.find((timer) => timer.ms === 240_000);
+    assert.ok(deadline);
+    deadline.callback();
+    assert.equal(kills, 1);
+    assert.equal(guardian.status().running, true, 'kill request never proves termination');
+    assert.equal(guardian.status().lastBlocker, 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED');
+    assert.equal(guardian.beginCpuProbe(), false);
+    assert.equal(guardian.status().scheduled, false, 'no duplicate repair while child is unverified');
+    child.emit('close', 0);
+    assert.equal(guardian.status().running, false);
+    assert.equal(guardian.status().lastOk, false);
+    assert.equal(guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
+    assert.equal(guardian.status().cpuProbeAdmissionExpired, false);
+    assert.equal(guardian.beginCpuProbe(), true);
+    assert.equal(guardian.endCpuProbe(), true);
+  } finally {
+    guardian.stop();
+  }
+});
+
 test('normal Commander pauses guardian for every CPU sample and rejects one during active repair', async () => {
   let server;
   let measured = 0;
