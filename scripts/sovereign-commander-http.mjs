@@ -18,7 +18,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
-export const SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS = 60_000;
+export const SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS = 480_000;
 export const SOVEREIGN_COMMANDER_CPU_PROBE_ENV = 'STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP';
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
@@ -76,6 +76,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     ? Math.max(1_024, Number(options.maxOutputBytes))
     : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES;
   const guardianEnv = options.env || process.env;
+  const cpuProbeAdmissionHold = options.cpuProbeAdmissionHold === true;
 
   let stopped = false;
   let scheduledTimer = null;
@@ -84,6 +85,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const state = {
     enabled: true,
     running: false,
+    cpuProbeAdmissionPending: cpuProbeAdmissionHold,
+    cpuProbeAdmissionExpired: false,
+    cpuProbeSampling: false,
     scheduled: false,
     cycleCount: 0,
     successCount: 0,
@@ -109,6 +113,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     scheduledTimer = setTimeoutImpl(() => {
       scheduledTimer = null;
       state.scheduled = false;
+      if (state.cpuProbeAdmissionPending) {
+        state.cpuProbeAdmissionPending = false;
+        state.cpuProbeAdmissionExpired = true;
+      }
       runNow();
     }, delayMs);
     scheduledTimer?.unref?.();
@@ -194,11 +202,27 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     return true;
   };
 
-  schedule(startDelayMs);
+  schedule(cpuProbeAdmissionHold ? Math.max(startDelayMs, SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS) : startDelayMs);
 
   return Object.freeze({
     status,
     runNow,
+    beginCpuProbe: () => {
+      if (!cpuProbeAdmissionHold || !state.cpuProbeAdmissionPending || state.running || state.cycleCount > 0) return false;
+      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+      scheduledTimer = null;
+      state.cpuProbeAdmissionPending = false;
+      state.cpuProbeSampling = true;
+      // Keep the guardian's health truthful while protecting the synchronous sampler.
+      state.scheduled = true;
+      return true;
+    },
+    endCpuProbe: () => {
+      if (!state.cpuProbeSampling) return false;
+      state.cpuProbeSampling = false;
+      schedule(startDelayMs);
+      return true;
+    },
     stop: () => {
       stopped = true;
       state.enabled = false;
@@ -410,6 +434,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       clearTimeoutImpl: options.continuousRepairClearTimeoutImpl,
       now,
       startDelayMs: options.continuousRepairStartDelayMs,
+      cpuProbeAdmissionHold: options.cpuProbeAdmissionHold === true,
       intervalMs: options.continuousRepairIntervalMs,
       maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
     })
@@ -512,16 +537,28 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         return sendJson(res, 400, rpcError(message.id, -32001, 'MCP session required'));
       }
 
+      const cpuProbeAction = message.method === 'tools/call'
+        && message.params?.name === 'maintenance_action'
+        && message.params?.arguments?.actionId === 'cpu-pressure-snapshot';
+      if (options.cpuProbeAdmissionHold === true && cpuProbeAction
+        && continuousRepairGuardian?.beginCpuProbe() !== true) {
+        return sendJson(res, 409, rpcError(message.id, -32002, 'SOVEREIGN_COMMANDER_CPU_PROBE_ADMISSION_EXPIRED'));
+      }
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
       const isNotification = !hasId;
-      const result = await handler(message.method, message.params || {}, {
-        id: message.id,
-        isRequest,
-        isNotification,
-        transportKind: 'authenticated-http-jsonrpc',
-        transportAuthenticated: true,
-      });
+      let result;
+      try {
+        result = await handler(message.method, message.params || {}, {
+          id: message.id,
+          isRequest,
+          isNotification,
+          transportKind: 'authenticated-http-jsonrpc',
+          transportAuthenticated: true,
+        });
+      } finally {
+        if (options.cpuProbeAdmissionHold === true && cpuProbeAction) continuousRepairGuardian?.endCpuProbe();
+      }
       if (initializing) sessions.set(sessionId, handler);
       const headers = { 'mcp-session-id': sessionId };
 
@@ -562,8 +599,8 @@ export async function runSovereignCommanderHttpServer(options = {}) {
   const created = await createSovereignCommanderHttpServer({
     ...options,
     continuousRepairEnabled: options.continuousRepairEnabled ?? true,
-    continuousRepairStartDelayMs: options.continuousRepairStartDelayMs
-      ?? (cpuProbeStartup ? SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS : undefined),
+    cpuProbeAdmissionHold: cpuProbeStartup,
+    continuousRepairStartDelayMs: options.continuousRepairStartDelayMs,
   });
   await new Promise((resolveListen, rejectListen) => {
     created.server.once('error', rejectListen);
