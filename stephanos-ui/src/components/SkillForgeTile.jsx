@@ -111,7 +111,7 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
       <ConversationLearningJourney
         placement="skill-forge"
         uplift={conversationUplift}
-        feedState={feed?.state || 'unavailable'}
+        feedState={refreshState === 'RECEIVED' ? 'reachable' : 'unavailable'}
       />
       <div className="skill-lab-layout">
         <section className="skill-panel skill-process-panel">
