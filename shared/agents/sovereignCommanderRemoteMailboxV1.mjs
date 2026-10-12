@@ -2695,6 +2695,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const coreHealthy = coreDaemonStatus?.available === true
       && coreDaemonStatus?.ok === true
       && coreDaemonStatus?.daemonHealthy === true
+      // A fresh heartbeat without exclusive lock/loaded rescue proof is not
+      // evidence of a healthy Core writer. Missing fields fail closed.
+      && coreDaemonStatus?.singleWriterProven === true
+      && coreDaemonStatus?.writerProcessObserved === true
+      && coreDaemonStatus?.lockOwnerMatchesWriter === true
+      && coreDaemonStatus?.rescueGenerationPresent === true
+      && Number.isSafeInteger(coreDaemonStatus?.rescueAttemptCount)
+      && coreDaemonStatus.rescueAttemptCount >= 0
       && (coreDaemonStatus?.heartbeatFresh === true || coreDaemonStatus?.busyGraceActive === true)
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
