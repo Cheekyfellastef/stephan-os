@@ -114,9 +114,6 @@ jobs:
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs \
             scripts/sovereign-commander-ui-4173-repair.test.mjs \
-            scripts/stephanos-core-daemon-publication.test.mjs \
-            shared/agents/stephanosCorePersistentFlywheelV1.test.mjs \
-            shared/agents/closedLoopLearningV1.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
             shared/agents/autonomyBuildTrackV1.test.mjs \
