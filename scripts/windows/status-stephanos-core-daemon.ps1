@@ -35,6 +35,7 @@ if ($null -ne $status -and $status.PSObject.Properties['processId']) {
     [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
 }
 $lockOwnerPid = 0
+$lockRecord = $null
 if (Test-Path -LiteralPath $coreLockPath -PathType Leaf) {
     try {
         $lockRecord = Get-Content -LiteralPath $coreLockPath -Raw | ConvertFrom-Json
@@ -45,7 +46,30 @@ $writerProcessObserved = [bool](
     $writerPid -gt 0 -and
     @($processes | Where-Object { [int]$_.ProcessId -eq $writerPid }).Count -eq 1
 )
-$lockOwnerMatchesWriter = [bool]($lockOwnerPid -gt 0 -and $lockOwnerPid -eq $writerPid)
+# The lock has four identity fields. PID equality by itself is not
+# ownership proof: Windows can reuse a PID after the original process exits.
+$lockOwnerMatchesWriter = $false
+if ($null -ne $lockRecord -and $writerPid -gt 0 -and $lockOwnerPid -eq $writerPid -and
+    [string]$lockRecord.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+    [string]$lockRecord.sourceHead -cmatch '^[0-9a-f]{40}$' -and
+    [string]::Equals([string]$lockRecord.sourceHead, [string]$status.sourceHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+    try {
+        $matchingWriter = @($processes | Where-Object { [int]$_.ProcessId -eq $writerPid })
+        if ($matchingWriter.Count -eq 1 -and $null -ne $matchingWriter[0].CreationDate) {
+            $lockStart = [DateTimeOffset]::Parse([string]$lockRecord.startedAtUtc)
+            $writerCreated = [DateTimeOffset]::new([datetime]$matchingWriter[0].CreationDate)
+            $heartbeatAt = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+            $startupLagSeconds = ($lockStart.ToUniversalTime() - $writerCreated.ToUniversalTime()).TotalSeconds
+            $lockOwnerMatchesWriter = [bool](
+                $lockStart.Offset -eq [TimeSpan]::Zero -and
+                $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+                $lockStart -le $heartbeatAt
+            )
+        }
+    } catch {
+        $lockOwnerMatchesWriter = $false
+    }
+}
 $singleWriterProven = [bool](
     $processes.Count -eq 1 -and $writerProcessObserved -and $lockOwnerMatchesWriter
 )
