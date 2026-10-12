@@ -38,47 +38,32 @@ function providerHealthStateToState(value) {
 }
 
 
-function isHostedObserver(runtimeStatus = {}) {
-  const sessionKind = String(
-    runtimeStatus?.runtimeContext?.sessionKind
-      || runtimeStatus?.canonicalRouteRuntimeTruth?.sessionKind
-      || runtimeStatus?.sessionKind
-      || '',
-  ).trim().toLowerCase();
-  return sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
-}
-
 function isFreshBackendHealthProof(routeTruthView = {}) {
   const freshness = String(routeTruthView.currentBackendHealthFresh || '').trim().toLowerCase();
   return ['yes', 'true', 'fresh', 'current'].includes(freshness);
 }
 
-export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView = {}, apiStatus = {} } = {}) {
+export function deriveBackendServiceState({ routeTruthView = {}, apiStatus = {}, nowMs = Date.now() } = {}) {
   const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
-  const hostedObserver = isHostedObserver(runtimeStatus);
-  const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
+
+  // A fresh, identity-verified service receipt is stronger evidence than a
+  // cached route failure, including a browser transport error after power loss.
+  // Do not promote an unverified "backendReachable: true" flag to service proof.
+  if (deriveCockpitBackendHealthDiagnostics({ apiStatus, routeTruthView: {}, nowMs }).fresh === 'yes') {
+    return 'alive';
+  }
 
   if (backendReachableState === 'yes') {
     return 'alive';
   }
 
-  if (backendReachableState === 'no') {
-    if (freshBackendHealthProof) {
-      return 'dead';
-    }
-    if (hostedObserver) {
-      return 'unknown';
-    }
-  }
-
-  if (apiStatus.backendReachable === true) {
-    return 'alive';
-  }
-
-  if (apiStatus.backendReachable === false && !hostedObserver) {
+  if (backendReachableState === 'no' && isFreshBackendHealthProof(routeTruthView)) {
     return 'dead';
   }
 
+  // Local and hosted browser transport failures are not proof that the backend
+  // process has stopped. Keep service state unknown while route links report
+  // browser-to-backend reachability separately.
   return 'unknown';
 }
 
