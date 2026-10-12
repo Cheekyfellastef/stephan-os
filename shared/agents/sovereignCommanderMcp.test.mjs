@@ -210,3 +210,41 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   assert.equal(lines[1].id, 2);
   assert.ok(lines[1].result.tools.some((tool) => tool.name === 'get_config'));
 });
+
+test('private MCP exposes bounded metadata and batch-reading parity without shell', async () => {
+  const observed = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async (envelope) => {
+      observed.push(envelope);
+      return { ok: true, proofHash: 'f'.repeat(64), finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' };
+    },
+  });
+  await handler('initialize', { protocolVersion: '2025-11-25' }, { id: 1, isRequest: true, isNotification: false });
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  const listed = await handler('tools/list', {}, { id: 2, isRequest: true, isNotification: false });
+  for (const name of ['get_file_info', 'read_multiple_files']) {
+    const tool = listed.tools.find((item) => item.name === name);
+    assert.ok(tool, name);
+    assert.equal(tool.annotations.readOnlyHint, true);
+  }
+  const readTool = listed.tools.find((item) => item.name === 'read_multiple_files');
+  assert.equal(readTool.inputSchema.properties.paths.maxItems, 8);
+  const paths = ['C:\\repo\\one.txt', 'C:\\repo\\two.txt'];
+  const read = await handler('tools/call', {
+    name: 'read_multiple_files',
+    arguments: { paths, offset: 1, length: 2, command: 'do-not-forward' },
+  }, { id: 3, isRequest: true, isNotification: false });
+  assert.equal(read.isError, false);
+  assert.equal(observed[0].operation, 'READ_MULTIPLE_FILES');
+  assert.deepEqual(observed[0].targetPaths, paths);
+  assert.deepEqual(observed[0].payload, { offset: 1, length: 2 });
+  const info = await handler('tools/call', {
+    name: 'get_file_info',
+    arguments: { path: paths[0] },
+  }, { id: 4, isRequest: true, isNotification: false });
+  assert.equal(info.isError, false);
+  assert.equal(observed[1].operation, 'GET_FILE_INFO');
+  assert.deepEqual(observed[1].targetPaths, [paths[0]]);
+  assert.equal(JSON.stringify(observed).includes('do-not-forward'), false);
+});
