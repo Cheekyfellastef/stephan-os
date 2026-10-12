@@ -41,8 +41,8 @@ try {
 } catch { $metadataAvailable = $false }
 $rows = @(
     foreach ($p in $after) {
-        $id = [int]$p.Id
-        $old = $before[$id]
+        $processId = [int]$p.Id
+        $old = $before[$processId]
         $cpu = $null
         $started = ''
         $matched = $false
@@ -54,7 +54,16 @@ $rows = @(
                 $matched = $true
             }
         } catch {}
-        $meta = $byPid[$id]
+        $meta = $byPid[$processId]
+        # CIM metadata is advisory only after proving its creation time matches
+        # this exact sampled process. Never attribute a reused PID to old work.
+        if ($meta) {
+            try {
+                $sampleStartedSecond = $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
+                $metadataStartedSecond = $meta.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
+                if ($sampleStartedSecond -cne $metadataStartedSecond) { $meta = $null }
+            } catch { $meta = $null }
+        }
         $parentId = if ($meta) { [int]$meta.ParentProcessId } else { 0 }
         $script = ''
         if ($meta) {
@@ -64,7 +73,7 @@ $rows = @(
             }
         }
         [pscustomobject]@{
-            pid = $id
+            pid = $processId
             processName = [string]$p.ProcessName
             parentPid = $parentId
             startedAtUtc = $started
