@@ -585,7 +585,7 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+    $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy)
 } elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
