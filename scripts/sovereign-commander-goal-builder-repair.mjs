@@ -28,8 +28,10 @@ const STEPS = Object.freeze({
   controllerLaneStatus: Object.freeze({
     id: 'controller-lane-status',
     executable: node,
-    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-controller-lane-status.mjs')]),
-    timeoutMs: 15_000,
+    // The repair's observation is read-only. The periodic status publisher
+    // owns Shared Workspace writes; do not wait on them inside the mailbox.
+    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-controller-lane-status.mjs'), '--snapshot-only']),
+    timeoutMs: 20_000,
   }),
   startMissionWorker: Object.freeze({
     id: 'start-mission-orchestrator-worker',
@@ -133,9 +135,18 @@ function laneStatusGreen(result) {
   // owners. If only their evidence is stale, a current/valid logical fabric
   // with no current hard-red host and no current runnable-work claim remains
   // safe for the canonical scheduler + mission worker to operate.
+  const selectedLogicalGoals = Number(status?.logical?.selectedForAdmission);
+  const provenActiveMaterialLanes = Number(status?.lanes?.activeMaterialLaneCount);
+  // Stale continuity hosts are not proof that selected logical goals were
+  // actually claimed. Never return repair-green for selected work when no
+  // material pickup has been evidenced; keep the canonical worker repair live.
+  const noUnprovenSelectedPickup = Number.isSafeInteger(selectedLogicalGoals)
+    && Number.isSafeInteger(provenActiveMaterialLanes)
+    && (selectedLogicalGoals === 0 || provenActiveMaterialLanes > 0);
   return finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED'
     && refillHealth === 'AMBER'
     && refillState === 'TELEMETRY_STALE_OR_INCOMPLETE'
+    && noUnprovenSelectedPickup
     && status?.logical?.current === true
     && status?.logical?.valid === true
     && text(status?.logical?.finalVerdict).toUpperCase() === 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY'
@@ -145,6 +156,10 @@ function laneStatusGreen(result) {
 
 function laneStatusBlocker(result) {
   const status = parseControllerLaneStatus(result);
+  if (Number(status?.logical?.selectedForAdmission) > 0
+      && Number(status?.lanes?.activeMaterialLaneCount) === 0) {
+    return 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN';
+  }
   const refillState = text(status?.lanes?.refillState);
   if (SAFE_BLOCKER.test(refillState) && refillState !== 'NO_SAFE_ELIGIBLE_WORK_REPORTED') return refillState;
   const verdict = text(status?.finalVerdict);
