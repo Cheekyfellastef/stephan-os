@@ -21,13 +21,14 @@ test('Core status fails closed on ambiguous process and lock writer custody', ()
 });
 
 test('Sovereign watchdog never blanket-recycles ambiguous Core process matches', () => {
-  const exactGuard = "if ($coreBefore.Count -gt 1) {";
-  const guardAt = watchdog.indexOf(exactGuard);
-  const oldStopAt = watchdog.indexOf("foreach ($process in $coreBefore)", guardAt);
-  assert.ok(guardAt >= 0 && oldStopAt > guardAt);
-  const between = watchdog.slice(guardAt, oldStopAt);
-  assert.match(between, /SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS/);
-  assert.match(between, /elseif \(\$coreBefore\.Count -eq 0 -or/);
+  const guardAt = watchdog.indexOf("if ($coreBefore.Count -gt 1) {");
+  const singleAt = watchdog.indexOf("elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy)", guardAt);
+  const missingAt = watchdog.indexOf("elseif ($coreBefore.Count -eq 0)", singleAt);
+  assert.ok(guardAt >= 0 && singleAt > guardAt && missingAt > singleAt);
+  assert.match(watchdog.slice(guardAt, singleAt), /SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS/);
+  assert.match(watchdog.slice(singleAt, missingAt), /SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED/);
+  assert.doesNotMatch(watchdog, /foreach \(\$process in \$coreBefore\)/);
+  assert.doesNotMatch(watchdog, /Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -eq 1 -and \$coreHealthAfter\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreObserved\.Count -eq 1 -and \$coreObservedHealth\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.doesNotMatch(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -ge 1/);
