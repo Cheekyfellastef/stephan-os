@@ -74,6 +74,9 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
   const target = source === targetId ? 'openclaw-standalone' : targetId;
   const learningPayload = (feed?.records?.eventRecords || []).find(record => (record.eventId || record.closedLoopLearning?.eventId) === selectedLearning?.id)?.closedLoopLearning;
   const transfer = buildSkillTransferAssessmentV1({ learning: learningPayload, sourceActor: source, targetActor: target });
+  const upgrade = runtimeStatusModel?.realityUpgradeOrchestrator || {};
+  const capabilityGaps = Array.isArray(upgrade.capabilityGaps) ? upgrade.capabilityGaps : [];
+
   async function copyReview(skill) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('clipboard-unavailable');
@@ -181,6 +184,16 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
           <p className="skill-truth-note">{transfer.verdict}. The existing approved execution route is required even if all checks eventually pass.</p>
         </section>
       </div>
+      <section className="skill-panel" data-testid="skill-reality-upgrade-signals">
+        <div className="skill-section-head"><div><span className="skill-kicker">CAPABILITY RADAR → REALITY UPGRADES</span><h3>Other detected capability gaps</h3></div><span>{capabilityGaps.length} reported</span></div>
+        {capabilityGaps.length ? <div className="skill-agent-list">
+          {capabilityGaps.map((gap, index) => <article className="skill-agent-card" key={index}>
+            <div className="skill-agent-symbol">+</div>
+            <div><strong>{typeof gap === 'string' ? gap : String(gap?.title || gap?.summary || 'Capability gap')}</strong><small>Proposed from reality upgrade intent: {String(upgrade.upgradeIntent || 'operator request')}</small></div>
+            <div className="skill-agent-count"><small>Not yet a skill</small></div>
+          </article>)}
+        </div> : <p className="skill-empty">No additional Reality Upgrade signals are currently published.</p>}
+      </section>
       <section className="skill-panel skill-reality-bar" role="status">
         <strong>Reality check</strong><span>{view.reason}</span><small>Next: {view.nextAction}</small>
         <small>Feed: {view.source} · Local bridge: {view.backendRoute}</small>
