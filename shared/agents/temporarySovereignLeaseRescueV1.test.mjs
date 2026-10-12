@@ -138,3 +138,22 @@ test('absent original worker evidence cannot release, and failed publication is 
   assert.equal(result.publicationBlocker,'STATUS_BLOCKED');
   assert.equal(result.physicalPickupProven,false);
 });
+
+
+test('emergency observer cannot reconcile an unrelated stale source lease', async () => {
+  let called = false;
+  const view = await run({
+    now: new Date(NOW), sourceHead: HEAD, paths,
+    readLease: async () => ({
+      ok: true, present: true,
+      record: { leaseId: 'critical-2955-elastic-goal-r4-lease', laneId: 'critical-2955-elastic-goal' },
+      validation: {valid: true, active: false, stale: true},
+    }),
+    readMissions: async () => { called = true; return []; },
+    reconcile: async () => { called = true; return {ok: true, released: true}; },
+    writeStatus: async () => ({ok:true}),
+  });
+  assert.equal(called, false);
+  assert.equal(view.blocker, 'UNEXPECTED_SOURCE_LEASE_OWNER');
+  assert.equal(view.canonicalLeaseReleaseProven, false);
+});
