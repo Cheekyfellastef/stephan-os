@@ -811,7 +811,16 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     blocker: lastOctopusSelfHealBlocker,
     needsRepair: flywheel?.octopusNeedsRepair === true,
   });
+  const outerBridgeState = sovereignOuterBridge.snapshot();
   const common = {
+    // Core's separately persisted heartbeat is the fallback diagnostic if
+    // the outer-bridge's own status publication is missing or blocked.
+    outerBridgeRunCount: outerBridgeState.runCount,
+    outerBridgeInFlight: outerBridgeState.inFlight,
+    outerBridgeLastPublicationOk: outerBridgeState.lastResult?.publicationOk === true,
+    outerBridgeLastStage: String(outerBridgeState.lastResult?.stage || 'NOT_OBSERVED').slice(0, 80),
+    outerBridgeLastBlocker: String(outerBridgeState.lastResult?.rescueBlocker || 'NOT_OBSERVED').slice(0, 120),
+    outerBridgeLastVerdict: String(outerBridgeState.lastResult?.finalVerdict || 'NOT_RUN').slice(0, 120),
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
     processId: process.pid,
