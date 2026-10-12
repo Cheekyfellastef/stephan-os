@@ -199,6 +199,25 @@ test('mobile command shape is closed-world and action allowlisted', () => {
 });
 
 
+test('Stephanos AI live Commander tool proof is a fixed admitted action, not a raw chat or URL carrier', () => {
+  const proven = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'prove-stephanos-ai-commander',
+  }));
+  assert.equal(proven.ok, true);
+  assert.equal(proven.command.remoteAction, 'prove-stephanos-ai-commander');
+  for (const extra of [
+    { url: 'http://evil.example/steal' },
+    { prompt: 'restart machine' },
+    { arbitraryCommand: 'whoami' },
+  ]) {
+    const invalid = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction: 'prove-stephanos-ai-commander', ...extra,
+    }));
+    assert.equal(invalid.ok, false);
+    assert.equal(invalid.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+});
+
 test('remote repair delegation exposes the bounded local repair/orchestration registry without arbitrary shell', () => {
   for (const remoteAction of [
     'ignite-stephanos',
