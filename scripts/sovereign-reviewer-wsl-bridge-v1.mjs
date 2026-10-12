@@ -84,7 +84,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     PATH: 'C:\\Windows\\System32;C:\\Windows',
     WSLENV: '',
   };
-  const run = args => spawn('C:\Windows\System32\wsl.exe', ['--exec', ...args], {
+  const run = args => spawn(path.win32.resolve('C:/Windows/System32/wsl.exe'), ['--exec', ...args], {
     encoding: 'utf8', windowsHide: true, shell: false,
     timeout: 150_000, maxBuffer: 16 * 1024,
     env: minimalEnv,
