@@ -113,7 +113,11 @@ function reviewRunner(source, path, findings) {
     ['$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', 'core-daemon-runner-relay-process-pattern-not-fixed'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'", 'core-daemon-runner-missing-script-blocker-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'", 'core-daemon-runner-missing-node-blocker-absent'],
-    ['$coreDaemonRestartRequested = $true', 'core-daemon-runner-stale-recycle-marker-absent'],
+    ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'", 'core-daemon-runner-ambiguous-custody-fence-absent'],
+    ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'", 'core-daemon-runner-single-writer-fence-absent'],
+    ["$writerCustodyProven = $false", 'core-daemon-runner-custody-fail-closed-absent'],
+    ["[string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1'", 'core-daemon-runner-lock-schema-proof-absent'],
+    ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-runner-process-creation-fence-absent'],
     ['$relayDaemonRestartRequested = $true', 'core-daemon-runner-relay-stale-recycle-marker-absent'],
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'core-daemon-runner-bounded-stop-absent'],
     ['$coreDaemonStartRequested = $true', 'core-daemon-runner-start-marker-absent'],
@@ -134,9 +138,20 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, source,
     /function\s+Get-StephanosCoreDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$coreDaemonScriptPattern/,
     'core-daemon-runner-process-identity-not-bounded', path);
-  requirePattern(findings, source,
-    /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
-    'core-daemon-runner-recycle-not-health-gated', path);
+  requirePattern(findings, activeSource,
+    /if \(\$coreBefore\.Count -gt 1\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 1 -and -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 0\)/,
+    'core-daemon-runner-ambiguous-and-live-writer-fence-not-proven', path);
+  // Core can only be started when absent. A matching writer without
+  // authenticated lease/process creation proof is HELD, not force-recycled.
+  const coreStart = activeSource.indexOf('if ($coreBefore.Count -gt 1)');
+  const relayStart = activeSource.indexOf('$relayBefore = @(Get-SovereignRelayDaemonProcesses)', coreStart);
+  if (coreStart < 0 || relayStart < coreStart) {
+    findings.push(finding('core-daemon-runner-custody-boundary-missing', path));
+  } else {
+    const coreLifecycle = activeSource.slice(coreStart, relayStart);
+    forbidPattern(findings, coreLifecycle, /\bStop-Process\b|\btaskkill\b|\$coreDaemonRestartRequested\s*=\s*\$true/i,
+      'core-daemon-runner-live-writer-recycle-forbidden', path);
+  }
   requirePattern(findings, activeSource,
     /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);
@@ -208,6 +223,10 @@ function reviewStatus(source, path, findings) {
     ["$_.Name -eq 'node.exe'", 'core-daemon-status-node-identity-absent'],
     ['[string]$_.CommandLine -match $corePattern', 'core-daemon-status-command-identity-absent'],
     ['Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json', 'core-daemon-status-fixed-read-absent'],
+    ["[string]$lockRecord.schemaVersion -ceq 'stephanos.core-daemon-lock.v1'", 'core-daemon-status-lock-schema-check-absent'],
+    ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-status-process-creation-fence-absent'],
+    ["$lockStart -le $heartbeatAt", 'core-daemon-status-heartbeat-lock-order-proof-absent'],
+    ["[string]$lockRecord.sourceHead", 'core-daemon-status-source-binding-absent'],
     ["schemaVersion = 'stephanos.core-daemon-status.v1'", 'core-daemon-status-schema-absent'],
     ['uiRequired = $false', 'core-daemon-status-ui-independence-absent'],
     ['sourceMutationAllowed = $false', 'core-daemon-status-source-denial-absent'],
