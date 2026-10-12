@@ -74,6 +74,7 @@ export async function runTemporarySovereignRescueObservationV1({
   // The canonical reconciler may release ONLY after its own identity,
   // terminal-receipt, worker-quiescence and exact-lease guards all succeed.
   if (leaseRead?.ok === true && leaseRead?.present === true
+      && String(lease?.leaseId || '').startsWith('critical-2962-elastic-goal-')
       && leaseRead?.validation?.valid === true
       && leaseRead?.validation?.stale === true
       && /^[a-f0-9]{40}$/.test(sourceHead)) {
