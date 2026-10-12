@@ -1201,3 +1201,56 @@ test('remote Commander start requires exact head and dispatches only through its
   assert.equal(missingHandler.ok, false);
   assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });
+
+test('protected reviewed squash merge checks current main against expectedBase, never PR source expectedHead', () => {
+  const source = 'a'.repeat(40);
+  const main = 'b'.repeat(40);
+  const protectedMerge = command({
+    requestId: 'req-reviewed-merge-pr-3023',
+    operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+    expectedHead: source,
+    expectedBase: main,
+    prNumber: 3023,
+    reviewRunId: 38285233816,
+    reviewRunAttempt: 1,
+    reviewJobId: 114931896662,
+    reviewArtifactId: 11762539092,
+    reviewArtifactDigest: 'sha256:' + 'c'.repeat(64),
+    reviewPayloadSha256: 'd'.repeat(64),
+    reviewMode: 'clean-independent',
+    reviewFindingCode: '',
+    mergeMethod: 'squash',
+    mergeApprovalToken: 'APPROVE_PROTECTED_WORKFLOW_SQUASH_MERGE:3023:' + source,
+  });
+  const accepted = selectBattleBridgeGitHubCommandBatch([
+    comment(protectedMerge, { id: 3023 }),
+  ], { now, currentHead: main });
+  assert.equal(accepted.verdict, 'COMMAND_BATCH_READY', JSON.stringify(accepted.rejected));
+  assert.equal(accepted.commands.length, 1);
+  assert.equal(accepted.commands[0].command.expectedHead, source);
+  assert.equal(accepted.commands[0].command.expectedBase, main);
+  assert.equal(accepted.terminalRejections.length, 0);
+
+  const stale = selectBattleBridgeGitHubCommandBatch([
+    comment(protectedMerge, { id: 3024 }),
+  ], { now, currentHead: 'f'.repeat(40) });
+  assert.equal(stale.verdict, 'NO_COMMAND_READY');
+  assert.equal(stale.terminalRejections.length, 1);
+  assert.equal(stale.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+
+  const bogus = selectBattleBridgeGitHubCommandBatch([
+    comment({ ...protectedMerge, mergeApprovalToken: 'APPROVE_INVALID' }, { id: 3025 }),
+  ], { now, currentHead: main });
+  assert.equal(bogus.verdict, 'NO_COMMAND_READY');
+  assert.equal(bogus.terminalRejections.length, 1);
+  assert.equal(bogus.terminalRejections[0].blocker, 'PROTECTED_MERGE_APPROVAL_TOKEN_INVALID');
+
+  const ordinary = selectBattleBridgeGitHubCommandBatch([
+    comment(command({
+      requestId: 'req-ordinary-stale-still-refused',
+      expectedHead: source,
+    }), { id: 3026 }),
+  ], { now, currentHead: main });
+  assert.equal(ordinary.verdict, 'NO_COMMAND_READY');
+  assert.equal(ordinary.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
