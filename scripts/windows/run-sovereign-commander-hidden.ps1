@@ -574,7 +574,10 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+    if ($coreObserved.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    }
+    $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy -and -not $coreDaemonBlocker)
 } elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
@@ -582,7 +585,11 @@ if ($SkipCoreDaemonLifecycle) {
 } else {
     $coreBefore = @(Get-StephanosCoreDaemonProcesses)
     $coreHealthBefore = Get-StephanosCoreDaemonHealth
-    if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
+    # Multiple matching processes require independent lock/heartbeat custody
+    # proof. Never force-terminate all matches and create another writer.
+    if ($coreBefore.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    } elseif ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
         if ($coreBefore.Count -gt 0) {
             $coreDaemonRestartRequested = $true
             try {
@@ -629,7 +636,7 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonFlywheelCycleAgeSeconds = $coreHealthAfter.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
     $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
-    $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
+    $coreDaemonOk = [bool]($coreAfter.Count -eq 1 -and $coreHealthAfter.healthy -and -not $coreDaemonBlocker)
     if (-not $coreDaemonOk -and -not $coreDaemonBlocker) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
     }
