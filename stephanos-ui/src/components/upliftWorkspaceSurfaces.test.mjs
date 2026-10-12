@@ -199,7 +199,7 @@ test('skill provenance never infers activation from an exam or static seed', asy
     seedSkills:[{id:'seed',status:'ACTIVE'}],
     payload:{state:'ready',records:{eventRecords:[{eventId:'capability-diagnostic',closedLoopLearning:lesson}]}}
   });
-  assert.equal(view.summary.proposals, 1);
+  assert.equal(view.summary.proposals, 2); // one seed and one conjured, still uninstalled
   assert.equal(view.summary.verifiedLessons, 1);
   assert.equal(view.summary.provenActiveTargets, 0);
   const transfer = buildSkillTransferAssessmentV1({
