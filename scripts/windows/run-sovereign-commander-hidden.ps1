@@ -589,19 +589,12 @@ if ($SkipCoreDaemonLifecycle) {
     # proof. Never force-terminate all matches and create another writer.
     if ($coreBefore.Count -gt 1) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
-    } elseif ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-        if ($coreBefore.Count -gt 0) {
-            $coreDaemonRestartRequested = $true
-            try {
-                foreach ($process in $coreBefore) {
-                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-                    $coreDaemonStoppedPidCount += 1
-                }
-                Start-Sleep -Milliseconds 300
-            } catch {
-                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_STALE_RECYCLE_FAILED'
-            }
-        }
+    } elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
+        # The sole matching process can be the original lock owner. A stale
+        # heartbeat is not a terminal custody receipt or kill authorisation.
+        # Keep it fenced for an independently proven owner repair.
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'
+    } elseif ($coreBefore.Count -eq 0) {
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
             $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
