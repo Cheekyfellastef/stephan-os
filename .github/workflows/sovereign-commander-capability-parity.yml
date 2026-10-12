@@ -22,6 +22,9 @@ on:
       - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
+      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/sovereign-commander-ignition-autoheal.mjs'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
   push:
     branches:
@@ -71,3 +74,5 @@ jobs:
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
+          node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
+          node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
