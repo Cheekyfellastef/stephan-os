@@ -2189,7 +2189,6 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       fetchFn: boundedPlanFetch,
       spawnSyncFn,
       repoRoot: repositoryRoot,
-      commanderOnly: shape.command.remoteAction === 'cpu-pressure-snapshot',
     }), preflightBudgetMs);
     if (runtimeSettlement.timedOut === true && remotePlanRequested) {
       return planDeadlineFailure();
