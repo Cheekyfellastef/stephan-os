@@ -297,7 +297,7 @@ test('Sovereign Commander watchdog supervises relay but does not make it a core 
   assert.match(relaySource, /writeStatus\(statusPath, inFlightStatus\(\)\)/);
   assert.match(
     watchdog,
-    /\$overallOk\s*=\s*\[bool\]\(\$ok\s+-and\s+\$vrGovernorOk\s+-and\s+\$coreDaemonOk\s+-and\s+\$fleetGoalSupervisorOk\)/,
+    /\$overallOk\s*=\s*\[bool\]\(\$ok\s+-and\s+\(\$CommanderOnly -or \(\$vrGovernorOk -and \$coreDaemonOk -and \$fleetGoalSupervisorOk\)\)\)/,
   );
   assert.doesNotMatch(
     watchdog,
