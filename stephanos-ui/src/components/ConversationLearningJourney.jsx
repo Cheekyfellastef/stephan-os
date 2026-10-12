@@ -3,7 +3,7 @@ import './ConversationLearningJourney.css';
 
 const STAGES = Object.freeze([
   { id: 'history', label: 'Conversation', detail: 'Canonical durable turns' },
-  { id: 'hints', label: 'Discover', detail: 'Detected conversation hints' }
+  { id: 'hints', label: 'Discover', detail: 'Detected conversation hints' },
   { id: 'investigate', label: 'Investigate', detail: 'Eligible for governed review' },
   { id: 'pickup', label: 'Build pickup', detail: 'Execution receipt required' },
   { id: 'prove', label: 'Prove', detail: 'Live completion proof required' },
