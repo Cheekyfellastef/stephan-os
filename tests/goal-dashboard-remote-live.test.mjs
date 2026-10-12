@@ -35,7 +35,7 @@ function beaconComment(record = beacon()) {
   return { body: `<!-- stephanos-battle-bridge-outbound-health-beacon -->\n\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`` };
 }
 
-function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: false, status: 500 }) } = {}) {
+function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: false, status: 500 }), backendBase = null } = {}) {
   const timers = [];
   const fields = new Map();
   const grid = { attrs: {}, setAttribute(key, value) { this.attrs[key] = value; } };
@@ -49,12 +49,15 @@ function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: fa
     setSourceBadge(value, truth) { fields.set('source-badge', String(value)); fields.set('source-truth', String(truth)); },
     applyProjection(projection, source, feedState) { window.applied = { projection, source, feedState }; },
   };
+  if (backendBase !== null) {
+    window.backendBase = typeof backendBase === 'function' ? backendBase : () => backendBase;
+  }
   const document = {
     visibilityState: 'visible',
     getElementById(id) { return id === 'goal-grid' ? grid : null; },
     querySelector() { return null; },
   };
-  const context = { window, document, AbortController, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
+  const context = { window, document, AbortController, URL, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
   vm.runInNewContext(source, context);
   return { api: window.__stephanosRemoteGoalDashboardV1, window, document, timers, fields, grid };
 }
@@ -141,6 +144,27 @@ test('remote browser refresh reads public GitHub truth only and renders iPad-saf
   assert.match(fields.get('workspace-root'), /local workspace path intentionally private/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'remote-github');
   assert.equal(grid.attrs['data-goal-dashboard-feed-state'], 'ready');
+});
+
+test('hosted Goal Dashboard keeps canonical HTTPS backend above the public remote fallback', async () => {
+  let called = false;
+  const { api, window } = makeContext({
+    hostname: 'cheekyfellastef.github.io',
+    backendBase: 'https://battle-bridge.example.ts.net',
+    fetchImpl: async () => {
+      called = true;
+      return { ok: false, status: 500, json: async () => ({}) };
+    },
+  });
+
+  assert.equal(api.canonicalHostedBackendRoute(), 'https://battle-bridge.example.ts.net');
+  const result = await api.refreshRemote();
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL');
+  assert.equal(result.backendBase, 'https://battle-bridge.example.ts.net');
+  assert.equal(called, false);
+  assert.equal(window.applied, undefined);
 });
 
 test('local Battle Bridge browser never uses the remote public adapter', async () => {

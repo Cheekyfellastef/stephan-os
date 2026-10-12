@@ -15,6 +15,19 @@
     return LOCAL_HOSTS.has(String(window.location?.hostname || '').toLowerCase());
   }
 
+  function canonicalHostedBackendRoute() {
+    if (isLocalHost() || typeof window.backendBase !== 'function') return '';
+    try {
+      const candidate = String(window.backendBase() || '').trim();
+      const parsed = candidate ? new URL(candidate) : null;
+      const hostname = String(parsed?.hostname || '').toLowerCase();
+      if (!parsed || parsed.protocol !== 'https:' || LOCAL_HOSTS.has(hostname)) return '';
+      return parsed.origin;
+    } catch {
+      return '';
+    }
+  }
+
   function safeSha(value) {
     const sha = String(value || '').trim().toLowerCase();
     return SHA.test(sha) ? sha : '';
@@ -229,6 +242,14 @@
 
   async function refreshRemote() {
     if (isLocalHost()) return { skipped: true, reason: 'LOCAL_BACKEND_REMAINS_CANONICAL' };
+    const canonicalBackend = canonicalHostedBackendRoute();
+    if (canonicalBackend) {
+      return {
+        skipped: true,
+        reason: 'CANONICAL_HOSTED_BACKEND_REMAINS_CANONICAL',
+        backendBase: canonicalBackend,
+      };
+    }
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 10000);
     try {
@@ -254,6 +275,7 @@
     parseBeaconComment,
     latestBeacon,
     buildProjection,
+    canonicalHostedBackendRoute,
     refreshRemote,
   });
 
