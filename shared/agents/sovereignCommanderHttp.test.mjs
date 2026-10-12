@@ -179,8 +179,9 @@ test('CPU action admission defers guardian work through sampler and resumes afte
   }
 });
 
-test('CPU probe admission fails closed after guardian startup hold expires', () => {
+test('expired startup hold rejects during takeover, then admits CPU sampling after repair completes', () => {
   const timers = [];
+  let repairChild;
   const guardian = startSovereignCommanderContinuousRepairGuardian({
     cpuProbeAdmissionHold: true,
     setTimeoutImpl: (callback, ms) => {
@@ -189,13 +190,26 @@ test('CPU probe admission fails closed after guardian startup hold expires', () 
       return t;
     },
     clearTimeoutImpl: () => {},
-    spawnImpl: () => { throw new Error('simulated guardian takeover'); },
+    spawnImpl: () => {
+      repairChild = new EventEmitter();
+      repairChild.stdout = new EventEmitter();
+      repairChild.stderr = new EventEmitter();
+      repairChild.kill = () => true;
+      return repairChild;
+    },
   });
   try {
     assert.equal(guardian.status().cpuProbeAdmissionPending, true);
     timers[0].callback();
     assert.equal(guardian.status().cpuProbeAdmissionExpired, true);
+    assert.equal(guardian.status().running, true);
     assert.equal(guardian.beginCpuProbe(), false);
+    repairChild.emit('close', 0);
+    assert.equal(guardian.status().running, false);
+    assert.equal(guardian.status().cpuProbeAdmissionExpired, false);
+    assert.equal(guardian.status().scheduled, true);
+    assert.equal(guardian.beginCpuProbe(), true);
+    assert.equal(guardian.endCpuProbe(), true);
   } finally {
     guardian.stop();
   }
