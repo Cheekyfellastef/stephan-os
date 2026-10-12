@@ -65,17 +65,19 @@ function Get-SovereignRelayDaemonHealth {
   $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
   return [pscustomobject]@{ healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30) }
 }
+$writerCustodyProven = $false
+$lock = [pscustomobject]@{ schemaVersion = 'stephanos.core-daemon-lock.v1'; sourceHead = 'abc' }
+$startupLagSeconds = 1
+if ($startupLagSeconds -ge -3 -and $startupLagSeconds -le 90) { $writerCustodyProven = $true }
 $coreBefore = @(Get-StephanosCoreDaemonProcesses)
 $coreHealthBefore = [pscustomobject]@{ healthy = $false }
-if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-  if ($coreBefore.Count -gt 0) {
-    $coreDaemonRestartRequested = $true
-    foreach ($process in $coreBefore) {
-      Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-    }
-  }
+if ($coreBefore.Count -gt 1) {
+  $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+} elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
+  $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'
+} elseif ($coreBefore.Count -eq 0) {
+  $coreDaemonStartRequested = $true
 }
-$coreDaemonStartRequested = $true
 $relayBefore = @(Get-SovereignRelayDaemonProcesses)
 $relayHealthBefore = Get-SovereignRelayDaemonHealth
 if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
@@ -121,6 +123,14 @@ $processes = @(
     }
 )
 $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+$lockRecord = [pscustomobject]@{ schemaVersion = 'stephanos.core-daemon-lock.v1'; sourceHead = 'abc' }
+$startupLagSeconds = 1
+$lockStart = [DateTimeOffset]::UtcNow
+$heartbeatAt = [DateTimeOffset]::UtcNow
+if ([string]$lockRecord.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+    [string]$lockRecord.sourceHead -and
+    $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+    $lockStart -le $heartbeatAt) { $lockOwnerMatchesWriter = $true }
 [pscustomobject]@{
   schemaVersion = 'stephanos.core-daemon-status.v1'
   uiRequired = $false
@@ -200,6 +210,23 @@ test('widened source estate and wrong escalation do not inherit qualification', 
     sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
   });
   assert.equal(wrong.eligible, false);
+});
+
+test('specialist rejects a Core writer mass-recycle even when relay recycle is approved', () => {
+  const inserted = runner.replace(
+    "$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'",
+    "$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'\n  Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop",
+  );
+  const result = review(inserted, status);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((x) => x.code === 'core-daemon-runner-live-writer-recycle-forbidden'));
+});
+
+test('specialist applies no-kill custody invariants to actual checked-in Windows sources', async () => {
+  const realRunner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+  const realStatus = await readFile(new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8');
+  const result = review(realRunner, realStatus);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
 });
 
 test('trusted switchboard byte-pins and invokes the Core Daemon specialist', async () => {
