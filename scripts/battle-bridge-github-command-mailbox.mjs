@@ -960,6 +960,12 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     .slice(0, 8));
   const selfHeal = Object.freeze({
     available: safeBoolean(value?.selfHeal?.available),
+    outerBridgeRunCount: safeOptionalNonNegativeInteger(value?.selfHeal?.outerBridgeRunCount),
+    outerBridgeInFlight: safeBoolean(value?.selfHeal?.outerBridgeInFlight),
+    outerBridgeLastPublicationOk: safeBoolean(value?.selfHeal?.outerBridgeLastPublicationOk),
+    outerBridgeLastStage: safeTelemetryText(value?.selfHeal?.outerBridgeLastStage, 80).toUpperCase(),
+    outerBridgeLastBlocker: safeTelemetryText(value?.selfHeal?.outerBridgeLastBlocker, 120).toUpperCase(),
+    outerBridgeLastVerdict: safeTelemetryText(value?.selfHeal?.outerBridgeLastVerdict, 120).toUpperCase(),
     dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
     dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
@@ -994,6 +1000,31 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
     finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
   });
+  const rawOuterBridge = value?.outerBridge;
+  const matchedOuterBridge = rawOuterBridge?.available === true
+    && rawOuterBridge?.current === true
+    && rawOuterBridge?.exactHeadMatch === true
+    && rawOuterBridge?.readOnly === true
+    && rawOuterBridge?.sourceMutationAllowed === false
+    && rawOuterBridge?.mergeAuthority === false
+    && safeTelemetrySha(rawOuterBridge?.sourceHead) === repository.head
+    && repository.head === headSync.runtimeHead
+    && headSync.exactHeadChainProven === true;
+  const outerBridge = Object.freeze({
+    available: rawOuterBridge?.available === true,
+    current: matchedOuterBridge,
+    exactHeadMatch: matchedOuterBridge,
+    sourceHead: matchedOuterBridge ? repository.head : '',
+    observedAtUtc: safeTimestamp(rawOuterBridge?.observedAtUtc),
+    cycleAgeSeconds: safeOptionalNonNegativeInteger(rawOuterBridge?.cycleAgeSeconds),
+    stage: matchedOuterBridge ? safeTelemetryText(rawOuterBridge?.stage, 80).toUpperCase() : 'UNVERIFIED',
+    rescueBlocker: safeTelemetryText(rawOuterBridge?.rescueBlocker, 120).toUpperCase(),
+    canonicalLeaseReleaseProven: matchedOuterBridge && rawOuterBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const health = Object.freeze({
     repository: safeLight(value?.health?.repository),
     core: safeLight(value?.health?.core),
@@ -1024,6 +1055,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     controllers,
     meters,
     relay,
+    outerBridge,
     health,
     readOnly: true,
     sourceMutationAllowed: false,
@@ -2052,6 +2084,12 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
     }) : null,
     selfHeal: snapshot.selfHeal ? Object.freeze({
       available: snapshot.selfHeal.available === true,
+      outerBridgeRunCount: snapshot.selfHeal.outerBridgeRunCount,
+      outerBridgeInFlight: snapshot.selfHeal.outerBridgeInFlight === true,
+      outerBridgeLastPublicationOk: snapshot.selfHeal.outerBridgeLastPublicationOk === true,
+      outerBridgeLastStage: snapshot.selfHeal.outerBridgeLastStage,
+      outerBridgeLastBlocker: snapshot.selfHeal.outerBridgeLastBlocker,
+      outerBridgeLastVerdict: snapshot.selfHeal.outerBridgeLastVerdict,
       dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
       dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
       dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
@@ -2107,6 +2145,7 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       counts: meters.counts,
       finalVerdict: meters.finalVerdict,
     }) : null,
+    outerBridge: snapshot.outerBridge,
     relay: snapshot.relay ? Object.freeze({
       available: snapshot.relay.available === true,
       daemonHealthy: snapshot.relay.daemonHealthy === true,

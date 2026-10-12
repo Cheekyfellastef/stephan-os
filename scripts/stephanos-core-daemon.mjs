@@ -46,6 +46,7 @@ import {
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import {
   buildStephanosBuildTruth,
   collectSovereignControllerLaneStatus,
@@ -810,7 +811,16 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     blocker: lastOctopusSelfHealBlocker,
     needsRepair: flywheel?.octopusNeedsRepair === true,
   });
+  const outerBridgeState = sovereignOuterBridge.snapshot();
   const common = {
+    // Core's separately persisted heartbeat is the fallback diagnostic if
+    // the outer-bridge's own status publication is missing or blocked.
+    outerBridgeRunCount: outerBridgeState.runCount,
+    outerBridgeInFlight: outerBridgeState.inFlight,
+    outerBridgeLastPublicationOk: outerBridgeState.lastResult?.publicationOk === true,
+    outerBridgeLastStage: String(outerBridgeState.lastResult?.stage || 'NOT_OBSERVED').slice(0, 80),
+    outerBridgeLastBlocker: String(outerBridgeState.lastResult?.rescueBlocker || 'NOT_OBSERVED').slice(0, 120),
+    outerBridgeLastVerdict: String(outerBridgeState.lastResult?.finalVerdict || 'NOT_RUN').slice(0, 120),
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
     processId: process.pid,
@@ -1042,6 +1052,12 @@ if (!lockHandle) {
   process.exit(0);
 }
 
+// This bridge reuses the ALREADY locked Core Daemon task and continues even
+// if Recovery Mesh wake/elastic admission is broken. No new controller.
+const sovereignOuterBridge = createSovereignOuterBridgeSupervisorV1({
+  root: repoRoot, workspaceRoot,
+});
+
 let shuttingDown = false;
 async function cleanup() {
   if (shuttingDown) return;
@@ -1075,6 +1091,14 @@ try {
       process.exit(75);
     }
     const observedState = await sample(sourceHead);
+    // A side path from the healthy Core heartbeat to the canonical lease
+    // reconciler. Never await this optional cycle on the 15s heartbeat;
+    // the supervisor enforces single-flight and a 60s minimum interval.
+    sovereignOuterBridge.tick({
+      sourceHead,
+      gamingActive: observedState.gamingActive,
+      shutdown: shuttingDown,
+    });
     const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
     const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
     await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);

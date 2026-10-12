@@ -186,7 +186,7 @@ function repositoryFromGithubEndpoint(endpoint) {
 }
 
 function isGithubCliRateLimitError(stderr) {
-  return /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(text(stderr));
+  return /(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(text(stderr));
 }
 
 export function invalidateBrokeredGithubObservation({ key, workspaceRoot, env = process.env } = {}) {
