@@ -6,6 +6,7 @@ import { overlayGoalDashboardWithLivePortfolio } from '../../shared/agents/liveG
 import { buildGoalDashboardEstateSummary } from '../../shared/agents/goalDashboardEstateSummaryV1.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
+import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
 import {
   projectGoalBuildConveyorV1,
   projectGoalBuildJourneyV1,
@@ -44,6 +45,7 @@ function unavailableFeed(validation) {
     diagnosticTrace: [validation.trace],
     records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] },
     goalEstate: buildGoalDashboardEstateSummary(),
+    conversationUplift: { state: 'unavailable', turnCount: 0, candidates: [] },
     errors: [validation.reason],
   });
 }
@@ -213,6 +215,13 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
   });
   const live = await resolveLiveProjection(input, nowMs);
+  let conversationUplift;
+  try {
+    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
+    conversationUplift = await reader({ root: validation.root, repoRoot: input.repoRoot, env: input.env, nowMs });
+  } catch {
+    conversationUplift = { state: 'unavailable', turnCount: 0, candidates: [] };
+  }
   const records = feed.records || {};
   const goalEstate = buildGoalDashboardEstateSummary({
     goalRecords: records.goalRecords,
@@ -266,6 +275,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     projection,
     operationalFacts: feed.operationalFacts,
     goalEstate,
+    conversationUplift,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({
       state: live.state,

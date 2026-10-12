@@ -74,6 +74,8 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
   const target = source !== targetId ? targetId : (SKILL_TRANSFER_ACTORS.find(actor => actor.id !== source)?.id || 'UNKNOWN');
   const learningPayload = (feed?.records?.eventRecords || []).find(record => (record.eventId || record.closedLoopLearning?.eventId) === selectedLearning?.id)?.closedLoopLearning;
   const transfer = buildSkillTransferAssessmentV1({ learning: learningPayload, sourceActor: source, targetActor: target });
+  const conversationUplift = feed?.conversationUplift || { state: 'unavailable', turnCount: 0, candidates: [] };
+  const conversationSignals = Array.isArray(conversationUplift.candidates) ? conversationUplift.candidates : [];
   const upgrade = runtimeStatusModel?.realityUpgradeOrchestrator || {};
   const capabilityGaps = Array.isArray(upgrade.capabilityGaps) ? upgrade.capabilityGaps : [];
 
@@ -106,6 +108,20 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
         <article><span>Published skill records</span><strong>{view.summary.publishedSkillRecords}</strong><small>Verified provenance schema</small></article>
         <article><span>Active recipients</span><strong>{view.summary.provenActiveTargets}</strong><small>Exact target runtime receipts</small></article>
       </div>
+      <section className="skill-panel" data-testid="skill-forge-conversation-uplift">
+        <div className="skill-section-head">
+          <div><span className="skill-kicker">SHARED CONVERSATION → CAPABILITY DISCOVERY</span><h3>Conversation intelligence feeding the Flywheel</h3></div>
+          <span>{conversationUplift.state === 'ready' ? conversationUplift.turnCount + ' indexed turns' : 'History ' + conversationUplift.state}</span>
+        </div>
+        <p className="skill-truth-note">Read-only canonical history, including turns beyond the 256-turn context limit. Repeated requests may enter the existing bounded Build Concierge investigation path. No conversation counts as execution proof or approval.</p>
+        {conversationSignals.length ? <div className="skill-agent-list">
+          {conversationSignals.slice(0, 5).map(signal => <article className="skill-agent-card" key={signal.id}>
+            <div className="skill-agent-symbol">↗</div>
+            <div><strong>{signal.title}</strong><small>{signal.mentionCount} matching protocol-role turns · {signal.eligibleForBoundedInvestigation ? 'Eligible for guarded investigation candidate' : 'More independent evidence needed'}</small></div>
+            <div className="skill-agent-count"><small>Unverified</small></div>
+          </article>)}
+        </div> : <p className="skill-empty">No indexed conversation capability signals are available. This does not establish that Stephanos has no gaps.</p>}
+      </section>
       <div className="skill-lab-layout">
         <section className="skill-panel skill-process-panel">
           <div className="skill-section-head"><div><span className="skill-kicker">THE GROWTH ENGINE</span><h3>Capability construction line</h3></div><span>8 qualification stages</span></div>
