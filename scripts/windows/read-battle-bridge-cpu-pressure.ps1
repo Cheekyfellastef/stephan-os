@@ -59,9 +59,11 @@ $rows = @(
         # this exact sampled process. Never attribute a reused PID to old work.
         if ($meta) {
             try {
-                $sampleStartedSecond = $p.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
-                $metadataStartedSecond = $meta.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
-                if ($sampleStartedSecond -cne $metadataStartedSecond) { $meta = $null }
+                $sampleStartUtc = $p.StartTime.ToUniversalTime()
+                $metadataStartUtc = $meta.CreationDate.ToUniversalTime()
+                # WMI may round sub-millisecond Windows FILETIME precision.
+                # A different process (including same-second PID reuse) fails.
+                if ([math]::Abs(($sampleStartUtc - $metadataStartUtc).TotalMilliseconds) -gt 2) { $meta = $null }
             } catch { $meta = $null }
         }
         $parentId = if ($meta) { [int]$meta.ParentProcessId } else { 0 }
