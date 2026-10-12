@@ -58,114 +58,11 @@ if ($null -ne $status -and
     $null -ne $status.PSObject.Properties['outerBridgeLastStage']) {
     $parsedCount = 0
     $stage = [string]$status.outerBridgeLastStage
-    # A field existing with null/garbage is not evidence of a loaded rescue
-    # generation. Count zero and the explicit NOT_OBSERVED stage are valid
-    # before the first tick, but must still be well-formed.
+    # Count zero and NOT_OBSERVED are valid before first tick; malformed
+    # fields are never proof that this process loaded the rescue module.
     if ([int]::TryParse([string]$status.outerBridgeRunCount, [ref]$parsedCount) -and
         $parsedCount -ge 0 -and
-        $stage -cmatch '^[A-Z][A-Z0-9_]{0,79}
-$heartbeatAgeSeconds = $null
-$heartbeatFresh = $false
-$sourceHead = if ($null -ne $status) { [string]$status.sourceHead } else { '' }
-$liveHead = ''
-$sourceHeadMatchesLive = $false
-if (Test-Path -LiteralPath $gitExe -PathType Leaf) {
-    try {
-        $liveHead = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1))
-        $liveHead = $liveHead.Trim()
-    } catch {}
-}
-$sourceHeadMatchesLive = [bool](
-    $liveHead -match '^[0-9a-fA-F]{40}$' -and
-    $sourceHead -match '^[0-9a-fA-F]{40}$' -and
-    [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
-)
-$flywheelCycleAgeSeconds = $null
-$busyGraceActive = $false
-if ($null -ne $status -and $status.PSObject.Properties['heartbeatAtUtc']) {
-    try {
-        $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
-        $heartbeatAgeSeconds = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
-        $heartbeatFresh = [bool]($heartbeatAgeSeconds -le $coreHeartbeatFreshSeconds)
-    } catch {}
-}
-if ($null -ne $status) {
-    $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
-    $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
-    $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
-    if ($flywheelCycleRunning -and $null -ne $flywheelCycleStartedProperty -and $flywheelCycleStartedProperty.Value) {
-        try {
-            $flywheelCycleStarted = [DateTimeOffset]::Parse([string]$flywheelCycleStartedProperty.Value)
-            $flywheelCycleAgeSeconds = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $flywheelCycleStarted).TotalSeconds)
-        } catch {}
-    }
-    $busyGraceActive = [bool](
-        $status.daemonHealthy -eq $true -and
-        [string]$status.readiness -ne 'RELOAD_REQUIRED' -and
-        $sourceHeadMatchesLive -and
-        $flywheelCycleRunning -and
-        $null -ne $heartbeatAgeSeconds -and
-        $null -ne $flywheelCycleAgeSeconds -and
-        $heartbeatAgeSeconds -le $coreBusyGraceSeconds -and
-        $flywheelCycleAgeSeconds -le $coreBusyGraceSeconds
-    )
-}
-$healthy = [bool](
-    $singleWriterProven -and
-    $rescueGenerationPresent -and
-    $null -ne $status -and
-    $status.daemonHealthy -eq $true -and
-    [string]$status.readiness -ne 'RELOAD_REQUIRED' -and
-    $sourceHeadMatchesLive -and
-    ($heartbeatFresh -or $busyGraceActive)
-)
-
-[pscustomobject]@{
-    schemaVersion = 'stephanos.core-daemon-status.v1'
-    ok = $healthy
-    processCount = [int]$processes.Count
-    daemonHealthy = $healthy
-    reportedDaemonHealthy = if ($null -ne $status) { [bool]$status.daemonHealthy } else { $false }
-    singleWriterProven = $singleWriterProven
-    writerProcessObserved = $writerProcessObserved
-    lockOwnerMatchesWriter = $lockOwnerMatchesWriter
-    rescueGenerationPresent = $rescueGenerationPresent
-    rescueAttemptCount = $rescueAttemptCount
-    readiness = if ($null -ne $status) { [string]$status.readiness } else { 'UNKNOWN' }
-    wakeState = if ($null -ne $status -and $status.PSObject.Properties['wakeState']) { [string]$status.wakeState } else { 'UNKNOWN' }
-    awake = if ($null -ne $status -and $status.PSObject.Properties['awake']) { [bool]$status.awake } else { $false }
-    repairRequired = if ($null -ne $status -and $status.PSObject.Properties['repairRequired']) { [bool]$status.repairRequired } else { $true }
-    repairReason = if ($null -ne $status -and $status.PSObject.Properties['repairReason']) { [string]$status.repairReason } else { 'CONTROL_PLANE_STATUS_UNAVAILABLE' }
-    controlPlaneFinalVerdict = if ($null -ne $status -and $status.PSObject.Properties['controlPlaneFinalVerdict']) { [string]$status.controlPlaneFinalVerdict } else { 'STEPHANOS_CONTROL_PLANE_UNKNOWN' }
-    sourceHead = $sourceHead
-    sourceHeadMatchesLive = [bool]$sourceHeadMatchesLive
-    heartbeatAgeSeconds = $heartbeatAgeSeconds
-    heartbeatFresh = [bool]$heartbeatFresh
-    busyGraceActive = [bool]$busyGraceActive
-    flywheelCycleAgeSeconds = $flywheelCycleAgeSeconds
-    heartbeatFreshSeconds = [int]$coreHeartbeatFreshSeconds
-    busyGraceSeconds = [int]$coreBusyGraceSeconds
-    sovereignCommanderHealthy = if ($null -ne $status) { [bool]$status.sovereignCommanderHealthy } else { $false }
-    backendHealthy = if ($null -ne $status) { [bool]$status.backendHealthy } else { $false }
-    missionWorkerHealthy = if ($null -ne $status) { [bool]$status.missionWorkerHealthy } else { $false }
-    gamingActive = if ($null -ne $status) { [bool]$status.gamingActive } else { $false }
-    uiRequired = $false
-    sourceMutationAllowed = $false
-    schedulerAuthority = $false
-    mergeAuthority = $false
-    vendorMeterRequired = $false
-    remoteCommanderRequired = $false
-    finalVerdict = if ($healthy) {
-        'STEPHANOS_CORE_DAEMON_STATUS_PASS'
-    } elseif (-not $singleWriterProven) {
-        'STEPHANOS_CORE_DAEMON_OWNER_CUSTODY_UNPROVEN'
-    } elseif (-not $rescueGenerationPresent) {
-        'STEPHANOS_CORE_DAEMON_RESCUE_GENERATION_UNPROVEN'
-    } else {
-        'STEPHANOS_CORE_DAEMON_STATUS_NOT_READY'
-    }
-} | ConvertTo-Json -Depth 4
-) {
+        $stage -cmatch '^[A-Z][A-Z0-9_]{0,79}$') {
         $rescueAttemptCount = $parsedCount
         $rescueGenerationPresent = $true
     }
