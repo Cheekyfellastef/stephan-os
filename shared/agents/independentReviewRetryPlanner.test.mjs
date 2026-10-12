@@ -365,7 +365,7 @@ test('trusted workflow serializes every bounded retry under the same PR authorit
     /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/,
   );
   assert.match(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.retry_targets != '\[\]'/);
-  assert.match(COORDINATOR_WORKFLOW, /max-parallel:\s*1/);
+  assert.match(COORDINATOR_WORKFLOW, /max-parallel:\s*4/);
   assert.doesNotMatch(COORDINATOR_WORKFLOW, /steps\.coordinate\.outputs\.decision ==/);
   assert.match(
     retryStep,
