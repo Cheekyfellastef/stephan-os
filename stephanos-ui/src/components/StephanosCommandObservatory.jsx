@@ -97,7 +97,7 @@ export default function StephanosCommandObservatory({
       </div>
       <div className="stephanos-ops-grid">
         <section className="stephanos-ops-section">
-          <div className="stephanos-ops-section-head"><span>01 / THE FLEET</span><h2>Who is actually working?</h2></div>
+          <div className="stephanos-ops-section-head"><span>01 / THE FLEET</span><h2>What the fleet registry reports</h2></div>
           <div className="stephanos-ops-fleet">
             {fleetOwners.map(agent => <div key={agent.label}><div><b>{agent.label}</b><small>{agent.reason}</small></div><span className={truthTone(agent.state)}>{agent.state}</span></div>)}
           </div>
@@ -111,7 +111,7 @@ export default function StephanosCommandObservatory({
             <div><span>Active mission</span><strong>{usefulText(missionBridgeTruth?.missionPacket?.status, 'UNREPORTED')}</strong></div>
             <div><span>Runtime</span><strong>{usefulText(runtime.runtimeState || runtimeStatus?.appLaunchState)}</strong></div>
           </div>
-          <p>Missing proof remains UNKNOWN. A healthy process does not prove the builders are constructing or merging goals.</p>
+          <p>Missing proof remains UNKNOWN. An agent marked acting in the registry is not proof of a completed build, repair or successful merge.</p>
         </section>
       </div>
     </>}
