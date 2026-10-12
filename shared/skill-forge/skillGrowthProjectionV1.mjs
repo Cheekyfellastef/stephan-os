@@ -62,7 +62,7 @@ export function buildSkillTransferAssessmentV1(input = {}) {
     verdict: blockers.length ? 'NOT_PROVEN_FOR_TARGET' : 'READY_FOR_EXISTING_APPROVAL_BOUNDARY',
   });
 }
-export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], runtimeStatusModel = null } = {}) {
+export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], runtimeStatusModel = null, nowUtc = new Date().toISOString() } = {}) {
   const feed = asObject(payload);
   const records = asObject(feed.records);
   const eventRecords = rows(records.eventRecords).slice().sort(recentFirst);
@@ -89,6 +89,50 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     });
   // Read-only conjuration: typed capability gaps become *reviewable drafts*,
   // not code, installed skills or an automatic privilege escalation.
+  const sovereignStatus = statusRecords.find((record) =>
+    record?.kind === 'stephanos.shared_workspace.status'
+      && record?.statusId === 'sovereign-commander-capability-parity-current'
+      && record?.canonicalOwnerGoal === '#2573');
+  const sovereignCompiler = asObject(sovereignStatus?.capabilityCompiler);
+  const sovereignContractValid = sovereignCompiler.schemaVersion === 'stephanos.sovereign-commander-capability-compiler.v1'
+    && sovereignCompiler.skillConjurerSchema === 'stephanos.sovereign-commander-skill-conjurer.v1'
+    && sovereignCompiler.skillForgeActivationAllowed === false
+    && sovereignCompiler.automaticCapabilityConstructionAllowed === false;
+  const sovereignAt = Date.parse(text(sovereignStatus?.timestampUtc));
+  const observationAt = Date.parse(nowUtc);
+  const sovereignFresh = sovereignContractValid && text(feed.state).toLowerCase() === 'ready'
+    && Number.isFinite(sovereignAt) && Number.isFinite(observationAt)
+    && sovereignAt <= observationAt + 60000 && observationAt - sovereignAt <= 900000;
+  // These are canonically produced BUILDABLE_GAP drafts, never installed
+  // capabilities. A stale report may be inspected but never shown as ready.
+  const sovereignDrafts = sovereignContractValid
+    ? rows(sovereignCompiler.skillForgeCandidates).slice(0, 3).filter((draft) =>
+      draft?.schemaVersion === 'stephanos.sovereign-capability-skill-packet.v1'
+      && draft?.status === 'DRAFT'
+      && draft?.canonicalOwnerGoal === '#2573'
+      && draft?.activationAllowed === false
+      && draft?.executionAllowed === false
+      && draft?.constructionAdmissionAllowed === false
+      && draft?.mergeAuthority === false
+      && /^sovereign-skill-[a-z0-9-]+$/.test(text(draft.id))
+    ).map((draft) => Object.freeze({
+      id: draft.id,
+      name: text(draft.name).slice(0, 140),
+      category: 'Sovereign Commander guarded draft',
+      status: 'DRAFT',
+      riskLevel: text(draft.riskLevel, 'HIGH'),
+      permissionLevel: text(draft.permissionLevel, 'NEEDS_OPERATOR_APPROVAL'),
+      plainEnglishSummary: text(draft.plainEnglishSummary).slice(0, 400),
+      whySuggested: text(draft.whySuggested).slice(0, 400),
+      allowedTouches: ['Canonical #2573 bounded design and independent review only'],
+      forbiddenTouches: ['No execution, activation, shell, force-push, merge, credentials or self-approval'],
+      rollbackPath: 'Discard unactivated draft; no live runtime mutation has occurred.',
+      evidence: [{ type: 'canonical-skill-conjurer', summary: 'Shared Workspace status; runtime capability not proven' }],
+      tags: ['sovereign-commander', 'codex-handoff'],
+      provenance: sovereignFresh ? 'SOVEREIGN_GUARDED_DRAFT_NOT_INSTALLED'
+        : 'SOVEREIGN_STALE_DRAFT_NOT_INSTALLED',
+    })) : [];
+
   const learnedDrafts = [...new Map(learningEvents.map(event => [event.capability, Object.freeze({
     id: 'learned-' + event.capability.replace(/[^a-z0-9-]/g, '-').slice(0, 70),
     name: 'Conjure skill: ' + event.capability,
@@ -112,6 +156,7 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
   const skillCandidates = [
     ...rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
     ...learnedDrafts,
+    ...sovereignDrafts,
   ];
   const publishedSkills = skillRecords.map(record => ({
     id: record.skillForge.skillId,
@@ -165,6 +210,10 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     timeline: learningEvents.slice(0, 16),
     summary: Object.freeze({
       proposals: skillCandidates.length,
+      sovereignDrafts: sovereignDrafts.length,
+      sovereignNativeGaps: sovereignContractValid ? Math.max(0, Number(sovereignCompiler.nativeGapCandidateCount) || 0) : 0,
+      sovereignParityGaps: sovereignContractValid ? Math.max(0, Number(sovereignStatus?.capabilityParity?.buildableGapCount) || 0) : 0,
+      sovereignStatusTruth: !sovereignContractValid ? 'UNKNOWN' : sovereignFresh ? 'CURRENT' : 'STALE',
       witnessedLearning: learningEvents.length,
       verifiedLessons: learningEvents.filter(event => event.verified).length,
       publishedSkillRecords: publishedSkills.length,

@@ -8,7 +8,11 @@ on:
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs'
       - 'shared/agents/sovereignCommanderNativeGapIntakeV1.mjs'
+      - 'shared/skill-forge/skillGrowthProjectionV1.mjs'
       - 'shared/agents/sovereignCommanderNativeGapIntakeV1.test.mjs'
+      - 'shared/skill-forge/skillGrowthProjectionV1.mjs'
+      - 'shared/skill-forge/skillGrowthProjectionV1.test.mjs'
+      - 'stephanos-ui/src/components/SkillForgeTile.jsx'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
@@ -93,6 +97,7 @@ jobs:
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           node --test shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs
           node --test shared/agents/sovereignCommanderNativeGapIntakeV1.test.mjs
+          node --test shared/skill-forge/skillGrowthProjectionV1.test.mjs
           node --test scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           node --test scripts/sovereign-commander-preservation-converge.test.mjs
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
