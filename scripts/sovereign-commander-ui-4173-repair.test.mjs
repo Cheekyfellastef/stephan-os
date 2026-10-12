@@ -169,3 +169,54 @@ test('served UI probe exceptions cannot silently mark the publisher READY', asyn
   assert.equal(result.servedHeadBefore.blocker, 'ECONNREFUSED');
   assert.equal(result.servedHeadAfter.ready, false);
 });
+
+
+test('concurrent exact-head recovery is idempotent when existing repair returns only already-ready', async () => {
+  let proofReads = 0;
+  const result = await runSovereignCommanderUi4173Repair({
+    repoRoot: 'C:\\repo',
+    sharedWorkspace: 'C:\\workspace',
+    sourceTruthFn: () => sourceTruth(),
+    evaluateSourceTruthFn: sourceVerdict,
+    publisherFn: async () => ({ ok: true, status: 'READY' }),
+    servedRuntimeProofFn: async () => ({ ready: ++proofReads === 2 }),
+    repairFn: async (options) => {
+      options.stdout.write(JSON.stringify({
+        ready: false,
+        action: 'blocked',
+        blockers: [{ id: 'stephanos-ui-already-ready' }],
+      }));
+      return 2;
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyReady, true);
+  assert.equal(result.raceConverged, true);
+  assert.equal(result.servedHeadAfter.ready, true);
+});
+
+test('concurrent convergence cannot excuse a second safety blocker', async () => {
+  let proofReads = 0;
+  const result = await runSovereignCommanderUi4173Repair({
+    repoRoot: 'C:\\repo',
+    sharedWorkspace: 'C:\\workspace',
+    sourceTruthFn: () => sourceTruth(),
+    evaluateSourceTruthFn: sourceVerdict,
+    publisherFn: async () => ({ ok: true, status: 'READY' }),
+    servedRuntimeProofFn: async () => ({ ready: ++proofReads === 2 }),
+    repairFn: async (options) => {
+      options.stdout.write(JSON.stringify({
+        ready: false,
+        action: 'blocked',
+        blockers: [
+          { id: 'stephanos-ui-already-ready' },
+          { id: 'shared-workspace-not-fresh' },
+        ],
+      }));
+      return 2;
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.raceConverged, false);
+  assert.equal(result.blocker, 'stephanos-ui-already-ready');
+});
