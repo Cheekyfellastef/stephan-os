@@ -91,8 +91,8 @@ function cpuRunner({ dirty = false, badPayload = false, sampleStatus = 0, observ
   const calls = [];
   const spawnSyncFn = (executable, args) => {
     calls.push({ executable, args });
-    if (args.includes('branch')) return { status: 0, stdout: 'main\\n' };
-    if (args.includes('rev-parse')) return { status: 0, stdout: observedHead + '\\n' };
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: observedHead + '\n' };
     if (args.includes('diff')) return { status: dirty ? 1 : 0, stdout: '' };
     if (executable === 'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe') {
       return { status: sampleStatus, stdout: badPayload ? '{malformed' : JSON.stringify(sample()) };
