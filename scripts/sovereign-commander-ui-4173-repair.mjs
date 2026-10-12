@@ -9,7 +9,7 @@ import {
   evaluateCanonicalIgnitionSourceTruth,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { refreshBattleBridgeSharedWorkspacePublisher } from './battle-bridge-shared-workspace-publisher.mjs';
-import { runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
+import { collectUi4173ServedExactHeadProof, runUi4173Repair } from './battle-bridge-ui-4173-repair.mjs';
 
 export const SOVEREIGN_COMMANDER_UI_4173_REPAIR_SCHEMA = 'stephanos.sovereign-commander-ui-4173-repair.v1';
 export const SOVEREIGN_COMMANDER_UI_4173_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_UI_4173_REPAIR_RESULT=';
@@ -32,6 +32,7 @@ export async function runSovereignCommanderUi4173Repair({
   sourceTruthFn = collectCanonicalIgnitionSourceTruth,
   evaluateSourceTruthFn = evaluateCanonicalIgnitionSourceTruth,
   publisherFn = refreshBattleBridgeSharedWorkspacePublisher,
+  servedRuntimeProofFn = collectUi4173ServedExactHeadProof,
   repairFn = runUi4173Repair,
 } = {}) {
   const canonicalRepoRoot = resolve(repoRoot);
@@ -64,7 +65,18 @@ export async function runSovereignCommanderUi4173Repair({
     });
   }
 
-  if (before.status === 'READY') {
+  // Publisher READY is a service-level observation, not proof that the
+  // generated dist on 4173 matches the exact protected main source head.
+  // A stale dist can still return HTTP 200 and make Flywheel open an old UI.
+  const proveServedHead = async () => {
+    try {
+      return await servedRuntimeProofFn({ expectedHead });
+    } catch (error) {
+      return { ready: false, blocker: text(error?.code || 'SERVED_HEAD_PROBE_FAILED') };
+    }
+  };
+  const servedBefore = await proveServedHead();
+  if (before.status === 'READY' && servedBefore?.ready === true) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_UI_4173_REPAIR_SCHEMA,
       ok: true,
@@ -72,6 +84,7 @@ export async function runSovereignCommanderUi4173Repair({
       workspaceRoot,
       alreadyReady: true,
       publisherBefore: before,
+      servedHeadBefore: servedBefore,
       finalVerdict: 'SOVEREIGN_COMMANDER_UI_4173_REPAIR_GREEN',
     });
   }
@@ -90,16 +103,18 @@ export async function runSovereignCommanderUi4173Repair({
     repoRoot: canonicalRepoRoot,
     sharedWorkspace: workspaceRoot,
   });
+  const servedAfter = await proveServedHead();
 
   const ok = repairExitCode === 0
     && repair?.ready === true
     && after?.ok === true
-    && after?.status === 'READY';
+    && after?.status === 'READY'
+    && servedAfter?.ready === true;
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_UI_4173_REPAIR_SCHEMA,
     ok,
-    blocker: ok ? '' : text(repair?.blockers?.[0]?.id || repair?.action || 'STEPHANOS_UI_4173_REPAIR_UNPROVEN'),
+    blocker: ok ? '' : text(repair?.blockers?.[0]?.id || (servedAfter?.ready !== true ? 'STEPHANOS_UI_4173_SERVED_HEAD_UNPROVEN' : '') || repair?.action || 'STEPHANOS_UI_4173_REPAIR_UNPROVEN'),
     expectedHead,
     workspaceRoot,
     alreadyReady: false,
@@ -107,6 +122,8 @@ export async function runSovereignCommanderUi4173Repair({
     repair,
     publisherBefore: before,
     publisherAfter: after,
+    servedHeadBefore: servedBefore,
+    servedHeadAfter: servedAfter,
     finalVerdict: ok
       ? 'SOVEREIGN_COMMANDER_UI_4173_REPAIR_GREEN'
       : 'SOVEREIGN_COMMANDER_UI_4173_REPAIR_BLOCKED',
