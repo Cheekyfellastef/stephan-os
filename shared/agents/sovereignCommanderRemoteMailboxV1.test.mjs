@@ -257,6 +257,7 @@ test('a failed local AI Commander probe gives a typed public-safe blocker, never
   assert.equal(blocked.ok, false);
   assert.equal(blocked.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED');
   assert.equal(blocked.acceptanceBlocker, 'AI_COMMANDER_CHAT_HTTP_404');
+  assert.equal(blocked.executionBlocker, 'AI_COMMANDER_CHAT_HTTP_404');
   assert.equal(blocked.toolCalled, false);
   assert.equal(JSON.stringify(blocked).includes('SECRET_PRIVATE'), false);
   assert.equal(JSON.stringify(blocked).includes('Users'), false);
@@ -272,6 +273,14 @@ test('a failed local AI Commander probe gives a typed public-safe blocker, never
   const rejected = await execute(forgedEnvelope);
   assert.equal(rejected.ok, false);
   assert.equal(rejected.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID');
+  assert.equal(rejected.executionBlocker, 'AI_COMMANDER_TYPED_ACCEPTANCE_MISSING');
+  assert.equal(JSON.stringify(rejected).includes('SECRET_PRIVATE'), false);
+
+  const absentEnvelope = await execute({});
+  assert.equal(absentEnvelope.ok, false);
+  assert.equal(absentEnvelope.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID');
+  assert.equal(absentEnvelope.executionBlocker, 'AI_COMMANDER_ACTION_ENVELOPE_MISSING');
+  assert.equal(JSON.stringify(absentEnvelope).includes('SECRET_PRIVATE'), false);
 
   const passedPayload = {
     ...payload,
