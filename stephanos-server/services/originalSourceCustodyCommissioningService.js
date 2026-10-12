@@ -42,7 +42,7 @@ export async function authenticateSourceCustodyCommissioning(expected = {}, { en
     if (![recordPath, trustedRootPath, issuerKeyPath, worktreePath].every(isAbsolute)
       || !SHA.test(rootDigest) || !SHA.test(serviceKeyDigest)
       || !SHA.test(text(expected.isolationPolicySha256)) || !SID.test(workerSid)) return fail();
-    const paths = [recordPath, trustedRootPath, issuerKeyPath].map(resolve);
+    const paths = [recordPath, trustedRootPath, issuerKeyPath].map(path => resolve(path));
     const isolated = resolve(worktreePath);
     // Nothing executable, no signer key, and no receipt path in the source worktree.
     if (paths.some(path => contained(isolated, path) || path === isolated)) return fail();
