@@ -163,6 +163,16 @@ test('watchdog recycles only verified Sovereign Commander processes when capabil
 });
 
 
+test('Commander-only CPU preflight skips unrelated desktop, VR, core and relay mutations', () => {
+  assert.match(runner, /\[switch\]\$CommanderOnly/);
+  assert.match(runner, /-not \$CommanderOnly -and -not \$SkipDesktopCommanderCrossHeal/);
+  assert.match(runner, /if \(\$CommanderOnly\) \{\s*\$vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_GOVERNOR_SKIPPED_COMMANDER_ONLY'/);
+  assert.match(runner, /if \(\$SkipCoreDaemonLifecycle -or \$CommanderOnly\)/);
+  assert.match(runner, /if \(\$CommanderOnly\) \{\s*\$relayDaemonBlocker = 'SOVEREIGN_COMMANDER_RELAY_SKIPPED_COMMANDER_ONLY'/);
+  assert.match(runner, /\$overallOk = \[bool\]\(\$ok -and \(\$CommanderOnly -or/);
+  assert.match(runner, /if \(-not \$CommanderOnly -and -not \$vrGovernorOk\) \{ exit 4 \}/);
+});
+
 test('capability probing is StrictMode-safe when an old daemon omits capabilityVersion', () => {
   assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
   assert.match(runner, /\$capabilityProperty\.Value/);
