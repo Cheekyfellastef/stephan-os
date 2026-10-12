@@ -67,6 +67,9 @@ function Get-SovereignRelayDaemonHealth {
 }
 $writerCustodyProven = $false
 $lock = [pscustomobject]@{ schemaVersion = 'stephanos.core-daemon-lock.v1'; sourceHead = 'abc' }
+if ([string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1') {
+  $writerCustodyProven = $true
+}
 $startupLagSeconds = 1
 if ($startupLagSeconds -ge -3 -and $startupLagSeconds -le 90) { $writerCustodyProven = $true }
 $coreBefore = @(Get-StephanosCoreDaemonProcesses)
