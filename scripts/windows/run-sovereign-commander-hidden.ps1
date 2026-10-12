@@ -2,7 +2,8 @@
 param(
     [string]$RequireCapabilityVersion = '2026-10-12-cpu-pressure-snapshot-v5',
     [switch]$SkipCoreDaemonLifecycle,
-    [switch]$SkipDesktopCommanderCrossHeal
+    [switch]$SkipDesktopCommanderCrossHeal,
+    [switch]$CommanderOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -479,7 +480,7 @@ if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' 
 # Repair it only when absent. Route recovery through the canonical scheduled task
 # so MultipleInstances=IgnoreNew serializes cold-boot and peer-heal races.
 $desktopCommanderBefore = @(Get-DesktopCommanderRemoteProcesses)
-if (-not $SkipDesktopCommanderCrossHeal -and $desktopCommanderBefore.Count -eq 0) {
+if (-not $CommanderOnly -and -not $SkipDesktopCommanderCrossHeal -and $desktopCommanderBefore.Count -eq 0) {
     $desktopCommanderCrossHealRequested = $true
     $desktopCommanderTask = Get-ScheduledTask -TaskName $desktopCommanderTaskName -ErrorAction SilentlyContinue
     if ($null -eq $desktopCommanderTask) {
@@ -506,7 +507,9 @@ if (-not $desktopCommanderCrossHealOk -and -not $desktopCommanderCrossHealBlocke
 
 # VR protection is intentionally independent of daemon health.
 # A sick commander must never leave Air Link exposed to heavyweight Ollama residency.
-if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
+if ($CommanderOnly) {
+    $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_GOVERNOR_SKIPPED_COMMANDER_ONLY'
+} elseif (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
@@ -564,7 +567,7 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 # Sovereign Commander owns only process liveness for this fixed source-controlled child.
 # When the Core Daemon itself is bootstrapping Commander, observe Core liveness only:
 # never recycle the caller while it is establishing its first fresh heartbeat.
-if ($SkipCoreDaemonLifecycle) {
+if ($SkipCoreDaemonLifecycle -or $CommanderOnly) {
     $coreObserved = @(Get-StephanosCoreDaemonProcesses)
     $coreObservedHealth = Get-StephanosCoreDaemonHealth
     $coreDaemonProcessCount = $coreObserved.Count
@@ -637,7 +640,9 @@ if ($SkipCoreDaemonLifecycle) {
 
 # The Sovereign Relay accelerates cloud-chat transport but is not a Commander dependency.
 # Scheduled GitHub polling, Tailnet access and optional third-party transports remain fallbacks.
-if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
+if ($CommanderOnly) {
+    $relayDaemonBlocker = 'SOVEREIGN_COMMANDER_RELAY_SKIPPED_COMMANDER_ONLY'
+} elseif (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
     $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
     $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_NODE_MISSING'
@@ -723,14 +728,14 @@ if ($ok) {
     }
 }
 
-$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
+$overallOk = [bool]($ok -and ($CommanderOnly -or ($vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)))
 $overallBlocker = if (-not $ok) {
     $blocker
-} elseif (-not $vrGovernorOk) {
+} elseif (-not $CommanderOnly -and -not $vrGovernorOk) {
     if ($vrGovernorBlocker) { $vrGovernorBlocker } else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' }
-} elseif (-not $coreDaemonOk) {
+} elseif (-not $CommanderOnly -and -not $coreDaemonOk) {
     if ($coreDaemonBlocker) { $coreDaemonBlocker } else { 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED' }
-} elseif (-not $fleetGoalSupervisorOk) {
+} elseif (-not $CommanderOnly -and -not $fleetGoalSupervisorOk) {
     if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
 } else {
     ''
@@ -743,6 +748,10 @@ $overallBlocker = if (-not $ok) {
     afterProcessCount = $after.Count
     healthyBefore = [bool]$healthyBefore
     healthyAfter = [bool]$healthyAfter
+    commanderOnly = [bool]$CommanderOnly
+    vrGovernorLifecycleSkipped = [bool]$CommanderOnly
+    relayLifecycleSkipped = [bool]$CommanderOnly
+    desktopCommanderCrossHealSkipped = [bool]($CommanderOnly -or $SkipDesktopCommanderCrossHeal)
     requiredCapabilityVersion = $RequireCapabilityVersion
     capabilityVersionBefore = [string]$healthBefore.capabilityVersion
     capabilityVersionAfter = [string]$healthAfter.capabilityVersion
@@ -834,6 +843,6 @@ $overallBlocker = if (-not $ok) {
 } | ConvertTo-Json -Depth 5
 
 if (-not $ok) { exit 2 }
-if (-not $vrGovernorOk) { exit 4 }
-if (-not $coreDaemonOk -and -not $SkipCoreDaemonLifecycle) { exit 5 }
+if (-not $CommanderOnly -and -not $vrGovernorOk) { exit 4 }
+if (-not $CommanderOnly -and -not $coreDaemonOk -and -not $SkipCoreDaemonLifecycle) { exit 5 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }
