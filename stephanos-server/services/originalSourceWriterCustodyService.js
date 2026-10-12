@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { authenticateSourceCustodyCommissioning } from './originalSourceCustodyCommissioningService.js';
 
 // V2 deliberately rejects all V1 shared-HMAC receipts. The source worker and
 // verifier hold only a public key, never the privileged issuer's signing key.
@@ -117,6 +118,17 @@ export async function authenticateOriginalWriterExclusionEvidence(
       || !Number.isSafeInteger(claims.rootPid) || claims.rootPid < 1
       || !RECEIPT_ID.test(text(claims.authorityReceiptId))) return fail();
 
+    // A possession of the issuer private key alone cannot confer historical
+    // custody authority: independently signed OS commissioning must predate
+    // this precise source process launch. Neither proof may be caller-supplied.
+    const commissioned = await authenticateSourceCustodyCommissioning({
+      repository: expected.repository, branch: expected.branch,
+      worktreePath: worktree, isolatedWriterPrincipalSid: claims.isolatedWriterPrincipalSid,
+      isolationPolicySha256: claims.isolationPolicySha256,
+      processStartedAtUtc: claims.processStartedAtUtc,
+    }, { env });
+    if (commissioned.authenticated !== true) return fail();
+
     const evidence = Object.freeze({
       schemaVersion: EXCLUSION_SCHEMA,
       missionId: claims.missionId,
@@ -130,6 +142,7 @@ export async function authenticateOriginalWriterExclusionEvidence(
       verdict: 'NO_SOURCE_WRITING_DESCENDANTS',
       authorityReceiptId: claims.authorityReceiptId,
       authorityReceiptSha256: createHash('sha256').update(bytes).digest('hex'),
+      commissioningReceiptSha256: commissioned.commissioningReceiptSha256,
     });
     return Object.freeze({ authenticated: true, evidence });
   } catch {

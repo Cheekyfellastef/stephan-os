@@ -9,6 +9,10 @@ import {
   ORIGINAL_WRITER_CUSTODY_RECEIPT_SCHEMA,
   ORIGINAL_WRITER_CUSTODY_SIGNATURE_DOMAIN,
 } from './originalSourceWriterCustodyService.js';
+import {
+  SOURCE_CUSTODY_COMMISSIONING_SCHEMA,
+  SOURCE_CUSTODY_COMMISSIONING_DOMAIN,
+} from './originalSourceCustodyCommissioningService.js';
 
 const NOW = Date.parse('2026-10-11T21:00:00.000Z');
 const MISSION = 'critical-2962-elastic-goal';
@@ -63,6 +67,39 @@ async function fixture() {
     STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_PATH: keyPath,
     STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256: createHash('sha256').update(publicPem).digest('hex'),
   };
+  // Synthetic independent offline root, deliberately separate from the
+  // service signer. Production never generates either key in source/tests.
+  const offline = generateKeyPairSync('ed25519');
+  const offlinePublic = offline.publicKey.export({ format: 'pem', type: 'spki' });
+  const offlinePublicPath = join(dir, 'commissioning-root-public.pem');
+  const commissioningPath = join(dir, 'commissioning.json');
+  await writeFile(offlinePublicPath, offlinePublic);
+  env.STEPHANOS_SOURCE_CUSTODY_COMMISSIONING_ROOT_PUBLIC_KEY_PATH = offlinePublicPath;
+  env.STEPHANOS_SOURCE_CUSTODY_COMMISSIONING_ROOT_PUBLIC_KEY_SHA256 = createHash('sha256').update(offlinePublic).digest('hex');
+  env.STEPHANOS_SOURCE_CUSTODY_COMMISSIONING_RECEIPT_PATH = commissioningPath;
+  const commissioningClaims = {
+    repository: identity.repository, branch: identity.branch,
+    worktreePath: identity.worktreePath,
+    isolatedWriterPrincipalSid: claims.isolatedWriterPrincipalSid,
+    issuerServicePrincipalSid: 'S-1-5-21-100-200-300-401',
+    operatorPrincipalSid: 'S-1-5-21-100-200-300-402',
+    issuerPublicKeySha256: env.STEPHANOS_SOURCE_CUSTODY_VERIFIER_PUBLIC_KEY_SHA256,
+    isolationPolicySha256: claims.isolationPolicySha256,
+    commissionedAtUtc: new Date(NOW - 5000).toISOString(),
+    expiresAtUtc: new Date(NOW + 86400_000).toISOString(),
+    issuerKeyNotAccessibleToWorker: true,
+    operatorCheckoutWriteDeniedToWorker: true,
+    outOfJobSourceWriterAccessDenied: true,
+    independentOsPrincipalAttestation: true,
+  };
+  await writeFile(commissioningPath, JSON.stringify({
+    schemaVersion: SOURCE_CUSTODY_COMMISSIONING_SCHEMA,
+    issuer: 'stephanos-independent-custody-commissioning-root',
+    algorithm: 'Ed25519', claims: commissioningClaims,
+    signatureBase64: ed25519Sign(null,
+      Buffer.from(SOURCE_CUSTODY_COMMISSIONING_DOMAIN + JSON.stringify(commissioningClaims), 'utf8'),
+      offline.privateKey).toString('base64'),
+  }));
   const receiptPath = join(receipts, EXECUTION + '.json');
   const sign = async (contents = claims, signingKey = privateKey) => {
     const record = {
@@ -90,6 +127,7 @@ test('synthetic isolated-issuer Ed25519 fixture validates exact identity without
     assert.equal(good.authenticated, true);
     assert.equal(good.evidence.sourceExecutionId, EXECUTION);
     assert.equal(good.evidence.authorityReceiptSha256.length, 64);
+    assert.equal(good.evidence.commissioningReceiptSha256.length, 64);
     assert.equal(good.evidence.worktreePath, f.identity.worktreePath);
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });
@@ -265,5 +303,18 @@ test('public-key fingerprint is a separate expected trust anchor, not a replacea
     const other = generateKeyPairSync('ed25519').publicKey.export({ format: 'pem', type: 'spki' });
     await writeFile(f.keyPath, other);
     assert.equal((await f.authenticate(null)).authenticated, false);
+  } finally { await rm(f.dir, { recursive: true, force: true }); }
+});
+
+test('issuer signature without independent pre-execution commissioning remains SAFE_HOLD', async () => {
+  const f = await fixture();
+  try {
+    await f.sign();
+    const noRoot = { ...f.env };
+    delete noRoot.STEPHANOS_SOURCE_CUSTODY_COMMISSIONING_ROOT_PUBLIC_KEY_PATH;
+    assert.equal((await f.authenticate(null, { env: noRoot })).authenticated, false);
+    const noReceipt = { ...f.env };
+    delete noReceipt.STEPHANOS_SOURCE_CUSTODY_COMMISSIONING_RECEIPT_PATH;
+    assert.equal((await f.authenticate(null, { env: noReceipt })).authenticated, false);
   } finally { await rm(f.dir, { recursive: true, force: true }); }
 });

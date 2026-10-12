@@ -19,6 +19,6 @@ The new `authenticateSourceCustodyCommissioning` confirms the root/issuer are tw
 
 ## Required next production step
 
-Only after independent Windows specialist qualification should the actual restricted service be built and commissioned, and should this policy validation be called from the existing writer custody verifier as one of its **necessary**, not sufficient, predicates. The actual signer must issue custody receipts solely from service-observed OS process lifecycle and ACL isolation, not accept caller-supplied booleans. Existing Job Object proofs do not cover WMI/COM out-of-job writers. The original historical #2962 r7 attempt **cannot be re-signed retrospectively** as if it were a new isolated execution.
+The writer custody verifier now requires this commissioning record as one of its **necessary**, not sufficient, predicates, even for a valid issuer-signed custody record. This is SOURCE-ONLY; no such root or issuer is commissioned on the real Battle Bridge. The actual signer must issue custody receipts solely from service-observed OS process lifecycle and ACL isolation, not accept caller-supplied booleans. Existing Job Object proofs do not cover WMI/COM out-of-job writers. The original historical #2962 r7 attempt **cannot be re-signed retrospectively** as if it were a new isolated execution.
 
 No authority changes are made to the lease reconciler, Core Daemon, mailbox, mission worker or runtime. PR #3023 remains specialist-HELD until qualified reviewer evidence is genuine.
