@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
+    [string]$RequireCapabilityVersion = '2026-10-12-cpu-pressure-snapshot-v5',
     [switch]$SkipCoreDaemonLifecycle,
     [switch]$SkipDesktopCommanderCrossHeal
 )
