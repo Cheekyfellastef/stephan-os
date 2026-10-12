@@ -546,3 +546,58 @@ test('StatusPanel renders mission synthesis rows without crashing on partial met
   assert.match(rendered, /\[MEMORY ELEVATION\] Active: true/);
   assert.match(rendered, /\[MEMORY ELEVATION\] Top Influencers: build-relevant-memory · dist parity recurrence · durable-memory · graph-deferred/);
 });
+
+test('runtime meaning strip uses canonical backend reachability and selected AI provider without claiming execution', async () => {
+  const { renderMeaningStrip } = await importBundledModule(
+    path.join(srcRoot, 'test/renderMeaningStripEntry.jsx'),
+    {}, 'runtime-meaning-strip',
+  );
+
+  const reachable = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    selectedProvider: 'ollama',
+    executedProvider: 'unknown',
+    providerExecutionGateStatus: 'pending-selection',
+    routeLayerStatus: 'healthy',
+    fallbackActive: false,
+  }, 'recording-only');
+  assert.match(reachable, /BACKEND REACHABLE/);
+  assert.match(reachable, /AI: OLLAMA \(SELECTED\)/);
+  assert.match(reachable, /MEMORY: RECORDING-ONLY/);
+  assert.doesNotMatch(reachable, /AI: UNKNOWN|AI: OLLAMA \(EXECUTED\)/);
+
+  const unreachable = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'no',
+    selectedProvider: 'ollama',
+    executedProvider: 'none',
+    providerExecutionGateStatus: 'route-blocked',
+    routeLayerStatus: 'route-failure',
+  });
+  assert.match(unreachable, /BACKEND UNREACHABLE FROM UI/);
+  assert.match(unreachable, /AI: OLLAMA \(SELECTED\)/);
+  assert.match(unreachable, /ROUTE ISSUE/);
+  assert.doesNotMatch(unreachable, /BACKEND REACHABLE/);
+
+  const unknown = renderMeaningStrip({
+    routeKind: 'unavailable',
+    backendReachableState: 'unknown',
+    selectedProvider: 'unknown',
+    executedProvider: 'none',
+  });
+  assert.match(unknown, /BACKEND UNVERIFIED/);
+  assert.match(unknown, /AI: UNVERIFIED/);
+  assert.doesNotMatch(unknown, /BACKEND UNREACHABLE|BACKEND REACHABLE/);
+});
+
+test('Command Deck status wiring uses the final route projection and transport failure text does not assert service outage', async () => {
+  const fs = await import('node:fs/promises');
+  const app = await fs.readFile(path.join(srcRoot, 'App.jsx'), 'utf8');
+  const consoleHook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
+
+  assert.match(app, /<MeaningStrip finalRouteTruth=\{routeTruthView\} memoryMode=\{runtimeStatusModel\?\.finalRouteTruth\?\.memoryMode\} \/>/);
+  assert.doesNotMatch(app, /<MeaningStrip finalRouteTruth=\{runtimeStatusModel\?\.finalRouteTruth\}/);
+  assert.match(consoleHook, /label: 'Backend connection unreachable from this browser'/);
+  assert.doesNotMatch(consoleHook, /label: 'Backend offline'/);
+});
