@@ -106,6 +106,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Temporary exact-head Sovereign logical builder repair regressions
+        run: |
+          node --test --test-concurrency=1 \
+            scripts/sovereign-controller-lane-status.test.mjs \
+            scripts/sovereign-commander-goal-builder-repair.test.mjs \
+            shared/agents/sovereignCommanderV1.test.mjs \
+            shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
       - name: Run surface, ignition, autonomy, and dashboard tests
         run: |
           node --test --test-concurrency=1 \
