@@ -19,10 +19,10 @@ Use the existing Sovereign Commander execution plane first. Local/private MCP is
 | Recovery task health | `status-recovery-mesh` |
 | Worker watchdog health | `status-worker-watchdog` |
 | Core daemon readiness and heartbeat | `status-stephanos-core-daemon` |
-| Gaming/VR governor's recorded state | `gaming-resource-status` |
+| Gaming/VR governor status | `gaming-resource-status` is **maintenance-only**, not available through read-only inspection, because a missing state file may trigger reconciliation and change processes |
 | Starfield VR performance evidence | `starfield-vr-performance-diagnosis` |
 
-`gaming-resource-status` reads recorded governor telemetry. Check its observation time; a newly returned receipt does not make old telemetry current. Likewise, process-list CPU is cumulative process time; use the sampler for utilization. A successful transport receipt proves execution, not healthy services, fresh evidence, low CPU or a successful repair.
+`gaming-resource-status` is deliberately excluded from `inspect_battle_bridge`: when state is absent, its status fallback can reconcile and alter running resources. Invoke only through the existing explicitly authorised maintenance surface. Check the observation time of any recorded governor telemetry; a newly returned receipt does not make old telemetry current. Likewise, process-list CPU is cumulative process time; use the sampler for utilization. A successful transport receipt proves execution, not healthy services, fresh evidence, low CPU or a successful repair.
 
 The VR diagnosis adapter preserves array shape for zero or one provider and numeric samples. This avoids Windows PowerShell StrictMode `.Count` failures and keeps missing measurements null rather than reporting zero or available telemetry. Windows regression fixtures cover no telemetry, a single provider, duplicate provider identity and conflicting providers.
 
