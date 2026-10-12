@@ -815,10 +815,17 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
       const blocker = phase === 'ACCEPTANCE'
         ? 'MAILBOX_ACCEPTANCE_CALLBACK_FAILED'
         : 'MAILBOX_EXECUTION_CALLBACK_FAILED';
-      results[index] = Object.freeze({
-        entry,
-        result: await checkpointTerminal(entry, fail(blocker)),
-      });
+      try {
+        results[index] = Object.freeze({
+          entry,
+          result: await checkpointTerminal(entry, fail(blocker)),
+        });
+      } catch {
+        // This fallback checkpoint may already have written a terminal
+        // receipt before failing. Preserve that durable truth for reconciliation
+        // and never leak potentially sensitive downstream exception messages.
+        throw new Error('MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      }
     } finally {
       activeExecutions -= 1;
     }
