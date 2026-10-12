@@ -8,6 +8,9 @@ const status = await readFile(
 const watchdog = await readFile(
   new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8',
 );
+const remote = await readFile(
+  new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8',
+);
 
 test('Core status fails closed on ambiguous process and lock writer custody', () => {
   assert.match(status, /\$processes\.Count -eq 1 -and \$writerProcessObserved -and \$lockOwnerMatchesWriter/);
@@ -38,4 +41,19 @@ test('Custody observations remain read-only and do not directly seize lease or k
   assert.doesNotMatch(status, /Stop-Process|taskkill|Remove-Item|Unregister-ScheduledTask/);
   assert.match(status, /singleWriterProven = \$singleWriterProven/);
   assert.match(status, /rescueAttemptCount = \$rescueAttemptCount/);
+});
+
+test('remote Core status exposes bounded proof booleans but not raw process identity', () => {
+  const start = remote.indexOf('function safeCoreDaemonStatusProjection(value = {})');
+  const end = remote.indexOf('function safeProjectSearchProjection(', start);
+  assert.ok(start >= 0 && end > start);
+  const projection = remote.slice(start, end);
+  for (const field of [
+    'singleWriterProven', 'writerProcessObserved', 'lockOwnerMatchesWriter',
+    'rescueGenerationPresent', 'rescueAttemptCount', 'reportedDaemonHealthy',
+  ]) {
+    assert.match(projection, new RegExp(field + ':'));
+  }
+  assert.doesNotMatch(projection, /processId:|lockOwnerPid:|commandLine:|lockPath:/);
+  assert.match(projection, /Number\.isSafeInteger\(parsed\.rescueAttemptCount\)/);
 });
