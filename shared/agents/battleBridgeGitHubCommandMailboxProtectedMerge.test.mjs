@@ -334,6 +334,9 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
   assert.equal(staleBase.verdict, 'NO_COMMAND_READY');
   assert.equal(staleBase.terminalRejections.length, 1);
   assert.equal(staleBase.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(staleBase.rejected[0].expectedHead, head);
+  assert.equal(staleBase.rejected[0].expectedMainHead, base);
+  assert.equal(staleBase.rejected[0].githubMainHead, 'f'.repeat(40));
 
   const normal = { ...payload, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE' };
   const normalEntry = { ...entry, body: '```stephanos-battle-bridge-command\n' + JSON.stringify(normal) + '\n```' };
@@ -362,4 +365,5 @@ test('protected merge mailbox compares reviewed PR expectedBase to main, never P
   });
   assert.equal(strictOrdinary.verdict, 'NO_COMMAND_READY');
   assert.equal(strictOrdinary.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(strictOrdinary.rejected[0].expectedMainHead, head);
 });
