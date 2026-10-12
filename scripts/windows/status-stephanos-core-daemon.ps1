@@ -10,6 +10,8 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
 $coreScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $statusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $corePattern = [regex]::Escape($coreScript)
+$localStateRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }
+$coreLockPath = Join-Path $localStateRoot 'Stephanos\stephanos-core-daemon.lock.json'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
@@ -25,6 +27,41 @@ $processes = @(
 $status = $null
 if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
     try { $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json } catch {}
+}
+# A matching process is not proof that it owns the canonical Core lock or
+# produced the latest heartbeat. Do not expose process IDs in public status.
+$writerPid = 0
+if ($null -ne $status -and $status.PSObject.Properties['processId']) {
+    [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
+}
+$lockOwnerPid = 0
+if (Test-Path -LiteralPath $coreLockPath -PathType Leaf) {
+    try {
+        $lockRecord = Get-Content -LiteralPath $coreLockPath -Raw | ConvertFrom-Json
+        [void][int]::TryParse([string]$lockRecord.pid, [ref]$lockOwnerPid)
+    } catch {}
+}
+$writerProcessObserved = [bool](
+    $writerPid -gt 0 -and
+    $null -ne @($processes | Where-Object { [int]$_.ProcessId -eq $writerPid } | Select-Object -First 1)[0]
+)
+$lockOwnerMatchesWriter = [bool]($lockOwnerPid -gt 0 -and $lockOwnerPid -eq $writerPid)
+$singleWriterProven = [bool](
+    $processes.Count -eq 1 -and $writerProcessObserved -and $lockOwnerMatchesWriter
+)
+# A current source SHA alone cannot prove that a running Node process
+# loaded the newly merged rescue module. Require its heartbeat fields.
+$rescueGenerationPresent = [bool](
+    $null -ne $status -and
+    $null -ne $status.PSObject.Properties['outerBridgeRunCount'] -and
+    $null -ne $status.PSObject.Properties['outerBridgeLastStage']
+)
+$rescueAttemptCount = $null
+if ($rescueGenerationPresent) {
+    $parsedCount = 0
+    if ([int]::TryParse([string]$status.outerBridgeRunCount, [ref]$parsedCount) -and $parsedCount -ge 0) {
+        $rescueAttemptCount = $parsedCount
+    }
 }
 $heartbeatAgeSeconds = $null
 $heartbeatFresh = $false
@@ -73,7 +110,8 @@ if ($null -ne $status) {
     )
 }
 $healthy = [bool](
-    $processes.Count -ge 1 -and
+    $singleWriterProven -and
+    $rescueGenerationPresent -and
     $null -ne $status -and
     $status.daemonHealthy -eq $true -and
     [string]$status.readiness -ne 'RELOAD_REQUIRED' -and
@@ -85,7 +123,13 @@ $healthy = [bool](
     schemaVersion = 'stephanos.core-daemon-status.v1'
     ok = $healthy
     processCount = [int]$processes.Count
-    daemonHealthy = if ($null -ne $status) { [bool]$status.daemonHealthy } else { $false }
+    daemonHealthy = $healthy
+    reportedDaemonHealthy = if ($null -ne $status) { [bool]$status.daemonHealthy } else { $false }
+    singleWriterProven = $singleWriterProven
+    writerProcessObserved = $writerProcessObserved
+    lockOwnerMatchesWriter = $lockOwnerMatchesWriter
+    rescueGenerationPresent = $rescueGenerationPresent
+    rescueAttemptCount = $rescueAttemptCount
     readiness = if ($null -ne $status) { [string]$status.readiness } else { 'UNKNOWN' }
     wakeState = if ($null -ne $status -and $status.PSObject.Properties['wakeState']) { [string]$status.wakeState } else { 'UNKNOWN' }
     awake = if ($null -ne $status -and $status.PSObject.Properties['awake']) { [bool]$status.awake } else { $false }
@@ -110,5 +154,13 @@ $healthy = [bool](
     mergeAuthority = $false
     vendorMeterRequired = $false
     remoteCommanderRequired = $false
-    finalVerdict = if ($healthy) { 'STEPHANOS_CORE_DAEMON_STATUS_PASS' } else { 'STEPHANOS_CORE_DAEMON_STATUS_NOT_READY' }
+    finalVerdict = if ($healthy) {
+        'STEPHANOS_CORE_DAEMON_STATUS_PASS'
+    } elseif (-not $singleWriterProven) {
+        'STEPHANOS_CORE_DAEMON_OWNER_CUSTODY_UNPROVEN'
+    } elseif (-not $rescueGenerationPresent) {
+        'STEPHANOS_CORE_DAEMON_RESCUE_GENERATION_UNPROVEN'
+    } else {
+        'STEPHANOS_CORE_DAEMON_STATUS_NOT_READY'
+    }
 } | ConvertTo-Json -Depth 4
