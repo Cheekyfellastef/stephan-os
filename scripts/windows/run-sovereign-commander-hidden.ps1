@@ -448,13 +448,24 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
         }
         if (-not $blocker) {
             $startRequested = $true
+            $cpuProbeEnvName = 'STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP'
+            $cpuProbePrevious = [Environment]::GetEnvironmentVariable($cpuProbeEnvName, 'Process')
             try {
+                # The newly started HTTP guardian remains enabled, but its first cycle
+                # is deferred past this fixed read-only CPU sampler's 25-second limit.
+                if ($CommanderOnly) {
+                    [Environment]::SetEnvironmentVariable($cpuProbeEnvName, '1', 'Process')
+                }
                 $quotedServerScript = '"' + $serverScript.Replace('"', '\"') + '"'
                 $started = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $startedPid = [int]$started.Id
                 Start-Sleep -Seconds 2
             } catch {
                 $blocker = 'SOVEREIGN_COMMANDER_START_FAILED'
+            } finally {
+                if ($CommanderOnly) {
+                    [Environment]::SetEnvironmentVariable($cpuProbeEnvName, $cpuProbePrevious, 'Process')
+                }
             }
         }
     }
