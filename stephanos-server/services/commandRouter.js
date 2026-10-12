@@ -1,6 +1,7 @@
 const slashMap = {
   help: { route: 'system', action: 'help' },
   status: { route: 'system', tool: 'getSystemStatus' },
+  sovereign: { route: 'system', tool: 'getSovereignCommanderStatus' },
   tools: { route: 'system', tool: 'listAvailableTools' },
   subsystems: { route: 'system', tool: 'listSubsystems' },
   agents: { route: 'system', tool: 'listAvailableAgents' },
