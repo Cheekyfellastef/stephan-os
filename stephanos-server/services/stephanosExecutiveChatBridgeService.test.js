@@ -292,6 +292,30 @@ test('explicit action without any Knowledge Twin alignment evidence fails closed
   assert.equal(harness.wakeCalls.length, 0);
 });
 
+test('sovereign up-stack requests address the guarded Commander without treating status questions as execution', () => {
+  const actions = [
+    'Take Sovereign Commander up the stack and improve its skills.',
+    'Keep taking Stephanos AI up the stack.',
+    'Can we elevate Sovereign Commander to the next level?',
+    'Please improve OpenClaw Local.',
+  ];
+  for (const prompt of actions) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+    if (/sovereign commander/i.test(prompt)) assert.equal(result.targetSystem, 'sovereign-commander');
+  }
+  for (const prompt of [
+    'Can we get a status report on Sovereign Commander?',
+    'How is Sovereign Commander getting on?',
+  ]) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, false, prompt);
+  }
+});
+
 test('Stephanos repair phrasing becomes an action without classifying read-only updates as work', () => {
   const actions = [
     'Can we get Stephanos AI up to the level of ChatGPT or above and use it to repair Stephanos?',
