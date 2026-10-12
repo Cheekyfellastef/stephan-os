@@ -157,7 +157,7 @@ function prState(pr = {}) {
   if (checks === 'failed') return 'BLOCKED';
   if (checks === 'pending') return 'VERIFYING';
   if (checks === 'passed' && /approval/i.test(text(pr.mergeReadiness))) return 'APPROVAL_REQUIRED';
-  if (checks === 'passed') return 'REVIEWED';
+  if (checks === 'passed') return 'VERIFYING';
   return 'ACTIVE';
 }
 
@@ -272,7 +272,9 @@ export function overlayGoalDashboardWithLivePortfolio(input = {}) {
     portfolioObservedAt: new Date(nowMs).toISOString(),
     sourceTruth: dynamicTruth,
     goals,
-    liveGithubPrCount: githubCards.length,
+    liveGithubPrCount: githubTelemetry.adapterAvailable === true
+      ? (githubTelemetry.totalOpenPullRequestCount ?? list(githubTelemetry.pullRequests).length) : 0,
+    renderedGithubPrCount: githubCards.length,
     liveWorkspaceGoalCount: workspaceCards.length,
     operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : (dynamicTruth === CURRENT ? 'LANDING_GOAL_DASHBOARD_CURRENT' : 'LANDING_GOAL_DASHBOARD_STALE_OR_UNKNOWN'),
