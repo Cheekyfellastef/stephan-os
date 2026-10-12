@@ -269,7 +269,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       state.running = false;
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       if (killTimer) clearTimeoutImpl(killTimer);
-      try { child?.kill?.(); } catch {}
+      if (!state.repairTreeUnverified) {
+        try { child?.kill?.(); } catch {}
+      }
       scheduledTimer = null;
       killTimer = null;
       child = null;
