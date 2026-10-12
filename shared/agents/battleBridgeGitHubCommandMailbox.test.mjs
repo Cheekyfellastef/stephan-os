@@ -794,6 +794,32 @@ test('failed execution callback writes a failure terminal once and never retries
   assert.equal(JSON.stringify(result).includes('PRIVATE MUTATION ERROR'), false);
 });
 
+test('fallback terminal checkpoint exception is sanitized and never retried', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-fallback-checkpoint-throw' }), { id: 94 }),
+  ], { now });
+  let executed = 0;
+  let terminals = 0;
+  await assert.rejects(
+    executeBattleBridgeGitHubCommandBatch(batch, {
+      now: () => now,
+      beforeExecute: async () => { throw new Error('PRIVATE ACCEPTANCE ERROR'); },
+      executeCommand: async () => { executed += 1; return { ok: true }; },
+      onTerminal: async () => {
+        terminals += 1;
+        throw new Error('PRIVATE_TERMINAL_SECRET');
+      },
+    }),
+    (err) => {
+      assert.equal(err.message, 'MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      assert.equal(String(err).includes('PRIVATE_TERMINAL_SECRET'), false);
+      return true;
+    },
+  );
+  assert.equal(executed, 0);
+  assert.equal(terminals, 1);
+});
+
 test('terminal checkpoint failure never overwrites a possibly durable terminal receipt', async () => {
   const batch = selectBattleBridgeGitHubCommandBatch([
     comment(command({ requestId: 'req-1507-terminal-throw' }), { id: 93 }),
