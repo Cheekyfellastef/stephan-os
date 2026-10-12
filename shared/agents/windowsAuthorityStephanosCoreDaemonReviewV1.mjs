@@ -5,6 +5,14 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
   'scripts/windows/status-stephanos-core-daemon.ps1',
 ]);
 
+// Authority is pinned to complete, independently reviewed Windows source.
+// The textual checks below add defense in depth, but may not approve a
+// modified script merely because familiar safe snippets still occur.
+const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
+  'scripts/windows/run-sovereign-commander-hidden.ps1': 'b794651bacf0e09c48a677586c0e0db6d24c6b9e',
+  'scripts/windows/status-stephanos-core-daemon.ps1': '74d5db0a25a6183653b5332304e39d2d1ca204b0',
+});
+
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const SHA = /^[a-f0-9]{40}$/;
@@ -288,6 +296,9 @@ export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
+    }
+    if (candidates[0].blobSha !== REVIEWED_CORE_SOURCE_BLOBS[path]) {
+      findings.push(finding('windows-authority-core-source-blob-unreviewed', path));
     }
     if (path.endsWith('status-stephanos-core-daemon.ps1')) reviewStatus(candidates[0].content, path, findings);
     else reviewRunner(candidates[0].content, path, findings);
