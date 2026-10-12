@@ -135,3 +135,17 @@ test('non Remote Commander queue entries are ignored', () => {
   assert.equal(ledger.retainedCapabilityCount, 0);
   assert.equal(ledger.buildableGapCount, 0);
 });
+
+test('new unmetered private read-only diagnostics map to Sovereign capabilities', () => {
+  const equivalences = {
+    'get-file-info': 'get_file_info',
+    'read-multiple-files': 'read_multiple_files',
+  };
+  for (const [operation, expected] of Object.entries(equivalences)) {
+    const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
+    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+    assert.equal(result.sovereignEquivalent, expected);
+    assert.equal(result.mergeAuthority, false);
+    assert.equal(result.arbitraryShellAllowed, false);
+  }
+});
