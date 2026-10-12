@@ -6,6 +6,9 @@ import { safeCpuPressureSnapshotProjection, SOVEREIGN_COMMANDER_REMOTE_ACTIONS }
 const registry = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
 const script = await readFile(new URL('../../scripts/windows/read-battle-bridge-cpu-pressure.ps1', import.meta.url), 'utf8');
+const mailbox = await readFile(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
+const requiredVersion = await readFile(new URL('../../scripts/sovereign-commander-ignition-autoheal.mjs', import.meta.url), 'utf8');
+const reportedVersion = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
 
 const sample = (patch = {}) => ({
   schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
@@ -40,6 +43,10 @@ const envelope = (data) => ({ structuredContent: { stdout: JSON.stringify(data) 
 
 test('fixed registry, MCP, and GitHub mailbox expose only bounded CPU snapshot action', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('cpu-pressure-snapshot'));
+  assert.match(mailbox, /const COMMANDER_RUNTIME_PREFLIGHT_ACTIONS = new Set\(\[\s*'cpu-pressure-snapshot'/);
+  assert.match(mailbox, /SOVEREIGN_COMMANDER_REMOTE_CPU_ACTION_STALE_RUNTIME/);
+  assert.match(requiredVersion, /2026-10-12-cpu-pressure-snapshot-v5/);
+  assert.match(reportedVersion, /2026-10-12-cpu-pressure-snapshot-v5/);
   assert.match(registry, /'cpu-pressure-snapshot': frozen\(\{/);
   assert.match(registry, /read-battle-bridge-cpu-pressure\.ps1/);
   assert.match(registry, /timeoutMs: 25_000/);
