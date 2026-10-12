@@ -7,7 +7,7 @@ const knownProvider = (provider) => {
     : '';
 };
 
-export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
+export function MeaningStrip({ finalRouteTruth, memoryMode = '', lastExecutionMetadata = null }) {
   if (!finalRouteTruth) {
     return (
       <div className="meaning-strip error">
@@ -48,9 +48,11 @@ export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
   // Selection is not proof of execution. Show which provider is selected when
   // the latest executed provider is not confirmed, without inventing a successful run.
   const selected = knownProvider(selectedProvider);
-  const executed = knownProvider(executedProvider);
-  const aiState = executed
-    ? `🧠 AI: ${executed} (EXECUTION RECORDED${selected && selected !== executed ? `; ${selected} SELECTED` : ''})`
+  // Route projection may be executable/healthy on startup without a request.
+  // Only an actual request execution receipt may justify "EXECUTION RECORDED".
+  const recordedExecution = knownProvider(lastExecutionMetadata?.actual_provider_used);
+  const aiState = recordedExecution
+    ? `🧠 AI: ${recordedExecution} (EXECUTION RECORDED${selected && selected !== recordedExecution ? `; ${selected} SELECTED` : ''})`
     : selected
       ? `🧠 AI: ${selected} (SELECTED)`
       : '🧠 AI: UNVERIFIED';
