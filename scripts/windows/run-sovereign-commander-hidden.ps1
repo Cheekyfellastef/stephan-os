@@ -74,7 +74,7 @@ function Get-StephanosCoreDaemonHealth {
         $bridgeInFlightProperty = $status.PSObject.Properties['outerBridgeInFlight']
         $bridgeContractReady = [bool](
             $null -ne $bridgeCountProperty -and
-            $bridgeCountProperty.Value -is [int] -and
+            ($bridgeCountProperty.Value -is [int] -or $bridgeCountProperty.Value -is [long]) -and
             [int]$bridgeCountProperty.Value -ge 0 -and
             $null -ne $bridgeVerdictProperty -and
             [string]$bridgeVerdictProperty.Value -match '^[A-Z][A-Z0-9_]{0,119}
