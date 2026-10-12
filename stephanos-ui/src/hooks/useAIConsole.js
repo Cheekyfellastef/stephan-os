@@ -3547,7 +3547,7 @@ export function useAIConsole() {
     // The explicitly configured loopback target is authoritative, even when
     // the browser's own origin uses a different loopback hostname (IPv4/IPv6).
     // Only replace a stale non-loopback home-node target for this local session.
-    const configuredLocalBackend = localDesktopSession && isLoopbackHost(configuredLoopbackHost);
+    const configuredLocalBackend = localDesktopSession && isLoopbackHost(configuredLoopbackHost.replace(/^\[|\]$/g, ''));
     const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend
       ? localDesktopBackendUrl
       : nextRuntimeConfig.baseUrl;
