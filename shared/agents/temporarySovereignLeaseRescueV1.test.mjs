@@ -79,7 +79,7 @@ test('malformed input strips unsafe forensic details from shared status', () => 
     bindingMismatchCodes: ['HEAD_SHA','../../secret','KEY_TOKEN','A'.repeat(120)],
   }}));
   assert.equal(view.forensicClassification,'FORENSIC_NOT_PROVEN');
-  assert.deepEqual(view.bindingMismatchCodes,['HEAD_SHA','KEY_TOKEN']);
+  assert.deepEqual(view.bindingMismatchCodes,['HEAD_SHA']);
   assert.equal(JSON.stringify(view).includes('token-value'), false);
 });
 
