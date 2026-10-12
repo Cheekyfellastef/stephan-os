@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 
 import { createSharedWorkspaceEventRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { reconcileFlywheelLearningGoalsV1 } from './flywheelLearningGoalBridgeService.js';
+// Exercise conversation-intelligence regressions in the existing required Flywheel suite.
+import './sharedConversationUpliftService.test.js';
+import './sharedConversationUpliftBridge.test.js';
 
 const NOW = '2026-10-03T12:00:00.000Z';
 
