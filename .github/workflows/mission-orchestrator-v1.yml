@@ -74,3 +74,5 @@ jobs:
         run: node --test shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
       - name: Run ownership and Mission Operations regression tests
         run: node --test shared/agents/coBuilderOperationalPacket.test.mjs tests/mission-operations-dashboard.test.mjs
+      - name: Temporary exact-head custody commissioning tests
+        run: node --test stephanos-server/services/originalSourceCustodyCommissioningService.test.js
