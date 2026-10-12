@@ -3543,7 +3543,15 @@ export function useAIConsole() {
       hostedCloudConfig: hostedCloudConfigOverlay,
     };
     const localDesktopBackendUrl = resolveLocalDesktopBackendBaseUrl(nextRuntimeConfig.frontendOrigin);
-    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession
+    const frontendLoopbackHost = extractHostname(nextRuntimeConfig.frontendOrigin);
+    const configuredLoopbackHost = extractHostname(nextRuntimeConfig.baseUrl);
+    // A 127.0.0.1 UI must not silently probe localhost (or vice versa):
+    // Windows browser IPv4/IPv6 resolution may differ from the listening backend.
+    // Only normalize when BOTH targets are loopback; preserve explicit LAN/remote routes.
+    const loopbackHostMismatch = localDesktopSession
+      && isLoopbackHost(configuredLoopbackHost)
+      && configuredLoopbackHost !== frontendLoopbackHost;
+    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession || loopbackHostMismatch
       ? localDesktopBackendUrl
       : nextRuntimeConfig.baseUrl;
     const compatibleBackendBaseUrl = resolveCompatibleTarget(
@@ -3572,11 +3580,13 @@ export function useAIConsole() {
           ? (shouldIgnoreHomeNodeForThisSession ? 'local-backend-session:operator-override' : 'local-backend-session')
           : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
         preferredTarget,
-        actualTargetUsed: resolveCompatibleTarget(
-          discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
-          compatibleBackendBaseUrl,
-          { allowLoopback: localDesktopSession },
-        ),
+        actualTargetUsed: loopbackHostMismatch
+          ? compatibleBackendBaseUrl
+          : resolveCompatibleTarget(
+            discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
+            compatibleBackendBaseUrl,
+            { allowLoopback: localDesktopSession },
+          ),
         restoreDecision: !localDesktopSession && isLoopbackHost(extractHostname(nextRuntimeConfig.baseUrl))
           ? 'Ignored loopback backend target for non-local session; using current home-node/network context instead.'
           : (shouldIgnoreHomeNodeForThisSession
