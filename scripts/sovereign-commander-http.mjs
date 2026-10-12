@@ -13,13 +13,11 @@ import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mj
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
-export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-12-cpu-pressure-snapshot-v5';
+export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-05-continuous-repair-reporting-v4';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
-export const SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS = 480_000;
-export const SOVEREIGN_COMMANDER_CPU_PROBE_ENV = 'STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP';
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -76,7 +74,6 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     ? Math.max(1_024, Number(options.maxOutputBytes))
     : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES;
   const guardianEnv = options.env || process.env;
-  const cpuProbeAdmissionHold = options.cpuProbeAdmissionHold === true;
 
   let stopped = false;
   let scheduledTimer = null;
@@ -85,10 +82,6 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const state = {
     enabled: true,
     running: false,
-    cpuProbeAdmissionPending: cpuProbeAdmissionHold,
-    cpuProbeAdmissionExpired: false,
-    cpuProbeSampling: false,
-    repairTreeUnverified: false,
     scheduled: false,
     cycleCount: 0,
     successCount: 0,
@@ -114,17 +107,13 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     scheduledTimer = setTimeoutImpl(() => {
       scheduledTimer = null;
       state.scheduled = false;
-      if (state.cpuProbeAdmissionPending) {
-        state.cpuProbeAdmissionPending = false;
-        state.cpuProbeAdmissionExpired = true;
-      }
       runNow();
     }, delayMs);
     scheduledTimer?.unref?.();
   };
 
   const runNow = () => {
-    if (stopped || child || state.repairTreeUnverified) return false;
+    if (stopped || child) return false;
     state.running = true;
     state.scheduled = false;
     state.cycleCount += 1;
@@ -136,7 +125,6 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     let stdout = '';
     let stderr = '';
     let settled = false;
-    let terminationRequested = false;
     let currentChild;
     const finish = (code, fallbackBlocker = '') => {
       if (settled) return;
@@ -145,34 +133,18 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         clearTimeoutImpl(killTimer);
         killTimer = null;
       }
-      if (terminationRequested) {
-        // The wrapper may exit while a descendant survives. Neither kill()
-        // nor wrapper close is proof that its whole Windows process tree exited.
-        // Keep this lease occupied and fail closed until #1814 supplies an
-        // independent, identity-bound tree-termination receipt.
-        state.repairTreeUnverified = true;
-        state.running = true;
-        state.scheduled = false;
-        state.lastOk = false;
-        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
-        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
-        state.failureCount += 1;
-        return;
-      }
       const receipt = parseContinuousRepairReceipt(stdout);
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
         ? receipt.reporting
         : {};
       const reportOk = reporting?.ok === true;
-      const ok = !terminationRequested && Number(code) === 0 && receipt?.ok === true && reportOk;
+      const ok = Number(code) === 0 && receipt?.ok === true && reportOk;
       state.running = false;
       state.lastCycleId = state.currentCycleId;
       state.currentCycleId = '';
       state.lastCompletedAtUtc = now();
       state.lastOk = ok;
-      state.lastFinalVerdict = terminationRequested
-        ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT'
-        : text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
+      state.lastFinalVerdict = text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
       state.lastReportOk = reportOk;
       state.lastReportOutcome = text(reporting?.outcome).slice(0, 64);
       state.lastReportStatus = text(reporting?.status).slice(0, 64);
@@ -183,9 +155,6 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (ok) state.successCount += 1;
       else state.failureCount += 1;
       child = null;
-      // Expiration blocks only the in-flight takeover repair, never every
-      // future CPU diagnosis on an otherwise healthy long-lived Commander.
-      state.cpuProbeAdmissionExpired = false;
       schedule(intervalMs);
     };
 
@@ -209,26 +178,12 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         stderr = appendBoundedOutput(stderr, chunk, maxOutputBytes);
       });
       currentChild.once?.('error', (error) => {
-        // A failed termination request is NOT proof that a spawned Windows
-        // process has exited. Retain the guarded repair-running state.
-        if (terminationRequested) {
-          state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED';
-          return;
-        }
         finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
       });
-      currentChild.once?.('close', (code) => finish(
-        code,
-        terminationRequested ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT' : '',
-      ));
+      currentChild.once?.('close', (code) => finish(code));
       killTimer = setTimeoutImpl(() => {
-        terminationRequested = true;
-        state.repairTreeUnverified = true;
-        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
-        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
-        // Never kill only the wrapper: PowerShell/Node descendants could outlive
-        // it. Keep the repair lease held even if the wrapper later closes.
-        // A future #1814 tree-aware recovery can verify and release the lease.
+        try { currentChild.kill?.(); } catch {}
+        finish(null, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
       }, maxRuntimeMs);
       killTimer?.unref?.();
     } catch (error) {
@@ -237,31 +192,11 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     return true;
   };
 
-  schedule(cpuProbeAdmissionHold ? Math.max(startDelayMs, SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS) : startDelayMs);
+  schedule(startDelayMs);
 
   return Object.freeze({
     status,
     runNow,
-    beginCpuProbe: () => {
-      if (state.cpuProbeAdmissionExpired || state.cpuProbeSampling
-        || state.repairTreeUnverified || state.running || child) return false;
-      // Every admitted CPU sample owns its own guard. Pause a pending normal
-      // cycle; never sample while a repair child is running.
-      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
-      scheduledTimer = null;
-      state.cpuProbeAdmissionPending = false;
-      state.cpuProbeSampling = true;
-      state.scheduled = true;
-      return true;
-    },
-    endCpuProbe: () => {
-      if (!state.cpuProbeSampling) return false;
-      state.cpuProbeSampling = false;
-      // Keep normal guardian cadence after prior repair cycles; first-cycle
-      // bootstrap remains prompt once the diagnostic has completed.
-      schedule(state.cycleCount === 0 ? startDelayMs : intervalMs);
-      return true;
-    },
     stop: () => {
       stopped = true;
       state.enabled = false;
@@ -269,9 +204,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       state.running = false;
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       if (killTimer) clearTimeoutImpl(killTimer);
-      if (!state.repairTreeUnverified) {
-        try { child?.kill?.(); } catch {}
-      }
+      try { child?.kill?.(); } catch {}
       scheduledTimer = null;
       killTimer = null;
       child = null;
@@ -460,8 +393,6 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   if (!token) throw new Error('SOVEREIGN_COMMANDER_BEARER_TOKEN_REQUIRED');
 
   const sessions = new Map();
-  const initializedSessions = new Set();
-  const cpuToolListedSessions = new Set();
   const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({ repoRoot: options.repoRoot }));
   const now = options.now || (() => new Date().toISOString());
@@ -477,7 +408,6 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       clearTimeoutImpl: options.continuousRepairClearTimeoutImpl,
       now,
       startDelayMs: options.continuousRepairStartDelayMs,
-      cpuProbeAdmissionHold: options.cpuProbeAdmissionHold === true,
       intervalMs: options.continuousRepairIntervalMs,
       maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
     })
@@ -560,8 +490,6 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         const sessionId = text(req.headers['mcp-session-id']);
         if (!sessionId || !sessions.has(sessionId)) return sendJson(res, 404, { ok: false, blocker: 'MCP_SESSION_NOT_FOUND' });
         sessions.delete(sessionId);
-        initializedSessions.delete(sessionId);
-        cpuToolListedSessions.delete(sessionId);
         res.writeHead(204, { 'cache-control': 'no-store' });
         return res.end();
       }
@@ -582,44 +510,17 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         return sendJson(res, 400, rpcError(message.id, -32001, 'MCP session required'));
       }
 
-      const cpuProbeAction = message.method === 'tools/call'
-        && message.params?.name === 'maintenance_action'
-        && message.params?.arguments?.actionId === 'cpu-pressure-snapshot';
-      if (cpuProbeAction && continuousRepairGuardian) {
-        // Only a fully initialized authenticated MCP session which proved the
-        // fixed action surface can claim this one-time startup isolation.
-        if (!initializedSessions.has(sessionId) || !cpuToolListedSessions.has(sessionId)) {
-          return sendJson(res, 409, rpcError(message.id, -32003, 'SOVEREIGN_COMMANDER_CPU_PROBE_SESSION_NOT_READY'));
-        }
-        if (continuousRepairGuardian?.beginCpuProbe() !== true) {
-          return sendJson(res, 409, rpcError(message.id, -32002, 'SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_ACTIVE_OR_EXPIRED'));
-        }
-      }
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
       const isNotification = !hasId;
-      let result;
-      try {
-        result = await handler(message.method, message.params || {}, {
-          id: message.id,
-          isRequest,
-          isNotification,
-          transportKind: 'authenticated-http-jsonrpc',
-          transportAuthenticated: true,
-        });
-      } finally {
-        if (cpuProbeAction) continuousRepairGuardian?.endCpuProbe();
-      }
+      const result = await handler(message.method, message.params || {}, {
+        id: message.id,
+        isRequest,
+        isNotification,
+        transportKind: 'authenticated-http-jsonrpc',
+        transportAuthenticated: true,
+      });
       if (initializing) sessions.set(sessionId, handler);
-      if (message.method === 'notifications/initialized' && result === undefined) {
-        initializedSessions.add(sessionId);
-      }
-      if (message.method === 'tools/list' && initializedSessions.has(sessionId)
-        && Array.isArray(result?.tools)
-        && result.tools.some((tool) => tool?.name === 'maintenance_action'
-          && tool?.inputSchema?.properties?.actionId?.enum?.includes?.('cpu-pressure-snapshot'))) {
-        cpuToolListedSessions.add(sessionId);
-      }
       const headers = { 'mcp-session-id': sessionId };
 
       if (isNotification || result === undefined) {
@@ -647,20 +548,9 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 }
 
 export async function runSovereignCommanderHttpServer(options = {}) {
-  // A fixed read-only CPU probe may have bootstrapped this Commander.
-  // Keep the guardian enabled and scheduled, but defer its *first* cycle
-  // beyond the 25-second fixed sampler timeout. The sentinel is local-only
-  // and consumed once so no repair child inherits a perpetual delay.
-  const launchEnv = options.env || process.env;
-  const cpuProbeStartup = launchEnv[SOVEREIGN_COMMANDER_CPU_PROBE_ENV] === '1';
-  if (cpuProbeStartup && launchEnv === process.env) {
-    delete process.env[SOVEREIGN_COMMANDER_CPU_PROBE_ENV];
-  }
   const created = await createSovereignCommanderHttpServer({
     ...options,
     continuousRepairEnabled: options.continuousRepairEnabled ?? true,
-    cpuProbeAdmissionHold: cpuProbeStartup,
-    continuousRepairStartDelayMs: options.continuousRepairStartDelayMs,
   });
   await new Promise((resolveListen, rejectListen) => {
     created.server.once('error', rejectListen);
