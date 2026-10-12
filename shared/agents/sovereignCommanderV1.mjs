@@ -323,6 +323,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
       timeoutMs: 60_000,
     }),
+    'prove-skill-forge-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-skill-forge-runtime-proof.mjs')]),
+      timeoutMs: 100_000,
+    }),
     'prove-flywheel-runtime': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
