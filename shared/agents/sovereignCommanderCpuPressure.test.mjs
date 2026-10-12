@@ -87,13 +87,17 @@ const CPU_COMMAND = Object.freeze({
   expiresAt: '2026-10-12T03:00:00.000Z',
   remoteAction: 'cpu-pressure-snapshot',
 });
-function cpuRunner({ dirty = false, badPayload = false, sampleStatus = 0, observedHead = CPU_HEAD } = {}) {
+const COMMITTED_CPU_SOURCE = '[CmdletBinding()]\nparam()\nStart-Sleep -Seconds 5\n';
+function cpuRunner({ missingBlob = false, oversizedBlob = false, badPayload = false, sampleStatus = 0, observedHead = CPU_HEAD } = {}) {
   const calls = [];
   const spawnSyncFn = (executable, args) => {
     calls.push({ executable, args });
     if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
     if (args.includes('rev-parse')) return { status: 0, stdout: observedHead + '\n' };
-    if (args.includes('diff')) return { status: dirty ? 1 : 0, stdout: '' };
+    if (args.includes('show')) return {
+      status: missingBlob ? 1 : 0,
+      stdout: oversizedBlob ? 'x'.repeat(14000) : COMMITTED_CPU_SOURCE,
+    };
     if (executable === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe') {
       return { status: sampleStatus, stdout: badPayload ? '{malformed' : JSON.stringify(sample()) };
     }
@@ -101,7 +105,7 @@ function cpuRunner({ dirty = false, badPayload = false, sampleStatus = 0, observ
   };
   return { calls, spawnSyncFn };
 }
-test('canonical mailbox runs only fixed read-only PowerShell CPU sample, without MCP or lifecycle side effects', async () => {
+test('canonical mailbox executes only exact-head Git blob via fixed encoded PowerShell, without MCP or lifecycle effects', async () => {
   const runner = cpuRunner();
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge(CPU_COMMAND, {
     env: { USERPROFILE: 'C:\\Users\\Operator' },
@@ -115,18 +119,24 @@ test('canonical mailbox runs only fixed read-only PowerShell CPU sample, without
   assert.equal(receipt.result.cpuPressure.rows[0].cpuPercent, 9.3);
   assert.equal(receipt.result.proofHash.length, 64);
   assert.equal(receipt.result.cpuPressure.rawCommandLinesReturned, false);
-  assert.equal(runner.calls.length, 5, 'branch, head, two clean-script checks, fixed CPU sampler');
-  assert.equal(runner.calls.at(-1).args.at(-1).endsWith('read-battle-bridge-cpu-pressure.ps1'), true);
-  assert.equal(runner.calls.at(-1).args.includes('-NoProfile'), true);
-  assert.equal(runner.calls.at(-1).args.includes('-NonInteractive'), true);
+  assert.equal(runner.calls.length, 4, 'branch, head, immutable Git blob, fixed CPU sampler');
+  const immutable = runner.calls[2];
+  assert.equal(immutable.args.at(-1), CPU_HEAD + ':scripts/windows/read-battle-bridge-cpu-pressure.ps1');
+  const powershell = runner.calls.at(-1);
+  assert.equal(powershell.args.includes('-File'), false);
+  assert.equal(powershell.args.includes('-EncodedCommand'), true);
+  assert.equal(powershell.args.includes('-NoProfile'), true);
+  assert.equal(powershell.args.includes('-NonInteractive'), true);
+  assert.equal(Buffer.from(powershell.args.at(-1), 'base64').toString('utf16le'), COMMITTED_CPU_SOURCE);
   assert.equal(receipt.result.pcRestartAuthority, false);
 });
-test('fixed CPU sampler fails closed on local script changes, unexpected HEAD, bad JSON and failed process', async () => {
+test('immutable CPU route fails closed on missing/large commit blob, unexpected HEAD, bad JSON or failed process', async () => {
   for (const [params, blocker, callCount] of [
-    [{ dirty: true }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SCRIPT_NOT_CANONICAL', 4],
+    [{ missingBlob: true }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_COMMITTED_SCRIPT_UNAVAILABLE', 3],
+    [{ oversizedBlob: true }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_COMMITTED_SCRIPT_UNAVAILABLE', 3],
     [{ observedHead: 'b'.repeat(40) }, 'SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH', 2],
-    [{ badPayload: true }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', 5],
-    [{ sampleStatus: 124 }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', 5],
+    [{ badPayload: true }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', 4],
+    [{ sampleStatus: 124 }, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_RECEIPT_INVALID', 4],
   ]) {
     const runner = cpuRunner(params);
     const receipt = await executeSovereignCommanderRemoteOnBattleBridge(CPU_COMMAND, {
