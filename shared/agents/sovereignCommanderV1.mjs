@@ -115,6 +115,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
       timeoutMs: 30_000,
     }),
+    'cpu-pressure-snapshot': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-battle-bridge-cpu-pressure.ps1')]),
+      timeoutMs: 25_000,
+    }),
     'publish-controller-activity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
