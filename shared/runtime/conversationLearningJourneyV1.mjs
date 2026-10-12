@@ -9,8 +9,9 @@ const text = value => String(value ?? '').trim();
 export function deriveConversationLearningJourneyV1({ uplift = null, feedState = 'unavailable' } = {}) {
   const observed = uplift && typeof uplift === 'object' ? uplift : {};
   const upstream = text(feedState).toLowerCase();
-  const feedUsable = ['ready', 'current', 'reported'].includes(upstream);
-  const feedStale = ['stale', 'partial'].includes(upstream);
+  // Dashboard stale/partial may be caused by unrelated GitHub or programme telemetry.
+  // Conversation freshness comes from the independently validated uplift state.
+  const feedUsable = ['ready', 'current', 'reported', 'reachable', 'stale', 'partial'].includes(upstream);
   const indexComplete = observed.state === 'ready';
   const available = indexComplete && feedUsable;
   const signals = available ? list(observed.candidates).filter(item =>
@@ -29,7 +30,7 @@ export function deriveConversationLearningJourneyV1({ uplift = null, feedState =
   const readyCount = candidates.filter(item => item.readyForInvestigation).length;
   return Object.freeze({
     schemaVersion: CONVERSATION_LEARNING_JOURNEY_SCHEMA_V1,
-    state: available ? 'REPORTED' : feedStale || indexComplete ? 'STALE_OR_UNVERIFIED' : 'UNKNOWN',
+    state: available ? 'REPORTED' : indexComplete ? 'TRANSPORT_UNAVAILABLE' : 'UNKNOWN',
     threadId: text(observed.threadId),
     indexedTurns: available ? number(observed.turnCount) : null,
     gapHints: available ? candidates.length : null,
@@ -42,8 +43,7 @@ export function deriveConversationLearningJourneyV1({ uplift = null, feedState =
     candidates: Object.freeze(candidates),
     source: 'Canonical Shared Workspace conversation via existing backend feed',
     reason: available ? 'Conversation signals reported; independent investigation required'
-      : feedStale ? 'Shared Workspace feed is stale or partial'
-      : indexComplete ? 'Source is reported, but the current backend feed is not verified'
+      : indexComplete ? 'Conversation source is ready but its transport cannot be verified'
       : 'Full conversation history is not currently verified',
     provenanceNote: 'Operator is a protocol role, not proof of human authorship. A candidate is not a goal, build or completed improvement.',
   });
