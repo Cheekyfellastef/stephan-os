@@ -135,6 +135,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let terminationRequested = false;
     let currentChild;
     const finish = (code, fallbackBlocker = '') => {
       if (settled) return;
@@ -148,13 +149,15 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         ? receipt.reporting
         : {};
       const reportOk = reporting?.ok === true;
-      const ok = Number(code) === 0 && receipt?.ok === true && reportOk;
+      const ok = !terminationRequested && Number(code) === 0 && receipt?.ok === true && reportOk;
       state.running = false;
       state.lastCycleId = state.currentCycleId;
       state.currentCycleId = '';
       state.lastCompletedAtUtc = now();
       state.lastOk = ok;
-      state.lastFinalVerdict = text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
+      state.lastFinalVerdict = terminationRequested
+        ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT'
+        : text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
       state.lastReportOk = reportOk;
       state.lastReportOutcome = text(reporting?.outcome).slice(0, 64);
       state.lastReportStatus = text(reporting?.status).slice(0, 64);
@@ -191,12 +194,24 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         stderr = appendBoundedOutput(stderr, chunk, maxOutputBytes);
       });
       currentChild.once?.('error', (error) => {
+        // A failed termination request is NOT proof that a spawned Windows
+        // process has exited. Retain the guarded repair-running state.
+        if (terminationRequested) {
+          state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED';
+          return;
+        }
         finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
       });
-      currentChild.once?.('close', (code) => finish(code));
+      currentChild.once?.('close', (code) => finish(
+        code,
+        terminationRequested ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT' : '',
+      ));
       killTimer = setTimeoutImpl(() => {
+        terminationRequested = true;
+        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED';
+        // Request a kill but never complete/restart a guardian cycle or reopen
+        // CPU sampling until the observed child close arrives.
         try { currentChild.kill?.(); } catch {}
-        finish(null, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
       }, maxRuntimeMs);
       killTimer?.unref?.();
     } catch (error) {
