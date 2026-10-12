@@ -2496,6 +2496,11 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
     ok: true,
     processCount: 1,
     daemonHealthy: true,
+    singleWriterProven: true,
+    writerProcessObserved: true,
+    lockOwnerMatchesWriter: true,
+    rescueGenerationPresent: true,
+    rescueAttemptCount: 1,
     readiness: 'READY',
     wakeState: 'AWAKE',
     awake: true,
@@ -2539,6 +2544,60 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.available, true);
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+});
+
+test('remote Core health refuses missing or false custody proofs despite fresh status', async () => {
+  const good = {
+    schemaVersion: 'stephanos.core-daemon-status.v1',
+    ok: true,
+    processCount: 1,
+    daemonHealthy: true,
+    singleWriterProven: true,
+    writerProcessObserved: true,
+    lockOwnerMatchesWriter: true,
+    rescueGenerationPresent: true,
+    rescueAttemptCount: 0,
+    readiness: 'READY',
+    sourceHead: HEAD,
+    heartbeatAgeSeconds: 3,
+    heartbeatFresh: true,
+  };
+  const variants = [
+    { ...good, singleWriterProven: false },
+    { ...good, writerProcessObserved: false },
+    { ...good, lockOwnerMatchesWriter: false },
+    { ...good, rescueGenerationPresent: false },
+    { ...good, rescueAttemptCount: null },
+    { ...good, rescueAttemptCount: -1 },
+    { ...good, rescueAttemptCount: 0.5 },
+    { ...good, singleWriterProven: undefined, writerProcessObserved: undefined,
+      lockOwnerMatchesWriter: undefined, rescueGenerationPresent: undefined,
+      rescueAttemptCount: undefined },
+  ];
+  for (const status of variants) {
+    const maintenance = {
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'b'.repeat(64),
+      command: { plan: { processId: 'status-stephanos-core-daemon' } },
+      structuredContent: {
+        ok: true, status: 0, stdout: JSON.stringify(status),
+        stderr: '', errorCode: '',
+      },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Operator' },
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY');
+  }
 });
 
 test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge packet', async () => {

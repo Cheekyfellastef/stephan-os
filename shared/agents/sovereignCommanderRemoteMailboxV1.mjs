@@ -1780,6 +1780,16 @@ function safeCoreDaemonStatusProjection(value = {}) {
       ? Number(parsed.processCount)
       : null,
     daemonHealthy: parsed.daemonHealthy === true,
+    reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
+    // Public projection contains only bounded custody verdicts, never PIDs,
+    // paths or raw command lines. Absent fields remain unproven.
+    singleWriterProven: parsed.singleWriterProven === true,
+    writerProcessObserved: parsed.writerProcessObserved === true,
+    lockOwnerMatchesWriter: parsed.lockOwnerMatchesWriter === true,
+    rescueGenerationPresent: parsed.rescueGenerationPresent === true,
+    rescueAttemptCount: Number.isSafeInteger(parsed.rescueAttemptCount)
+      && parsed.rescueAttemptCount >= 0 && parsed.rescueAttemptCount <= 1_000_000
+      ? parsed.rescueAttemptCount : null,
     readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
     wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
     awake: parsed.awake === true,
@@ -2685,6 +2695,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const coreHealthy = coreDaemonStatus?.available === true
       && coreDaemonStatus?.ok === true
       && coreDaemonStatus?.daemonHealthy === true
+      // A fresh heartbeat without exclusive lock/loaded rescue proof is not
+      // evidence of a healthy Core writer. Missing fields fail closed.
+      && coreDaemonStatus?.singleWriterProven === true
+      && coreDaemonStatus?.writerProcessObserved === true
+      && coreDaemonStatus?.lockOwnerMatchesWriter === true
+      && coreDaemonStatus?.rescueGenerationPresent === true
+      && Number.isSafeInteger(coreDaemonStatus?.rescueAttemptCount)
+      && coreDaemonStatus.rescueAttemptCount >= 0
       && (coreDaemonStatus?.heartbeatFresh === true || coreDaemonStatus?.busyGraceActive === true)
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';

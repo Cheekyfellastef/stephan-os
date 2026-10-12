@@ -27,6 +27,7 @@ $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$coreDaemonLockPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }) 'Stephanos\stephanos-core-daemon.lock.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $desktopCommanderTaskName = 'Stephanos Commander Watchdog'
@@ -79,6 +80,49 @@ function Get-StephanosCoreDaemonHealth {
             $sourceHead -match '^[0-9a-fA-F]{40}$' -and
             [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
         )
+        $writerPid = 0
+        if ($status.PSObject.Properties['processId']) {
+            [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
+        }
+        $lockOwnerPid = 0
+        $lock = $null
+        if (Test-Path -LiteralPath $coreDaemonLockPath -PathType Leaf) {
+            try {
+                $lock = Get-Content -LiteralPath $coreDaemonLockPath -Raw | ConvertFrom-Json
+                [void][int]::TryParse([string]$lock.pid, [ref]$lockOwnerPid)
+            } catch {}
+        }
+        $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
+        $writerCustodyProven = $false
+        if ($coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+            $lockOwnerPid -eq $writerPid -and $null -ne $lock -and
+            [string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+            [string]$lock.sourceHead -cmatch '^[0-9a-f]{40}$' -and
+            [string]::Equals([string]$lock.sourceHead, [string]$status.sourceHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                $writerProcess = @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid })
+                if ($writerProcess.Count -eq 1 -and $null -ne $writerProcess[0].CreationDate) {
+                    $lockStart = [DateTimeOffset]::Parse([string]$lock.startedAtUtc)
+                    $writerCreated = [DateTimeOffset]::new([datetime]$writerProcess[0].CreationDate)
+                    $heartbeatAt = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+                    $startupLagSeconds = ($lockStart.ToUniversalTime() - $writerCreated.ToUniversalTime()).TotalSeconds
+                    $writerCustodyProven = [bool](
+                        $lockStart.Offset -eq [TimeSpan]::Zero -and
+                        $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+                        $lockStart -le $heartbeatAt
+                    )
+                }
+            } catch { $writerCustodyProven = $false }
+        }
+        $rescueCount = 0
+        $rescueStage = if ($status.PSObject.Properties['outerBridgeLastStage']) {
+            [string]$status.outerBridgeLastStage
+        } else { '' }
+        $rescueGenerationProven = [bool](
+            $status.PSObject.Properties['outerBridgeRunCount'] -and
+            [int]::TryParse([string]$status.outerBridgeRunCount, [ref]$rescueCount) -and
+            $rescueCount -ge 0 -and $rescueStage -cmatch '^[A-Z][A-Z0-9_]{0,79}$'
+        )
         $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
         $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
         $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
@@ -91,6 +135,7 @@ function Get-StephanosCoreDaemonHealth {
         }
         $busyGraceActive = [bool](
             $status.daemonHealthy -eq $true -and
+            $writerCustodyProven -and $rescueGenerationProven -and
             $readiness -ne 'RELOAD_REQUIRED' -and
             $sourceHeadMatchesLive -and
             $flywheelCycleRunning -and
@@ -101,6 +146,7 @@ function Get-StephanosCoreDaemonHealth {
         return [pscustomobject]@{
             healthy = [bool](
                 $status.daemonHealthy -eq $true -and
+                $writerCustodyProven -and $rescueGenerationProven -and
                 $readiness -ne 'RELOAD_REQUIRED' -and
                 $sourceHeadMatchesLive -and
                 ($heartbeatFresh -or $busyGraceActive)
@@ -574,7 +620,10 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+    if ($coreObserved.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    }
+    $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy -and -not $coreDaemonBlocker)
 } elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
@@ -582,19 +631,16 @@ if ($SkipCoreDaemonLifecycle) {
 } else {
     $coreBefore = @(Get-StephanosCoreDaemonProcesses)
     $coreHealthBefore = Get-StephanosCoreDaemonHealth
-    if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-        if ($coreBefore.Count -gt 0) {
-            $coreDaemonRestartRequested = $true
-            try {
-                foreach ($process in $coreBefore) {
-                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-                    $coreDaemonStoppedPidCount += 1
-                }
-                Start-Sleep -Milliseconds 300
-            } catch {
-                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_STALE_RECYCLE_FAILED'
-            }
-        }
+    # Multiple matching processes require independent lock/heartbeat custody
+    # proof. Never force-terminate all matches and create another writer.
+    if ($coreBefore.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    } elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
+        # The sole matching process can be the original lock owner. A stale
+        # heartbeat is not a terminal custody receipt or kill authorisation.
+        # Keep it fenced for an independently proven owner repair.
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'
+    } elseif ($coreBefore.Count -eq 0) {
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
             $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
@@ -629,7 +675,7 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonFlywheelCycleAgeSeconds = $coreHealthAfter.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
     $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
-    $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
+    $coreDaemonOk = [bool]($coreAfter.Count -eq 1 -and $coreHealthAfter.healthy -and -not $coreDaemonBlocker)
     if (-not $coreDaemonOk -and -not $coreDaemonBlocker) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
     }
