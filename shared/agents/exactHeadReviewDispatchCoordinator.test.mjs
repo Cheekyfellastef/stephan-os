@@ -778,7 +778,7 @@ test('wires the trusted coordinator identity through the runner and trusted work
   assert.match(workflow, /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(workflow, /STEPHANOS_INDEPENDENT_REVIEW_RETRY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/);
-  assert.match(workflow, /max-parallel:\s*4/);
+  assert.match(workflow, /max-parallel:\s*1/);
   assert.match(workflow, /uses: actions\/download-artifact@v4/);
   assert.match(workflow, /run-id: \$\{\{ github\.event\.workflow_run\.id \}\}/);
   assert.match(workflow, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED/);
