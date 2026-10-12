@@ -830,6 +830,8 @@ $overallBlocker = if (-not $ok) {
     visiblePowerShellRequired = $false
     finalVerdict = if (-not $ok) {
         'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } elseif ($CommanderOnly) {
+        'SOVEREIGN_COMMANDER_COMMANDER_ONLY_HEALTHY'
     } elseif (-not $vrGovernorOk) {
         'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
     } elseif (-not $coreDaemonOk) {
