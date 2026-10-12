@@ -34,6 +34,7 @@ const DIRECT_PARITY = Object.freeze({
   'battle-bridge-observe': 'battle-bridge-observe',
   'visibility-snapshot': 'visibility-snapshot',
   'cpu-pressure-snapshot': 'cpu-pressure-snapshot',
+  'meter-status': 'meter-status',
   'controller-lane-status': 'controller-lane-status',
   'status-recovery-mesh': 'status-recovery-mesh',
   'status-worker-watchdog': 'status-worker-watchdog',
