@@ -456,7 +456,7 @@ test('Meaning strip projects canonical route truth and keeps unprobed runtime st
     },
   });
   const renderedWithTruth = renderApp();
-  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(EXECUTION RECORDED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
+  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(SELECTED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: undefined });
   const renderedWithoutTruth = renderApp();
@@ -618,11 +618,22 @@ test('runtime meaning strip uses canonical backend reachability and selected AI 
     selectedProvider: 'ollama',
     executedProvider: 'groq',
     fallbackActive: true,
-  });
+  }, '', { actual_provider_used: 'groq' });
   assert.match(stalePositive, /BACKEND UNVERIFIED/);
   assert.doesNotMatch(stalePositive, /BACKEND REACHABLE/);
   assert.match(stalePositive, /AI: GROQ \(EXECUTION RECORDED; OLLAMA SELECTED\)/);
   assert.match(stalePositive, /FALLBACK ACTIVE/);
+
+  const noRequestYet = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
+    selectedProvider: 'ollama',
+    executedProvider: 'groq',
+  });
+  assert.match(noRequestYet, /AI: OLLAMA \(SELECTED\)/);
+  assert.doesNotMatch(noRequestYet, /EXECUTION RECORDED/);
 
   const staleNegative = renderMeaningStrip({
     backendReachableState: 'no', currentBackendHealthFresh: 'no',
@@ -637,7 +648,7 @@ test('Command Deck status wiring uses the final route projection and transport f
   const app = await fs.readFile(path.join(srcRoot, 'App.jsx'), 'utf8');
   const consoleHook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
 
-  assert.match(app, /<MeaningStrip finalRouteTruth=\{routeTruthView\} memoryMode=\{runtimeStatusModel\?\.finalRouteTruth\?\.memoryMode\} \/>/);
+  assert.match(app, /<MeaningStrip finalRouteTruth=\{routeTruthView\} memoryMode=\{runtimeStatusModel\?\.finalRouteTruth\?\.memoryMode\} lastExecutionMetadata=\{lastExecutionMetadata\} \/>/);
   assert.doesNotMatch(app, /<MeaningStrip finalRouteTruth=\{runtimeStatusModel\?\.finalRouteTruth\}/);
   assert.match(consoleHook, /label: 'Backend connection unreachable from this browser'/);
   assert.doesNotMatch(consoleHook, /label: 'Backend offline'/);
@@ -648,7 +659,7 @@ test('local browser health preserves explicitly configured loopback backend host
   const hook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
 
   assert.match(hook, /const configuredLoopbackHost = extractHostname\(nextRuntimeConfig\.baseUrl\)/);
-  assert.match(hook, /const configuredLocalBackend = localDesktopSession && isLoopbackHost\(configuredLoopbackHost\)/);
+  assert.match(hook, /const configuredLocalBackend = localDesktopSession && isLoopbackHost\(configuredLoopbackHost\.replace\(/);
   assert.match(hook, /shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend[\s\S]*?\? localDesktopBackendUrl[\s\S]*?: nextRuntimeConfig\.baseUrl/);
   assert.match(hook, /actualTargetUsed: configuredLocalBackend[\s\S]*?\? compatibleBackendBaseUrl/);
   assert.doesNotMatch(hook, /loopbackHostMismatch/, 'frontend origin must not override an explicit IPv4 loopback target');
