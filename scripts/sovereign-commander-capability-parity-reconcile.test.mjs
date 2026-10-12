@@ -51,6 +51,39 @@ test('reconcile proves source construction parity without needing Remote Command
   assert.equal(persisted.standingGoalMustRemainOpen, true);
 });
 
+test('canonical parity reconcile persists proposed Skill Forge recipes without starting a builder', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-skill-conjurer-'));
+  const result = await reconcileSovereignCommanderCapabilityParity({
+    paths: { workspaceRoot, repoRoot: 'C:/repo' },
+    now: new Date('2026-10-12T11:12:00.000Z'),
+    readQueue: async () => [{
+      adapter: 'desktop-commander-direct',
+      item: {
+        missionId: 'critical-2573-skill-conjurer',
+        actionId: 'process-gap-1',
+        actionGrant: { operation: 'start-process' },
+      },
+    }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.buildableGapCount, 1);
+  assert.equal(result.capabilityCompiler.skillForgeCandidateCount, 1);
+  const proposal = result.capabilityCompiler.skillForgeCandidates[0];
+  assert.equal(proposal.status, 'DRAFT');
+  assert.equal(proposal.activationAllowed, false);
+  assert.equal(proposal.constructionAdmissionAllowed, false);
+  assert.equal(result.duplicateGoalCreationAllowed, false);
+  const persisted = JSON.parse(await readFile(
+    join(workspaceRoot, 'status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`),
+    'utf8',
+  ));
+  assert.equal(persisted.capabilityCompiler.skillForgeCandidates.length, 1);
+  assert.equal(persisted.capabilityCompiler.skillForgeCandidates[0].id, proposal.id);
+  assert.equal(persisted.capabilityCompiler.skillForgeActivationAllowed, false);
+  assert.equal(persisted.capabilityCompiler.automaticCapabilityConstructionAllowed, false);
+  assert.equal(persisted.mergeAuthority, false);
+});
+
 test('proven parity transition is promoted into Flywheel learning', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-parity-learning-'));
   const repoRoot = 'C:/repo';
