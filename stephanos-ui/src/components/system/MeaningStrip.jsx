@@ -19,6 +19,8 @@ export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
   const {
     routeKind,
     backendReachableState,
+    currentBackendHealthFresh,
+    routeTruthHealthSource,
     selectedProvider,
     executedProvider,
     fallbackActive,
@@ -29,11 +31,15 @@ export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
 
   // The canonical route projection uses a tri-state, not the legacy backendReachable boolean.
   // Unknown reachability must not be rendered as a confirmed backend outage.
-  const systemState = backendReachableState === 'yes'
-    ? '🟢 BACKEND REACHABLE'
-    : backendReachableState === 'no'
-      ? '🔴 BACKEND UNREACHABLE FROM UI'
-      : '🟠 BACKEND UNVERIFIED';
+  const freshVerifiedBackend = String(currentBackendHealthFresh || '').toLowerCase() === 'yes'
+    && !['stale-route-candidate', 'unknown', 'unavailable'].includes(String(routeTruthHealthSource || '').toLowerCase());
+  const systemState = !freshVerifiedBackend
+    ? '🟠 BACKEND UNVERIFIED'
+    : backendReachableState === 'yes'
+      ? '🟢 BACKEND REACHABLE'
+      : backendReachableState === 'no'
+        ? '🔴 BACKEND UNREACHABLE FROM UI'
+        : '🟠 BACKEND UNVERIFIED';
 
   const routeState = routeKind && routeKind !== 'unavailable'
     ? `📡 ROUTE: ${routeKind.toUpperCase()}`
@@ -43,10 +49,10 @@ export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
   // the latest executed provider is not confirmed, without inventing a successful run.
   const selected = knownProvider(selectedProvider);
   const executed = knownProvider(executedProvider);
-  const aiState = selected
-    ? `🧠 AI: ${selected} (SELECTED)`
-    : executed
-      ? `🧠 AI: ${executed} (EXECUTION RECORDED)`
+  const aiState = executed
+    ? `🧠 AI: ${executed} (EXECUTION RECORDED${selected && selected !== executed ? `; ${selected} SELECTED` : ''})`
+    : selected
+      ? `🧠 AI: ${selected} (SELECTED)`
       : '🧠 AI: UNVERIFIED';
 
   const fallbackState = fallbackActive === true
