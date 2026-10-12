@@ -71,7 +71,7 @@ jobs:
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
             if ($parseErrors.Count -gt 0) {
-              foreach ($parseError in $parseErrors) { Write-Error "$file:$($parseError.Extent.StartLineNumber): $($parseError.Message)" }
+              foreach ($parseError in $parseErrors) { Write-Host ('{0}:{1}: {2}' -f $file, $parseError.Extent.StartLineNumber, $parseError.Message) }
               throw "PowerShell parse errors: $file"
             }
           }
