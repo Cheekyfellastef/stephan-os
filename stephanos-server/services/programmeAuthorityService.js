@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
@@ -1652,6 +1654,8 @@ export async function claimSourceMutationLease(input = {}, options = {}) {
         github,
       });
     }
+    try { await assertOriginalSourceAttemptNotFenced(record.laneId, { env: options.env }); }
+    catch { return Object.freeze({ ok: false, claimed: false, reason: 'ORIGINAL_SOURCE_ATTEMPT_FENCED_OR_UNOBSERVABLE' }); }
     const releaseMarker = createSourceMutationLeaseReleaseRecord(record, { timestampUtc: nowUtc });
     const releaseMarkerPath = authorityPath(
       layout.root,
@@ -1775,6 +1779,8 @@ export async function renewSourceMutationLease(input = {}, options = {}) {
     if (!current.ok || !current.present) {
       return Object.freeze({ ok: false, renewed: false, reason: current.reason, current });
     }
+    try { await assertOriginalSourceAttemptNotFenced(current.record.laneId, { env: options.env }); }
+    catch { return Object.freeze({ ok: false, renewed: false, reason: 'ORIGINAL_SOURCE_ATTEMPT_FENCED_OR_UNOBSERVABLE' }); }
     const renewal = renewSourceMutationLeaseRecord(current.record, input);
     if (!renewal.ok) return Object.freeze({ ok: false, renewed: false, reason: renewal.reason, current, renewal });
     const github = await githubEvidenceForLaneIdentity(current.record, options, deps);
@@ -1824,6 +1830,17 @@ export async function renewSourceMutationLease(input = {}, options = {}) {
       write,
     });
   });
+}
+
+// Reuses the canonical operation lock; callers already hold the mission lock.
+export async function withOriginalSourceLeaseFenceGuard(operation, options = {}) {
+  const deps = dependencies(options);
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) throw new Error(layout.reason);
+  return withSourceMutationLeaseOperationGuard({
+    root: layout.root, repoRoot: options.repoRoot, deps,
+    failure: { ok: false, reason: 'ORIGINAL_SOURCE_LEASE_FENCE_LOCK_UNAVAILABLE' },
+  }, operation);
 }
 
 export async function releaseSourceMutationLease(expected = {}, options = {}) {
@@ -1931,6 +1948,10 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       });
     }
     if (!current.ok) return Object.freeze({ ok: false, released: false, reason: current.reason, current });
+    if (expected.originalLeaseDigest !== undefined
+        && createHash('sha256').update(JSON.stringify(current.record)).digest('hex') !== expected.originalLeaseDigest) {
+      return Object.freeze({ ok: false, released: false, reason: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CHANGED' });
+    }
     const validation = validateSourceMutationLease(current.record, {
       nowUtc,
       expected: expectedIdentity,

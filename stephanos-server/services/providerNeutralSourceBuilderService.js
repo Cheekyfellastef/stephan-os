@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -903,6 +904,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   }
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
+  // Future native Job Object execution needs its own independent Windows
+  // specialist review. This quarantine-first PR keeps the existing builder
+  // command route, under its original lease and cancellation fences.
   const run = options.runCommand || defaultRun;
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
@@ -958,6 +962,10 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       { ...options, sourceSnapshots },
     );
     providerCompleted = true;
+    await assertOriginalSourceAttemptNotFenced(action.missionId, {
+      env: options.env, missionStoreOptions: { root: options.root },
+      readMissionRecord: options.readMissionRecord,
+    });
 
     if (Array.isArray(generated.edits)) {
       const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(

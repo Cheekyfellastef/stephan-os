@@ -16,6 +16,10 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
+import { authenticateLegacyOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
+import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
@@ -3343,15 +3347,29 @@ async function readCriticalBacklogStatus(command = {}) {
 export async function cancelMissionOrchestratorMission(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   cancelMission = cancelBoundedMission,
+  quarantineSourceAttempt = quarantineOriginalSourceAttempt,
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   try {
-    const result = await cancelMission({
+    const result = await (command.originalLeaseId ? quarantineSourceAttempt : cancelMission)({
       missionId: command.missionId,
       commandId: command.commandId,
       reason: command.reason,
-    });
+      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+        originalLeaseDigest: command.originalLeaseDigest,
+        expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}),
+        operatorSourceRevision: identity.sourceHead,
+        operatorRequestId: command.requestId } : {}),
+    }, command.originalLeaseId ? {
+      paths: resolveCriticalBacklogRuntimePaths({}),
+      // Trusted immutable issuer receipt only. Never use the public packet as
+      // custody evidence or supply a caller-selectable verifier.
+      authenticateOriginalWriterExclusionEvidence,
+      authenticateLegacyOrphanQuarantine,
+    } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
     const cancelled = currentPhase === 'CANCELLED';
@@ -3367,6 +3385,7 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       currentPhase,
       duplicate: result?.duplicate === true,
       eventId: safeTelemetryId(result?.eventId),
+      originalSourceAttemptFence: result?.state?.storeMetadata?.originalSourceAttemptFence || null,
       operatorActionRequired: result?.state?.operatorActionRequired === true,
       arbitraryFilesystemAccess: false,
       commandExecutionAccess: false,

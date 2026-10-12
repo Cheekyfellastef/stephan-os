@@ -40,6 +40,24 @@ function command(overrides = {}) {
   };
 }
 
+test('original source quarantine requires an indivisible exact lease and mission revision packet', () => {
+  const packet = command({ operation: 'CANCEL_MISSION_ORCHESTRATOR_MISSION',
+    missionId: 'critical-2962-elastic-goal', commandId: 'fence-original-2962-test',
+    reason: 'Retire the original source attempt only.',
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    originalLeaseDigest: 'a'.repeat(64), expectedMissionRevision: 7 });
+  const accepted = validateBattleBridgeGitHubCommand(packet, { now, authorLogin: 'Cheekyfellastef' });
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  for (const field of ['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision']) {
+    const incomplete = { ...packet }; delete incomplete[field];
+    assert.equal(validateBattleBridgeGitHubCommand(incomplete, { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+  }
+  assert.equal(validateBattleBridgeGitHubCommand({ ...packet, expectedMissionRevision: 8 },
+    { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+  assert.equal(validateBattleBridgeGitHubCommand({ ...packet, operation: 'UPDATE_STEPHANOS_FROM_CHAT' },
+    { now, authorLogin: 'Cheekyfellastef' }).ok, false);
+});
+
 function scopedDelivery(overrides = {}) {
   return {
     prNumber: 1668,

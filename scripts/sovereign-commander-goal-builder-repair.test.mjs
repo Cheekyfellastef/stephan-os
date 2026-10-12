@@ -12,6 +12,8 @@ function laneStatus({
   refillState = 'NO_SAFE_ELIGIBLE_WORK_REPORTED',
   currentPhysicalHardRedCount = 0,
   runnableBacklogCount = 0,
+  activeMaterialLaneCount = 0,
+  selectedForAdmission = 0,
   logicalCurrent = true,
   logicalValid = true,
   logicalFinalVerdict = 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
@@ -25,6 +27,7 @@ function laneStatus({
       logical: {
         current: logicalCurrent,
         valid: logicalValid,
+        selectedForAdmission,
         finalVerdict: logicalFinalVerdict,
       },
       lanes: {
@@ -32,6 +35,7 @@ function laneStatus({
         refillState,
         currentPhysicalHardRedCount,
         runnableBacklogCount,
+        activeMaterialLaneCount,
       },
       finalVerdict,
     }) + '\n',
@@ -307,4 +311,33 @@ test('goal builder flow stays healthy while autonomous parity work is actively d
   assert.equal(result.repairApplied, false);
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
+});
+
+
+test('selected logical work without material pickup never lets stale controllers suppress bounded repair', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
+      if (step.id === 'controller-lane-status') return laneStatus({
+        finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+        refillHealth: 'AMBER',
+        refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+        selectedForAdmission: 17,
+        activeMaterialLaneCount: 0,
+      });
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN');
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor', 'controller-lane-status',
+    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'fleet-goal-supervisor', 'controller-lane-status',
+  ]);
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });

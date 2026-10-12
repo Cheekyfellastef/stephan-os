@@ -7,12 +7,13 @@ import test from 'node:test';
 
 import { buildOfflinePublicationOutboxRecordV1 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
 import { issueOpenClawGitHubAuthorization } from '../../shared/agents/openClawGitHubAuthorization.mjs';
+import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishForgePrePrToGitHub } from './forgePrePrGitHubPublisherService.js';
 
 const NOW = '2026-10-08T07:30:00.000Z';
 const sha = (data, type = 'sha256') => createHash(type).update(data).digest('hex');
 
-function fixture() {
+async function fixture() {
   const source = Buffer.from('export const valid = true;\n');
   const blobSha = sha(Buffer.concat([Buffer.from('blob ' + source.length + '\0'), source]), 'sha1');
   const info = {
@@ -75,14 +76,20 @@ function fixture() {
     async createPullRequest(_, input) { calls.push('createPullRequest');
       assert.equal(input.draft, true); return { number: 3000, head: { sha: commitSha } }; },
   };
-  return { escrow, outbox, bundleBytes, authorization, publicKeyPem,
+  const missionRoot = await mkdtemp(join(tmpdir(), 'forge-publication-mission-'));
+  const env = { STEPHANOS_MISSION_ORCHESTRATOR_DIR: missionRoot };
+  await createMissionRecord({ missionId: info.missionId, repository: info.repository,
+    repositoryRoot: '/repo', worktreePath: '/worktree', branch: info.canonicalBranch,
+    operatorIntent: 'Publish source under review.', intendedOutcome: 'Draft only.',
+    allowedFiles: [], requiredTests: [], requiredEvidence: [] }, { root: missionRoot, env: {} });
+  return { env, missionRoot, escrow, outbox, bundleBytes, authorization, publicKeyPem,
     githubApi, nowUtc: NOW, calls };
 }
 
 test('signed exact-file escrow creates a draft PR, preserves branch and no-merge boundary', async () => {
   const root = await mkdtemp(join(tmpdir(), 'forge-publish-authority-'));
   try {
-    const input = fixture();
+    const input = await fixture();
     const result = await publishForgePrePrToGitHub({ ...input, receiptRoot: root });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.prNumber, 3000);
@@ -96,7 +103,7 @@ test('signed exact-file escrow creates a draft PR, preserves branch and no-merge
 });
 
 test('mismatched signed grant is refused before mutations', async () => {
-  const input = fixture();
+  const input = await fixture();
   input.authorization.claims.resultTree = 'e'.repeat(40);
   const result = await publishForgePrePrToGitHub({ ...input, receiptRoot: '/unused' });
   assert.equal(result.ok, false);
@@ -105,7 +112,7 @@ test('mismatched signed grant is refused before mutations', async () => {
 });
 
 test('branch or base drift refuses publication without issuing branch', async () => {
-  const input = fixture();
+  const input = await fixture();
   input.githubApi.getMain = async () => ({ sha: 'e'.repeat(40), treeSha: 'b'.repeat(40) });
   const result = await publishForgePrePrToGitHub({ ...input, receiptRoot: '/unused' });
   assert.equal(result.ok, false);
@@ -116,11 +123,39 @@ test('branch or base drift refuses publication without issuing branch', async ()
 test('wrong GitHub result tree blocks publication before commit', async () => {
   const root = await mkdtemp(join(tmpdir(), 'forge-publish-tree-'));
   try {
-    const input = fixture();
+    const input = await fixture();
     input.githubApi.createTree = async () => ({ sha: 'e'.repeat(40) });
     const result = await publishForgePrePrToGitHub({ ...input, receiptRoot: root });
     assert.equal(result.ok, false);
     assert.equal(result.blocker, 'GITHUB_CREATED_TREE_HASH_MISMATCH');
     assert.equal(input.calls.includes('createCommit'), false);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('canonical cancellation fences direct publication before even a remote read', async () => {
+  const input = await fixture();
+  await appendMissionEvent(input.escrow.missionId, { eventId: 'cancel-publication-test',
+    eventType: 'MISSION_CANCELLED' }, { root: input.missionRoot, env: {} });
+  const result = await publishForgePrePrToGitHub({ ...input, receiptRoot: '/unused' });
+  assert.equal(result.reason, 'ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  assert.deepEqual(input.calls, []);
+});
+
+test('cancellation cannot race a publisher waiting for remote response', async () => {
+  const input = await fixture(); const receiptRoot = await mkdtemp(join(tmpdir(), 'forge-publication-race-'));
+  let releaseRemote; let enteredRemote;
+  const entered = new Promise((resolve) => { enteredRemote = resolve; });
+  const blocked = new Promise((resolve) => { releaseRemote = resolve; });
+  const getMain = input.githubApi.getMain;
+  input.githubApi.getMain = async () => { enteredRemote(); await blocked; return getMain(); };
+  const publication = publishForgePrePrToGitHub({ ...input, receiptRoot });
+  await entered;
+  const cancellation = appendMissionEvent(input.escrow.missionId, { eventId: 'cancel-race-test',
+    eventType: 'MISSION_CANCELLED' }, { root: input.missionRoot, env: {} });
+  assert.equal((await readMissionRecord(input.escrow.missionId, { root: input.missionRoot })).state.cancelled, false);
+  releaseRemote();
+  assert.equal((await publication).ok, true);
+  assert.equal((await cancellation).state.cancelled, true);
+  const after = await publishForgePrePrToGitHub({ ...input, receiptRoot });
+  assert.equal(after.reason, 'ORIGINAL_SOURCE_ATTEMPT_FENCED');
 });

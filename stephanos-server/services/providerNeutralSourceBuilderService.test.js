@@ -88,6 +88,24 @@ const PATCH = [
   '',
 ].join('\n');
 
+test('cancellation observed after provider response prevents any source edit', async () => {
+  const fx = await fixture(); fx.action.missionId = 'critical-3001-elastic-goal';
+  let providerReturned = false;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+    claimNext: async () => fx.claim,
+    goalContext: 'Bounded source repair.',
+    generatePatch: async () => { providerReturned = true; return PATCH; },
+    readMissionRecord: async () => ({ state: { cancelled: providerReturned } }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /ORIGINAL_SOURCE_ATTEMPT_FENCED/);
+  assert.equal((await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8')).trim(), 'export const value = 1;');
+  assert.equal(run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
+});
+
 test('local Forge builder edits, tests, escrows and queues source while offline publication remains zero-authority', async () => {
   const fx = await fixture();
   const collected = [];
@@ -95,6 +113,7 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -169,6 +188,7 @@ test('local Forge builder runs stephanos verify through an ephemeral build and r
   const accepted = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -202,6 +222,7 @@ test('local Forge builder rejects shell-shaped tests and rolls its patch back cl
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -240,6 +261,7 @@ test('local Forge builder rejects path-escape attempts and does not invoke gener
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: escapeRun,
@@ -271,6 +293,7 @@ test('local Forge builder bounds broad directory source context instead of rejec
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -304,6 +327,7 @@ test('local Forge builder accepts repository-wide scope while excluding protecte
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -337,6 +361,7 @@ test('local Forge builder rejects a protected patch target even under repository
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -364,6 +389,7 @@ test('local Forge builder permits an empty source snapshot for a scoped new file
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -383,6 +409,7 @@ test('local Forge builder rejects an allowlisted tracked symlink before provider
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -407,6 +434,7 @@ test('local Forge builder safely recounts model patch hunk lengths before applyi
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -436,6 +464,7 @@ test('local Forge builder still rejects a structurally malformed patch after rec
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -457,6 +486,7 @@ test('local Forge builder rolls back a recounted patch when a later test fails',
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -483,6 +513,7 @@ test('local Forge builder applies exact structured edits and escrows the resulti
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -514,6 +545,7 @@ test('Forge rejects a late import before escrow and rolls back a generated struc
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -546,6 +578,7 @@ test('local Forge builder creates a bounded new file through structured edits', 
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -579,6 +612,7 @@ test('local Forge builder removes a structured new file when a later required te
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -609,6 +643,7 @@ test('elastic Forge model creates a scoped new file with structured edits when s
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -654,6 +689,7 @@ test('elastic Forge rejects an out-of-scope structured new file with no source s
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -685,6 +721,7 @@ test('elastic Forge model can create an allowed new file with structured edits w
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -729,6 +766,7 @@ test('elastic Forge model retries a semantically invalid structured edit before 
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -782,6 +820,7 @@ test('elastic Forge model rejects unified-diff fallback when source snapshots ar
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -810,6 +849,7 @@ test('local Forge builder rejects structured edits outside the allowlist without
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -841,6 +881,7 @@ test('local Forge builder rejects a non-unique structured edit anchor before mut
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -863,6 +904,7 @@ test('local Forge builder rolls structured edits back cleanly when a required te
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -911,6 +953,7 @@ test('local Forge builder retains patch mode for mixed tracked-source plus new-f
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -943,6 +986,7 @@ test('elastic Forge builder hydrates authoritative goal context and retries malf
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -994,6 +1038,7 @@ test('elastic Forge resolves lowercase canonical GitHub goal identity but reject
     const result = await processNextProviderNeutralSourceBuild({
       preferredAdapter: 'foundry-forge',
       sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
       repoRoot: fx.repoRoot,
       actionGrant: fx.actionGrant,
       runCommand: run,
@@ -1056,6 +1101,7 @@ test('elastic Forge builder fails closed before model invocation when authoritat
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -1100,6 +1146,7 @@ test('elastic Forge builder revalidates queued GitHub goal authority before sour
     const result = await processNextProviderNeutralSourceBuild({
       preferredAdapter: 'foundry-forge',
       sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
       repoRoot: fx.repoRoot,
       actionGrant: fx.actionGrant,
       runCommand: run,
@@ -1158,6 +1205,7 @@ test('local Forge builder resolves lowercased mission scope to one exact tracked
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -1208,6 +1256,7 @@ test('local Forge builder hydrates an admitted structured-edit target omitted by
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,
@@ -1250,6 +1299,7 @@ test(`local Forge builder rejects an existing ignored target during ${oldText ? 
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
     repoRoot: fx.repoRoot,
     actionGrant: fx.actionGrant,
     runCommand: run,

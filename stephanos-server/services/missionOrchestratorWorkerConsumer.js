@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
 import {
   appendExecutionReceipt,
@@ -13,7 +14,7 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
-import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
@@ -390,13 +391,29 @@ async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, ob
 
 async function proveProcessingClaim(claim, options = {}) {
   const action = claim?.item?.payload;
+  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
   if (action?.actionKind !== 'agent-handoff') {
+    if (/^critical-[1-9]\d*-elastic-goal$/.test(missionId)) {
+      // Even signed worktree/publication actions must cross the same mission
+      // lock after rename. A preflight read alone can race fence commit.
+      const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
+        if (state.cancelled === true || state.currentPhase === 'CANCELLED'
+            || state.storeMetadata?.originalSourceAttemptFence) {
+          throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+        }
+        return Object.freeze({ proven: true, state: 'NON_AGENT_MISSION_FENCE_CHECKED' });
+      }, options);
+      return guarded.result;
+    }
     return Object.freeze({ proven: true, state: 'NOT_AGENT_HANDOFF' });
   }
 
-  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
   const adapter = normalizedText(claim?.adapter).toLowerCase();
   const record = await readMissionRecord(missionId, options);
+  if (record.state.cancelled === true || record.state.currentPhase === 'CANCELLED'
+      || record.state.storeMetadata?.originalSourceAttemptFence) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
   const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
 
@@ -499,11 +516,27 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         );
         continue;
       }
+      try {
+        await assertOriginalSourceAttemptNotFenced(item.missionId, {
+          env: options.env, missionStoreOptions: { root: options.root },
+        });
+      } catch (fenceError) {
+        if (fenceError?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw fenceError;
+        await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+          'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+        continue;
+      }
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
       try {
         claim.pickupProof = await proveProcessingClaim(claim, options);
       } catch (claimError) {
+        if (claimError?.message === 'ORIGINAL_SOURCE_ATTEMPT_FENCED') {
+          await rename(processingPath, pendingPath);
+          await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+            'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+          continue;
+        }
         // Do not strand an item in processing when mission-state pickup proof
         // cannot be recorded. Return ownership to pending so the canonical
         // conveyor can safely retry or route it on the next bounded sweep.
