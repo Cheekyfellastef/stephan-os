@@ -23,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.2');
+  assert.equal(plugin.version, '1.0.3');
   assert.equal(plugin.mcpServers, './.mcp.json');
   assert.equal(plugin.skills, './skills');
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
@@ -49,7 +49,7 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.2');
+  assert.equal(plugin.version, '1.0.3');
   assert.equal(plugin.skills, './skills/');
   assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
   assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');
@@ -79,4 +79,22 @@ test('desktop skill preserves the bounded authority contract', () => {
 test('desktop route remains marketplace-installed rather than adding a new Windows mutation installer', () => {
   assert.doesNotMatch(marketplace, /install-sovereign-commander-chatgpt-desktop-plugin/i);
   assert.match(skill, /This plugin is the direct local desktop route/i);
+});
+
+
+test('Plus/cloud orchestration contract is source-pinned to the private plugin skill without authority widening', () => {
+  assert.match(skill, /Plus-level intent to sovereign execution \(v1\.0\.3\)/);
+  assert.match(skill, /Classify intent as/);
+  assert.match(skill, /BOUNDED_MAINTENANCE/);
+  assert.match(skill, /MISSION_BUILD/);
+  assert.match(skill, /ACCEPTED.*is not terminal completion/i);
+  assert.match(skill, /GitHub issue #2808 command mailbox/);
+  assert.match(skill, /source-binding\/custody\/lease disagreements remain held/i);
+  assert.match(skill, /Do not use the public mailbox to transport source file contents/i);
+  assert.match(skill, /same execution command fabric/);
+  assert.match(skill, /canonical Stephanos Executive Command Plane/);
+  assert.match(skill, /GitHub rate limits/);
+  assert.match(skill, /original source-binding\/custody\/lease disagreements remain held|source-binding\/custody\/lease disagreements remain held/);
+  assert.match(skill, /ChatGPT Plus may assist but is not a required source/);
+  assert.doesNotMatch(skill, /bypass the (?:original|protected) lease/i);
 });
