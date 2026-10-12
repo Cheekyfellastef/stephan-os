@@ -46,6 +46,34 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'read_multiple_files',
+    title: 'Read multiple files',
+    description: 'Read bounded line ranges from up to eight absolute paths on the private Battle Bridge MCP route.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['paths'],
+      properties: {
+        paths: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string', minLength: 1 } },
+        offset: { type: 'integer', minimum: 0 },
+        length: { type: 'integer', minimum: 1, maximum: 200 },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'get_file_info',
+    title: 'Get file metadata',
+    description: 'Read bounded file type, byte size and modification time without reading its contents.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['path'],
+      properties: { path: { type: 'string', minLength: 1 } },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'write_file',
     title: 'Write file',
     description: 'Rewrite or append bounded UTF-8 content to one absolute path. No delete or arbitrary shell is exposed.',
@@ -210,6 +238,8 @@ function operationForTool(name) {
   return Object.freeze({
     get_config: SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG,
     read_file: SOVEREIGN_COMMANDER_OPERATION.READ_FILE,
+    read_multiple_files: SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES,
+    get_file_info: SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO,
     write_file: SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE,
     edit_file: SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE,
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
@@ -220,12 +250,13 @@ function operationForTool(name) {
 }
 
 function targetPathsForTool(name, args = {}) {
-  if (['read_file', 'write_file', 'edit_file', 'list_directory'].includes(name)) return [text(args.path)].filter(Boolean);
+  if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
+  if (['read_file', 'get_file_info', 'write_file', 'edit_file', 'list_directory'].includes(name)) return [text(args.path)].filter(Boolean);
   return [];
 }
 
 function payloadForTool(name, args = {}) {
-  if (name === 'read_file') return { offset: args.offset, length: args.length };
+  if (name === 'read_file' || name === 'read_multiple_files') return { offset: args.offset, length: args.length };
   if (name === 'write_file') return { content: args.content, mode: args.mode };
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
