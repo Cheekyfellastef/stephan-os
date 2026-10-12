@@ -39,7 +39,7 @@ test('Battle Bridge diagnosis and fixed repairs resolve across registry, MCP and
   const admitted = listed.tools.find(({ name }) => name === 'maintenance_action').inputSchema.properties.actionId.enum;
   for (const action of [
     'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
-    'cpu-pressure-snapshot', 'controller-lane-status', 'status-recovery-mesh',
+    'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status', 'status-recovery-mesh',
     'status-worker-watchdog', 'status-stephanos-core-daemon', 'gaming-resource-status',
     'starfield-vr-performance-diagnosis', 'repair-ui-4173', 'repair-control-plane',
     'repair-battle-bridge', 'repair-openclaw-stack',
