@@ -432,26 +432,40 @@ test('App route/provider labels are sourced from finalRouteTruth', async () => {
 });
 
 
-test('Meaning strip projects finalRouteTruth and fails transparently when missing', async () => {
+test('Meaning strip projects canonical route truth and keeps unprobed runtime status unverified', async () => {
   const { renderApp } = await importBundledModule(path.join(srcRoot, 'test/renderAppEntry.jsx'), appAliases);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({
     runtimeStatusModel: {
-      finalRouteTruth: {
-        routeKind: 'local-desktop',
+      appLaunchState: 'ready',
+      canonicalRouteRuntimeTruth: {
+        winningRoute: 'local-desktop',
         backendReachable: true,
-        providerExecution: { executableProvider: 'ollama' },
+        routeReachable: true,
+        routeUsable: true,
+        selectedProvider: 'ollama',
+        executedProvider: 'ollama',
+        providerHealthState: 'READY',
         fallbackActive: false,
+      },
+      finalRouteTruth: {
         memoryMode: 'shared',
       },
     },
   });
   const renderedWithTruth = renderApp();
-  assert.match(renderedWithTruth, /🟢 SYSTEM HEALTHY \| 🧠 AI: OLLAMA \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
+  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(SELECTED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: undefined });
   const renderedWithoutTruth = renderApp();
-  assert.match(renderedWithoutTruth, /⚠️ NO RUNTIME TRUTH AVAILABLE/);
+  assert.match(renderedWithoutTruth, /BACKEND UNVERIFIED/);
+  assert.match(renderedWithoutTruth, /AI: UNVERIFIED/);
+  assert.doesNotMatch(renderedWithoutTruth, /BACKEND REACHABLE|BACKEND UNREACHABLE/);
+
+  const { renderMeaningStrip } = await importBundledModule(
+    path.join(srcRoot, 'test/renderMeaningStripEntry.jsx'), {}, 'meaning-strip-missing-truth',
+  );
+  assert.match(renderMeaningStrip(null), /NO RUNTIME TRUTH AVAILABLE/);
 });
 
 test('AIConsole route/provider banner is sourced from finalRouteTruth', async () => {
