@@ -208,14 +208,14 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     status,
     runNow,
     beginCpuProbe: () => {
-      if (!cpuProbeAdmissionHold) return false;
-      if (!state.cpuProbeAdmissionPending) return !state.cpuProbeAdmissionExpired && !state.cpuProbeSampling;
-      if (state.running || state.cycleCount > 0) return false;
+      if (!cpuProbeAdmissionHold || state.cpuProbeAdmissionExpired
+        || state.cpuProbeSampling || state.running || child) return false;
+      // Every admitted CPU sample owns its own guard. Pause a pending normal
+      // cycle; never sample while a repair child is running.
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       scheduledTimer = null;
       state.cpuProbeAdmissionPending = false;
       state.cpuProbeSampling = true;
-      // Keep the guardian's health truthful while protecting the synchronous sampler.
       state.scheduled = true;
       return true;
     },
