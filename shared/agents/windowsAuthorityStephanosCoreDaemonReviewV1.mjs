@@ -5,6 +5,14 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
   'scripts/windows/status-stephanos-core-daemon.ps1',
 ]);
 
+// Authority is pinned to complete, independently reviewed Windows source.
+// The textual checks below add defense in depth, but may not approve a
+// modified script merely because familiar safe snippets still occur.
+const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
+  'scripts/windows/run-sovereign-commander-hidden.ps1': 'b794651bacf0e09c48a677586c0e0db6d24c6b9e',
+  'scripts/windows/status-stephanos-core-daemon.ps1': '74d5db0a25a6183653b5332304e39d2d1ca204b0',
+});
+
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const SHA = /^[a-f0-9]{40}$/;
@@ -113,7 +121,11 @@ function reviewRunner(source, path, findings) {
     ['$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', 'core-daemon-runner-relay-process-pattern-not-fixed'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'", 'core-daemon-runner-missing-script-blocker-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'", 'core-daemon-runner-missing-node-blocker-absent'],
-    ['$coreDaemonRestartRequested = $true', 'core-daemon-runner-stale-recycle-marker-absent'],
+    ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'", 'core-daemon-runner-ambiguous-custody-fence-absent'],
+    ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'", 'core-daemon-runner-single-writer-fence-absent'],
+    ["$writerCustodyProven = $false", 'core-daemon-runner-custody-fail-closed-absent'],
+    ["[string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1'", 'core-daemon-runner-lock-schema-proof-absent'],
+    ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-runner-process-creation-fence-absent'],
     ['$relayDaemonRestartRequested = $true', 'core-daemon-runner-relay-stale-recycle-marker-absent'],
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'core-daemon-runner-bounded-stop-absent'],
     ['$coreDaemonStartRequested = $true', 'core-daemon-runner-start-marker-absent'],
@@ -134,9 +146,20 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, source,
     /function\s+Get-StephanosCoreDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$coreDaemonScriptPattern/,
     'core-daemon-runner-process-identity-not-bounded', path);
-  requirePattern(findings, source,
-    /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
-    'core-daemon-runner-recycle-not-health-gated', path);
+  requirePattern(findings, activeSource,
+    /if \(\$coreBefore\.Count -gt 1\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 1 -and -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*?elseif \(\$coreBefore\.Count -eq 0\)/,
+    'core-daemon-runner-ambiguous-and-live-writer-fence-not-proven', path);
+  // Core can only be started when absent. A matching writer without
+  // authenticated lease/process creation proof is HELD, not force-recycled.
+  const coreStart = activeSource.indexOf('if ($coreBefore.Count -gt 1)');
+  const relayStart = activeSource.indexOf('$relayBefore = @(Get-SovereignRelayDaemonProcesses)', coreStart);
+  if (coreStart < 0 || relayStart < coreStart) {
+    findings.push(finding('core-daemon-runner-custody-boundary-missing', path));
+  } else {
+    const coreLifecycle = activeSource.slice(coreStart, relayStart);
+    forbidPattern(findings, coreLifecycle, /\bStop-Process\b|\btaskkill\b|\$coreDaemonRestartRequested\s*=\s*\$true/i,
+      'core-daemon-runner-live-writer-recycle-forbidden', path);
+  }
   requirePattern(findings, activeSource,
     /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);
@@ -170,7 +193,7 @@ function reviewRunner(source, path, findings) {
     /^\s*\$age\s*=\s*\[math\]::Max\(0,\s*\[int\]\(\[DateTimeOffset\]::UtcNow\s*-\s*\$heartbeat\)\.TotalSeconds\)\s*$/m,
     'core-daemon-runner-relay-heartbeat-age-not-derived', path);
   requirePattern(findings, relayHealthSource,
-    /healthy\s*=\s*\[bool\]\(\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30\)/,
+    /healthy\s*=\s*\[bool\]\(\s*\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30(?:\s+-and\s+\$sourceHeadMatchesLive)?\s*\)/,
     'core-daemon-runner-relay-health-proof-not-bounded', path);
   if ((relayHealthSource.match(/^\s*\$heartbeat\s*=/gmi) || []).length !== 1) {
     findings.push(finding('core-daemon-runner-relay-heartbeat-reassigned', path));
@@ -188,10 +211,22 @@ function reviewRunner(source, path, findings) {
     findings.push(finding('core-daemon-runner-process-executable-widened', path));
   }
 
+  // The existing desktop Commander watchdog may wake its fixed registered
+  // task, but must not gain a general task control surface.
+  const taskStartLines = activeSource.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /\bStart-ScheduledTask\b/i.test(line));
+  if (taskStartLines.length > 1
+      || taskStartLines.some((line) => line !== 'Start-ScheduledTask -TaskName $desktopCommanderTaskName')
+      || (taskStartLines.length === 1
+          && !activeSource.includes("$desktopCommanderTaskName = 'Stephanos Commander Watchdog'"))) {
+    findings.push(finding('core-daemon-runner-fixed-task-wake-only', path));
+  }
+
   for (const [pattern, code] of [
     [/Stop-Process\s+-Name/i, 'core-daemon-runner-name-based-kill-forbidden'],
     [/Invoke-Expression|\biex\b|cmd\.exe|Restart-Computer|shutdown\.exe/i, 'core-daemon-runner-dynamic-or-pc-authority-forbidden'],
-    [/\b(?:Register|New|Start)-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'core-daemon-runner-task-mutation-forbidden'],
+    [/\b(?:Register|New)-ScheduledTask(?:Action|Trigger|Principal|SettingsSet)?\b/i, 'core-daemon-runner-task-mutation-forbidden'],
     [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'core-daemon-runner-git-mutation-forbidden'],
     [/\$env:[A-Z0-9_]+_COMMAND\b/i, 'core-daemon-runner-command-env-forbidden'],
     [/\[(?:string|object)\]\s*\$(?:CoreDaemonScript|CoreDaemonStatusPath|Executable|Command|Arguments)\b/i, 'core-daemon-runner-caller-authority-forbidden'],
@@ -208,6 +243,11 @@ function reviewStatus(source, path, findings) {
     ["$_.Name -eq 'node.exe'", 'core-daemon-status-node-identity-absent'],
     ['[string]$_.CommandLine -match $corePattern', 'core-daemon-status-command-identity-absent'],
     ['Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json', 'core-daemon-status-fixed-read-absent'],
+    ["[string]$lockRecord.schemaVersion -ceq 'stephanos.core-daemon-lock.v1'", 'core-daemon-status-lock-schema-check-absent'],
+    ["$startupLagSeconds -ge -3 -and $startupLagSeconds -le 90", 'core-daemon-status-process-creation-fence-absent'],
+    ["$lockStart -le $heartbeatAt", 'core-daemon-status-heartbeat-lock-order-proof-absent'],
+    ["[string]$lockRecord.sourceHead", 'core-daemon-status-source-binding-absent'],
+    ["$gitExe = 'C:\\Program Files\\Git\\cmd\\git.exe'", 'core-daemon-status-git-observer-not-fixed'],
     ["schemaVersion = 'stephanos.core-daemon-status.v1'", 'core-daemon-status-schema-absent'],
     ['uiRequired = $false', 'core-daemon-status-ui-independence-absent'],
     ['sourceMutationAllowed = $false', 'core-daemon-status-source-denial-absent'],
@@ -224,7 +264,7 @@ function reviewStatus(source, path, findings) {
     [/Invoke-Expression|\biex\b|cmd\.exe|Restart-Computer|shutdown\.exe/i, 'core-daemon-status-dynamic-or-pc-authority-forbidden'],
     [/\b(?:Set-Content|Add-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)\b/i, 'core-daemon-status-filesystem-mutation-forbidden'],
     [/Invoke-RestMethod|Invoke-WebRequest|System\.Net\.Http/i, 'core-daemon-status-network-authority-forbidden'],
-    [/\bgit(?:\.exe)?\b/i, 'core-daemon-status-git-authority-forbidden'],
+    [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b|\$gitExe[^\r\n]{0,160}\s(?:push|reset|clean|rebase|checkout|switch|merge|stash)\b/i, 'core-daemon-status-git-mutation-forbidden'],
     [/(^|\r?\n)\s*exit\s+[1-9]\d*\b/im, 'core-daemon-status-failing-diagnostic-forbidden'],
   ]) forbidPattern(findings, source, pattern, code, path);
 }
@@ -256,6 +296,9 @@ export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
     if (candidates.length !== 1 || !exactSource(candidates[0], repository, sourceHead, path)) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
+    }
+    if (candidates[0].blobSha !== REVIEWED_CORE_SOURCE_BLOBS[path]) {
+      findings.push(finding('windows-authority-core-source-blob-unreviewed', path));
     }
     if (path.endsWith('status-stephanos-core-daemon.ps1')) reviewStatus(candidates[0].content, path, findings);
     else reviewRunner(candidates[0].content, path, findings);

@@ -37,100 +37,12 @@ const analysis = {
   })),
 };
 
-const runner = String.raw`[CmdletBinding()]
-param([string]$RequireCapabilityVersion = '')
-$canonicalNode = 'C:\Program Files\nodejs\node.exe'
-$powershellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-$coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
-$coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
-$relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
-$relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
-$coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
-$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
-function Get-StephanosCoreDaemonProcesses {
-  return @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq 'node.exe'
-    [string]$_.CommandLine -match $coreDaemonScriptPattern
-  })
-}
-function Get-SovereignRelayDaemonProcesses {
-  return @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq 'node.exe' -and
-    [string]$_.CommandLine -match $relayDaemonScriptPattern
-  })
-}
-function Get-SovereignRelayDaemonHealth {
-  $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
-  $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
-  $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
-  return [pscustomobject]@{ healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30) }
-}
-$coreBefore = @(Get-StephanosCoreDaemonProcesses)
-$coreHealthBefore = [pscustomobject]@{ healthy = $false }
-if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-  if ($coreBefore.Count -gt 0) {
-    $coreDaemonRestartRequested = $true
-    foreach ($process in $coreBefore) {
-      Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-    }
-  }
-}
-$coreDaemonStartRequested = $true
-$relayBefore = @(Get-SovereignRelayDaemonProcesses)
-$relayHealthBefore = Get-SovereignRelayDaemonHealth
-if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
-  if ($relayBefore.Count -gt 0) {
-    $relayDaemonRestartRequested = $true
-    foreach ($process in $relayBefore) {
-      Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-    }
-  }
-}
-$relayDaemonStartRequested = $true
-$serverStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -PassThru
-$vrStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @('-File', $quotedVrGovernorScript) -PassThru
-$coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
-$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
-$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
-[pscustomobject]@{
-  coreDaemonHealthy = [bool]$coreDaemonOk
-  sourceMutationDelegatedToMissionWorker = $true
-  duplicateSchedulerAllowed = $false
-  duplicateLeaseAllowed = $false
-  arbitraryExecutableAllowed = $false
-  arbitraryShellAllowed = $false
-  unrelatedProcessRestartAllowed = $false
-  pcRestartAllowed = $false
-}`;
-
-const status = String.raw`[CmdletBinding()]
-param()
-
-$ErrorActionPreference = 'Stop'
-$repoRoot = 'C:\Users\operator\Documents\GitHub\stephan-os'
-$coreScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
-$statusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
-$corePattern = [regex]::Escape($coreScript)
-$processes = @(
-  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.Name -eq 'node.exe'
-      [string]$_.CommandLine -match $corePattern
-    }
-)
-$status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
-[pscustomobject]@{
-  schemaVersion = 'stephanos.core-daemon-status.v1'
-  uiRequired = $false
-  sourceMutationAllowed = $false
-  schedulerAuthority = $false
-  mergeAuthority = $false
-  vendorMeterRequired = $false
-  remoteCommanderRequired = $false
-} | ConvertTo-Json -Depth 4
-`;
+const runner = await readFile(
+  new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8',
+);
+const status = await readFile(
+  new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8',
+);
 
 function review(runnerSource = runner, statusSource = status, extra = []) {
   return analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({
@@ -144,7 +56,7 @@ function review(runnerSource = runner, statusSource = status, extra = []) {
 test('clean Core Daemon Windows estate is qualified with zero authority', () => {
   const result = review();
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1);
   assert.equal(result.sourceMutationAllowed, false);
   assert.equal(result.mergeAuthority, false);
@@ -160,7 +72,7 @@ test('top-level trusted specialist routes the Core Daemon pair before fallback',
     sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
   });
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_SPECIALIST_CLEAN');
 });
 
@@ -169,16 +81,19 @@ test('widened execution, process kill, task, Git and writable-status authority f
     [runner + "\nStart-Process -FilePath $canonicalNode -ArgumentList @($callerArgs)", status],
     [runner.replace("Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru", ''), status],
     [runner.replace('Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'Stop-Process -Name node -Force'), status],
-    [runner.replace("    $_.Name -eq 'node.exe' -and\n    [string]$_.CommandLine -match $relayDaemonScriptPattern", "    $_.Name -eq 'node.exe'\n    [string]$_.CommandLine -match $relayDaemonScriptPattern"), status],
+    [runner.replace("[string]$_.CommandLine -match $relayDaemonScriptPattern", "($true)"), status],
     [runner.replace('[string]$_.CommandLine -match $relayDaemonScriptPattern', '$true'), status],
     [runner.replace('$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', "$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)\n$relayDaemonScriptPattern = '.*'"), status],
     [runner.replace('$age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)', '$age = 0'), status],
-    [runner.replace('healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)', 'healthy = $true'), status],
+    [runner.replace('$age -le 30 -and', '$age -le 3000 -and'), status],
     [runner.replace('if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy)', 'if ($relayBefore.Count -eq 0)'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '# $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '$x = 1 # $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '<#\n$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru\n#>'), status],
     [runner + "\nStart-ScheduledTask -TaskName $TaskName", status],
+    [runner + "\nStart-ScheduledTask -TaskName $arbitraryTask", status],
+    [runner + "\n$desktopCommanderTaskName = 'Other Task'\nStart-ScheduledTask -TaskName $desktopCommanderTaskName", status],
+    [runner, status + "\ngit reset --hard HEAD~1"],
     [runner + "\nInvoke-Expression $env:CORE_COMMAND", status],
     [runner + "\ngit reset --hard HEAD~1", status],
     [runner, status + "\nSet-Content -LiteralPath $statusPath -Value bad"],
@@ -191,6 +106,33 @@ test('widened execution, process kill, task, Git and writable-status authority f
   }
 });
 
+test('specialist full-source pin blocks attacks outside narrow textual scan windows', () => {
+  const attackRows = [
+    [
+      runner.replace('$coreHealthBefore = Get-StephanosCoreDaemonHealth',
+        '$coreHealthBefore = Get-StephanosCoreDaemonHealth\nStop-Process -Id ([int]$coreBefore[0].ProcessId) -Force'),
+      status,
+    ],
+    [
+      runner.replace('Start-ScheduledTask -TaskName $desktopCommanderTaskName',
+        "$desktopCommanderTaskName = 'Untrusted Task'\nStart-ScheduledTask -TaskName $desktopCommanderTaskName"),
+      status,
+    ],
+    [runner, status + "\n& $gitExe update-ref refs/heads/main $sourceHead"],
+    [
+      runner,
+      status.replace('$healthy = [bool](',
+        '$singleWriterProven = $true\n$rescueGenerationPresent = $true\n$healthy = [bool]('),
+    ],
+  ];
+  for (const [changedRunner, changedStatus] of attackRows) {
+    assert.ok(changedRunner !== runner || changedStatus !== status);
+    const result = review(changedRunner, changedStatus);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some(x => x.code === 'windows-authority-core-source-blob-unreviewed'));
+  }
+});
+
 test('widened source estate and wrong escalation do not inherit qualification', () => {
   assert.equal(review(runner, status, [source('scripts/windows/other.ps1', 'x')]).clean, false);
   const wrong = analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({
@@ -200,6 +142,23 @@ test('widened source estate and wrong escalation do not inherit qualification', 
     sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
   });
   assert.equal(wrong.eligible, false);
+});
+
+test('specialist rejects a Core writer mass-recycle even when relay recycle is approved', () => {
+  const inserted = runner.replace(
+    "$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'",
+    "$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'\n  Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop",
+  );
+  const result = review(inserted, status);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((x) => x.code === 'windows-authority-core-source-blob-unreviewed'));
+});
+
+test('specialist applies no-kill custody invariants to actual checked-in Windows sources', async () => {
+  const realRunner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+  const realStatus = await readFile(new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8');
+  const result = review(realRunner, realStatus);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
 });
 
 test('trusted switchboard byte-pins and invokes the Core Daemon specialist', async () => {
