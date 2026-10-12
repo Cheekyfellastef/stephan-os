@@ -24,6 +24,8 @@ Use the existing Sovereign Commander execution plane first. Local/private MCP is
 
 `gaming-resource-status` reads recorded governor telemetry. Check its observation time; a newly returned receipt does not make old telemetry current. Likewise, process-list CPU is cumulative process time; use the sampler for utilization. A successful transport receipt proves execution, not healthy services, fresh evidence, low CPU or a successful repair.
 
+The VR diagnosis adapter preserves array shape for zero or one provider and numeric samples. This avoids Windows PowerShell StrictMode `.Count` failures and keeps missing measurements null rather than reporting zero or available telemetry. Windows regression fixtures cover no telemetry, a single provider, duplicate provider identity and conflicting providers.
+
 Before the new tool is admitted and the connected MCP process refreshed, use the existing `maintenance_action` for its exposed diagnostics. The core-daemon action also remains available through the guarded cloud mailbox. Source publication does not refresh an already-running MCP process or the client tool catalog.
 
 ## Cloud ChatGPT
