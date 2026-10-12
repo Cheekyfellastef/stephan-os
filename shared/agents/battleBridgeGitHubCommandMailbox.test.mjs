@@ -736,6 +736,89 @@ test('publishes acceptance only at slot start and checkpoints terminal state bef
   ]);
 });
 
+test('failed post-accept callback publishes one terminal blocker without invoking the handler', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-accept-throw' }), { id: 91 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async () => {
+      events.push('accepted-published');
+      throw new Error('PRIVATE ACCEPTANCE FAILURE');
+    },
+    executeCommand: async () => {
+      events.push('MUST_NOT_EXECUTE');
+      return { ok: true };
+    },
+    onTerminal: async (_entry, execution) => {
+      events.push('terminal:' + execution.blocker);
+      return { receipt: { state: 'BLOCKED', blocker: execution.blocker } };
+    },
+  });
+  assert.deepEqual(events, [
+    'accepted-published',
+    'terminal:MAILBOX_ACCEPTANCE_CALLBACK_FAILED',
+  ]);
+  assert.equal(result.executedCount, 0);
+  assert.equal(result.terminalizedCount, 1);
+  assert.equal(result.results[0].result.receipt.state, 'BLOCKED');
+  assert.equal(result.results[0].result.receipt.blocker, 'MAILBOX_ACCEPTANCE_CALLBACK_FAILED');
+  assert.equal(JSON.stringify(result).includes('PRIVATE ACCEPTANCE FAILURE'), false);
+});
+
+test('failed execution callback writes a failure terminal once and never retries mutation', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-execute-throw' }), { id: 92 }),
+  ], { now });
+  let executions = 0;
+  let terminals = 0;
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async () => {},
+    executeCommand: async () => {
+      executions += 1;
+      throw new Error('PRIVATE MUTATION ERROR');
+    },
+    onTerminal: async (_entry, execution) => {
+      terminals += 1;
+      assert.equal(execution.ok, false);
+      assert.equal(execution.blocker, 'MAILBOX_EXECUTION_CALLBACK_FAILED');
+      return { receipt: { state: 'BLOCKED', blocker: execution.blocker } };
+    },
+  });
+  assert.equal(executions, 1);
+  assert.equal(terminals, 1);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.results[0].result.receipt.blocker, 'MAILBOX_EXECUTION_CALLBACK_FAILED');
+  assert.equal(JSON.stringify(result).includes('PRIVATE MUTATION ERROR'), false);
+});
+
+test('terminal checkpoint failure never overwrites a possibly durable terminal receipt', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-terminal-throw' }), { id: 93 }),
+  ], { now });
+  let executions = 0;
+  let terminalAttempts = 0;
+  await assert.rejects(
+    executeBattleBridgeGitHubCommandBatch(batch, {
+      now: () => now,
+      beforeExecute: async () => {},
+      executeCommand: async () => {
+        executions += 1;
+        return { ok: true };
+      },
+      onTerminal: async () => {
+        terminalAttempts += 1;
+        throw new Error('PRIVATE POST-WRITE ERROR');
+      },
+    }),
+    /MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED/,
+  );
+  assert.equal(executions, 1);
+  assert.equal(terminalAttempts, 1);
+});
+
 test('preflight blocker terminalizes without acceptance or handler execution', async () => {
   const batch = selectBattleBridgeGitHubCommandBatch([
     comment(command({ requestId: 'req-1507-stale-head' }), { id: 9 }),
