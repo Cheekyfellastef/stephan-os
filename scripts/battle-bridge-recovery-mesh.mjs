@@ -701,6 +701,54 @@ export async function runBattleBridgeRecoveryMesh({
       }
     }
     const completionGuardianHealthy = completionGuardian?.ok === true;
+    // Emergency #2961 out-of-band rescue piggybacks on the ALREADY supervised
+    // Recovery Mesh Windows Task, outside blocked elastic goal admission.
+    // Its child invokes only the pre-existing canonical exact-lease reconciler.
+    // Do not make core Recovery Mesh health depend on optional forensic work.
+    // The existing Recovery Mesh mutex prevents concurrent sidecar invocations.
+    let temporaryLeaseRescue = Object.freeze({
+      observed: false, blocker: 'RESCUE_NOT_ELIGIBLE',
+      canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    });
+    if (process.platform === 'win32' && completionGuardianEligible) {
+      try {
+        const fixedRescueScript = path.resolve(
+          paths.repoRoot, 'scripts', 'temporary-sovereign-lease-rescue.mjs');
+        const child = spawnSync(process.execPath, [fixedRescueScript, '--once'], {
+          cwd: paths.repoRoot,
+          env,
+          encoding: 'utf8', shell: false, windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 45_000, maxBuffer: 64 * 1024,
+        });
+        const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
+        const line = text(child?.stdout).split(/\\r?\\n/).find(x => x.startsWith(marker));
+        const response = child?.status === 0 && !child?.error && line
+          ? JSON.parse(line.slice(marker.length)) : null;
+        const knownModes = new Set([
+          'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
+          'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
+        ]);
+        temporaryLeaseRescue = response?.publicationOk === true
+          && knownModes.has(response?.mode)
+          ? Object.freeze({
+            observed: true, mode: response.mode,
+            blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(response.blocker))
+              ? response.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
+            canonicalLeaseReleaseProven: response.canonicalLeaseReleaseProven === true,
+            physicalPickupProven: false,
+          })
+          : Object.freeze({
+            observed: false, blocker: 'RESCUE_CHILD_UNVERIFIED',
+            canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+          });
+      } catch {
+        temporaryLeaseRescue = Object.freeze({
+          observed: false, blocker: 'RESCUE_CHILD_EXCEPTION',
+          canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+        });
+      }
+    }
     return Object.freeze({
       ok: coreHealthy && publication.ok && syncHealthy && completionGuardianHealthy,
       classification: !syncHealthy
@@ -714,6 +762,7 @@ export async function runBattleBridgeRecoveryMesh({
       publication,
       githubSyncSelfRepair,
       completionGuardian,
+      temporaryLeaseRescue,
       lock,
       acceptsRuntimeWork: coreHealthy && syncHealthy && completionGuardianHealthy,
       bulletproofAcceptanceClaimed: false,
