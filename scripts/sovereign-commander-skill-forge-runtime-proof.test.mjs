@@ -44,6 +44,6 @@ test('fixed maintenance process does not accept caller-supplied URLs',async()=>{
  assert.match(s,/nodeFile\('sovereign-commander-skill-forge-runtime-proof.mjs'\)/);
  const browser=await readFile(new URL('./sovereign-commander-skill-forge-runtime-proof.mjs',import.meta.url),'utf8');
  assert.match(browser,/\?surface=skill-forge/);
- assert.match(browser,/sourceHead !==/); // source is bound by the runtime observation route
+ assert.match(browser,/remoteHead !== sourceHead/); // source is bound by the runtime observation route
  assert.doesNotMatch(browser,/process\.argv\[2\]/);
 });
