@@ -130,3 +130,62 @@ test('proven parity transition is promoted into Flywheel learning', async () => 
   assert.equal(lesson.mergeAuthority, false);
   assert.equal(lesson.runtimeMutationAllowed, false);
 });
+
+
+test('Sovereign native self-gap events create guarded skill drafts but do not self-authorise', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-native-gap-'));
+  const { createSharedWorkspaceEventRecord } = await import('../shared/agents/sharedAgentWorkspaceStore.mjs');
+  const event = createSharedWorkspaceEventRecord({
+    eventId: 'sovereign-native-capability-gap',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-12T11:00:00.000Z',
+    eventKind: 'capability-gap',
+    summary: 'Missing bounded service ownership diagnosis.',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP', genuineCapabilityFailure: true,
+      capabilityId: 'windows-service-ownership',
+      targetRefs: ['goal:#2573'],
+    },
+  });
+  const result = await reconcileSovereignCommanderCapabilityParity({
+    paths: { workspaceRoot, repoRoot: 'C:/repo' },
+    now: new Date('2026-10-12T11:20:00.000Z'),
+    readQueue: async () => [],
+    readNativeEvents: async () => ({ records: [event], errors: [] }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.parityPresentCount, 0);
+  assert.equal(result.buildableGapCount, 0, 'remote parity is unchanged');
+  assert.equal(result.capabilityCompiler.nativeGapCandidateCount, 1);
+  assert.equal(result.nativeGapSourceHealth, 'VALIDATED');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_NATIVE_CAPABILITY_GAPS_TRACKED');
+  const status = JSON.parse(await readFile(
+    join(workspaceRoot, 'status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`), 'utf8',
+  ));
+  assert.equal(status.nativeGapIntake.candidateCount, 1);
+  assert.equal(status.capabilityCompiler.skillForgeCandidates[0].status, 'DRAFT');
+  assert.equal(status.capabilityCompiler.automaticCapabilityConstructionAllowed, false);
+  assert.equal(status.mergeAuthority, false);
+});
+
+test('invalid native event feed degrades intake but preserves canonical remote parity', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-native-invalid-'));
+  const result = await reconcileSovereignCommanderCapabilityParity({
+    paths: { workspaceRoot, repoRoot: 'C:/repo' },
+    now: new Date('2026-10-12T11:20:00.000Z'),
+    readQueue: async () => [{
+      adapter: 'desktop-commander', item: { actionGrant: { operation: 'read-file' } },
+    }],
+    readNativeEvents: async () => ({ records: [{ capabilityId: 'untrusted' }], errors: ['INVALID_EVENT'] }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.nativeGapSourceHealth, 'DEGRADED');
+  assert.equal(result.capabilityCompiler.nativeGapCandidateCount, 0);
+  assert.equal(result.parityPresentCount, 1);
+  const saved = JSON.parse(await readFile(
+    join(workspaceRoot, 'status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`), 'utf8',
+  ));
+  assert.equal(saved.nativeGapIntake.sourceHealth, 'DEGRADED');
+  assert.equal(saved.nativeGapIntake.sourceErrorCount, 1);
+  assert.equal(saved.capabilityParity.parityPresentCount, 1);
+});
