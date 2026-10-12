@@ -111,8 +111,11 @@ async function processAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM means the process can exist but this caller cannot signal it.
+    // Only ESRCH actually establishes that the recorded owner disappeared.
+    // Unknown errors must never license deletion of an occupied Core lock.
+    return error?.code !== 'ESRCH';
   }
 }
 
