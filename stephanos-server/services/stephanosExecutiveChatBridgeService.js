@@ -31,9 +31,11 @@ export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE = Object.freeze({
 });
 
 const PROJECT_RELEVANT =
-  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace|over the line|#[1-9]\d*)\b/i;
+  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace|sovereign commander|skill forge|over the line|#[1-9]\d*)\b/i;
 
 const EXPLICIT_ACTION_PATTERNS = Object.freeze([
+  /^\s*(?:please\s+|let(?:'|’)s\s+)?(?:keep\s+)?(?:taking|take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
+  /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
   /^\s*(?:can|could|would|will)\s+we\s+(?:please\s+)?(?:build|fix|repair|restore|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:get|make|have)\b[\s\S]{0,200}\bto\s+(?:fix|repair|restore|build|run|start|restart|continue|resume|work)\b/i,
   /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:get|make|have)\b[\s\S]{0,160}\b(?:fixed|repaired|built|finished|completed|merged|live|working|running|building|over\s+the\s+line)\b/i,
@@ -122,6 +124,7 @@ function safeId(value, fallback = '') {
 
 function targetForPrompt(prompt = '') {
   const normalized = text(prompt).toLowerCase();
+  if (/\bsovereign commander\b/.test(normalized)) return 'sovereign-commander';
   if (/\b(verification harness|verify|verification|proof)\b/.test(normalized)) return 'verification-harness';
   if (/\b(recovery mesh|recover battle bridge)\b/.test(normalized)) return 'battle-bridge-recovery-mesh';
   if (/\b(mailbox|battle bridge command)\b/.test(normalized)) return 'battle-bridge-github-command-mailbox';
