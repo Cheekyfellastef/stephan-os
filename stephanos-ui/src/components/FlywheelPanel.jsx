@@ -191,7 +191,7 @@ export default function FlywheelPanel() {
 
       <FlywheelWorkspaceCanvas
         conversationUplift={telemetry.payload?.conversationUplift || null}
-        conversationFeedState={telemetry.state}
+        conversationFeedState={telemetry.state === 'unreachable' || telemetry.state === 'connecting' ? 'unavailable' : 'reachable'}
         view={{
           ...upliftView,
           liveFeedState: telemetry.state,
