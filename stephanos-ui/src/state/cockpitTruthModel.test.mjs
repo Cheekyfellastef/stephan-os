@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { buildCockpitModel, deriveCockpitBackendHealthDiagnostics, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
+import { buildCockpitModel, deriveBackendServiceState, deriveCockpitBackendHealthDiagnostics, deriveConnectionState, NODE_LAYOUT } from './cockpitTruthModel.js';
 
 test('cockpit layout places memory halfway between backend and operator', () => {
   const midpointY = (NODE_LAYOUT.backend.y + NODE_LAYOUT.operator.y) / 2;
@@ -478,4 +481,34 @@ test('Cockpit diagnoses fresh verified backend health using its live API receipt
     }).fresh,
     'no',
   );
+});
+
+test('Cockpit invalidates a cached verified backend health receipt at the same deadline used by the model', () => {
+  const timestamp = '2026-10-12T19:00:00.000Z';
+  const initialNow = Date.parse(timestamp) + 1000;
+  const apiStatus = {
+    backendReachable: true,
+    lastCheckedAt: timestamp,
+    meta: {
+      ok: true, service: 'stephanos-server',
+      schemaVersion: 'stephanos.backend-health.v1',
+      backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' },
+    },
+    runtimeContext: {
+      healthProbeTruth: {
+        lastBackendHealthProbeAt: timestamp,
+        lastBackendHealthProbeResult: 'ok:true',
+        currentBackendHealthSource: 'refresh-health-poll',
+      },
+    },
+  };
+  const routeTruthView = { backendReachableState: 'no', currentBackendHealthFresh: 'no' };
+  assert.equal(deriveBackendServiceState({ apiStatus, routeTruthView, nowMs: initialNow }), 'alive');
+  assert.equal(deriveBackendServiceState({ apiStatus, routeTruthView, nowMs: initialNow + 120000 }), 'unknown');
+
+  const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../components/CockpitPanel.jsx'), 'utf8');
+  assert.match(source, /checkedAt \+ 120_000 \+ 50/);
+  assert.match(source, /setBackendHealthExpiryTick\(value => value \+ 1\)/);
+  assert.match(source, /telemetryEntries, activityExpiryTick, backendHealthExpiryTick/);
+  assert.match(source, /window\.clearTimeout\(timeoutId\)/);
 });
