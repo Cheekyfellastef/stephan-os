@@ -346,7 +346,7 @@ test('hosted cockpit reports backend dead only when a fresh backend health proof
   assert.equal(model.nodeStates.backend, 'dead');
 });
 
-test('local cockpit keeps direct backend failure red without hosted observer ambiguity', () => {
+test('local cockpit reports failed browser transport separately from backend service health', () => {
   const model = buildCockpitModel({
     runtimeStatus: {
       appLaunchState: 'degraded',
@@ -372,7 +372,62 @@ test('local cockpit keeps direct backend failure red without hosted observer amb
     telemetryEntries: [],
   });
 
-  assert.equal(model.nodeStates.backend, 'dead');
+  assert.equal(model.nodeStates.backend, 'unknown');
+  assert.equal(model.connectionStates['localSurface-backend'], 'broken');
+});
+
+test('Cockpit trusts fresh backend identity receipt over a stale negative browser route', () => {
+  const checkedAt = new Date().toISOString();
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: { provider: { providerHealthState: 'unknown' } },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+    },
+    apiStatus: {
+      backendReachable: true,
+      lastCheckedAt: checkedAt,
+      meta: {
+        ok: true,
+        service: 'stephanos-server',
+        schemaVersion: 'stephanos.backend-health.v1',
+        backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' },
+      },
+      runtimeContext: {
+        healthProbeTruth: {
+          lastBackendHealthProbeAt: checkedAt,
+          lastBackendHealthProbeResult: 'ok:true',
+          currentBackendHealthSource: 'refresh-health-poll',
+        },
+      },
+    },
+    telemetryEntries: [],
+    commandHistory: [],
+  });
+  assert.equal(model.nodeStates.backend, 'alive', 'verified service is alive despite a stale route failure');
+  assert.equal(model.connectionStates['localSurface-backend'], 'broken', 'browser transport route remains blocked');
+});
+
+test('Cockpit does not treat an unverified green API flag as backend identity proof', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: { appLaunchState: 'pending', runtimeTruth: {} },
+    routeTruthView: {
+      routeKind: 'local-desktop', backendReachableState: 'unknown',
+      currentBackendHealthFresh: 'no', selectedRouteReachableState: 'unknown',
+      routeUsableState: 'unknown', uiReachableState: 'unknown',
+    },
+    apiStatus: { backendReachable: true, meta: null },
+  });
+  assert.equal(model.nodeStates.backend, 'unknown');
 });
 
 test('Cockpit diagnoses fresh verified backend health using its live API receipt', () => {
