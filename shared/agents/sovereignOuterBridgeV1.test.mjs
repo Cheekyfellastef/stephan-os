@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
   decideSovereignOuterBridgeAttemptV1 as decide,
   projectSovereignOuterBridgeV1 as project,
@@ -100,6 +101,8 @@ test('Core cycle starts without awaiting blocked lease and never duplicates it',
   assert.equal(supervisor.snapshot().lastResult.publicationOk,true);
   assert.equal(supervisor.tick({sourceHead:HEAD}).reason,'RESCUE_INTERVAL_COOLDOWN');
   assert.equal(published.length,2);
+  assert.equal(validateSharedWorkspaceRecord(published[0][2]).valid,true);
+  assert.equal(validateSharedWorkspaceRecord(published[1][2]).valid,true);
   assert.deepEqual(published[0][1],['status','sovereign-outer-bridge-current.json']);
   assert.equal(published[0][2].status,'HELD');
   assert.equal(published[0][2].bridge.canonicalHandbackEligible,false);
