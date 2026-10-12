@@ -69,6 +69,7 @@ export async function ensureSovereignCommanderRuntime({
   fetchFn = globalThis.fetch,
   spawnSyncFn = spawnSync,
   repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+  commanderOnly = false,
 } = {}) {
   const beforeHealth = await health(fetchFn);
   if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
@@ -77,6 +78,7 @@ export async function ensureSovereignCommanderRuntime({
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
     '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
     '-SkipCoreDaemonLifecycle',
+    ...(commanderOnly ? ['-CommanderOnly', '-SkipDesktopCommanderCrossHeal'] : []),
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
