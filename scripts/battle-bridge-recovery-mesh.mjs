@@ -719,7 +719,7 @@ export async function runBattleBridgeRecoveryMesh({
           env,
           encoding: 'utf8', shell: false, windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 45_000, maxBuffer: 64 * 1024,
+          timeout: 12_000, maxBuffer: 64 * 1024,
         });
         const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
         const line = text(child?.stdout).split(/\r?\n/).find(x => x.startsWith(marker));
