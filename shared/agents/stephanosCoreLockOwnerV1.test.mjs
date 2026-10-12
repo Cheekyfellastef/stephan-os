@@ -37,5 +37,7 @@ test('Core acquisition and release stay fail-closed when lock owner changed',asy
   assert.match(code,/if \(await readExactCurrentLock\(ownedLock\.identity\)\) \{/);
   assert.doesNotMatch(code,/if \(Number\(current\?\.pid\) === process\.pid\) await unlink\(lockPath\)/);
   assert.doesNotMatch(code,/let stale = true/);
+  assert.match(code,/return error\?\.code !== 'ESRCH'/);
+  assert.match(code,/if \(!exactCoreLockOwnerV1\(existing, existing\)\) return null/);
   assert.match(code,/return Object\.freeze\(\{ handle, identity \}\)/);
 });
