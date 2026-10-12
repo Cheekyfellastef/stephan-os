@@ -1,0 +1,77 @@
+/* Shared read-only conversation journey: one visual language in Flywheel + Skill Forge. */
+.conversation-learning-journey {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  margin: 16px 0;
+  padding: clamp(14px, 2vw, 24px);
+  border-radius: 18px;
+  border: 1px solid rgba(124, 193, 234, .23);
+  background: linear-gradient(135deg, rgba(11, 49, 74, .94), rgba(9, 31, 52, .97));
+  color: #eaf6ff;
+}
+.conversation-learning-journey * { box-sizing: border-box; min-width: 0; }
+.conversation-learning-journey__header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 15px;
+}
+.conversation-learning-journey__eyebrow {
+  font-size: .65rem; font-weight: 750; letter-spacing: .15em; color: #91d7d6;
+}
+.conversation-learning-journey__header h4 {
+  font-size: clamp(1rem, 1.7vw, 1.3rem); margin: 7px 0; color: #f6fbff;
+}
+.conversation-learning-journey__header p { margin: 0; max-width: 75ch; color: #b9cfdf; font-size: .88rem; }
+.conversation-learning-journey__truth {
+  flex-shrink: 0; padding: 7px 10px; border-radius: 20px; font-size: .68rem;
+  border: 1px solid rgba(173, 190, 212, .5); color: #cbd7e6; letter-spacing: .035em;
+}
+.conversation-learning-journey__truth.is-reported {
+  border-color: rgba(115, 217, 173, .55); color: #9df1c8;
+}
+.conversation-learning-journey__steps {
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px;
+  margin: 17px 0;
+}
+.conversation-learning-journey__step {
+  border: 1px solid rgba(130, 180, 221, .19); border-radius: 12px;
+  background: rgba(20, 71, 103, .34); padding: 13px; display: grid; gap: 7px;
+}
+.conversation-learning-journey__step-top {
+  font-size: .69rem; color: #94cee7; text-transform: uppercase; letter-spacing: .035em;
+}
+.conversation-learning-journey__step strong {
+  font-size: clamp(1rem, 1.6vw, 1.45rem); font-weight: 750; overflow-wrap: anywhere;
+}
+.conversation-learning-journey__step strong.is-reported { color: #b5f5d3; }
+.conversation-learning-journey__step strong.is-unknown { font-size: .85rem; color: #d8c3a8; }
+.conversation-learning-journey__step > span { font-size: .71rem; color: #a9c0d0; line-height: 1.4; }
+.conversation-learning-journey__status {
+  border-top: 1px solid rgba(124, 193, 234, .2); padding-top: 14px; display: grid; gap: 4px;
+}
+.conversation-learning-journey__status strong { font-size: .83rem; }
+.conversation-learning-journey__status span { font-size: .78rem; color: #b9cfdf; }
+.conversation-learning-journey__hints { margin-top: 16px; }
+.conversation-learning-journey__hints h5 { font-size: .85rem; color: #c2e9ee; margin: 0 0 10px; }
+.conversation-learning-journey__hint-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 9px;
+}
+.conversation-learning-journey__hint {
+  display: grid; align-content: start; gap: 6px; padding: 12px; border-radius: 10px;
+  border: 1px solid rgba(127, 195, 227, .17); background: rgba(92, 149, 188, .095);
+}
+.conversation-learning-journey__hint strong { font-size: .8rem; line-height: 1.35; }
+.conversation-learning-journey__hint span, .conversation-learning-journey__hint small {
+  font-size: .72rem; color: #aec7d9; overflow-wrap: anywhere;
+}
+.conversation-learning-journey__hint small { color: #dfca9f; }
+.conversation-learning-journey__empty, .conversation-learning-journey__fineprint {
+  color: #abc3d4; font-size: .72rem; line-height: 1.4;
+}
+.conversation-learning-journey__fineprint { margin: 13px 0 0; }
+@media (max-width: 760px) {
+  .conversation-learning-journey__header { flex-direction: column; }
+  .conversation-learning-journey__steps { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 420px) {
+  .conversation-learning-journey__steps { grid-template-columns: 1fr; }
+}
