@@ -27,8 +27,8 @@ test('Sovereign Commander supervises exactly the fixed Stephanos Core Daemon', a
   assert.match(runner, /duplicateSchedulerAllowed = \$false/);
   assert.match(runner, /coreDaemonHealthy = \[bool\]\$coreDaemonOk/);
   assert.match(runner, /\[switch\]\$SkipCoreDaemonLifecycle/);
-  assert.match(runner, /if \(\$SkipCoreDaemonLifecycle -or \$CommanderOnly\)/);
-  assert.match(runner, /if \(-not \$CommanderOnly -and -not \$coreDaemonOk -and -not \$SkipCoreDaemonLifecycle\) \{ exit 5 \}/);
+  assert.match(runner, /if \(\$SkipCoreDaemonLifecycle\)/);
+  assert.match(runner, /if \(-not \$coreDaemonOk -and -not \$SkipCoreDaemonLifecycle\) \{ exit 5 \}/);
   assert.match(autoheal, /'-SkipCoreDaemonLifecycle'/);
   assert.match(commander, /'status-stephanos-core-daemon': frozen\(\{/);
   assert.match(remote, /'status-stephanos-core-daemon'/);
@@ -43,6 +43,6 @@ test('Sovereign Commander supervises exactly the fixed Stephanos Core Daemon', a
   assert.doesNotMatch(status, /exit 2/);
   assert.match(refresh, /scripts\/stephanos-core-daemon\.mjs/);
   assert.match(refresh, /scripts\/windows\/status-stephanos-core-daemon\.ps1/);
-  assert.match(http, /2026-10-12-cpu-pressure-snapshot-v5/);
-  assert.match(autoheal, /2026-10-12-cpu-pressure-snapshot-v5/);
+  assert.match(http, /2026-10-05-continuous-repair-reporting-v4/);
+  assert.match(autoheal, /2026-10-05-continuous-repair-reporting-v4/);
 });
