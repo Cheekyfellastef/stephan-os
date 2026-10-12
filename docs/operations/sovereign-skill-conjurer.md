@@ -80,3 +80,28 @@ independent runtime proof.
 - Do not claim new runtime capabilities until the actual guarded tool is
   installed, the connected tool catalog refreshed, and its terminal live
   proof verified.
+
+## Native self-discovery intake (V2)
+
+The same existing one-minute Sovereign fleet supervisor's parity reconciler
+now reads validated `events` from the canonical Shared Workspace through the
+existing Flywheel event reader. It admits only structured,
+seven-day-fresh closed-loop capability failures reported by
+`sovereign-commander`, with a matching attempted-by identity and no owner
+conflict. Free-form error prose, forged actor labels, invalid events, stale
+evidence, other goals' events and raw local paths are excluded.
+
+At most two distinct native gaps per reconciliation are composed into the same
+existing `capabilityCompiler` as the Remote Commander parity gaps. Evidence
+is **discovery-only** and never establishes a working tool or eligible
+autonomous execution. The Remote parity ledger remains separate; an otherwise
+green Remote parity result does **not** turn a native unmet ability green.
+
+If the event history fails validation, the native portion is marked
+`sourceHealth: DEGRADED` and no native proposal is admitted; previously
+working remote parity reconciliation continues. Full proposals are still
+bounded to the existing three-item Shared Workspace status limit.
+This feature does not yet install generated skills, dispatch build work,
+provide direct ChatGPT plugin tool discovery, or claim an end-to-end
+autonomous source-build-to-live-repair demonstration. Those require separate
+canonical approval and verified runtime gates.

@@ -7,6 +7,8 @@ on:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs'
+      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.mjs'
+      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
@@ -35,6 +37,7 @@ on:
       - main
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
+      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
@@ -64,6 +67,7 @@ jobs:
         run: |
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check shared/agents/sovereignCommanderCapabilityCompilerV1.mjs
+          node --check shared/agents/sovereignCommanderNativeGapIntakeV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
@@ -88,6 +92,7 @@ jobs:
         run: |
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           node --test shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs
+          node --test shared/agents/sovereignCommanderNativeGapIntakeV1.test.mjs
           node --test scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           node --test scripts/sovereign-commander-preservation-converge.test.mjs
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
