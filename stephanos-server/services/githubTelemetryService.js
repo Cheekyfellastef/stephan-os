@@ -183,7 +183,7 @@ async function githubJson(url, auth, options = {}) {
         // A plain permissions 403 is not a rate-limit event: preserve the
         // existing alternate-auth retry only for that distinct case.
         if (response.status === 429 || remaining === '0'
-            || /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message)) {
+            || /(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message)) {
           const retrySeconds = Number(response.headers?.get?.('retry-after'));
           const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
           const requestedMs = Number.isFinite(retrySeconds) && retrySeconds > 0
