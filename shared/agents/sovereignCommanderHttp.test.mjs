@@ -215,7 +215,7 @@ test('expired startup hold rejects during takeover, then admits CPU sampling aft
   }
 });
 
-test('timed-out repair kill cannot reopen CPU probes until child close is observed', () => {
+test('timed-out guardian never kills wrapper or releases repair-tree lease without independent proof', () => {
   const timers = [];
   let child;
   let kills = 0;
@@ -243,20 +243,22 @@ test('timed-out repair kill cannot reopen CPU probes until child close is observ
     const deadline = timers.find((timer) => timer.ms === 240_000);
     assert.ok(deadline);
     deadline.callback();
-    assert.equal(kills, 1);
-    assert.equal(guardian.status().running, true, 'kill request never proves termination');
-    assert.equal(guardian.status().lastBlocker, 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED');
+    assert.equal(kills, 0, 'never kill a wrapper and orphan PowerShell descendants');
+    assert.equal(guardian.status().running, true, 'retains occupied lease');
+    assert.equal(guardian.status().repairTreeUnverified, true);
+    assert.equal(guardian.status().lastBlocker, 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED');
     assert.equal(guardian.beginCpuProbe(), false);
-    assert.equal(guardian.status().scheduled, false, 'no duplicate repair while child is unverified');
+    assert.equal(guardian.runNow(), false);
     child.emit('close', 0);
-    assert.equal(guardian.status().running, false);
+    assert.equal(guardian.status().running, true, 'wrapper exit alone does not prove child tree termination');
     assert.equal(guardian.status().lastOk, false);
-    assert.equal(guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
-    assert.equal(guardian.status().cpuProbeAdmissionExpired, false);
-    assert.equal(guardian.beginCpuProbe(), true);
-    assert.equal(guardian.endCpuProbe(), true);
+    assert.equal(guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED');
+    assert.equal(guardian.status().scheduled, false);
+    assert.equal(guardian.beginCpuProbe(), false);
+    assert.equal(guardian.runNow(), false);
   } finally {
     guardian.stop();
+    assert.equal(kills, 0, 'closing guardian cannot orphan unverified repair descendants');
   }
 });
 
