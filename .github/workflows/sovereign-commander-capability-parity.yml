@@ -5,6 +5,8 @@ on:
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
@@ -33,6 +35,7 @@ on:
       - main
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
@@ -60,6 +63,7 @@ jobs:
       - name: Syntax proof
         run: |
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
+          node --check shared/agents/sovereignCommanderCapabilityCompilerV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
@@ -83,6 +87,7 @@ jobs:
       - name: Focused parity regression tests
         run: |
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
+          node --test shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs
           node --test scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           node --test scripts/sovereign-commander-preservation-converge.test.mjs
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
