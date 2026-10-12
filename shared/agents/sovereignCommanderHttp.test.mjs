@@ -77,6 +77,103 @@ test('Commander-only startup keeps repair guardian enabled but defers its first 
   }
 });
 
+test('CPU action admission defers guardian work through sampler and resumes after a successful call', async () => {
+  const timers = [];
+  const cancelled = [];
+  let created;
+  let cpuCalls = 0;
+  const handlerFactory = () => async (method, _params) => {
+    if (method === 'initialize') return { protocolVersion: '2025-11-25', capabilities: { tools: {} } };
+    if (method === 'tools/call') {
+      cpuCalls += 1;
+      if (cpuCalls === 1) assert.equal(created.continuousRepairStatus().cpuProbeSampling, true);
+      return { ok: true };
+    }
+    return { tools: [] };
+  };
+  created = await createSovereignCommanderHttpServer({
+    token: TOKEN,
+    host: '127.0.0.1',
+    port: 0,
+    cpuProbeAdmissionHold: true,
+    continuousRepairEnabled: true,
+    continuousRepairStartDelayMs: 5000,
+    handlerFactory,
+    continuousRepairSetTimeoutImpl: (callback, ms) => {
+      const timer = { callback, ms, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    continuousRepairClearTimeoutImpl: (timer) => cancelled.push(timer),
+    continuousRepairSpawnImpl: () => { throw new Error('Guardian cannot run during CPU probe'); },
+  });
+  await new Promise((resolve, reject) => {
+    created.server.once('error', reject);
+    created.server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = created.server.address().port;
+  const url = `http://127.0.0.1:${port}/mcp`;
+  const send = async (message, sessionId = '') => fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TOKEN}`,
+      'content-type': 'application/json',
+      ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+    },
+    body: JSON.stringify(message),
+  });
+  try {
+    assert.equal(timers[0].ms, SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS);
+    assert.equal(created.continuousRepairStatus().cpuProbeAdmissionPending, true);
+    const initialized = await send({
+      jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-11-25' },
+    });
+    assert.equal(initialized.status, 200);
+    const sessionId = initialized.headers.get('mcp-session-id');
+    assert.ok(sessionId);
+    const cpu = {
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { actionId: 'cpu-pressure-snapshot' } },
+    };
+    const first = await send(cpu, sessionId);
+    assert.equal(first.status, 200);
+    assert.equal(cpuCalls, 1);
+    assert.equal(cancelled.length, 1, 'pending guardian startup was cancelled on admission');
+    assert.equal(timers[1].ms, 5000, 'normal guardian schedule resumes only after handler returns');
+    assert.equal(created.continuousRepairStatus().cycleCount, 0);
+    assert.equal(created.continuousRepairStatus().cpuProbeSampling, false);
+    assert.equal(created.continuousRepairStatus().cpuProbeAdmissionExpired, false);
+    const second = await send({ ...cpu, id: 3 }, sessionId);
+    assert.equal(second.status, 200, 'subsequent read-only snapshots remain available');
+    assert.equal(cpuCalls, 2);
+  } finally {
+    await new Promise((resolve) => created.server.close(resolve));
+  }
+});
+
+test('CPU probe admission fails closed after guardian startup hold expires', () => {
+  const timers = [];
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    cpuProbeAdmissionHold: true,
+    setTimeoutImpl: (callback, ms) => {
+      const t = { callback, ms, unref() {} };
+      timers.push(t);
+      return t;
+    },
+    clearTimeoutImpl: () => {},
+    spawnImpl: () => { throw new Error('simulated guardian takeover'); },
+  });
+  try {
+    assert.equal(guardian.status().cpuProbeAdmissionPending, true);
+    timers[0].callback();
+    assert.equal(guardian.status().cpuProbeAdmissionExpired, true);
+    assert.equal(guardian.beginCpuProbe(), false);
+  } finally {
+    guardian.stop();
+  }
+});
+
 test('HTTP transport is bearer authenticated and health exposes no secret', async () => withServer(async ({ base }) => {
   const health = await fetch(base + '/health');
   assert.equal(health.status, 200);
