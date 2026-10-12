@@ -169,8 +169,7 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED/);
   assert.match(runner, /PowerShell loads the governor script into memory/);
   assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
-  assert.match(runner, /if \(-not \$CommanderOnly -and -not \$vrGovernorOk\) \{ exit 4 \}/);
-  assert.match(runner, /vrGovernorLifecycleSkipped = \[bool\]\$CommanderOnly/);
+  assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
   assert.match(installer, /run-vr-resource-governor\.ps1/);
   assert.equal((installer.match(/vrResourceGovernorPath = \$vrGovernorPath/g) ?? []).length, 2);
