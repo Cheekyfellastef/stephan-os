@@ -2118,14 +2118,18 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // Sample directly in this existing process, not by recycling the long-lived
   // Commander: diagnostic observation must never start a repair guardian.
   if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
-    const cleanWorking = run(spawnSyncFn, GIT, [
-      '-C', repositoryRoot, 'diff', '--quiet', '--', CPU_SNAPSHOT_SCRIPT,
-    ], { timeout: 10_000 });
-    const cleanIndex = run(spawnSyncFn, GIT, [
-      '-C', repositoryRoot, 'diff', '--cached', '--quiet', '--', CPU_SNAPSHOT_SCRIPT,
-    ], { timeout: 10_000 });
-    if (!cleanWorking.ok || !cleanIndex.ok) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_SCRIPT_NOT_CANONICAL', {
+    // Read exactly the blob from the SHA-approved immutable Git tree.
+    // Never execute a checkout pathname: diff --quiet can be bypassed by
+    // skip-worktree/assume-unchanged and has a time-of-check/use race.
+    const committedScript = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + CPU_SNAPSHOT_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const source = committedScript.stdout;
+    const encodedSource = committedScript.ok && source.length > 0 && source.length <= 12_000
+      ? Buffer.from(source, 'utf16le').toString('base64')
+      : '';
+    if (!encodedSource || encodedSource.length > 28_000) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_COMMITTED_SCRIPT_UNAVAILABLE', {
         remoteAction: 'cpu-pressure-snapshot',
         publicReceiptSafe: true,
         secretMaterialReturned: false,
@@ -2133,7 +2137,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     }
     const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-File', resolve(repositoryRoot, CPU_SNAPSHOT_SCRIPT),
+      '-EncodedCommand', encodedSource,
     ], { timeout: 25_000, maxBuffer: 32 * 1024 });
     const cpuPressure = sampled.ok
       ? safeCpuPressureSnapshotProjection({
