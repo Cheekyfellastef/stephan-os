@@ -218,6 +218,84 @@ test('Stephanos AI live Commander tool proof is a fixed admitted action, not a r
   }
 });
 
+test('a failed local AI Commander probe gives a typed public-safe blocker, never false green', async () => {
+  const payload = {
+    schemaVersion: 'stephanos.sovereign-ai-commander-acceptance.v1',
+    ok: false, toolCalled: false, healthAvailable: false,
+    guardianCycleCount: null, backendRoute: 'UNKNOWN',
+    blocker: 'AI_COMMANDER_CHAT_HTTP_404',
+    readOnly: true, localLoopbackOnly: true,
+    remoteCommanderRequired: false, arbitraryShellAllowed: false,
+    sourceMutationAllowed: false, mergeAuthority: false,
+    coreAwakeProven: false, physicalWorkerPickupProven: false,
+    finalVerdict: 'STEPHANOS_AI_COMMANDER_TOOL_CALL_BLOCKED',
+  };
+  payload.proofHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-stephanos-ai-commander' } },
+    contentText: 'SECRET_PRIVATE_OUTPUT_DO_NOT_RETURN',
+    structuredContent: {
+      ok: true, status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_AI_CHAT_ACCEPTANCE_RESULT=' + JSON.stringify(payload),
+      stderr: 'SECRET_PRIVATE_STDERR',
+      errorCode: '',
+    },
+  };
+  const execute = async (chosen) => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-stephanos-ai-commander' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: chosen }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  const blocked = await execute(maintenance);
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED');
+  assert.equal(blocked.acceptanceBlocker, 'AI_COMMANDER_CHAT_HTTP_404');
+  assert.equal(blocked.toolCalled, false);
+  assert.equal(JSON.stringify(blocked).includes('SECRET_PRIVATE'), false);
+  assert.equal(JSON.stringify(blocked).includes('Users'), false);
+
+  const forged = { ...payload, blocker: 'C:\\SECRET\\LEAK' };
+  const forgedEnvelope = {
+    ...maintenance,
+    structuredContent: {
+      ...maintenance.structuredContent,
+      stdout: 'SOVEREIGN_COMMANDER_AI_CHAT_ACCEPTANCE_RESULT=' + JSON.stringify(forged),
+    },
+  };
+  const rejected = await execute(forgedEnvelope);
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID');
+
+  const passedPayload = {
+    ...payload,
+    ok: true, toolCalled: true, healthAvailable: true,
+    guardianCycleCount: 4, backendRoute: 'system', blocker: '',
+    finalVerdict: 'STEPHANOS_AI_COMMANDER_TOOL_CALL_PROVEN',
+  };
+  delete passedPayload.proofHash;
+  passedPayload.proofHash = createHash('sha256').update(JSON.stringify(passedPayload)).digest('hex');
+  const success = await execute({
+    ...maintenance,
+    structuredContent: {
+      ...maintenance.structuredContent,
+      stdout: 'SOVEREIGN_COMMANDER_AI_CHAT_ACCEPTANCE_RESULT=' + JSON.stringify(passedPayload),
+    },
+  });
+  assert.equal(success.ok, true);
+  assert.equal(success.aiCommanderAcceptance.toolCalled, true);
+  assert.equal(success.aiCommanderAcceptance.guardianCycleCount, 4);
+  assert.equal(success.aiCommanderAcceptance.coreAwakeProven, false);
+  assert.equal(success.aiCommanderAcceptance.sourceMutationAllowed, false);
+  assert.equal(JSON.stringify(success).includes('SECRET_PRIVATE'), false);
+});
+
 test('remote repair delegation exposes the bounded local repair/orchestration registry without arbitrary shell', () => {
   for (const remoteAction of [
     'ignite-stephanos',
