@@ -92,6 +92,9 @@ test('Plus/cloud orchestration contract is source-pinned to the private plugin s
   assert.match(skill, /source-binding\/custody\/lease disagreements remain held/i);
   assert.match(skill, /Do not use the public mailbox to transport source file contents/i);
   assert.match(skill, /same execution command fabric/);
+  assert.match(skill, /canonical Stephanos Executive Command Plane/);
+  assert.match(skill, /GitHub rate limits/);
+  assert.match(skill, /original source-binding\/custody\/lease disagreements remain held|source-binding\/custody\/lease disagreements remain held/);
   assert.match(skill, /ChatGPT Plus may assist but is not a required source/);
   assert.doesNotMatch(skill, /bypass the (?:original|protected) lease/i);
 });
