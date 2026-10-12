@@ -181,6 +181,97 @@ test('GitHub telemetry cache is partitioned by non-secret credential fingerprint
   assert.equal(calls.length, 6);
 });
 
+test('concurrent Goal Dashboard refreshes share a single GitHub request flight', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (url.includes('/pulls?')) return okJson([{ number: 22, title: 'Concurrent PR' }]);
+    if (url.includes('/actions/runs')) return okJson({ workflow_runs: [] });
+    if (url.includes('/notifications')) return okJson([]);
+    throw new Error('unexpected request');
+  };
+  const args = {
+    env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/single-flight-repo', GITHUB_TOKEN: 'single-flight-token' },
+    secretStoreToken: '', fetchImpl, cacheEnabled: true,
+  };
+  const [one, two, three] = await Promise.all([
+    readGithubTelemetry(args), readGithubTelemetry(args), readGithubTelemetry(args),
+  ]);
+  assert.equal(one.status, 'live');
+  assert.equal(two.status, 'live');
+  assert.equal(three.status, 'live');
+  assert.equal(calls.length, 3, 'one 3-endpoint sequence across three concurrent consumers');
+  assert.equal(one.pullRequests.length, 1);
+});
+
+test('rate-limited telemetry shares a durable HOLD with other Battle Bridge workers and skips fallback', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-telemetry-rate-limit-'));
+  let calls = 0;
+  let fallbackAttempts = 0;
+  const repo = 'anti-hammer-test-owner/anti-hammer-test-repo';
+  const fetchImpl = async () => {
+    calls++;
+    return {
+      ok: false, status: 403,
+      headers: { get: (name) => name === 'x-ratelimit-remaining' ? '0'
+        : name === 'retry-after' ? '120' : null },
+      json: async () => ({ message: 'API rate limit exceeded for user ID 123' }),
+    };
+  };
+  try {
+    const args = {
+      env: { GITHUB_REPOSITORY: repo, GITHUB_TOKEN: 'private-telemetry-token' },
+      secretStoreToken: '', workspaceRoot, fetchImpl,
+      ghTokenProvider: async () => { fallbackAttempts++; return 'unused-gh-token'; },
+    };
+    const first = await readGithubTelemetry(args);
+    const repeated = await readGithubTelemetry(args);
+    assert.equal(first.status, 'adapter_error');
+    assert.deepEqual(first.blockers, ['github_rate_limit_backoff']);
+    assert.equal(first.rateLimitHold.reasonCode, 'GITHUB_RATE_LIMIT_BACKOFF');
+    assert.equal(repeated.rateLimitHold.retryAfterUtc, first.rateLimitHold.retryAfterUtc);
+    assert.equal(calls, 1, 'stop at the first rate-limited endpoint; do not launch the other two');
+    assert.equal(fallbackAttempts, 0);
+    assert.equal(first.adapterAvailable, false);
+    assert.equal(first.pullRequests.length, 0);
+    const shared = readBrokeredGithubRateLimitHold({ repository: repo, workspaceRoot });
+    assert.equal(shared?.source, 'SHARED_GITHUB_RATE_LIMIT_HOLD');
+    const pr = await fetchGithubPrEvidence({
+      owner: 'anti-hammer-test-owner', repo: 'anti-hammer-test-repo', prNumber: 42,
+      auth: { token: 'other-token', configured: true, authority: 'environment' }, workspaceRoot,
+      fetchImpl: async () => { throw new Error('must not make a PR API request during shared HOLD'); },
+    });
+    assert.equal(pr.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+    assert.equal(JSON.stringify([first, repeated, pr]).includes('private-telemetry-token'), false);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('telemetry 429 Retry-After records the shared HOLD without credential fallback', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-telemetry-429-'));
+  let fallbackAttempts = 0;
+  try {
+    const result = await readGithubTelemetry({
+      env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/telemetry-429-repo', GITHUB_TOKEN: 'token' },
+      secretStoreToken: '', workspaceRoot,
+      ghTokenProvider: async () => { fallbackAttempts++; return 'other-token'; },
+      fetchImpl: async () => ({
+        ok: false, status: 429,
+        headers: { get: (name) => name === 'retry-after' ? '90' : null },
+        json: async () => ({ message: 'Too many requests' }),
+      }),
+    });
+    const delay = Date.parse(result.rateLimitHold.retryAfterUtc) - Date.now();
+    assert.equal(result.status, 'adapter_error');
+    assert.ok(delay > 75_000 && delay < 100_000);
+    assert.equal(fallbackAttempts, 0);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {
   const startedAt = Date.now();
   const telemetry = await readGithubTelemetry({
