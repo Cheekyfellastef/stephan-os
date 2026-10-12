@@ -46,6 +46,9 @@ test('fixed registry, MCP, and GitHub mailbox expose only bounded CPU snapshot a
   assert.match(mcp, /'cpu-pressure-snapshot'/);
   assert.match(script, /Start-Sleep -Seconds 5/);
   assert.match(script, /StartedTicks -eq \$startTime\.Ticks/);
+  assert.doesNotMatch(script, /\$id\b/i, 'PowerShell $id aliases the reserved $PID variable');
+  assert.match(script, /\$processId = \[int\]\$p\.Id/);
+  assert.match(script, /\$sampleStartedSecond -cne \$metadataStartedSecond/);
   assert.match(script, /rawCommandLinesReturned = \$false/);
   assert.match(script, /processTerminationAllowed = \$false/);
   assert.doesNotMatch(script, /\b(?:Stop-Process|taskkill|Invoke-Expression|Register-ScheduledTask)\b/i);
