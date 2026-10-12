@@ -12,7 +12,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL = '2025-11-25';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-12-cpu-pressure-snapshot-v5';
+const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-05-continuous-repair-reporting-v4';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -69,7 +69,6 @@ export async function ensureSovereignCommanderRuntime({
   fetchFn = globalThis.fetch,
   spawnSyncFn = spawnSync,
   repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
-  commanderOnly = false,
 } = {}) {
   const beforeHealth = await health(fetchFn);
   if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
@@ -78,7 +77,6 @@ export async function ensureSovereignCommanderRuntime({
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
     '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
     '-SkipCoreDaemonLifecycle',
-    ...(commanderOnly ? ['-CommanderOnly', '-SkipDesktopCommanderCrossHeal'] : []),
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
