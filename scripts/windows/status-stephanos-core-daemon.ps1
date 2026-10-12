@@ -43,7 +43,7 @@ if (Test-Path -LiteralPath $coreLockPath -PathType Leaf) {
 }
 $writerProcessObserved = [bool](
     $writerPid -gt 0 -and
-    $null -ne @($processes | Where-Object { [int]$_.ProcessId -eq $writerPid } | Select-Object -First 1)[0]
+    @($processes | Where-Object { [int]$_.ProcessId -eq $writerPid }).Count -eq 1
 )
 $lockOwnerMatchesWriter = [bool]($lockOwnerPid -gt 0 -and $lockOwnerPid -eq $writerPid)
 $singleWriterProven = [bool](
