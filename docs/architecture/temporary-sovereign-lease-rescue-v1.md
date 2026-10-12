@@ -46,17 +46,25 @@ admission. It is not an alternate source writer.
 - No claim that source-level code is installed, supervised or executing on
   Battle Bridge merely because this PR exists or CI passes.
 - The `--watch` mode itself does not provide Windows boot persistence or
-  single-instance OS supervision. Existing reviewed #1814 lifeboat / Recovery
-  Mesh should own that attachment only after its Windows authority review.
+  single-instance OS supervision. The source integration in the existing
+  Windows Recovery Mesh calls the fixed `--once` child only after canonical
+  Recovery Mesh task, path, mutex, source and healthy-control-plane guards
+  pass. It is bounded to twelve seconds, reports failures independently and
+  does not change Recovery Mesh's own protected repair status. This attaches
+  to an *existing task*, not a new daemon or Scheduled Task.
+- As with all source changes, the new Recovery Mesh attachment does **not**
+  become live merely when CI passes. Protected merge, Battle Bridge source
+  sync, Windows specialist review and a real task-cycle receipt remain gates.
 
 ## Gates to live operation
 
 1. Run `node --test shared/agents/temporarySovereignLeaseRescueV1.test.mjs`
    and relevant lease authority tests; independently review the exact PR head.
 2. Protected merge and source-head-safe deployment to Battle Bridge.
-3. Attach to an existing qualified Recovery Mesh/lifeboat service, proving
-   single-flight and restart endurance, rather than installing a duplicate
-   source writer or allowing simultaneous watch instances.
+3. After protected merge and deployment, prove that the **existing**
+   Recovery Mesh Scheduled Task invokes the source-attached bounded observer
+   on an eligible Windows cycle; prove single-flight, timeout fail-close and
+   restart endurance. Do not separately start `--watch` as a second owner.
 4. Obtain fresh status for the real #2962 r7 original; reconcile only exact
    terminal/original-owner evidence. If it remains mismatched, repair the
    original source chain using an isolated reviewed branch (PR #3023)
