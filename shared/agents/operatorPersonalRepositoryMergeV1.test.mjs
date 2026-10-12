@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { selectBattleBridgeGitHubCommandBatch } from './battleBridgeGitHubCommandMailbox.mjs';
 import { deflateRawSync } from 'node:zlib';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
@@ -1287,7 +1288,7 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('mailbox authorization binds the exact owner actor and rejects legacy bot or lookalike transport identities', () => {
+test('mailbox dispatch actor must match verified owner-comment provenance without granting bot approval authority', () => {
   const mailboxAuthorization = {
     authorizedAtUtc: '2026-09-20T11:55:03Z',
     commentId: 5749628881,
@@ -1295,37 +1296,46 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
     requestId: 'multiplexer-control-plane-protected-merge-2300-cdb875c6-20260920-v1',
     transportActor: 'Cheekyfellastef',
   };
-  const ready = validatePersonalRepositoryDispatchExecution(
+  const ownerReady = validatePersonalRepositoryDispatchExecution(
     dispatchExecutionInput(),
     { ...expectedDispatchExecution, mailboxAuthorization },
   );
-  assert.equal(ready.valid, true);
-  assert.deepEqual(ready.currentMismatches, []);
+  assert.equal(ownerReady.valid, true);
 
-  for (const transportActor of ['github-actions[bot]', 'lookalike-operator']) {
-    const blocked = validatePersonalRepositoryDispatchExecution(
-      dispatchExecutionInput(),
-      {
-        ...expectedDispatchExecution,
-        mailboxAuthorization: { ...mailboxAuthorization, transportActor },
-      },
-    );
-    assert.equal(blocked.valid, false, transportActor);
-    assert.ok(
-      blocked.blockers.includes('personal-repository-mailbox-authorization-provenance-invalid'),
-      transportActor,
-    );
-  }
+  // github-actions[bot] is the fixed mailbox carrier; only authenticated
+  // owner-comment provenance can bind it to the actual workflow-run actor.
+  const botRun = dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } });
+  const botAuthorization = { ...mailboxAuthorization, transportActor: 'github-actions[bot]' };
+  const botReady = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ run: botRun }),
+    { ...expectedDispatchExecution, mailboxAuthorization: botAuthorization },
+  );
+  assert.equal(botReady.valid, true, JSON.stringify(botReady.blockers));
+  assert.deepEqual(botReady.currentMismatches, []);
+
+  // A bot run without the owner-comment provenance must remain blocked.
+  const unprovedBot = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ run: botRun }),
+    expectedDispatchExecution,
+  );
+  assert.equal(unprovedBot.valid, false);
+  assert.ok(unprovedBot.currentMismatches.includes('triggering-actor'));
 
   const wrongRunActor = validatePersonalRepositoryDispatchExecution(
-    dispatchExecutionInput({
-      run: dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } }),
-    }),
+    dispatchExecutionInput({ run: botRun }),
     { ...expectedDispatchExecution, mailboxAuthorization },
   );
   assert.equal(wrongRunActor.valid, false);
-  assert.deepEqual(wrongRunActor.currentMismatches, ['triggering-actor']);
-  assert.ok(wrongRunActor.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+  assert.ok(wrongRunActor.currentMismatches.includes('triggering-actor'));
+
+  for (const badActor of ['lookalike-operator', 'github-actions[bot]-evil', '']) {
+    const denied = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: dispatchRun({ triggering_actor: { login: badActor } }) }),
+      { ...expectedDispatchExecution, mailboxAuthorization: { ...mailboxAuthorization, transportActor: badActor } },
+    );
+    assert.equal(denied.valid, false, badActor);
+    assert.ok(denied.blockers.includes('personal-repository-mailbox-authorization-provenance-invalid'));
+  }
 });
 
 test('prior authority jobs bind one complete canonical parent-run envelope', () => {
@@ -1648,24 +1658,32 @@ test('malformed source-matching prior run blocks instead of evading replay proof
   assert.ok(invalidContainer.blockers.includes('personal-repository-prior-runs-invalid'));
 });
 
-test('wrong actor or source title cannot become an exact prior operator replay', () => {
+test('unrelated source title is ignored, but matching-source lookalike transport is malformed', () => {
+  const unrelated = dispatchRun({
+    id: runId + 14,
+    name: `Protected operator merge ${'9'.repeat(40)}`,
+    display_title: `Protected operator merge ${'9'.repeat(40)}`,
+  });
   const ready = validatePersonalRepositoryDispatchExecution(
-    dispatchExecutionInput({
-      priorRuns: [
-        dispatchRun(),
-        dispatchRun({ id: runId + 13, triggering_actor: { login: 'lookalike-operator' } }),
-        dispatchRun({
-          id: runId + 14,
-          name: `Protected operator merge ${'9'.repeat(40)}`,
-          display_title: `Protected operator merge ${'9'.repeat(40)}`,
-        }),
-      ],
-    }),
+    dispatchExecutionInput({ priorRuns: [dispatchRun(), unrelated] }),
     expectedDispatchExecution,
   );
   assert.equal(ready.valid, true);
   assert.deepEqual(ready.replayRunIds, []);
   assert.deepEqual(ready.malformedPriorRunIds, []);
+
+  const blocked = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({ priorRuns: [
+      dispatchRun(),
+      dispatchRun({ id: runId + 13, triggering_actor: { login: 'lookalike-operator' } }),
+      unrelated,
+    ] }),
+    expectedDispatchExecution,
+  );
+  assert.equal(blocked.valid, false);
+  assert.deepEqual(blocked.replayRunIds, []);
+  assert.deepEqual(blocked.malformedPriorRunIds, [runId + 13]);
+  assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-invalid'));
 });
 
 test('all seven universally applicable exact-head workflow identities must be active and successful', () => {
@@ -2491,4 +2509,147 @@ test('unbound push duplicate is neutral only when the same check has an exact PR
     assert.equal(hostile.valid, false, label);
     assert.ok(hostile.blockers.includes('personal-repository-check-run-identity-invalid'), label);
   }
+});
+
+test('protected workflow treats GitHub Actions as transport only and still proves the owner comment', () => {
+  const workflow = readFileSync(
+    new URL('../../.github/workflows/operator-merge-approval-gate.yml', import.meta.url),
+    'utf8',
+  );
+  const entry = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(workflow, /Prove exact owner-authored mailbox authorization/);
+  assert.match(workflow, /validateProtectedWorkflowAuthorizationComment\(comment/);
+  assert.match(workflow, /github-actions\[bot\]/);
+  assert.match(workflow, /AUTHORIZATION_COMMENT_ID:/);
+  assert.match(workflow, /Re-prove immutable evidence after protected approval/);
+  assert.match(entry, /MAILBOX_GITHUB_ACTIONS_ACTOR_ID = 41898282/);
+  assert.match(entry, /validateProtectedWorkflowAuthorizationComment\(comment/);
+  assert.match(entry, /!trustedOwnerTransport && !trustedMailboxCarrier/);
+  assert.match(workflow, /Mark exact authorized pull request ready and publish lifecycle proof/);
+  // The separate ready path is unchanged and still requires the owner actor.
+  assert.match(workflow, /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
+});
+
+test('base-versus-source mailbox regression stays within protected merge admission only', () => {
+  const prHead = 'a'.repeat(40), mainHead = 'b'.repeat(40);
+  const cmd = {
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: 'protected-merge-source-base-regression',
+    operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: prHead,
+    expiresAt: '2026-08-05T18:00:00.000Z',
+    prNumber: 2990,
+    expectedBase: mainHead,
+    reviewRunId: 38158830639,
+    reviewRunAttempt: 2,
+    reviewJobId: 114527934835,
+    reviewArtifactId: 11709144337,
+    reviewArtifactDigest: `sha256:${'c'.repeat(64)}`,
+    reviewPayloadSha256: 'd'.repeat(64),
+    reviewMode: 'qualified-operator-bootstrap',
+    reviewFindingCode: 'approval-boundary-v2-self-change-requires-qualified-review',
+    mergeMethod: 'squash',
+    mergeApprovalToken: `APPROVE_OPENCLAW_SQUASH_MERGE:2990:${prHead}`,
+  };
+  const makeComment = (value) => [{
+    id: 12,
+    created_at: '2026-08-05T16:29:00.000Z',
+    user: { login: 'Cheekyfellastef' },
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(value) + '\n```',
+  }];
+  const now = new Date('2026-08-05T16:30:00.000Z');
+  const accepted = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: mainHead });
+  assert.equal(accepted.verdict, 'COMMAND_BATCH_READY', JSON.stringify(accepted));
+  assert.equal(accepted.commands.length, 1);
+  assert.equal(accepted.commands[0].command.expectedHead, prHead);
+  assert.equal(accepted.commands[0].command.expectedBase, mainHead);
+  const rejected = selectBattleBridgeGitHubCommandBatch(makeComment(cmd), { now, currentHead: 'e'.repeat(40) });
+  assert.equal(rejected.verdict, 'NO_COMMAND_READY');
+  assert.equal(rejected.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  const unsafeWiden = selectBattleBridgeGitHubCommandBatch(makeComment({
+    ...cmd, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+  }), { now, currentHead: mainHead });
+  assert.equal(unsafeWiden.verdict, 'NO_COMMAND_READY');
+  assert.equal(unsafeWiden.terminalRejections[0].blocker, 'PROTECTED_MERGE_FIELD_NOT_ALLOWED');
+  const ordinary = {
+    schemaVersion: cmd.schemaVersion,
+    requestId: 'ordinary-control-main-head-regression',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    repository: cmd.repository,
+    issueNumber: cmd.issueNumber,
+    branch: cmd.branch,
+    operatorApproval: cmd.operatorApproval,
+    expectedHead: prHead,
+    expiresAt: cmd.expiresAt,
+  };
+  const ordinaryControl = selectBattleBridgeGitHubCommandBatch(makeComment(ordinary), { now, currentHead: mainHead });
+  assert.equal(ordinaryControl.verdict, 'NO_COMMAND_READY');
+  assert.equal(ordinaryControl.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
+
+
+test('fixed bot and owner dispatches share one protected head/base replay domain', () => {
+  const priorRunId = runId + 10;
+  for (const [currentActor, previousActor] of [
+    ['Cheekyfellastef', 'github-actions[bot]'],
+    ['github-actions[bot]', 'Cheekyfellastef'],
+  ]) {
+    const mailboxAuthorization = {
+      authorizedAtUtc: '2026-09-20T11:55:03Z',
+      commentId: 5749628881,
+      operatorAuthor: 'Cheekyfellastef',
+      requestId: 'guarded-cross-carrier-replay-v1',
+      transportActor: currentActor,
+    };
+    const current = dispatchRun({ triggering_actor: { login: currentActor } });
+    const prior = dispatchRun({ id: priorRunId,
+      triggering_actor: { login: previousActor },
+      status: 'completed', conclusion: 'failure',
+    });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ run: current, priorRuns: [current, prior] }),
+      { ...expectedDispatchExecution, mailboxAuthorization },
+    );
+    assert.equal(blocked.valid, false, currentActor + ':' + previousActor);
+    assert.deepEqual(blocked.currentMismatches, [], currentActor);
+    assert.deepEqual(blocked.replayRunIds, [priorRunId], currentActor);
+    assert.ok(blocked.blockers.includes('personal-repository-prior-attempt-exists'), currentActor);
+
+    const replayProof = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({
+        run: current,
+        priorRuns: [current, prior],
+        priorRunJobSets: [{ runId: priorRunId, jobs: priorFailureJobs() }],
+      }),
+      { ...expectedDispatchExecution, mailboxAuthorization },
+    );
+    assert.equal(replayProof.valid, true, JSON.stringify(replayProof.blockers));
+    assert.deepEqual(replayProof.retryablePriorRunIds, [priorRunId]);
+  }
+});
+
+test('malformed or lookalike prior carrier cannot evade same-source replay via mismatch', () => {
+  const priorRunId = runId + 11;
+  for (const badActor of ['lookalike-operator', '', 'github-actions[bot]-other']) {
+    const prior = dispatchRun({
+      id: priorRunId, triggering_actor: { login: badActor },
+      status: 'completed', conclusion: 'failure',
+    });
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({ priorRuns: [dispatchRun(), prior] }),
+      expectedDispatchExecution,
+    );
+    assert.equal(blocked.valid, false, badActor);
+    assert.ok(blocked.malformedPriorRunIds.includes(priorRunId), badActor);
+  }
+});
+
+test('merge executor compares current actor to proved owner-comment authorization without dead constant', () => {
+  const entry = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(entry, /transportActor === text\(authorization\.transportActor\)\.toLowerCase\(\)/);
+  assert.doesNotMatch(entry, /\bMAILBOX_TRANSPORT_ACTOR\b/);
 });

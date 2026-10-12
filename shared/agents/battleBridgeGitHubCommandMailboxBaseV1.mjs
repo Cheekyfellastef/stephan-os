@@ -642,10 +642,17 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     if (seenRequestIds.has(validated.command.requestId)) continue;
     const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
     const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
+    // A protected merge binds two different commits: expectedHead is the PR
+    // source and expectedBase is canonical main. The downstream protected
+    // adapter independently checks the exact source, base, review and approval.
+    // All other control commands remain pinned to expectedHead === main.
+    const expectedMainHead = validated.command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION
+      ? String(validated.command.expectedBase || '').trim().toLowerCase()
+      : expectedHead;
     if (normalizedCurrentHead
       && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
       && SHA_PATTERN.test(expectedHead)
-      && expectedHead !== normalizedCurrentHead) {
+      && (!SHA_PATTERN.test(expectedMainHead) || expectedMainHead !== normalizedCurrentHead)) {
       seenRequestIds.add(validated.command.requestId);
       const superseded = Object.freeze({
         ok: false,

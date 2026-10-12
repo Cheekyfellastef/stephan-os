@@ -70,7 +70,9 @@ const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
-const MAILBOX_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR.toLowerCase();
+const MAILBOX_OWNER_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR.toLowerCase();
+const MAILBOX_GITHUB_ACTIONS_TRANSPORT_ACTOR = 'github-actions[bot]';
+const MAILBOX_GITHUB_ACTIONS_ACTOR_ID = 41898282;
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
 class GateError extends Error {
@@ -267,8 +269,12 @@ function mailboxTransportActor(run = {}) {
 
 async function proveMailboxAuthorization(context, run) {
   const transportActor = mailboxTransportActor(run);
-  if (transportActor !== MAILBOX_TRANSPORT_ACTOR) {
-    fail('Protected merge workflow transport actor is not the canonical owner-dispatched mailbox transport.', {
+  const transportIdentity = run?.triggering_actor || run?.actor || {};
+  const trustedOwnerTransport = transportActor === MAILBOX_OWNER_TRANSPORT_ACTOR;
+  const trustedMailboxCarrier = transportActor === MAILBOX_GITHUB_ACTIONS_TRANSPORT_ACTOR
+    && Number(transportIdentity.id) === MAILBOX_GITHUB_ACTIONS_ACTOR_ID;
+  if (!trustedOwnerTransport && !trustedMailboxCarrier) {
+    fail('Protected merge transport requires the owner or the authenticated fixed mailbox carrier.', {
       blockers: ['personal-repository-mailbox-transport-actor-mismatch'],
       transportActor,
     });
@@ -389,7 +395,9 @@ async function currentWorkflowExecution(context) {
     ...execution.currentMismatches,
     ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
-    ...(transportActor === MAILBOX_TRANSPORT_ACTOR ? [] : ['transport-actor']),
+    // Owner comment provenance was validated by proveMailboxAuthorization.
+    // Compare to THAT run-bound carrier, not a deleted owner-only constant.
+    ...(transportActor === text(authorization.transportActor).toLowerCase() ? [] : ['transport-actor']),
   ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact mailbox-transported trusted-main execution.', {

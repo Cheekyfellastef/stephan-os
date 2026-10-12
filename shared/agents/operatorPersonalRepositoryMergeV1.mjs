@@ -998,11 +998,23 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     && strictPositiveInteger(mailboxAuthorization.commentId)
     && text(mailboxAuthorization.requestId)
     && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
-    && text(mailboxAuthorization.transportActor).toLowerCase() === nativeOwnerActor
+    && [
+      nativeOwnerActor,
+      'github-actions[bot]',
+    ].includes(text(mailboxAuthorization.transportActor).toLowerCase())
     && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
     && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
   );
-  const expectedActor = nativeOwnerActor;
+  // A valid mailbox authorization is bound to the original owner comment
+  // and the authenticated transport actor by the trusted evidence collector.
+  // Only that exact validated provenance can change the expected workflow actor.
+  const expectedActor = mailboxAuthorizationValid
+    ? text(mailboxAuthorization.transportActor).toLowerCase()
+    : nativeOwnerActor;
+  // The current run must match its authenticated owner comment's carrier.
+  // Replay accounting must span BOTH admitted carriers: alternating owner
+  // and fixed GitHub Actions delivery cannot open a new authority lane.
+  const replayCarrierActors = new Set([nativeOwnerActor, 'github-actions[bot]']);
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1037,7 +1049,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     const candidateActor = personalRepositoryDispatchActor(candidate);
     const sourceMatching = text(candidate?.name) === expectedTitle
       || text(candidate?.display_title) === expectedTitle;
-    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    if (!sourceMatching) continue;
     const candidateBase = text(candidate?.head_sha).toLowerCase();
     const exactIdentity = Boolean(
       candidateId
@@ -1051,7 +1063,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       && SHA_PATTERN.test(candidateBase)
       && text(candidate?.head_branch) === 'main'
       && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
-      && candidateActor === expectedActor
+      && replayCarrierActors.has(candidateActor)
     );
     if (!exactIdentity) {
       malformedPriorRunIds.push(candidateId || 0);
