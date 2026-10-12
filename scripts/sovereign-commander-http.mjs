@@ -421,6 +421,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   if (!token) throw new Error('SOVEREIGN_COMMANDER_BEARER_TOKEN_REQUIRED');
 
   const sessions = new Map();
+  const initializedSessions = new Set();
+  const cpuToolListedSessions = new Set();
   const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({ repoRoot: options.repoRoot }));
   const now = options.now || (() => new Date().toISOString());
@@ -519,6 +521,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         const sessionId = text(req.headers['mcp-session-id']);
         if (!sessionId || !sessions.has(sessionId)) return sendJson(res, 404, { ok: false, blocker: 'MCP_SESSION_NOT_FOUND' });
         sessions.delete(sessionId);
+        initializedSessions.delete(sessionId);
+        cpuToolListedSessions.delete(sessionId);
         res.writeHead(204, { 'cache-control': 'no-store' });
         return res.end();
       }
@@ -542,9 +546,15 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       const cpuProbeAction = message.method === 'tools/call'
         && message.params?.name === 'maintenance_action'
         && message.params?.arguments?.actionId === 'cpu-pressure-snapshot';
-      if (options.cpuProbeAdmissionHold === true && cpuProbeAction
-        && continuousRepairGuardian?.beginCpuProbe() !== true) {
-        return sendJson(res, 409, rpcError(message.id, -32002, 'SOVEREIGN_COMMANDER_CPU_PROBE_ADMISSION_EXPIRED'));
+      if (options.cpuProbeAdmissionHold === true && cpuProbeAction) {
+        // Only a fully initialized authenticated MCP session which proved the
+        // fixed action surface can claim this one-time startup isolation.
+        if (!initializedSessions.has(sessionId) || !cpuToolListedSessions.has(sessionId)) {
+          return sendJson(res, 409, rpcError(message.id, -32003, 'SOVEREIGN_COMMANDER_CPU_PROBE_SESSION_NOT_READY'));
+        }
+        if (continuousRepairGuardian?.beginCpuProbe() !== true) {
+          return sendJson(res, 409, rpcError(message.id, -32002, 'SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_ACTIVE_OR_EXPIRED'));
+        }
       }
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
@@ -562,6 +572,15 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         if (options.cpuProbeAdmissionHold === true && cpuProbeAction) continuousRepairGuardian?.endCpuProbe();
       }
       if (initializing) sessions.set(sessionId, handler);
+      if (message.method === 'notifications/initialized' && result === undefined) {
+        initializedSessions.add(sessionId);
+      }
+      if (message.method === 'tools/list' && initializedSessions.has(sessionId)
+        && Array.isArray(result?.tools)
+        && result.tools.some((tool) => tool?.name === 'maintenance_action'
+          && tool?.inputSchema?.properties?.actionId?.enum?.includes?.('cpu-pressure-snapshot'))) {
+        cpuToolListedSessions.add(sessionId);
+      }
       const headers = { 'mcp-session-id': sessionId };
 
       if (isNotification || result === undefined) {
