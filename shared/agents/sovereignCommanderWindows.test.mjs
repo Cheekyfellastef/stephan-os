@@ -163,11 +163,11 @@ test('watchdog recycles only verified Sovereign Commander processes when capabil
 });
 
 
-test('PowerShell watchdog emits each receipt key exactly once', () => {
-  const keys = [...runner.matchAll(/^\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*/gm)].map((match) => match[1]);
-  const propertyBlock = runner.slice(runner.indexOf('[pscustomobject]@{', runner.indexOf('$overallOk =')));
-  const occurrenceCount = (name) => (propertyBlock.match(new RegExp('^\\s*' + name + '\\s*=', 'gm')) || []).length;
-  assert.equal(occurrenceCount('desktopCommanderCrossHealSkipped'), 1);
+test('PowerShell watchdog emits every result-object receipt key only once', () => {
+  const propertyBlock = runner.slice(runner.lastIndexOf('[pscustomobject]@{'));
+  const names = [...propertyBlock.matchAll(/^    ([A-Za-z][A-Za-z0-9]*)\s*=/gm)].map((hit) => hit[1]);
+  assert.ok(names.length > 40, 'expected complete watchdog status projection');
+  assert.deepEqual(names.filter((name, index) => names.indexOf(name) !== index), []);
   assert.match(propertyBlock, /desktopCommanderCrossHealSkipped = \[bool\]\(\$CommanderOnly -or \$SkipDesktopCommanderCrossHeal\)/);
 });
 
