@@ -217,7 +217,7 @@ test('canonical plan and coordinate jobs enforce installation reserve before Git
   assert.ok(plan.includes("github.event_name != 'pull_request'"));
 });
 
-test('5-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
+test('15-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
   const estate = Array.from({ length: 145 }, (_, index) => ({
     number: 4000 - index, draft: index % 6 === 0,
   }));
@@ -251,4 +251,46 @@ test('discovery fails closed for duplicated/unknown PR identity and bounded sele
   assert.match(dispatcher, /selectExactHeadDiscoveryWindowV1\(openPullRequests\)/);
   assert.match(dispatcher, /mapWithConcurrency\(boundedCandidates, 8,/);
   assert.doesNotMatch(dispatcher, /mapWithConcurrency\(openPullRequests, 8,/);
+});
+
+
+test('anti-hammer review scheduling preserves immediate qualified review while dropping duplicate CI fanout', () => {
+  const workflow = readWorkflow();
+  const uiWorkflow = fs.readFileSync(
+    new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8',
+  );
+  // A single independent security-review completion can wake coordinator.
+  // All normal pull_request source checks, owner comment and manual triggers
+  // remain, and the 15 minute fallback continues to discover older PRs.
+  assert.match(workflow, /workflow_run:\s*\n\s+workflows:\s*\n\s+- Independent Merge Security Review/);
+  for (const old of [
+    '      - OpenClaw GitHub Operator',
+    '      - PR Clean Guard',
+    '      - Build Stephanos UI',
+    '      - Battle Bridge Publisher Proof',
+    '      - Codex Dispatch Queue Proof',
+  ]) {
+    assert.equal(workflow.includes(old), false, 'duplicate workflow completion wakes a reviewer');
+  }
+  assert.match(workflow, /pull_request:\s*\n\s+branches:/);
+  assert.match(workflow, /issue_comment:\s*\n\s+types:/);
+  assert.match(workflow, /workflow_dispatch:\s*\n\s+inputs:/);
+  assert.match(workflow, /schedule:\s*\n\s+- cron: '\*\/15 \* \* \* \*'/);
+  assert.equal(EXACT_HEAD_DISCOVERY_WINDOW_MS, 15 * 60_000);
+  assert.match(workflow, /max-parallel: 1/);
+  assert.match(workflow, /group: exact-head-review-dispatch-\$\{\{ github\.repository \}\}-pr-\$\{\{ matrix\.target\.prNumber \}\}/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  // The 30-minute Pages catch-up still runs, but must not spawn five sets
+  // of unrelated suite checks every time it deploys the same source head.
+  assert.match(uiWorkflow, /cron: '\*\/30 \* \* \* \*'/);
+  const suiteJobs = ['scheduler-tests', 'runtime-guardrail-tests', 'surface-ignition-tests', 'vr-research-tests', 'build'];
+  for (const job of suiteJobs) {
+    const start = uiWorkflow.indexOf('\n  '+job+':');
+    assert.ok(start >= 0, 'missing ' + job);
+    const conditional = uiWorkflow.slice(start, uiWorkflow.indexOf('\n    runs-on:',start));
+    assert.match(conditional, /github\.event_name != 'schedule'/);
+  }
+  const pagesDeploy=uiWorkflow.slice(uiWorkflow.indexOf('\n  pages-deploy:'));
+  assert.match(pagesDeploy, /github\.event_name == 'schedule'/);
+  assert.match(pagesDeploy, /name: Deploy current main to GitHub Pages/);
 });
