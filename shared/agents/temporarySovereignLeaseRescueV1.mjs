@@ -24,7 +24,7 @@ function code(value, fallback) {
 }
 function leaseKey(value) {
   const raw = String(value || '');
-  return /^critical-[1-9]\d*-elastic-goal-r[1-9]\d*-lease$/.test(raw) ? raw : '';
+  return /^critical-2962-elastic-goal-r[1-9]\d*-lease$/.test(raw) ? raw : '';
 }
 const noAuthority = Object.freeze({
   sourceMutationAllowed: false,
