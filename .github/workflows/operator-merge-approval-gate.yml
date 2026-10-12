@@ -586,6 +586,7 @@ jobs:
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         shell: bash
         env:
+          STEPHANOS_PRE_MUTATION_FAILURE_PATH: ${{ runner.temp }}/pre-mutation-failure.json
           GH_TOKEN: ${{ github.token }}
           STEPHANOS_RULESET_PROOF_TOKEN: ${{ steps.ruleset-proof-token.outputs.token }}
           STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ needs.personal-repository-evidence.outputs.authorization_comment_id }}
@@ -948,4 +949,13 @@ jobs:
           name: stephanos-pr-ready-${{ inputs.pr_number }}-${{ inputs.expected_head }}
           path: ready-proof/
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve exact failure before any merge request
+        if: ${{ failure() && inputs.mode == 'user-owned-protected-squash' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-protected-pre-mutation-failure-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pre-mutation-failure.json
+          if-no-files-found: ignore
           retention-days: 30

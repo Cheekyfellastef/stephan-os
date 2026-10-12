@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { deflateRawSync } from 'node:zlib';
+import {
+  buildPreMutationFailureReceipt,
+  createPreMutationFailureBoundary,
+  preMutationFailureArtifactName,
+  validatePreMutationFailureArtifact,
+  validatePreMutationFailureReceipt,
+} from './operatorPersonalRepositoryMergeV1.mjs';
 import {
   PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES,
@@ -977,6 +988,9 @@ function normalizedPriorFailureJobs(attempts = 1, parentRunId = runId + 10) {
 
 const expectedDispatchExecution = Object.freeze({
   repository,
+  prNumber,
+  branch,
+  sourceTree,
   sourceHead,
   baseSha,
   workflowRunId: runId,
@@ -1353,6 +1367,168 @@ test('prior authority jobs bind one complete canonical parent-run envelope', () 
     assert.equal(blocked.valid, false, name);
     assert.ok(blocked.blockers.length > 0, name);
     assert.equal(blocked.receipt, null, name);
+  }
+});
+
+function preMutationFailureFixture(attempts = 1, parentRunId = runId + 10) {
+  const run = dispatchRun({ id: parentRunId, run_attempt: attempts, status: 'completed', conclusion: 'failure' });
+  const jobs = priorFailureJobs({
+    [PERSONAL_REPOSITORY_EVIDENCE_JOB]: { conclusion: 'success' },
+    [PERSONAL_REPOSITORY_APPROVAL_JOB]: { conclusion: 'success' },
+    [PERSONAL_REPOSITORY_MERGE_JOB]: {
+      conclusion: 'failure', started_at: '2026-10-03T10:00:00Z', completed_at: '2026-10-03T10:01:00Z',
+    },
+  }, attempts, parentRunId);
+  const preMutationFailures = Array.from({ length: attempts }, (_, index) => ({
+    receipt: buildPreMutationFailureReceipt({
+      repository, prNumber, branch, sourceHead, sourceTree, baseSha,
+      workflowRunId: parentRunId, workflowRunAttempt: index + 1,
+    }, { mode: 'evidence', mergeRequestAttempted: false, now: new Date('2026-10-03T10:00:30Z') }),
+    artifactId: 900 + index,
+    archiveDigest: `sha256:${'a'.repeat(64)}`,
+    payloadSha256: 'b'.repeat(64),
+  }));
+  return { run, jobs, preMutationFailures };
+}
+
+test('fresh dispatch recovers complete failed final validation only with exact immutable pre-mutation proof', () => {
+  for (const attempts of [1, 2, PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX]) {
+    const fixture = preMutationFailureFixture(attempts);
+    const ready = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+      priorRuns: [dispatchRun(), fixture.run],
+      priorRunJobSets: [{ runId: fixture.run.id, jobs: fixture.jobs, preMutationFailures: fixture.preMutationFailures }],
+    }), expectedDispatchExecution);
+    assert.equal(ready.valid, true, JSON.stringify(ready.blockers));
+    assert.deepEqual(ready.replayRunIds, []);
+    assert.deepEqual(ready.retryablePriorFailures[0].preMutationFailures, fixture.preMutationFailures);
+  }
+});
+
+test('one missing, duplicate, widened or stale failure proof blocks the entire all-attempt history', () => {
+  const fixture = preMutationFailureFixture(2);
+  const original = fixture.preMutationFailures;
+  const receiptMutations = [
+    { repository: 'Cheekyfellastef/lookalike' }, { prNumber: prNumber + 1 }, { branch: `${branch}-other` },
+    { sourceHead: 'f'.repeat(40) }, { sourceTree: 'f'.repeat(40) }, { baseSha: 'f'.repeat(40) },
+    { workflowRunId: fixture.run.id + 1 }, { workflowRunAttempt: 3 },
+    { workflowJob: PERSONAL_REPOSITORY_APPROVAL_JOB }, { operationMode: 'unknown' },
+    { mergeRequestAttempted: true }, { createdAtUtc: '2026-10-03T10:02:00Z' },
+    { createdAtUtc: '2026-10-03T09:59:59Z' }, { extraAuthority: true },
+  ];
+  const hostileProofs = [
+    original.slice(1), [original[0], original[0]], [...original, original[0]],
+    ...receiptMutations.map((mutation) => [original[0], { ...original[1], receipt: { ...original[1].receipt, ...mutation } }]),
+    [original[0], { ...original[1], artifactId: 0 }],
+    [original[0], { ...original[1], artifactId: original[0].artifactId }],
+    [original[0], { ...original[1], archiveDigest: 'lookalike' }],
+    [original[0], { ...original[1], payloadSha256: 'lookalike' }],
+  ];
+  for (const preMutationFailures of hostileProofs) {
+    const blocked = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+      priorRuns: [dispatchRun(), fixture.run],
+      priorRunJobSets: [{ runId: fixture.run.id, jobs: fixture.jobs, preMutationFailures }],
+    }), expectedDispatchExecution);
+    assert.equal(blocked.valid, false, JSON.stringify(preMutationFailures));
+    assert.deepEqual(blocked.retryablePriorFailures, []);
+  }
+});
+
+test('pre-mutation proof cannot replace canonical job envelopes, terminal failures or fresh-run approval', () => {
+  const fixture = preMutationFailureFixture();
+  for (const jobs of [
+    fixture.jobs.map((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB ? { ...job, conclusion: 'success' } : job),
+    fixture.jobs.map((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB ? { ...job, status: 'in_progress' } : job),
+    fixture.jobs.map((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB ? { ...job, run_id: runId } : job),
+    fixture.jobs.map((job) => job.name === PERSONAL_REPOSITORY_APPROVAL_JOB ? { ...job, conclusion: 'skipped' } : job),
+    fixture.jobs.map((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB ? { ...job, started_at: null } : job),
+  ]) {
+    const blocked = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+      priorRuns: [dispatchRun(), fixture.run],
+      priorRunJobSets: [{ runId: fixture.run.id, jobs, preMutationFailures: fixture.preMutationFailures }],
+    }), expectedDispatchExecution);
+    assert.equal(blocked.valid, false);
+  }
+  const replay = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+    run: dispatchRun({ run_attempt: 2 }),
+  }), { ...expectedDispatchExecution, workflowRunAttempt: 2 });
+  assert.equal(replay.valid, false);
+});
+
+test('artifact proof binds the exact failed workflow run, attempt, digest, size and expiry', () => {
+  const fixture = preMutationFailureFixture();
+  const job = fixture.jobs.find((job) => job.name === PERSONAL_REPOSITORY_MERGE_JOB);
+  const artifact = {
+    id: 900, name: preMutationFailureArtifactName(fixture.run.id, 1), expired: false,
+    size_in_bytes: 1000, digest: `sha256:${'a'.repeat(64)}`,
+    workflow_run: { id: fixture.run.id, head_sha: baseSha },
+  };
+  assert.equal(validatePreMutationFailureArtifact(artifact, fixture.run, job).valid, true);
+  for (const mutation of [
+    { id: 0 }, { name: preMutationFailureArtifactName(fixture.run.id, 2) }, { expired: true },
+    { size_in_bytes: 0 }, { size_in_bytes: 65537 }, { digest: 'missing' },
+    { workflow_run: { id: runId, head_sha: baseSha } },
+    { workflow_run: { id: fixture.run.id, head_sha: 'f'.repeat(40) } },
+  ]) assert.equal(validatePreMutationFailureArtifact({ ...artifact, ...mutation }, fixture.run, job).valid, false);
+  assert.equal(validatePreMutationFailureReceipt(fixture.preMutationFailures[0].receipt, {
+    run: fixture.run, job, expected: expectedDispatchExecution,
+  }).valid, true);
+});
+
+test('mutation boundary never emits a safe retry receipt once a merge request starts, including lost responses', async () => {
+  const identity = preMutationFailureFixture().preMutationFailures[0].receipt;
+  for (const mode of ['evidence', 'approve', 'merge']) {
+    const boundary = createPreMutationFailureBoundary();
+    assert.ok(boundary.failureReceipt(identity, { mode }));
+    await assert.rejects(boundary.requestMerge(async () => { throw new Error('lost response'); }), /lost response/);
+    assert.equal(boundary.failureReceipt(identity, { mode }), null);
+  }
+  const successful = createPreMutationFailureBoundary();
+  assert.deepEqual(await successful.requestMerge(async () => ({ merged: true })), { merged: true });
+  assert.equal(successful.failureReceipt(identity, { mode: 'merge' }), null);
+  assert.equal(buildPreMutationFailureReceipt(identity, { mode: 'merge', mergeRequestAttempted: true }), null);
+});
+
+test('real trusted executor publishes a credential-free receipt when final-job evidence fails before mutation', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'stephanos-pre-mutation-'));
+  try {
+    const eventPath = join(temp, 'event.json');
+    const preload = join(temp, 'blocked-api.mjs');
+    const receiptPath = join(temp, 'pre-mutation-failure.json');
+    writeFileSync(eventPath, JSON.stringify({ inputs: { ...dispatchInputs(), authorization_comment_id: '5968257818' } }));
+    writeFileSync(preload, "globalThis.fetch = async () => new Response('fixture unavailable', {status:403});");
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, fileURLToPath(PERSONAL_REPOSITORY_MERGE_ENTRY), 'evidence'], {
+      encoding: 'utf8', timeout: 10000, windowsHide: true,
+      env: {
+        ...process.env, GH_TOKEN: 'fixture-not-a-credential', GITHUB_TOKEN: 'fixture-not-a-credential',
+        GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_JOB: PERSONAL_REPOSITORY_EVIDENCE_JOB,
+        GITHUB_EVENT_PATH: eventPath, GITHUB_REPOSITORY: repository,
+        GITHUB_RUN_ID: String(runId), GITHUB_RUN_ATTEMPT: '1',
+        STEPHANOS_AUTHORIZATION_COMMENT_ID: '5968257818', STEPHANOS_PRE_MUTATION_FAILURE_PATH: receiptPath,
+      },
+    });
+    assert.equal(result.status, 1);
+    assert.equal(existsSync(receiptPath), true, result.stderr);
+    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+    assert.equal(receipt.mergeRequestAttempted, false);
+    assert.equal(receipt.sourceHead, sourceHead);
+    assert.equal(receipt.sourceTree, sourceTree);
+    assert.equal(receipt.workflowRunId, runId);
+    assert.equal(receipt.operationMode, 'evidence');
+    assert.doesNotMatch(JSON.stringify(receipt), /fixture-not-a-credential|fixture unavailable|TOKEN/);
+    assert.equal(JSON.parse(result.stderr).finalStatus, 'PERSONAL_REPOSITORY_PROTECTED_MERGE_BLOCKED');
+
+    writeFileSync(eventPath, JSON.stringify({ inputs: {} }));
+    rmSync(receiptPath);
+    const invalid = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, fileURLToPath(PERSONAL_REPOSITORY_MERGE_ENTRY), 'evidence'], {
+      encoding: 'utf8', timeout: 10000, windowsHide: true,
+      env: { ...process.env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch',
+        GITHUB_JOB: PERSONAL_REPOSITORY_EVIDENCE_JOB, GITHUB_EVENT_PATH: eventPath,
+        STEPHANOS_PRE_MUTATION_FAILURE_PATH: receiptPath },
+    });
+    assert.equal(invalid.status, 1);
+    assert.equal(existsSync(receiptPath), false);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
   }
 });
 

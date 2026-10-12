@@ -147,7 +147,15 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /STEPHANOS_RULESET_PROOF_TOKEN/);
   assert.match(source, /extractPersonalRepositoryArtifactZip\(archiveBytes, INDEPENDENT_REVIEW_ARTIFACT_FILE\)/);
   assert.doesNotMatch(source, /node:child_process|\bspawn(?:Sync)?\b|\bexec(?:File|Sync)?\b|\bunzip\b|shell\s*:/i);
-  assert.doesNotMatch(source, /mkdtempSync|writeFileSync|rmSync|node:os|node:path/);
+  assert.doesNotMatch(source, /mkdtempSync|rmSync|node:os|node:path/);
+  // The only new file output is the fixed workflow-owned failure receipt.
+  // ZIP extraction stays entirely in memory and never writes archive content.
+  assert.equal([...source.matchAll(/writeFileSync/g)].length, 2);
+  assert.match(source, /if \(receipt\) writeFileSync\(failurePath, JSON\.stringify\(receipt\)\)/);
+  assert.match(source, /mutationBoundary\.requestMerge\(\(\) => apiJson\(/);
+  assert.match(source, /validatePreMutationFailureArtifact/);
+  assert.match(source, /validatePreMutationFailureReceipt/);
+  assert.match(source, /`sha256:\$\{sha256\(bytes\)\}` !== artifact\.digest/);
   assert.doesNotMatch(source, /adm-zip|jszip|yauzl|unzipper|node-stream-zip/i);
   assert.match(source, /Ruleset proof token is restricted to bounded repository-configuration GET requests/);
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
