@@ -45,6 +45,8 @@ test('fixed registry, MCP, and GitHub mailbox expose only bounded CPU snapshot a
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('cpu-pressure-snapshot'));
   assert.match(mailbox, /const COMMANDER_RUNTIME_PREFLIGHT_ACTIONS = new Set\(\[\s*'cpu-pressure-snapshot'/);
   assert.match(mailbox, /SOVEREIGN_COMMANDER_REMOTE_CPU_ACTION_STALE_RUNTIME/);
+  assert.match(mailbox, /if \(!listed\.ok[\s\S]{0,550}SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID[\s\S]{0,650}SOVEREIGN_COMMANDER_REMOTE_CPU_ACTION_STALE_RUNTIME/);
+  assert.match(mailbox, /commanderOnly: shape\.command\.remoteAction === 'cpu-pressure-snapshot'/);
   assert.match(requiredVersion, /2026-10-12-cpu-pressure-snapshot-v5/);
   assert.match(reportedVersion, /2026-10-12-cpu-pressure-snapshot-v5/);
   assert.match(registry, /'cpu-pressure-snapshot': frozen\(\{/);
