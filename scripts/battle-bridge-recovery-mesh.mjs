@@ -530,6 +530,47 @@ async function writeStateAtomically(statePath, value) {
   await rename(temporaryPath, statePath);
 }
 
+// No caller-supplied commands or output paths. Read ONLY the bounded
+// known result marker from the fixed child and preserve fail-closed telemetry.
+export function projectRecoveryMeshTemporaryRescueChildV1(child = {}) {
+  const denied = (blocker) => Object.freeze({
+    observed: false, blocker,
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+  });
+  if (child?.status !== 0 || child?.error || typeof child?.stdout !== 'string'
+      || Buffer.byteLength(child.stdout, 'utf8') > 64 * 1024) {
+    return denied('RESCUE_CHILD_UNVERIFIED');
+  }
+  const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
+  const lines = child.stdout.split(/\r?\n/).filter(line => line.startsWith(marker));
+  if (lines.length !== 1 || lines[0].length > 16 * 1024) {
+    return denied('RESCUE_CHILD_RESULT_UNVERIFIED');
+  }
+  let result;
+  try { result = JSON.parse(lines[0].slice(marker.length)); }
+  catch { return denied('RESCUE_CHILD_RESULT_MALFORMED'); }
+  const knownModes = new Set([
+    'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
+    'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
+  ]);
+  if (result?.publicationOk !== true || !knownModes.has(result?.mode)
+      || result?.schemaVersion !== 'stephanos.temporary-sovereign-lease-rescue.v1'
+      || result?.sourceMutationAllowed !== false
+      || result?.leaseSeizureAllowed !== false
+      || result?.newWriterAllowed !== false
+      || result?.physicalPickupProven !== false) {
+    return denied('RESCUE_CHILD_RESULT_UNVERIFIED');
+  }
+  return Object.freeze({
+    observed: true, mode: result.mode,
+    blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(result.blocker))
+      ? result.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
+    // Observation of the child's report is not independent post-release proof.
+    canonicalLeaseReleaseProven: result.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+  });
+}
+
 export async function runBattleBridgeRecoveryMesh({
   env = process.env,
   now = new Date(),
@@ -721,27 +762,7 @@ export async function runBattleBridgeRecoveryMesh({
           stdio: ['ignore', 'pipe', 'pipe'],
           timeout: 12_000, maxBuffer: 64 * 1024,
         });
-        const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
-        const line = text(child?.stdout).split(/\r?\n/).find(x => x.startsWith(marker));
-        const response = child?.status === 0 && !child?.error && line
-          ? JSON.parse(line.slice(marker.length)) : null;
-        const knownModes = new Set([
-          'EVIDENCE_HELD', 'ORIGINAL_OWNER_REPAIR_REQUIRED',
-          'WAITING_EXACT_RELEASE', 'CANONICAL_RECOVERY_NEEDS_WORKER_PROOF',
-        ]);
-        temporaryLeaseRescue = response?.publicationOk === true
-          && knownModes.has(response?.mode)
-          ? Object.freeze({
-            observed: true, mode: response.mode,
-            blocker: /^[A-Z][A-Z0-9_]{0,119}$/.test(text(response.blocker))
-              ? response.blocker : 'RESCUE_BLOCKER_UNVERIFIED',
-            canonicalLeaseReleaseProven: response.canonicalLeaseReleaseProven === true,
-            physicalPickupProven: false,
-          })
-          : Object.freeze({
-            observed: false, blocker: 'RESCUE_CHILD_UNVERIFIED',
-            canonicalLeaseReleaseProven: false, physicalPickupProven: false,
-          });
+        temporaryLeaseRescue = projectRecoveryMeshTemporaryRescueChildV1(child);
       } catch {
         temporaryLeaseRescue = Object.freeze({
           observed: false, blocker: 'RESCUE_CHILD_EXCEPTION',
