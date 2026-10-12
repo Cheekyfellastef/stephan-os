@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
   decideSovereignOuterBridgeAttemptV1 as decide,
   projectSovereignOuterBridgeV1 as project,
@@ -88,15 +89,20 @@ test('Core cycle starts without awaiting blocked lease and never duplicates it',
   });
   assert.equal(supervisor.tick({sourceHead:HEAD}).start,true);
   assert.equal(supervisor.tick({sourceHead:HEAD}).reason,'RESCUE_CYCLE_ALREADY_IN_FLIGHT');
+  await flush();
   assert.equal(calls,1);
   assert.equal(supervisor.snapshot().inFlight,true);
+  assert.equal(published.length,1);
+  assert.equal(published[0][2].bridge.rescueBlocker,'OUTER_RESCUE_INSPECTION_IN_FLIGHT');
   releaseFirst(rescue());
   await flush();
   assert.equal(supervisor.snapshot().inFlight,false);
   assert.equal(supervisor.snapshot().lastResult.stage,'OUTER_BRIDGE_WIDE');
   assert.equal(supervisor.snapshot().lastResult.publicationOk,true);
   assert.equal(supervisor.tick({sourceHead:HEAD}).reason,'RESCUE_INTERVAL_COOLDOWN');
-  assert.equal(published.length,1);
+  assert.equal(published.length,2);
+  assert.equal(validateSharedWorkspaceRecord(published[0][2]).valid,true);
+  assert.equal(validateSharedWorkspaceRecord(published[1][2]).valid,true);
   assert.deepEqual(published[0][1],['status','sovereign-outer-bridge-current.json']);
   assert.equal(published[0][2].status,'HELD');
   assert.equal(published[0][2].bridge.canonicalHandbackEligible,false);
@@ -124,7 +130,9 @@ test('an observer failure is HELD and does not kill Core Daemon supervisor',asyn
   assert.equal(snapshot.lastResult.publicationOk,true);
   assert.equal(snapshot.lastResult.rescueBlocker,'OUTER_RESCUE_EXECUTION_FAILED');
   assert.equal(JSON.stringify(snapshot).includes('private local stack trace'),false);
-  assert.equal(records.length,1);
+  assert.equal(records.length,2);
+  assert.equal(records[0].bridge.rescueBlocker,'OUTER_RESCUE_INSPECTION_IN_FLIGHT');
+  assert.equal(records[1].bridge.rescueBlocker,'OUTER_RESCUE_EXECUTION_FAILED');
   assert.equal(attempts,1);
 });
 

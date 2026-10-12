@@ -211,6 +211,12 @@ export async function collectSelfHealVisibility(options = {}) {
     : [];
   return Object.freeze({
     available: true,
+    outerBridgeRunCount: integer(parsed.outerBridgeRunCount, 1_000_000),
+    outerBridgeInFlight: parsed.outerBridgeInFlight === true,
+    outerBridgeLastPublicationOk: parsed.outerBridgeLastPublicationOk === true,
+    outerBridgeLastStage: state(parsed.outerBridgeLastStage, 80) || 'NOT_OBSERVED',
+    outerBridgeLastBlocker: state(parsed.outerBridgeLastBlocker, 120) || 'NOT_OBSERVED',
+    outerBridgeLastVerdict: state(parsed.outerBridgeLastVerdict, 120) || 'NOT_RUN',
     dependencySelfHealEnabled: parsed.dependencySelfHealEnabled === true,
     dependencySelfHealLastAttemptAtUtc: timestamp(parsed.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: integer(parsed.dependencySelfHealAttemptCount, 1_000_000),

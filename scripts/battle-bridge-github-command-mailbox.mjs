@@ -957,6 +957,12 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     .slice(0, 8));
   const selfHeal = Object.freeze({
     available: safeBoolean(value?.selfHeal?.available),
+    outerBridgeRunCount: safeOptionalNonNegativeInteger(value?.selfHeal?.outerBridgeRunCount),
+    outerBridgeInFlight: safeBoolean(value?.selfHeal?.outerBridgeInFlight),
+    outerBridgeLastPublicationOk: safeBoolean(value?.selfHeal?.outerBridgeLastPublicationOk),
+    outerBridgeLastStage: safeTelemetryText(value?.selfHeal?.outerBridgeLastStage, 80).toUpperCase(),
+    outerBridgeLastBlocker: safeTelemetryText(value?.selfHeal?.outerBridgeLastBlocker, 120).toUpperCase(),
+    outerBridgeLastVerdict: safeTelemetryText(value?.selfHeal?.outerBridgeLastVerdict, 120).toUpperCase(),
     dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
     dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
@@ -2075,6 +2081,12 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
     }) : null,
     selfHeal: snapshot.selfHeal ? Object.freeze({
       available: snapshot.selfHeal.available === true,
+      outerBridgeRunCount: snapshot.selfHeal.outerBridgeRunCount,
+      outerBridgeInFlight: snapshot.selfHeal.outerBridgeInFlight === true,
+      outerBridgeLastPublicationOk: snapshot.selfHeal.outerBridgeLastPublicationOk === true,
+      outerBridgeLastStage: snapshot.selfHeal.outerBridgeLastStage,
+      outerBridgeLastBlocker: snapshot.selfHeal.outerBridgeLastBlocker,
+      outerBridgeLastVerdict: snapshot.selfHeal.outerBridgeLastVerdict,
       dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
       dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
       dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
