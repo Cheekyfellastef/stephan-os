@@ -681,6 +681,9 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
         ok: false,
         blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
         expectedHead,
+        // For protected merges expose the rejected main-base SHA separately
+        // from the reviewed PR source SHA. Never conflate the two identities.
+        expectedMainHead,
         githubMainHead: normalizedCurrentHead,
         finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
       });
