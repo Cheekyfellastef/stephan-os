@@ -35,6 +35,11 @@ async function withServer(action, overrides = {}) {
     }),
     now: overrides.now || (() => '2026-09-29T21:00:00.000Z'),
     nowMs: overrides.nowMs,
+    continuousRepairEnabled: overrides.continuousRepairEnabled,
+    continuousRepairStartDelayMs: overrides.continuousRepairStartDelayMs,
+    continuousRepairSetTimeoutImpl: overrides.continuousRepairSetTimeoutImpl,
+    continuousRepairClearTimeoutImpl: overrides.continuousRepairClearTimeoutImpl,
+    continuousRepairSpawnImpl: overrides.continuousRepairSpawnImpl,
   });
   await new Promise((resolve, reject) => {
     created.server.once('error', reject);
@@ -194,6 +199,75 @@ test('CPU probe admission fails closed after guardian startup hold expires', () 
   } finally {
     guardian.stop();
   }
+});
+
+test('normal Commander pauses guardian for every CPU sample and rejects one during active repair', async () => {
+  let server;
+  let measured = 0;
+  const timers = [];
+  const cancelled = [];
+  const handlers = () => async (method) => {
+    if (method === 'initialize') return { protocolVersion: '2025-11-25', capabilities: { tools: {} } };
+    if (method === 'notifications/initialized') return undefined;
+    if (method === 'tools/list') return {
+      tools: [{ name: 'maintenance_action', inputSchema: {
+        properties: { actionId: { enum: ['cpu-pressure-snapshot'] } },
+      } }],
+    };
+    if (method === 'tools/call') {
+      measured += 1;
+      assert.equal(server.continuousRepairStatus().cpuProbeSampling, true);
+      return { ok: true };
+    }
+    return {};
+  };
+  await withServer(async ({ base, created }) => {
+    server = created;
+    const post = (message, id = '') => fetch(base + '/mcp', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+        ...(id ? { 'mcp-session-id': id } : {}),
+      },
+      body: JSON.stringify(message),
+    });
+    const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } });
+    assert.equal(init.status, 200);
+    const sessionId = init.headers.get('mcp-session-id');
+    assert.ok(sessionId);
+    assert.equal((await post({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }, sessionId)).status, 202);
+    assert.equal((await post({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }, sessionId)).status, 200);
+    const cpu = {
+      jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { actionId: 'cpu-pressure-snapshot' } },
+    };
+    assert.equal((await post(cpu, sessionId)).status, 200);
+    assert.equal(measured, 1);
+    assert.equal(cancelled.length, 1);
+    assert.equal(server.continuousRepairStatus().cycleCount, 0);
+    // Simulate the next scheduled guardian cycle starting a live repair child.
+    timers.at(-1).callback();
+    assert.equal(server.continuousRepairStatus().running, true);
+    assert.equal((await post({ ...cpu, id: 4 }, sessionId)).status, 409);
+    assert.equal(measured, 1, 'active repair prevents the CPU sample');
+  }, {
+    handlerFactory: handlers,
+    continuousRepairEnabled: true,
+    continuousRepairSetTimeoutImpl: (callback, ms) => {
+      const timer = { callback, ms, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    continuousRepairClearTimeoutImpl: (timer) => cancelled.push(timer),
+    continuousRepairSpawnImpl: () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      return child;
+    },
+  });
 });
 
 test('HTTP transport is bearer authenticated and health exposes no secret', async () => withServer(async ({ base }) => {
