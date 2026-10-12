@@ -28,13 +28,15 @@ test('both workspaces get the same high-level evidence-based journey beyond 256 
 });
 
 test('offline and partial data cannot masquerade as live counts or completed builds', () => {
-  for (const feedState of ['unavailable', 'stale', 'connecting', 'offline']) {
+  for (const feedState of ['unavailable', 'connecting', 'offline']) {
     const view = deriveConversationLearningJourneyV1({ uplift, feedState });
     assert.equal(view.indexedTurns, null);
     assert.equal(view.investigationEligible, null);
     assert.equal(view.provenImprovements, null);
     assert.notEqual(view.state, 'REPORTED');
   }
+  // Unrelated programme staleness must not hide a separately ready conversation index.
+  assert.equal(deriveConversationLearningJourneyV1({ uplift, feedState: 'stale' }).indexedTurns, 301);
   const partial = deriveConversationLearningJourneyV1({ uplift: { ...uplift, state: 'partial' }, feedState: 'ready' });
   assert.equal(partial.indexedTurns, null);
   assert.equal(partial.gapHints, null);
