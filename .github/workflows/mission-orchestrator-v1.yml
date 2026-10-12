@@ -75,4 +75,4 @@ jobs:
       - name: Run ownership and Mission Operations regression tests
         run: node --test shared/agents/coBuilderOperationalPacket.test.mjs tests/mission-operations-dashboard.test.mjs
       - name: Temporary exact-head custody commissioning tests
-        run: node --test stephanos-server/services/originalSourceCustodyCommissioningService.test.js
+        run: node --test stephanos-server/services/originalSourceCustodyCommissioningService.test.js stephanos-server/services/originalSourceWriterCustodyService.test.js
