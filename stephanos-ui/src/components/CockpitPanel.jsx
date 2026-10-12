@@ -53,6 +53,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [detailId, setDetailId] = useState('backend');
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
+  const [backendHealthExpiryTick, setBackendHealthExpiryTick] = useState(0);
   const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
   const { copyState: plannerCopyState, setCopyState: setPlannerCopyState } = useClipboardButtonState();
   const { copyState: missionCopyState, setCopyState: setMissionCopyState } = useClipboardButtonState();
@@ -96,7 +97,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       commandHistory,
       telemetryEntries,
     });
-  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
+  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick, backendHealthExpiryTick]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -131,6 +132,21 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }, expiresInMs);
     return () => window.clearTimeout(timeoutId);
   }, [shouldRenderCockpit, cockpitModel?.continuitySnapshot?.lastContinuityEventAt]);
+
+  // Positive health proof expires even when the browser governor suspends
+  // polling. A single deadline-based tick invalidates the memoized Cockpit
+  // model; no background polling loop or additional backend request is added.
+  useEffect(() => {
+    if (!shouldRenderCockpit || typeof window === 'undefined') return undefined;
+    const checkedAt = Date.parse(String(apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt || ''));
+    if (!Number.isFinite(checkedAt) || !apiStatus?.backendReachable) return undefined;
+    const expiresInMs = (checkedAt + 120_000 + 50) - Date.now();
+    if (expiresInMs <= 0) return undefined;
+    const timeoutId = window.setTimeout(() => {
+      setBackendHealthExpiryTick(value => value + 1);
+    }, expiresInMs);
+    return () => window.clearTimeout(timeoutId);
+  }, [shouldRenderCockpit, apiStatus?.backendReachable, apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt]);
 
   const detail = useMemo(() => {
     if (!cockpitModel) {
