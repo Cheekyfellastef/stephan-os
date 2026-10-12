@@ -18,6 +18,8 @@ export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
+export const SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS = 60_000;
+export const SOVEREIGN_COMMANDER_CPU_PROBE_ENV = 'STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP';
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
@@ -548,9 +550,20 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 }
 
 export async function runSovereignCommanderHttpServer(options = {}) {
+  // A fixed read-only CPU probe may have bootstrapped this Commander.
+  // Keep the guardian enabled and scheduled, but defer its *first* cycle
+  // beyond the 25-second fixed sampler timeout. The sentinel is local-only
+  // and consumed once so no repair child inherits a perpetual delay.
+  const launchEnv = options.env || process.env;
+  const cpuProbeStartup = launchEnv[SOVEREIGN_COMMANDER_CPU_PROBE_ENV] === '1';
+  if (cpuProbeStartup && launchEnv === process.env) {
+    delete process.env[SOVEREIGN_COMMANDER_CPU_PROBE_ENV];
+  }
   const created = await createSovereignCommanderHttpServer({
     ...options,
     continuousRepairEnabled: options.continuousRepairEnabled ?? true,
+    continuousRepairStartDelayMs: options.continuousRepairStartDelayMs
+      ?? (cpuProbeStartup ? SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS : undefined),
   });
   await new Promise((resolveListen, rejectListen) => {
     created.server.once('error', rejectListen);
