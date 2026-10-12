@@ -5,6 +5,9 @@ import { EventEmitter } from 'node:events';
 import {
   createSovereignCommanderHttpServer,
   startSovereignCommanderContinuousRepairGuardian,
+  runSovereignCommanderHttpServer,
+  SOVEREIGN_COMMANDER_CPU_PROBE_ENV,
+  SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS,
 } from '../../scripts/sovereign-commander-http.mjs';
 
 const TOKEN = 't'.repeat(48);
@@ -42,6 +45,37 @@ async function withServer(action, overrides = {}) {
   try { return await action({ base, created, observed }); }
   finally { await new Promise((resolve) => created.server.close(resolve)); }
 }
+
+test('Commander-only startup keeps repair guardian enabled but defers its first cycle beyond CPU sample', async () => {
+  const timers = [];
+  let repairStarted = false;
+  const env = { [SOVEREIGN_COMMANDER_CPU_PROBE_ENV]: '1' };
+  const created = await runSovereignCommanderHttpServer({
+    token: TOKEN,
+    host: '127.0.0.1',
+    port: 0,
+    env,
+    continuousRepairSetTimeoutImpl: (_callback, delayMs) => {
+      timers.push(delayMs);
+      return { unref() {} };
+    },
+    continuousRepairClearTimeoutImpl: () => {},
+    continuousRepairSpawnImpl: () => {
+      repairStarted = true;
+      throw new Error('CPU probe must not start repair');
+    },
+  });
+  try {
+    assert.equal(created.continuousRepairStatus().enabled, true);
+    assert.equal(created.continuousRepairStatus().scheduled, true);
+    assert.equal(created.continuousRepairStatus().cycleCount, 0);
+    assert.deepEqual(timers, [SOVEREIGN_COMMANDER_CPU_PROBE_GUARDIAN_GRACE_MS]);
+    assert.ok(timers[0] > 25_000, 'guardian starts strictly after bounded CPU sampler');
+    assert.equal(repairStarted, false);
+  } finally {
+    await new Promise((resolve) => created.server.close(resolve));
+  }
+});
 
 test('HTTP transport is bearer authenticated and health exposes no secret', async () => withServer(async ({ base }) => {
   const health = await fetch(base + '/health');
