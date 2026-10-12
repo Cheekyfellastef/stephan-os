@@ -4,10 +4,23 @@ export const TEMPORARY_SOVEREIGN_LEASE_RESCUE_SCHEMA =
   'stephanos.temporary-sovereign-lease-rescue.v1';
 const SHA = /^[a-f0-9]{40}$/i;
 const ISSUE = '#2961';
+const FORENSIC_CLASSIFICATIONS = new Set([
+  'ORIGINAL_TERMINAL_QUEUE_UNOBSERVABLE',
+  'ORIGINAL_MULTIPLE_BOUND_TERMINAL_PAIRS',
+  'ORIGINAL_TERMINAL_QUEUE_SOURCE_BINDING_UNPROVEN',
+  'ORIGINAL_BOUND_TERMINAL_RESULT_MISSING_OR_INVALID',
+  'ORIGINAL_EXACT_TERMINAL_PAIR_PRESENT',
+  'ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND',
+]);
+const BINDING_MISMATCH_FIELDS = new Set([
+  'ITEM_SCHEMA', 'ADAPTER', 'ACTION_FILENAME', 'BINDING_SCHEMA',
+  'LEASE_KEY', 'MISSION_ID', 'EXECUTION_ID', 'REPOSITORY',
+  'ISSUE_NUMBER', 'PR_NUMBER', 'BRANCH', 'HEAD_SHA',
+]);
 
 function code(value, fallback) {
   const raw = String(value || '').trim().toUpperCase();
-  return /^[A-Z][A-Z0-9_:-]{0,119}$/.test(raw) ? raw : fallback;
+  return /^[A-Z][A-Z0-9_]{0,119}$/.test(raw) ? raw : fallback;
 }
 function leaseKey(value) {
   const raw = String(value || '');
@@ -38,7 +51,8 @@ export function projectTemporarySovereignLeaseRescueV1({
     && leaseRead?.validation?.active === false
     && leaseRead?.validation?.stale === true;
   const validHead = SHA.test(String(sourceHead || ''));
-  const safeForensicClassification = code(forensic?.classification, 'FORENSIC_NOT_PROVEN');
+  const safeForensicClassification = FORENSIC_CLASSIFICATIONS.has(forensic?.classification)
+    ? forensic.classification : 'FORENSIC_NOT_PROVEN';
   if (!observedAtUtc || !validHead) {
     blocker = 'EXACT_LOCAL_SOURCE_HEAD_UNAVAILABLE';
     nextAutomaticAction = 'RETRY_LOCAL_SOURCE_HEAD_PROOF';
@@ -75,7 +89,7 @@ export function projectTemporarySovereignLeaseRescueV1({
     originalLeaseId,
     forensicClassification: safeForensicClassification,
     bindingMismatchCodes: Object.freeze(Array.isArray(forensic?.bindingMismatchCodes)
-      ? forensic.bindingMismatchCodes.filter(x => /^[A-Z_]{2,40}$/.test(String(x))).slice(0,12)
+      ? forensic.bindingMismatchCodes.filter(x => BINDING_MISMATCH_FIELDS.has(x)).slice(0,12)
       : []),
     exactTerminalPairCount: Number.isSafeInteger(forensic?.exactPairCount)
       ? forensic.exactPairCount : 0,
