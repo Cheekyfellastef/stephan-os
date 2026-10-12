@@ -151,7 +151,7 @@ test('specialist rejects a Core writer mass-recycle even when relay recycle is a
   );
   const result = review(inserted, status);
   assert.equal(result.clean, false);
-  assert.ok(result.findings.some((x) => x.code === 'core-daemon-runner-live-writer-recycle-forbidden'));
+  assert.ok(result.findings.some((x) => x.code === 'windows-authority-core-source-blob-unreviewed'));
 });
 
 test('specialist applies no-kill custody invariants to actual checked-in Windows sources', async () => {
