@@ -615,3 +615,15 @@ test('Command Deck status wiring uses the final route projection and transport f
   assert.match(consoleHook, /label: 'Backend connection unreachable from this browser'/);
   assert.doesNotMatch(consoleHook, /label: 'Backend offline'/);
 });
+
+test('local browser health targets normalize mismatched loopback hosts without changing LAN routes', async () => {
+  const fs = await import('node:fs/promises');
+  const hook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
+
+  assert.match(hook, /const frontendLoopbackHost = extractHostname\(nextRuntimeConfig\.frontendOrigin\)/);
+  assert.match(hook, /const configuredLoopbackHost = extractHostname\(nextRuntimeConfig\.baseUrl\)/);
+  assert.match(hook, /const loopbackHostMismatch = localDesktopSession[\s\S]*?isLoopbackHost\(configuredLoopbackHost\)[\s\S]*?configuredLoopbackHost !== frontendLoopbackHost/);
+  assert.match(hook, /shouldIgnoreHomeNodeForThisSession \|\| loopbackHostMismatch[\s\S]*?\? localDesktopBackendUrl[\s\S]*?: nextRuntimeConfig\.baseUrl/);
+  assert.match(hook, /actualTargetUsed: loopbackHostMismatch[\s\S]*?\? compatibleBackendBaseUrl/);
+  assert.match(hook, /const health = await checkApiHealth\(resolvedRuntimeContext\)/);
+});
