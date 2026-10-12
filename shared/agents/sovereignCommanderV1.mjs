@@ -107,8 +107,9 @@ function fixedRegistry(repoRoot) {
     }),
     'controller-lane-status': frozen({
       executable: node,
-      args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
-      timeoutMs: 10_000,
+      // Snapshot only. No Shared Workspace file/lock mutation over remote MCP.
+      args: frozen([nodeFile('sovereign-controller-lane-status.mjs'), '--snapshot-only']),
+      timeoutMs: 20_000,
     }),
     'visibility-snapshot': frozen({
       executable: node,

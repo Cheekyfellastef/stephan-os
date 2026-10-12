@@ -9,6 +9,7 @@ import {
   buildSharedWorkspaceStephanosBuildTruthRecord,
   buildStephanosBuildTruth,
   buildSovereignControllerLaneStatus,
+  runSovereignControllerLaneStatus,
   SOVEREIGN_CONTROLLER_LANE_STATUS_FILE,
   writeControllerLaneSpecializedStatus,
 } from './sovereign-controller-lane-status.mjs';
@@ -631,4 +632,38 @@ test('never reports idle green when safe eligible work is stranded', () => {
   assert.equal(truth.state, 'BLOCKED');
   assert.equal(truth.trafficLight, 'RED');
   assert.equal(truth.blockers.includes('SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE'), true);
+});
+
+
+test('MCP controller snapshot skips Shared Workspace writes while preserving bounded evidence', async () => {
+  const observed = buildSovereignControllerLaneStatus({ controllerFleet: fleet(), logicalFabric: logical(), now: NOW });
+  let publications = 0;
+  const lines = [];
+  const actual = await runSovereignControllerLaneStatus({
+    snapshotOnly: true,
+    collectStatusFn: async () => observed,
+    publishStatusFn: async () => { publications++; throw new Error('status-locked'); },
+    publishBuildTruthFn: async () => { publications++; throw new Error('truth-locked'); },
+    emitFn: (line) => lines.push(line),
+  });
+  assert.equal(actual, observed);
+  assert.equal(publications, 0);
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0].startsWith('SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='));
+  const parsed = JSON.parse(lines[0].slice('SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='.length));
+  assert.equal(parsed.readOnly, true);
+  assert.equal(parsed.sourceMutationAllowed, false);
+  assert.equal(parsed.mergeAuthority, false);
+});
+
+test('normal controller pulse continues publishing both snapshots', async () => {
+  const observed = buildSovereignControllerLaneStatus({ controllerFleet: fleet(), logicalFabric: logical(), now: NOW });
+  const calls = [];
+  await runSovereignControllerLaneStatus({
+    collectStatusFn: async () => observed,
+    publishStatusFn: async (status) => { assert.equal(status, observed); calls.push('status'); return { ok: true }; },
+    publishBuildTruthFn: async (truth) => { assert.ok(truth && typeof truth === 'object'); calls.push('truth'); return { ok: true }; },
+    emitFn: () => calls.push('marker'),
+  });
+  assert.deepEqual(calls, ['status', 'truth', 'marker']);
 });

@@ -608,17 +608,27 @@ export async function collectSovereignControllerLaneStatus({
   });
 }
 
+// The MCP fixed read-only diagnostic must not wait on mutable Shared Workspace
+// publications. The periodic publisher keeps both existing writes unchanged.
 export async function runSovereignControllerLaneStatus(options = {}) {
-  const status = await collectSovereignControllerLaneStatus(options);
-  await publishSharedWorkspaceControllerLaneStatus(status, options);
-  await publishSharedWorkspaceStephanosBuildTruth(buildStephanosBuildTruth(status), options);
-  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  const status = await (options.collectStatusFn || collectSovereignControllerLaneStatus)(options);
+  if (options.snapshotOnly !== true) {
+    await (options.publishStatusFn || publishSharedWorkspaceControllerLaneStatus)(status, options);
+    await (options.publishBuildTruthFn || publishSharedWorkspaceStephanosBuildTruth)(buildStephanosBuildTruth(status), options);
+  }
+  (options.emitFn || ((line) => process.stdout.write(line)))(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
   return status;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runSovereignControllerLaneStatus().catch((error) => {
-    process.stderr.write(`${text(error?.message || error, 240)}\n`);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--snapshot-only')) {
+    process.stderr.write('CONTROLLER_LANE_STATUS_ARGUMENTS_INVALID\n');
     process.exitCode = 1;
-  });
+  } else {
+    runSovereignControllerLaneStatus({ snapshotOnly: args[0] === '--snapshot-only' }).catch((error) => {
+      process.stderr.write(`${text(error?.message || error, 240)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

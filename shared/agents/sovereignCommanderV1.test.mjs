@@ -344,7 +344,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
   const cases = [
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
-    ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 10000],
+    ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 20000],
     ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
@@ -384,6 +384,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed.length, 1, actionId);
     assert.match(observed[0].args.find((arg) => /\.(?:mjs|ps1)$/i.test(arg)) || '', expectedPath, actionId);
     if (expectedArg) assert.ok(observed[0].args.includes(expectedArg), actionId);
+    if (actionId === 'controller-lane-status') assert.deepEqual(observed[0].args.slice(1), ['--snapshot-only']);
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
