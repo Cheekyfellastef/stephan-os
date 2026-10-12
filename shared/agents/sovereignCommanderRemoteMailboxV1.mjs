@@ -2126,6 +2126,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       fetchFn: boundedPlanFetch,
       spawnSyncFn,
       repoRoot: repositoryRoot,
+      commanderOnly: shape.command.remoteAction === 'cpu-pressure-snapshot',
     }), preflightBudgetMs);
     if (runtimeSettlement.timedOut === true && remotePlanRequested) {
       return planDeadlineFailure();
@@ -2257,6 +2258,12 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const tools = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.map((tool) => text(tool?.name))
     : [];
+  if (!listed.ok
+    || !tools.includes('get_config')
+    || !tools.includes('maintenance_action')
+    || (shape.command.remoteAction === 'search-project' && !tools.includes('search_project'))) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
+  }
   // A synced main commit does not prove the pre-merge MCP server loaded its new actions.
   const maintenanceTool = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.find((tool) => text(tool?.name) === 'maintenance_action')
@@ -2268,12 +2275,6 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
-  }
-  if (!listed.ok
-    || !tools.includes('get_config')
-    || !tools.includes('maintenance_action')
-    || (shape.command.remoteAction === 'search-project' && !tools.includes('search_project'))) {
-    return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
   }
 
   const configCall = await callMcp({
