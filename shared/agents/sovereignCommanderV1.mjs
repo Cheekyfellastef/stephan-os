@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -14,6 +14,8 @@ export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
   READ_FILE: 'READ_FILE',
+  READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
+  GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
@@ -388,6 +390,22 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
       length: safeInteger(payload.length, 200, 1, 1000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES) {
+    const paths = targetPaths.map(normalizedAbsolutePath);
+    if (paths.length < 1 || paths.length > 8 || paths.some((path) => !path)) {
+      blockers.push('sovereign-commander-multiple-read-requires-1-to-8-absolute-targets');
+    } else {
+      plan = frozen({
+        kind: 'read-multiple-files',
+        paths: frozen(paths),
+        offset: safeInteger(payload.offset, 0, 0, 100_000_000),
+        length: safeInteger(payload.length, 100, 1, 200),
+      });
+    }
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO) {
+    const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
+    if (!path) blockers.push('sovereign-commander-file-info-requires-one-absolute-target');
+    else plan = frozen({ kind: 'get-file-info', path });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     const content = typeof payload.content === 'string' ? payload.content : null;
@@ -722,6 +740,40 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         length: selected.length,
         totalLines: lines.length,
       });
+    } else if (command.plan.kind === 'read-multiple-files') {
+      const files = [];
+      let remainingCharacters = MAX_RESULT_TEXT;
+      for (const path of command.plan.paths) {
+        const raw = await readFile(path, 'utf8');
+        const lines = raw.split(/\r?\n/);
+        const selected = lines.slice(command.plan.offset, command.plan.offset + command.plan.length);
+        const fullContent = selected.join('\n');
+        const content = fullContent.slice(0, remainingCharacters);
+        remainingCharacters -= content.length;
+        files.push(frozen({
+          path,
+          offset: command.plan.offset,
+          length: selected.length,
+          totalLines: lines.length,
+          content,
+          truncated: content.length < fullContent.length,
+        }));
+      }
+      structuredContent = frozen({
+        files: frozen(files),
+        totalFiles: files.length,
+        contentBudgetExhausted: remainingCharacters === 0,
+      });
+      contentText = files.map((file) => `${file.path}\n${file.content}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'get-file-info') {
+      const info = await lstat(command.plan.path);
+      structuredContent = frozen({
+        path: command.plan.path,
+        type: info.isSymbolicLink() ? 'SYMLINK' : info.isFile() ? 'FILE' : info.isDirectory() ? 'DIRECTORY' : 'OTHER',
+        bytes: info.size,
+        modifiedAtUtc: info.mtime.toISOString(),
+      });
+      contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'write-file') {
       if (command.plan.mode === 'append') await appendFile(command.plan.path, command.plan.content, 'utf8');
       else await writeFile(command.plan.path, command.plan.content, 'utf8');
