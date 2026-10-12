@@ -190,6 +190,8 @@ export default function FlywheelPanel() {
       </div>
 
       <FlywheelWorkspaceCanvas
+        conversationUplift={telemetry.payload?.conversationUplift || null}
+        conversationFeedState={telemetry.state}
         view={{
           ...upliftView,
           liveFeedState: telemetry.state,
