@@ -163,6 +163,14 @@ test('watchdog recycles only verified Sovereign Commander processes when capabil
 });
 
 
+test('PowerShell watchdog emits each receipt key exactly once', () => {
+  const keys = [...runner.matchAll(/^\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*/gm)].map((match) => match[1]);
+  const propertyBlock = runner.slice(runner.indexOf('[pscustomobject]@{', runner.indexOf('$overallOk =')));
+  const occurrenceCount = (name) => (propertyBlock.match(new RegExp('^\\s*' + name + '\\s*=', 'gm')) || []).length;
+  assert.equal(occurrenceCount('desktopCommanderCrossHealSkipped'), 1);
+  assert.match(propertyBlock, /desktopCommanderCrossHealSkipped = \[bool\]\(\$CommanderOnly -or \$SkipDesktopCommanderCrossHeal\)/);
+});
+
 test('Commander-only CPU preflight skips unrelated desktop, VR, core and relay mutations', () => {
   assert.match(runner, /\[switch\]\$CommanderOnly/);
   assert.match(runner, /-not \$CommanderOnly -and -not \$SkipDesktopCommanderCrossHeal/);
