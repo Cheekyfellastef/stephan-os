@@ -11,6 +11,11 @@ It now also emits `skillForgeCandidates` into the same
 `sovereign-commander-capability-parity-current` Shared Workspace **status**
 record. No new daemon, scheduler, data store, approval queue, or remote transport.
 
+The Shared Workspace status envelope has a 16 KiB limit. The compiler retains
+all gap identities in its normal `plans` list and embeds only the first three
+full draft skill packets in the status, with an explicit total count and
+truncation flag; it never silently marks undisplayed gaps resolved.
+
 For each gap, the proposal contains a stable skill ID, permission/risk posture,
 observed evidence count, its least-privilege primitive, a reusable recipe
 sequence, rollback expectation, test requirements, and the route through
