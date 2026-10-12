@@ -15,6 +15,13 @@ export const SOVEREIGN_COMMANDER_UI_4173_REPAIR_SCHEMA = 'stephanos.sovereign-co
 export const SOVEREIGN_COMMANDER_UI_4173_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_UI_4173_REPAIR_RESULT=';
 
 const DEFAULT_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SERVED_HEAD_PROBE_TIMEOUT_MS = 5_000;
+
+function boundedServedHeadFetch(url) {
+  // Keep the abort signal active through the response body read performed by
+  // collectUi4173ServedExactHeadProof, not only until fetch resolves headers.
+  return fetch(url, { signal: AbortSignal.timeout(SERVED_HEAD_PROBE_TIMEOUT_MS), cache: 'no-store' });
+}
 
 function text(value) {
   return String(value ?? '').trim();
@@ -33,6 +40,7 @@ export async function runSovereignCommanderUi4173Repair({
   evaluateSourceTruthFn = evaluateCanonicalIgnitionSourceTruth,
   publisherFn = refreshBattleBridgeSharedWorkspacePublisher,
   servedRuntimeProofFn = collectUi4173ServedExactHeadProof,
+  servedProbeFetchFn = boundedServedHeadFetch,
   repairFn = runUi4173Repair,
 } = {}) {
   const canonicalRepoRoot = resolve(repoRoot);
@@ -70,7 +78,7 @@ export async function runSovereignCommanderUi4173Repair({
   // A stale dist can still return HTTP 200 and make Flywheel open an old UI.
   const proveServedHead = async () => {
     try {
-      return await servedRuntimeProofFn({ expectedHead });
+      return await servedRuntimeProofFn({ expectedHead, fetchFn: servedProbeFetchFn });
     } catch (error) {
       return { ready: false, blocker: text(error?.code || 'SERVED_HEAD_PROBE_FAILED') };
     }
@@ -105,8 +113,16 @@ export async function runSovereignCommanderUi4173Repair({
   });
   const servedAfter = await proveServedHead();
 
-  const ok = repairExitCode === 0
-    && repair?.ready === true
+  // A peer may have repaired a transiently stale listener between the two
+  // probes. Only admit the canonical narrow already-ready result if BOTH final
+  // proofs agree; do not suppress any other safety blocker or error.
+  const raceConverged = repairExitCode === 2
+    && repair?.action === 'blocked'
+    && Array.isArray(repair?.blockers)
+    && repair.blockers.length === 1
+    && repair.blockers[0]?.id === 'stephanos-ui-already-ready';
+  const repairSucceeded = repairExitCode === 0 && repair?.ready === true;
+  const ok = (repairSucceeded || raceConverged)
     && after?.ok === true
     && after?.status === 'READY'
     && servedAfter?.ready === true;
@@ -117,9 +133,10 @@ export async function runSovereignCommanderUi4173Repair({
     blocker: ok ? '' : text(repair?.blockers?.[0]?.id || (servedAfter?.ready !== true ? 'STEPHANOS_UI_4173_SERVED_HEAD_UNPROVEN' : '') || repair?.action || 'STEPHANOS_UI_4173_REPAIR_UNPROVEN'),
     expectedHead,
     workspaceRoot,
-    alreadyReady: false,
+    alreadyReady: ok && raceConverged,
     repairExitCode,
     repair,
+    raceConverged: ok && raceConverged,
     publisherBefore: before,
     publisherAfter: after,
     servedHeadBefore: servedBefore,
