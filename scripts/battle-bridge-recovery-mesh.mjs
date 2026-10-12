@@ -722,7 +722,7 @@ export async function runBattleBridgeRecoveryMesh({
           timeout: 45_000, maxBuffer: 64 * 1024,
         });
         const marker = 'TEMPORARY_SOVEREIGN_LEASE_RESCUE_RESULT=';
-        const line = text(child?.stdout).split(/\\r?\\n/).find(x => x.startsWith(marker));
+        const line = text(child?.stdout).split(/\r?\n/).find(x => x.startsWith(marker));
         const response = child?.status === 0 && !child?.error && line
           ? JSON.parse(line.slice(marker.length)) : null;
         const knownModes = new Set([
