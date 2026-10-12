@@ -41,7 +41,7 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
       maxBuffer: 512 * 1024, env: execution.environment,
     });
     if (result?.error || result?.status !== 0) throw Error('EXACT_LOCAL_GIT_READ_UNVERIFIED');
-    return String(result.stdout || '').trimEnd();
+    return String(result.stdout || '');
   };
   if (git(['rev-parse','HEAD']).trim().toLowerCase() !== head) throw Error('LOCAL_REVIEW_HEAD_MISMATCH');
   if (git(['symbolic-ref','--quiet','--short','HEAD']).trim() !== branch) {
@@ -56,14 +56,13 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     '--name-only',base,head,'--']).split('\n').filter(Boolean);
   const diff = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
     '--unified=3',base,head,'--']);
-  // Git output is captured with trimEnd; the source digest is over the exact
-  // bytes used by the reviewer. Reattach the one final LF stripped by trimEnd.
+  // Preserve the exact Git diff byte stream, including final newline.
   return Object.freeze({
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
     prNumber: Number(env.STEPHANOS_REVIEW_PR),
     branch, sourceHead: head, baseSha: base, changedFiles,
-    diff: diff.endsWith('\n') ? diff : diff + '\n',
+    diff,
     reviewerSessionId: text(env.STEPHANOS_REVIEW_SESSION),
     implementerSessionId: text(env.STEPHANOS_REVIEW_IMPLEMENTER_SESSION),
     implementerProvider: text(env.STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER),
