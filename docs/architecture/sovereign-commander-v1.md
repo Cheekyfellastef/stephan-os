@@ -180,3 +180,9 @@ Source tests are not physical Battle Bridge proof. Before normal routing depends
 The guarded GitHub mailbox ingress is the cloud/mobile control route when direct local MCP is unavailable. It now admits the same source-controlled repair/orchestration actions used by the local Commander for Battle Bridge ignition, control-plane repair, general Battle Bridge repair, worker/backend recovery, and OpenClaw ignition repair. The public ingress returns sanitised proof metadata only.
 
 This is functional repair delegation, not arbitrary-shell parity. Remote chats must prefer these fixed repair actions and must not claim Sovereign Commander is unreachable merely because the local desktop MCP tool is absent. Arbitrary shell text, arbitrary paths, raw stdout/stderr, secrets, merge authority and PC restart remain outside the remote mailbox boundary.
+
+## Additional private inspection parity (11 October 2026)
+
+The local authenticated Sovereign Commander MCP exposes `read_multiple_files` (one to eight absolute paths, no more than 200 selected lines per file and a shared 16 KiB content budget) and `get_file_info` (file type, byte size and modification time, never the file contents). These are read-only, source-controlled operations implemented by the local Node executor, not a Remote Desktop Commander call or an arbitrary shell command. They complement the existing `read_file`, `search_project`, process telemetry and fixed maintenance actions.
+
+These tools are **private MCP only**. The public GitHub/mobile command mailbox must not expose private path reads, whole-PC metadata or arbitrary file contents. Their presence in source and a parity mapping is *capability coverage*, not a claim of a live Battle Bridge execution receipt. Verify on the exact PR head with independent review, protected merge, safe machine sync, local MCP tool advertisement and a fresh authenticated command proof before marking runtime parity green.
