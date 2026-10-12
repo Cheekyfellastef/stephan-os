@@ -298,6 +298,7 @@ function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_R
 // session. Use the existing guarded, fixed-capability ignition preflight only;
 // read-only/status commands never gain service-recycle authority.
 const COMMANDER_RUNTIME_PREFLIGHT_ACTIONS = new Set([
+  'cpu-pressure-snapshot',
   'repair-stephanos',
   'repair-goal-builder-flow',
   'fleet-goal-supervisor',
@@ -2256,6 +2257,18 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const tools = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.map((tool) => text(tool?.name))
     : [];
+  // A synced main commit does not prove the pre-merge MCP server loaded its new actions.
+  const maintenanceTool = Array.isArray(listed.body?.result?.tools)
+    ? listed.body.result.tools.find((tool) => text(tool?.name) === 'maintenance_action')
+    : null;
+  const runtimeActions = maintenanceTool?.inputSchema?.properties?.actionId?.enum;
+  if (shape.command.remoteAction === 'cpu-pressure-snapshot'
+    && (!Array.isArray(runtimeActions) || !runtimeActions.includes('cpu-pressure-snapshot'))) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CPU_ACTION_STALE_RUNTIME', {
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+  }
   if (!listed.ok
     || !tools.includes('get_config')
     || !tools.includes('maintenance_action')
