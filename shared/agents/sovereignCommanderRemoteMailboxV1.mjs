@@ -55,6 +55,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
+  'prove-skill-forge-runtime',
   'reconcile-remote-commander-parity',
   'sync-vr-reference-sources',
   'preservation-converge-pr-branch',
@@ -420,7 +421,13 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
         profile: 'flywheel-live-feed',
         verdicts: Object.freeze(['FLYWHEEL_RUNTIME_PROOF_PASS', 'FLYWHEEL_RUNTIME_PROOF_BLOCKED']),
       })
-      : null;
+      : processId === 'prove-skill-forge-runtime'
+        ? Object.freeze({
+          marker: 'SOVEREIGN_COMMANDER_SKILL_FORGE_RUNTIME_PROOF_RESULT=',
+          profile: 'skill-forge-and-command-observatory',
+          verdicts: Object.freeze(['SKILL_FORGE_RUNTIME_PROOF_PASS', 'SKILL_FORGE_RUNTIME_PROOF_BLOCKED']),
+        })
+        : null;
   if (!proofContract) return null;
   const stdout = String(value?.structuredContent?.stdout || '');
   const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(proofContract.marker));
@@ -465,7 +472,18 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     seedVisible: proof?.browser?.seedVisible === true,
     consoleErrorCount: safeCount(proof.consoleErrorCount),
     pageErrorCount: safeCount(proof.pageErrorCount),
-    screenshotCaptured: Boolean(proof.screenshotPath),
+    screenshotCaptured: Boolean(proof.screenshotPath || proof.screenshotCaptured === true),
+    forgeTitleVisible: proof?.forgeTitleVisible === true,
+    forgeConstructionLineVisible: proof?.forgeConstructionLineVisible === true,
+    forgeLearningViewVisible: proof?.forgeLearningViewVisible === true,
+    forgeTransferGateVisible: proof?.forgeTransferGateVisible === true,
+    commandObservatoryVisible: proof?.commandObservatoryVisible === true,
+    commandNavigationVisible: proof?.commandNavigationVisible === true,
+    forgeFeedTruth: ['REPORTED', 'STALE', 'UNAVAILABLE'].includes(text(proof?.forgeFeedTruth)) ? text(proof?.forgeFeedTruth) : '',
+    backendState: ['ready','stale','unavailable','error'].includes(text(proof?.backendState).toLowerCase()) ? text(proof?.backendState).toLowerCase() : '',
+    backendHttpStatus: safeCount(proof.backendHttpStatus, 599),
+    forgeHttpStatus: safeCount(proof.forgeHttpStatus, 599),
+    commandHttpStatus: safeCount(proof.commandHttpStatus, 599),
     receiptCaptured: Boolean(proof.receiptPath),
     blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
   });
@@ -498,6 +516,21 @@ function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead
       && ['LIVE', 'STALE'].includes(proof.browserLiveLabel)
       && proof.backendUnreachableVisible === false
       && proof.seedVisible === true;
+  }
+  if (actionId === 'prove-skill-forge-runtime') {
+    return proof.profile === 'skill-forge-and-command-observatory'
+      && proof.finalVerdict === 'SKILL_FORGE_RUNTIME_PROOF_PASS'
+      && proof.forgeHttpStatus === 200
+      && proof.commandHttpStatus === 200
+      && proof.backendHttpStatus === 200
+      && proof.backendState === 'ready'
+      && proof.forgeFeedTruth === 'REPORTED'
+      && proof.forgeTitleVisible === true
+      && proof.forgeConstructionLineVisible === true
+      && proof.forgeLearningViewVisible === true
+      && proof.forgeTransferGateVisible === true
+      && proof.commandObservatoryVisible === true
+      && proof.commandNavigationVisible === true;
   }
   return false;
 }
@@ -2502,7 +2535,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         });
       }
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
-      const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
+      const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime', 'prove-skill-forge-runtime'].includes(actionId);
       const runtimeProofComplete = !runtimeProofRequired
         || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
@@ -3146,7 +3179,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
-  const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
+  const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime', 'prove-skill-forge-runtime'].includes(shape.command.remoteAction);
   const runtimeProofComplete = !runtimeProofRequired
     || runtimeProofCompleteForAction(shape.command.remoteAction, projection.runtimeProof, shape.expectedHead);
   const observationRequired = shape.command.remoteAction === 'battle-bridge-observe';
