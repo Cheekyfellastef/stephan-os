@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
 export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
@@ -336,6 +338,15 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
 // A failed bounded Sovereign repair enters the existing Flywheel learning feed.
 // Stable source head and typed root blocker dedupe cooldown retries.
 
+function boundedRepairIdentity(prefix, reason, maxLength) {
+  const slug = reason.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  if ((prefix + slug).length <= maxLength) return prefix + slug;
+  // Preserve short existing identities. Long typed blockers need both a
+  // readable prefix and a digest of the full reason, not truncation aliases.
+  const digest = createHash('sha256').update(reason).digest('hex').slice(0, 16);
+  return prefix + slug.slice(0, maxLength - prefix.length - digest.length - 1) + '-' + digest;
+}
+
 export function projectOctopusFailedRepairLearningEventV1({
   sourceHead = '', attemptAtUtc = '', attemptCount = 0,
   blocker = '', needsRepair = false,
@@ -348,14 +359,15 @@ export function projectOctopusFailedRepairLearningEventV1({
     && Number.isSafeInteger(attemptCount) && attemptCount > 0
     && Number.isFinite(observed) && needsRepair === true;
   const id = publish
-    ? 'core-octopus-repair-gap-' + head.slice(0, 12) + '-'
-      + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 80)
+    // Shared Workspace path segments allow 81 characters including '.json'.
+    ? boundedRepairIdentity('core-octopus-repair-gap-' + head.slice(0, 12) + '-', reason, 76)
     : '';
   return Object.freeze({
     publish, eventId: id,
     reason: publish ? reason : '',
     ownerIssue: '#2961',
-    capabilityId: publish ? 'core-octopus-failed-repair-' + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+    // Learning capability IDs allow 68 characters; the default lesson adds 12.
+    capabilityId: publish ? boundedRepairIdentity('core-octopus-failed-repair-', reason, 68) : '',
     attemptAtUtc: publish ? attemptAtUtc : '',
     schedulerAuthority: false, mergeAuthority: false, leaseOverrideAllowed: false,
   });
