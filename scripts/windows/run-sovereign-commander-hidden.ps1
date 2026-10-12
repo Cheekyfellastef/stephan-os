@@ -116,8 +116,8 @@ function Get-StephanosCoreDaemonHealth {
             healthy = [bool](
                 $status.daemonHealthy -eq $true -and
                 $readiness -ne 'RELOAD_REQUIRED' -and
-                $sourceHeadMatchesLive -and
                 $bridgeContractReady -and
+                $sourceHeadMatchesLive -and
                 ($heartbeatFresh -or $busyGraceActive)
             )
             heartbeatFresh = $heartbeatFresh
