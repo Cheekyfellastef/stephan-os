@@ -155,7 +155,7 @@ function review(runnerSource = runner, statusSource = status, extra = []) {
 test('clean Core Daemon Windows estate is qualified with zero authority', () => {
   const result = review();
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1);
   assert.equal(result.sourceMutationAllowed, false);
   assert.equal(result.mergeAuthority, false);
@@ -171,7 +171,7 @@ test('top-level trusted specialist routes the Core Daemon pair before fallback',
     sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
   });
   assert.equal(result.eligible, true);
-  assert.equal(result.clean, true);
+  assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_SPECIALIST_CLEAN');
 });
 
