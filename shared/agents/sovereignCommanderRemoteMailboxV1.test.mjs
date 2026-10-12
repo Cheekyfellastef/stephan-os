@@ -2495,6 +2495,9 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
     schemaVersion: 'stephanos.core-daemon-status.v1',
     ok: true,
     processCount: 1,
+    singleInstanceProven: true,
+    bridgeContractCurrent: true,
+    outerBridgeRunCount: 2,
     daemonHealthy: true,
     readiness: 'READY',
     wakeState: 'AWAKE',
@@ -2539,6 +2542,9 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.available, true);
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+  assert.equal(result.coreDaemonStatus.singleInstanceProven, true);
+  assert.equal(result.coreDaemonStatus.bridgeContractCurrent, true);
+  assert.equal(result.coreDaemonStatus.outerBridgeRunCount, 2);
 });
 
 test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge packet', async () => {
