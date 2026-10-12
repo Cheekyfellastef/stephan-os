@@ -56,8 +56,10 @@ export function deriveBackendServiceState({ routeTruthView = {}, apiStatus = {},
     return 'alive';
   }
 
+  // A route-positive flag is not timeless process health. Without fresh,
+  // timestamp-bound evidence the UI must show unknown, not a stale green.
   if (backendReachableState === 'yes') {
-    return 'alive';
+    return isFreshBackendHealthProof(routeTruthView) && timeBoundProof ? 'alive' : 'unknown';
   }
 
   if (backendReachableState === 'no' && isFreshBackendHealthProof(routeTruthView) && timeBoundProof) {
