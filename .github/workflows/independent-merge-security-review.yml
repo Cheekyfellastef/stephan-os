@@ -40,10 +40,6 @@ permissions: {}
 
 jobs:
   independent-security-review:
-    # Draft source is not an admitted review target. Keep the workflow_dispatch
-    # authority path available for explicit coordinator handoffs, but avoid
-    # burning the shared installation quota on draft PR synchronizations.
-    if: ${{ github.event_name != 'pull_request_target' || !github.event.pull_request.draft }}
     name: independent-security-review
     runs-on: ubuntu-latest
     timeout-minutes: 60
