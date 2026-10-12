@@ -115,6 +115,7 @@ $repoRoot = 'C:\Users\operator\Documents\GitHub\stephan-os'
 $coreScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $statusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $corePattern = [regex]::Escape($coreScript)
+$gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $processes = @(
   Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     Where-Object {
@@ -189,6 +190,9 @@ test('widened execution, process kill, task, Git and writable-status authority f
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '$x = 1 # $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '<#\n$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru\n#>'), status],
     [runner + "\nStart-ScheduledTask -TaskName $TaskName", status],
+    [runner + "\nStart-ScheduledTask -TaskName $arbitraryTask", status],
+    [runner + "\n$desktopCommanderTaskName = 'Other Task'\nStart-ScheduledTask -TaskName $desktopCommanderTaskName", status],
+    [runner, status + "\ngit reset --hard HEAD~1"],
     [runner + "\nInvoke-Expression $env:CORE_COMMAND", status],
     [runner + "\ngit reset --hard HEAD~1", status],
     [runner, status + "\nSet-Content -LiteralPath $statusPath -Value bad"],
