@@ -231,6 +231,55 @@ export async function collectSelfHealVisibility(options = {}) {
   });
 }
 
+// Observe the already-running Core Daemon bridge without creating a
+// recovery task, touching the original source lease or exposing raw workspace.
+export async function collectSovereignOuterBridgeVisibility(options = {}) {
+  const parsed = await readWorkspaceStatusFile('sovereign-outer-bridge-current.json', options);
+  const bridge = parsed?.bridge;
+  const unknown = Object.freeze({
+    available: false, current: false, exactHeadMatch: false, cycleAgeSeconds: null,
+    sourceHead: '', stage: 'UNVERIFIED', rescueBlocker: 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    twoUnattendedRefillsProven: false, canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: true, readOnly: true,
+  });
+  if (parsed?.statusId !== 'sovereign-outer-bridge-current'
+    || parsed?.participantId !== 'stephanos-core-daemon'
+    || parsed?.status !== 'HELD'
+    || bridge?.schemaVersion !== 'stephanos.sovereign-outer-bridge.v1'
+    || bridge?.sourceMutationAllowed !== false
+    || bridge?.leaseSeizureAllowed !== false
+    || bridge?.duplicateSchedulerAllowed !== false
+    || bridge?.mergeAuthority !== false) return unknown;
+  const observedAtUtc = timestamp(bridge.observedAtUtc);
+  const statusTimestampUtc = timestamp(parsed.timestampUtc);
+  const nowMs = options?.now instanceof Date ? options.now.getTime() : Date.now();
+  const ageMs = observedAtUtc ? nowMs - Date.parse(observedAtUtc) : NaN;
+  const current = Boolean(statusTimestampUtc && observedAtUtc
+    && statusTimestampUtc === observedAtUtc && Number.isFinite(ageMs)
+    && ageMs >= 0 && ageMs <= 3 * 60_000);
+  const sourceHead = sha(bridge.sourceHead);
+  const stage = state(bridge.stage, 80);
+  const known = ['OUTER_BRIDGE_WIDE','OUTER_BRIDGE_NARROWING_LEASE',
+    'OUTER_BRIDGE_NARROWING_PICKUP','CANONICAL_REJOIN_READY'];
+  const allowedStage = known.includes(stage) ? stage : 'UNVERIFIED';
+  return Object.freeze({
+    available: true, current,
+    observedAtUtc, cycleAgeSeconds: Number.isFinite(ageMs) && ageMs >= 0
+      ? Math.floor(ageMs / 1000) : null,
+    sourceHead, exactHeadMatch: false, // proven only by the caller's exact local source
+    stage: allowedStage,
+    rescueBlocker: state(bridge.rescueBlocker, 120) || 'OUTER_BRIDGE_BLOCKER_UNVERIFIED',
+    // Be conservative: local source and current cycle are independently required.
+    canonicalLeaseReleaseProven: current && bridge.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: bridge.oneCanonicalLeaseAuthority === true,
+    readOnly: true,
+  });
+}
+
 export async function collectRelayVisibility(options = {}) {
   const parsed = await readWorkspaceStatusFile('sovereign-relay-current.json', options);
   if (!parsed || ![
@@ -443,11 +492,32 @@ export function buildSovereignVisibilitySnapshot({
   controllers = {},
   meters = {},
   relay = {},
+  outerBridge = {},
 } = {}) {
   const compactObservationValue = compactObservation(observation);
   const compactControllersValue = compactControllers(controllers);
   const compactMetersValue = compactMeters(meters);
   const headSync = buildHeadSyncVisibility({ repository, core });
+  const headMatchedBridge = outerBridge?.available === true
+    && outerBridge?.current === true
+    && sha(outerBridge.sourceHead) === sha(repository.head)
+    && sha(outerBridge.sourceHead) === sha(core.sourceHead)
+    && headSync.exactHeadChainProven === true;
+  const projectedOuterBridge = Object.freeze({
+    available: outerBridge?.available === true,
+    current: headMatchedBridge,
+    exactHeadMatch: headMatchedBridge,
+    sourceHead: headMatchedBridge ? sha(outerBridge.sourceHead) : '',
+    observedAtUtc: timestamp(outerBridge?.observedAtUtc),
+    cycleAgeSeconds: integer(outerBridge?.cycleAgeSeconds, 31_536_000),
+    stage: headMatchedBridge ? state(outerBridge?.stage, 80) : 'UNVERIFIED',
+    rescueBlocker: state(outerBridge?.rescueBlocker, 120) || 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: headMatchedBridge && outerBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const repositoryLight = !repository?.available
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
@@ -493,6 +563,7 @@ export function buildSovereignVisibilitySnapshot({
     controllers: compactControllersValue,
     meters: compactMetersValue,
     relay,
+    outerBridge: projectedOuterBridge,
     health: Object.freeze({
       repository: repositoryLight,
       core: coreLight,
@@ -526,12 +597,13 @@ export async function collectSovereignVisibilitySnapshot({
   meterCollector = collectSovereignMeterStatus,
 } = {}) {
   const current = now();
-  const [observation, controllers, meters, selfHeal, relay] = await Promise.all([
+  const [observation, controllers, meters, selfHeal, relay, outerBridge] = await Promise.all([
     battleBridgeCollector({ spawnSyncFn, env, now: () => current }),
     controllerCollector({ env, now: () => current }),
     meterCollector({ env, spawnSyncFn, now: () => current }),
     collectSelfHealVisibility({ env, readFileFn, now: current }),
     collectRelayVisibility({ env, readFileFn, now: current }),
+    collectSovereignOuterBridgeVisibility({ env, readFileFn, now: current }),
   ]);
   const repository = collectRepositoryVisibility({ spawnSyncFn });
   const core = collectCoreDaemonVisibility({ spawnSyncFn });
@@ -544,6 +616,7 @@ export async function collectSovereignVisibilitySnapshot({
     controllers,
     meters,
     relay,
+    outerBridge,
   });
 }
 

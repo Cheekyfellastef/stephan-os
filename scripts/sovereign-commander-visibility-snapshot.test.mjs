@@ -239,3 +239,47 @@ test('visibility snapshot remains below Sovereign maintenance stdout cap under f
   assert.equal(snapshot.meters.attentionMetersTruncated, true);
   assert.deepEqual(snapshot.meters.counts, { total: 64, green: 0, amber: 0, red: 0, grey: 64 });
 });
+
+
+test('Sovereign outer bridge status is carried read-only only on exact source and fresh cycle',()=>{
+  const base={
+    capturedAtUtc:'2026-10-12T13:35:00.000Z',
+    repository:{available:true,head:HEAD,branch:'main',remoteMainAvailable:true,remoteMainHead:HEAD},
+    core:{available:true,ok:true,daemonHealthy:true,sourceHead:HEAD,readiness:'READY'},
+    outerBridge:{
+      available:true,current:true,sourceHead:HEAD,observedAtUtc:'2026-10-12T13:34:40.000Z',
+      cycleAgeSeconds:20,stage:'OUTER_BRIDGE_WIDE',
+      rescueBlocker:'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+      canonicalLeaseReleaseProven:false,readOnly:true,
+    },
+  };
+  const value=buildSovereignVisibilitySnapshot(base);
+  assert.equal(value.outerBridge.current,true);
+  assert.equal(value.outerBridge.stage,'OUTER_BRIDGE_WIDE');
+  assert.equal(value.outerBridge.rescueBlocker,'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN');
+  assert.equal(value.outerBridge.canonicalLeaseReleaseProven,false);
+  assert.equal(value.outerBridge.canonicalHandbackEligible,false);
+  assert.equal(value.outerBridge.sourceMutationAllowed,false);
+  const drift=buildSovereignVisibilitySnapshot({...base,core:{...base.core,sourceHead:'b'.repeat(40)}});
+  assert.equal(drift.outerBridge.current,false);
+  assert.equal(drift.outerBridge.stage,'UNVERIFIED');
+  assert.equal(drift.outerBridge.canonicalLeaseReleaseProven,false);
+});
+
+test('unknown or old bridge cannot claim pickup or rejoin from local fields alone',()=>{
+  for(const candidate of [
+    {},
+    {available:true,current:false,sourceHead:HEAD,stage:'CANONICAL_REJOIN_READY',canonicalLeaseReleaseProven:true},
+    {available:true,current:true,sourceHead:'b'.repeat(40),stage:'CANONICAL_REJOIN_READY',canonicalLeaseReleaseProven:true},
+  ]){
+    const result=buildSovereignVisibilitySnapshot({
+      repository:{available:true,head:HEAD,branch:'main',remoteMainAvailable:true,remoteMainHead:HEAD},
+      core:{available:true,ok:true,daemonHealthy:true,sourceHead:HEAD},
+      outerBridge:candidate,
+    });
+    assert.equal(result.outerBridge.current,false);
+    assert.equal(result.outerBridge.canonicalLeaseReleaseProven,false);
+    assert.equal(result.outerBridge.physicalPickupProven,false);
+    assert.equal(result.outerBridge.twoUnattendedRefillsProven,false);
+  }
+});

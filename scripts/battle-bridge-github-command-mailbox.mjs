@@ -991,6 +991,31 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
     finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
   });
+  const rawOuterBridge = value?.outerBridge;
+  const matchedOuterBridge = rawOuterBridge?.available === true
+    && rawOuterBridge?.current === true
+    && rawOuterBridge?.exactHeadMatch === true
+    && rawOuterBridge?.readOnly === true
+    && rawOuterBridge?.sourceMutationAllowed === false
+    && rawOuterBridge?.mergeAuthority === false
+    && safeTelemetrySha(rawOuterBridge?.sourceHead) === repository.head
+    && repository.head === headSync.runtimeHead
+    && headSync.exactHeadChainProven === true;
+  const outerBridge = Object.freeze({
+    available: rawOuterBridge?.available === true,
+    current: matchedOuterBridge,
+    exactHeadMatch: matchedOuterBridge,
+    sourceHead: matchedOuterBridge ? repository.head : '',
+    observedAtUtc: safeTimestamp(rawOuterBridge?.observedAtUtc),
+    cycleAgeSeconds: safeOptionalNonNegativeInteger(rawOuterBridge?.cycleAgeSeconds),
+    stage: matchedOuterBridge ? safeTelemetryText(rawOuterBridge?.stage, 80).toUpperCase() : 'UNVERIFIED',
+    rescueBlocker: safeTelemetryText(rawOuterBridge?.rescueBlocker, 120).toUpperCase(),
+    canonicalLeaseReleaseProven: matchedOuterBridge && rawOuterBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const health = Object.freeze({
     repository: safeLight(value?.health?.repository),
     core: safeLight(value?.health?.core),
@@ -1021,6 +1046,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     controllers,
     meters,
     relay,
+    outerBridge,
     health,
     readOnly: true,
     sourceMutationAllowed: false,
@@ -2104,6 +2130,7 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       counts: meters.counts,
       finalVerdict: meters.finalVerdict,
     }) : null,
+    outerBridge: snapshot.outerBridge,
     relay: snapshot.relay ? Object.freeze({
       available: snapshot.relay.available === true,
       daemonHealthy: snapshot.relay.daemonHealthy === true,
