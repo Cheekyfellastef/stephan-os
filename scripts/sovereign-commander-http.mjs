@@ -88,6 +88,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     cpuProbeAdmissionPending: cpuProbeAdmissionHold,
     cpuProbeAdmissionExpired: false,
     cpuProbeSampling: false,
+    repairTreeUnverified: false,
     scheduled: false,
     cycleCount: 0,
     successCount: 0,
@@ -123,7 +124,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   };
 
   const runNow = () => {
-    if (stopped || child) return false;
+    if (stopped || child || state.repairTreeUnverified) return false;
     state.running = true;
     state.scheduled = false;
     state.cycleCount += 1;
@@ -143,6 +144,20 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (killTimer) {
         clearTimeoutImpl(killTimer);
         killTimer = null;
+      }
+      if (terminationRequested) {
+        // The wrapper may exit while a descendant survives. Neither kill()
+        // nor wrapper close is proof that its whole Windows process tree exited.
+        // Keep this lease occupied and fail closed until #1814 supplies an
+        // independent, identity-bound tree-termination receipt.
+        state.repairTreeUnverified = true;
+        state.running = true;
+        state.scheduled = false;
+        state.lastOk = false;
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
+        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
+        state.failureCount += 1;
+        return;
       }
       const receipt = parseContinuousRepairReceipt(stdout);
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
@@ -208,10 +223,12 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       ));
       killTimer = setTimeoutImpl(() => {
         terminationRequested = true;
-        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TERMINATION_UNVERIFIED';
-        // Request a kill but never complete/restart a guardian cycle or reopen
-        // CPU sampling until the observed child close arrives.
-        try { currentChild.kill?.(); } catch {}
+        state.repairTreeUnverified = true;
+        state.lastBlocker = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_REPAIR_TREE_TERMINATION_UNVERIFIED';
+        // Never kill only the wrapper: PowerShell/Node descendants could outlive
+        // it. Keep the repair lease held even if the wrapper later closes.
+        // A future #1814 tree-aware recovery can verify and release the lease.
       }, maxRuntimeMs);
       killTimer?.unref?.();
     } catch (error) {
@@ -227,7 +244,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     runNow,
     beginCpuProbe: () => {
       if (state.cpuProbeAdmissionExpired || state.cpuProbeSampling
-        || state.running || child) return false;
+        || state.repairTreeUnverified || state.running || child) return false;
       // Every admitted CPU sample owns its own guard. Pause a pending normal
       // cycle; never sample while a repair child is running.
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
