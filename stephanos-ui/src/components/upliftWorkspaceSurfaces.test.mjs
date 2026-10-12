@@ -222,10 +222,10 @@ test('Flywheel and Skill Forge both render one shared, truth-gated conversation 
     readFile(new URL('./ConversationLearningJourney.css', import.meta.url), 'utf8'),
   ]);
   assert.match(panel, /conversationUplift=\{telemetry\.payload\?\.conversationUplift \|\| null\}/);
-  assert.match(panel, /conversationFeedState=\{telemetry\.state\}/);
+  assert.match(panel, /conversationFeedState=\{telemetry\.state === 'unreachable'/);
   assert.match(canvas, /<ConversationLearningJourney[\s\S]*placement="flywheel"/);
   assert.match(forge, /<ConversationLearningJourney[\s\S]*placement="skill-forge"/);
-  assert.match(forge, /feedState=\{feed\?\.state \|\| 'unavailable'\}/);
+  assert.match(forge, /feedState=\{refreshState === 'RECEIVED'/);
   assert.match(component, /Conversation Intelligence · Improvement Journey/);
   assert.match(component, /KNOWLEDGE → CAPABILITY → PROOF/);
   assert.match(component, /UNKNOWN/);
@@ -252,10 +252,11 @@ test('conversation journey never promotes unverified conversation hints into bui
   assert.equal(ready.provenImprovements, null);
   assert.equal(JSON.stringify(ready).includes('workspace://one'), false);
 
-  for (const state of ['stale', 'unavailable', 'connecting']) {
+  for (const state of ['unavailable', 'connecting']) {
     const result = deriveConversationLearningJourneyV1({ uplift, feedState: state });
     assert.equal(result.indexedTurns, null);
     assert.equal(result.provenImprovements, null);
     assert.notEqual(result.state, 'REPORTED');
   }
+  assert.equal(deriveConversationLearningJourneyV1({ uplift, feedState: 'stale' }).indexedTurns, 301);
 });
