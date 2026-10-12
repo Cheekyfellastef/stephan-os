@@ -1780,6 +1780,16 @@ function safeCoreDaemonStatusProjection(value = {}) {
       ? Number(parsed.processCount)
       : null,
     daemonHealthy: parsed.daemonHealthy === true,
+    reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
+    // Public projection contains only bounded custody verdicts, never PIDs,
+    // paths or raw command lines. Absent fields remain unproven.
+    singleWriterProven: parsed.singleWriterProven === true,
+    writerProcessObserved: parsed.writerProcessObserved === true,
+    lockOwnerMatchesWriter: parsed.lockOwnerMatchesWriter === true,
+    rescueGenerationPresent: parsed.rescueGenerationPresent === true,
+    rescueAttemptCount: Number.isSafeInteger(parsed.rescueAttemptCount)
+      && parsed.rescueAttemptCount >= 0 && parsed.rescueAttemptCount <= 1_000_000
+      ? parsed.rescueAttemptCount : null,
     readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
     wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
     awake: parsed.awake === true,
