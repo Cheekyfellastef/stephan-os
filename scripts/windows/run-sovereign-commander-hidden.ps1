@@ -27,6 +27,7 @@ $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$coreDaemonLockPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }) 'Stephanos\stephanos-core-daemon.lock.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $desktopCommanderTaskName = 'Stephanos Commander Watchdog'
@@ -79,6 +80,32 @@ function Get-StephanosCoreDaemonHealth {
             $sourceHead -match '^[0-9a-fA-F]{40}$' -and
             [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
         )
+        $writerPid = 0
+        if ($status.PSObject.Properties['processId']) {
+            [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
+        }
+        $lockOwnerPid = 0
+        if (Test-Path -LiteralPath $coreDaemonLockPath -PathType Leaf) {
+            try {
+                $lock = Get-Content -LiteralPath $coreDaemonLockPath -Raw | ConvertFrom-Json
+                [void][int]::TryParse([string]$lock.pid, [ref]$lockOwnerPid)
+            } catch {}
+        }
+        $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
+        $writerCustodyProven = [bool](
+            $coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+            $lockOwnerPid -eq $writerPid -and
+            @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid }).Count -eq 1
+        )
+        $rescueCount = 0
+        $rescueStage = if ($status.PSObject.Properties['outerBridgeLastStage']) {
+            [string]$status.outerBridgeLastStage
+        } else { '' }
+        $rescueGenerationProven = [bool](
+            $status.PSObject.Properties['outerBridgeRunCount'] -and
+            [int]::TryParse([string]$status.outerBridgeRunCount, [ref]$rescueCount) -and
+            $rescueCount -ge 0 -and $rescueStage -cmatch '^[A-Z][A-Z0-9_]{0,79}$'
+        )
         $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
         $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
         $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
@@ -91,6 +118,7 @@ function Get-StephanosCoreDaemonHealth {
         }
         $busyGraceActive = [bool](
             $status.daemonHealthy -eq $true -and
+            $writerCustodyProven -and $rescueGenerationProven -and
             $readiness -ne 'RELOAD_REQUIRED' -and
             $sourceHeadMatchesLive -and
             $flywheelCycleRunning -and
@@ -101,6 +129,7 @@ function Get-StephanosCoreDaemonHealth {
         return [pscustomobject]@{
             healthy = [bool](
                 $status.daemonHealthy -eq $true -and
+                $writerCustodyProven -and $rescueGenerationProven -and
                 $readiness -ne 'RELOAD_REQUIRED' -and
                 $sourceHeadMatchesLive -and
                 ($heartbeatFresh -or $busyGraceActive)
