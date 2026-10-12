@@ -45,6 +45,9 @@ function isFreshBackendHealthProof(routeTruthView = {}) {
 
 export function deriveBackendServiceState({ routeTruthView = {}, apiStatus = {}, nowMs = Date.now() } = {}) {
   const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
+  const checkedAtMs = Date.parse(String(apiStatus?.runtimeContext?.healthProbeTruth?.lastBackendHealthProbeAt || apiStatus?.lastCheckedAt || ''));
+  const ageMs = nowMs - checkedAtMs;
+  const timeBoundProof = Number.isFinite(checkedAtMs) && ageMs >= 0 && ageMs <= 120000;
 
   // A fresh, identity-verified service receipt is stronger evidence than a
   // cached route failure, including a browser transport error after power loss.
@@ -57,7 +60,7 @@ export function deriveBackendServiceState({ routeTruthView = {}, apiStatus = {},
     return 'alive';
   }
 
-  if (backendReachableState === 'no' && isFreshBackendHealthProof(routeTruthView)) {
+  if (backendReachableState === 'no' && isFreshBackendHealthProof(routeTruthView) && timeBoundProof) {
     return 'dead';
   }
 
