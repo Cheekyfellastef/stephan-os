@@ -14,7 +14,7 @@ import {
   projectBattleBridgeSupervisorStatus,
   runBattleBridgeIgnitionSupervisor,
 } from './battle-bridge-ignition-supervisor.mjs';
-import { runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
+import { evaluateOllamaRuntimeAutostartWithDeps, runIgnitionHousekeep } from './ignite-stephanos-local.mjs';
 import {
   battleBridgeCanonicalRepositoryArgs,
   resolveBattleBridgeGitExecution,
@@ -523,6 +523,7 @@ export async function main({
   platform = process.platform,
   sourceTruthFn = collectCanonicalIgnitionSourceTruth,
   currentHeadFn = getCurrentGitHead,
+  ollamaPreflightFn = evaluateOllamaRuntimeAutostartWithDeps,
   backendPreflightFn = ensureBackend8787ConvergedBeforeSupervisor,
   uiPreflightFn = ensureLiveUiConvergedBeforeSupervisor,
   supervisorFn = runBattleBridgeIgnitionSupervisor,
@@ -563,6 +564,21 @@ export async function main({
   };
 
   if (platform === 'win32') {
+    if (!await proveSourceTruthBeforeMutation()) return 2;
+    try {
+      const ollama = await ollamaPreflightFn({ platform });
+      console.log(`[IGNITION ENTRY] Ollama local AI ready (state=${ollama?.state || 'unknown'} model=${ollama?.requiredModel || 'unknown'} endpoint=${ollama?.baseURL || 'unknown'}).`);
+    } catch (error) {
+      await writePreSupervisorFailureStatus({
+        sharedWorkspace,
+        phase: 'Ollama local AI',
+        blockerId: 'ollama-local-ai-preflight-failed-before-supervisor',
+        detail: error?.message || 'Ollama local AI did not become ready before the Battle Bridge supervisor could start.',
+        nextOperatorAction: 'Restore the local Ollama API and configured model, then retry Ignition.',
+      });
+      console.error(`[IGNITION ENTRY] Battle Bridge supervisor not started because Ollama local AI readiness failed (${error?.message || 'unknown blocker'}).`);
+      return 1;
+    }
     if (!await proveSourceTruthBeforeMutation()) return 2;
     const backend = await backendPreflightFn({ platform, expectedHead, currentHeadFn });
     if (!backend.ok) {
