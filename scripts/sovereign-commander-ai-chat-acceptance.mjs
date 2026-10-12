@@ -116,7 +116,8 @@ export async function verifyStephanosAiCommanderTool({
 }
 export async function runStephanosAiCommanderToolAcceptance(options = {}) {
   const result = await verifyStephanosAiCommanderTool(options);
-  process.stdout.write(AI_COMMANDER_ACCEPTANCE_MARKER + JSON.stringify(result) + '\n');
+  const emit = typeof options.emitLine === 'function' ? options.emitLine : (line) => process.stdout.write(line);
+  emit(AI_COMMANDER_ACCEPTANCE_MARKER + JSON.stringify(result) + '\n');
   // Probe execution can complete even when the observed AI tool call is blocked.
   // Exit 0 so the fixed Commander process envelope preserves the typed, public-safe
   // failed-acceptance receipt. The remote mailbox must still mark such outcomes
