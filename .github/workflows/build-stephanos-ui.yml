@@ -31,7 +31,8 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: '*/10 * * * *'
+    # Periodic Pages catch-up, not a repeated full PR test suite.
+    - cron: '*/30 * * * *'
   issue_comment:
     types:
       - created
@@ -44,9 +45,10 @@ permissions:
 jobs:
   scheduler-tests:
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.login == 'Cheekyfellastef' &&
-       github.event.comment.body == '/stephanos-deploy-pages')
+      github.event_name != 'schedule' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.login == 'Cheekyfellastef' &&
+        github.event.comment.body == '/stephanos-deploy-pages'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -68,9 +70,10 @@ jobs:
 
   runtime-guardrail-tests:
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.login == 'Cheekyfellastef' &&
-       github.event.comment.body == '/stephanos-deploy-pages')
+      github.event_name != 'schedule' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.login == 'Cheekyfellastef' &&
+        github.event.comment.body == '/stephanos-deploy-pages'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -93,9 +96,10 @@ jobs:
 
   surface-ignition-tests:
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.login == 'Cheekyfellastef' &&
-       github.event.comment.body == '/stephanos-deploy-pages')
+      github.event_name != 'schedule' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.login == 'Cheekyfellastef' &&
+        github.event.comment.body == '/stephanos-deploy-pages'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -141,9 +145,10 @@ jobs:
 
   vr-research-tests:
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.login == 'Cheekyfellastef' &&
-       github.event.comment.body == '/stephanos-deploy-pages')
+      github.event_name != 'schedule' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.login == 'Cheekyfellastef' &&
+        github.event.comment.body == '/stephanos-deploy-pages'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -170,9 +175,10 @@ jobs:
 
   build:
     if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.comment.user.login == 'Cheekyfellastef' &&
-       github.event.comment.body == '/stephanos-deploy-pages')
+      github.event_name != 'schedule' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.comment.user.login == 'Cheekyfellastef' &&
+        github.event.comment.body == '/stephanos-deploy-pages'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
