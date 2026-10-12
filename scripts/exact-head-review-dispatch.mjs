@@ -39,6 +39,7 @@ import {
 import {
   evaluateOperatorLaneContainmentV1,
 } from '../shared/agents/operatorLaneContainmentV1.mjs';
+import { selectExactHeadDiscoveryWindowV1 } from '../shared/agents/exactHeadReviewDiscoveryWindowV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -406,7 +407,9 @@ async function postPrComment({ owner, repo, token, prNumber, body }) {
 
 async function discoverCanonicalContexts({ owner, repo, repository, token, laneAuthorityLogin, triggeringArtifact }) {
   const openPullRequests = await listOpenPullRequests({ owner, repo, token });
-  const candidates = (await mapWithConcurrency(openPullRequests, 8, async (rawPr) => {
+  const boundedCandidates = selectExactHeadDiscoveryWindowV1(openPullRequests);
+  console.log(`EXACT_HEAD_REVIEW_DISCOVERY_BOUNDED total=${openPullRequests.length} selected=${boundedCandidates.length}`);
+  const candidates = (await mapWithConcurrency(boundedCandidates, 8, async (rawPr) => {
     const prNumber = positiveInteger(rawPr?.number);
     if (!prNumber) return null;
     const mappedComments = (await githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token })).map(mapComment);
