@@ -71,7 +71,7 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
   const selected = filtered.find(skill => skill.id === selectedId) || filtered[0] || null;
   const selectedLearning = view.learningEvents.find(event => event.id === selectedLearningId) || view.learningEvents[0] || null;
   const source = selectedLearning?.teacher || 'openclaw-local';
-  const target = source === targetId ? 'openclaw-standalone' : targetId;
+  const target = source !== targetId ? targetId : (SKILL_TRANSFER_ACTORS.find(actor => actor.id !== source)?.id || 'UNKNOWN');
   const learningPayload = (feed?.records?.eventRecords || []).find(record => (record.eventId || record.closedLoopLearning?.eventId) === selectedLearning?.id)?.closedLoopLearning;
   const transfer = buildSkillTransferAssessmentV1({ learning: learningPayload, sourceActor: source, targetActor: target });
   const upgrade = runtimeStatusModel?.realityUpgradeOrchestrator || {};
@@ -104,7 +104,7 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
         <article><span>Learning events</span><strong>{view.summary.witnessedLearning}</strong><small>Typed events in history</small></article>
         <article><span>Lessons qualified</span><strong>{view.summary.verifiedLessons}</strong><small>Passed exam + proof</small></article>
         <article><span>Published skill records</span><strong>{view.summary.publishedSkillRecords}</strong><small>Verified provenance schema</small></article>
-        <article><span>Active recipients</span><strong>{view.summary.provenActiveTargets}</strong><small>With explicit skill records</small></article>
+        <article><span>Active recipients</span><strong>{view.summary.provenActiveTargets}</strong><small>Exact target runtime receipts</small></article>
       </div>
       <div className="skill-lab-layout">
         <section className="skill-panel skill-process-panel">
@@ -122,7 +122,7 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
           <div className="skill-agent-list">
             {view.observedActors.map((actor, index) => <article key={actor.id} className="skill-agent-card">
               <div className="skill-agent-symbol">{index === 0 ? '◈' : index === 1 ? '◇' : index === 2 ? '♛' : '▣'}</div>
-              <div><strong>{actor.label}</strong><small>{actor.scope}</small><span>Runtime: {actor.runtime} · {actor.learningCount} learning event(s)</span></div>
+              <div><strong>{actor.label}</strong><small>{actor.scope}</small><span>Runtime proof: {actor.runtime} · {actor.learningCount} learning event(s)</span></div>
               <div className="skill-agent-count"><b>{actor.skillCount}</b><small>recorded</small></div>
             </article>)}
           </div>
