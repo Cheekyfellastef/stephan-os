@@ -47,6 +47,7 @@ import {
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
+import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
 import {
   buildStephanosBuildTruth,
   collectSovereignControllerLaneStatus,
@@ -105,40 +106,35 @@ function currentHead() {
   return head;
 }
 
-async function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+async function readExactCurrentLock(identity) {
+  try { return exactCoreLockOwnerV1(JSON.parse(await readFile(lockPath, 'utf8')), identity); }
+  catch { return false; }
 }
 
+// Core source never removes an EXISTING lock while acquiring one.
+// PID liveness is not an atomic lock ownership test; competing attempts can
+// otherwise delete each other's newly created lock. Stale lock recovery must
+// use the separately reviewed, exclusive custody authority after proving no
+// original Core worker exists.
 async function acquireSingleInstance(sourceHead) {
   await mkdir(localStateRoot, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(lockPath, 'wx', 0o600);
-      await handle.writeFile(JSON.stringify({
-        schemaVersion: 'stephanos.core-daemon-lock.v1',
-        pid: process.pid,
-        sourceHead,
-        startedAtUtc: new Date().toISOString(),
-      }));
-      return handle;
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      let stale = true;
-      try {
-        const existing = JSON.parse(await readFile(lockPath, 'utf8'));
-        stale = !(await processAlive(Number(existing?.pid)));
-      } catch {}
-      if (!stale) return null;
-      try { await unlink(lockPath); } catch {}
+  const identity = Object.freeze({
+    pid: process.pid, sourceHead, startedAtUtc: new Date().toISOString(),
+  });
+  let handle;
+  try {
+    handle = await open(lockPath, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify({ schemaVersion: CORE_LOCK_SCHEMA, ...identity }));
+    if (!(await readExactCurrentLock(identity))) {
+      try { await handle.close(); } catch {}
+      return null;
     }
+    return Object.freeze({ handle, identity });
+  } catch (error) {
+    if (handle) { try { await handle.close(); } catch {} }
+    if (error?.code === 'EEXIST') return null;
+    throw error;
   }
-  return null;
 }
 
 async function probe(url, expectedService = '') {
@@ -1042,8 +1038,8 @@ async function sample(sourceHead) {
 }
 
 const sourceHead = currentHead();
-const lockHandle = await acquireSingleInstance(sourceHead);
-if (!lockHandle) {
+const ownedLock = await acquireSingleInstance(sourceHead);
+if (!ownedLock) {
   console.log(JSON.stringify({
     ok: true,
     finalVerdict: 'STEPHANOS_CORE_DAEMON_ALREADY_RUNNING',
@@ -1062,17 +1058,25 @@ let shuttingDown = false;
 async function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
-  try { await lockHandle.close(); } catch {}
-  try {
-    const current = JSON.parse(await readFile(lockPath, 'utf8'));
-    if (Number(current?.pid) === process.pid) await unlink(lockPath);
-  } catch {}
+  try { await ownedLock.handle.close(); } catch {}
+  // The lock may have changed custody while this process was exiting.
+  // PID equality alone is insufficient, and must never delete a new lock.
+  if (await readExactCurrentLock(ownedLock.identity)) {
+    try { await unlink(lockPath); } catch {}
+  }
 }
 process.on('SIGINT', async () => { await cleanup(); process.exit(0); });
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
 
 try {
   while (true) {
+    // Even if a stale-lock contender displaced this record, only the
+    // exact current owner may continue Core work. No second source writer.
+    if (!(await readExactCurrentLock(ownedLock.identity))) {
+      await cleanup();
+      console.error('STEPHANOS_CORE_OWNER_LOCK_CHANGED_HELD');
+      process.exit(76);
+    }
     const observedHead = currentHead();
     if (shouldReloadStephanosCoreDaemon(sourceHead, observedHead)) {
       const state = projectStephanosCoreDaemonState({
