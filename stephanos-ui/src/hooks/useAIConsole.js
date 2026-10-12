@@ -3685,7 +3685,7 @@ export function useAIConsole() {
       const finalized = finalizeRuntimeContext(resolvedRuntimeContext, providerHealthRef.current, false);
       setApiStatus({
         state: 'offline',
-        label: 'Backend offline',
+        label: 'Backend connection unreachable from this browser',
         detail: uiError.output,
         target: resolvedRuntimeContext.target || runtimeConfig.target,
         baseUrl: resolvedRuntimeContext.baseUrl || runtimeConfig.baseUrl,
@@ -5484,7 +5484,7 @@ export function useAIConsole() {
             lastCheckedAt: new Date().toISOString(),
           };
         }
-        return { ...prev, state: 'offline', label: 'Backend offline', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() };
+        return { ...prev, state: 'offline', label: 'Backend connection unreachable from this browser', detail: uiError.output, backendReachable: false, lastCheckedAt: new Date().toISOString() };
       });
 
       setCommandHistory((prev) => {
