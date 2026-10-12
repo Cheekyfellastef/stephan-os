@@ -5,6 +5,7 @@ import {
   SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_SCHEMA,
   SOVEREIGN_COMMANDER_SKILL_CONJURER_SCHEMA,
   SOVEREIGN_COMMANDER_SKILL_PACKET_SCHEMA,
+  SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT,
   SOVEREIGN_COMMANDER_PRIMITIVE,
   compileSovereignCommanderCapabilityPlanV1,
 } from './sovereignCommanderCapabilityCompilerV1.mjs';
@@ -151,4 +152,24 @@ test('known read-only parity gaps remain proposal-only and forbidden authority s
   assert.equal(unsafe.blockedByPolicy, true);
   assert.equal(unsafe.constructionAdmissionAllowed, false);
   assert.match(unsafe.suggestedNextAction, /do not implement/i);
+});
+
+test('burst of parity gaps retains all plans but caps public draft packet size', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({
+    timestampUtc: '2026-10-12T11:13:00.000Z',
+    capabilities: Array.from({ length: 20 }, (_, index) => ({
+      capabilityId: `bounded-probe-${index}`,
+      state: 'BUILDABLE_GAP',
+      observationCount: index + 1,
+    })),
+  });
+  assert.equal(result.buildableCapabilityCount, 20);
+  assert.equal(result.plans.length, 20);
+  assert.equal(result.skillForgeCandidateCount, SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT);
+  assert.equal(result.skillForgeCandidateTotalCount, 20);
+  assert.equal(result.skillForgeCandidatesTruncated, true);
+  assert.equal(new Set(result.skillForgeCandidates.map((item) => item.id)).size,
+    SOVEREIGN_COMMANDER_SKILL_STATUS_CANDIDATE_LIMIT);
+  assert.ok(Buffer.byteLength(JSON.stringify(result.skillForgeCandidates), 'utf8') < 11 * 1024,
+    'bounded draft packet portion must not exceed the shared status budget');
 });
