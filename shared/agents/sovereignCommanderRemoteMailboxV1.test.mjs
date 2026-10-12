@@ -296,6 +296,96 @@ test('a failed local AI Commander probe gives a typed public-safe blocker, never
   assert.equal(JSON.stringify(success).includes('SECRET_PRIVATE'), false);
 });
 
+
+test('read-only private MCP parity proof invokes real authenticated batch/metadata tools without publishing path or contents', async () => {
+  const secret = 'DO_NOT_PUBLISH_PRIVATE_PATH_OR_FILE';
+  const makeFetch = ({ batchAdvertised = true, metadataWorks = true, batchWorks = true } = {}) => {
+    const base = mcpFetch({});
+    const calls = [];
+    const fetchFn = async (url, options = {}) => {
+      let message = null;
+      try { message = JSON.parse(options.body || '{}'); } catch {}
+      if (message?.method === 'tools/list') {
+        const tools = [
+          { name: 'get_config' }, { name: 'maintenance_action' },
+          { name: 'get_file_info',
+            annotations: { readOnlyHint: true, destructiveHint: false },
+            inputSchema: { required: ['path'] } },
+        ];
+        if (batchAdvertised) tools.push({
+          name: 'read_multiple_files',
+          annotations: { readOnlyHint: true, destructiveHint: false },
+          inputSchema: { properties: { paths: { maxItems: 8 }, length: { maximum: 200 } } },
+        });
+        return response({ jsonrpc: '2.0', id: 2, result: { tools } }, { sessionId: 'session-1' });
+      }
+      const name = message?.params?.name;
+      if (message?.method === 'tools/call' && ['get_file_info', 'read_multiple_files'].includes(name)) {
+        calls.push({ name, args: message.params.arguments });
+        const path = message.params.arguments.path || message.params.arguments.paths?.[0];
+        const isMetadata = name === 'get_file_info';
+        const valid = isMetadata ? metadataWorks : batchWorks;
+        return response({ jsonrpc: '2.0', id: message.id, result: {
+          isError: !valid,
+          structuredContent: {
+            ok: valid, finalVerdict: valid ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+            proofHash: 'd'.repeat(64),
+            structuredContent: isMetadata
+              ? { path, type: 'FILE', bytes: 150, privateFileContents: secret }
+              : { totalFiles: 1, files: [{ path, content: '#!/usr/bin/env node', offset: 0, length: 1, truncated: false, privateMarker: secret }] },
+          },
+        } }, { sessionId: 'session-1' });
+      }
+      return base.fetchFn(url, options);
+    };
+    return { fetchFn, calls };
+  };
+
+  const healthy = makeFetch();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'private-mcp-parity-proof' }), {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn: healthy.fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_PRIVATE_MCP_PARITY_PROVEN');
+  assert.equal(result.localAuthenticatedMcp, true);
+  assert.equal(result.metadataCallProven, true);
+  assert.equal(result.batchReadCallProven, true);
+  assert.equal(result.privateFileContentReturned, false);
+  assert.equal(result.privateFilePathReturned, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.deepEqual(healthy.calls.map(x => x.name), ['get_file_info', 'read_multiple_files']);
+  assert.deepEqual(healthy.calls[1].args.paths, [healthy.calls[0].args.path]);
+  assert.equal(healthy.calls[1].args.length, 1);
+  assert.ok(JSON.stringify(result).includes('SOVEREIGN_PRIVATE_MCP_PARITY_PROVEN'));
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.equal(JSON.stringify(result).includes(healthy.calls[0].args.path), false);
+
+  for (const [fault, expected] of [
+    [{ batchAdvertised: false }, 'SOVEREIGN_PRIVATE_MCP_CAPABILITIES_NOT_ADVERTISED'],
+    [{ metadataWorks: false }, 'SOVEREIGN_PRIVATE_MCP_METADATA_CALL_UNPROVEN'],
+    [{ batchWorks: false }, 'SOVEREIGN_PRIVATE_MCP_BATCH_READ_CALL_UNPROVEN'],
+  ]) {
+    const bad = makeFetch(fault);
+    const failure = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'private-mcp-parity-proof' }), {
+        spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn: bad.fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Operator' },
+      },
+    );
+    assert.equal(failure.ok, false);
+    assert.equal(failure.blocker, expected);
+    assert.equal(JSON.stringify(failure).includes(secret), false);
+  }
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'private-mcp-parity-proof',
+    arbitraryPath: 'C:\\private\\secret.txt',
+  })).ok, false);
+});
+
 test('remote repair delegation exposes the bounded local repair/orchestration registry without arbitrary shell', () => {
   for (const remoteAction of [
     'ignite-stephanos',
