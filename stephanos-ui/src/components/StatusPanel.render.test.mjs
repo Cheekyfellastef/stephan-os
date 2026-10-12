@@ -443,6 +443,8 @@ test('Meaning strip projects canonical route truth and keeps unprobed runtime st
         backendReachable: true,
         routeReachable: true,
         routeUsable: true,
+        currentBackendHealthFresh: 'yes',
+        routeTruthHealthSource: 'refresh-health-poll',
         selectedProvider: 'ollama',
         executedProvider: 'ollama',
         providerHealthState: 'READY',
@@ -454,7 +456,7 @@ test('Meaning strip projects canonical route truth and keeps unprobed runtime st
     },
   });
   const renderedWithTruth = renderApp();
-  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(SELECTED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
+  assert.match(renderedWithTruth, /🟢 BACKEND REACHABLE \| 🧠 AI: OLLAMA \(EXECUTION RECORDED\) \| 📡 ROUTE: LOCAL-DESKTOP \| ✅ NO FALLBACK \| 💾 MEMORY: SHARED/);
 
   globalThis.__STEPHANOS_TEST_AI_STORE__ = createBaseStore({ runtimeStatusModel: undefined });
   const renderedWithoutTruth = renderApp();
@@ -570,6 +572,8 @@ test('runtime meaning strip uses canonical backend reachability and selected AI 
   const reachable = renderMeaningStrip({
     routeKind: 'local-desktop',
     backendReachableState: 'yes',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
     selectedProvider: 'ollama',
     executedProvider: 'unknown',
     providerExecutionGateStatus: 'pending-selection',
@@ -584,6 +588,8 @@ test('runtime meaning strip uses canonical backend reachability and selected AI 
   const unreachable = renderMeaningStrip({
     routeKind: 'local-desktop',
     backendReachableState: 'no',
+    currentBackendHealthFresh: 'yes',
+    routeTruthHealthSource: 'refresh-health-poll',
     selectedProvider: 'ollama',
     executedProvider: 'none',
     providerExecutionGateStatus: 'route-blocked',
@@ -603,6 +609,27 @@ test('runtime meaning strip uses canonical backend reachability and selected AI 
   assert.match(unknown, /BACKEND UNVERIFIED/);
   assert.match(unknown, /AI: UNVERIFIED/);
   assert.doesNotMatch(unknown, /BACKEND UNREACHABLE|BACKEND REACHABLE/);
+
+  const stalePositive = renderMeaningStrip({
+    routeKind: 'local-desktop',
+    backendReachableState: 'yes',
+    currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+    selectedProvider: 'ollama',
+    executedProvider: 'groq',
+    fallbackActive: true,
+  });
+  assert.match(stalePositive, /BACKEND UNVERIFIED/);
+  assert.doesNotMatch(stalePositive, /BACKEND REACHABLE/);
+  assert.match(stalePositive, /AI: GROQ \(EXECUTION RECORDED; OLLAMA SELECTED\)/);
+  assert.match(stalePositive, /FALLBACK ACTIVE/);
+
+  const staleNegative = renderMeaningStrip({
+    backendReachableState: 'no', currentBackendHealthFresh: 'no',
+    routeTruthHealthSource: 'stale-route-candidate',
+  });
+  assert.match(staleNegative, /BACKEND UNVERIFIED/);
+  assert.doesNotMatch(staleNegative, /BACKEND UNREACHABLE FROM UI/);
 });
 
 test('Command Deck status wiring uses the final route projection and transport failure text does not assert service outage', async () => {
@@ -616,14 +643,14 @@ test('Command Deck status wiring uses the final route projection and transport f
   assert.doesNotMatch(consoleHook, /label: 'Backend offline'/);
 });
 
-test('local browser health targets normalize mismatched loopback hosts without changing LAN routes', async () => {
+test('local browser health preserves explicitly configured loopback backend host, not frontend hostname', async () => {
   const fs = await import('node:fs/promises');
   const hook = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
 
-  assert.match(hook, /const frontendLoopbackHost = extractHostname\(nextRuntimeConfig\.frontendOrigin\)/);
   assert.match(hook, /const configuredLoopbackHost = extractHostname\(nextRuntimeConfig\.baseUrl\)/);
-  assert.match(hook, /const loopbackHostMismatch = localDesktopSession[\s\S]*?isLoopbackHost\(configuredLoopbackHost\)[\s\S]*?configuredLoopbackHost !== frontendLoopbackHost/);
-  assert.match(hook, /shouldIgnoreHomeNodeForThisSession \|\| loopbackHostMismatch[\s\S]*?\? localDesktopBackendUrl[\s\S]*?: nextRuntimeConfig\.baseUrl/);
-  assert.match(hook, /actualTargetUsed: loopbackHostMismatch[\s\S]*?\? compatibleBackendBaseUrl/);
+  assert.match(hook, /const configuredLocalBackend = localDesktopSession && isLoopbackHost\(configuredLoopbackHost\)/);
+  assert.match(hook, /shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend[\s\S]*?\? localDesktopBackendUrl[\s\S]*?: nextRuntimeConfig\.baseUrl/);
+  assert.match(hook, /actualTargetUsed: configuredLocalBackend[\s\S]*?\? compatibleBackendBaseUrl/);
+  assert.doesNotMatch(hook, /loopbackHostMismatch/, 'frontend origin must not override an explicit IPv4 loopback target');
   assert.match(hook, /const health = await checkApiHealth\(resolvedRuntimeContext\)/);
 });
