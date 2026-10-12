@@ -55,7 +55,7 @@ import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConve
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
-import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION, safeCpuPressureSnapshotProjection } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1363,6 +1363,18 @@ function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
   return null;
 }
 
+// Revalidate the existing immutable CPU sampler's allowlisted schema on the
+// public boundary. Reject unknown process/script identities; never forward raw
+// stdout, full paths, command lines or caller-selected process enumeration.
+function safeCpuPressureReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'cpu-pressure-snapshot') return null;
+  const value = operationResult?.cpuPressure;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  let stdout = '';
+  try { stdout = JSON.stringify(value); } catch { return null; }
+  return safeCpuPressureSnapshotProjection({ structuredContent: { stdout } }, 'cpu-pressure-snapshot');
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1403,6 +1415,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     maintenanceStatus: Number.isInteger(status) ? status : null,
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
@@ -2231,6 +2244,32 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   });
 }
 
+// Keep bounded measurements even if the receipt exceeds GitHub's 9 KiB
+// limit. Only a previously validated CPU schema may survive compaction.
+function compactCpuPressureForCoreReceipt(value = null) {
+  const safe = safeCpuPressureReceiptProjection({
+    remoteAction: 'cpu-pressure-snapshot',
+    cpuPressure: value,
+  });
+  if (!safe) return null;
+  const rows = safe.rows.slice(0, 6);
+  return Object.freeze({
+    schemaVersion: safe.schemaVersion,
+    capturedAtUtc: safe.capturedAtUtc,
+    sampleSeconds: safe.sampleSeconds,
+    processorCount: safe.processorCount,
+    metadataAvailable: safe.metadataAvailable,
+    rows: Object.freeze(rows),
+    rowsTruncated: safe.rows.length > rows.length,
+    readOnly: true,
+    processTerminationAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    finalVerdict: safe.finalVerdict,
+  });
+}
+
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
@@ -2268,6 +2307,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         planProofHash: inner?.planProofHash || '',
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        cpuPressure: inner?.remoteAction === 'cpu-pressure-snapshot' ? compactCpuPressureForCoreReceipt(inner?.cpuPressure) : null,
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,

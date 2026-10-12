@@ -677,6 +677,90 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('meter-free CPU snapshot reaches GitHub with safe measured rows instead of only a success flag', () => {
+  const head = 'b'.repeat(40);
+  const cpuPressure = {
+    schemaVersion: 'stephanos.battle-bridge-cpu-pressure.v1',
+    capturedAtUtc: '2026-10-12T10:00:00.000Z',
+    sampleSeconds: 5,
+    processorCount: 8,
+    metadataAvailable: true,
+    rows: Array.from({ length: 10 }, (_, n) => ({
+      pid: 5900 + n,
+      parentPid: 7000,
+      processName: 'powershell',
+      startedAtUtc: '2026-10-12T09:00:00.000Z',
+      cpuPercent: 9.3,
+      script: 'run-vr-resource-governor.ps1',
+      sampleMatched: true,
+      rawCommandLine: 'PRIVATE C:\\Users\\Operator\\secret.ps1',
+    })),
+    readOnly: true,
+    sourceMutationAllowed: false,
+    processTerminationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawCommandLinesReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED',
+    privatePath: 'PRIVATE C:\\Users\\Operator',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-cpu-result-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: head, processSourceHead: head,
+    acceptedAt: '2026-10-12T10:00:00.000Z',
+    heartbeatAt: '2026-10-12T10:00:06.000Z',
+    completedAt: '2026-10-12T10:00:07.000Z',
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-cpu-result-proof-001',
+      result: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE',
+        remoteAction: 'cpu-pressure-snapshot', sourceHead: head, proofHash: '1'.repeat(64),
+        publicReceiptSafe: true, secretMaterialReturned: false, cpuPressure,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  const measured = projected.operationResult.cpuPressure;
+  assert.equal(measured.schemaVersion, cpuPressure.schemaVersion);
+  assert.equal(measured.rows.length, 10);
+  assert.equal(measured.rows[0].pid, 5900);
+  assert.equal(measured.rows[0].cpuPercent, 9.3);
+  assert.equal(measured.rows[0].script, 'run-vr-resource-governor.ps1');
+  assert.equal(Object.hasOwn(measured.rows[0], 'rawCommandLine'), false);
+  assert.equal(Object.hasOwn(measured, 'privatePath'), false);
+  const publicJson = serializeBoundedReceiptJson(receipt);
+  const serialized = JSON.parse(publicJson);
+  assert.equal(serialized.result.result.cpuPressure.rows.length, 10);
+  assert.equal(publicJson.includes('PRIVATE'), false);
+  const twice = createSanitizedMailboxReceiptProjection(serialized);
+  assert.deepEqual(twice.operationResult.cpuPressure, measured);
+
+  const oversized = structuredClone(receipt);
+  oversized.result.result.codexLastMessage = 'SAFE_STATUS '.repeat(1200);
+  oversized.result.result.blockers = Array.from({ length: 30 }, (_, n) => 'SAFE_' + n + '_' + 'X'.repeat(120));
+  const compact = JSON.parse(serializeBoundedReceiptJson(oversized, 9 * 1024));
+  assert.equal(compact.result.result.cpuPressure.rows.length, 6);
+  assert.equal(compact.result.result.cpuPressure.rowsTruncated, true);
+  assert.equal(compact.githubProjectionTruncated, true);
+  assert.equal(JSON.stringify(compact).includes('PRIVATE'), false);
+
+  const unsafe = structuredClone(receipt);
+  unsafe.result.result.cpuPressure.rows[0].script = 'secret.ps1';
+  assert.equal(createSanitizedMailboxReceiptProjection(unsafe).operationResult.cpuPressure, null);
+  assert.equal(JSON.parse(serializeBoundedReceiptJson(unsafe)).result.result.cpuPressure, null);
+  const wrongAction = structuredClone(receipt);
+  wrongAction.result.result.remoteAction = 'repair-control-plane';
+  assert.equal(createSanitizedMailboxReceiptProjection(wrongAction).operationResult.cpuPressure, null);
+});
+
 test('Sovereign Commander blocked receipts preserve only bounded failure diagnostics', () => {
   const head = 'c'.repeat(40);
   const receipt = {

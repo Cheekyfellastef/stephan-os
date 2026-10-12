@@ -21,7 +21,26 @@ export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.1.0';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION, '2025-06-18', '2024-11-05']));
 
+// Transport admission only: each action still executes through the canonical
+// fixed registry and returns its existing receipt. Never include repair verbs.
+export const SOVEREIGN_COMMANDER_INSPECTION_ACTIONS = Object.freeze([
+  'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
+  'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status',
+  'status-recovery-mesh', 'status-worker-watchdog', 'status-stephanos-core-daemon',
+  'starfield-vr-performance-diagnosis',
+]);
+
 const TOOLS = Object.freeze([
+  {
+    name: 'inspect_battle_bridge',
+    title: 'Inspect Battle Bridge without a remote-control meter',
+    description: 'Read-only fixed Windows diagnostics: sampled CPU/process attribution, RAM/GPU/VRAM, Stephanos service and daemon health, controller lanes, and VR performance. Returns existing Sovereign receipts; no caller-selected PowerShell or repairs.',
+    inputSchema: {
+      type: 'object', additionalProperties: false, required: ['actionId'],
+      properties: { actionId: { type: 'string', enum: SOVEREIGN_COMMANDER_INSPECTION_ACTIONS } },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   {
     name: 'get_config',
     title: 'Get Sovereign Commander configuration',
@@ -139,6 +158,7 @@ const TOOLS = Object.freeze([
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
+            'status-stephanos-core-daemon',
             'qwen35-canary',
             'vr-resource-governor',
             'gaming-resource-status',
@@ -216,6 +236,7 @@ function operationForTool(name) {
     search_project: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
     maintenance_action: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    inspect_battle_bridge: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
   })[name] || '';
 }
 
@@ -225,6 +246,7 @@ function targetPathsForTool(name, args = {}) {
 }
 
 function payloadForTool(name, args = {}) {
+  if (name === 'inspect_battle_bridge') return { actionId: args.actionId };
   if (name === 'read_file') return { offset: args.offset, length: args.length };
   if (name === 'write_file') return { content: args.content, mode: args.mode };
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
@@ -309,6 +331,11 @@ export function createSovereignCommanderMcpHandler({
       const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments)
         ? params.arguments
         : {};
+      if (name === 'inspect_battle_bridge'
+        && (!SOVEREIGN_COMMANDER_INSPECTION_ACTIONS.includes(args.actionId)
+          || Object.keys(args).some((key) => key !== 'actionId'))) {
+        return asTextResult({ ok: false, blocker: 'SOVEREIGN_INSPECTION_ACTION_INVALID' }, true);
+      }
       const targetPaths = targetPathsForTool(name, args);
       const catalog = buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot });
       const envelope = buildStephanosExecutionCommandEnvelopeV1({

@@ -1,10 +1,87 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { resolve } from 'node:path';
+import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import {
   createSovereignCommanderMcpHandler,
   runSovereignCommanderStdioMcpServer,
+  SOVEREIGN_COMMANDER_INSPECTION_ACTIONS,
 } from '../../scripts/sovereign-commander-mcp.mjs';
+
+test('core daemon diagnosis is discoverable and executes only the existing fixed Windows probe', async () => {
+  const calls = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: (envelope, options) => executeSovereignCommanderCommandV1(envelope, {
+      ...options,
+      spawnSyncFn: (executable, args, settings) => {
+        calls.push({ executable, args, settings });
+        return { status: 0, stdout: '{"daemonHealthy":false,"readiness":"UNKNOWN"}', stderr: '' };
+      },
+    }),
+  });
+  await handler('initialize', { protocolVersion: '2025-11-25' }, { isRequest: true });
+  await handler('notifications/initialized', {}, { isNotification: true });
+  const listed = await handler('tools/list', {}, { isRequest: true });
+  const maintenance = listed.tools.find(({ name }) => name === 'maintenance_action');
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-stephanos-core-daemon'));
+  const result = await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: { actionId: 'status-stephanos-core-daemon', command: 'Stop-Process -Id 123', path: 'C:\\other.ps1' },
+  }, { isRequest: true });
+  assert.equal(result.isError, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].executable, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.deepEqual(calls[0].args, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolve('C:\\repo', 'scripts', 'windows', 'status-stephanos-core-daemon.ps1')]);
+  assert.equal(calls[0].settings.shell, false);
+  assert.equal(calls[0].settings.windowsHide, true);
+  assert.equal(calls[0].settings.timeout, 10_000);
+  assert.match(result.structuredContent.proofHash, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.parse(result.structuredContent.contentText).daemonHealthy, false);
+  assert.equal(result.structuredContent.command.mergeAuthority, false);
+  assert.equal(result.structuredContent.command.pcRestartAuthority, false);
+});
+
+test('read-only inspection admits every fixed diagnostic and rejects repair/shell input before execution', async () => {
+  const observed = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async (envelope) => {
+      observed.push(envelope);
+      return { ok: true, proofHash: 'd'.repeat(64) };
+    },
+  });
+  await handler('initialize', { protocolVersion: '2025-11-25' }, { isRequest: true });
+  await handler('notifications/initialized', {}, { isNotification: true });
+  const listed = await handler('tools/list', {}, { isRequest: true });
+  const tool = listed.tools.find(({ name }) => name === 'inspect_battle_bridge');
+  assert.equal(tool.annotations.readOnlyHint, true);
+  assert.equal(tool.annotations.destructiveHint, false);
+  assert.deepEqual(tool.inputSchema.properties.actionId.enum, SOVEREIGN_COMMANDER_INSPECTION_ACTIONS);
+  assert.equal(SOVEREIGN_COMMANDER_INSPECTION_ACTIONS.includes('gaming-resource-status'), false, 'governor Status may reconcile and mutate runtime');
+  for (const actionId of SOVEREIGN_COMMANDER_INSPECTION_ACTIONS) {
+    const result = await handler('tools/call', { name: tool.name, arguments: { actionId } }, { isRequest: true });
+    assert.equal(result.isError, false);
+    assert.equal(observed.at(-1).operation, 'MAINTENANCE_ACTION');
+    assert.deepEqual(observed.at(-1).payload, { actionId });
+    assert.deepEqual(observed.at(-1).targetPaths, []);
+  }
+  const before = observed.length;
+  for (const args of [
+    {}, { actionId: 'repair-control-plane' }, { actionId: 'vr-resource-governor' },
+    { actionId: 'gaming-resource-prepare' }, { actionId: 'gaming-resource-force-on' },
+    { actionId: 'restart-stephanos-runtime' }, { actionId: 'arbitrary-shell' },
+    { actionId: 'cpu-pressure-snapshot', command: 'Stop-Process -Id 123' },
+    { actionId: 'battle-bridge-observe', path: 'C:\\secret' },
+    { actionId: 'status-stephanos-core-daemon', processId: 'repair-control-plane' },
+  ]) {
+    const result = await handler('tools/call', { name: tool.name, arguments: args }, { isRequest: true });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.blocker, 'SOVEREIGN_INSPECTION_ACTION_INVALID');
+  }
+  assert.equal(observed.length, before, 'rejected input never reaches the executor');
+});
 
 test('Sovereign Commander MCP requires initialize, initialized, and tools/list before calls', async () => {
   const observed = [];
