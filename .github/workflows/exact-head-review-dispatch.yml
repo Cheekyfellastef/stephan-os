@@ -4,11 +4,13 @@ on:
   pull_request:
     branches:
       - main
-  # One qualified review-completion trigger, not five duplicate CI-completion
-  # discovery runs. Pull-request verification and bounded scheduled recovery
-  # remain available if that review fails or its artifact is missing.
   workflow_run:
     workflows:
+      - OpenClaw GitHub Operator
+      - PR Clean Guard
+      - Build Stephanos UI
+      - Battle Bridge Publisher Proof
+      - Codex Dispatch Queue Proof
       - Independent Merge Security Review
     types:
       - completed
@@ -16,7 +18,7 @@ on:
     types:
       - created
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
     inputs:
       pr_number:
@@ -227,8 +229,7 @@ jobs:
       needs.plan.outputs.targets != '[]'
     strategy:
       fail-fast: false
-      # Bound GitHub installation REST bursts during one review recovery pass.
-      max-parallel: 1
+      max-parallel: 4
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
     concurrency:
