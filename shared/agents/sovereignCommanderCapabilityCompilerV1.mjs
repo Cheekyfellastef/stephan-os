@@ -153,9 +153,13 @@ function skillPacketFromPlan(plan, capability, timestampUtc) {
     riskLevel,
     plainEnglishSummary: `Build a guarded Sovereign Commander equivalent for ${id}, without depending on Remote Desktop Commander.`,
     technicalSummary: plan.strategy,
-    whySuggested: `An existing parity observation classified ${id} as BUILDABLE_GAP.`,
+    whySuggested: capability?.origin === 'sovereign-native-event'
+      ? `An existing validated Sovereign Commander learning event reported ${id} as an unmet ability. This is discovery evidence, not implementation proof.`
+      : `An existing parity observation classified ${id} as BUILDABLE_GAP.`,
     evidence: Object.freeze([Object.freeze({
-      type: 'canonical-parity-ledger',
+      type: capability?.origin === 'sovereign-native-event'
+        ? 'canonical-sovereign-learning-event'
+        : 'canonical-parity-ledger',
       summary: `#2573 tracked ${observationCount} observation(s); gap is not proof of an executable implementation.`,
     })]),
     benefits: Object.freeze(['Reuse a guarded local ability across Stephanos and chat transports.']),
@@ -231,16 +235,36 @@ function learningCandidate(capability, timestampUtc) {
   });
 }
 
-export function compileSovereignCommanderCapabilityPlanV1(ledger = {}) {
+export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeGaps = [] } = {}) {
   const capabilities = Array.isArray(ledger?.capabilities) ? ledger.capabilities : [];
   const timestampUtc = text(ledger?.timestampUtc, new Date().toISOString());
-  const buildable = capabilities.filter((item) => text(item?.state) === 'BUILDABLE_GAP');
+  const remoteBuildable = capabilities.filter((item) => text(item?.state) === 'BUILDABLE_GAP');
+  const remoteIds = new Set(remoteBuildable.map((item) => capabilityId(item.capabilityId)));
+  // Only our validated native event adapter may inject native capability
+  // proposals; they cannot change the Remote parity ledger or become proof.
+  const nativeBuildable = (Array.isArray(nativeGaps) ? nativeGaps.slice(0, 2) : [])
+    .filter((item) => item?.origin === 'sovereign-native-event'
+      && item?.state === 'BUILDABLE_GAP'
+      && item?.sourceIsRuntimeParityProof === false
+      && /^[a-z][a-z0-9-]{2,79}$/.test(String(item.capabilityId || ''))
+      && !remoteIds.has(item.capabilityId))
+    .map((item) => Object.freeze({
+      capabilityId: item.capabilityId,
+      state: 'BUILDABLE_GAP',
+      origin: 'sovereign-native-event',
+      observationCount: Number.isSafeInteger(item.observationCount)
+        ? Math.max(1, Math.min(1_000_000, item.observationCount)) : 1,
+    }));
+  const buildable = [...remoteBuildable, ...nativeBuildable];
   const plans = buildable.map((capability) => {
     const id = capabilityId(capability.capabilityId);
     const primitive = primitiveFor(id);
     const requiresKernelChange = primitive === SOVEREIGN_COMMANDER_PRIMITIVE.COMPOSE_RECIPE;
+    const observationOrigin = capability.origin === 'sovereign-native-event'
+      ? 'sovereign-native-event' : 'remote-commander-parity';
     return Object.freeze({
       capabilityId: id,
+      observationOrigin,
       sovereignEquivalent: text(capability.sovereignEquivalent, `sovereign-${id}`),
       primitive,
       recipeId: `recipe-${id}`.slice(0, 120),
@@ -281,6 +305,8 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}) {
     doctrine: 'PRIMITIVES_FIRST_RECIPES_SECOND_PROOF_BEFORE_LEARNING',
     buildableCapabilityCount: plans.length,
     recipeCandidateCount: plans.length,
+    nativeGapCandidateCount: nativeBuildable.length,
+    nativeGapIntakeSource: 'validated-shared-workspace-closed-loop-events',
     primitiveGapCount: primitiveGapIds.length,
     primitiveGapIds: Object.freeze(primitiveGapIds),
     plans: Object.freeze(plans),
