@@ -94,7 +94,7 @@ function cpuRunner({ dirty = false, badPayload = false, sampleStatus = 0, observ
     if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
     if (args.includes('rev-parse')) return { status: 0, stdout: observedHead + '\n' };
     if (args.includes('diff')) return { status: dirty ? 1 : 0, stdout: '' };
-    if (executable === 'C:\\\\Windows\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe') {
+    if (executable === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe') {
       return { status: sampleStatus, stdout: badPayload ? '{malformed' : JSON.stringify(sample()) };
     }
     throw new Error('unexpected process/executable: ' + executable);
@@ -104,7 +104,7 @@ function cpuRunner({ dirty = false, badPayload = false, sampleStatus = 0, observ
 test('canonical mailbox runs only fixed read-only PowerShell CPU sample, without MCP or lifecycle side effects', async () => {
   const runner = cpuRunner();
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge(CPU_COMMAND, {
-    env: { USERPROFILE: 'C:\\\\Users\\\\Operator' },
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
     spawnSyncFn: runner.spawnSyncFn,
     fetchFn: () => { throw new Error('MCP network request not permitted for fixed CPU snapshot'); },
     ensureRuntimeFn: () => { throw new Error('CPU snapshot must not recycle Commander'); },
@@ -130,7 +130,7 @@ test('fixed CPU sampler fails closed on local script changes, unexpected HEAD, b
   ]) {
     const runner = cpuRunner(params);
     const receipt = await executeSovereignCommanderRemoteOnBattleBridge(CPU_COMMAND, {
-      env: { USERPROFILE: 'C:\\\\Users\\\\Operator' },
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
       spawnSyncFn: runner.spawnSyncFn,
       fetchFn: () => { throw new Error('Unexpected network call'); },
       ensureRuntimeFn: () => { throw new Error('Unexpected runtime mutation'); },
