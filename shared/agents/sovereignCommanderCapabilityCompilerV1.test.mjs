@@ -173,3 +173,41 @@ test('burst of parity gaps retains all plans but caps public draft packet size',
   assert.ok(Buffer.byteLength(JSON.stringify(result.skillForgeCandidates), 'utf8') < 11 * 1024,
     'bounded draft packet portion must not exceed the shared status budget');
 });
+
+
+test('native Sovereign gap reuses canonical compiler without claiming remote parity or activation', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({
+    timestampUtc: '2026-10-12T11:20:00.000Z',
+    capabilities: [],
+  }, { nativeGaps: [{
+    capabilityId: 'windows-service-ownership',
+    origin: 'sovereign-native-event',
+    state: 'BUILDABLE_GAP',
+    observationCount: 2,
+    sourceIsRuntimeParityProof: false,
+    evidenceEventIds: ['event-safe'],
+  }] });
+  assert.equal(result.nativeGapCandidateCount, 1);
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.plans[0].observationOrigin, 'sovereign-native-event');
+  assert.equal(result.skillForgeCandidates[0].status, 'DRAFT');
+  assert.equal(result.skillForgeCandidates[0].permissionLevel, 'NEEDS_OPERATOR_APPROVAL');
+  assert.match(result.skillForgeCandidates[0].whySuggested, /learning event/);
+  assert.equal(result.skillForgeCandidates[0].executionAllowed, false);
+  assert.equal(result.skillForgeCandidates[0].constructionAdmissionAllowed, false);
+  assert.equal(result.learningCandidates.length, 0, 'native failure is never proof of parity');
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('native gap cannot duplicate a canonical remote gap or inject an untrusted source', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({
+    timestampUtc: '2026-10-12T11:20:00.000Z',
+    capabilities: [{ capabilityId: 'windows-service-ownership', state: 'BUILDABLE_GAP' }],
+  }, { nativeGaps: [
+    { capabilityId: 'windows-service-ownership', origin: 'sovereign-native-event', state: 'BUILDABLE_GAP', sourceIsRuntimeParityProof: false },
+    { capabilityId: 'untrusted-skill', origin: 'arbitrary-agent', state: 'BUILDABLE_GAP', sourceIsRuntimeParityProof: false },
+  ] });
+  assert.equal(result.nativeGapCandidateCount, 0);
+  assert.equal(result.buildableCapabilityCount, 1);
+  assert.equal(result.duplicateGoalCreationAllowed, false);
+});
