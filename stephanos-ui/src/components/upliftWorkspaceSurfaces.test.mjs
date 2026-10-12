@@ -230,7 +230,7 @@ test('Flywheel and Skill Forge both render one shared, truth-gated conversation 
   assert.match(component, /KNOWLEDGE → CAPABILITY → PROOF/);
   assert.match(component, /UNKNOWN/);
   assert.match(component, /builder and runtime evidence/);
-  assert.match(component, /source-turn|protocol role|protocol/i);
+  assert.match(component, /view\.provenanceNote/);
   assert.match(css, /max-width: 760px/);
 });
 
