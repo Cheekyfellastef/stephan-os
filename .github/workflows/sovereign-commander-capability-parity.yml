@@ -76,3 +76,4 @@ jobs:
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
           node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
+          node --test shared/agents/sovereignCommanderWindows.test.mjs
