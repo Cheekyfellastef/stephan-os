@@ -431,3 +431,63 @@ test('OpenClaw stack repair has bounded headroom below the remote transport dead
   assert.equal(command.plan.timeoutMs, 195_000);
   assert.ok(command.plan.timeoutMs < 210_000);
 });
+
+test('Sovereign private batch reads bound eight absolute paths and total content budget', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-batch-read-'));
+  try {
+    const first = join(root, 'one.txt');
+    const second = join(root, 'two.txt');
+    await writeFile(first, 'alpha\nbeta\ngamma\n', 'utf8');
+    await writeFile(second, 'delta\nepsilon\n', 'utf8');
+    const make = (targets) => buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'private-batch-read',
+      missionId: 'private-inspection',
+      operation: SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES,
+      targetPaths: targets,
+      payload: { offset: 1, length: 2 },
+    });
+    const result = await executeSovereignCommanderCommandV1(make([first, second]));
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.structuredContent.files.map((file) => file.content), [
+      'beta\ngamma', 'epsilon\n',
+    ]);
+    assert.equal(result.structuredContent.totalFiles, 2);
+    assert.equal(result.vendorMeterRequired, false);
+    assert.equal(result.command.arbitraryUnboundedCommandAllowed, false);
+    const tooMany = await executeSovereignCommanderCommandV1(make(Array(9).fill(first)));
+    assert.equal(tooMany.ok, false);
+    assert.match(tooMany.blocker, /multiple-read-requires-1-to-8-absolute-targets/);
+    const relative = await executeSovereignCommanderCommandV1(make(['relative.txt']));
+    assert.equal(relative.ok, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Sovereign file metadata inspection does not return file contents', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-file-info-'));
+  try {
+    const file = join(root, 'alpha.txt');
+    const secretSentinel = 'NEVER_RETURN_CONTENT_OF_FILE_IN_METADATA';
+    await writeFile(file, secretSentinel, 'utf8');
+    const env = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'file-info',
+      missionId: 'private-inspection',
+      operation: SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO,
+      targetPaths: [file],
+      payload: {},
+    });
+    const result = await executeSovereignCommanderCommandV1(env);
+    assert.equal(result.ok, true);
+    assert.equal(result.structuredContent.type, 'FILE');
+    assert.equal(result.structuredContent.bytes, Buffer.byteLength(secretSentinel));
+    assert.ok(result.structuredContent.modifiedAtUtc.endsWith('Z'));
+    assert.equal(JSON.stringify(result).includes(secretSentinel), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
