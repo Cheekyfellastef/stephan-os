@@ -527,3 +527,16 @@ test('Cockpit refuses stale negative backend service proof rather than retaining
   assert.match(componentSource, /typeof apiStatus\?\.backendReachable !== 'boolean'/);
   assert.doesNotMatch(componentSource, /!apiStatus\?\.backendReachable\) return undefined/);
 });
+
+test('Cockpit requires fresh timestamped route proof before displaying Backend alive', () => {
+  const at = '2026-10-12T19:00:00.000Z';
+  const routeTruthView = { backendReachableState: 'yes', currentBackendHealthFresh: 'yes' };
+  const apiStatus = {
+    backendReachable: true, lastCheckedAt: at,
+    runtimeContext: { healthProbeTruth: { lastBackendHealthProbeAt: at, lastBackendHealthProbeResult: 'ok:true' } },
+  };
+  assert.equal(deriveBackendServiceState({ routeTruthView, apiStatus, nowMs: Date.parse(at) + 1000 }), 'alive');
+  assert.equal(deriveBackendServiceState({ routeTruthView, apiStatus, nowMs: Date.parse(at) + 120100 }), 'unknown');
+  assert.equal(deriveBackendServiceState({ routeTruthView, apiStatus: {}, nowMs: Date.parse(at) + 1000 }), 'unknown');
+  assert.equal(deriveBackendServiceState({ routeTruthView: { ...routeTruthView, currentBackendHealthFresh: 'no' }, apiStatus, nowMs: Date.parse(at) + 1000 }), 'unknown');
+});
