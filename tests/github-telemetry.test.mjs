@@ -338,6 +338,36 @@ test('paginated goal estate stops after the first 403 instead of hammering every
   }
 });
 
+test('secondary-limit 403 with nonzero core remaining holds both telemetry and PR evidence', async () => {
+  const secondaryLimit = async () => ({
+    ok: false, status: 403,
+    headers: { get: (name) => name === 'x-ratelimit-remaining' ? '3200' : null },
+    json: async () => ({ message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' }),
+  });
+  let fallbackCalls = 0;
+  let telemetryCalls = 0;
+  const result = await readGithubTelemetry({
+    env: { GITHUB_REPOSITORY: 'anti-hammer-test-owner/secondary-limit-repo', GITHUB_TOKEN: 'secondary-token' },
+    secretStoreToken: '',
+    ghTokenProvider: async () => { fallbackCalls++; return 'unused-token'; },
+    fetchImpl: async () => { telemetryCalls++; return secondaryLimit(); },
+  });
+  assert.equal(result.status, 'adapter_error');
+  assert.deepEqual(result.blockers, ['github_rate_limit_backoff']);
+  assert.equal(telemetryCalls, 1);
+  assert.equal(fallbackCalls, 0);
+  let prCalls = 0;
+  const pr = await fetchGithubPrEvidence({
+    owner: 'anti-hammer-test-owner', repo: 'secondary-limit-pr-repo', prNumber: 12,
+    auth: { token: 'pr-token', configured: true, authority: 'environment' },
+    ghTokenProvider: async () => { fallbackCalls++; return 'unused-token'; },
+    fetchImpl: async () => { prCalls++; return secondaryLimit(); },
+  });
+  assert.equal(pr.reasonCode, 'GITHUB_PR_RATE_LIMIT_BACKOFF');
+  assert.equal(prCalls, 1);
+  assert.equal(fallbackCalls, 0);
+});
+
 test('PR evidence uses shared resolver authority and gh CLI fallback after explicit 403', async () => {
   const calls = [];
   const auth = await resolveGithubAuth({ env: { GITHUB_TOKEN: 'bad-env-token' }, secretStoreToken: '', ghTokenProvider: async () => 'unused-gh-token' });
