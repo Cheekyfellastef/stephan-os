@@ -4,12 +4,14 @@ import { resolve } from 'node:path';
 import { readMissionRecord, appendMissionEvent } from './missionOrchestratorStore.js';
 import { readSourceMutationLease, withOriginalSourceLeaseFenceGuard } from './programmeAuthorityService.js';
 import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
+import { authenticateLegacyOrphanQuarantine } from './legacyOriginalSourceOrphanQuarantineV1.js';
 import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import {
   exactElasticPrHeadIdentity, originalMissionHasQueuedWork, readOriginalSourceExecutionIdV1,
 } from './elasticPrHeadLeaseService.js';
 
 export const ORIGINAL_SOURCE_FENCE_SCHEMA = 'stephanos.original-source-attempt-fence.v1';
+export const LEGACY_ORPHAN_FENCE_SCHEMA = 'stephanos.original-source-attempt-legacy-orphan-fence.v2';
 const SHA256 = /^[a-f0-9]{64}$/;
 const REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const WRITER_EXCLUSION_SCHEMA = 'stephanos.original-source-writer-exclusion.v1';
@@ -55,6 +57,37 @@ export async function assertOriginalSourceAttemptNotFenced(missionId, options = 
 }
 
 export function originalSourceFenceBindsLease(fence, lease) {
+  // Exception is bound to the one verified historical gap; its schema never
+  // claims an original terminal receipt. The proof is independently rechecked
+  // from protected OS/operator keys before any canonical release.
+  if (fence?.schemaVersion === LEGACY_ORPHAN_FENCE_SCHEMA) {
+    return Boolean(
+      fence.missionId === 'critical-2962-elastic-goal'
+      && fence.originalRevision === 7
+      && fence.originalLeaseId === 'critical-2962-elastic-goal-r7-lease'
+      && fence.originalLeaseId === lease?.leaseId
+      && fence.missionId === lease?.laneId
+      && fence.originalLeaseDigest === digest(lease)
+      && fence.repository === lease.repository && fence.issueNumber === lease.issueNumber
+      && fence.prNumber === lease.prNumber && fence.branch === lease.branch
+      && fence.headSha === lease.headSha
+      && typeof fence.worktreePath === 'string' && fence.worktreePath.length > 0
+      && /^critical-2962-elastic-goal-r(?:0|[1-9]\d*)-[a-f0-9]{12}$/.test(fence.sourceExecutionId)
+      && fence.historicalExecutionOutcome === 'UNKNOWN'
+      && fence.historicalTerminalReceiptPresent === false
+      && fence.historicalTerminalReceiptReconstructed === false
+      && fence.sourceWriterTerminalProven === false
+      && fence.originalQueuesIdle === true
+      && fence.prospectiveWriterExclusionAuthenticated === true
+      && SHA256.test(text(fence.legacyEvidenceDigest))
+      && SHA256.test(text(fence.legacyWitnessDigest))
+      && /^[a-f0-9]{40}$/.test(text(fence.operatorSourceRevision))
+      && /^[a-z0-9._-]{8,127}$/.test(text(fence.commandId))
+      && /^[a-z0-9._:-]{8,120}$/.test(text(fence.operatorRequestId))
+      && fence.goalComplete === false && fence.leaseSeizureAllowed === false
+      && fence.sourceMutationAuthority === false && fence.leaseReleaseAuthority === false
+    );
+  }
   return Boolean(fence?.schemaVersion === ORIGINAL_SOURCE_FENCE_SCHEMA
     && fence.sourceWriterTerminalProven === true && fence.originalQueuesIdle === true
     && typeof fence.worktreePath === 'string' && fence.worktreePath.length > 0
@@ -101,6 +134,74 @@ export async function proveOriginalSourceQuarantine(current, input, options = {}
       || lease.repository !== identity.repository || lease.issueNumber !== identity.issueNumber
       || lease.prNumber !== identity.prNumber || lease.branch !== identity.branch
       || lease.headSha !== identity.headSha) fail('ORIGINAL_FENCE_EXACT_STALE_LEASE_UNPROVEN');
+  // Missing historical #2962 r7 terminal evidence is never silently treated
+  // as completed. An exceptional prospective quarantine can be prepared only
+  // with separately privileged current OS denial and exact signed approval.
+  if (input.legacyOrphanQuarantineRequested === true) {
+    if (current.missionId !== 'critical-2962-elastic-goal'
+        || current.revision !== 7
+        || lease.leaseId !== 'critical-2962-elastic-goal-r7-lease') {
+      fail('LEGACY_ORPHAN_EXACT_REVISION_REQUIRED');
+    }
+    const sourceAction = await (options.readOriginalSourceExecutionId || readOriginalSourceExecutionIdV1)(current, paths, env);
+    if (!/^critical-2962-elastic-goal-r(?:0|[1-9]\d*)-[a-f0-9]{12}$/.test(sourceAction)) {
+      fail('LEGACY_ORPHAN_CONSUMED_EXECUTION_UNPROVEN');
+    }
+    const readHistory = options.readExecutionReceiptHistory || readExecutionReceiptHistory;
+    const held = await readHistory(paths.workspaceRoot, {
+      leaseKey: lease.leaseId, expectedHead: lease.headSha,
+    }, { repoRoot: paths.repoRoot });
+    if (held?.ok !== true || !Array.isArray(held.receipts)
+        || held.receipts.length !== 0) {
+      fail('LEGACY_ORPHAN_HISTORICALLY_MISSING_RECEIPT_NOT_PROVEN');
+    }
+    const inspectQueues = options.originalMissionHasQueuedWork || originalMissionHasQueuedWork;
+    if (!resolveMissionWorkerQueueRoot(env)
+        || await inspectQueues({ missionId: current.missionId, leaseId: lease.leaseId, env }) !== false) {
+      fail('LEGACY_ORPHAN_QUEUE_STILL_ACTIVE_OR_UNKNOWN');
+    }
+    const authenticate = options.authenticateLegacyOrphanQuarantine;
+    if (typeof authenticate !== 'function') fail('LEGACY_ORPHAN_INDEPENDENT_OS_AUTHORITY_NOT_INSTALLED');
+    const expected = {
+      repository: lease.repository, missionId: current.missionId,
+      leaseId: lease.leaseId, revision: 7, originalLeaseDigest: digest(lease),
+      branch: lease.branch, headSha: lease.headSha,
+      sourceExecutionId: sourceAction, sourceRevision: input.operatorSourceRevision,
+      worktreePath: current.git?.worktreePath,
+      commandId: text(input.commandId), requestId: text(input.operatorRequestId),
+    };
+    const attested = await authenticate(expected, { env, now: () => Date.parse(nowUtc) });
+    if (attested?.authenticated !== true
+        || attested?.historicalExecutionOutcome !== 'UNKNOWN'
+        || attested?.eligibilityOnly !== true
+        || attested?.leaseReleaseAuthority !== false
+        || !SHA256.test(text(attested.evidenceDigest))
+        || !SHA256.test(text(attested.witnessDigest))) {
+      fail('LEGACY_ORPHAN_PROSPECTIVE_CONTAINMENT_NOT_AUTHENTICATED');
+    }
+    const again = await readLease({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc });
+    if (again.ok !== true || digest(again.record) !== input.originalLeaseDigest
+        || again.validation?.stale !== true) fail('LEGACY_ORPHAN_LEASE_CHANGED');
+    return Object.freeze({
+      schemaVersion: LEGACY_ORPHAN_FENCE_SCHEMA,
+      missionId: current.missionId, originalRevision: 7,
+      originalLeaseId: lease.leaseId, originalLeaseDigest: digest(lease),
+      repository: lease.repository, issueNumber: lease.issueNumber,
+      prNumber: lease.prNumber, branch: lease.branch, headSha: lease.headSha,
+      worktreePath: current.git?.worktreePath, sourceExecutionId: sourceAction,
+      historicalExecutionOutcome: 'UNKNOWN',
+      historicalTerminalReceiptPresent: false,
+      historicalTerminalReceiptReconstructed: false,
+      sourceWriterTerminalProven: false, originalQueuesIdle: true,
+      prospectiveWriterExclusionAuthenticated: true,
+      legacyEvidenceDigest: attested.evidenceDigest,
+      legacyWitnessDigest: attested.witnessDigest,
+      commandId: text(input.commandId), operatorRequestId: text(input.operatorRequestId),
+      operatorSourceRevision: text(input.operatorSourceRevision),
+      goalComplete: false, leaseSeizureAllowed: false,
+      sourceMutationAuthority: false, leaseReleaseAuthority: false,
+    });
+  }
   const receiptReader = options.readExecutionReceiptHistory || readExecutionReceiptHistory;
   const heldExecutionCount = await proveHeldLeaseExecutionsTerminal(lease, paths, receiptReader);
   const sourceAction = await (options.readOriginalSourceExecutionId || readOriginalSourceExecutionIdV1)(current, paths, env);
@@ -227,6 +328,13 @@ export async function quarantineOriginalSourceAttempt(input, options = {}) {
       || !REQUEST_ID.test(text(input.operatorRequestId))
       || !Number.isSafeInteger(input.expectedMissionRevision) || input.expectedMissionRevision < 0
       || !/^critical-[1-9]\d*-elastic-goal$/.test(text(input.missionId))) fail('ORIGINAL_FENCE_COMMAND_INVALID');
+  if (input.legacyOrphanQuarantineRequested !== undefined
+      && (input.legacyOrphanQuarantineRequested !== true
+          || input.missionId !== 'critical-2962-elastic-goal'
+          || input.expectedMissionRevision !== 7
+          || input.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
+    fail('LEGACY_ORPHAN_COMMAND_SCOPE_FORBIDDEN');
+  }
   const normalizedInput = { ...input, operatorRequestId: text(input.operatorRequestId).toLowerCase() };
   return appendMissionEvent(input.missionId, {
     eventId: `cancel-${input.commandId}`, eventType: 'MISSION_CANCELLED',
@@ -259,6 +367,31 @@ export async function verifyOriginalSourceAttemptFence(mission, lease, paths, en
       || events[0].missionId !== mission.missionId || events[0].eventType !== 'MISSION_CANCELLED'
       || events[0].originalSourceQuarantineRequested !== true
       || digest(events[0].originalSourceAttemptFence) !== digest(fence)) return false;
+  if (fence.schemaVersion === LEGACY_ORPHAN_FENCE_SCHEMA) {
+    const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
+    if (sourceAction !== fence.sourceExecutionId || !resolveMissionWorkerQueueRoot(env)) return false;
+    const historical = await readExecutionReceiptHistory(paths.workspaceRoot, {
+      leaseKey: lease.leaseId, expectedHead: lease.headSha,
+    }, { repoRoot: paths.repoRoot });
+    if (historical?.ok !== true || !Array.isArray(historical.receipts)
+        || historical.receipts.length !== 0) return false;
+    if (await originalMissionHasQueuedWork({ missionId: mission.missionId,
+      leaseId: lease.leaseId, env }) !== false) return false;
+    const verified = await authenticateLegacyOrphanQuarantine({
+      repository: lease.repository, missionId: mission.missionId,
+      leaseId: lease.leaseId, revision: 7, originalLeaseDigest: digest(lease),
+      branch: lease.branch, headSha: lease.headSha,
+      sourceExecutionId: sourceAction, sourceRevision: fence.operatorSourceRevision,
+      worktreePath: mission.git?.worktreePath,
+      commandId: fence.commandId, requestId: fence.operatorRequestId,
+    }, { env });
+    return verified?.authenticated === true
+      && verified.eligibilityOnly === true
+      && verified.leaseReleaseAuthority === false
+      && verified.historicalExecutionOutcome === 'UNKNOWN'
+      && verified.evidenceDigest === fence.legacyEvidenceDigest
+      && verified.witnessDigest === fence.legacyWitnessDigest;
+  }
   const sourceAction = await readOriginalSourceExecutionIdV1(mission, paths, env);
   if (sourceAction !== fence.sourceExecutionId) return false;
   const history = await readExecutionReceiptHistory(paths.workspaceRoot,

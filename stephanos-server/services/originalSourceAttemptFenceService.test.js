@@ -333,3 +333,84 @@ test('plain cancellation cannot fabricate a quarantine fence', async () => {
     eventId: 'cancel-forged-proof', eventType: 'MISSION_CANCELLED', originalSourceQuarantineRequested: true,
   }, { root, env: {} }), /GUARD_REQUIRED/);
 });
+
+test('exact historical r7 can prepare exception fence without forging an original terminal receipt', async () => {
+  const f = fixture();
+  f.input.legacyOrphanQuarantineRequested = true;
+  f.options.authenticateLegacyOrphanQuarantine = async (expected) => {
+    assert.equal(expected.leaseId, f.lease.leaseId);
+    assert.equal(expected.originalLeaseDigest, digest(f.lease));
+    assert.equal(expected.revision, 7);
+    assert.equal(expected.sourceExecutionId, f.receipt.executionId);
+    assert.equal(expected.requestId, f.input.operatorRequestId);
+    return {
+      authenticated: true, historicalExecutionOutcome: 'UNKNOWN',
+      eligibilityOnly: true, leaseReleaseAuthority: false,
+      evidenceDigest: '2'.repeat(64), witnessDigest: '3'.repeat(64),
+    };
+  };
+  const fence = await proveOriginalSourceQuarantine(f.mission, f.input, f.options);
+  assert.equal(fence.schemaVersion, 'stephanos.original-source-attempt-legacy-orphan-fence.v2');
+  assert.equal(fence.historicalExecutionOutcome, 'UNKNOWN');
+  assert.equal(fence.historicalTerminalReceiptPresent, false);
+  assert.equal(fence.historicalTerminalReceiptReconstructed, false);
+  assert.equal(fence.sourceWriterTerminalProven, false);
+  assert.equal(fence.originalQueuesIdle, true);
+  assert.equal(fence.goalComplete, false);
+  assert.equal(fence.leaseReleaseAuthority, false);
+  assert.equal(fence.legacyEvidenceDigest, '2'.repeat(64));
+  assert.equal(originalSourceFenceBindsLease(fence, f.lease), true);
+  assert.equal(originalSourceFenceBindsLease(fence, { ...f.lease, headSha: '5'.repeat(40) }), false);
+});
+
+test('legacy orphan exception is fail-closed on missing signer, unresolved queue and real held execution', async () => {
+  const make = () => {
+    const f = fixture();
+    f.input.legacyOrphanQuarantineRequested = true;
+    f.options.authenticateLegacyOrphanQuarantine = async () => ({
+      authenticated: true, historicalExecutionOutcome: 'UNKNOWN',
+      eligibilityOnly: true, leaseReleaseAuthority: false,
+      evidenceDigest: '2'.repeat(64), witnessDigest: '3'.repeat(64),
+    });
+    return f;
+  };
+  const noSigner = make();
+  delete noSigner.options.authenticateLegacyOrphanQuarantine;
+  await assert.rejects(proveOriginalSourceQuarantine(noSigner.mission, noSigner.input, noSigner.options),
+    /INDEPENDENT_OS_AUTHORITY_NOT_INSTALLED/);
+  const queueActive = make();
+  queueActive.options.originalMissionHasQueuedWork = async () => true;
+  await assert.rejects(proveOriginalSourceQuarantine(queueActive.mission, queueActive.input, queueActive.options),
+    /QUEUE_STILL_ACTIVE_OR_UNKNOWN/);
+  const heldActive = make();
+  heldActive.options.readExecutionReceiptHistory = async () => ({
+    ok: true, receipts: [{ state: 'progress', executionId: 'original-running' }],
+  });
+  await assert.rejects(proveOriginalSourceQuarantine(heldActive.mission, heldActive.input, heldActive.options),
+    /HISTORICALLY_MISSING_RECEIPT_NOT_PROVEN/);
+  const noHistory = make();
+  noHistory.options.readExecutionReceiptHistory = async () => ({ ok: false });
+  await assert.rejects(proveOriginalSourceQuarantine(noHistory.mission, noHistory.input, noHistory.options),
+    /HISTORICALLY_MISSING_RECEIPT_NOT_PROVEN/);
+  const forgedCompletion = make();
+  forgedCompletion.options.authenticateLegacyOrphanQuarantine = async () => ({
+    authenticated: true, historicalExecutionOutcome: 'COMPLETED',
+    eligibilityOnly: true, leaseReleaseAuthority: false,
+    evidenceDigest: '2'.repeat(64), witnessDigest: '3'.repeat(64),
+  });
+  await assert.rejects(proveOriginalSourceQuarantine(forgedCompletion.mission, forgedCompletion.input, forgedCompletion.options),
+    /PROSPECTIVE_CONTAINMENT_NOT_AUTHENTICATED/);
+});
+
+test('legacy orphan flag is scoped to exact #2962 r7, never another goal/revision', async () => {
+  for (const change of [
+    { expectedMissionRevision: 8 }, { missionId: 'critical-2955-elastic-goal' },
+    { originalLeaseId: 'critical-2962-elastic-goal-r8-lease' },
+  ]) {
+    const f = fixture();
+    f.input.legacyOrphanQuarantineRequested = true;
+    Object.assign(f.input, change);
+    await assert.rejects(quarantineOriginalSourceAttempt(f.input, f.options),
+      /LEGACY_ORPHAN_COMMAND_SCOPE_FORBIDDEN/);
+  }
+});

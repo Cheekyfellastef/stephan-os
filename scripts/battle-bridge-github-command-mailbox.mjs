@@ -18,6 +18,7 @@ import {
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
 import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
+import { authenticateLegacyOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
 import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
@@ -3358,6 +3359,8 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
         originalLeaseDigest: command.originalLeaseDigest,
         expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}),
         operatorSourceRevision: identity.sourceHead,
         operatorRequestId: command.requestId } : {}),
     }, command.originalLeaseId ? {
@@ -3365,6 +3368,7 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       // Trusted immutable issuer receipt only. Never use the public packet as
       // custody evidence or supply a caller-selectable verifier.
       authenticateOriginalWriterExclusionEvidence,
+      authenticateLegacyOrphanQuarantine,
     } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
