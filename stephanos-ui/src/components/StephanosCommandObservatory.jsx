@@ -66,7 +66,7 @@ export default function StephanosCommandObservatory({
   ];
   const platformState = usefulText(runtimeStatus?.headline, 'Battle Bridge status unreported');
   const fleetOwners = ['OpenClaw Local', 'Sovereign Commander', 'OpenClaw Standalone'].map(name => {
-    const record = liveAgents.find(agent => usefulText(agent.displayName || agent.agentId).toLowerCase().includes(name.toLowerCase().replace('openclaw ', '')));
+    const record = liveAgents.find(agent => { const id = usefulText(agent.agentId).toLowerCase(); const label = usefulText(agent.displayName).toLowerCase(); return name === 'OpenClaw Local' ? (id === 'openclaw-local' || id === 'stephanos-scout-coder' || label === 'openclaw local') : name === 'OpenClaw Standalone' ? (id === 'openclaw-standalone' || label === 'openclaw standalone') : (id === 'sovereign-commander' || label === 'sovereign commander'); });
     return { label:name, state: record ? usefulText(record.state) : 'UNKNOWN', reason: record ? usefulText(record.stateReason, 'No reason supplied') : 'Not found in current visible-agent projection' };
   });
   const inspectedAt = useMemo(() => new Date().toLocaleString(), [feed]);
@@ -118,7 +118,7 @@ export default function StephanosCommandObservatory({
     <section className="stephanos-ops-section stephanos-ops-nav">
       <div className="stephanos-ops-section-head"><span>03 / WORKSPACE CONSTELLATION</span><h2>Open the next command deck</h2></div>
       <div className="stephanos-ops-links">
-        {WORKSPACES.map(space => <a key={space.id} href={space.id === 'vr-research-lab' ? '../vr-research-lab/' : '?surface=' + encodeURIComponent(space.id)} title={'Open ' + space.label}>
+        {WORKSPACES.map(space => <a key={space.id} href={['vr-research-lab', 'stephanos-ai', 'goal-dashboard'].includes(space.id) ? '/apps/' + space.id + '/' : '?surface=' + encodeURIComponent(space.id)} title={'Open ' + space.label}>
           <span className="stephanos-ops-emblem">{space.emblem}</span><b>{space.label}</b><small>{space.detail}</small><span className="stephanos-ops-arrow">↗</span>
         </a>)}
       </div>
