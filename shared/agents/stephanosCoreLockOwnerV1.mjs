@@ -11,7 +11,7 @@ export function exactCoreLockOwnerV1(record, expected = {}) {
     && typeof record.sourceHead === 'string' && SHA.test(record.sourceHead)
     && record.sourceHead === expected.sourceHead
     && typeof record.startedAtUtc === 'string'
-    && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/.test(record.startedAtUtc)
+    && /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$/.test(record.startedAtUtc)
     && Number.isFinite(Date.parse(record.startedAtUtc))
     && record.startedAtUtc === expected.startedAtUtc
   );
