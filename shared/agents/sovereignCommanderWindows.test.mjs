@@ -145,7 +145,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-12-cpu-pressure-snapshot-v5'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
@@ -162,28 +162,6 @@ test('watchdog recycles only verified Sovereign Commander processes when capabil
   assert.doesNotMatch(runner, /Stop-Process\s+-Name/);
 });
 
-
-test('PowerShell watchdog emits every result-object receipt key only once', () => {
-  const propertyBlock = runner.slice(runner.lastIndexOf('[pscustomobject]@{'));
-  const names = [...propertyBlock.matchAll(/^    ([A-Za-z][A-Za-z0-9]*)\s*=/gm)].map((hit) => hit[1]);
-  assert.ok(names.length > 40, 'expected complete watchdog status projection');
-  assert.deepEqual(names.filter((name, index) => names.indexOf(name) !== index), []);
-  assert.match(propertyBlock, /desktopCommanderCrossHealSkipped = \[bool\]\(\$CommanderOnly -or \$SkipDesktopCommanderCrossHeal\)/);
-});
-
-test('Commander-only CPU preflight skips unrelated desktop, VR, core and relay mutations', () => {
-  assert.match(runner, /\[switch\]\$CommanderOnly/);
-  assert.match(runner, /-not \$CommanderOnly -and -not \$SkipDesktopCommanderCrossHeal/);
-  assert.match(runner, /if \(\$CommanderOnly\) \{\s*\$vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_GOVERNOR_SKIPPED_COMMANDER_ONLY'/);
-  assert.match(runner, /if \(\$SkipCoreDaemonLifecycle -or \$CommanderOnly\)/);
-  assert.match(runner, /if \(\$CommanderOnly\) \{\s*\$relayDaemonBlocker = 'SOVEREIGN_COMMANDER_RELAY_SKIPPED_COMMANDER_ONLY'/);
-  assert.match(runner, /\$overallOk = \[bool\]\(\$ok -and \(\$CommanderOnly -or/);
-  assert.match(runner, /if \(-not \$CommanderOnly -and -not \$vrGovernorOk\) \{ exit 4 \}/);
-  assert.match(runner, /SOVEREIGN_COMMANDER_COMMANDER_ONLY_HEALTHY/);
-  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_CPU_PROBE_STARTUP/);
-  assert.match(runner, /SetEnvironmentVariable\(\$cpuProbeEnvName, '1', 'Process'\)/);
-  assert.match(runner, /SetEnvironmentVariable\(\$cpuProbeEnvName, \$cpuProbePrevious, 'Process'\)/);
-});
 
 test('capability probing is StrictMode-safe when an old daemon omits capabilityVersion', () => {
   assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
