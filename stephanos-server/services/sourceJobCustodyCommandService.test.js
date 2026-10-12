@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createRequiredSourceJobCommandRunner, sanitizeSourceCustodyChildEnvironment, sourceJobCustodyRequired } from './sourceJobCustodyCommandService.js';
 
 const env = Object.freeze({
@@ -28,7 +29,7 @@ test('required Win32 runner sends only exact allowlisted program and bounded arg
   assert.equal(run('git.exe', ['status', '--porcelain'], { cwd: '/worktree' }).status, 0);
   assert.equal(run('node.exe', ['--test', 'test.mjs'], { cwd: '/worktree' }).status, 0);
   assert.equal(seen.length, 2);
-  assert.equal(seen[0][0], '/windows/System32/WindowsPowerShell/v1.0/powershell.exe');
+  assert.equal(seen[0][0], join('/windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
   assert.equal(seen[0][1].includes('/trusted/git.exe'), true);
   assert.equal(seen[0][2].shell, false);
   const raw = seen[0][1][seen[0][1].indexOf('-ArgumentsBase64') + 1];
@@ -104,10 +105,10 @@ test('source worker strips verifier paths, private keys and credentials before e
   assert.match(safe.USERPROFILE, /stephanos-source-custody-/);
   assert.equal(safe.HOME, safe.USERPROFILE);
   assert.equal(safe.TEMP, safe.USERPROFILE);
-  assert.equal(safe.APPDATA, safe.USERPROFILE + '/Roaming');
+  assert.equal(safe.APPDATA, join(safe.USERPROFILE, 'Roaming'));
   assert.equal(safe.GIT_CONFIG_NOSYSTEM, '1');
   assert.equal(safe.GIT_TERMINAL_PROMPT, '0');
-  assert.equal(safe.GIT_CONFIG_GLOBAL, safe.HOME + '/nonexistent-git-config');
+  assert.equal(safe.GIT_CONFIG_GLOBAL, join(safe.HOME, 'nonexistent-git-config'));
   assert.equal(safe.NODE_OPTIONS, '');
   for (const name of Object.keys(hostile).filter(k => k !== 'SystemRoot' && k !== 'PATH')) {
     assert.equal(Object.hasOwn(safe, name), false, name);

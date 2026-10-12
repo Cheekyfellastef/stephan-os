@@ -352,3 +352,14 @@ test('Gaming Resource Guard exposes only bounded trusted UI controls', () => {
   assert.match(app, /id: 'gamingResourcePanel'/);
   assert.match(app, /<GamingResourceTile uiLayout=\{safeUiLayout\} togglePanel=\{togglePanel\}/);
 });
+
+
+test('VR Watch throttles heavyweight desktop scans without slowing VR headset protection', () => {
+  assert.match(governor, /param\(\[switch\]\$ThrottleFlatGameScan\)/);
+  assert.match(governor, /\$script:flatGameScanIntervalSeconds = 3/);
+  assert.match(governor, /\$script:cachedFlatGameSignal = Get-FlatGameSignal/);
+  assert.match(governor, /\$signal = Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /if \(\$airLink\.active\) \{[\s\S]{0,170}cachedFlatGameSignal = \$null/);
+  assert.match(governor, /\[void\]\(Invoke-ImmediateVrModelEviction\)[\s\S]{0,500}\$signal = Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /\$flatGame = Get-FlatGameSignal[\s\S]{0,170}\$flatGame\.active/);
+});

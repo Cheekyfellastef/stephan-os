@@ -814,6 +814,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   });
   let releasedLease = null;
   let currentLease = leaseRead?.present ? leaseRead.record : null;
+  let pendingLeaseClaim = null;
   let leasedEntry = currentLease
     ? exactMissions.find(({ identity }) => sameLeaseIdentity(currentLease, identity)) ?? null
     : null;
@@ -1068,7 +1069,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
-    const claim = await claimLease({
+    // Validation alone is not durable evidence: a refused/failed receipt write
+    // after claim used to strand the programme behind a lease with no chain.
+    // Prepare the exact reservation, but persist/replay the canonical queued
+    // receipt below BEFORE claiming it. A queued receipt grants no writer
+    // authority; publication still requires the canonical lease claim.
+    pendingLeaseClaim = {
       leaseId: requestedLeaseId,
       laneId: leasedEntry.identity.missionId,
       repository: leasedEntry.identity.repository,
@@ -1079,17 +1085,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       ownerId: 'mission-worker',
       nowUtc,
       proofRefs: [],
-    }, serviceOptions);
-    if (claim?.ok !== true) {
-      return baseResult({
-        ok: false,
-        classification: 'ELASTIC_PR_HEAD_LEASE_CLAIM_BLOCKED',
-        handledMissionIds,
-        held: [{ missionId: leasedEntry.identity.missionId, reason: text(claim?.reason, 'LEASE_CLAIM_FAILED') }],
-        releasedLease,
-      });
-    }
-    currentLease = claim.record;
+    };
   }
 
   const currentPhase = phaseOf(leasedEntry.mission);
@@ -1131,7 +1127,8 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     });
   }
 
-  if (!paths.workspaceRoot || !text(currentLease?.leaseId)) {
+  const receiptLease = currentLease ?? pendingLeaseClaim;
+  if (!paths.workspaceRoot || !text(receiptLease?.leaseId)) {
     return baseResult({
       ok: false,
       classification: 'ELASTIC_PR_HEAD_EXECUTION_RECEIPT_CONTEXT_UNAVAILABLE',
@@ -1146,7 +1143,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   try {
     receiptHistory = await readReceiptHistory(paths.workspaceRoot, {
       executionId: grant.actionId,
-      leaseKey: currentLease.leaseId,
+      leaseKey: receiptLease.leaseId,
       expectedHead: grant.headSha,
     }, receiptOptions);
   } catch (error) {
@@ -1185,6 +1182,15 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     });
   }
   if (inFlight) {
+    if (pendingLeaseClaim) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_RUNNING_WITHOUT_LEASE',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: 'IN_FLIGHT_PR_HEAD_ACTION_WITHOUT_CANONICAL_LEASE' }],
+        releasedLease,
+      });
+    }
     if (!executionReceipt || !ACTIVE_EXECUTION_RECEIPT_STATES.has(executionReceipt.state)) {
       return baseResult({
         ok: false,
@@ -1225,7 +1231,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
 
   if (!executionReceipt) {
-    const proofRefs = existingQueuedProofRefs(grant, currentLease, leasedEntry.mission);
+    const proofRefs = existingQueuedProofRefs(grant, receiptLease, leasedEntry.mission);
     if (proofRefs.length === 0) {
       return baseResult({
         ok: false,
@@ -1236,7 +1242,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
-    executionReceipt = createQueuedExecutionReceipt(grant, currentLease, nowUtc, proofRefs);
+    executionReceipt = createQueuedExecutionReceipt(grant, receiptLease, nowUtc, proofRefs);
     const validation = validateExecutionReceipt(executionReceipt);
     if (!validation.valid) {
       return baseResult({
@@ -1251,8 +1257,8 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     let queuedAppend;
     try {
       queuedAppend = await appendReceipt(paths.workspaceRoot, executionReceipt, receiptOptions);
-    } catch (error) {
-      queuedAppend = { ok: false, reason: `append-exception:${text(error?.message, 'unknown')}` };
+    } catch {
+      queuedAppend = { ok: false, reason: 'QUEUED_EXECUTION_RECEIPT_APPEND_EXCEPTION' };
     }
     if (queuedAppend?.ok !== true) {
       return baseResult({
@@ -1264,6 +1270,28 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
         releasedLease,
       });
     }
+  }
+
+  if (pendingLeaseClaim) {
+    let claim;
+    try {
+      claim = await claimLease(pendingLeaseClaim, serviceOptions);
+    } catch {
+      claim = { ok: false, reason: 'SOURCE_MUTATION_LEASE_CLAIM_EXCEPTION' };
+    }
+    if (claim?.ok !== true || !sameLeaseIdentity(claim.record, leasedEntry.identity)
+        || text(claim.record?.leaseId) !== pendingLeaseClaim.leaseId) {
+      return baseResult({
+        ok: false,
+        classification: 'ELASTIC_PR_HEAD_LEASE_CLAIM_BLOCKED',
+        handledMissionIds,
+        held: [{ missionId: leasedEntry.identity.missionId, reason: claim?.ok === true
+          ? 'SOURCE_MUTATION_LEASE_CLAIM_IDENTITY_MISMATCH'
+          : text(claim?.reason, 'LEASE_CLAIM_FAILED') }],
+        releasedLease,
+      });
+    }
+    currentLease = claim.record;
   }
 
   let publication;

@@ -803,14 +803,42 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     }
     activeExecutions += 1;
     maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
+    let phase = 'ACCEPTANCE';
     try {
       if (beforeExecute) await beforeExecute(entry);
       handlerExecutionCount += 1;
+      phase = 'EXECUTION';
       const execution = await executeCommand(entry);
+      phase = 'TERMINAL_CHECKPOINT';
       results[index] = Object.freeze({
         entry,
         result: await checkpointTerminal(entry, execution),
       });
+    } catch {
+      // If ACCEPTED was durably published but its follow-up callback failed,
+      // never leave ownership pending until the 16-minute lease expiry.
+      // Terminalize without retrying the handler, repeating source mutation,
+      // or leaking callback exception text into GitHub receipts.
+      //
+      // An exception *during* terminal checkpoint is different: it may already
+      // have written a durable DONE/BLOCKED receipt. Never overwrite uncertain
+      // successful execution with a fabricated failure; the existing receipt
+      // reconciliation owns publication/recovery of that terminal.
+      if (phase === 'TERMINAL_CHECKPOINT') throw new Error('MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      const blocker = phase === 'ACCEPTANCE'
+        ? 'MAILBOX_ACCEPTANCE_CALLBACK_FAILED'
+        : 'MAILBOX_EXECUTION_CALLBACK_FAILED';
+      try {
+        results[index] = Object.freeze({
+          entry,
+          result: await checkpointTerminal(entry, fail(blocker)),
+        });
+      } catch {
+        // This fallback checkpoint may already have written a terminal
+        // receipt before failing. Preserve that durable truth for reconciliation
+        // and never leak potentially sensitive downstream exception messages.
+        throw new Error('MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      }
     } finally {
       activeExecutions -= 1;
     }

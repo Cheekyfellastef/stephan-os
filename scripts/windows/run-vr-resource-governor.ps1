@@ -359,11 +359,15 @@ function Get-FlatGameSignal {
 }
 
 function Get-GamingSignal {
+    param([switch]$ThrottleFlatGameScan)
+
     $airLink = Get-AirLinkSignal
 
     # Headset detection is the highest-priority signal. Do not spend the first
     # protection cycle walking every desktop process before evicting local AI.
     if ($airLink.active) {
+        # Never reuse a stale desktop game scan after a headset transition.
+        if ($ThrottleFlatGameScan) { $script:cachedFlatGameSignal = $null }
         return [pscustomobject]@{
             active = $true
             airLinkActive = $true
@@ -380,7 +384,19 @@ function Get-GamingSignal {
         }
     }
 
-    $flatGame = Get-FlatGameSignal
+    # Only Watch may reuse a bounded idle inventory. Explicit reconcile/prepare
+    # actions always obtain fresh process proof.
+    if ($ThrottleFlatGameScan) {
+        $scanAt = Get-Date
+        if ($null -eq $script:cachedFlatGameSignal -or
+            ($scanAt - $script:lastFlatGameScanAt).TotalSeconds -ge $script:flatGameScanIntervalSeconds) {
+            $script:cachedFlatGameSignal = Get-FlatGameSignal
+            $script:lastFlatGameScanAt = Get-Date
+        }
+        $flatGame = $script:cachedFlatGameSignal
+    } else {
+        $flatGame = Get-FlatGameSignal
+    }
     return [pscustomobject]@{
         active = [bool]$flatGame.active
         airLinkActive = $false
@@ -1172,6 +1188,11 @@ if ($Action -eq 'Reconcile') {
 
 $poll = [Math]::Max(250, $PollMilliseconds)
 $lastGuardAt = [DateTime]::MinValue
+# Retain fast real-headset detection and immediate AI-model eviction on every
+# watcher tick. Expensive all-process flat-game discovery is capped at 1/3s.
+$script:flatGameScanIntervalSeconds = 3
+$script:lastFlatGameScanAt = [DateTime]::MinValue
+$script:cachedFlatGameSignal = $null
 
 while ($true) {
     # First bite: headset presence wins over every other workload. If any Ollama
@@ -1179,7 +1200,7 @@ while ($true) {
     [void](Invoke-ImmediateVrModelEviction)
 
     $prior = Read-GovernorState
-    $signal = Get-GamingSignal
+    $signal = Get-GamingSignal -ThrottleFlatGameScan
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
     $now = Get-Date
     $phaseChanged = -not $prior -or [string]$prior.phase -ne [string]$effective.phase

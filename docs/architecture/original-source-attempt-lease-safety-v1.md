@@ -1,5 +1,32 @@
 # Original attempt quarantine and exact lease release (#2961)
 
+## Receipt-before-lease dispatch invariant, 12 October 2026
+
+The original missing-proof defect also has an I/O failure variant: validating a
+queued receipt before claiming the global lease does not prove that receipt can
+be persisted. The PR-head dispatcher now reads authenticated execution history
+and persists the first canonical queued receipt before making a new lease claim.
+Only a successful, exactly bound canonical claim permits queue publication.
+Queued intent alone grants no execution, source-writer or lease-release authority.
+
+A refused receipt write or unobservable history leaves the lease unclaimed. A
+claim interruption/refusal leaves a durable intent that the same execution can
+replay without replacing its sequence-one timestamp or duplicating its receipt.
+Accepted/nonterminal executions without queue proof, terminal executions, an
+in-flight action without its lease, and a mismatched claim still fail closed.
+Existing leases and historic missing-proof holds retain their original recovery
+requirements; this ordering cannot manufacture historic r7 terminal evidence.
+
+Regression proof uses the real durable receipt writer/reader for interruption,
+claim refusal, wrong claim identity and later replay, plus admission spies for
+write/history failures. The live guarded `repair-goal-builder-flow` on deployed
+main `50411d67c719292da85ff9e1263468d7894712dc` restarted the existing worker and
+refreshed goal discovery successfully but remained blocked by
+`REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN`. No new real-goal pickup,
+Building transition, historical lease release or deployment is proven by these
+source tests. Current-main ancestry must be restored before exact-head review;
+independent Windows specialist qualification and protected merge remain required.
+
 ## Physical defect and preserved truth
 
 The original #2962 r7 lease has no authentic r7 execution receipt or exact r7 terminal queue pair. Historical intake revision r0 was incorrectly classified as a current-attempt binding mismatch. Recognizing canonical r0 yields five historical terminal records and ORIGINAL_EXACT_TERMINAL_PAIR_NOT_FOUND; it grants no release authority. STOP on PR #2987 and an idle supervised worker do not prove detached-writer nonactivity.

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { readExecutionReceiptHistory, validateExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
+import { appendExecutionReceipt, readExecutionReceiptHistory, validateExecutionReceipt } from '../../shared/agents/executionReceiptV1.mjs';
 
 import { dispatchElasticGoalBuildsFromCanonicalMain } from './criticalBacklogConveyorService.js';
 import {
@@ -113,7 +113,10 @@ test('claims the canonical lease before publishing one exact PR-head worker gran
       throw new Error('release must not run on active work');
     },
     readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
-    appendExecutionReceipt: async () => ({ ok: true }),
+    appendExecutionReceipt: async (root, receipt) => {
+      calls.push(['receipt', receipt]);
+      return { ok: true };
+    },
     isActionInFlight: async () => false,
     publishWorkerAction: async (options) => {
       calls.push(['publish', options.actionGrant]);
@@ -129,18 +132,21 @@ test('claims the canonical lease before publishing one exact PR-head worker gran
   assert.equal(result.classification, 'ELASTIC_PR_HEAD_DISPATCH_LIVE');
   assert.equal(result.dispatchCount, 1);
   assert.deepEqual(result.newlyOccupiedMissionIds, ['critical-1802-elastic-goal']);
-  assert.equal(calls[0][0], 'claim');
-  assert.equal(calls[0][1].prNumber, 2096);
-  assert.equal(calls[0][1].headSha, HEAD_A);
-  assert.equal(calls[0][1].branch, 'openclaw/elastic-goal-1802');
-  assert.equal(calls[0][1].ownerId, 'mission-worker');
-  assert.equal(calls[1][0], 'publish');
+  assert.equal(calls[0][0], 'receipt');
+  assert.equal(calls[0][1].state, 'queued');
+  assert.equal(calls[0][1].leaseKey, claimedRecord.leaseId);
+  assert.equal(calls[1][0], 'claim');
   assert.equal(calls[1][1].prNumber, 2096);
   assert.equal(calls[1][1].headSha, HEAD_A);
-  assert.equal(calls[1][1].laneId, 'critical-1802-elastic-goal');
-  assert.equal(calls[1][1].boundedActionCount, 1);
-  assert.equal(calls[1][1].mergeAuthority, false);
-  assert.equal(calls[1][1].leaseSeizureAllowed, false);
+  assert.equal(calls[1][1].branch, 'openclaw/elastic-goal-1802');
+  assert.equal(calls[1][1].ownerId, 'mission-worker');
+  assert.equal(calls[2][0], 'publish');
+  assert.equal(calls[2][1].prNumber, 2096);
+  assert.equal(calls[2][1].headSha, HEAD_A);
+  assert.equal(calls[2][1].laneId, 'critical-1802-elastic-goal');
+  assert.equal(calls[2][1].boundedActionCount, 1);
+  assert.equal(calls[2][1].mergeAuthority, false);
+  assert.equal(calls[2][1].leaseSeizureAllowed, false);
   assert.deepEqual(result.activeLease, claimedRecord);
 });
 
@@ -1090,4 +1096,111 @@ test('first PR-head lease claim is refused before reservation when queued proof 
   assert.equal(queuedAppends, 0);
   assert.equal(workerPublishes, 0);
   assert.equal(result.leaseSeizureAllowed, false);
+});
+
+test('failed receipt persistence or unobservable history never reserves the global lease', async () => {
+  const candidate = mission(1802, 2096, HEAD_A);
+  const cases = [
+    { append: async () => ({ ok: false, reason: 'EXECUTION_RECEIPT_WRITE_FAILED' }), classification: 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_BLOCKED' },
+    { append: async () => { throw new Error('private filesystem detail'); }, classification: 'ELASTIC_PR_HEAD_QUEUED_RECEIPT_BLOCKED' },
+    { history: async () => ({ ok: false, reason: 'EXECUTION_RECEIPT_HISTORY_INVALID' }), classification: 'ELASTIC_PR_HEAD_EXECUTION_RECEIPT_HISTORY_BLOCKED' },
+    { history: async () => { throw new Error('history unavailable'); }, classification: 'ELASTIC_PR_HEAD_EXECUTION_RECEIPT_HISTORY_UNAVAILABLE' },
+    { inFlight: async () => true, classification: 'ELASTIC_PR_HEAD_RUNNING_WITHOUT_LEASE' },
+  ];
+  for (const scenario of cases) {
+    let claims = 0;
+    let publishes = 0;
+    const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+      now: NOW, paths: PATHS, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({ ok: true, present: false }),
+      claimSourceMutationLease: async () => { claims += 1; return { ok: true, record: leaseFor(candidate) }; },
+      readExecutionReceiptHistory: scenario.history ?? (async () => ({ ok: true, receipts: [], latestReceipt: null })),
+      appendExecutionReceipt: scenario.append ?? (async () => ({ ok: true })),
+      isActionInFlight: scenario.inFlight ?? (async () => false),
+      publishWorkerAction: async () => { publishes += 1; return { published: true, actionGrantAccepted: true }; },
+    });
+    assert.equal(result.classification, scenario.classification);
+    assert.equal(result.activeLease, null);
+    assert.equal(claims, 0);
+    assert.equal(publishes, 0);
+    assert.equal(JSON.stringify(result).includes('private filesystem detail'), false);
+  }
+});
+
+test('persisted queued intent survives interrupted or refused lease claim and replays without another receipt', async () => {
+  for (const failure of ['exception', 'refusal', 'wrong-identity']) {
+    const root = await mkdtemp(join(tmpdir(), 'elastic-receipt-before-lease-'));
+    const candidate = mission(1802, 2096, HEAD_A);
+    const paths = { ...PATHS, workspaceRoot: root, repoRoot: resolve('.') };
+    let appends = 0;
+    let publishes = 0;
+    let healthy = false;
+    const options = {
+      now: NOW, paths, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({ ok: true, present: false }),
+      readExecutionReceiptHistory,
+      appendExecutionReceipt: async (...args) => { appends += 1; return appendExecutionReceipt(...args); },
+      isActionInFlight: async () => false,
+      claimSourceMutationLease: async (input) => {
+        // Use the real authenticated receipt reader at the claim boundary.
+        const history = await readExecutionReceiptHistory(root, { leaseKey: input.leaseId }, { repoRoot: resolve('.') });
+        assert.equal(history.ok, true, history.reason);
+        assert.equal(history.receipts.length, 1);
+        assert.equal(history.latestReceipt.state, 'queued');
+        assert.equal(history.latestReceipt.sourceHead, input.headSha);
+        if (!healthy) {
+          if (failure === 'exception') throw Error('private claim failure');
+          if (failure === 'refusal') return { ok: false, reason: 'LEASE_BUSY' };
+          return { ok: true, record: { ...input, headSha: HEAD_C } };
+        }
+        return { ok: true, record: { ...input } };
+      },
+      publishWorkerAction: async () => {
+        publishes += 1;
+        assert.equal(healthy, true, 'queued intent alone never authorizes publication');
+        return { published: true, actionGrantAccepted: true };
+      },
+    };
+    try {
+      const stopped = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), options);
+      assert.equal(stopped.classification, 'ELASTIC_PR_HEAD_LEASE_CLAIM_BLOCKED');
+      assert.equal(stopped.activeLease, null);
+      assert.equal(publishes, 0);
+      assert.equal(appends, 1);
+      assert.equal(JSON.stringify(stopped).includes('private claim failure'), false);
+      healthy = true;
+      const replay = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+        ...options, now: new Date(NOW.getTime() + 2000),
+      });
+      assert.equal(replay.classification, 'ELASTIC_PR_HEAD_DISPATCH_LIVE', JSON.stringify(replay.held));
+      assert.equal(replay.dispatchCount, 1);
+      assert.equal(appends, 1, 'retry must reuse durable sequence 1 and its original timestamp');
+      assert.equal(publishes, 1);
+      const history = await readExecutionReceiptHistory(root, { leaseKey: leaseFor(candidate).leaseId }, { repoRoot: resolve('.') });
+      assert.equal(history.receipts.length, 1);
+      assert.equal(history.latestReceipt.receiptId, replay.dispatched[0].queuedReceiptId);
+      assert.equal(validateExecutionReceipt(history.latestReceipt).valid, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('terminal or already accepted receipt without a lease cannot reclaim writer authority', async () => {
+  const candidate = mission(1802, 2096, HEAD_A);
+  for (const state of ['accepted', 'started', 'progress', 'completed', 'failed', 'cancelled']) {
+    let claims = 0;
+    const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+      now: NOW, paths: PATHS, sourceRevision: SOURCE,
+      readSourceMutationLease: async () => ({ ok: true, present: false }),
+      readExecutionReceiptHistory: async () => ({ ok: true, receipts: [{ state }], latestReceipt: { state } }),
+      isActionInFlight: async () => false,
+      claimSourceMutationLease: async () => { claims += 1; throw Error('must not claim'); },
+      appendExecutionReceipt: async () => { throw Error('must not append'); },
+      publishWorkerAction: async () => { throw Error('must not publish'); },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.activeLease, null);
+    assert.equal(claims, 0);
+  }
 });

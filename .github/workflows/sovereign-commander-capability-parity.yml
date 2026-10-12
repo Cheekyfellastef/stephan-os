@@ -22,6 +22,11 @@ on:
       - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
+      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/run-sovereign-commander-hidden.ps1'
+      - 'shared/agents/sovereignCommanderWindows.test.mjs'
+      - 'scripts/sovereign-commander-ignition-autoheal.mjs'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
   push:
     branches:
@@ -36,6 +41,9 @@ on:
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/battle-bridge-observation.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'scripts/windows/run-sovereign-commander-hidden.ps1'
+      - 'shared/agents/sovereignCommanderWindows.test.mjs'
+      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
 
 permissions:
   contents: read
@@ -59,6 +67,19 @@ jobs:
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
+      - name: Parse Windows PowerShell CPU and watchdog scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Host ('{0}:{1}: {2}' -f $file, $parseError.Extent.StartLineNumber, $parseError.Message) }
+              throw "PowerShell parse errors: $file"
+            }
+          }
       - name: Focused parity regression tests
         run: |
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
@@ -71,3 +92,6 @@ jobs:
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
+          node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
+          node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
+          node --test shared/agents/sovereignCommanderWindows.test.mjs
