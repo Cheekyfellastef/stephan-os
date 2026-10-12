@@ -3543,15 +3543,12 @@ export function useAIConsole() {
       hostedCloudConfig: hostedCloudConfigOverlay,
     };
     const localDesktopBackendUrl = resolveLocalDesktopBackendBaseUrl(nextRuntimeConfig.frontendOrigin);
-    const frontendLoopbackHost = extractHostname(nextRuntimeConfig.frontendOrigin);
     const configuredLoopbackHost = extractHostname(nextRuntimeConfig.baseUrl);
-    // A 127.0.0.1 UI must not silently probe localhost (or vice versa):
-    // Windows browser IPv4/IPv6 resolution may differ from the listening backend.
-    // Only normalize when BOTH targets are loopback; preserve explicit LAN/remote routes.
-    const loopbackHostMismatch = localDesktopSession
-      && isLoopbackHost(configuredLoopbackHost)
-      && configuredLoopbackHost !== frontendLoopbackHost;
-    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession || loopbackHostMismatch
+    // The explicitly configured loopback target is authoritative, even when
+    // the browser's own origin uses a different loopback hostname (IPv4/IPv6).
+    // Only replace a stale non-loopback home-node target for this local session.
+    const configuredLocalBackend = localDesktopSession && isLoopbackHost(configuredLoopbackHost);
+    const effectiveRuntimeBaseUrl = shouldIgnoreHomeNodeForThisSession && !configuredLocalBackend
       ? localDesktopBackendUrl
       : nextRuntimeConfig.baseUrl;
     const compatibleBackendBaseUrl = resolveCompatibleTarget(
@@ -3580,7 +3577,7 @@ export function useAIConsole() {
           ? (shouldIgnoreHomeNodeForThisSession ? 'local-backend-session:operator-override' : 'local-backend-session')
           : (discovery.preferredNode?.source || discovery.source || nextRuntimeConfig.homeNode?.source || 'route-diagnostics'),
         preferredTarget,
-        actualTargetUsed: loopbackHostMismatch
+        actualTargetUsed: configuredLocalBackend
           ? compatibleBackendBaseUrl
           : resolveCompatibleTarget(
             discovery.preferredNode?.backendUrl || nextRuntimeConfig.homeNode?.backendUrl || '',
