@@ -1,6 +1,7 @@
 const slashMap = {
   help: { route: 'system', action: 'help' },
   status: { route: 'system', tool: 'getSystemStatus' },
+  sovereign: { route: 'system', tool: 'getSovereignCommanderStatus' },
   tools: { route: 'system', tool: 'listAvailableTools' },
   subsystems: { route: 'system', tool: 'listSubsystems' },
   agents: { route: 'system', tool: 'listAvailableAgents' },
@@ -143,6 +144,7 @@ export function resolveRoute(parsed, input) {
     if (familyResult?.action) return { route: parsed.command === 'kg' ? 'kg' : 'simulation', action: familyResult.action, reason: 'Family action routing' };
     if (familyResult?.tool) return { route: parsed.command === 'kg' ? 'kg' : 'simulation', tool: familyResult.tool, args: familyResult.args, reason: `Family command mapped to ${familyResult.tool}` };
   }
+  if (parsed.command === 'sovereign' && parsed.args.length > 0) return { route: 'system', needsAI: false, action: 'invalid_command', reason: 'Sovereign status accepts no arguments' };
   if (slashMap[parsed.command]) return { ...slashMap[parsed.command], needsAI: false, reason: `Slash command /${parsed.command}` };
   return { route: 'assistant', needsAI: false, action: 'invalid_command', reason: `Unknown slash command /${parsed.command}` };
 }
