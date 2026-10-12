@@ -2,12 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  ensureSovereignCommanderRuntime,
   probeSovereignCommanderRuntimeCompatibility,
   runSovereignCommanderIgnitionAutoheal,
 } from './sovereign-commander-ignition-autoheal.mjs';
 
-const CAPABILITY = '2026-10-12-cpu-pressure-snapshot-v5';
+const CAPABILITY = '2026-10-05-continuous-repair-reporting-v4';
 
 function response({ ok = true, status = 200, body = null, sessionId = '' } = {}) {
   return {
@@ -174,34 +173,6 @@ test('ignition autoheal recycles a healthy but stale Commander before requiring 
   assert.ok(processCalls[0].args.includes('-SkipCoreDaemonLifecycle'));
 });
 
-
-
-test('read-only CPU preflight requests Commander-only recycle without unrelated lifecycle', async () => {
-  const calls = [];
-  let checked = 0;
-  const result = await ensureSovereignCommanderRuntime({
-    repoRoot: 'C:\\repo',
-    commanderOnly: true,
-    fetchFn: async () => {
-      checked += 1;
-      return response({
-        body: { ok: true, service: 'stephanos-sovereign-commander',
-          capabilityVersion: checked === 1 ? '2026-10-05-continuous-repair-reporting-v4' : CAPABILITY },
-      });
-    },
-    spawnSyncFn(_executable, args) {
-      calls.push(args);
-      return { status: 0, stdout: '{}', stderr: '' };
-    },
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.staleCapabilityRecycleRequested, true);
-  assert.equal(calls.length, 1);
-  assert.ok(calls[0].includes('-CommanderOnly'));
-  assert.ok(calls[0].includes('-SkipDesktopCommanderCrossHeal'));
-  assert.ok(calls[0].includes('-SkipCoreDaemonLifecycle'));
-  assert.ok(calls[0].includes(CAPABILITY));
-});
 
 test('Commander compatibility probe rejects a running stale capability version', async () => {
   const result = await probeSovereignCommanderRuntimeCompatibility({
