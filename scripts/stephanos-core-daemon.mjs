@@ -106,63 +106,35 @@ function currentHead() {
   return head;
 }
 
-async function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM means the process can exist but this caller cannot signal it.
-    // Only ESRCH actually establishes that the recorded owner disappeared.
-    // Unknown errors must never license deletion of an occupied Core lock.
-    return error?.code !== 'ESRCH';
-  }
-}
-
 async function readExactCurrentLock(identity) {
   try { return exactCoreLockOwnerV1(JSON.parse(await readFile(lockPath, 'utf8')), identity); }
   catch { return false; }
 }
 
+// Core source never removes an EXISTING lock while acquiring one.
+// PID liveness is not an atomic lock ownership test; competing attempts can
+// otherwise delete each other's newly created lock. Stale lock recovery must
+// use the separately reviewed, exclusive custody authority after proving no
+// original Core worker exists.
 async function acquireSingleInstance(sourceHead) {
   await mkdir(localStateRoot, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const identity = Object.freeze({
-      pid: process.pid, sourceHead, startedAtUtc: new Date().toISOString(),
-    });
-    let handle;
-    try {
-      handle = await open(lockPath, 'wx', 0o600);
-      await handle.writeFile(JSON.stringify({ schemaVersion: CORE_LOCK_SCHEMA, ...identity }));
-      // A concurrent stale-takeover cannot be admitted as another writer.
-      // Verify our complete lock identity before starting any runtime work.
-      if (!(await readExactCurrentLock(identity))) {
-        try { await handle.close(); } catch {}
-        return null;
-      }
-      return Object.freeze({ handle, identity });
-    } catch (error) {
-      if (handle) { try { await handle.close(); } catch {} }
-      if (error?.code !== 'EEXIST') throw error;
-      // A malformed/unreadable lock is NOT evidence that its owner is dead.
-      let existingRaw = '';
-      let existing;
-      try {
-        existingRaw = await readFile(lockPath, 'utf8');
-        existing = JSON.parse(existingRaw);
-      } catch { return null; }
-      if (!exactCoreLockOwnerV1(existing, existing)) return null;
-      if (await processAlive(existing.pid)) return null;
-      // Before clearing a dead-owner lock, revalidate the exact original
-      // record and the dead PID. If it moved, another owner now has custody.
-      try {
-        if ((await readFile(lockPath, 'utf8')) !== existingRaw) return null;
-        if (await processAlive(existing.pid)) return null;
-        await unlink(lockPath);
-      } catch { return null; }
+  const identity = Object.freeze({
+    pid: process.pid, sourceHead, startedAtUtc: new Date().toISOString(),
+  });
+  let handle;
+  try {
+    handle = await open(lockPath, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify({ schemaVersion: CORE_LOCK_SCHEMA, ...identity }));
+    if (!(await readExactCurrentLock(identity))) {
+      try { await handle.close(); } catch {}
+      return null;
     }
+    return Object.freeze({ handle, identity });
+  } catch (error) {
+    if (handle) { try { await handle.close(); } catch {} }
+    if (error?.code === 'EEXIST') return null;
+    throw error;
   }
-  return null;
 }
 
 async function probe(url, expectedService = '') {
