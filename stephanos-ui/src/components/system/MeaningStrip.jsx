@@ -1,6 +1,13 @@
 import React from 'react';
 
-export function MeaningStrip({ finalRouteTruth }) {
+const knownProvider = (provider) => {
+  const value = String(provider || '').trim();
+  return value && !['unknown', 'none', 'pending', 'unavailable', 'n/a'].includes(value.toLowerCase())
+    ? value.toUpperCase()
+    : '';
+};
+
+export function MeaningStrip({ finalRouteTruth, memoryMode = '' }) {
   if (!finalRouteTruth) {
     return (
       <div className="meaning-strip error">
@@ -11,32 +18,46 @@ export function MeaningStrip({ finalRouteTruth }) {
 
   const {
     routeKind,
-    backendReachable,
-    providerExecution,
+    backendReachableState,
+    selectedProvider,
+    executedProvider,
     fallbackActive,
-    memoryMode,
     routeLayerStatus,
     backendExecutionContractStatus,
     providerExecutionGateStatus,
   } = finalRouteTruth;
 
-  const systemState = backendReachable === true ? '🟢 SYSTEM HEALTHY' : '🔴 BACKEND OFFLINE';
+  // The canonical route projection uses a tri-state, not the legacy backendReachable boolean.
+  // Unknown reachability must not be rendered as a confirmed backend outage.
+  const systemState = backendReachableState === 'yes'
+    ? '🟢 BACKEND REACHABLE'
+    : backendReachableState === 'no'
+      ? '🔴 BACKEND UNREACHABLE FROM UI'
+      : '🟠 BACKEND UNVERIFIED';
 
-  const routeState = routeKind
+  const routeState = routeKind && routeKind !== 'unavailable'
     ? `📡 ROUTE: ${routeKind.toUpperCase()}`
     : '📡 ROUTE: UNKNOWN';
 
-  const aiState = providerExecution?.executableProvider
-    ? `🧠 AI: ${providerExecution.executableProvider.toUpperCase()}`
-    : '🧠 AI: UNKNOWN';
+  // Selection is not proof of execution. Show which provider is selected when
+  // the latest executed provider is not confirmed, without inventing a successful run.
+  const selected = knownProvider(selectedProvider);
+  const executed = knownProvider(executedProvider);
+  const aiState = selected
+    ? `🧠 AI: ${selected} (SELECTED)`
+    : executed
+      ? `🧠 AI: ${executed} (EXECUTION RECORDED)`
+      : '🧠 AI: UNVERIFIED';
 
   const fallbackState = fallbackActive === true
     ? '⚠️ FALLBACK ACTIVE'
     : '✅ NO FALLBACK';
 
-  const memoryState = memoryMode
-    ? `💾 MEMORY: ${memoryMode.toUpperCase()}`
+  const resolvedMemoryMode = String(memoryMode || finalRouteTruth.memoryMode || '').trim();
+  const memoryState = resolvedMemoryMode
+    ? `💾 MEMORY: ${resolvedMemoryMode.toUpperCase()}`
     : '💾 MEMORY: UNKNOWN';
+
   const operatorBoundaryState = routeLayerStatus === 'healthy' && backendExecutionContractStatus === 'stale-or-incomplete'
     ? '🛠️ ROUTE HEALTHY · BACKEND CONTRACT STALE'
     : providerExecutionGateStatus === 'route-blocked'
