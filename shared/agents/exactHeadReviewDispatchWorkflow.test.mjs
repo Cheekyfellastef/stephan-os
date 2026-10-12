@@ -217,7 +217,7 @@ test('canonical plan and coordinate jobs enforce installation reserve before Git
   assert.ok(plan.includes("github.event_name != 'pull_request'"));
 });
 
-test('5-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
+test('15-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
   const estate = Array.from({ length: 145 }, (_, index) => ({
     number: 4000 - index, draft: index % 6 === 0,
   }));

@@ -40,6 +40,7 @@ import {
   evaluateOperatorLaneContainmentV1,
 } from '../shared/agents/operatorLaneContainmentV1.mjs';
 import { selectExactHeadDiscoveryWindowV1 } from '../shared/agents/exactHeadReviewDiscoveryWindowV1.mjs';
+import { admitExactHeadReviewTriggerV1 } from '../shared/agents/exactHeadReviewTriggerThrottleV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -493,9 +494,21 @@ async function main() {
   console.log(`EXACT_HEAD_REVIEW_LANE_AUTHORITY=${laneAuthorityLogin}`);
 
   const event = readJson(text(process.env.GITHUB_EVENT_PATH));
-  const triggeringArtifact = triggeringIndependentReviewArtifact();
   const planOnly = text(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PLAN_ONLY).toLowerCase() === 'true';
   const manualPrNumber = parseOptionalManualPrNumber(process.env.STEPHANOS_EXACT_HEAD_REVIEW_PR);
+  const trigger = admitExactHeadReviewTriggerV1({
+    eventName: text(process.env.GITHUB_EVENT_NAME),
+    event,
+    planOnly,
+    manuallyRequestedPr: manualPrNumber !== null,
+  });
+  if (!trigger.allowDiscovery) {
+    console.log(`EXACT_HEAD_REVIEW_TRIGGER_HELD=${trigger.reason}`);
+    appendOutput('targets', '[]');
+    appendOutput('decision', 'REVIEW_DISCOVERY_TRIGGER_HELD');
+    return;
+  }
+  const triggeringArtifact = triggeringIndependentReviewArtifact();
   const explicitOwnerReviewRequest = explicitOwnerExactHeadReviewRequest({ event, laneAuthorityLogin });
   const requestedNumbers = candidateReviewPrNumbers({ event, manualPrNumber });
   const contextLoader = requestedNumbers.length ? loadRequestedCanonicalContexts : discoverCanonicalContexts;
