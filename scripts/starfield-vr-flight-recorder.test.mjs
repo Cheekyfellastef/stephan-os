@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
 
 test('Windows VR diagnosis handles zero, one and conflicting providers without inventing missing metrics', { skip: process.platform !== 'win32' }, async () => {
   const scriptPath = fileURLToPath(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url));
@@ -44,9 +46,6 @@ test('Windows VR diagnosis handles zero, one and conflicting providers without i
     }
   }
 });
-import test from 'node:test';
-
-import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
 
 const performance = await readFile(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const recorder = await readFile(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url), 'utf8');
