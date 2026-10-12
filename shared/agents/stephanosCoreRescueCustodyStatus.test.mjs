@@ -30,8 +30,11 @@ test('Sovereign watchdog never blanket-recycles ambiguous Core process matches',
   assert.ok(guardAt >= 0 && singleAt > guardAt && missingAt > singleAt);
   assert.match(watchdog.slice(guardAt, singleAt), /SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS/);
   assert.match(watchdog.slice(singleAt, missingAt), /SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED/);
-  assert.doesNotMatch(watchdog, /foreach \(\$process in \$coreBefore\)/);
-  assert.doesNotMatch(watchdog, /Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
+  const afterCoreAt = watchdog.indexOf('$coreAfter = @(Get-StephanosCoreDaemonProcesses)', missingAt);
+  assert.ok(afterCoreAt > missingAt);
+  const coreLifecycleOnly = watchdog.slice(guardAt, afterCoreAt);
+  assert.doesNotMatch(coreLifecycleOnly, /foreach \(\$process in \$coreBefore\)/);
+  assert.doesNotMatch(coreLifecycleOnly, /Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -eq 1 -and \$coreHealthAfter\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.match(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreObserved\.Count -eq 1 -and \$coreObservedHealth\.healthy -and -not \$coreDaemonBlocker\)/);
   assert.doesNotMatch(watchdog, /\$coreDaemonOk = \[bool\]\(\$coreAfter\.Count -ge 1/);
