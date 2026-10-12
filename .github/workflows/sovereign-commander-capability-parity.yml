@@ -62,6 +62,19 @@ jobs:
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
+      - name: Parse Windows PowerShell CPU and watchdog scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1')) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Error "$file:$($parseError.Extent.StartLineNumber): $($parseError.Message)" }
+              throw "PowerShell parse errors: $file"
+            }
+          }
       - name: Focused parity regression tests
         run: |
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
