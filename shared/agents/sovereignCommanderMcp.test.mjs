@@ -59,6 +59,7 @@ test('read-only inspection admits every fixed diagnostic and rejects repair/shel
   assert.equal(tool.annotations.readOnlyHint, true);
   assert.equal(tool.annotations.destructiveHint, false);
   assert.deepEqual(tool.inputSchema.properties.actionId.enum, SOVEREIGN_COMMANDER_INSPECTION_ACTIONS);
+  assert.equal(SOVEREIGN_COMMANDER_INSPECTION_ACTIONS.includes('gaming-resource-status'), false, 'governor Status may reconcile and mutate runtime');
   for (const actionId of SOVEREIGN_COMMANDER_INSPECTION_ACTIONS) {
     const result = await handler('tools/call', { name: tool.name, arguments: { actionId } }, { isRequest: true });
     assert.equal(result.isError, false);
