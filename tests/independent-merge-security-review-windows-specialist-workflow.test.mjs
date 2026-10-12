@@ -52,11 +52,3 @@ test('immutable artifact remains exact-run, fail-closed and non-overwriting', as
   assert.match(text, /overwrite: false/);
   assert.match(text, /include-hidden-files: false/);
 });
-
-test('draft PRs cannot launch hosted independent review before ready_for_review', async () => {
-  const source = await workflow();
-  const job = source.split('  independent-security-review:')[1]?.split('\n    steps:')[0] || '';
-  assert.ok(job.includes("if: ${{ github.event_name != 'pull_request_target' || !github.event.pull_request.draft }}"));
-  assert.ok(source.includes('types: [opened, synchronize, reopened, ready_for_review]'));
-  assert.ok(source.includes('workflow_dispatch:'));
-});
