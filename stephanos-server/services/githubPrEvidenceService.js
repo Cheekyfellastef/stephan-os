@@ -378,7 +378,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     let message = '';
     try { message = String((await response.json())?.message ?? ''); } catch {}
     if (response.status !== 429 && remaining !== '0'
-        && !/(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message)) return;
+        && !/(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message)) return;
     const now = Date.now();
     const retrySeconds = Number(response.headers?.get?.('retry-after'));
     const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
@@ -526,7 +526,7 @@ async function checkPrRateLimitResponse(response, key, owner, repo, prNumber, au
   try { message = String((await response.json())?.message ?? ''); } catch {}
   const limited = response.status === 429
     || remaining === '0'
-    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|too many requests/i.test(message);
+    || /(?:api|secondary) rate limit exceeded|rate limit exceeded|exceeded (?:a |the )?secondary rate limit|too many requests/i.test(message);
   if (!limited) return null;
   const nowMs = Date.now();
   const resetSeconds = Number(response.headers?.get?.('x-ratelimit-reset'));
