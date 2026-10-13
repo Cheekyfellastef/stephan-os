@@ -227,3 +227,106 @@ test('native task installation requires an exact signed routing candidate', asyn
   assert.equal(pass.ok, true);
   assert.equal(pass.attempt, 1);
 });
+
+test('typed stale signed head triggers only one guarded fixed-task reconcile and demands new signed proof', async () => {
+  let verifications = 0, starts = 0, reconcileAttempts = 0;
+  const spawnSyncFn = (_executable, args) => {
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n' };
+    if (args.includes('status')) return { status: 0, stdout: '' };
+    if (args.some(v => String(v).endsWith('reconcile-stephanos-native-capacity-publisher-stale.ps1'))) {
+      reconcileAttempts++;
+      assert.deepEqual(args.slice(-4), ['-ExpectedHead', HEAD, '-RequestId', 'native-publisher-install-v1'].slice(-4));
+      return { status: 0, stdout: JSON.stringify({
+        finalVerdict: 'NATIVE_PUBLISHER_FIXED_TASK_RESTART_REQUESTED',
+        expectedHead: HEAD, taskName: 'Stephanos Native Capacity Publisher',
+        signedCapacityVerified: false, leaseReleaseAllowed: false,
+        sourceMutationAllowed: false, mergeAuthority: false,
+      }) + '\n' };
+    }
+    starts++;
+    return { status: 0, stdout: installerReceipt() };
+  };
+  const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\operator' },
+    spawnSyncFn,
+    sleepFn: async () => {},
+    verifyCandidateFn: async () => {
+      verifications++;
+      return verifications <= 5
+        ? { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }
+        : { ok: true, candidate: {
+            sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+            taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+            mergeAuthority: false, leaseSeizureAllowed: false,
+          } };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.signedCapacityProven, true);
+  assert.equal(result.boundedRestartAttempted, true);
+  assert.equal(reconcileAttempts, 1);
+  assert.equal(starts, 1);
+  assert.equal(verifications, 6);
+});
+
+test('stale signed head never becomes success when guarded restart is blocked', async () => {
+  let recover = 0;
+  const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\operator' },
+    spawnSyncFn: (_exe,args) => {
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n' };
+      if (args.includes('status')) return { status: 0, stdout: '' };
+      if (args.some(v => String(v).endsWith('reconcile-stephanos-native-capacity-publisher-stale.ps1'))) {
+        recover++;
+        return { status: 1, stdout: '', stderr: 'NATIVE_RECONCILE_EXACT_HEAD_ALREADY_ATTEMPTED' };
+      }
+      return { status: 0, stdout: installerReceipt() };
+    },
+    sleepFn: async () => {},
+    verifyCandidateFn: async () => ({
+      ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID',
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_BOUNDED_RESTART_BLOCKED');
+  assert.equal(result.signedCapacityProven, false);
+  assert.equal(recover, 1);
+});
+
+test('unrelated signed-capacity failures do not acquire task-stop authority', async () => {
+  let restartCalled = false;
+  const result = await executeStephanosNativeCapacityPublisherInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\operator' },
+    spawnSyncFn: (_exe,args) => {
+      if (args.includes('branch')) return { status: 0, stdout: 'main\n' };
+      if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n' };
+      if (args.includes('status')) return { status: 0, stdout: '' };
+      if (args.some(v => String(v).endsWith('reconcile-stephanos-native-capacity-publisher-stale.ps1'))) {
+        restartCalled = true; throw new Error('unexpected task restart');
+      }
+      return { status: 0, stdout: installerReceipt() };
+    },
+    sleepFn: async () => {},
+    verifyCandidateFn: async () => ({ ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUST_PATH_UNAVAILABLE' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN');
+  assert.equal(result.boundedRestartAttempted, false);
+  assert.equal(restartCalled, false);
+});
+
+test('qualified native publisher restart source is fixed, one-shot and never targets an original writer', async () => {
+  const { readFileSync } = await import('node:fs');
+  const ps = readFileSync(new URL('../../scripts/windows/reconcile-stephanos-native-capacity-publisher-stale.ps1', import.meta.url), 'utf8');
+  assert.match(ps, /\$taskName = 'Stephanos Native Capacity Publisher'/);
+  assert.match(ps, /Stop-ScheduledTask -TaskName \$taskName/);
+  assert.match(ps, /Start-ScheduledTask -TaskName \$taskName/);
+  assert.match(ps, /FileMode\]::CreateNew/);
+  assert.match(ps, /NATIVE_RECONCILE_TASK_OWNER_MISMATCH/);
+  assert.match(ps, /NATIVE_RECONCILE_EXACT_HEAD_ALREADY_ATTEMPTED/);
+  assert.match(ps, /NATIVE_RECONCILE_DIRT_OR_SOURCE_UNSAFE/);
+  assert.match(ps, /sourceMutationAllowed=\$false/);
+  assert.doesNotMatch(ps, /Stop-Process|taskkill|Unregister-ScheduledTask|Remove-Item|git\s+(?:reset|clean|push)/i);
+});
