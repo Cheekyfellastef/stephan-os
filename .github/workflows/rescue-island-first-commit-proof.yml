@@ -22,8 +22,12 @@ concurrency:
 
 jobs:
   isolated-build-proof:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - name: Checkout exact source with read-only credentials
         uses: actions/checkout@v4
