@@ -251,11 +251,11 @@ export function createSharedWorkspaceDashboardPollingContract(input = {}) {
   });
 }
 
-function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs, proofRecords = [], goalGateTrust = {}) {
   return Object.freeze({
     ...projection,
     autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
-    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, proofRecords, ...goalGateTrust, nowMs, staleAfterMs }),
   });
 }
 
@@ -334,7 +334,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
-  }), records.statusRecords, nowMs, staleAfterMs);
+  }), records.statusRecords, nowMs, staleAfterMs, records.proofRecords, input.goalGateTrust || {});
   const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
   const brainState = resolved.ok
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
