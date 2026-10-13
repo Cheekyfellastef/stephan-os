@@ -112,7 +112,8 @@ test('inventory and skill qualification require separate proof for Local and Sta
   payload.records.eventRecords.push(event(rungs[4]));
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1);
   payload.records.eventRecords.push(event(rungs[4], 'openclaw-standalone'));
-  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 2);
+  // Both agents can claim PASS, but these are not verified exams or approvals.
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1);
 });
 
 test('mere prose, no receipt or wrong proof identity never counts toward agent parity', () => {
@@ -175,7 +176,9 @@ test('Codex task-class parity requires two independent agent matrices of matched
   payload.records.eventRecords = fullMatrix.slice(0, -1);
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
   payload.records.eventRecords = fullMatrix;
-  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1);
+  // A complete matrix of self-authored booleans and arbitrary refs is not an
+  // independent Codex comparison, even if every declared task class passes.
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
   payload.records.eventRecords = fullMatrix.map((entry, i) => i === 0
     ? {
       ...entry,
@@ -186,4 +189,68 @@ test('Codex task-class parity requires two independent agent matrices of matched
     }
     : entry);
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+});
+
+test('fabricated ten-question, adversarial-test, operator-approval and reviewer flags never self-qualify skills', () => {
+  const rung = 'QUALIFY_AGENT_SPECIFIC_SKILLS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = ['openclaw-local', 'openclaw-standalone'].map((agentId) => ({
+    ...event(rung, agentId),
+    proofRefs: ['proof/arbitrary-agent-test-' + agentId, 'approval/not-verified-' + agentId],
+    openClawExcellenceEvidence: {
+      ...event(rung, agentId).openClawExcellenceEvidence,
+      tenQuestionExamPassed: true,
+      adversarialTestsPassed: true,
+      operatorApprovalGranted: true,
+      independentReviewPassed: true,
+      reviewerId: 'self-declared-independent-reviewer',
+    },
+  }));
+  const seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.pressureState, 'ACTIVE');
+});
+
+test('agent-authored complete benchmark matrix cannot forge reviewer independence', () => {
+  const contract = buildOpenClawExcellenceSeedV1();
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = contract.agentIdentities.flatMap(({ participantId: agentId }) =>
+    contract.taskClasses.map((taskClass) => ({
+      ...event('PROVE_END_TO_END_TASK_PARITY', agentId),
+      eventId: 'self-reviewed-' + agentId + '-' + taskClass,
+      proofRefs: ['proof/codex-' + taskClass, 'proof/openclaw-' + taskClass],
+      openClawExcellenceEvidence: {
+        schemaVersion: 'stephanos.openclaw-excellence-rung-proof.v1',
+        rung: 'PROVE_END_TO_END_TASK_PARITY',
+        agentId,
+        benchmark: {
+          schemaVersion: 'stephanos.openclaw-codex-comparative-task.v1',
+          taskClass,
+          taskFingerprint: 'same-inputs-' + taskClass,
+          sameTaskInputs: true,
+          codexSuccessful: true,
+          openClawSuccessful: true,
+          independentReviewPassed: true,
+          reviewerId: 'claimed-reviewer',
+          codexProofRef: 'proof/codex-' + taskClass,
+          openClawProofRef: 'proof/openclaw-' + taskClass,
+        },
+      },
+    })));
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+});
+
+test('stale feed or stale source freshness cannot plant a fresh seed or show current/dispatch work', () => {
+  for (const payload of [
+    { ...feed({ statusRecords: [heartbeat(), event('INVENTORY_BOTH_AGENTS')] }), state: 'stale' },
+    { ...feed({ statusRecords: [heartbeat()] }), projection: { sourceFreshness: { truth: 'STALE' } } },
+    { ...feed({ statusRecords: [heartbeat()] }), errors: ['BACKEND_FEED_INVALID'] },
+  ]) {
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.planted, false);
+    assert.notEqual(seed.sourceTruth, 'CURRENT');
+    assert.equal(seed.pressureState, 'UNKNOWN');
+    assert.equal(seed.rungProofCount, null);
+    assert.deepEqual(pressure(payload), []);
+  }
 });
