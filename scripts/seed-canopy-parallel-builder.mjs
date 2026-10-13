@@ -17,7 +17,7 @@ import {
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
-import { checkParallelSeedModelResourceV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -65,6 +65,23 @@ async function localModelPreflight() {
     governor = JSON.parse(await readFile(governorFile, 'utf8'));
   } catch {
     throw new Error('VR_GOVERNOR_TRUTH_MISSING');
+  }
+  // The canonical Watch action does not rewrite stable idle snapshots. Only
+  // on Windows and only on stale evidence, request ONE fixed-path canonical
+  // Reconcile, which re-observes VR/game signals. A stopped or failed governor
+  // never becomes 'idle' merely because an old snapshot says so.
+  if (!isParallelSeedGovernorSnapshotFreshV1(governor)) {
+    if (process.platform !== 'win32')
+      throw new Error('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');
+    const canonicalGovernor = join(repoRoot, 'scripts', 'windows', 'run-vr-resource-governor.ps1');
+    try {
+      await processExec('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-File', canonicalGovernor, '-Action', 'Reconcile'],
+        repoRoot, 18000);
+      governor = JSON.parse(await readFile(governorFile, 'utf8'));
+    } catch {
+      throw new Error('VR_GOVERNOR_LIVE_RECONCILE_FAILED');
+    }
   }
   let ps;
   try {
