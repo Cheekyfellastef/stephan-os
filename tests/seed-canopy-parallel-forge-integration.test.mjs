@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { makeParallelSeedExactApprovalV1, parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
+import { SEED_PARALLEL_APPROVAL_REF_SCHEMA } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
 
 const sourceRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const SEED_ID = 'test-seed-isolated-builder';
@@ -35,6 +36,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   const home = join(scratch, 'operator-home');
   const path = (relative) => join(repo, relative);
   let server;
+  let ownerComment = null;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'tests']) {
       await mkdir(path(folder), { recursive: true });
@@ -53,6 +55,15 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       path('scripts/seed-canopy-parallel-supervisor.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelSupervisorV1.mjs'),
       path('shared/runtime/seedCanopyParallelSupervisorV1.mjs'));
+    // A deliberately modified fixture-only copy redirects the immutable production
+    // GitHub owner proof URL to our loopback stub; production source stays HTTPS-fixed.
+    const approvalModule = await readFile(join(sourceRoot,
+      'shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs'), 'utf8');
+    const githubLiteral = "'https://api.github.com/repos/' + REPO + '/issues/comments/'";
+    if (!approvalModule.includes(githubLiteral)) throw new Error('GITHUB_APPROVAL_FIXTURE_ANCHOR_MISSING');
+    await writeFile(path('shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs'),
+      approvalModule.replace(githubLiteral,
+        "('http://127.0.0.1:' + process.env.STEPHANOS_SEED_LOCAL_PORT + '/repos/') + REPO + '/issues/comments/'"));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelResourceV1.mjs'),
       path('shared/runtime/seedCanopyParallelResourceV1.mjs'));
     await writeFile(path('shared/project/seedGardenProjectionV1.mjs'),
@@ -77,6 +88,12 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const main = git('rev-parse', 'main');
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
+        if (req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
+          && req.method === 'GET' && ownerComment) {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify(ownerComment));
+          return;
+        }
         if (req.url === '/api/ps' && req.method === 'GET') {
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ models: [{ name: 'mock-fixture-model' }] }));
@@ -131,7 +148,15 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       request, manifestSha256: parallelSeedManifestHashV1(raw), nowUtc: issuedAtUtc,
       expiryUtc: new Date(Date.parse(issuedAtUtc) + 3600000).toISOString(),
     });
-    await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'), JSON.stringify(approval));
+    ownerComment = {
+      id: 7654321, user: { login: 'Cheekyfellastef' }, author_association: 'OWNER',
+      issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3096',
+      created_at: issuedAtUtc, updated_at: issuedAtUtc,
+      body: '\`\`\`stephanos-seed-parallel-owner-approval\\n' +
+        JSON.stringify(approval) + '\\n\`\`\`',
+    };
+    await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
     const run = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(run.code, 0, run.stderr);
     const completed = JSON.parse(await readFile(
