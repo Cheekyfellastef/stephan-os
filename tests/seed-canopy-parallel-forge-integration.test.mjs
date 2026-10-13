@@ -91,6 +91,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       return result.stdout.trim();
     };
     git('init', '-b', 'main');
+    // Production boundary requires the one canonical origin even in an ephemeral fixture.
+    git('remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
     git('config', 'user.name', 'Seed Fixture');
     git('config', 'user.email', 'fixture@example.invalid');
     git('add', '.');
