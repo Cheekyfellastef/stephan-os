@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   PARALLEL_SEED_REQUEST_SCHEMA,
   listParallelSeedCandidatesV1,
+  draftParallelSeedGoalV1,
   validateParallelSeedBuildRequestV1,
   parallelSeedBranchNameV1,
   parseParallelSeedModelResponseV1,
@@ -39,6 +40,17 @@ test('parallel proposal selects canonical seeds without manufacturing live proof
   assert.equal(candidates[0].firstRung, 'INVENTORY_BOTH_AGENTS');
   assert.equal(candidates[0].routeTruth, 'SOURCE_BACKED_PROPOSAL_ONLY');
   assert.equal(candidates[0].requiresIndependentOwnerAndLiveEvidence, true);
+});
+
+test('direct seed goal drafts are source-backed but not admitted or built', () => {
+  const draft = draftParallelSeedGoalV1(seeds[0]);
+  assert.equal(draft.ownerIssue, '#3094');
+  assert.equal(draft.nextRung, 'INVENTORY_BOTH_AGENTS');
+  assert.equal(draft.sourceTruth, 'DECLARED_CONTRACT_NOT_LIVE_PRESSURE');
+  assert.equal(draft.workAuthorized, false);
+  assert.equal(draft.implementationCompleted, false);
+  assert.equal(draft.existingOwnerMustBeChecked, true);
+  assert.throws(() => draftParallelSeedGoalV1({ ...seeds[0], growthRungs: ['../unsafe'] }));
 });
 
 test('exact seed owner, issue, contract, path, tests, SHA and authority are mandatory', () => {
