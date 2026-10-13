@@ -31,6 +31,29 @@ export function listParallelSeedCandidatesV1(seeds = []) {
   })));
 }
 
+
+// A goal *draft* from declared seed truth. This never claims observed gaps, worker pickup, or admission.
+export function draftParallelSeedGoalV1(seed = {}) {
+  if (!safeId(seed.seedId) || !/^#\d+$/.test(seed.issue || '')
+    || !safePath(seed.source || '')) throw new Error('INVALID_CANONICAL_SEED');
+  const nextRung = Array.isArray(seed.growthRungs) && seed.growthRungs.length
+    ? text(seed.growthRungs[0]) : 'INVENTORY';
+  if (!/^[A-Z0-9_]{3,90}$/.test(nextRung)) throw new Error('INVALID_SEED_RUNG');
+  return Object.freeze({
+    seedId: seed.seedId,
+    ownerIssue: seed.issue,
+    contractSource: seed.source,
+    title: 'Goal draft: ' + text(seed.title) + ' / ' + nextRung,
+    nextRung,
+    taskIntent: 'Produce verifiable evidence for ' + nextRung + ' under the '
+      + text(seed.title) + ' seed; identify exact bounded repair work only after measurement.',
+    sourceTruth: 'DECLARED_CONTRACT_NOT_LIVE_PRESSURE',
+    workAuthorized: false,
+    implementationCompleted: false,
+    existingOwnerMustBeChecked: true,
+  });
+}
+
 export function validateParallelSeedBuildRequestV1(request, seeds = []) {
   const errors = [];
   if (request?.schemaVersion !== PARALLEL_SEED_REQUEST_SCHEMA) errors.push('INVALID_SCHEMA');
@@ -88,8 +111,15 @@ export function makeParallelSeedReceiptV1(request, stage, extras = {}) {
     branch: parallelSeedBranchNameV1(request),
     exactBaseSha: request.baseSha,
     targetPath: request.targetPath,
-    stage,
     ...extras,
+    stage,
+    schemaVersion: PARALLEL_SEED_RECEIPT_SCHEMA,
+    seedId: request.seedId,
+    ownerIssue: request.ownerIssue,
+    taskId: request.taskId,
+    branch: parallelSeedBranchNameV1(request),
+    exactBaseSha: request.baseSha,
+    targetPath: request.targetPath,
     sourceBuildProposalOnly: true,
     merged: false,
     deployed: false,
