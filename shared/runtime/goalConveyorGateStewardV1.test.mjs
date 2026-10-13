@@ -174,7 +174,8 @@ test('independent per-gate cooldown does not park native capacity behind origina
   assert.equal(allCooling.leaseOverrideAllowed, false);
   const sourceChanged = planCoreGateStewardV1({ sourceHead: 'b'.repeat(40), gates },
     { nowMs: nowMs + 4000, previousAttempts: ledger });
-  assert.equal(sourceChanged.nextAction.gateId, 8);
+  assert.equal(sourceChanged.nextAction, null);
+  assert.equal(sourceChanged.decision, 'AWAIT_FRESH_GATE_PROOF');
   const coreSource = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(coreSource, /previousAttempts: lastGateStewardAttempts/);
   assert.match(coreSource, /lastGateStewardAttempts = \[/);
