@@ -16,6 +16,7 @@ import {
   createSanitizedCriticalBacklogStatusProjection,
   createSanitizedProgrammeAuthorityStatusProjection,
   readNativeCapacityProgrammeTelemetry,
+  readNativeCapacityPublisherHeadDiagnosticV1,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
@@ -3095,6 +3096,45 @@ test('read-only programme receipt exposes observed original lease identity witho
   assert.equal(unknown.elasticOriginalMissionUnique, false);
 });
 
+
+test('gate-13 publisher head diagnostics distinguish stale unsigned claims without granting native capacity', async () => {
+  const target = 'a'.repeat(40), stale = 'b'.repeat(40);
+  const status = sourceHead => JSON.stringify({
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    statusId: 'stephanos-native-capacity-current',
+    capacityReceipt: { payload: { sourceHead, privateKeyPem: 'CANARY_SECRET' } },
+  });
+  const mismatch = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(stale),
+  });
+  assert.equal(mismatch.nativePublisherDiagnosticOnly, true);
+  assert.equal(mismatch.nativePublisherObservedHead, stale);
+  assert.equal(mismatch.nativePublisherHeadMatchesExpected, false);
+  assert.equal(mismatch.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD');
+  assert.doesNotMatch(JSON.stringify(mismatch), /CANARY_SECRET/);
+  const sameUnsigned = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(target),
+  });
+  assert.equal(sameUnsigned.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED');
+  assert.equal(sameUnsigned.nativePublisherHeadMatchesExpected, true);
+  const verifiedGateStillFails = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({ ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }),
+    diagnosticReader: () => sameUnsigned,
+  });
+  assert.equal(verifiedGateStillFails.nativeCapacityVerified, false);
+  assert.equal(verifiedGateStillFails.nativeCapacitySourceHead, '');
+  assert.equal(verifiedGateStillFails.nativePublisherHeadMatchesExpected, true);
+  const invalid = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status('not-a-sha'),
+  });
+  assert.equal(invalid.nativePublisherObservedHead, '');
+  assert.equal(invalid.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  const absent = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => { const e = new Error('absent'); e.code = 'ENOENT'; throw e; },
+  });
+  assert.equal(absent.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STATUS_MISSING');
+});
 
 test('native programme proof checks the signed router and exposes only exact-head bounded truth', async () => {
   const head = 'a'.repeat(40);
