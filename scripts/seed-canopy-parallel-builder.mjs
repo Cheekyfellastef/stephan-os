@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import {
   listParallelSeedCandidatesV1,
+  draftParallelSeedGoalV1,
   makeParallelSeedReceiptV1,
   parallelSeedBranchNameV1,
   parseParallelSeedModelResponseV1,
@@ -177,8 +178,13 @@ async function main() {
     route: 'PARALLEL_SOURCE_PROPOSALS_ONLY',
     seeds: listParallelSeedCandidatesV1(HIGH_LEVEL_FLYWHEEL_SEEDS_V1),
   });
+  if (operation === 'plan' && filename) {
+    const seed = HIGH_LEVEL_FLYWHEEL_SEEDS_V1.find((item) => item.seedId === filename);
+    if (!seed) throw new Error('UNKNOWN_SEED');
+    return output(draftParallelSeedGoalV1(seed));
+  }
   if (operation !== 'build' || !filename || confirmation !== '--execute') {
-    throw new Error('Usage: node scripts/seed-canopy-parallel-builder.mjs list | build <request.json> --execute');
+    throw new Error('Usage: node scripts/seed-canopy-parallel-builder.mjs list | plan <seed-id> | build <request.json> --execute');
   }
   const request = JSON.parse(await readFile(resolve(filename), 'utf8'));
   output(await build(request));
