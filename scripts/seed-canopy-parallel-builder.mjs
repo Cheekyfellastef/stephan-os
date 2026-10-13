@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Bounded parallel source authoring via an operator-controlled LOCAL Ollama instance.
+// Bounded parallel source authoring through an already resident local llama.cpp router.
+// Its per-request autoload=false contract prevents an evicted model reloading.
 // Deliberately does not call the canonical scheduler, Goal Worker or Core Daemon.
 import { readFile, mkdir, writeFile, rename, lstat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
@@ -27,6 +28,8 @@ const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
 const stateRoot = join(homedir(), '.stephanos', 'seed-parallel', scope);
 const output = (obj) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+const governorFile = join(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr',
+  'vr-resource-governor-current.json');
 
 async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000) {
   const git = bin === 'git';
@@ -71,11 +74,9 @@ async function saveReceipt(request, stage, more = {}) {
 
 async function localModelPreflight() {
   const selectedModel = process.env.STEPHANOS_SEED_LOCAL_MODEL || 'qwen3-coder:30b';
-  const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 11434);
+  const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 8080);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
     throw new Error('LOCAL_MODEL_PORT_INVALID');
-  const governorFile = join(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr',
-    'vr-resource-governor-current.json');
   let governor;
   try {
     governor = JSON.parse(await readFile(governorFile, 'utf8'));
@@ -98,18 +99,21 @@ async function localModelPreflight() {
   } else if (!isParallelSeedGovernorSnapshotFreshV1(governor)) {
     throw new Error('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');
   }
-  let ps;
+  let modelInventory;
   try {
-    const response = await fetch('http://127.0.0.1:' + port + '/api/ps', {
+    // Router /models includes an explicit loaded/unloaded status. A dedicated
+    // llama.cpp endpoint must be configured locally; the Ollama API is not an
+    // admissible fallback because it can implicitly reload a stopped model.
+    const response = await fetch('http://127.0.0.1:' + port + '/models', {
       signal: AbortSignal.timeout(5000),
     });
-    if (!response.ok) throw new Error('OLLAMA_PS_UNAVAILABLE');
-    ps = await response.json();
+    if (!response.ok) throw new Error('RESIDENT_ROUTER_MODELS_UNAVAILABLE');
+    modelInventory = await response.json();
   } catch {
-    throw new Error('OLLAMA_LOADED_MODEL_PROOF_UNAVAILABLE');
+    throw new Error('RESIDENT_MODEL_PROOF_UNAVAILABLE');
   }
   const verdict = checkParallelSeedModelResourceV1({
-    governor, ollamaPs: ps, selectedModel,
+    governor, modelInventory, selectedModel,
   });
   if (!verdict.ok) throw new Error('PARALLEL_FORGE_RESOURCE_HOLD: ' + verdict.reasonCodes.join(','));
   return { model: selectedModel, port };
@@ -135,22 +139,52 @@ async function localModelWrite(request, existingContent, seed, preflight) {
   const port = current.port;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120000);
+  let resourceAbort = '';
+  let governorCheckInFlight = false;
+  // VR/flat-game starts must cancel work already in progress, not merely
+  // prohibit the next request. The local governor remains the eviction owner.
+  const gameWatch = setInterval(async () => {
+    if (governorCheckInFlight || resourceAbort) return;
+    governorCheckInFlight = true;
+    try {
+      const state = JSON.parse(await readFile(governorFile, 'utf8'));
+      if (state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+        || state.active !== false || state.localModelAllowed !== true
+        || !isParallelSeedGovernorSnapshotFreshV1(state)) {
+        resourceAbort = 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE';
+        controller.abort();
+      }
+    } catch {
+      resourceAbort = 'GAME_PRIORITY_GOVERNOR_TRUTH_UNAVAILABLE';
+      controller.abort();
+    } finally {
+      governorCheckInFlight = false;
+    }
+  }, 500);
   try {
-    const response = await fetch('http://127.0.0.1:' + port + '/api/generate', {
+    // Unlike Ollama /api/generate, llama.cpp router honours autoload=false
+    // atomically at dispatch. An evicted model cannot reload via this request.
+    const response = await fetch('http://127.0.0.1:' + port + '/v1/completions?autoload=false', {
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: current.model,
-        prompt, stream: false, format: 'json',
-        options: { temperature: 0.1, num_predict: 4096 },
+        model: current.model, prompt, stream: false,
+        temperature: 0.1, max_tokens: 4096,
       }),
     });
-    if (!response.ok) throw new Error('LOCAL_MODEL_UNAVAILABLE_HTTP_' + response.status);
+    if (resourceAbort) throw new Error(resourceAbort);
+    if (!response.ok) throw new Error('RESIDENT_MODEL_UNAVAILABLE_HTTP_' + response.status);
     const data = await response.json();
-    if (typeof data.response !== 'string' || data.response.length > 150000)
+    if (resourceAbort) throw new Error(resourceAbort);
+    const generated = data?.choices?.[0]?.text;
+    if (typeof generated !== 'string' || generated.length > 150000)
       throw new Error('LOCAL_MODEL_RESPONSE_INVALID');
-    return parseParallelSeedModelResponseV1(data.response, request.targetPath);
+    return parseParallelSeedModelResponseV1(generated, request.targetPath);
+  } catch (error) {
+    if (resourceAbort) throw new Error(resourceAbort);
+    throw error;
   } finally {
+    clearInterval(gameWatch);
     clearTimeout(timer);
   }
 }
