@@ -66,5 +66,7 @@ test('Core gaming posture uses canonical VR governor state and never admits unkn
   assert.match(source, /gamingStatePath = resolve\(workspaceRoot, 'vr', 'vr-resource-governor-current\.json'\)/);
   assert.match(source, /coreGamingProtectionFromGovernor\(JSON\.parse\(await readFile\(gamingStatePath, 'utf8'\)\)\)/);
   assert.match(source, /No authoritative gaming truth means no new local CPU\/GPU-intensive work/);
+  assert.match(source, /if \(state\.gamingActive === true\) \{/);
+  assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_GAMING_PROTECTED/);
   assert.doesNotMatch(source, /resolve\(workspaceRoot, 'status', 'vr-resource-governor-current\.json'\)/);
 });
