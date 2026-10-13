@@ -144,6 +144,13 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       await writeFile(join(stateRoot, 'inbox', taskId + '.json'),
         JSON.stringify({ ...request, taskId }));
     }
+    // Poison four earlier approval-pointer files. Only schema-valid references
+    // may consume the bounded GitHub verification budget.
+    for (const taskId of ['aae-badref', 'aaf-badref', 'aag-badref', 'aah-badref']) {
+      await writeFile(join(stateRoot, 'inbox', taskId + '.json'),
+        JSON.stringify({ ...request, taskId }));
+      await writeFile(join(stateRoot, 'approvals', taskId + '.json'), '{}');
+    }
     const direct = await runAsync(process.execPath, [
       path('scripts/seed-canopy-parallel-builder.mjs'), 'build', manifest, '--execute',
     ], { cwd: repo, env });
@@ -200,6 +207,22 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       { cwd: repo, env });
     assert.notEqual(second.code, 0);
     assert.match(second.stderr, /TASK_ALREADY_HAS_A_RECEIPT|TASK_ALREADY_CLAIMED/);
+    assert.equal(git('rev-parse', 'main'), main);
+    // Adversarial post-build receipt forgery: a second clean commit plus a
+    // locally rewritten receipt is NOT verified proof of the approved build.
+    await writeFile(join(completed.worktree, 'unapproved-extra.md'), 'out-of-scope\\n');
+    const extraAdd = command('git', ['add', '--', 'unapproved-extra.md'], { cwd: completed.worktree });
+    assert.equal(extraAdd.status, 0, extraAdd.stderr);
+    const extraCommit = command('git', ['commit', '-m', 'unrelated fixture mutation'], { cwd: completed.worktree });
+    assert.equal(extraCommit.status, 0, extraCommit.stderr);
+    const forgedSha = command('git', ['rev-parse', 'HEAD'], { cwd: completed.worktree }).stdout.trim();
+    await writeFile(join(stateRoot, 'receipts', TASK_ID + '.json'),
+      JSON.stringify({ ...persisted, commitSha: forgedSha }, null, 2));
+    const forgedStatus = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
+    assert.equal(forgedStatus.code, 0, forgedStatus.stderr);
+    const forgedProjection = JSON.parse(forgedStatus.stdout);
+    assert.equal(forgedProjection.tasks[0].candidateCommitted, false);
+    assert.equal(forgedProjection.liveBuildProven, false);
     assert.equal(git('rev-parse', 'main'), main);
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
