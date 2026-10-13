@@ -22,7 +22,7 @@ import {
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -31,7 +31,16 @@ const output = (obj) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n'
 const governorFile = join(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr',
   'vr-resource-governor-current.json');
 
-async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000) {
+async function assertHeavyLocalGamingHeadroom() {
+  let governor;
+  try { governor = JSON.parse(await readFile(governorFile, 'utf8')); }
+  catch { throw new Error('GAME_PRIORITY_LOCAL_TEST_GOVERNOR_UNAVAILABLE'); }
+  if (!isParallelSeedLocalWorkAllowedV1(governor))
+    throw new Error('GAME_PRIORITY_LOCAL_TEST_PARKED');
+}
+
+async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gamingGuarded = false) {
+  if (gamingGuarded) await assertHeavyLocalGamingHeadroom();
   const git = bin === 'git';
   const executable = git ? resolveBattleBridgeGitExecutable()
     : bin === 'powershell.exe' && process.platform === 'win32'
@@ -47,13 +56,31 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000) {
       cwd, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = '';
+    let abortOnGaming = false;
+    let checkingGaming = false;
     const timer = setTimeout(() => child.kill(), timeoutMs);
+    const gameWatch = gamingGuarded ? setInterval(async () => {
+      if (checkingGaming || abortOnGaming) return;
+      checkingGaming = true;
+      try { await assertHeavyLocalGamingHeadroom(); }
+      catch {
+        abortOnGaming = true;
+        // This is only the explicitly approved, fixed Node test child.
+        // Never terminate unrelated Windows processes or seize their leases.
+        child.kill();
+      } finally { checkingGaming = false; }
+    }, 500) : null;
+    const cleanup = () => {
+      clearTimeout(timer);
+      if (gameWatch) clearInterval(gameWatch);
+    };
     child.stdout.on('data', (chunk) => { stdout += String(chunk).slice(0, 32768); stdout = stdout.slice(-65536); });
     child.stderr.on('data', (chunk) => { stderr += String(chunk).slice(0, 32768); stderr = stderr.slice(-65536); });
-    child.on('error', (error) => { clearTimeout(timer); rej(error); });
+    child.on('error', (error) => { cleanup(); rej(error); });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) res(stdout.trim());
+      cleanup();
+      if (abortOnGaming) rej(new Error('GAME_PRIORITY_LOCAL_TEST_ABORTED'));
+      else if (code === 0) res(stdout.trim());
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
@@ -323,7 +350,7 @@ async function build(request, manifestSha256) {
     await saveReceipt(request, stage, { worktree, proposedSha256: proposedSha });
     for (const path of request.testPaths) {
       // Test paths are exact allowlisted filenames. No shell, arbitrary script or globbing.
-      await processExec(process.execPath, ['--test', path], worktree);
+      await processExec(process.execPath, ['--test', path], worktree, 120000, true);
     }
     const status = await processExec('git', ['status', '--porcelain', '--untracked-files=all'], worktree);
     const changed = status.split('\n').filter(Boolean).map((line) => line.slice(3).replace(/\\/g, '/'));
