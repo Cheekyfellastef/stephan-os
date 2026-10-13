@@ -84,11 +84,13 @@ The first command prints the absolute local stateRoot. Create its inbox folder a
 
 The file must have the exact request schema shown above and a filename matching its taskId. Do not put passwords, bearer tokens or general shell instructions in manifests.
 
-**Approve the exact bytes in a genuine local terminal** after examining the source ownership and currently open PR estate for target-path overlap:
+**Request externally authenticated approval first.** The local `approvals/<taskId>.json` file is only a pointer and can never authorise execution itself. Using the owner's authenticated GitHub account, create a comment on [canonical goal #3096](https://github.com/Cheekyfellastef/stephan-os/issues/3096) with the exact fenced `stephanos-seed-parallel-owner-approval` JSON created by `makeParallelSeedExactApprovalV1`: taskId, seedId, ownerIssue, targetPath, baseSha, manifestSha256, issuedAtUtc, expiresAtUtc (no more than 24 hours), and the fixed source-proposal-only scope. The comment must be truly authored by `Cheekyfellastef` with GitHub OWNER association, belong to issue #3096, and remain fresh. This is an authenticated bootstrap route through GitHub, not yet fully meter-independent offline authority.
+
+**Bind the owner comment in a genuine local terminal** after examining the exact task, owner issue title (or explicit unavailable status), source ownership and target-path PR overlap:
 
     node scripts/seed-canopy-parallel-supervisor.mjs approve <task-id>
 
-The supervisor prints the seed, owner, target, base, tests and SHA-256 of the approved manifest, then requires an interactive phrase. Approval binds **one** exact manifest for at most 24 hours and grants source-candidate authoring only.
+The supervisor prints the seed, owner issue (with title truth), target, base, tests and SHA-256 of the manifest; it requires an interactive phrase and then the numeric owner-authored GitHub comment ID. The supervisor independently fetches and validates the GitHub owner/issue/proof before writing a local reference. The actual worker independently re-fetches that same owner comment immediately before source mutation. Forged or stale local files fail closed; GitHub 403/offline blocks only that task. A valid comment binds **one** exact manifest for no more than 24 hours and grants source-candidate authoring only.
 
 Run at most one eligible task:
 
