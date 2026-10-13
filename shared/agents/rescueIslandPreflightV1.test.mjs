@@ -95,8 +95,15 @@ test('invalid issue, unsafe paths, review downgrades and execution overrides are
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['../protected/secrets.txt'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['docs/architecture/a.md', 'DOCS/ARCHITECTURE/A.md'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist/index.html'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['node_modules'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['NODE_MODULES'] });
   rejects('AUTHORITY_POLICY_INVALID', { allowCanonicalLeaseBypass: true });
   rejects('AUTHORITY_POLICY_INVALID', { allowMerge: true });
+  rejects('AUTHORITY_POLICY_INVALID', { allowMerge: 'true' });
+  rejects('AUTHORITY_POLICY_INVALID', { allowDeploy: null });
+  rejects('AUTHORITY_POLICY_INVALID', { allowArbitraryShell: undefined });
+  rejects('AUTHORITY_POLICY_INVALID', { allowCanonicalLeaseBypass: 0 });
   rejects('AUTHORITY_POLICY_INVALID', { allowArbitraryShell: true });
   rejects('AUTHORITY_POLICY_INVALID', { operatorApproval: 'auto-approved' });
   rejects('TASK_CLASS_NOT_ADMITTED', { taskClass: 'UNBOUNDED_MAINTENANCE' });
