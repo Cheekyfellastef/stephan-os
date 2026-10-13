@@ -51,7 +51,7 @@ test('single Core steward separates 23 independent gates and does not self-autho
   const coreSource = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(coreSource, /previousActionKey: lastGateStewardActionKey/);
   assert.match(coreSource, /previousAttemptAtMs: lastGateStewardAttemptAtMs/);
-  assert.match(coreSource, /lastGateStewardAttemptAtMs = Date\.parse\(timestampUtc\)/);
+  assert.match(coreSource, /lastGateStewardAttemptAtMs = proposedAtMs/);
   assert.equal(planCoreGateStewardV1({
     sourceHead: head, gates: facts.evidence.gates,
   }, { nowMs, gamingProtected: true }).nextAction, null);
