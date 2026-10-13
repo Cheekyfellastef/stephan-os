@@ -46,7 +46,7 @@ function validClaims(value) {
 // A lexical path, boolean, or caller-supplied digest never authenticates this scan.
 function canonicalScopes(p, paths) {
   if (p.scopeResolutionScan !== 'INDEPENDENT_READ_ONLY'
-      || !Array.isArray(p.scopeResolutions) || p.scopeResolutions.length > 1539)
+      || !Array.isArray(p.scopeResolutions) || p.scopeResolutions.length > 4611)
     return null;
   const resolved = new Map();
   for (const item of p.scopeResolutions) {
@@ -110,7 +110,7 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
   else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
     if (claims.some(claim => normalizedPath(claim.worktreeBranch) === normalizedPath(t.worktreeBranch)
-        || claim.worktreeIdentity === t.worktreeIdentity))
+        || claim.worktreeIdentity.toLowerCase() === t.worktreeIdentity.toLowerCase()))
       blockers.push('BRANCH_OR_WORKTREE_ALREADY_OWNED');
     const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
     if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
