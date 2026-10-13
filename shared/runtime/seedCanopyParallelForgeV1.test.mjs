@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   PARALLEL_SEED_REQUEST_SCHEMA,
   listParallelSeedCandidatesV1,
@@ -127,4 +128,19 @@ test('all receipts explicitly deny merge/deploy/goal-completion even with malici
     assert.equal(receipt.exactBaseSha, request.baseSha);
   }
   assert.throws(() => makeParallelSeedReceiptV1(request, 'DEPLOYED'), /INVALID_RECEIPT_STAGE/);
+});
+
+
+test('standalone CLI can list canopy contracts and produce a source-only goal draft', () => {
+  const cli = new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url).pathname;
+  const invoke = (args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], {
+    encoding: 'utf8', timeout: 30000,
+  }));
+  const listed = invoke(['list']);
+  assert.equal(listed.route, 'PARALLEL_SOURCE_PROPOSALS_ONLY');
+  assert.ok(listed.seeds.some((seed) => seed.seedId === 'stephanos-full-sovereignty-every-function'));
+  const proposed = invoke(['plan', 'stephanos-full-sovereignty-every-function']);
+  assert.equal(proposed.sourceTruth, 'DECLARED_CONTRACT_NOT_LIVE_PRESSURE');
+  assert.equal(proposed.workAuthorized, false);
+  assert.equal(proposed.existingOwnerMustBeChecked, true);
 });
