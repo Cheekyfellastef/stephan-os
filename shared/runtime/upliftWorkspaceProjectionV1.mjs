@@ -1769,12 +1769,38 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     'PROVE_END_TO_END_TASK_PARITY',
     'PROVE_SOVEREIGN_ENDURANCE',
   ]);
-  const hasRungProof = (rung, agentId) => proved.some((record) =>
-    record.openClawExcellenceEvidence?.schemaVersion === 'stephanos.openclaw-excellence-rung-proof.v1'
-      && record.openClawExcellenceEvidence?.rung === rung
-      && (!agentId || record.openClawExcellenceEvidence?.agentId === agentId));
-  const rungProof = contract.growthRungs.map((rung) =>
-    agentScopedRungs.has(rung) ? agents.every((id) => hasRungProof(rung, id)) : hasRungProof(rung));
+  const hasRungProof = (rung, agentId, taskClass = '') => proved.some((record) => {
+    const evidence = record.openClawExcellenceEvidence;
+    if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
+      || evidence.rung !== rung) return false;
+    // A claimed proof for Standalone cannot be published under Local's identity.
+    // Runtime authentication is still owned by Shared Workspace ingress, not this projection.
+    if (agentId && (evidence.agentId !== agentId || actorId(record) !== agentId)) return false;
+    if (rung !== 'PROVE_END_TO_END_TASK_PARITY') return true;
+    const benchmark = evidence.benchmark;
+    return contract.taskClasses.includes(taskClass)
+      && benchmark?.schemaVersion === 'stephanos.openclaw-codex-comparative-task.v1'
+      && benchmark.taskClass === taskClass
+      && benchmark.sameTaskInputs === true
+      && benchmark.codexSuccessful === true
+      && benchmark.openClawSuccessful === true
+      && benchmark.independentReviewPassed === true
+      && text(benchmark.taskFingerprint).length >= 16
+      && text(benchmark.codexProofRef)
+      && text(benchmark.openClawProofRef)
+      && proofRefs(record).includes(benchmark.codexProofRef)
+      && proofRefs(record).includes(benchmark.openClawProofRef);
+  });
+  const rungProof = contract.growthRungs.map((rung) => {
+    if (rung === 'PROVE_END_TO_END_TASK_PARITY') {
+      // Each agent must prove every declared task class on matched inputs.
+      return agents.every((id) => contract.taskClasses.every((taskClass) =>
+        hasRungProof(rung, id, taskClass)));
+    }
+    return agentScopedRungs.has(rung)
+      ? agents.every((id) => hasRungProof(rung, id))
+      : hasRungProof(rung);
+  });
   const firstMissing = rungProof.findIndex((done) => !done);
   const currentRungIndex = planted ? (firstMissing < 0 ? rungProof.length - 1 : firstMissing) : null;
   const currentRung = currentRungIndex === null
