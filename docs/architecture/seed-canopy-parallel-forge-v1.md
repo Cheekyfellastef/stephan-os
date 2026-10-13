@@ -56,7 +56,7 @@ The task runs **once**, in its own branch and worktree under the operator's .ste
 - SELECTED: manifest validated, no build proof.
 - CLAIMED: new isolated worktree and exact-base branch created.
 - EDITED: local model returned a bounded, exact-target source proposal.
-- TESTED: requested Node tests passed and no out-of-scope file was changed.
+- TESTED: requested Node tests passed and no out-of-scope file was changed. Before every CPU-intensive local Node test, the worker requires a current, NORMAL, gaming-inactive governor snapshot and watches that state every 500 ms while the test is running; if the state becomes active, stale or unavailable it terminates that approved test child and marks the task BLOCKED. A descendant spawned by a test is not independently guaranteed terminated by Node's `child.kill()`, so a live Windows process-tree acceptance test is still required before fleet-wide gaming protection can be called complete.
 - COMMITTED: new local-branch source commit exists, with exact SHA.
 - BLOCKED: any check, model, test, claim or source boundary failed. A failed task does not seize a global conveyor lease or stop other unrelated seed tasks.
 
