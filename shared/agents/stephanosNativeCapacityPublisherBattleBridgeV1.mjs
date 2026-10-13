@@ -98,14 +98,22 @@ function lastJsonObject(stdout = '') {
 }
 
 export async function proveNativePublisherSignedReadbackV1({
-  expectedHead = '', repositoryRoot = '', env = process.env,
+  expectedHead = '', repositoryRoot = '', env = process.env, notBeforeUtc = '',
   verify = readVerifiedStephanosNativeRoutingCandidate,
   sleep = (ms) => new Promise(resolveWait => setTimeout(resolveWait, ms)),
   now = () => new Date(),
 } = {}) {
-  // Task registration and StartNow do not prove a fresh signed capacity record.
+  // StartNow is not execution proof. Require post-request publication of
+  // independently verified signed current-head capacity.
+  const notBeforeMs = Date.parse(notBeforeUtc);
+  if (!Number.isFinite(notBeforeMs)) {
+    return Object.freeze({ ok: false, attempt: 0, sourceHead: expectedHead,
+      reason: 'STEPHANOS_NATIVE_PUBLISHER_POST_START_BOUNDARY_MISSING',
+      finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD' });
+  }
+  let sawAuthenticatedStaleHead = false;
   let lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_STATUS_NOT_YET_PROVEN';
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  for (let attempt = 1; attempt <= 16; attempt += 1) {
     try {
       const v = await verify({
         nowUtc: now().toISOString(),
@@ -121,21 +129,34 @@ export async function proveNativePublisherSignedReadbackV1({
         && c?.taskClass === 'FOCUSED_REPAIR'
         && c?.sourceMutationAllowed === true
         && c?.mergeAuthority === false && c?.leaseSeizureAllowed === false) {
-        return Object.freeze({
-          ok: true, attempt, sourceHead: expectedHead,
-          finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
-        });
+        const observedAtMs = Date.parse(c?.capacityObservedAtUtc || '');
+        if (Number.isFinite(observedAtMs) && observedAtMs >= notBeforeMs) {
+          return Object.freeze({
+            ok: true, attempt, sourceHead: expectedHead,
+            capacityObservedAtUtc: c.capacityObservedAtUtc,
+            finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN',
+          });
+        }
+        lastReason = 'STEPHANOS_NATIVE_PUBLISHER_POST_START_SIGNED_RECEIPT_UNPROVEN';
+      } else {
+        const reason = text(v?.reason);
+        lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
+          ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
+        if (lastReason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID') {
+          sawAuthenticatedStaleHead = true;
+        }
       }
-      const reason = text(v?.reason);
-      lastReason = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,119}$/.test(reason)
-        ? reason : 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_TRUST_NOT_PROVEN';
     } catch {
       lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_UNAVAILABLE';
     }
-    if (attempt < 5) await sleep(2000);
+    if (attempt < 16) await sleep(10_000);
   }
+  // The stale writer may clear its own status before the final sample. Only
+  // preserve a witnessed stale head across MISSING, never a new trust error.
+  const reason = sawAuthenticatedStaleHead && lastReason === 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING'
+    ? 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' : lastReason;
   return Object.freeze({
-    ok: false, attempt: 5, sourceHead: expectedHead, reason: lastReason,
+    ok: false, attempt: 16, sourceHead: expectedHead, reason,
     finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
   });
 }
@@ -173,6 +194,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
   }
 
   const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-stephanos-native-capacity-publisher.ps1');
+  const installRequestedAtUtc = (options.now || (() => new Date()))().toISOString();
   const install = run(spawnSyncFn, POWERSHELL, [
     '-NoProfile',
     '-NonInteractive',
@@ -202,6 +224,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
 
   let signed = await proveNativePublisherSignedReadbackV1({
     expectedHead: shape.expectedHead, repositoryRoot, env,
+    notBeforeUtc: installRequestedAtUtc,
     verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
     sleep: options.sleepFn,
     now: options.now || (() => new Date()),
@@ -238,6 +261,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     }
     signed = await proveNativePublisherSignedReadbackV1({
       expectedHead: shape.expectedHead, repositoryRoot, env,
+    notBeforeUtc: installRequestedAtUtc,
       verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
       sleep: options.sleepFn,
       now: options.now || (() => new Date()),
