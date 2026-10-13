@@ -10,17 +10,21 @@ const SAFE_BLOCKER = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,159}$/;
 // Called ONLY by Battle Bridge's existing authenticated outbound beacon.
 // Suppresses private paths, signed payloads, full status records and keys.
 export function projectPublicGoalGateObservatoryV1(coreStatus = null, {
-  sourceHead = '', nowMs = Date.now(),
+  sourceHead = '', nowMs = Date.now(), verifiedObservatory = null,
 } = {}) {
   if (!HEAD.test(sourceHead)) return null;
   const sourceBound = coreStatus?.sourceHead === sourceHead
     && coreStatus?.goalBuildGateEvidence?.sourceHead === sourceHead;
   // Pages receives all 23 named gates even before the steward starts. In that
   // case all are unverified. An absent/stale core record NEVER makes green.
-  const obs = projectGoalBuildGateObservatoryV1({
-    statusRecords: sourceBound ? [coreStatus] : [],
-    nowMs, staleAfterMs: 3 * 60_000,
-  });
+  const obs = verifiedObservatory?.sourceHead === sourceHead
+    && verifiedObservatory?.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
+    && Array.isArray(verifiedObservatory?.gates) && verifiedObservatory.gates.length === 23
+    ? verifiedObservatory
+    : projectGoalBuildGateObservatoryV1({
+      statusRecords: sourceBound ? [coreStatus] : [],
+      nowMs, staleAfterMs: 3 * 60_000,
+    });
   return Object.freeze({
     schemaVersion: PUBLIC_GOAL_GATE_SCHEMA_V1,
     sourceHead, observedAtUtc: obs.observedAtUtc,
