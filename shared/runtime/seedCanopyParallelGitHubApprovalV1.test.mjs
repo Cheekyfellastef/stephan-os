@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeParallelSeedExactApprovalV1 } from './seedCanopyParallelSupervisorV1.mjs';
 import {
-  SEED_PARALLEL_APPROVAL_REF_SCHEMA, verifySeedParallelOwnerGitHubApprovalV1,
+  SEED_PARALLEL_APPROVAL_REF_SCHEMA, resolveSeedParallelOwnerIssueLabelV1,
+  verifySeedParallelOwnerGitHubApprovalV1,
 } from './seedCanopyParallelGitHubApprovalV1.mjs';
 
 const NOW = Date.parse('2026-10-13T18:00:00.000Z');
@@ -71,4 +72,48 @@ test('missing owner proof, malformed reference and exhausted GitHub are fail-clo
     request, manifestSha256: digest, reference: ref, nowMs: NOW, fetchFn: fakeFetch(source, 403),
   });
   assert.equal(r.ok, false);
+});
+
+test('seed approval and execution titles use exact canonical issue data, never a fabricated title', async () => {
+  let requests = 0;
+  const valid = await resolveSeedParallelOwnerIssueLabelV1('#3026', {
+    fetchFn: async (url, options) => {
+      requests++;
+      assert.equal(url, 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3026');
+      assert.equal(options.redirect, 'error');
+      return { status: 200, text: async () => JSON.stringify({
+        number: 3026, title: 'Stephanos Full Sovereignty: Every Function, Zero External Critical Dependencies',
+      }) };
+    },
+  });
+  assert.equal(requests, 1);
+  assert.equal(valid.issueTitleTruth, 'CURRENT_CANONICAL_GITHUB');
+  assert.equal(valid.label, '#3026 — Stephanos Full Sovereignty: Every Function, Zero External Critical Dependencies');
+  for (const response of [
+    { status: 403 },
+    { status: 200, body: { number: 3027, title: 'wrong issue' } },
+    { status: 200, body: { number: 3026, title: '' } },
+    { status: 200, body: { number: 3026, title: 'bad\ncontrol' } },
+  ]) {
+    const result = await resolveSeedParallelOwnerIssueLabelV1('#3026', {
+      fetchFn: async () => ({
+        status: response.status, text: async () => JSON.stringify(response.body || {}),
+      }),
+    });
+    assert.equal(result.issueTitleTruth, 'UNAVAILABLE');
+    assert.equal(result.label, '#3026 — title unavailable from current evidence');
+  }
+  const invalid = await resolveSeedParallelOwnerIssueLabelV1('#3026/../../../secrets', {
+    fetchFn: async () => { throw Error('must never request a bad URL'); },
+  });
+  assert.equal(invalid.issueTitleTruth, 'UNAVAILABLE');
+});
+
+test('supervisor uses canonical title truth in both approval and run-once packets', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../../scripts/seed-canopy-parallel-supervisor.mjs', import.meta.url), 'utf8');
+  assert.match(source, /resolveSeedParallelOwnerIssueLabelV1\(entry\.request\.ownerIssue\)/);
+  assert.match(source, /resolveSeedParallelOwnerIssueLabelV1\(selected\.request\.ownerIssue\)/);
+  assert.match(source, /owner: issueLabel\.label/);
+  assert.match(source, /issueTitleTruth: issueLabel\.issueTitleTruth/);
 });
