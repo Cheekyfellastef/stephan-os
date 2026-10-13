@@ -13,7 +13,7 @@ function finiteAge(value) {
 
 // The Windows gaming governor publishes to Shared Workspace/vr, not status.
 // Missing, corrupt, or contradictory state must never authorise a local CPU
- // build. External GitHub runners are independent of this Core admission gate.
+// build. External GitHub runners are independent of this Core admission gate.
 export function coreGamingProtectionFromGovernor(state) {
   if (!state || typeof state !== 'object' || Array.isArray(state)
     || state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
