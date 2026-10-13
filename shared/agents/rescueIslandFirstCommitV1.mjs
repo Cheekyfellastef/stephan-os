@@ -359,7 +359,9 @@ export async function constructIsolatedRescueIslandPilotV1({
       fail('RESCUE_ISLAND_COMMITTED_TREE_NOT_PROVEN');
     }
     const blob = git(worktree, ['rev-parse', 'HEAD:' + task.targetPath], runGit);
-    const workingBlob = git(worktree, ['hash-object', '--', task.targetPath], runGit);
+    // Compare the exact approved bytes. Filter-aware hashing can silently
+    // normalize CRLF or apply attributes while hiding a changed committed blob.
+    const workingBlob = git(worktree, ['hash-object', '--no-filters', '--', task.targetPath], runGit);
     if (!SHA.test(blob) || workingBlob !== blob)
       fail('RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN');
     await append('ISOLATED_COMMIT', { commitHead: head, sourceBlob: blob,
