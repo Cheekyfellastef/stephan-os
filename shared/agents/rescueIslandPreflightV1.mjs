@@ -35,6 +35,8 @@ function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
     && value.every((item) => TASK_ID.test(item?.taskId || '')
       && Number.isSafeInteger(item?.ownerIssueNumber) && item.ownerIssueNumber > 0
+      && typeof item?.worktreeBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(item.worktreeBranch)
+      && DIGEST.test(item?.worktreeIdentity || '')
       && Array.isArray(item?.targetPaths) && item.targetPaths.length > 0
       && item.targetPaths.length <= 3 && item.targetPaths.every(repositoryPath));
 }
@@ -107,6 +109,9 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
   else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
+    if (claims.some(claim => normalizedPath(claim.worktreeBranch) === normalizedPath(t.worktreeBranch)
+        || claim.worktreeIdentity === t.worktreeIdentity))
+      blockers.push('BRANCH_OR_WORKTREE_ALREADY_OWNED');
     const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
     if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
       blockers.push('CANONICAL_SOURCE_SCOPE_UNPROVEN');
@@ -123,6 +128,7 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('GAMING_OR_RESOURCE_CUSTODY_UNPROVEN');
   if (p.isolatedWorktreeClean !== true || p.independentRunnerQualified !== true
       || p.worktreeHead !== t.baseHead
+      || !DIGEST.test(t.worktreeIdentity || '') || p.worktreeIdentity !== t.worktreeIdentity
       || typeof t.worktreeBranch !== 'string'
       || !/^rescue-island\/[a-z0-9][a-z0-9._-]{5,100}$/.test(t.worktreeBranch)
       || p.worktreeBranch !== t.worktreeBranch)

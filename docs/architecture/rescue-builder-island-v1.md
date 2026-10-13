@@ -38,7 +38,12 @@ junction aliases. Missing, ambiguous or escaping resolutions are held. Compare
 canonical equality and ancestor/descendant scopes, and reject generated dist
 ancestors as candidate scopes as well as dist itself and any node_modules segment.
 The isolated runner observation binds `worktreeHead` to the exact base and
-`worktreeBranch` to the candidate branch. A clean checkout alone is insufficient.
+`worktreeBranch` to the candidate branch. Every claim also carries a branch and
+`worktreeIdentity` (digest of the independently resolved physical worktree path,
+case-folded on Windows). Reject either identity collision even for different
+tasks, issues and disjoint source paths. The future verifier must bind the
+candidate identity to its actual/prospective physical directory, not accept a
+caller-selected digest. A clean checkout alone is insufficient.
 These are structural requirements for the future authenticated adapter; the
 classifier itself does not perform a filesystem scan or authenticate its input.
 

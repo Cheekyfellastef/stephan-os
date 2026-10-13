@@ -17,6 +17,7 @@ const task = () => ({
   taskClass: 'BOUNDED_SOURCE_PROPOSAL',
   baseHead: HEAD,
   worktreeBranch: 'rescue-island/pilot-rescue-3103-pilot-01',
+  worktreeIdentity: 'e'.repeat(64),
   targetPaths: ['docs/architecture/rescue-island-pilot.md'],
   operatorApproval: 'EXTERNAL_OWNER_PROOF_REQUIRED',
   reviewPolicy: 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED',
@@ -29,6 +30,7 @@ const evidence = () => ({
   mainHead: HEAD,
   worktreeHead: HEAD,
   worktreeBranch: 'rescue-island/pilot-rescue-3103-pilot-01',
+  worktreeIdentity: 'e'.repeat(64),
   scopeResolutionScan: 'INDEPENDENT_READ_ONLY',
   canonicalOwnerScan: 'INDEPENDENT_READ_ONLY',
   seedOwnerScan: 'INDEPENDENT_READ_ONLY',
@@ -47,7 +49,8 @@ function evaluate(patchTask = {}, patchEvidence = {}, nowUtc = NOW) {
   const t = { ...task(), ...patchTask };
   const p = { ...evidence(), ...patchEvidence };
   for (const key of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
-    if (Array.isArray(p[key])) p[key] = p[key].map(c => ({ ownerIssueNumber: 9999, ...c }));
+    if (Array.isArray(p[key])) p[key] = p[key].map(c => ({ ownerIssueNumber: 9999,
+      worktreeBranch: 'other-system/' + c.taskId, worktreeIdentity: 'd'.repeat(64), ...c }));
   }
   if (!Object.hasOwn(patchEvidence, 'scopeResolutions')) {
     const paths = [...(t.targetPaths || []), ...['canonicalClaims', 'seedClaims', 'islandClaims']
@@ -163,6 +166,18 @@ test('clean worktree observations must bind both branch and exact base head', ()
   rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeHead: undefined });
   rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeBranch: 'rescue-island/unrelated-task' });
   rejects('ISOLATED_RUNNER_NOT_PROVEN', { worktreeBranch: 'main' });
+  rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeIdentity: 'd'.repeat(64) });
+  for (const inventory of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
+    for (const collision of [{ worktreeBranch: task().worktreeBranch },
+      { worktreeIdentity: task().worktreeIdentity }]) {
+      rejects('BRANCH_OR_WORKTREE_ALREADY_OWNED', {}, { [inventory]: [{
+        taskId: 'another-task-01', targetPaths: ['different/file.md'], ...collision,
+      }] });
+    }
+    rejects('CROSS_SYSTEM_OWNERSHIP_UNPROVEN', {}, { [inventory]: [{
+      taskId: 'another-task-01', targetPaths: ['different/file.md'], worktreeIdentity: undefined,
+    }] });
+  }
 });
 
 test('gaming, GPU model custody and second clone are independently gated', () => {
