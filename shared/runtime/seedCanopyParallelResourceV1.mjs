@@ -10,6 +10,15 @@ export function isParallelSeedGovernorSnapshotFreshV1(governor, nowMs = Date.now
     && observed <= nowMs && nowMs - observed <= SEED_PARALLEL_GOVERNOR_MAX_AGE_MS;
 }
 
+// One canonical fail-closed predicate is used before and during any
+// CPU/GPU-intensive local Seed Forge work, including tests after inference.
+export function isParallelSeedLocalWorkAllowedV1(governor, nowMs = Date.now()) {
+  return governor?.schemaVersion === 'stephanos.vr-resource-governor.v1'
+    && governor.active === false && governor.phase === 'NORMAL'
+    && governor.localModelAllowed === true
+    && isParallelSeedGovernorSnapshotFreshV1(governor, nowMs);
+}
+
 export function checkParallelSeedModelResourceV1({ governor, modelInventory, selectedModel, nowMs = Date.now() } = {}) {
   const reasons = [];
   if (governor?.schemaVersion !== 'stephanos.vr-resource-governor.v1') reasons.push('VR_GOVERNOR_TRUTH_MISSING');
