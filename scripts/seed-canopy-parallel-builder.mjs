@@ -236,8 +236,21 @@ async function build(request, manifestSha256) {
     await processExec('git', ['add', '--', request.targetPath], worktree);
     const staged = await processExec('git', ['diff', '--cached', '--name-only'], worktree);
     if (staged !== request.targetPath) throw new Error('OUT_OF_SCOPE_STAGED_FILES');
-    await processExec('git', ['commit', '-m', 'Seed Canopy parallel candidate: ' + request.taskId + ' (' + request.ownerIssue + ')'], worktree);
+    // Hooks are not trusted task writers. A dedicated empty hooks directory prevents
+    // inherited hooksPath or local hooks adding unrelated files to this commit.
+    const hooksDir = join(stateRoot, 'empty-hooks');
+    await mkdir(hooksDir, { recursive: true });
+    const exactTree = await processExec('git', ['write-tree'], worktree);
+    await processExec('git', ['-c', 'core.hooksPath=' + hooksDir, 'commit', '-m',
+      'Seed Canopy parallel candidate: ' + request.taskId + ' (' + request.ownerIssue + ')'], worktree);
     const commitSha = await processExec('git', ['rev-parse', 'HEAD'], worktree);
+    const parents = (await processExec('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], worktree)).split(' ');
+    const committedPaths = await processExec('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], worktree);
+    const committedTree = await processExec('git', ['rev-parse', 'HEAD^{tree}'], worktree);
+    const workingStatus = await processExec('git', ['status', '--porcelain', '--untracked-files=all'], worktree);
+    if (parents.length !== 2 || parents[0] !== commitSha || parents[1] !== request.baseSha
+      || committedPaths !== request.targetPath || committedTree !== exactTree || workingStatus !== '')
+      throw new Error('COMMIT_SCOPE_OR_PARENT_MISMATCH');
     stage = 'COMMITTED';
     return await saveReceipt(request, stage, {
       worktree, proposedSha256: proposedSha, commitSha, testPaths: request.testPaths,
