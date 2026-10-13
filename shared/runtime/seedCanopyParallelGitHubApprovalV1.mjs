@@ -72,7 +72,6 @@ export async function verifySeedParallelOwnerGitHubApprovalV1({
   });
 }
 
- 
 // Title truth is presentation-only. Never let an unavailable GitHub read
 // manufacture an owning issue title, or change the separately verified grant.
 export async function resolveSeedParallelOwnerIssueLabelV1(issueRef, {
