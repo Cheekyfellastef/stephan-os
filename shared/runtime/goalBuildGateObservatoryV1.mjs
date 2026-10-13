@@ -69,7 +69,7 @@ export function projectGoalBuildGateObservatoryV1({
   const knownProofs = Array.isArray(proofRecords) ? proofRecords : [];
   const evidence = key
     ? (Array.isArray(statusRecords) ? statusRecords : [])
-      .filter(record => record?.kind === 'status'
+      .filter(record => ['status', 'stephanos.shared_workspace.status'].includes(record?.kind)
         && record?.statusId === 'goal-build-gates-current'
         && record?.participantId === 'stephanos-core')
       .map(record => record.goalBuildGateEvidence)
@@ -96,7 +96,7 @@ export function projectGoalBuildGateObservatoryV1({
           const id = /^workspace:proof\/([A-Za-z0-9][A-Za-z0-9._-]{1,100})$/.exec(String(g?.proofRef || ''))?.[1];
           const proofDigest = String(g?.proofRecordSha256 || '');
           if (!id || !/^[a-f0-9]{64}$/.test(proofDigest)) return false;
-          const matches = knownProofs.filter(p => p?.kind === 'proof'
+          const matches = knownProofs.filter(p => ['proof', 'stephanos.shared_workspace.proof'].includes(p?.kind)
             && p?.proofId === id && p?.sourceHead === trustedHead
             && time(p.timestampUtc) <= time(e.observedAtUtc) + MAX_CLOCK_SKEW_MS
             && nowMs - time(p.timestampUtc) <= maxAge
