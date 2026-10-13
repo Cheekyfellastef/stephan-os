@@ -3,8 +3,8 @@
 // scheduler, mailbox verb, merge, deployment, or unattended run is registered.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { inspectRescueIslandCandidateV1 } from './rescueIslandPreflightV1.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
@@ -14,6 +14,27 @@ const REPO = 'Cheekyfellastef/stephan-os';
 
 const digest = (s) => createHash('sha256').update(s).digest('hex');
 const text = (s) => String(s ?? '').trim();
+const lower = (v) => process.platform === 'win32' ? v.toLowerCase() : v;
+const overlaps = (left, right) => {
+  const a = lower(left), b = lower(right);
+  return a === b || a.startsWith(b + sep) || b.startsWith(a + sep);
+};
+// Resolve existing ancestors, including symlink aliases, without creating a directory.
+async function physicalRoot(raw) {
+  if (typeof raw !== 'string' || !isAbsolute(raw)) fail('RESCUE_ISLAND_ROOT_MUST_BE_ABSOLUTE');
+  let probe = resolve(raw);
+  const missing = [];
+  for (;;) {
+    try { return resolve(await realpath(probe), ...missing.reverse()); }
+    catch (err) {
+      if (err.code !== 'ENOENT') fail('RESCUE_ISLAND_ROOT_UNVERIFIABLE');
+      const parent = dirname(probe);
+      if (parent === probe) fail('RESCUE_ISLAND_ROOT_UNVERIFIABLE');
+      missing.push(basename(probe));
+      probe = parent;
+    }
+  }
+}
 function fail(code) { const e = new Error(code); e.code = code; throw e; }
 function git(cwd, args, run = spawnSync) {
   const x = run('git', ['-C', cwd, ...args], {
@@ -118,12 +139,15 @@ export async function constructIsolatedRescueIslandPilotV1({
   // This demonstration does not claim that the two booleans constitute
   // external authentication. Only separately reviewed trusted adapters may
   // supply them; do not expose this function as a remote mailbox action.
-  const canonicalRoot = resolve(repoRoot || '');
-  const treeRoot = resolve(worktreeRoot || '');
-  const proofs = resolve(receiptRoot || '');
-  if (!repoRoot || !worktreeRoot || !receiptRoot
-      || canonicalRoot === treeRoot || canonicalRoot === proofs
-      || treeRoot === proofs) fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
+  if (!repoRoot || !worktreeRoot || !receiptRoot)
+    fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
+  const canonicalRoot = await physicalRoot(repoRoot);
+  const treeRoot = await physicalRoot(worktreeRoot);
+  const proofs = await physicalRoot(receiptRoot);
+  if (overlaps(canonicalRoot, treeRoot) || overlaps(canonicalRoot, proofs)
+      || overlaps(treeRoot, proofs)) fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
+  if (await physicalRoot(repoRoot) !== canonicalRoot)
+    fail('RESCUE_ISLAND_CANONICAL_ROOT_MOVED');
   if (git(canonicalRoot, ['rev-parse', 'HEAD'], runGit) !== task.baseHead
       || git(canonicalRoot, ['rev-parse', 'origin/main'], runGit) !== task.baseHead)
     fail('RESCUE_ISLAND_BASE_NOT_CURRENT_MAIN');
@@ -134,6 +158,11 @@ export async function constructIsolatedRescueIslandPilotV1({
   const claimDir = join(proofs, 'claims');
   await mkdir(treeRoot, { recursive: true });
   await mkdir(claimDir, { recursive: true });
+  if (await physicalRoot(worktreeRoot) !== treeRoot
+      || await physicalRoot(receiptRoot) !== proofs
+      || overlaps(await physicalRoot(repoRoot), treeRoot)
+      || overlaps(await physicalRoot(repoRoot), proofs))
+    fail('RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED');
   const claim = await open(join(claimDir, task.taskId + '.json'), 'wx')
     .catch(() => fail('RESCUE_ISLAND_DUPLICATE_CLAIM'));
   const stages = [];
