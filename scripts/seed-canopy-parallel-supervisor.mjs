@@ -105,7 +105,9 @@ async function approve(taskId) {
   if (entry.existingClaim || entry.existingReceipt) throw new Error('EXISTING_TASK_CUSTODY');
   const phrase = 'APPROVE ' + taskId + ' ' + entry.manifestSha256.slice(0, 12);
   output({
-    taskId, seedId: entry.request.seedId, owner: entry.request.ownerIssue,
+    taskId, seedId: entry.request.seedId,
+    owner: entry.request.ownerIssue + ' — title unavailable from current evidence',
+    issueTitleTruth: 'UNAVAILABLE',
     targetPath: entry.request.targetPath, baseSha: entry.request.baseSha,
     requestedTests: entry.request.testPaths,
     exactManifestSha256: entry.manifestSha256,
