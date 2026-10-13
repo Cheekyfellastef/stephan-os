@@ -5,7 +5,7 @@ import { join, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import { validateParallelSeedBuildRequestV1 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
@@ -71,7 +71,28 @@ async function status() {
   const receipts = [];
   for (const name of await files('receipts', '.json')) {
     const receipt = await maybeJson(join(stateRoot, 'receipts', name));
-    if (receipt) receipts.push(receipt);
+    if (!receipt) continue;
+    let independentGitHeadVerified = false;
+    const expectedClaim = claims.find((claim) => claim.taskId === receipt.taskId);
+    if (expectedClaim && receipt.stage === 'COMMITTED'
+      && /^[a-f0-9]{40}$/.test(receipt.commitSha || '')
+      && receipt.seedId === expectedClaim.seedId
+      && receipt.targetPath === expectedClaim.targetPath) {
+      const worktree = pathFor('worktrees', expectedClaim.taskId, '');
+      const verifyGit = (...args) => {
+        const result = spawnSync('git', ['-C', worktree, ...args], {
+          encoding: 'utf8', shell: false, windowsHide: true, timeout: 5000,
+        });
+        return result.status === 0 ? result.stdout.trim() : null;
+      };
+      const head = verifyGit('rev-parse', 'HEAD');
+      const branch = verifyGit('branch', '--show-current');
+      const clean = verifyGit('status', '--porcelain', '--untracked-files=all');
+      independentGitHeadVerified = Boolean(head === receipt.commitSha
+        && branch === 'seed-parallel/' + expectedClaim.seedId + '/' + expectedClaim.taskId
+        && clean === '' && receipt.exactBaseSha === expectedClaim.baseSha);
+    }
+    receipts.push({ ...receipt, independentGitHeadVerified });
   }
   return projectParallelSeedReceiptStatusV1(claims, receipts);
 }
