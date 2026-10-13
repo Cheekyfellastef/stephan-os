@@ -71,7 +71,7 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   const receipts = [
     { taskId: 'blocked-one', stage: 'CLAIMED', recordedAtUtc: '2026-10-13T12:05:00.000Z' },
     { taskId: 'finished-two', stage: 'COMMITTED', recordedAtUtc: '2026-10-13T15:40:00.000Z',
-      commitSha: 'b'.repeat(40) },
+      commitSha: 'b'.repeat(40), independentGitHeadVerified: true },
   ];
   const projected = projectParallelSeedReceiptStatusV1(claims, receipts, NOW);
   assert.equal(projected.taskCount, 2);
@@ -79,6 +79,10 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
   assert.equal(projected.tasks[0].merged, false);
   assert.equal(projected.tasks[1].candidateCommitted, true);
+  const spoofed = projectParallelSeedReceiptStatusV1(claims, receipts.map((receipt) =>
+    receipt.taskId === 'finished-two' ? { ...receipt, independentGitHeadVerified: false } : receipt), NOW);
+  assert.equal(spoofed.tasks[1].candidateCommitted, false);
+  assert.equal(spoofed.liveBuildProven, false);
   assert.equal(projected.tasks[1].deployed, false);
   assert.equal(projected.doesNotDependOnCanonicalConveyor, true);
 });
