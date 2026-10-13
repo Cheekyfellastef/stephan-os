@@ -12,7 +12,7 @@ It is NOT a second protected merge service, a second daemon, a bypass for active
 
 ## Running on an authorized Battle Bridge checkout
 
-Prerequisites: Node.js 20.11+, Git, an authenticated checkout with local main up to date, and an operator-controlled local Ollama endpoint on 127.0.0.1:11434 with the selected model already installed. No Remote Commander, Codex, cloud model or new paid provider is used. Default model is qwen:14b; change it only through the STEPHANOS_SEED_LOCAL_MODEL environment variable after checking local availability.
+Prerequisites: Node.js 20.11+, Git, an authenticated checkout with local main up to date, and an operator-controlled local Ollama endpoint on 127.0.0.1:11434 with the selected model already installed. No Remote Commander, Codex, cloud model or new paid provider is used. Default model is qwen3-coder:30b; change it only through the STEPHANOS_SEED_LOCAL_MODEL environment variable. The worker now requires an exact match in Ollama's already-loaded /api/ps list, plus a readable canonical vr-resource-governor-current.json whose localModelAllowed flag is true and active is false. It rechecks immediately before inference. Missing or gaming-protected evidence blocks execution before claiming source. No extra large model may be loaded implicitly.
 
 Read source-backed seed candidates:
 
