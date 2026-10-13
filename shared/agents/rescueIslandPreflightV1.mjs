@@ -14,6 +14,7 @@ function validPath(raw) {
     && !raw.includes('//') && !raw.endsWith('/')
     && !raw.split('/').some((segment) => segment === '.' || segment === '..'
       || segment.toLowerCase() === '.git')
+    && !['apps/stephanos/dist', 'node_modules'].includes(raw.toLowerCase())
     && !raw.toLowerCase().startsWith('apps/stephanos/dist/')
     && !raw.toLowerCase().startsWith('node_modules/')
     && !raw.toLowerCase().includes('/node_modules/');
@@ -69,8 +70,8 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('BASE_OR_SCOPE_INVALID');
   if (t.operatorApproval !== 'EXTERNAL_OWNER_PROOF_REQUIRED'
       || t.reviewPolicy !== 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED'
-      || t.allowMerge === true || t.allowDeploy === true
-      || t.allowCanonicalLeaseBypass === true || t.allowArbitraryShell === true)
+      || t.allowMerge !== false || t.allowDeploy !== false
+      || t.allowCanonicalLeaseBypass !== false || t.allowArbitraryShell !== false)
     blockers.push('AUTHORITY_POLICY_INVALID');
   if (!recentTimestamp(p.observedAtUtc, nowUtc)
       || p.repository !== REPO || !HEAD.test(p.mainHead || '')
