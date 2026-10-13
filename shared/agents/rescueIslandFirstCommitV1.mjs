@@ -169,18 +169,17 @@ export async function constructIsolatedRescueIslandPilotV1({
     const head = git(worktree, ['rev-parse', 'HEAD'], runGit);
     const parent = git(worktree, ['rev-parse', 'HEAD^'], runGit);
     const changed = git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit);
-    const committedContent = git(worktree, ['show', 'HEAD:' + task.targetPath], runGit);
+    const committedPathContent = await readFile(output, 'utf8');
     const dirty = git(worktree, ['status', '--porcelain'], runGit);
     if (!SHA.test(head) || parent !== task.baseHead
         || changed !== task.targetPath || dirty
-        || digest(committedContent + (task.content.endsWith('\n') ? '\n' : ''))
-          !== digest(task.content)) {
-      // No fallback to declaring success from a commit command's exit status.
-      // Text normalization is checked exactly again by the binary blob hash below.
+        || committedPathContent !== task.content) {
       fail('RESCUE_ISLAND_COMMITTED_TREE_NOT_PROVEN');
     }
     const blob = git(worktree, ['rev-parse', 'HEAD:' + task.targetPath], runGit);
-    if (!SHA.test(blob)) fail('RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN');
+    const workingBlob = git(worktree, ['hash-object', '--', task.targetPath], runGit);
+    if (!SHA.test(blob) || workingBlob !== blob)
+      fail('RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN');
     await append('ISOLATED_COMMIT', { commitHead: head, sourceBlob: blob,
       exactParentHead: parent, changedPath: changed });
     return Object.freeze({ ok: true, workerId: task.workerId, taskId: task.taskId,
