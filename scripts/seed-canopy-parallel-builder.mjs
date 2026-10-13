@@ -8,6 +8,7 @@ import { join, dirname, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import {
   createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecutable,
+  inspectBattleBridgeGitTopology, validateBattleBridgeLocalGitConfiguration,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { createHash } from 'node:crypto';
@@ -84,6 +85,16 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
+}
+
+async function assertTrustedGitBoundary(cwd = repoRoot) {
+  // The canonical source Git directory and local config remain untrusted data.
+  // Recheck both before any new worktree and after potentially long inference.
+  const topology = inspectBattleBridgeGitTopology(repoRoot);
+  if (!topology.ok) throw new Error(topology.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN');
+  const localConfig = await processExec('git', ['config', '--local', '--null', '--list'], cwd);
+  const config = validateBattleBridgeLocalGitConfiguration(localConfig);
+  if (!config.ok) throw new Error(config.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID');
 }
 
 async function saveReceipt(request, stage, more = {}) {
@@ -326,6 +337,7 @@ async function build(request, manifestSha256) {
       throw error;
     }
     await saveReceipt(request, stage);
+    await assertTrustedGitBoundary();
     const head = await processExec('git', ['rev-parse', '--verify', 'refs/heads/main']);
     if (head !== request.baseSha) throw new Error('EXACT_BASE_MAIN_MOVED');
     const isRepo = await processExec('git', ['rev-parse', '--show-toplevel']);
@@ -357,6 +369,7 @@ async function build(request, manifestSha256) {
       // Test paths are exact allowlisted filenames. No shell, arbitrary script or globbing.
       await processExec(process.execPath, ['--test', path], worktree, 120000, true);
     }
+    await assertTrustedGitBoundary(worktree);
     const status = await processExec('git', ['status', '--porcelain', '--untracked-files=all'], worktree);
     const changed = status.split('\n').filter(Boolean).map((line) => line.slice(3).replace(/\\/g, '/'));
     if (changed.length !== 1 || changed[0] !== request.targetPath) throw new Error('OUT_OF_SCOPE_WORKTREE_CHANGES');
@@ -365,12 +378,11 @@ async function build(request, manifestSha256) {
     await processExec('git', ['add', '--', request.targetPath], worktree);
     const staged = await processExec('git', ['diff', '--cached', '--name-only'], worktree);
     if (staged !== request.targetPath) throw new Error('OUT_OF_SCOPE_STAGED_FILES');
-    // Hooks are not trusted task writers. A dedicated empty hooks directory prevents
-    // inherited hooksPath or local hooks adding unrelated files to this commit.
-    const hooksDir = join(stateRoot, 'empty-hooks');
-    await mkdir(hooksDir, { recursive: true });
+    // Hardened child environment disables all hooks using the OS null device;
+    // never override it with an attacker-populatable persistent directory.
     const exactTree = await processExec('git', ['write-tree'], worktree);
-    await processExec('git', ['-c', 'core.hooksPath=' + hooksDir, 'commit', '-m',
+    await assertTrustedGitBoundary(worktree);
+    await processExec('git', ['commit', '-m',
       'Seed Canopy parallel candidate: ' + request.taskId + ' (' + request.ownerIssue + ')'], worktree);
     const commitSha = await processExec('git', ['rev-parse', 'HEAD'], worktree);
     const parents = (await processExec('git', ['rev-list', '--parents', '-n', '1', 'HEAD'], worktree)).split(' ');
