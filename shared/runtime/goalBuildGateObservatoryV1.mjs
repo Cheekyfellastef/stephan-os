@@ -1,6 +1,8 @@
+import { createHash, createPublicKey, verify } from 'node:crypto';
 // Read-only diagnostic display. Never grants a lease, source writer,
 // worker action, signed capacity, protected review or merge authority.
 export const GOAL_BUILD_GATE_SCHEMA_V1 = 'stephanos.goal-build-gate-observation.v1';
+export const GOAL_GATE_SIGNATURE_DOMAIN = 'stephanos.goal-build-gate-observation.v1\\0';
 export const GOAL_BUILD_GATE_OBSERVATORY_SCHEMA_V1 = 'stephanos.goal-build-gate-observatory.v1';
 
 const define = (id, group, title, owner, prerequisites = []) =>
@@ -45,19 +47,65 @@ function time(value) {
 }
 
 export function projectGoalBuildGateObservatoryV1({
-  statusRecords = [], nowMs = Date.now(), staleAfterMs = DEFAULT_MAX_AGE_MS,
+  statusRecords = [], proofRecords = [], expectedSourceHead = '',
+  trustedPublicKeyPem = '', trustedPublicKeySha256 = '',
+  nowMs = Date.now(), staleAfterMs = DEFAULT_MAX_AGE_MS,
 } = {}) {
   const maxAge = Math.min(Math.max(1000, Number(staleAfterMs) || DEFAULT_MAX_AGE_MS), DEFAULT_MAX_AGE_MS);
-  const observations = (Array.isArray(statusRecords) ? statusRecords : [])
-    .map(record => record?.goalBuildGateEvidence)
-    .filter(record => record?.schemaVersion === GOAL_BUILD_GATE_SCHEMA_V1
-      && SHA.test(String(record?.sourceHead || ''))
-      && Array.isArray(record?.gates)
-      && record.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
-      && Number.isFinite(time(record.observedAtUtc))
-      && time(record.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS)
-    .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc));
-  const evidence = observations[0] || null;
+  // A generic workspace status is NOT a security witness. Authenticate the
+  // protected publisher's Ed25519 signature, externally pinned key and
+  // canonical head, then resolve every exact immutable proof record. Neither
+  // a status-record flag nor a plausible-looking receipt: URL is sufficient.
+  const trustedHead = String(expectedSourceHead || '').toLowerCase();
+  let key = null;
+  try {
+    if (SHA.test(trustedHead) && typeof trustedPublicKeyPem === 'string'
+      && /^[a-f0-9]{64}$/.test(String(trustedPublicKeySha256 || ''))
+      && createHash('sha256').update(trustedPublicKeyPem).digest('hex') === trustedPublicKeySha256) {
+      key = createPublicKey(trustedPublicKeyPem);
+      if (key.asymmetricKeyType !== 'ed25519') key = null;
+    }
+  } catch { key = null; }
+  const knownProofs = Array.isArray(proofRecords) ? proofRecords : [];
+  const evidence = key
+    ? (Array.isArray(statusRecords) ? statusRecords : [])
+      .filter(record => record?.kind === 'status'
+        && record?.statusId === 'goal-build-gates-current'
+        && record?.participantId === 'stephanos-core')
+      .map(record => record.goalBuildGateEvidence)
+      .filter(e => e?.schemaVersion === GOAL_BUILD_GATE_SCHEMA_V1
+        && e?.publisherId === 'stephanos-core'
+        && e?.signingKeyId === 'stephanos-goal-build-gates-v1'
+        && e?.sourceHead === trustedHead
+        && Array.isArray(e?.gates) && e.gates.length <= GOAL_BUILD_GATE_DEFINITIONS_V1.length
+        && Number.isFinite(time(e.observedAtUtc))
+        && time(e.observedAtUtc) <= nowMs + MAX_CLOCK_SKEW_MS
+        && typeof e.signatureBase64 === 'string')
+      .filter(e => {
+        const signed = Object.freeze({
+          schemaVersion: e.schemaVersion, publisherId: e.publisherId,
+          signingKeyId: e.signingKeyId, sourceHead: e.sourceHead,
+          observedAtUtc: e.observedAtUtc, gates: e.gates,
+        });
+        try {
+          const sig = Buffer.from(e.signatureBase64, 'base64');
+          if (sig.length !== 64 || sig.toString('base64') !== e.signatureBase64
+            || !verify(null, Buffer.from(GOAL_GATE_SIGNATURE_DOMAIN + JSON.stringify(signed)), key, sig)) return false;
+        } catch { return false; }
+        return e.gates.every(g => {
+          const id = /^workspace:proof\/([A-Za-z0-9][A-Za-z0-9._-]{1,100})$/.exec(String(g?.proofRef || ''))?.[1];
+          const proofDigest = String(g?.proofRecordSha256 || '');
+          if (!id || !/^[a-f0-9]{64}$/.test(proofDigest)) return false;
+          const matches = knownProofs.filter(p => p?.kind === 'proof'
+            && p?.proofId === id && p?.sourceHead === trustedHead
+            && time(p.timestampUtc) <= time(e.observedAtUtc) + MAX_CLOCK_SKEW_MS
+            && nowMs - time(p.timestampUtc) <= maxAge
+            && createHash('sha256').update(JSON.stringify(p)).digest('hex') === proofDigest);
+          return matches.length === 1;
+        });
+      })
+      .sort((a, b) => time(b.observedAtUtc) - time(a.observedAtUtc))[0] || null
+    : null;
   const observedAtUtc = evidence?.observedAtUtc || '';
   const sourceHead = evidence?.sourceHead || '';
   const expired = evidence ? nowMs - time(observedAtUtc) > maxAge : false;
