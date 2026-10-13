@@ -75,6 +75,14 @@ test('remote adapter accepts only the bounded outbound beacon contract', () => {
   assert.equal(api.parseBeaconComment({ body: 'not a beacon' }), null);
 });
 
+test('latest hosted gate beacon excludes unauthenticated comments before timestamp ranking', () => {
+  const { api } = makeContext();
+  const owner = { ...beaconComment(beacon()), user: { login: 'Cheekyfellastef', id: 267490109 } };
+  const futureCopy = { ...beaconComment(beacon({ observedAtUtc: '2099-01-01T00:00:00.000Z' })), user: { login: 'unrelated-account', id: 123 } };
+  assert.equal(api.latestBeacon([owner, futureCopy])?.ownerCommentAuthenticated, true);
+  assert.equal(api.latestBeacon([futureCopy]), null);
+});
+
 test('remote projection is current only with fresh exact-head complete evidence', () => {
   const { api } = makeContext();
   const projection = api.buildProjection({
@@ -115,7 +123,7 @@ test('remote browser refresh reads public GitHub truth only and renders iPad-saf
   const liveBeacon = beacon({ observedAtUtc: new Date().toISOString() });
   const responses = new Map([
     ['ref', { object: { sha: HEAD } }],
-    ['comments', [beaconComment(liveBeacon)]],
+    ['comments', [{ ...beaconComment(liveBeacon), user: { login: 'Cheekyfellastef', id: 267490109 } }]],
     ['issues', [
       { number: 1282, title: 'Goal Dashboard', state: 'open', updated_at: '2026-09-12T12:33:00Z' },
       { number: 2188, title: 'Merged PR is filtered', state: 'open', pull_request: {}, updated_at: '2026-09-12T12:32:00Z' },

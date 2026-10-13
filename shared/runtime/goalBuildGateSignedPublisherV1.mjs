@@ -42,10 +42,12 @@ export async function publishSignedCoreGateEvidenceV1({
     const proof = {
       ...createSharedWorkspaceProofRecord({
         proofId, participantId: 'stephanos-core', relatedIssue: '#2961',
+        correlationId: proofId + '-' + sourceHead.slice(0, 12),
         timestampUtc: observedAtUtc, status: gate.status,
         summary: 'Core observed gate ' + id + ': ' + (gate.typedBlocker || 'verified runtime predicate'),
         refs: [gate.proofRef],
-        proofRefs: [gate.proofRef],
+        // Store paths accepted by the real workspace writer, not view-only workspace: URIs.
+        proofRefs: ['proof/' + proofId + '.json'],
       }),
       sourceHead,
     };
@@ -74,7 +76,7 @@ export async function publishSignedCoreGateEvidenceV1({
       participantId: 'stephanos-core', timestampUtc: observedAtUtc,
       relatedIssue: '#2961', status: 'OBSERVED',
       summary: 'Signed per-gate evidence for read-only observatory; never security authority.',
-      proofRefs: stamped.map(g => g.proofRef),
+      proofRefs: stamped.map(g => 'proof/goal-gate-' + g.id + '.json'),
     }),
     goalBuildGateEvidence: { ...exact, signatureBase64 },
   };

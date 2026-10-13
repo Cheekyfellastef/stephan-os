@@ -278,6 +278,8 @@ let lastNativeGateProbeAtMs = 0;
 let lastNativeGateRouting = null;
 let lastGateSignedPublicationAtMs = 0;
 let lastGateSignedPublicationVerdict = 'NOT_COMMISSIONED';
+let lastGateStewardActionKey = '';
+let lastGateStewardAttemptAtMs = null;
 let lastOctopusSelfHealSourceHead = '';
 let lastOctopusSelfHealProgrammeBlockerIdentity = '';
 let lastOctopusSelfHealAttemptCount = 0;
@@ -854,7 +856,15 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     gates: gateEvidence.ok ? gateEvidence.evidence.gates : [],
   }, {
     nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
+    previousActionKey: lastGateStewardActionKey,
+    previousAttemptAtMs: lastGateStewardAttemptAtMs,
   });
+  // Persist the last diagnostic suggestion across heartbeats. This does not
+  // execute it, open a lease, or claim custody of the original worker.
+  if (gateSteward.decision === 'PROPOSE_EXISTING_AUTHORITY_ACTION' && gateSteward.proofKey) {
+    lastGateStewardActionKey = gateSteward.proofKey;
+    lastGateStewardAttemptAtMs = Date.parse(timestampUtc);
+  }
   // Optional, independently commissioned private signing key, never in Git
   // or the Shared Workspace. Lack of key leaves all 23 observable gates
   // UNVERIFIED and does not hinder the Core heartbeat.

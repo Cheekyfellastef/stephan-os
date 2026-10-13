@@ -46,7 +46,9 @@
   function latestBeacon(comments) {
     return (Array.isArray(comments) ? comments : [])
       .map(parseBeaconComment)
-      .filter(Boolean)
+      // Only GitHub-authenticated owner comments may determine hosted status.
+      // A copied public comment, even with a future embedded timestamp, is inert.
+      .filter(record => record?.ownerCommentAuthenticated === true)
       .sort((left, right) => observedMs(left.observedAtUtc) - observedMs(right.observedAtUtc))
       .at(-1) || null;
   }

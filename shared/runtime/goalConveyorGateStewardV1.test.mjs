@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   projectCoreGateEvidenceV1, planCoreGateStewardV1,
 } from './goalConveyorGateStewardV1.mjs';
 import { publishSignedCoreGateEvidenceV1 } from './goalBuildGateSignedPublisherV1.mjs';
+import { validateSharedWorkspaceRecord } from '../agents/sharedAgentWorkspaceStore.mjs';
 import { projectGoalBuildGateObservatoryV1 } from './goalBuildGateObservatoryV1.mjs';
 import { projectPublicGoalGateObservatoryV1 } from './goalBuildGatePublicProjectionV1.mjs';
 
@@ -24,7 +26,7 @@ function raw() {
   });
 }
 
-test('single Core steward separates 23 independent gates and does not self-authorize', () => {
+test('single Core steward separates 23 independent gates and does not self-authorize', async () => {
   const facts = raw();
   assert.equal(facts.ok, true);
   assert.deepEqual(facts.evidence.gates.map(x => x.id), [3, 7, 8, 9, 13]);
@@ -43,6 +45,13 @@ test('single Core steward separates 23 independent gates and does not self-autho
   }, { nowMs: nowMs + 5000, previousActionKey: shadow.proofKey, previousAttemptAtMs: nowMs });
   assert.equal(cooldown.nextAction, null);
   assert.equal(cooldown.decision, 'SAME_EVIDENCE_COOLDOWN');
+  const oneHourLater = planCoreGateStewardV1({ sourceHead: head, gates: facts.evidence.gates },
+    { nowMs: nowMs + 60 * 60_000, previousActionKey: shadow.proofKey, previousAttemptAtMs: nowMs });
+  assert.equal(oneHourLater.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
+  const coreSource = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(coreSource, /previousActionKey: lastGateStewardActionKey/);
+  assert.match(coreSource, /previousAttemptAtMs: lastGateStewardAttemptAtMs/);
+  assert.match(coreSource, /lastGateStewardAttemptAtMs = Date\.parse\(timestampUtc\)/);
   assert.equal(planCoreGateStewardV1({
     sourceHead: head, gates: facts.evidence.gates,
   }, { nowMs, gamingProtected: true }).nextAction, null);
@@ -70,6 +79,8 @@ test('externally pinned Ed25519 signer makes individual evidence visible, never 
   const privatePem = privateKey.export({ format: 'pem', type: 'pkcs8' });
   const records = new Map();
   const write = async (_root, segments, record) => {
+    const checked = validateSharedWorkspaceRecord(record, { nowMs });
+    assert.equal(checked.valid, true, `${segments.join('/')} ${checked.errors.join(',')}`);
     records.set(segments.join('/'), structuredClone(record));
     return { ok: true };
   };
@@ -82,6 +93,9 @@ test('externally pinned Ed25519 signer makes individual evidence visible, never 
   const status = records.get('status/goal-build-gates-current.json');
   const proofs = [...records.entries()].filter(([p]) => p.startsWith('proof/')).map(([,p]) => p);
   assert.equal(proofs.length, 5);
+  assert.ok(proofs.every(p => /^goal-gate-[1-9]-[a-f0-9]{12}$/.test(p.correlationId)));
+  assert.ok(proofs.every(p => p.proofRefs.length === 1 && /^proof\/goal-gate-[1-9]\.json$/.test(p.proofRefs[0])));
+  assert.ok(status.proofRefs.every(p => /^proof\/goal-gate-[1-9]\.json$/.test(p)));
   const authenticated = projectGoalBuildGateObservatoryV1({
     statusRecords: [status], proofRecords: proofs, expectedSourceHead: head,
     trustedPublicKeyPem: pem,
