@@ -138,6 +138,12 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await mkdir(join(stateRoot, 'approvals'), { recursive: true });
     const raw = await readFile(manifest, 'utf8');
     await writeFile(join(stateRoot, 'inbox', TASK_ID + '.json'), raw);
+    // Four earlier, valid but UNAPPROVED manifests must not consume the four
+    // GitHub owner-approval verification slots or starve the eligible fifth.
+    for (const taskId of ['aaa-unapproved', 'aab-unapproved', 'aac-unapproved', 'aad-unapproved']) {
+      await writeFile(join(stateRoot, 'inbox', taskId + '.json'),
+        JSON.stringify({ ...request, taskId }));
+    }
     const direct = await runAsync(process.execPath, [
       path('scripts/seed-canopy-parallel-builder.mjs'), 'build', manifest, '--execute',
     ], { cwd: repo, env });
@@ -159,6 +165,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
     const run = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(run.code, 0, run.stderr);
+    assert.match(run.stdout, /#3096 — title unavailable from current evidence/,
+      'operator run report must preserve truthful owner and title binding');
     const completed = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(completed.stage, 'COMMITTED');
