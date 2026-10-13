@@ -104,7 +104,7 @@ These are operator-invoked entrypoints today. No Task Scheduler service, automat
 
 The test at tests/seed-canopy-parallel-forge-integration.test.mjs constructs a disposable Git repository with a canonical seed fixture and a **mock loopback Ollama server**, then proves real worktree creation, one file edit, actual tests, a local commit, durable receipts, main unchanged and refusal of duplicate retries. This is a genuine Git execution proof using simulated model output, not live inference, deployment or autonomous completion.
 
-Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed.
+Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed. The supervisor reports `localSourceCandidateProven` for a fresh independently verified local source commit, while `liveBuildProven` remains false until separately authenticated unattended live build evidence exists.
 
 ## Sovereign Commander fast mailbox observation
 
