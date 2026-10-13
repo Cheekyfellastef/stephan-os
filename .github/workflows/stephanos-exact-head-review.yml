@@ -173,16 +173,10 @@ jobs:
           }));
           NODE
 
-      - name: Review exact head with trusted engine
-        id: deterministic_review
-        continue-on-error: true
-        run: node scripts/exact-head-review.mjs review-proof/input.json review-proof/receipt.json
-
-      # The deterministic P2 remains a failure unless a separate, exact-head,
-      # owner-authenticated and immutable GitHub Independent Review proves
-      # the narrow escalation. A P0, P1, unrelated P2 or missing receipt
-      # always fails this final required step. Neither step approves or merges.
-      - name: Require ordinary clean review or qualified independent escalation
+      # One atomic fail-closed gate. The trusted reviewer emits immutable P2
+      # findings; only independent authenticated evidence can qualify them.
+      # There is deliberately no continue-on-error anywhere in this workflow.
+      - name: Review exact head and require independently qualified escalation
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/exact-head-qualified-escalation-v1.mjs review-proof/input.json review-proof/receipt.json
