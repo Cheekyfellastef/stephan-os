@@ -5,6 +5,10 @@ import { readFile, mkdir, writeFile, rename, lstat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join, dirname, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecutable,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { createHash } from 'node:crypto';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import {
@@ -25,8 +29,20 @@ const stateRoot = join(homedir(), '.stephanos', 'seed-parallel', scope);
 const output = (obj) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
 
 async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000) {
+  const git = bin === 'git';
+  const executable = git ? resolveBattleBridgeGitExecutable()
+    : bin === 'powershell.exe' && process.platform === 'win32'
+      ? BATTLE_BRIDGE_WINDOWS_HOST.powershell
+      : bin === process.execPath ? process.execPath : null;
+  if (!executable) throw new Error('SEED_FORGE_UNAPPROVED_CHILD_EXECUTABLE');
+  const env = {
+    ...createBattleBridgeMinimalChildEnvironment(process.env, { git }),
+    ...(process.platform !== 'win32' ? { HOME: homedir() } : {}),
+  };
   return await new Promise((res, rej) => {
-    const child = spawn(bin, args, { cwd, shell: false, windowsHide: true, env: process.env });
+    const child = spawn(executable, args, {
+      cwd, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
     let stdout = '', stderr = '';
     const timer = setTimeout(() => child.kill(), timeoutMs);
     child.stdout.on('data', (chunk) => { stdout += String(chunk).slice(0, 32768); stdout = stdout.slice(-65536); });
@@ -35,7 +51,7 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000) {
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) res(stdout.trim());
-      else rej(new Error(bin + ' failed (' + code + '): ' + stderr.slice(-1500)));
+      else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
 }
@@ -66,13 +82,10 @@ async function localModelPreflight() {
   } catch {
     throw new Error('VR_GOVERNOR_TRUTH_MISSING');
   }
-  // The canonical Watch action does not rewrite stable idle snapshots. Only
-  // on Windows and only on stale evidence, request ONE fixed-path canonical
-  // Reconcile, which re-observes VR/game signals. A stopped or failed governor
-  // never becomes 'idle' merely because an old snapshot says so.
-  if (!isParallelSeedGovernorSnapshotFreshV1(governor)) {
-    if (process.platform !== 'win32')
-      throw new Error('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');
+  // A recently written idle snapshot is NOT live gaming evidence. Reconcile
+  // on every Windows preflight, including the final pre-inference check.
+  // On non-Windows fixtures, fail closed when the observed state is stale.
+  if (process.platform === 'win32') {
     const canonicalGovernor = join(repoRoot, 'scripts', 'windows', 'run-vr-resource-governor.ps1');
     try {
       await processExec('powershell.exe',
@@ -82,6 +95,8 @@ async function localModelPreflight() {
     } catch {
       throw new Error('VR_GOVERNOR_LIVE_RECONCILE_FAILED');
     }
+  } else if (!isParallelSeedGovernorSnapshotFreshV1(governor)) {
+    throw new Error('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');
   }
   let ps;
   try {
