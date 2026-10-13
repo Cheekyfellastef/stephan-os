@@ -127,6 +127,7 @@ jobs:
             shared/agents/agentSystem.test.mjs \
             shared/runtime/upliftWorkspaceProjectionV1.test.mjs \
             shared/runtime/fullSovereigntySeedV1.test.mjs \
+            shared/runtime/seedCanopyParallelForgeV1.test.mjs \
             shared/ai/missionKernelV1.test.mjs \
             stephanos-ui/src/components/upliftWorkspaceSurfaces.test.mjs \
             tests/command-deck-protected-canon.test.mjs \
