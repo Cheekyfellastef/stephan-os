@@ -1,0 +1,39 @@
+name: Rescue Island First Isolated Commit Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'shared/agents/rescueIslandFirstCommitV1.mjs'
+      - 'shared/agents/rescueIslandFirstCommitV1.test.mjs'
+      - '.github/workflows/rescue-island-first-commit-proof.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rescue-island-first-commit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-build-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact source with read-only credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test isolated real Git source build and refusal boundaries
+        run: |
+          node --check shared/agents/rescueIslandFirstCommitV1.mjs
+          node --test shared/agents/rescueIslandPreflightV1.test.mjs shared/agents/rescueIslandFirstCommitV1.test.mjs
+      - name: Verify source scope cleanliness
+        run: git diff --check HEAD~1 HEAD
