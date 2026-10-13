@@ -46,7 +46,6 @@ import {
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
-import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
@@ -274,6 +273,8 @@ let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
 let lastOctopusSelfHealVerdict = 'NOT_RUN';
 let lastOctopusSelfHealBlocker = '';
+let lastNativeGateProbeAtMs = 0;
+let lastNativeGateRouting = null;
 let lastOctopusSelfHealSourceHead = '';
 let lastOctopusSelfHealProgrammeBlockerIdentity = '';
 let lastOctopusSelfHealAttemptCount = 0;
@@ -821,15 +822,20 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
   });
   // Only use existing canonical evidence and the existing locked daemon.
   // Never make the heartbeat depend on this optional read-only observer.
-  let nativeRouting = null;
-  try {
-    nativeRouting = await readVerifiedStephanosNativeRoutingCandidate({
-      root: workspaceRoot, repoRoot, env: process.env,
-      repository: 'Cheekyfellastef/stephan-os',
-      sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
-      nowUtc: timestampUtc,
-    });
-  } catch { nativeRouting = null; }
+  // Share one bounded native capacity probe per minute across existing
+  // heartbeats. The signer and publisher own their own trust boundaries.
+  if (Date.parse(timestampUtc) - lastNativeGateProbeAtMs >= 60_000) {
+    lastNativeGateProbeAtMs = Date.parse(timestampUtc);
+    try {
+      lastNativeGateRouting = await readVerifiedStephanosNativeRoutingCandidate({
+        root: workspaceRoot, repoRoot, env: process.env,
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+        nowUtc: timestampUtc,
+      });
+    } catch { lastNativeGateRouting = null; }
+  }
+  const nativeRouting = lastNativeGateRouting;
   const gateEvidence = projectCoreGateEvidenceV1({
     sourceHead: state.sourceHead, observedAtUtc: timestampUtc, state,
     refillSummary: lastRefillSummary,
@@ -837,11 +843,13 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     lastRepairSourceHead: lastOctopusSelfHealSourceHead,
     nativeRouting,
   });
-  const gateObservatory = projectGoalBuildGateObservatoryV1({
-    statusRecords: gateEvidence.ok ? [{ goalBuildGateEvidence: gateEvidence.evidence }] : [],
-    nowMs: Date.parse(timestampUtc),
-  });
-  const gateSteward = planCoreGateStewardV1(gateObservatory, {
+  // Raw Core facts are only shadow-mode suggestions; the public observatory
+  // intentionally rejects them until separately pinned, signed, immutable
+  // status+proof records exist. Never convert a proposal into a PASS.
+  const gateSteward = planCoreGateStewardV1({
+    sourceHead: state.sourceHead,
+    gates: gateEvidence.ok ? gateEvidence.evidence.gates : [],
+  }, {
     nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
   });
   const outerBridgeState = sovereignOuterBridge.snapshot();
