@@ -359,6 +359,13 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
     lastDependencySelfHealBlocker = '';
     return Object.freeze({ attempted: false, recovered: true });
   }
+  if (state.gamingActive === true) {
+    // Keep the lightweight Core heartbeat, but do not spawn expensive
+    // machine repair/worker bootstrap while local gaming owns the PC.
+    lastDependencySelfHealVerdict = 'CORE_DEPENDENCY_SELF_HEAL_GAMING_PROTECTED';
+    lastDependencySelfHealBlocker = '';
+    return Object.freeze({ attempted: false, recovered: false });
+  }
 
   const nowMs = Date.now();
   if (lastDependencySelfHealAtMs !== null
