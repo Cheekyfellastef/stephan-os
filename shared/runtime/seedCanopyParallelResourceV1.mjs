@@ -2,14 +2,20 @@ export const PARALLEL_SEED_RESOURCE_PREFLIGHT_SCHEMA = 'stephanos.seed-parallel-
 
 export const SEED_PARALLEL_GOVERNOR_MAX_AGE_MS = 30000;
 
+// Shared freshness predicate for the on-demand canonical governor reconcile and
+// the final independent pre-inference safety verdict. Never infer idle from age.
+export function isParallelSeedGovernorSnapshotFreshV1(governor, nowMs = Date.now()) {
+  const observed = Date.parse(governor?.updatedAtUtc || '');
+  return Number.isFinite(observed) && Number.isFinite(nowMs)
+    && observed <= nowMs && nowMs - observed <= SEED_PARALLEL_GOVERNOR_MAX_AGE_MS;
+}
+
 export function checkParallelSeedModelResourceV1({ governor, ollamaPs, selectedModel, nowMs = Date.now() } = {}) {
   const reasons = [];
   if (governor?.schemaVersion !== 'stephanos.vr-resource-governor.v1') reasons.push('VR_GOVERNOR_TRUTH_MISSING');
   if (governor?.active !== false || governor?.localModelAllowed !== true)
     reasons.push('VR_OR_GAMING_MODEL_PROTECTION_ACTIVE');
-  const observed = Date.parse(governor?.updatedAtUtc || '');
-  if (!Number.isFinite(observed) || !Number.isFinite(nowMs) || observed > nowMs
-    || nowMs - observed > SEED_PARALLEL_GOVERNOR_MAX_AGE_MS)
+  if (!isParallelSeedGovernorSnapshotFreshV1(governor, nowMs))
     reasons.push('VR_GOVERNOR_SNAPSHOT_STALE_OR_UNPROVEN');
   if (typeof selectedModel !== 'string'
     || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]{1,100}$/.test(selectedModel))
