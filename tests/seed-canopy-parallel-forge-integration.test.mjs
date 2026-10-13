@@ -38,7 +38,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   let server;
   let ownerComment = null;
   try {
-    for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'tests']) {
+    for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
       await mkdir(path(folder), { recursive: true });
     }
     await mkdir(home, { recursive: true });
@@ -49,6 +49,10 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         active: false, localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
     await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'),
       path('scripts/seed-canopy-parallel-builder.mjs'));
+    await copyFile(join(sourceRoot, 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'),
+      path('shared/agents/battleBridgeExecutionBoundaryV1.mjs'));
+    await copyFile(join(sourceRoot, 'shared/agents/battleBridgeWindowsHosts.mjs'),
+      path('shared/agents/battleBridgeWindowsHosts.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelForgeV1.mjs'),
       path('shared/runtime/seedCanopyParallelForgeV1.mjs'));
     await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-supervisor.mjs'),
