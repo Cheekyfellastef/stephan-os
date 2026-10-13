@@ -123,13 +123,28 @@ async function build(request) {
   try {
     await writeFile(join(dirname(receiptPath), request.taskId + '.claim'),
       JSON.stringify({ seedId: request.seedId, ownerIssue: request.ownerIssue,
-        baseSha: request.baseSha, targetPath: request.targetPath }) + '\n', { flag: 'wx' });
+        baseSha: request.baseSha, targetPath: request.targetPath,
+        createdAtUtc: new Date().toISOString() }) + '\n', { flag: 'wx' });
   } catch (error) {
     if (error.code === 'EEXIST') throw new Error('TASK_ALREADY_CLAIMED_INSPECT_EXISTING_ARTIFACT');
     throw error;
   }
   let stage = 'SELECTED';
   try {
+    // Target-level custody is deliberately independent from the old goal lease.
+    // One failed path cannot block another seed or another non-overlapping path.
+    const targetKey = createHash('sha256').update(request.targetPath).digest('hex');
+    const targetClaims = join(stateRoot, 'target-claims');
+    await mkdir(targetClaims, { recursive: true });
+    try {
+      await writeFile(join(targetClaims, targetKey + '.claim'), JSON.stringify({
+        taskId: request.taskId, seedId: request.seedId, ownerIssue: request.ownerIssue,
+        targetPath: request.targetPath, baseSha: request.baseSha, createdAtUtc: new Date().toISOString(),
+      }) + '\\n', { flag: 'wx' });
+    } catch (error) {
+      if (error.code === 'EEXIST') throw new Error('TARGET_ALREADY_OWNED_BY_PARALLEL_TASK');
+      throw error;
+    }
     await saveReceipt(request, stage);
     const head = await processExec('git', ['rev-parse', '--verify', 'refs/heads/main']);
     if (head !== request.baseSha) throw new Error('EXACT_BASE_MAIN_MOVED');
