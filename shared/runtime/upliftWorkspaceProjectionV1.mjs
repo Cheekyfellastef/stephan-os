@@ -1762,8 +1762,15 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     ...allRecords(payload),
   ].filter((record) => record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
       || record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE) : [];
-  const latest = latestByTime(relevant);
-  const proved = relevant.filter((record) => record !== heartbeat
+  // Only observed, time-bounded evidence may influence authority-bearing
+  // growth rungs, proof totals, latest proof time or gap pressure. A future
+  // timestamp is not proof that work happened, even with a current feed.
+  const observed = relevant.filter((record) => {
+    const stamp = recordTimeMs(record);
+    return stamp > 0 && stamp <= nowMs;
+  });
+  const latest = latestByTime(observed);
+  const proved = observed.filter((record) => record !== heartbeat
     && record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
     && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
     && isPositiveProofRecord(record) && proofRefs(record).length > 0);
@@ -1812,7 +1819,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const currentRung = currentRungIndex === null
     ? 'AWAITING_LIVE_PROOF'
     : contract.growthRungs[currentRungIndex];
-  const currentGaps = deriveGapHistory(relevant).current.slice(0, 8).map((gap) => Object.freeze({
+  const currentGaps = deriveGapHistory(observed).current.slice(0, 8).map((gap) => Object.freeze({
     capabilityId: gap.capabilityId,
     owner: gap.owner,
     state: gap.state,
