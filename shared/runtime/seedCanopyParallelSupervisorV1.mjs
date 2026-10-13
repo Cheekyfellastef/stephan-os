@@ -94,7 +94,8 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
       targetPath: claim.targetPath,
       stage: receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
       sourceTruth: stale ? 'STALE_OR_UNKNOWN' : 'CURRENT',
-      candidateCommitted: Boolean(receipt?.stage === 'COMMITTED' && safeCommit(receipt?.commitSha)),
+      candidateCommitted: Boolean(receipt?.stage === 'COMMITTED' && safeCommit(receipt?.commitSha)
+        && receipt?.independentGitHeadVerified === true),
       merged: false,
       deployed: false,
       requiresReview: true,
