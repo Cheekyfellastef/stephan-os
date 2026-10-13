@@ -45,6 +45,9 @@ import {
   SOVEREIGN_COMMANDER_OPERATION,
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
+import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
@@ -816,6 +819,31 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     blocker: lastOctopusSelfHealBlocker,
     needsRepair: flywheel?.octopusNeedsRepair === true,
   });
+  // Only use existing canonical evidence and the existing locked daemon.
+  // Never make the heartbeat depend on this optional read-only observer.
+  let nativeRouting = null;
+  try {
+    nativeRouting = await readVerifiedStephanosNativeRoutingCandidate({
+      root: workspaceRoot, repoRoot, env: process.env,
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+      nowUtc: timestampUtc,
+    });
+  } catch { nativeRouting = null; }
+  const gateEvidence = projectCoreGateEvidenceV1({
+    sourceHead: state.sourceHead, observedAtUtc: timestampUtc, state,
+    refillSummary: lastRefillSummary,
+    lastRepairBlocker: lastOctopusSelfHealBlocker,
+    lastRepairSourceHead: lastOctopusSelfHealSourceHead,
+    nativeRouting,
+  });
+  const gateObservatory = projectGoalBuildGateObservatoryV1({
+    statusRecords: gateEvidence.ok ? [{ goalBuildGateEvidence: gateEvidence.evidence }] : [],
+    nowMs: Date.parse(timestampUtc),
+  });
+  const gateSteward = planCoreGateStewardV1(gateObservatory, {
+    nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
+  });
   const outerBridgeState = sovereignOuterBridge.snapshot();
   const common = {
     // Core's separately persisted heartbeat is the fallback diagnostic if
@@ -828,6 +856,8 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     outerBridgeLastVerdict: String(outerBridgeState.lastResult?.finalVerdict || 'NOT_RUN').slice(0, 120),
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
+    goalBuildGateEvidence: gateEvidence.evidence,
+    goalConveyorGateSteward: gateSteward,
     processId: process.pid,
     readiness: state.readiness,
     daemonHealthy: state.daemonHealthy,
