@@ -151,3 +151,40 @@ test('local Battle Bridge browser never uses the remote public adapter', async (
   assert.equal(result.reason, 'LOCAL_BACKEND_REMAINS_CANONICAL');
   assert.equal(called, false);
 });
+
+test('iPad hosted projection shows all 23 signed-gate states only with owner-authenticated current beacon', () => {
+  const { api } = makeContext({ hostname: 'stephanos.pages.dev' });
+  const gateView = {
+    schemaVersion: 'stephanos.public-goal-build-gate-observatory.v1',
+    sourceHead: HEAD,
+    observationStatus: 'EVIDENCE_AVAILABLE',
+    observedAtUtc: '2026-09-12T12:34:00.000Z',
+    gates: Array.from({ length: 23 }, (_, i) => ({
+      id: i + 1, status: i === 6 ? 'FAIL' : i === 2 ? 'PASS' : 'UNVERIFIED',
+      title: 'Gate ' + (i + 1), owner: 'Trusted subsystem',
+      typedBlocker: i === 6 ? 'PROGRAMME_HOLD' : '',
+      proofRef: 'workspace:proof/goal-gate-' + (i + 1),
+    })),
+  };
+  const ownerBeacon = api.parseBeaconComment({
+    ...beaconComment(beacon({ goalBuildGateObservatory: gateView })),
+    user: { login: 'Cheekyfellastef', id: 267490109 },
+  });
+  const projection = api.buildProjection({
+    beacon: ownerBeacon, ref: { object: { sha: HEAD } },
+    issues: [], nowMs: NOW,
+  });
+  assert.equal(projection.goalBuildGateObservatory.gates.length, 23);
+  assert.equal(projection.goalBuildGateObservatory.counts.PASS, 1);
+  assert.equal(projection.goalBuildGateObservatory.counts.FAIL, 1);
+  assert.equal(projection.goalBuildGateObservatory.firstActionableGate, 7);
+  assert.equal(projection.goalBuildGateObservatory.gates[6].proofRef, 'workspace:proof/goal-gate-7');
+  const bot = api.parseBeaconComment(beaconComment(beacon({ goalBuildGateObservatory: gateView })));
+  const noOwner = api.buildProjection({ beacon: bot, ref: { object: { sha: HEAD } }, issues: [], nowMs: NOW });
+  assert.equal(noOwner.goalBuildGateObservatory.counts.PASS, 0);
+  assert.equal(noOwner.goalBuildGateObservatory.counts.STALE, 2);
+  assert.equal(noOwner.goalBuildGateObservatory.firstActionableGate, null);
+  const mismatch = api.buildProjection({ beacon: ownerBeacon, ref: { object: { sha: OTHER_HEAD } }, issues: [], nowMs: NOW });
+  assert.equal(mismatch.goalBuildGateObservatory.counts.PASS, 0);
+  assert.equal(mismatch.goalBuildGateObservatory.firstActionableGate, null);
+});
