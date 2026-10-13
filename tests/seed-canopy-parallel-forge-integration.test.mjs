@@ -152,8 +152,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       id: 7654321, user: { login: 'Cheekyfellastef' }, author_association: 'OWNER',
       issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3096',
       created_at: issuedAtUtc, updated_at: issuedAtUtc,
-      body: '\`\`\`stephanos-seed-parallel-owner-approval\\n' +
-        JSON.stringify(approval) + '\\n\`\`\`',
+      body: '```stephanos-seed-parallel-owner-approval\n' +
+        JSON.stringify(approval) + '\n```',
     };
     await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'),
       JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
