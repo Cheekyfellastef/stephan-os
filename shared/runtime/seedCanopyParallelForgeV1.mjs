@@ -63,6 +63,10 @@ export function validateParallelSeedBuildRequestV1(request, seeds = []) {
   if (!seed || request?.ownerIssue !== seed.issue) errors.push('OWNER_MUST_MATCH_CANONICAL_SEED');
   if (request?.contractSource !== seed?.source) errors.push('CONTRACT_SOURCE_MISMATCH');
   if (!sourcePath(request?.targetPath)) errors.push('UNSAFE_TARGET_PATH');
+  // V1 may execute local tests only after writing a non-executable documentation target.
+  // Generated JS needs a separately qualified execution sandbox before this can widen.
+  if (sourcePath(request?.targetPath) && !request.targetPath.endsWith('.md'))
+    errors.push('CODE_PROPOSAL_NEEDS_QUALIFIED_SANDBOX');
   if (!text(request?.intent) || text(request.intent).length > 2400) errors.push('MISSING_OR_UNBOUNDED_INTENT');
   if (!Array.isArray(request?.testPaths) || request.testPaths.length < 1
     || request.testPaths.length > 5 || !request.testPaths.every(testPath)
