@@ -44,7 +44,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await mkdir(governorDir, { recursive: true });
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, localModelAllowed: true }));
+        active: false, localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
     await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'),
       path('scripts/seed-canopy-parallel-builder.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelForgeV1.mjs'),
