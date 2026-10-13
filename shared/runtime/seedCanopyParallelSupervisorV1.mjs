@@ -107,6 +107,9 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
     taskCount: tasks.length,
     tasks: Object.freeze(tasks),
     doesNotDependOnCanonicalConveyor: true,
-    liveBuildProven: tasks.some((task) => task.candidateCommitted && task.sourceTruth === 'CURRENT'),
+    // A clean exact-base local commit proves a scoped SOURCE CANDIDATE, not
+    // an unattended live Seed Canopy build, protected PR, or deployment.
+    localSourceCandidateProven: tasks.some((task) => task.candidateCommitted && task.sourceTruth === 'CURRENT'),
+    liveBuildProven: false,
   });
 }
