@@ -98,21 +98,22 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
           res.end(JSON.stringify(ownerComment));
           return;
         }
-        if (req.url === '/api/ps' && req.method === 'GET') {
+        if (req.url === '/models' && req.method === 'GET') {
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ models: [{ name: 'mock-fixture-model' }] }));
+          res.end(JSON.stringify({ data: [{ id: 'mock-fixture-model', status: { value: 'loaded' } }] }));
           return;
         }
-        if (req.url !== '/api/generate' || req.method !== 'POST') {
+        // An inference call without atomic autoload=false must fail the fixture.
+        if (req.url !== '/v1/completions?autoload=false' || req.method !== 'POST') {
           res.writeHead(404); res.end(); return;
         }
         // Deliberately no actual inference: verifies every real Git/receipt step only.
         req.resume();
         req.on('end', () => {
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ response: JSON.stringify({
+          res.end(JSON.stringify({ choices: [{ text: JSON.stringify({
             path: TARGET, content: '# Parallel Forge\n\nFixture model-generated source candidate.\n',
-          }) }));
+          }) }] }));
         });
       });
       server.listen(0, '127.0.0.1', () => done(server.address().port));
