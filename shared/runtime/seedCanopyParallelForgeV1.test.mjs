@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   PARALLEL_SEED_REQUEST_SCHEMA,
   listParallelSeedCandidatesV1,
@@ -132,7 +133,7 @@ test('all receipts explicitly deny merge/deploy/goal-completion even with malici
 
 
 test('standalone CLI can list canopy contracts and produce a source-only goal draft', () => {
-  const cli = new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url));
   const invoke = (args) => JSON.parse(execFileSync(process.execPath, [cli, ...args], {
     encoding: 'utf8', timeout: 30000,
   }));
