@@ -15,9 +15,8 @@ import {
   parseParallelSeedModelResponseV1,
   validateParallelSeedBuildRequestV1,
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
-import {
-  parallelSeedManifestHashV1, evaluateParallelSeedExactApprovalV1,
-} from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
+import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
+import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
 import { checkParallelSeedModelResourceV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
@@ -149,16 +148,18 @@ async function build(request, manifestSha256) {
   if (!checked.ok) throw new Error('REQUEST_REJECTED: ' + checked.errors.join(','));
   // Enforced at the actual mutating worker boundary, not merely by the supervisor.
   // Direct invocation cannot waive the operator's exact manifest approval.
-  let approval = null;
+  let approvalReference = null;
   try {
-    approval = JSON.parse(await readFile(join(stateRoot, 'approvals', request.taskId + '.json'), 'utf8'));
+    approvalReference = JSON.parse(await readFile(join(stateRoot, 'approvals', request.taskId + '.json'), 'utf8'));
   } catch {
     throw new Error('EXACT_LOCAL_OPERATOR_APPROVAL_MISSING_OR_UNREADABLE');
   }
-  const approved = evaluateParallelSeedExactApprovalV1({
-    request, manifestSha256, approval, nowMs: Date.now(),
+  // The local file is NOT authority. Authenticate a short-lived exact task grant
+  // against an owner-authored GitHub comment at the actual worker boundary.
+  const approved = await verifySeedParallelOwnerGitHubApprovalV1({
+    request, manifestSha256, reference: approvalReference, nowMs: Date.now(),
   });
-  if (!approved.ok) throw new Error('EXACT_LOCAL_OPERATOR_APPROVAL_REJECTED: ' + approved.reasons.join(','));
+  if (!approved.ok) throw new Error('EXTERNAL_OWNER_APPROVAL_REJECTED: ' + approved.reason);
   const resource = await localModelPreflight();
   const branch = parallelSeedBranchNameV1(request);
   const worktree = join(stateRoot, 'worktrees', request.taskId);
