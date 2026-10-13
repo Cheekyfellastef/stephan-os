@@ -4,6 +4,7 @@ export const SEED_PARALLEL_AUTHORITY_SCHEMA = 'stephanos.seed-parallel-exact-tas
 const text = (value) => typeof value === 'string' ? value.trim() : '';
 const safeTask = (value) => /^[a-z0-9][a-z0-9-]{2,79}$/.test(text(value));
 const safeHash = (value) => /^[a-f0-9]{64}$/.test(text(value));
+const safeCommit = (value) => /^[a-f0-9]{40}$/.test(text(value));
 const safeUtc = (value) => {
   const t = Date.parse(value);
   return Number.isFinite(t) && new Date(t).toISOString() === value;
@@ -93,7 +94,7 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
       targetPath: claim.targetPath,
       stage: receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
       sourceTruth: stale ? 'STALE_OR_UNKNOWN' : 'CURRENT',
-      candidateCommitted: Boolean(receipt?.stage === 'COMMITTED' && safeHash(receipt?.commitSha)),
+      candidateCommitted: Boolean(receipt?.stage === 'COMMITTED' && safeCommit(receipt?.commitSha)),
       merged: false,
       deployed: false,
       requiresReview: true,
