@@ -4,8 +4,8 @@ import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1
 
 const NOW = Date.parse('2026-10-13T16:00:00.000Z');
 const idle = { schemaVersion: 'stephanos.vr-resource-governor.v1',
-  active: false, localModelAllowed: true, updatedAtUtc: new Date(NOW - 1000).toISOString() };
-const loaded = { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded' } }] };
+  active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date(NOW - 1000).toISOString() };
+const loaded = { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded', args: ['llama-server', '-ctx', '4096'] } }] };
 
 test('already resident local coding model is eligible only with explicit idle VR governor', () => {
   const result = checkParallelSeedModelResourceV1({
@@ -20,6 +20,8 @@ test('missing, gaming-protected or stale local model evidence must not start hea
   const changes = [
     { governor: null },
     { governor: { ...idle, active: true, localModelAllowed: false } },
+    { governor: { ...idle, active: false, phase: 'GAMING' } },
+    { governor: { ...idle, active: false, phase: 'COOLDOWN' } },
     { governor: { ...idle, localModelAllowed: false } },
     { governor: { ...idle, schemaVersion: 'unknown' } },
     { governor: { ...idle, updatedAtUtc: new Date(NOW - 60000).toISOString() } },
@@ -28,6 +30,8 @@ test('missing, gaming-protected or stale local model evidence must not start hea
     { modelInventory: { data: [] } },
     { modelInventory: { data: [{ id: 'other-heavy-model:30b', status: { value: 'loaded' } }] } },
     { modelInventory: { data: [{ id: 'qwen3-coder:30b', status: { value: 'unloaded' } }] } },
+    { modelInventory: { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded', args: ['llama-server', '--sleep-idle-seconds=10'] } }] } },
+    { modelInventory: { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded' } }] } },
     { selectedModel: 'http://not-local.example' },
     { selectedModel: '' },
   ];
