@@ -13,7 +13,7 @@ function validPath(raw) {
   return typeof raw === 'string' && PATH.test(raw)
     && !raw.includes('//') && !raw.endsWith('/')
     && !raw.split('/').some((segment) => segment === '.' || segment === '..'
-      || segment.toLowerCase() === '.git')
+      || segment.toLowerCase() === '.git' || segment.toLowerCase() === 'node_modules')
     && !['apps/stephanos/dist', 'node_modules'].includes(raw.toLowerCase())
     && !raw.toLowerCase().startsWith('apps/stephanos/dist/')
     && !raw.toLowerCase().startsWith('node_modules/')
