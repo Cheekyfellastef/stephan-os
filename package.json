@@ -67,7 +67,7 @@
     "stephanos:chat:update": "node scripts/stephanos-chat-update.mjs update",
     "stephanos:chat:sync": "node scripts/stephanos-chat-update.mjs sync",
     "stephanos:chat:diagnostics": "node scripts/stephanos-chat-update.mjs diagnostics",
-    "stephanos:goal-build-gates:test": "node --test shared/runtime/goalBuildGateObservatoryV1.test.mjs",
+    "stephanos:goal-build-gates:test": "node --test shared/runtime/goalBuildGateObservatoryV1.test.mjs shared/runtime/goalConveyorGateStewardV1.test.mjs tests/goal-dashboard-remote-live.test.mjs",
     "stephanos:monitor-multiplexer:test": "node --test shared/agents/monitorMultiplexer.test.mjs",
     "stephanos:monitor-multiplexer:canary:test": "node --test shared/agents/monitorMultiplexerCanary.test.mjs scripts/battle-bridge-monitor-multiplexer-canary.test.mjs",
     "stephanos:runtime-boundary:workbench": "node scripts/runtime-boundary-workbench.mjs",
