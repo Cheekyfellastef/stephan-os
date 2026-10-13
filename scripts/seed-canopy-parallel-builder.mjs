@@ -18,6 +18,7 @@ import {
 import {
   parallelSeedManifestHashV1, evaluateParallelSeedExactApprovalV1,
 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
+import { checkParallelSeedModelResourceV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -53,7 +54,41 @@ async function saveReceipt(request, stage, more = {}) {
   return receipt;
 }
 
-async function localModelWrite(request, existingContent, seed) {
+async function localModelPreflight() {
+  const selectedModel = process.env.STEPHANOS_SEED_LOCAL_MODEL || 'qwen3-coder:30b';
+  const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 11434);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
+    throw new Error('LOCAL_MODEL_PORT_INVALID');
+  const governorFile = join(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr',
+    'vr-resource-governor-current.json');
+  let governor;
+  try {
+    governor = JSON.parse(await readFile(governorFile, 'utf8'));
+  } catch {
+    throw new Error('VR_GOVERNOR_TRUTH_MISSING');
+  }
+  let ps;
+  try {
+    const response = await fetch('http://127.0.0.1:' + port + '/api/ps', {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) throw new Error('OLLAMA_PS_UNAVAILABLE');
+    ps = await response.json();
+  } catch {
+    throw new Error('OLLAMA_LOADED_MODEL_PROOF_UNAVAILABLE');
+  }
+  const verdict = checkParallelSeedModelResourceV1({
+    governor, ollamaPs: ps, selectedModel,
+  });
+  if (!verdict.ok) throw new Error('PARALLEL_FORGE_RESOURCE_HOLD: ' + verdict.reasonCodes.join(','));
+  return { model: selectedModel, port };
+}
+
+async function localModelWrite(request, existingContent, seed, preflight) {
+  // Recheck immediately before inference in case the VR governor changed during task setup.
+  const current = await localModelPreflight();
+  if (current.model !== preflight.model || current.port !== preflight.port)
+    throw new Error('LOCAL_MODEL_PREFLIGHT_CHANGED');
   const prompt = [
     'You are drafting ONE bounded source proposal for Stephanos OS in an isolated Git worktree.',
     'Return only valid JSON with exactly these fields: {"path":"target","content":"complete file contents"}.',
@@ -66,10 +101,7 @@ async function localModelWrite(request, existingContent, seed) {
     'Current contents of this exact target (may be empty for a new file):',
     existingContent.slice(0, 24000),
   ].join('\n\n');
-  // Loopback only, including fixture ports. Never let a task request a remote endpoint.
-  const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 11434);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
-    throw new Error('LOCAL_MODEL_PORT_INVALID');
+  const port = current.port;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120000);
   try {
@@ -77,7 +109,7 @@ async function localModelWrite(request, existingContent, seed) {
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: process.env.STEPHANOS_SEED_LOCAL_MODEL || 'qwen:14b',
+        model: current.model,
         prompt, stream: false, format: 'json',
         options: { temperature: 0.1, num_predict: 4096 },
       }),
@@ -127,6 +159,7 @@ async function build(request, manifestSha256) {
     request, manifestSha256, approval, nowMs: Date.now(),
   });
   if (!approved.ok) throw new Error('EXACT_LOCAL_OPERATOR_APPROVAL_REJECTED: ' + approved.reasons.join(','));
+  const resource = await localModelPreflight();
   const branch = parallelSeedBranchNameV1(request);
   const worktree = join(stateRoot, 'worktrees', request.taskId);
   const receiptPath = join(stateRoot, 'receipts', request.taskId + '.json');
@@ -185,7 +218,7 @@ async function build(request, manifestSha256) {
     }
     const sha = targetExisted ? createHash('sha256').update(current).digest('hex') : null;
     if (sha !== request.expectedTargetSha256) throw new Error('TARGET_CONTENT_HASH_MISMATCH');
-    const proposal = await localModelWrite(request, current, checked.seed);
+    const proposal = await localModelWrite(request, current, checked.seed, resource);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, proposal.content, { flag: sha === null ? 'wx' : 'w' });
     stage = 'EDITED';
