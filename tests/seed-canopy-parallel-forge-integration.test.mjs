@@ -200,7 +200,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(supervised.taskCount, 1);
     assert.equal(supervised.tasks[0].candidateCommitted, true);
     assert.equal(supervised.tasks[0].merged, false);
-    assert.equal(supervised.liveBuildProven, true);
+    assert.equal(supervised.localSourceCandidateProven, true);
+    assert.equal(supervised.liveBuildProven, false);
     const emptyRun = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(emptyRun.code, 0, emptyRun.stderr);
     assert.equal(JSON.parse(emptyRun.stdout).ran, false);
