@@ -71,15 +71,14 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   const receipts = [
     { taskId: 'blocked-one', stage: 'CLAIMED', recordedAtUtc: '2026-10-13T12:05:00.000Z' },
     { taskId: 'finished-two', stage: 'COMMITTED', recordedAtUtc: '2026-10-13T15:40:00.000Z',
-      commitSha: 'b'.repeat(64).slice(0, 40) },
+      commitSha: 'b'.repeat(40) },
   ];
-  // Receipt identity must be a 40-character git commit SHA, not a 64-character content hash.
   const projected = projectParallelSeedReceiptStatusV1(claims, receipts, NOW);
   assert.equal(projected.taskCount, 2);
   assert.equal(projected.tasks[0].recovery, 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE');
   assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
   assert.equal(projected.tasks[0].merged, false);
-  assert.equal(projected.tasks[1].candidateCommitted, false); // malformed 40-char SHA is not a SHA-256 hash
+  assert.equal(projected.tasks[1].candidateCommitted, true);
   assert.equal(projected.tasks[1].deployed, false);
   assert.equal(projected.doesNotDependOnCanonicalConveyor, true);
 });
