@@ -41,6 +41,16 @@ async function physicalRoot(raw) {
   }
 }
 function fail(code) { const e = new Error(code); e.code = code; throw e; }
+function branchExists(cwd, branch, run = spawnSync) {
+  const result = run('git', ['-C', cwd, 'show-ref', '--verify', '--quiet',
+    'refs/heads/' + branch], {
+    cwd, shell: false, windowsHide: true, encoding: 'utf8',
+    timeout: 30_000, maxBuffer: 128 * 1024,
+  });
+  if (result?.error || (result?.status !== 0 && result?.status !== 1))
+    fail('RESCUE_ISLAND_BRANCH_OBSERVATION_FAILED');
+  return result.status === 0;
+}
 function git(cwd, args, run = spawnSync) {
   const x = run('git', ['-C', cwd, ...args], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
@@ -164,10 +174,12 @@ export async function constructIsolatedRescueIslandPilotV1({
   const claimDir = join(proofs, 'claims');
   await mkdir(treeRoot, { recursive: true });
   await mkdir(claimDir, { recursive: true });
-  if (await physicalRoot(worktreeRoot) !== treeRoot
-      || await physicalRoot(receiptRoot) !== proofs
+  if (lower(await physicalRoot(worktreeRoot)) !== lower(treeRoot)
+      || lower(await physicalRoot(receiptRoot)) !== lower(proofs)
+      || lower(await physicalRoot(claimDir)) !== lower(join(proofs, 'claims'))
       || overlaps(await physicalRoot(repoRoot), treeRoot)
-      || overlaps(await physicalRoot(repoRoot), proofs))
+      || overlaps(await physicalRoot(repoRoot), proofs)
+      || overlaps(await physicalRoot(worktree), canonicalRoot))
     fail('RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED');
   const claimPath = join(claimDir, task.taskId + '.json');
   const recoveryLockPath = join(claimDir, task.taskId + '.recovery.lock');
@@ -234,14 +246,28 @@ export async function constructIsolatedRescueIslandPilotV1({
       const existingHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
       if (checkedOutBranch !== branch || !SHA.test(existingHead))
         fail('RESCUE_ISLAND_RECOVERY_WORKTREE_MISMATCH');
+    } else if (recovering && branchExists(canonicalRoot, branch, runGit)) {
+      // A failed Git checkout may leave the branch but no worktree.
+      // Reclaim only the same exact-base unmodified branch. Never reset or delete it.
+      if (git(canonicalRoot, ['rev-parse', 'refs/heads/' + branch], runGit) !== task.baseHead)
+        fail('RESCUE_ISLAND_RECOVERY_BRANCH_HEAD_MISMATCH');
+      git(canonicalRoot, ['worktree', 'add', worktree, branch], runGit);
     } else {
       git(canonicalRoot, ['worktree', 'add', '-b', branch, worktree, task.baseHead], runGit);
     }
+    if (lower(await physicalRoot(worktree)) !== lower(worktree)
+        || overlaps(await physicalRoot(worktree), canonicalRoot)
+        || overlaps(await physicalRoot(worktree), proofs))
+      fail('RESCUE_ISLAND_WORKTREE_PHYSICAL_BOUNDARY_INVALID');
     await append('PHYSICAL_PICKUP', { worktreeCreated: true });
     const output = resolve(worktree, task.targetPath);
     if (!output.startsWith(resolve(worktree) + (process.platform === 'win32' ? '\\' : '/')))
       fail('RESCUE_ISLAND_PATH_ESCAPES_WORKTREE');
     await mkdir(dirname(output), { recursive: true });
+    if (lower(await physicalRoot(dirname(output))) !== lower(dirname(output))
+        || overlaps(await physicalRoot(dirname(output)), canonicalRoot)
+        || overlaps(await physicalRoot(dirname(output)), proofs))
+      fail('RESCUE_ISLAND_TARGET_PARENT_BOUNDARY_INVALID');
     if (recovering && await exists(output)) {
       if (await readFile(output, 'utf8') !== task.content)
         fail('RESCUE_ISLAND_RECOVERY_SOURCE_MISMATCH');
