@@ -98,6 +98,8 @@ test('invalid issue, unsafe paths, review downgrades and execution overrides are
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['node_modules'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['NODE_MODULES'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['packages/foo/node_modules'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['packages/foo/node_modules/index.js'] });
   rejects('AUTHORITY_POLICY_INVALID', { allowCanonicalLeaseBypass: true });
   rejects('AUTHORITY_POLICY_INVALID', { allowMerge: true });
   rejects('AUTHORITY_POLICY_INVALID', { allowMerge: 'true' });
