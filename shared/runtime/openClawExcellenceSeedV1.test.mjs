@@ -274,3 +274,35 @@ test('stale feed or stale source freshness cannot plant a fresh seed or show cur
     assert.deepEqual(pressure(payload), []);
   }
 });
+
+
+test('future-dated OpenClaw proof cannot advance seed rungs or inflate proof totals', () => {
+  const inventory = 'INVENTORY_BOTH_AGENTS';
+  const future = '2026-10-14T14:38:00.000Z';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [
+    event(inventory, 'openclaw-local'),
+    { ...event(inventory, 'openclaw-standalone'), timestampUtc: future },
+  ];
+  let seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.planted, true);
+  assert.equal(seed.nextGrowthRung, inventory);
+  assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.proofCount, 1);
+  assert.equal(seed.latestEvidenceAt, '2026-10-13T14:38:00.000Z');
+
+  // A forged future observation cannot become the latest proof or redirect
+  // work pressure even when the enclosing feed and heartbeat are current.
+  payload.records.eventRecords = [
+    { ...event(inventory, 'openclaw-local'), timestampUtc: future },
+    { ...event(inventory, 'openclaw-standalone'), timestampUtc: future },
+  ];
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.nextGrowthRung, inventory);
+  assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.proofCount, 0);
+  assert.equal(seed.latestEvidenceAt, '2026-10-13T14:35:00.000Z');
+  const work = pressure(payload).filter((item) => item.seedId === OPENCLAW_EXCELLENCE_MISSION_ID);
+  assert.equal(work.length, 1);
+  assert.equal(work[0].pressureKey, 'seed-3094:rung:inventory_both_agents');
+});
