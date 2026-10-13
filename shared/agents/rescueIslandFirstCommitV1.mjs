@@ -3,9 +3,11 @@
 // scheduler, mailbox verb, merge, deployment, or unattended run is registered.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { inspectRescueIslandCandidateV1 } from './rescueIslandPreflightV1.mjs';
+import { resolveBattleBridgeGitExecutable, createBattleBridgeMinimalChildEnvironment,
+  battleBridgeGitFixedConfigArgs, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
 const TASK = /^[a-z0-9][a-z0-9-]{7,63}$/;
@@ -42,19 +44,21 @@ async function physicalRoot(raw) {
 }
 function fail(code) { const e = new Error(code); e.code = code; throw e; }
 function branchExists(cwd, branch, run = spawnSync) {
-  const result = run('git', ['-C', cwd, 'show-ref', '--verify', '--quiet',
+  const result = run(resolveBattleBridgeGitExecutable(), [...battleBridgeGitFixedConfigArgs(), '-C', cwd, 'show-ref', '--verify', '--quiet',
     'refs/heads/' + branch], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
     timeout: 30_000, maxBuffer: 128 * 1024,
+    env: createBattleBridgeMinimalChildEnvironment(process.env, { git: true }),
   });
   if (result?.error || (result?.status !== 0 && result?.status !== 1))
     fail('RESCUE_ISLAND_BRANCH_OBSERVATION_FAILED');
   return result.status === 0;
 }
 function git(cwd, args, run = spawnSync) {
-  const x = run('git', ['-C', cwd, ...args], {
+  const x = run(resolveBattleBridgeGitExecutable(), [...battleBridgeGitFixedConfigArgs(), '-C', cwd, ...args], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
     timeout: 30_000, maxBuffer: 128 * 1024,
+    env: createBattleBridgeMinimalChildEnvironment(process.env, { git: true }),
   });
   if (x?.status !== 0 || x.error) fail('RESCUE_ISLAND_GIT_OPERATION_FAILED');
   return text(x.stdout);
@@ -63,6 +67,7 @@ function nodeTest(cwd, testFile, run = spawnSync) {
   const x = run(process.execPath, ['--test', testFile], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
     timeout: 60_000, maxBuffer: 128 * 1024,
+    env: createBattleBridgeMinimalChildEnvironment(process.env),
   });
   if (x?.status !== 0 || x.error) fail('RESCUE_ISLAND_FOCUSED_TEST_FAILED');
   return digest(x.stdout || '');
@@ -143,6 +148,7 @@ export async function constructIsolatedRescueIslandPilotV1({
       taskId: task.taskId, ownerIssueNumber: task.issueNumber,
       ownerIssueTitle: task.issueTitle, taskClass: 'BOUNDED_SOURCE_PROPOSAL',
       baseHead: task.baseHead, targetPaths: [task.targetPath],
+      worktreeBranch: 'rescue-island/pilot-' + task.taskId,
       operatorApproval: 'EXTERNAL_OWNER_PROOF_REQUIRED',
       reviewPolicy: 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED',
       allowMerge: false, allowDeploy: false, allowCanonicalLeaseBypass: false,
@@ -158,6 +164,12 @@ export async function constructIsolatedRescueIslandPilotV1({
   if (!repoRoot || !worktreeRoot || !receiptRoot)
     fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
   const canonicalRoot = await physicalRoot(repoRoot);
+  const gitTopLevel = await physicalRoot(git(canonicalRoot, ['rev-parse', '--show-toplevel'], runGit));
+  if (lower(gitTopLevel) !== lower(canonicalRoot))
+    fail('RESCUE_ISLAND_REPOSITORY_TOP_LEVEL_MISMATCH');
+  if (!validateBattleBridgeLocalGitConfiguration(git(canonicalRoot,
+    ['config', '--local', '--null', '--list'], runGit)).ok)
+    fail('RESCUE_ISLAND_GIT_CONFIGURATION_UNTRUSTED');
   const treeRoot = await physicalRoot(worktreeRoot);
   const proofs = await physicalRoot(receiptRoot);
   if (overlaps(canonicalRoot, treeRoot) || overlaps(canonicalRoot, proofs)
@@ -172,6 +184,8 @@ export async function constructIsolatedRescueIslandPilotV1({
   const branch = 'rescue-island/pilot-' + task.taskId;
   const worktree = join(treeRoot, task.taskId);
   const claimDir = join(proofs, 'claims');
+  if (lower(await physicalRoot(claimDir)) !== lower(claimDir))
+    fail('RESCUE_ISLAND_CLAIMS_PHYSICAL_BOUNDARY_INVALID');
   await mkdir(treeRoot, { recursive: true });
   await mkdir(claimDir, { recursive: true });
   if (lower(await physicalRoot(worktreeRoot)) !== lower(treeRoot)
@@ -239,21 +253,35 @@ export async function constructIsolatedRescueIslandPilotV1({
     if (recoveryLock) await recoveryLock.close();
     await append('SELECTED');
     await append('CLAIMED');
-    // Git worktree add is restricted to the task-derived unique branch.
-    // No force, no direct main update, no cleanup of pre-existing directories.
+    // Atomically reserve an absent branch; a matching head never proves ownership.
+    // A crash between reservation and receipt requires owner reconciliation,
+    // never adoption of an unproven branch or a fresh mutation lane.
+    const branchProofPath = join(claimDir, task.taskId + '.BRANCH_RESERVED.json');
+    if (recovering && await exists(branchProofPath)) {
+      const proof = JSON.parse(await readFile(branchProofPath, 'utf8'));
+      if (proof.stage !== 'BRANCH_RESERVED' || proof.taskId !== task.taskId
+          || proof.workerId !== task.workerId || proof.sourceHead !== task.baseHead
+          || proof.branch !== branch || proof.taskFingerprint !== taskFingerprint)
+        fail('RESCUE_ISLAND_BRANCH_OWNERSHIP_UNPROVEN');
+      await append('BRANCH_RESERVED');
+    } else {
+      if (branchExists(canonicalRoot, branch, runGit))
+        fail('RESCUE_ISLAND_BRANCH_OWNERSHIP_UNPROVEN');
+      git(canonicalRoot, ['update-ref', 'refs/heads/' + branch, task.baseHead, '0'.repeat(40)], runGit);
+      await append('BRANCH_RESERVED', { taskFingerprint });
+    }
     if (recovering && await exists(worktree)) {
       const checkedOutBranch = git(worktree, ['symbolic-ref', '--short', 'HEAD'], runGit);
       const existingHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
-      if (checkedOutBranch !== branch || !SHA.test(existingHead))
+      if (checkedOutBranch !== branch || !SHA.test(existingHead)
+          || lower(await physicalRoot(git(worktree, ['rev-parse', '--show-toplevel'], runGit))) !== lower(worktree))
         fail('RESCUE_ISLAND_RECOVERY_WORKTREE_MISMATCH');
-    } else if (recovering && branchExists(canonicalRoot, branch, runGit)) {
+    } else {
       // A failed Git checkout may leave the branch but no worktree.
       // Reclaim only the same exact-base unmodified branch. Never reset or delete it.
       if (git(canonicalRoot, ['rev-parse', 'refs/heads/' + branch], runGit) !== task.baseHead)
         fail('RESCUE_ISLAND_RECOVERY_BRANCH_HEAD_MISMATCH');
       git(canonicalRoot, ['worktree', 'add', worktree, branch], runGit);
-    } else {
-      git(canonicalRoot, ['worktree', 'add', '-b', branch, worktree, task.baseHead], runGit);
     }
     if (lower(await physicalRoot(worktree)) !== lower(worktree)
         || overlaps(await physicalRoot(worktree), canonicalRoot)
@@ -275,6 +303,28 @@ export async function constructIsolatedRescueIslandPilotV1({
       await writeFile(output, task.content, { flag: 'wx' });
     }
     await append('EDITED', { sha256: digest(task.content) });
+    // Persisted recovery state is untrusted. Before executing any JavaScript,
+    // prove every tracked delta and every untracked file is the approved doc.
+    // This covers the test and its imported dependency graph, not just testPath.
+    const beforeTestHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
+    if (beforeTestHead !== task.baseHead && (!recovering
+        || git(worktree, ['rev-parse', 'HEAD^'], runGit) !== task.baseHead
+        || git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit) !== task.targetPath))
+      fail('RESCUE_ISLAND_RECOVERY_HEAD_UNTRUSTED');
+    const deltas = git(worktree, ['diff', '--name-only', task.baseHead, '--'], runGit)
+      .split('\n').filter(Boolean);
+    const pendingPaths = git(worktree, ['status', '--porcelain', '--untracked-files=all'], runGit)
+      .split('\n').filter(Boolean).map(line => line.slice(3).trim());
+    if (deltas.some(path => path !== task.targetPath)
+        || pendingPaths.some(path => path !== task.targetPath))
+      fail('RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED');
+    for (const relative of [task.testPath, 'shared/agents/rescueIslandPreflightV1.mjs']) {
+      const file = join(worktree, relative);
+      if (lower(await physicalRoot(file)) !== lower(file) || !(await lstat(file)).isFile()
+          || git(worktree, ['hash-object', '--no-filters', '--', relative], runGit)
+            !== git(worktree, ['rev-parse', task.baseHead + ':' + relative], runGit))
+        fail('RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED');
+    }
     const testResultHash = nodeTest(worktree, task.testPath, runTest);
     await append('TESTED', { testResultHash });
     const currentHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
@@ -282,7 +332,7 @@ export async function constructIsolatedRescueIslandPilotV1({
       git(worktree, ['add', '--', task.targetPath], runGit);
       const staged = git(worktree, ['diff', '--cached', '--name-only'], runGit);
       if (staged !== task.targetPath) fail('RESCUE_ISLAND_STAGED_SCOPE_MISMATCH');
-      git(worktree, ['-c', 'core.hooksPath=/dev/null',
+      git(worktree, ['-c', 'core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'),
         '-c', 'user.name=Rescue Island Proposal',
         '-c', 'user.email=rescue-island@users.noreply.github.com',
         'commit', '-m', 'Bounded Rescue Island pilot proposal (' + task.taskId + ')'], runGit);

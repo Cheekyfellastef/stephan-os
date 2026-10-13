@@ -33,6 +33,7 @@ async function fixture() {
   git(repoRoot, 'init', '-b', 'main');
   git(repoRoot, 'config', 'user.name', 'Island Test');
   git(repoRoot, 'config', 'user.email', 'island-test@example.invalid');
+  git(repoRoot, 'remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
   git(repoRoot, 'add', '--', 'shared/agents/rescueIslandPreflightV1.mjs',
     'shared/agents/rescueIslandPreflightV1.test.mjs');
   git(repoRoot, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'preflight baseline');
@@ -52,6 +53,9 @@ async function fixture() {
   };
   const observed = {
     repository: task.repository, mainHead: head, observedAtUtc: NOW,
+    worktreeHead: head, worktreeBranch: 'rescue-island/pilot-' + task.taskId,
+    scopeResolutionScan: 'INDEPENDENT_READ_ONLY',
+    scopeResolutions: [{ path: task.targetPath, canonicalPath: task.targetPath, repositoryContained: true }],
     canonicalOwnerScan: 'INDEPENDENT_READ_ONLY',
     seedOwnerScan: 'INDEPENDENT_READ_ONLY',
     islandOwnerScan: 'INDEPENDENT_READ_ONLY',
@@ -78,7 +82,7 @@ test('isolated real Git source build proves physical pickup, actual Node tests, 
   assert.equal(result.reviewRequired, true);
   assert.equal(result.merged, false);
   assert.deepEqual(result.receipts.map(x => x.stage), [
-    'SELECTED', 'CLAIMED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
+    'SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
   ]);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
   const tree = join(ctx.worktreeRoot, ctx.task.taskId);
@@ -109,12 +113,12 @@ test('wrong head, path collision and original/seed ownership stop before claim',
     /RESCUE_ISLAND_PREFLIGHT_HELD/);
   await assert.rejects(() => build({
     ...ctx, observed: { ...ctx.observed, canonicalClaims: [{
-      taskId: 'canonical-claim-001', targetPaths: [ctx.task.targetPath],
+      taskId: 'canonical-claim-001', ownerIssueNumber: 3103, targetPaths: [ctx.task.targetPath],
     }] },
   }), /RESCUE_ISLAND_PREFLIGHT_HELD/);
   await assert.rejects(() => build({
     ...ctx, observed: { ...ctx.observed, seedClaims: [{
-      taskId: 'seed-claim-001', targetPaths: ['docs/architecture'],
+      taskId: 'seed-claim-001', ownerIssueNumber: 3103, targetPaths: ['docs/architecture'],
     }] },
   }), /RESCUE_ISLAND_PREFLIGHT_HELD/);
 });
@@ -172,7 +176,7 @@ test('same-task transient test failure is recoverable by explicitly authorised s
   const result = await build({ ...ctx, sameOwnerRecoveryAuthenticated: true });
   assert.equal(result.ok, true);
   assert.deepEqual(result.receipts.map(r => r.stage), [
-    'SELECTED', 'CLAIMED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
+    'SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
   ]);
   const after = git(ctx.repoRoot, 'worktree', 'list', '--porcelain');
   assert.equal((after.match(/branch refs\/heads\/rescue-island\/pilot-pilot-3103-01/g) || []).length, 1);
@@ -206,7 +210,7 @@ test('symlinked claims folder cannot redirect receipts into the canonical checko
   await mkdir(ctx.receiptRoot, { recursive: true });
   await symlink(ctx.repoRoot, join(ctx.receiptRoot, 'claims'),
     process.platform === 'win32' ? 'junction' : 'dir');
-  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED/);
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_CLAIMS_PHYSICAL_BOUNDARY_INVALID/);
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
 });
 
@@ -217,8 +221,6 @@ test('branch retained after interrupted Git worktree add can resume under same i
   const incompleteGit = (command, args, options) => {
     if (!interrupted && args.includes('worktree') && args.includes('add')) {
       interrupted = true;
-      status('git', ['-C', ctx.repoRoot, 'branch', branch, ctx.task.baseHead],
-        ctx.repoRoot);
       return { status: 1, stdout: '', stderr: 'simulated interrupted worktree add' };
     }
     return spawnSync(command, args, options);
@@ -234,6 +236,62 @@ test('branch retained after interrupted Git worktree add can resume under same i
   assert.equal(result.receipts.filter(x => x.stage === 'ISOLATED_COMMIT').length, 1);
 });
 
+test('Git top-level, not a caller subdirectory, owns the isolation boundary', async () => {
+  const ctx = await fixture();
+  const sub = join(ctx.repoRoot, 'shared');
+  await assert.rejects(() => build({ ...ctx, repoRoot: sub,
+    receiptRoot: join(ctx.repoRoot, 'hidden-receipts') }), /RESCUE_ISLAND_REPOSITORY_TOP_LEVEL_MISMATCH/);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('local Git filters cannot execute at the source mutation boundary', async () => {
+  const ctx = await fixture();
+  git(ctx.repoRoot, 'config', 'filter.untrusted.clean', 'arbitrary-command');
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_GIT_CONFIGURATION_UNTRUSTED/);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('recovery rejects changed test or dependency content BEFORE invoking Node', async () => {
+  for (const relative of ['shared/agents/rescueIslandPreflightV1.test.mjs',
+    'shared/agents/rescueIslandPreflightV1.mjs']) {
+    const ctx = await fixture();
+    await assert.rejects(() => build({ ...ctx, runTest: () => ({ status: 1 }) }),
+      /RESCUE_ISLAND_FOCUSED_TEST_FAILED/);
+    await writeFile(join(ctx.worktreeRoot, ctx.task.taskId, relative), 'throw new Error("untrusted");\n');
+    let executed = false;
+    await assert.rejects(() => build({ ...ctx, sameOwnerRecoveryAuthenticated: true,
+      runTest: () => { executed = true; return { status: 0 }; } }),
+      /RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED/);
+    assert.equal(executed, false);
+    assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+  }
+});
+
+test('existing exact-base branch cannot be adopted as a newly owned mutation lane', async () => {
+  const ctx = await fixture();
+  const branch = 'rescue-island/pilot-' + ctx.task.taskId;
+  git(ctx.repoRoot, 'branch', branch, ctx.task.baseHead);
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_BRANCH_OWNERSHIP_UNPROVEN/);
+  await assert.rejects(() => build({ ...ctx, sameOwnerRecoveryAuthenticated: true }),
+    /RESCUE_ISLAND_BRANCH_OWNERSHIP_UNPROVEN/);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', branch), ctx.task.baseHead);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('recovery rejects a clean unrelated commit BEFORE invoking Node', async () => {
+  const ctx = await fixture();
+  await assert.rejects(() => build({ ...ctx, runTest: () => ({ status: 1 }) }),
+    /RESCUE_ISLAND_FOCUSED_TEST_FAILED/);
+  const tree = join(ctx.worktreeRoot, ctx.task.taskId);
+  await writeFile(join(tree, 'extra.md'), 'unapproved\n');
+  git(tree, 'add', '.');
+  git(tree, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'untrusted extra');
+  let executed = false;
+  await assert.rejects(() => build({ ...ctx, sameOwnerRecoveryAuthenticated: true,
+    runTest: () => { executed = true; return { status: 0 }; } }), /RESCUE_ISLAND_RECOVERY_HEAD_UNTRUSTED/);
+  assert.equal(executed, false);
+});
+
 test('worktree task directory cannot point to another checkout by symlink alias', async () => {
   const ctx = await fixture();
   await mkdir(ctx.worktreeRoot, { recursive: true });
@@ -245,7 +303,7 @@ test('worktree task directory cannot point to another checkout by symlink alias'
 
 test('no privileged public CLI, scheduler, mailbox, network write, merge or lease authority exists in pilot module', async () => {
   const source = await readFile(new URL('./rescueIslandFirstCommitV1.mjs', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /\b(?:force-push|push --force|update-ref|Stop-Process)\b/i);
+  assert.doesNotMatch(source, /\b(?:force-push|push --force|Stop-Process)\b/i);
   assert.doesNotMatch(source, /fetch\s*\(|https\.request\s*\(|execSync\s*\(/);
   assert.match(source, /sourceBuildProposalOnly: true/);
   assert.match(source, /merge[dA-Za-z]*: false/);

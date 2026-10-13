@@ -8,6 +8,8 @@ on:
       - 'shared/agents/rescueIslandPreflightV1.test.mjs'
       - 'shared/agents/rescueIslandFirstCommitV1.mjs'
       - 'shared/agents/rescueIslandFirstCommitV1.test.mjs'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'
+      - 'shared/agents/battleBridgeWindowsHosts.mjs'
       - '.github/workflows/rescue-island-first-commit-proof.yml'
   workflow_dispatch:
 

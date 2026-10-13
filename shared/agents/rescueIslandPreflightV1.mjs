@@ -9,15 +9,16 @@ const PATH = /^[A-Za-z0-9][A-Za-z0-9._/-]{1,219}$/;
 const MAX_EVIDENCE_AGE_MS = 90_000;
 const REPO = 'Cheekyfellastef/stephan-os';
 
-function validPath(raw) {
+function repositoryPath(raw) {
   return typeof raw === 'string' && PATH.test(raw)
     && !raw.includes('//') && !raw.endsWith('/')
     && !raw.split('/').some((segment) => segment === '.' || segment === '..'
-      || segment.toLowerCase() === '.git' || segment.toLowerCase() === 'node_modules')
-    && !['apps/stephanos/dist', 'node_modules'].includes(raw.toLowerCase())
-    && !raw.toLowerCase().startsWith('apps/stephanos/dist/')
-    && !raw.toLowerCase().startsWith('node_modules/')
-    && !raw.toLowerCase().includes('/node_modules/');
+      || segment.toLowerCase() === '.git');
+}
+function validPath(raw) {
+  return repositoryPath(raw)
+    && !raw.split('/').some((segment) => segment.toLowerCase() === 'node_modules')
+    && !overlaps(raw, 'apps/stephanos/dist');
 }
 function normalizedPath(value) { return String(value || '').toLowerCase(); }
 function overlaps(left, right) {
@@ -33,7 +34,26 @@ function validPaths(value) {
 function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
     && value.every((item) => TASK_ID.test(item?.taskId || '')
-      && validPaths(item?.targetPaths));
+      && Number.isSafeInteger(item?.ownerIssueNumber) && item.ownerIssueNumber > 0
+      && Array.isArray(item?.targetPaths) && item.targetPaths.length > 0
+      && item.targetPaths.length <= 3 && item.targetPaths.every(repositoryPath));
+}
+
+// Structural contract only: the independent runtime verifier must resolve each
+// scope on the actual filesystem (including missing leaves via real ancestors).
+// A lexical path, boolean, or caller-supplied digest never authenticates this scan.
+function canonicalScopes(p, paths) {
+  if (p.scopeResolutionScan !== 'INDEPENDENT_READ_ONLY'
+      || !Array.isArray(p.scopeResolutions) || p.scopeResolutions.length > 1539)
+    return null;
+  const resolved = new Map();
+  for (const item of p.scopeResolutions) {
+    if (!repositoryPath(item?.path) || !repositoryPath(item?.canonicalPath)
+        || item.repositoryContained !== true || resolved.has(normalizedPath(item.path)))
+      return null;
+    resolved.set(normalizedPath(item.path), item.canonicalPath);
+  }
+  return paths.every((path) => resolved.has(normalizedPath(path))) ? resolved : null;
 }
 function recentTimestamp(observedAtUtc, nowUtc) {
   if (typeof observedAtUtc !== 'string' || !observedAtUtc.endsWith('Z')
@@ -85,18 +105,27 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
       || !validClaims(p.islandClaims)
       || !DIGEST.test(p.scopeInventoryDigest || ''))
     blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
-  else {
+  else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
+    const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
+    if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
+      blockers.push('CANONICAL_SOURCE_SCOPE_UNPROVEN');
     if (claims.some((claim) => claim.taskId === t.taskId
-      || (validPaths(t.targetPaths) && claim.targetPaths.some((path) =>
-        t.targetPaths.some((candidate) => overlaps(path, candidate))))))
+      || claim.ownerIssueNumber === t.ownerIssueNumber
+      || (scopes && claim.targetPaths.some((path) =>
+        t.targetPaths.some((candidate) => overlaps(scopes.get(normalizedPath(path)),
+          scopes.get(normalizedPath(candidate))))))))
       blockers.push('TASK_OR_SOURCE_SCOPE_ALREADY_OWNED');
   }
   if (p.gamingState !== 'IDLE_FRESH_VERIFIED'
       || p.runnerResourceMode !== 'CPU_ONLY'
       || p.localGamingResourceBudgetVerified !== true)
     blockers.push('GAMING_OR_RESOURCE_CUSTODY_UNPROVEN');
-  if (p.isolatedWorktreeClean !== true || p.independentRunnerQualified !== true)
+  if (p.isolatedWorktreeClean !== true || p.independentRunnerQualified !== true
+      || p.worktreeHead !== t.baseHead
+      || typeof t.worktreeBranch !== 'string'
+      || !/^rescue-island\/[a-z0-9][a-z0-9._-]{5,100}$/.test(t.worktreeBranch)
+      || p.worktreeBranch !== t.worktreeBranch)
     blockers.push('ISOLATED_RUNNER_NOT_PROVEN');
   if (t.workerId === 'rescue-island-02' && p.firstWorkerMaterialProof !== true)
     blockers.push('SECOND_WORKER_PILOT_NOT_PROVEN');
