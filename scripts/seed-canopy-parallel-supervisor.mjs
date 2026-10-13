@@ -18,7 +18,7 @@ import {
 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import {
   SEED_PARALLEL_APPROVAL_REF_SCHEMA, validateSeedParallelApprovalReferenceV1,
-  verifySeedParallelOwnerGitHubApprovalV1,
+  resolveSeedParallelOwnerIssueLabelV1, verifySeedParallelOwnerGitHubApprovalV1,
 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -159,10 +159,11 @@ async function approve(taskId) {
   if (!entry) throw new Error('NO_VALID_INBOX_TASK_WITH_THIS_ID');
   if (entry.existingClaim || entry.existingReceipt) throw new Error('EXISTING_TASK_CUSTODY');
   const phrase = 'APPROVE ' + taskId + ' ' + entry.manifestSha256.slice(0, 12);
+  const issueLabel = await resolveSeedParallelOwnerIssueLabelV1(entry.request.ownerIssue);
   output({
     taskId, seedId: entry.request.seedId,
-    owner: entry.request.ownerIssue + ' — title unavailable from current evidence',
-    issueTitleTruth: 'UNAVAILABLE',
+    owner: issueLabel.label,
+    issueTitleTruth: issueLabel.issueTitleTruth,
     targetPath: entry.request.targetPath, baseSha: entry.request.baseSha,
     requestedTests: entry.request.testPaths,
     exactManifestSha256: entry.manifestSha256,
@@ -206,9 +207,10 @@ async function runOnce() {
     child.on('error', reject);
     child.on('close', resolveCode);
   });
+  const issueLabel = await resolveSeedParallelOwnerIssueLabelV1(selected.request.ownerIssue);
   output({ ran: true, taskId: selected.request.taskId, childExitCode: code,
-    owner: selected.request.ownerIssue + ' — title unavailable from current evidence',
-    issueTitleTruth: 'UNAVAILABLE',
+    owner: issueLabel.label,
+    issueTitleTruth: issueLabel.issueTitleTruth,
     executionTruth: code === 0 ? 'SEE_EXACT_LOCAL_COMMIT_RECEIPT' : 'BLOCKED_CHECK_LOCAL_RECEIPT' });
   if (code !== 0) process.exitCode = 1;
 }
