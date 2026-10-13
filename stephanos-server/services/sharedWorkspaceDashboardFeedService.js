@@ -252,6 +252,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
     operationalFacts: feed.operationalFacts,
+    goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
