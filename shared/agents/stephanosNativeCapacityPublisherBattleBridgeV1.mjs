@@ -200,17 +200,55 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     return fail('STEPHANOS_NATIVE_PUBLISHER_INSTALL_RECEIPT_INVALID');
   }
 
-  const signed = await proveNativePublisherSignedReadbackV1({
+  let signed = await proveNativePublisherSignedReadbackV1({
     expectedHead: shape.expectedHead, repositoryRoot, env,
     verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
     sleep: options.sleepFn,
     now: options.now || (() => new Date()),
   });
+  let recoveryReceipt = null;
+  // The fixed task's IgnoreNew policy can leave a pre-upgrade publisher
+  // running after a successful installer StartNow. Repair ONLY a typed signed
+  // SOURCE-HEAD-INVALID verdict, after canonical main/dirt and installer
+  // identity were already proved; never try a generic process kill.
+  if (!signed.ok
+    && signed.reason === 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID') {
+    const recovery = run(spawnSyncFn, POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', resolve(repositoryRoot, 'scripts', 'windows',
+        'reconcile-stephanos-native-capacity-publisher-stale.ps1'),
+      '-ExpectedHead', shape.expectedHead,
+      '-RequestId', text(command.requestId),
+    ]);
+    recoveryReceipt = lastJsonObject(recovery.stdout);
+    if (!recovery.ok
+      || recoveryReceipt?.finalVerdict !== 'NATIVE_PUBLISHER_FIXED_TASK_RESTART_REQUESTED'
+      || recoveryReceipt.expectedHead !== shape.expectedHead
+      || recoveryReceipt.taskName !== 'Stephanos Native Capacity Publisher'
+      || recoveryReceipt.signedCapacityVerified !== false
+      || recoveryReceipt.leaseReleaseAllowed !== false
+      || recoveryReceipt.sourceMutationAllowed !== false
+      || recoveryReceipt.mergeAuthority !== false) {
+      return fail('STEPHANOS_NATIVE_PUBLISHER_BOUNDED_RESTART_BLOCKED', {
+        signedCapacityProven: false, previousSignedReason: signed.reason,
+        taskName: 'Stephanos Native Capacity Publisher',
+        noOtherTaskTouched: true,
+        mergeAuthority: false, leaseSeizureAllowed: false,
+      });
+    }
+    signed = await proveNativePublisherSignedReadbackV1({
+      expectedHead: shape.expectedHead, repositoryRoot, env,
+      verify: options.verifyCandidateFn || readVerifiedStephanosNativeRoutingCandidate,
+      sleep: options.sleepFn,
+      now: options.now || (() => new Date()),
+    });
+  }
   if (!signed.ok) {
     return fail('STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_NOT_PROVEN', {
       operation: STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
       sourceHead: shape.expectedHead, taskInstalled: true, startRequested: true,
       signedCapacityProven: false, signedReadbackReason: signed.reason,
+      boundedRestartAttempted: recoveryReceipt !== null,
       mergeAuthority: false, leaseSeizureAllowed: false,
     });
   }
@@ -223,6 +261,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     taskInstalled: true,
     signedCapacityProven: true,
     signedReadbackAttempt: signed.attempt,
+    boundedRestartAttempted: recoveryReceipt !== null,
     sourceHead: shape.expectedHead,
     expectedHead: shape.expectedHead,
     expectedHeadMatch: true,
