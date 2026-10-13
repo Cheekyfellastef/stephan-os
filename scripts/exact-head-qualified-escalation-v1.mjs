@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateIndependentReviewArtifact } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
+import { reviewExactHead } from './exact-head-review.mjs';
 import {
   validateProtectedOpenClawReviewRunIdentity,
   validateProtectedOpenClawReviewArtifactMetadata,
@@ -174,7 +175,12 @@ async function main() {
   requireProof(process.env.GITHUB_ACTIONS === 'true' && process.argv.length === 4,
     'TRUSTED_WORKFLOW_REQUIRED');
   const input = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-  const receipt = JSON.parse(readFileSync(process.argv[3], 'utf8'));
+  // Only the trusted source-controlled engine creates the review receipt.
+  // Never ingest a caller-provided approval or a PR-controlled JSON receipt.
+  const receipt = reviewExactHead(input);
+  writeFileSync(process.argv[3], JSON.stringify(receipt, null, 2) + '\n', {
+    flag: 'wx', mode: 0o600,
+  });
   if (receipt.verdict === 'STEPHANOS_REVIEW_PASS' && Array.isArray(receipt.findings)
     && receipt.findings.length === 0) {
     process.stdout.write('EXACT_HEAD_QUALIFIED_ESCALATION=NOT_REQUIRED\n');
