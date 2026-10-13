@@ -7,6 +7,9 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
+import {
+  createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecutable,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import { validateParallelSeedBuildRequestV1 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import {
@@ -23,6 +26,21 @@ const scope = createHash('sha256').update(root).digest('hex').slice(0, 12);
 const stateRoot = join(homedir(), '.stephanos', 'seed-parallel', scope);
 const safeFilename = (value) => /^[a-z0-9][a-z0-9-]{2,79}\.json$/.test(value);
 const output = (obj) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+const fixedGit = resolveBattleBridgeGitExecutable();
+const fixedGitEnvironment = () => ({
+  ...createBattleBridgeMinimalChildEnvironment(process.env, { git: true }),
+  ...(process.platform !== 'win32' ? { HOME: homedir() } : {}),
+});
+const workerEnvironment = () => ({
+  ...createBattleBridgeMinimalChildEnvironment(process.env),
+  ...(process.platform !== 'win32' ? { HOME: homedir() } : {}),
+  // Configuration is data, not a path or command. The worker independently
+  // validates both values before contacting loopback Ollama.
+  ...(process.env.STEPHANOS_SEED_LOCAL_PORT
+    ? { STEPHANOS_SEED_LOCAL_PORT: process.env.STEPHANOS_SEED_LOCAL_PORT } : {}),
+  ...(process.env.STEPHANOS_SEED_LOCAL_MODEL
+    ? { STEPHANOS_SEED_LOCAL_MODEL: process.env.STEPHANOS_SEED_LOCAL_MODEL } : {}),
+});
 const pathFor = (kind, taskId, extension = '.json') => join(stateRoot, kind, taskId + extension);
 
 async function maybeJson(path) {
@@ -99,8 +117,9 @@ async function status() {
       && receipt.targetPath === expectedClaim.targetPath) {
       const worktree = pathFor('worktrees', expectedClaim.taskId, '');
       const verifyGit = (...args) => {
-        const result = spawnSync('git', ['-C', worktree, ...args], {
+        const result = spawnSync(fixedGit, ['-C', worktree, ...args], {
           encoding: 'utf8', shell: false, windowsHide: true, timeout: 5000,
+          env: fixedGitEnvironment(),
         });
         return result.status === 0 ? result.stdout.trim() : null;
       };
@@ -181,7 +200,7 @@ async function runOnce() {
     throw new Error('APPROVED_MANIFEST_CHANGED_BEFORE_DISPATCH');
   const script = fileURLToPath(new URL('./seed-canopy-parallel-builder.mjs', import.meta.url));
   const child = spawn(process.execPath, [script, 'build', selected.path, '--execute'], {
-    cwd: root, env: process.env, shell: false, windowsHide: true, stdio: 'inherit',
+    cwd: root, env: workerEnvironment(), shell: false, windowsHide: true, stdio: 'inherit',
   });
   const code = await new Promise((resolveCode, reject) => {
     child.on('error', reject);
