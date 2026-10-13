@@ -28,6 +28,20 @@ This PR adds no active worker, process, service, scheduler, polling loop, mailbo
 
 Focused tests: node --test shared/agents/rescueIslandPreflightV1.test.mjs
 
+### Canonical ownership contract after structural review
+
+Each claim in all three inventories must include `ownerIssueNumber`; changing
+task IDs or selecting a different file never permits duplicate goal ownership.
+The independently observed `scopeResolutions` maps every candidate and claimed
+scope to a repository-contained canonical relative path, including symlink and
+junction aliases. Missing, ambiguous or escaping resolutions are held. Compare
+canonical equality and ancestor/descendant scopes, and reject generated dist
+ancestors as candidate scopes as well as dist itself and any node_modules segment.
+The isolated runner observation binds `worktreeHead` to the exact base and
+`worktreeBranch` to the candidate branch. A clean checkout alone is insufficient.
+These are structural requirements for the future authenticated adapter; the
+classifier itself does not perform a filesystem scan or authenticate its input.
+
 ## Next independently reviewed slice, before any actual source mutation
 
 1. Qualify an existing source-builder library for reuse without importing its canonical queue/lease consumer. Audit it for implicit controller calls, source dirt handling and process model custody.

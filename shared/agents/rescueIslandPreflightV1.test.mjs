@@ -16,6 +16,7 @@ const task = () => ({
   ownerIssueTitle: 'Rescue Island: two independent proof-gated builders outside Goal Conveyor',
   taskClass: 'BOUNDED_SOURCE_PROPOSAL',
   baseHead: HEAD,
+  worktreeBranch: 'rescue-island/pilot-rescue-3103-pilot-01',
   targetPaths: ['docs/architecture/rescue-island-pilot.md'],
   operatorApproval: 'EXTERNAL_OWNER_PROOF_REQUIRED',
   reviewPolicy: 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED',
@@ -26,6 +27,9 @@ const evidence = () => ({
   observedAtUtc: NOW,
   repository: 'Cheekyfellastef/stephan-os',
   mainHead: HEAD,
+  worktreeHead: HEAD,
+  worktreeBranch: 'rescue-island/pilot-rescue-3103-pilot-01',
+  scopeResolutionScan: 'INDEPENDENT_READ_ONLY',
   canonicalOwnerScan: 'INDEPENDENT_READ_ONLY',
   seedOwnerScan: 'INDEPENDENT_READ_ONLY',
   islandOwnerScan: 'INDEPENDENT_READ_ONLY',
@@ -40,7 +44,18 @@ const evidence = () => ({
 });
 
 function evaluate(patchTask = {}, patchEvidence = {}, nowUtc = NOW) {
-  return inspect({ task: { ...task(), ...patchTask }, observations: { ...evidence(), ...patchEvidence }, nowUtc });
+  const t = { ...task(), ...patchTask };
+  const p = { ...evidence(), ...patchEvidence };
+  for (const key of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
+    if (Array.isArray(p[key])) p[key] = p[key].map(c => ({ ownerIssueNumber: 9999, ...c }));
+  }
+  if (!Object.hasOwn(patchEvidence, 'scopeResolutions')) {
+    const paths = [...(t.targetPaths || []), ...['canonicalClaims', 'seedClaims', 'islandClaims']
+      .flatMap(key => (p[key] || []).flatMap(c => c.targetPaths))];
+    p.scopeResolutions = [...new Set(paths.map(path => path.toLowerCase()))]
+      .map(path => ({ path, canonicalPath: path, repositoryContained: true }));
+  }
+  return inspect({ task: t, observations: p, nowUtc });
 }
 function rejects(code, patchTask, patchEvidence, nowUtc) {
   const r = evaluate(patchTask, patchEvidence, nowUtc);
@@ -96,6 +111,8 @@ test('invalid issue, unsafe paths, review downgrades and execution overrides are
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['docs/architecture/a.md', 'DOCS/ARCHITECTURE/A.md'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist/index.html'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['node_modules'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['NODE_MODULES'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['packages/foo/node_modules'] });
@@ -109,6 +126,43 @@ test('invalid issue, unsafe paths, review downgrades and execution overrides are
   rejects('AUTHORITY_POLICY_INVALID', { allowArbitraryShell: true });
   rejects('AUTHORITY_POLICY_INVALID', { operatorApproval: 'auto-approved' });
   rejects('TASK_CLASS_NOT_ADMITTED', { taskClass: 'UNBOUNDED_MAINTENANCE' });
+});
+
+test('ownership follows canonical issue and filesystem identity across all three inventories', () => {
+  for (const inventory of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
+    rejects('TASK_OR_SOURCE_SCOPE_ALREADY_OWNED', {}, { [inventory]: [{
+      taskId: 'another-task-01', ownerIssueNumber: 3103, targetPaths: ['different/file.md'],
+    }] });
+    for (const canonicalPath of ['docs/architecture/rescue-island-pilot.md', 'docs/architecture']) {
+      rejects('TASK_OR_SOURCE_SCOPE_ALREADY_OWNED', {}, {
+        [inventory]: [{ taskId: 'another-task-01', targetPaths: ['alias/file.md'] }],
+        scopeResolutions: [
+          { path: task().targetPaths[0], canonicalPath: task().targetPaths[0], repositoryContained: true },
+          { path: 'alias/file.md', canonicalPath, repositoryContained: true },
+        ],
+      });
+    }
+    rejects('CROSS_SYSTEM_OWNERSHIP_UNPROVEN', {}, { [inventory]: [{
+      taskId: 'another-task-01', ownerIssueNumber: undefined, targetPaths: ['different/file.md'],
+    }] });
+  }
+  rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutions: [] });
+  rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutionScan: 'UNKNOWN' });
+  for (const canonicalPath of ['../outside', 'apps/stephanos', 'apps/stephanos/dist', 'packages/foo/node_modules']) {
+    rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutions: [{
+      path: task().targetPaths[0], canonicalPath, repositoryContained: true,
+    }] });
+  }
+  rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutions: [{
+    path: task().targetPaths[0], canonicalPath: task().targetPaths[0], repositoryContained: false,
+  }] });
+});
+
+test('clean worktree observations must bind both branch and exact base head', () => {
+  rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeHead: 'c'.repeat(40) });
+  rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeHead: undefined });
+  rejects('ISOLATED_RUNNER_NOT_PROVEN', {}, { worktreeBranch: 'rescue-island/unrelated-task' });
+  rejects('ISOLATED_RUNNER_NOT_PROVEN', { worktreeBranch: 'main' });
 });
 
 test('gaming, GPU model custody and second clone are independently gated', () => {
