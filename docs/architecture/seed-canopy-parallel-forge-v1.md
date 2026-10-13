@@ -43,9 +43,13 @@ Prepare a JSON request file *outside the repository*, replacing BASE_SHA with th
   "deployAllowed": false
 }
 
-After independently checking that no existing PR owns the exact target path and that the issue/intent are still valid:
+After independently checking that no existing PR owns the exact target path and that the issue/intent are still valid, **do not execute the builder directly as the first step**. Copy the exact request into the supervisor's local inbox, run `supervisor approve <task-id>` in a genuine interactive operator terminal, and then run `supervisor run-once`, as documented below.
 
-    node scripts/seed-canopy-parallel-builder.mjs build /absolute/path/to/request.json --execute
+    node scripts/seed-canopy-parallel-supervisor.mjs inbox
+    node scripts/seed-canopy-parallel-supervisor.mjs approve <task-id>
+    node scripts/seed-canopy-parallel-supervisor.mjs run-once
+
+A direct `build <request.json> --execute` invocation is a guarded internal worker entrypoint; without a verified exact approval it fails closed.
 
 The task runs **once**, in its own branch and worktree under the operator's .stephanos/seed-parallel directory, and records stage receipts under receipts/<taskId>.json.
 
