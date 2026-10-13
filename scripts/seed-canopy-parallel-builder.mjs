@@ -140,7 +140,7 @@ async function build(request) {
       await writeFile(join(targetClaims, targetKey + '.claim'), JSON.stringify({
         taskId: request.taskId, seedId: request.seedId, ownerIssue: request.ownerIssue,
         targetPath: request.targetPath, baseSha: request.baseSha, createdAtUtc: new Date().toISOString(),
-      }) + '\\n', { flag: 'wx' });
+      }) + '\n', { flag: 'wx' });
     } catch (error) {
       if (error.code === 'EEXIST') throw new Error('TARGET_ALREADY_OWNED_BY_PARALLEL_TASK');
       throw error;
