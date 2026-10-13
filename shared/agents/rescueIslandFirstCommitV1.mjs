@@ -132,6 +132,7 @@ export async function constructIsolatedRescueIslandPilotV1({
   const branch = 'rescue-island/pilot-' + task.taskId;
   const worktree = join(treeRoot, task.taskId);
   const claimDir = join(proofs, 'claims');
+  await mkdir(treeRoot, { recursive: true });
   await mkdir(claimDir, { recursive: true });
   const claim = await open(join(claimDir, task.taskId + '.json'), 'wx')
     .catch(() => fail('RESCUE_ISLAND_DUPLICATE_CLAIM'));
