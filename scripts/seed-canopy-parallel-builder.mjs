@@ -15,6 +15,9 @@ import {
   parseParallelSeedModelResponseV1,
   validateParallelSeedBuildRequestV1,
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
+import {
+  parallelSeedManifestHashV1, evaluateParallelSeedExactApprovalV1,
+} from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -109,9 +112,21 @@ async function safeTarget(worktree, targetPath) {
   return full;
 }
 
-async function build(request) {
+async function build(request, manifestSha256) {
   const checked = validateParallelSeedBuildRequestV1(request, HIGH_LEVEL_FLYWHEEL_SEEDS_V1);
   if (!checked.ok) throw new Error('REQUEST_REJECTED: ' + checked.errors.join(','));
+  // Enforced at the actual mutating worker boundary, not merely by the supervisor.
+  // Direct invocation cannot waive the operator's exact manifest approval.
+  let approval = null;
+  try {
+    approval = JSON.parse(await readFile(join(stateRoot, 'approvals', request.taskId + '.json'), 'utf8'));
+  } catch {
+    throw new Error('EXACT_LOCAL_OPERATOR_APPROVAL_MISSING_OR_UNREADABLE');
+  }
+  const approved = evaluateParallelSeedExactApprovalV1({
+    request, manifestSha256, approval, nowMs: Date.now(),
+  });
+  if (!approved.ok) throw new Error('EXACT_LOCAL_OPERATOR_APPROVAL_REJECTED: ' + approved.reasons.join(','));
   const branch = parallelSeedBranchNameV1(request);
   const worktree = join(stateRoot, 'worktrees', request.taskId);
   const receiptPath = join(stateRoot, 'receipts', request.taskId + '.json');
@@ -218,8 +233,10 @@ async function main() {
   if (operation !== 'build' || !filename || confirmation !== '--execute') {
     throw new Error('Usage: node scripts/seed-canopy-parallel-builder.mjs list | plan <seed-id> | build <request.json> --execute');
   }
-  const request = JSON.parse(await readFile(resolve(filename), 'utf8'));
-  output(await build(request));
+  const rawManifest = await readFile(resolve(filename), 'utf8');
+  const manifestSha256 = parallelSeedManifestHashV1(rawManifest);
+  const request = JSON.parse(rawManifest);
+  output(await build(request, manifestSha256));
 }
 main().catch((error) => {
   process.stderr.write('Seed Canopy parallel lane BLOCKED: ' + String(error.message || error) + '\n');
