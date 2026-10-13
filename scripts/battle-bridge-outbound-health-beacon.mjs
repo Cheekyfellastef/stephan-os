@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { resolveSharedWorkspacePath } from '../shared/agents/sharedAgentWorkspac
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
 export * from './battle-bridge-outbound-health-beacon-core.mjs';
@@ -566,6 +567,33 @@ function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualified
   });
 }
 
+// The public beacon gets only an independently VERIFIED, strictly pinned
+// local signed ledger. Unsigned Core heartbeat facts are never green by proxy.
+function readCommissionedGateLedger(workspaceRoot, sourceHead, observedAtUtc, env = process.env) {
+  const pin = String(env.STEPHANOS_GATE_OBSERVATORY_PUBLIC_KEY_SHA256 || '').trim().toLowerCase();
+  const localAppData = String(env.LOCALAPPDATA || '');
+  if (!/^[a-f0-9]{64}$/.test(pin) || !localAppData) return null;
+  try {
+    const pemPath = resolve(localAppData, 'Stephanos', 'keys', 'stephanos-goal-build-gates-public.pem');
+    const metadata = lstatSync(pemPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 8192) return null;
+    const key = readFileSync(pemPath, 'utf8');
+    const status = readJsonBounded(join(workspaceRoot, 'status', 'goal-build-gates-current.json'));
+    if (!status) return null;
+    const proofs = [];
+    for (let id = 1; id <= 23; id += 1) {
+      const proof = readJsonBounded(join(workspaceRoot, 'proof', 'goal-gate-' + id + '.json'));
+      if (proof) proofs.push(proof);
+    }
+    return projectGoalBuildGateObservatoryV1({
+      statusRecords: [status], proofRecords: proofs,
+      expectedSourceHead: sourceHead,
+      trustedPublicKeyPem: key, trustedPublicKeySha256: pin,
+      nowMs: Date.parse(observedAtUtc), staleAfterMs: 3 * 60_000,
+    });
+  } catch { return null; }
+}
+
 export function buildBattleBridgeOutboundBeacon(args = {}) {
   const base = core.buildBattleBridgeOutboundBeacon(args);
   const augmented = augmentRecordWithWorkerWatchdog(
@@ -767,6 +795,9 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
     ...augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord, [], sovereignRepairRecord, controllerLaneStatusRecord),
     goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(coreGateStatus, {
       sourceHead: coreResult.record.sourceHead, nowMs: Date.parse(coreResult.record.observedAtUtc),
+      verifiedObservatory: readCommissionedGateLedger(
+        workspaceRoot, coreResult.record.sourceHead, coreResult.record.observedAtUtc, env,
+      ),
     }),
   });
   const publication = requestedPublish(repoRoot, core.buildBattleBridgeOutboundBeaconBody(record));
