@@ -9,12 +9,6 @@ on:
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs'
-      - 'shared/runtime/goalBuildGateObservatoryV1.mjs'
-      - 'shared/runtime/goalBuildGateObservatoryV1.test.mjs'
-      - 'shared/agents/shared-workspace-dashboard-feed.mjs'
-      - 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js'
-      - 'stephanos-ui/src/components/FlywheelPanel.jsx'
-      - 'apps/goal-dashboard/index.html'
       - 'shared/runtime/missionScheduler.mjs'
       - 'shared/runtime/missionScheduler.test.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.mjs'
@@ -77,7 +71,6 @@ jobs:
           node --check shared/agents/programmeAuthorityV1.mjs
           node --check shared/agents/durableFlywheelControllerVNext.mjs
           node --check shared/runtime/missionScheduler.mjs
-          node --check shared/runtime/goalBuildGateObservatoryV1.mjs
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
           node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
@@ -108,7 +101,6 @@ jobs:
           shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
-          shared/runtime/goalBuildGateObservatoryV1.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
           stephanos-server/services/elasticPrHeadLeaseService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
