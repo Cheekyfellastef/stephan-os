@@ -68,7 +68,9 @@ export function planCoreGateStewardV1(observatory = {}, {
   minRetryMs = 60 * 60_000, gamingProtected = false, previousAttempts = [],
 } = {}) {
   const failures = Array.isArray(observatory.gates)
-    ? observatory.gates.filter(g => g?.status === 'FAIL') : [];
+    ? observatory.gates.filter(g => g?.status === 'FAIL'
+      && HEAD.test(observatory?.sourceHead || '')
+      && g.sourceHead === observatory.sourceHead) : [];
   const actions = failures.map(gate => {
     const policy = SAFE_GATE_ACTIONS_V1[gate.id];
     return policy ? Object.freeze({
