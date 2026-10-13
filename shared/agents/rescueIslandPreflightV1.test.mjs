@@ -180,6 +180,33 @@ test('clean worktree observations must bind both branch and exact base head', ()
   }
 });
 
+test('mixed-case worktree digest claims cannot evade cross-conveyor ownership', () => {
+  for (const inventory of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
+    rejects('BRANCH_OR_WORKTREE_ALREADY_OWNED', {}, {
+      [inventory]: [{ taskId: 'another-task-01', targetPaths: ['different/file.md'],
+        worktreeIdentity: task().worktreeIdentity.toUpperCase() }],
+    });
+  }
+});
+
+test('complete independent scope scan accepts all permitted claim inventory paths', () => {
+  const canonicalClaims = Array.from({ length: 512 }, (_, i) => ({
+    taskId: `canonical-task-${i}`,
+    targetPaths: [0, 1, 2].map(j => `docs/unclaimed/project-${i}-${j}.md`),
+  }));
+  const seedClaims = [{ taskId: 'seed-task-01', targetPaths: ['docs/unclaimed/seed-extra.md'] }];
+  const targetPaths = [
+    'docs/architecture/rescue-island-pilot.md',
+    'docs/architecture/rescue-island-pilot-tests.md',
+    'docs/architecture/rescue-island-pilot-notes.md',
+  ];
+  const result = evaluate({ targetPaths }, { canonicalClaims, seedClaims });
+  assert.equal(result.preflight, 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED',
+    JSON.stringify(result.blockers));
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.workerStartAllowed, false);
+});
+
 test('gaming, GPU model custody and second clone are independently gated', () => {
   rejects('GAMING_OR_RESOURCE_CUSTODY_UNPROVEN', {}, { gamingState: 'ACTIVE' });
   rejects('GAMING_OR_RESOURCE_CUSTODY_UNPROVEN', {}, { gamingState: 'UNKNOWN' });
