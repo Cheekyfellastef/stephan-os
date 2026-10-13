@@ -124,6 +124,7 @@ test('admits the canonical protected-key identity and derived authority identity
   const result = await admit();
   assert.equal(result.ok, true, result.reason);
   assert.equal(result.candidate.authorityReceiptIds.length, 1);
+  assert.equal(result.candidate.capacityObservedAtUtc, '2026-08-10T11:59:00.000Z');
   assert.match(result.candidate.authorityReceiptIds[0], /^native-authority-[0-9a-f]{24}$/);
 });
 
