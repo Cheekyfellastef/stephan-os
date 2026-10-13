@@ -93,9 +93,9 @@ test('externally pinned Ed25519 signer makes individual evidence visible, never 
   const status = records.get('status/goal-build-gates-current.json');
   const proofs = [...records.entries()].filter(([p]) => p.startsWith('proof/')).map(([,p]) => p);
   assert.equal(proofs.length, 5);
-  assert.ok(proofs.every(p => /^goal-gate-[1-9]-[a-f0-9]{12}$/.test(p.correlationId)));
-  assert.ok(proofs.every(p => p.proofRefs.length === 1 && /^proof\/goal-gate-[1-9]\.json$/.test(p.proofRefs[0])));
-  assert.ok(status.proofRefs.every(p => /^proof\/goal-gate-[1-9]\.json$/.test(p)));
+  assert.ok(proofs.every(p => /^goal-gate-(?:[1-9]|1[0-9]|2[0-3])-[a-f0-9]{12}$/.test(p.correlationId)));
+  assert.ok(proofs.every(p => p.proofRefs.length === 1 && /^proof\/goal-gate-(?:[1-9]|1[0-9]|2[0-3])\.json$/.test(p.proofRefs[0])));
+  assert.ok(status.proofRefs.every(p => /^proof\/goal-gate-(?:[1-9]|1[0-9]|2[0-3])\.json$/.test(p)));
   const authenticated = projectGoalBuildGateObservatoryV1({
     statusRecords: [status], proofRecords: proofs, expectedSourceHead: head,
     trustedPublicKeyPem: pem,
