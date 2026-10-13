@@ -103,6 +103,14 @@ test('reject traversal, Windows escape, protected paths, exotic paths and arbitr
   }, seeds).ok, false);
 });
 
+test('v1 refuses executable code proposals until a real sandbox is qualified', () => {
+  const proposedCode = validateParallelSeedBuildRequestV1({
+    ...request, targetPath: 'shared/runtime/harmless-module.mjs',
+  }, seeds);
+  assert.equal(proposedCode.ok, false);
+  assert.ok(proposedCode.errors.includes('CODE_PROPOSAL_NEEDS_QUALIFIED_SANDBOX'));
+});
+
 test('local model may propose only one exact file with size bounds, not additional edits', () => {
   const data = JSON.stringify({ path: request.targetPath, content: '# Source-backed inventory\n' });
   assert.equal(parseParallelSeedModelResponseV1(data, request.targetPath).path, request.targetPath);
