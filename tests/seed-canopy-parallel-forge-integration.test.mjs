@@ -176,8 +176,17 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
     const run = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(run.code, 0, run.stderr);
-    assert.match(run.stdout, /#3096 — title unavailable from current evidence/,
-      'operator run report must preserve truthful owner and title binding');
+    // GitHub may return the live canonical issue title or be unavailable.
+    // Both states must be labelled accurately, never invented or self-attested.
+    const titleReport = run.stdout.match(/"owner": "([^"\n]+)"[\s\S]*?"issueTitleTruth": "([^"]+)"/);
+    assert.ok(titleReport, 'operator report must include issue title truth');
+    const [, reportedOwner, titleTruth] = titleReport;
+    if (titleTruth === 'UNAVAILABLE') {
+      assert.equal(reportedOwner, '#3096 — title unavailable from current evidence');
+    } else {
+      assert.equal(titleTruth, 'CURRENT_CANONICAL_GITHUB');
+      assert.match(reportedOwner, /^#3096 — (?!title unavailable from current evidence).+/);
+    }
     const completed = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(completed.stage, 'COMMITTED');
