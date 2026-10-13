@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
@@ -254,6 +255,7 @@ function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
   return Object.freeze({
     ...projection,
     autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, nowMs, staleAfterMs }),
   });
 }
 
