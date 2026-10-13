@@ -46,7 +46,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await mkdir(governorDir, { recursive: true });
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
-        active: false, localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
+        active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
     await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'),
       path('scripts/seed-canopy-parallel-builder.mjs'));
     await copyFile(join(sourceRoot, 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'),
@@ -100,7 +100,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         }
         if (req.url === '/models' && req.method === 'GET') {
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify({ data: [{ id: 'mock-fixture-model', status: { value: 'loaded' } }] }));
+          res.end(JSON.stringify({ data: [{ id: 'mock-fixture-model', status: { value: 'loaded', args: ['llama-server'] } }] }));
           return;
         }
         // An inference call without atomic autoload=false must fail the fixture.
