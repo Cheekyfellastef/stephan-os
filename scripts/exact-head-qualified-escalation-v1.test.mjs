@@ -118,5 +118,5 @@ test('untrusted PR data can never set review authority by adding a flag', () => 
   ), /OWNER_SCHEMA/);
   assert.throws(() => assertQualifiableExactHeadReceiptV1(
     input, { ...receipt, verdict: 'STEPHANOS_REVIEW_PASS' },
-  ), /DETERMINISTIC_REVIEW_UNBOUND/);
+  ), /REVIEW_IDENTITY/);
 });
