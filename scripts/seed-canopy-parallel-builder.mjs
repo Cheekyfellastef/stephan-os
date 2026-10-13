@@ -161,6 +161,35 @@ async function localModelWrite(request, existingContent, seed, preflight) {
       governorCheckInFlight = false;
     }
   }, 500);
+  // The canonical governor's normal idle Watch loop does not continuously
+  // rewrite its snapshot. Without live refresh a healthy 30B inference takes
+  // >30 seconds and our freshness watcher aborts it even with no game open.
+  // Refresh through the same bounded Windows Reconcile entry point. Keep this
+  // separate from the 500ms watcher so the heavy reconcile never delays an
+  // observed game transition or an unreadable-state abort.
+  let governorRefreshInFlight = false;
+  const refreshWatch = process.platform === 'win32' ? setInterval(async () => {
+    if (governorRefreshInFlight || resourceAbort) return;
+    governorRefreshInFlight = true;
+    try {
+      const canonicalGovernor = join(repoRoot, 'scripts', 'windows', 'run-vr-resource-governor.ps1');
+      await processExec('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-File', canonicalGovernor, '-Action', 'Reconcile'],
+        repoRoot, 18000);
+      const state = JSON.parse(await readFile(governorFile, 'utf8'));
+      if (state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+        || state.active !== false || state.localModelAllowed !== true
+        || !isParallelSeedGovernorSnapshotFreshV1(state)) {
+        resourceAbort = 'GAME_PRIORITY_ABORTED_LOCAL_INFERENCE';
+        controller.abort();
+      }
+    } catch {
+      resourceAbort = 'GAME_PRIORITY_GOVERNOR_LIVE_REFRESH_FAILED';
+      controller.abort();
+    } finally {
+      governorRefreshInFlight = false;
+    }
+  }, 15000) : null;
   try {
     // Unlike Ollama /api/generate, llama.cpp router honours autoload=false
     // atomically at dispatch. An evicted model cannot reload via this request.
@@ -185,6 +214,7 @@ async function localModelWrite(request, existingContent, seed, preflight) {
     throw error;
   } finally {
     clearInterval(gameWatch);
+    if (refreshWatch) clearInterval(refreshWatch);
     clearTimeout(timer);
   }
 }
