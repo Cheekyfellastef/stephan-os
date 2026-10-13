@@ -17,6 +17,7 @@ import {
 
 const HEAD = 'b'.repeat(40);
 const NOW = new Date('2026-09-22T17:50:00.000Z');
+const CAPACITY_OBSERVED_AT = new Date(Date.now() + 60_000).toISOString();
 
 function command(overrides = {}) {
   return {
@@ -99,7 +100,7 @@ test('Battle Bridge executor proves exact main then invokes only the fixed insta
     spawnSyncFn,
     verifyCandidateFn: async () => ({ ok: true, candidate: {
       sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-      taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+      taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: CAPACITY_OBSERVED_AT, sourceMutationAllowed: true,
       mergeAuthority: false, leaseSeizureAllowed: false,
     } }),
     sleepFn: async () => {},
@@ -139,7 +140,7 @@ test('runtime-owned tracked and untracked dirt does not block native publisher a
     spawnSyncFn,
     verifyCandidateFn: async () => ({ ok: true, candidate: {
       sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-      taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+      taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: CAPACITY_OBSERVED_AT, sourceMutationAllowed: true,
       mergeAuthority: false, leaseSeizureAllowed: false,
     } }),
     sleepFn: async () => {},
@@ -194,33 +195,33 @@ test('real tracked or untracked source dirt still fails closed before native pub
 test('native task install cannot falsely certify a stale signed capacity receipt', async () => {
   let observed = 0, slept = 0;
   const result = await proveNativePublisherSignedReadbackV1({
-    expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+    notBeforeUtc: NOW.toISOString(), expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
     verify: async () => {
       observed += 1;
       return { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' };
     },
-    sleep: async (ms) => { assert.equal(ms, 2000); slept += 1; },
+    sleep: async (ms) => { assert.equal(ms, 10_000); slept += 1; },
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID');
-  assert.equal(observed, 5);
-  assert.equal(slept, 4);
+  assert.equal(observed, 16);
+  assert.equal(slept, 15);
 });
 
 test('native task installation requires an exact signed routing candidate', async () => {
   const candidate = {
     sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-    taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+    taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: CAPACITY_OBSERVED_AT, sourceMutationAllowed: true,
     mergeAuthority: false, leaseSeizureAllowed: false,
   };
   const fail = await proveNativePublisherSignedReadbackV1({
-    expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+    notBeforeUtc: NOW.toISOString(), expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
     verify: async () => ({ ok: true, candidate: { ...candidate, sourceHead: 'c'.repeat(40) } }),
     sleep: async () => {},
   });
   assert.equal(fail.ok, false);
   const pass = await proveNativePublisherSignedReadbackV1({
-    expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+    notBeforeUtc: NOW.toISOString(), expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
     verify: async () => ({ ok: true, candidate }),
     sleep: async () => { throw new Error('must not sleep after successful proof'); },
   });
@@ -253,11 +254,11 @@ test('typed stale signed head triggers only one guarded fixed-task reconcile and
     sleepFn: async () => {},
     verifyCandidateFn: async () => {
       verifications++;
-      return verifications <= 5
+      return verifications <= 16
         ? { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }
         : { ok: true, candidate: {
             sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
-            taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+            taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: CAPACITY_OBSERVED_AT, sourceMutationAllowed: true,
             mergeAuthority: false, leaseSeizureAllowed: false,
           } };
     },
@@ -267,7 +268,7 @@ test('typed stale signed head triggers only one guarded fixed-task reconcile and
   assert.equal(result.boundedRestartAttempted, true);
   assert.equal(reconcileAttempts, 1);
   assert.equal(starts, 1);
-  assert.equal(verifications, 6);
+  assert.equal(verifications, 17);
 });
 
 test('stale signed head never becomes success when guarded restart is blocked', async () => {
