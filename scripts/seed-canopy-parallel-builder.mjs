@@ -63,10 +63,14 @@ async function localModelWrite(request, existingContent, seed) {
     'Current contents of this exact target (may be empty for a new file):',
     existingContent.slice(0, 24000),
   ].join('\n\n');
+  // Loopback only, including fixture ports. Never let a task request a remote endpoint.
+  const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 11434);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
+    throw new Error('LOCAL_MODEL_PORT_INVALID');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 120000);
   try {
-    const response = await fetch('http://127.0.0.1:11434/api/generate', {
+    const response = await fetch('http://127.0.0.1:' + port + '/api/generate', {
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
