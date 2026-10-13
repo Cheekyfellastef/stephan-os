@@ -271,6 +271,7 @@ let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
 let lastOctopusSelfHealVerdict = 'NOT_RUN';
 let lastOctopusSelfHealBlocker = '';
+let lastOctopusSelfHealSourceHead = '';
 let lastOctopusSelfHealAttemptCount = 0;
 let lastOctopusSelfHealProofHash = '';
 let lastOctopusSelfHealProofHashes = Object.freeze([]);
@@ -461,12 +462,16 @@ async function runBoundedOctopusSelfHeal(sourceHead) {
     nowMs: Date.now(),
     lastAttemptAtMs: lastOctopusSelfHealAtMs,
     cooldownMs: OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+    lastBlocker: lastOctopusSelfHealBlocker,
+    lastAttemptSourceHead: lastOctopusSelfHealSourceHead,
+    sourceHead,
   });
   if (!decision.shouldRepair) {
     lastOctopusSelfHealVerdict = decision.reason;
     return Object.freeze({ ok: false, attempted: false, decision });
   }
 
+  lastOctopusSelfHealSourceHead = sourceHead;
   lastOctopusSelfHealAtMs = Date.now();
   lastOctopusSelfHealAtUtc = new Date(lastOctopusSelfHealAtMs).toISOString();
   lastOctopusSelfHealAttemptCount += 1;
