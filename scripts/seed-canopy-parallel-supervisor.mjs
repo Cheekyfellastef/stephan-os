@@ -40,6 +40,7 @@ async function files(kind, extension) {
 }
 async function inboxCandidates() {
   const candidates = [];
+  let approvalVerifications = 0;
   for (const name of await files('inbox', '.json')) {
     if (!safeFilename(name)) continue;
     const taskId = name.slice(0, -5);
@@ -57,7 +58,10 @@ async function inboxCandidates() {
       const reference = await maybeJson(pathFor('approvals', taskId));
       // Limit GitHub traffic: only a small batch of eligible, unclaimed task references
       // is authenticated per supervisor cycle. Never continuously poll for approval.
-      const verification = !existingClaim && !existingReceipt && reference && candidates.length < 4
+      const shouldVerify = !existingClaim && !existingReceipt && Boolean(reference)
+        && approvalVerifications < 4;
+      if (shouldVerify) approvalVerifications += 1;
+      const verification = shouldVerify
         ? await verifySeedParallelOwnerGitHubApprovalV1({ request, manifestSha256, reference })
         : null;
       candidates.push({
@@ -163,7 +167,8 @@ async function runOnce() {
     child.on('close', resolveCode);
   });
   output({ ran: true, taskId: selected.request.taskId, childExitCode: code,
-    owner: selected.request.ownerIssue,
+    owner: selected.request.ownerIssue + ' — title unavailable from current evidence',
+    issueTitleTruth: 'UNAVAILABLE',
     executionTruth: code === 0 ? 'SEE_EXACT_LOCAL_COMMIT_RECEIPT' : 'BLOCKED_CHECK_LOCAL_RECEIPT' });
   if (code !== 0) process.exitCode = 1;
 }
