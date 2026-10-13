@@ -143,6 +143,7 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   lastAttemptAtMs = null,
   cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   lastBlocker = '', lastAttemptSourceHead = '', sourceHead = '',
+  programmeBlockerIdentity = '', lastAttemptProgrammeBlockerIdentity = '',
 } = {}) {
   const now = finiteMs(nowMs) ?? Date.now();
   const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
@@ -170,7 +171,11 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   const sameExactSource = /^[0-9a-f]{40}$/.test(String(sourceHead).toLowerCase())
     && String(lastAttemptSourceHead).toLowerCase() === String(sourceHead).toLowerCase();
   const sinceLastAttemptMs = lastAttempt === null ? null : Math.max(0, now - lastAttempt);
+  const sameCanonicalBlocker = typeof programmeBlockerIdentity === 'string'
+    && programmeBlockerIdentity.length > 0
+    && programmeBlockerIdentity === lastAttemptProgrammeBlockerIdentity;
   if (ownerProofMissing && sameExactSource && octopusSummary?.octopusProgrammeHeld === true
+    && sameCanonicalBlocker
     && sinceLastAttemptMs !== null && sinceLastAttemptMs < OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS) {
     return Object.freeze({
       shouldRepair: false,
@@ -268,6 +273,16 @@ export function summarizePersistentRefillSweep(result = {}) {
     refillCanonicalProgrammeHeld: text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
       || result?.controllerContinuity === 'RECONCILE_CANONICAL_PROGRAMME_HOLD'
       || result?.finalVerdict === 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
+    // No hourly throttle without an explicit, bounded canonical HOLD blocker identity.
+    refillCanonicalProgrammeBlockerIdentity: (
+      text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
+      && Array.isArray(result?.conveyorResult?.programmeBlockers)
+      && result.conveyorResult.programmeBlockers.length > 0
+      && result.conveyorResult.programmeBlockers.length <= 20
+      && result.conveyorResult.programmeBlockers.every((entry) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(text(entry)))
+    )
+      ? [...new Set(result.conveyorResult.programmeBlockers.map((entry) => text(entry).toLowerCase()))].sort().join('|')
+      : '',
     refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
   });
 }
