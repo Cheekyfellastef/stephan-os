@@ -35,3 +35,15 @@ test('existing specialist-pinned Windows starter accepts the required generation
   assert.ok(runner.includes('$staleCapability = [bool]'));
   assert.ok(runner.includes('$staleCapabilityRecycleRequested'));
 });
+
+
+test('scheduled S4U launcher and post-sync refresh explicitly require same generation', async () => {
+  const [launcher, postSync] = await Promise.all([
+    source('scripts/windows/run-stephanos-scheduled-task-windowless.vbs'),
+    source('scripts/battle-bridge-post-sync-refresh.mjs'),
+  ]);
+  assert.ok(launcher.includes('Case "sovereign-commander-watchdog"'));
+  assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-13-private-mcp-batch-metadata-v5"'));
+  const refresh = postSync.slice(postSync.indexOf('refreshSovereignCommander({ afterHead, paths })'), postSync.indexOf('restartGitHubMailbox({ afterHead, paths })'));
+  assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5'"));
+});
