@@ -200,6 +200,49 @@ test('same-owner recovery denies changed task fingerprint and missing blocked pr
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
 });
 
+
+test('symlinked claims folder cannot redirect receipts into the canonical checkout', async () => {
+  const ctx = await fixture();
+  await mkdir(ctx.receiptRoot, { recursive: true });
+  await symlink(ctx.repoRoot, join(ctx.receiptRoot, 'claims'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED/);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('branch retained after interrupted Git worktree add can resume under same immutable owner', async () => {
+  const ctx = await fixture();
+  let interrupted = false;
+  const branch = 'rescue-island/pilot-' + ctx.task.taskId;
+  const incompleteGit = (command, args, options) => {
+    if (!interrupted && args.includes('worktree') && args.includes('add')) {
+      interrupted = true;
+      status('git', ['-C', ctx.repoRoot, 'branch', branch, ctx.task.baseHead],
+        ctx.repoRoot);
+      return { status: 1, stdout: '', stderr: 'simulated interrupted worktree add' };
+    }
+    return spawnSync(command, args, options);
+  };
+  await assert.rejects(() => build({ ...ctx, runGit: incompleteGit }),
+    /RESCUE_ISLAND_GIT_OPERATION_FAILED/);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'refs/heads/' + branch), ctx.task.baseHead);
+  const result = await build({ ...ctx, sameOwnerRecoveryAuthenticated: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.parent, ctx.task.baseHead);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+  assert.equal(git(join(ctx.worktreeRoot, ctx.task.taskId), 'rev-parse', 'HEAD'), result.head);
+  assert.equal(result.receipts.filter(x => x.stage === 'ISOLATED_COMMIT').length, 1);
+});
+
+test('worktree task directory cannot point to another checkout by symlink alias', async () => {
+  const ctx = await fixture();
+  await mkdir(ctx.worktreeRoot, { recursive: true });
+  await symlink(ctx.repoRoot, join(ctx.worktreeRoot, ctx.task.taskId),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED/);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
 test('no privileged public CLI, scheduler, mailbox, network write, merge or lease authority exists in pilot module', async () => {
   const source = await readFile(new URL('./rescueIslandFirstCommitV1.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\b(?:force-push|push --force|update-ref|Stop-Process)\b/i);
