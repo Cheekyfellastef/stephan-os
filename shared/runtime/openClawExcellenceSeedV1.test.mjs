@@ -128,3 +128,62 @@ test('mere prose, no receipt or wrong proof identity never counts toward agent p
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
   assert.equal(view(payload).openClawExcellenceSeedGrowth.nextGrowthRung, rung);
 });
+
+test('an OpenClaw Local publisher cannot spoof Standalone inventory or skill proofs', () => {
+  const rung = buildOpenClawExcellenceSeedV1().growthRungs[0];
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [
+    event(rung, 'openclaw-local'),
+    {
+      ...event(rung, 'openclaw-standalone'),
+      participantId: 'openclaw-local',
+    },
+  ];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.nextGrowthRung, rung);
+});
+
+test('Codex task-class parity requires two independent agent matrices of matched and reviewed receipts', () => {
+  const seed = buildOpenClawExcellenceSeedV1();
+  const rung = 'PROVE_END_TO_END_TASK_PARITY';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [event(rung, 'openclaw-local'), event(rung, 'openclaw-standalone')];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+  const benchmark = (agent, taskClass) => ({
+    ...event(rung, agent),
+    eventId: 'codex-parity-' + agent + '-' + taskClass,
+    proofRefs: ['proof/codex-' + agent + '-' + taskClass, 'proof/openclaw-' + agent + '-' + taskClass],
+    openClawExcellenceEvidence: {
+      schemaVersion: 'stephanos.openclaw-excellence-rung-proof.v1',
+      rung,
+      agentId: agent,
+      benchmark: {
+        schemaVersion: 'stephanos.openclaw-codex-comparative-task.v1',
+        taskClass,
+        taskFingerprint: 'same-inputs:' + agent + ':' + taskClass,
+        sameTaskInputs: true,
+        codexSuccessful: true,
+        openClawSuccessful: true,
+        independentReviewPassed: true,
+        codexProofRef: 'proof/codex-' + agent + '-' + taskClass,
+        openClawProofRef: 'proof/openclaw-' + agent + '-' + taskClass,
+      },
+    },
+  });
+  const fullMatrix = seed.agentIdentities.flatMap((agent) =>
+    seed.taskClasses.map((taskClass) => benchmark(agent.participantId, taskClass)));
+  payload.records.eventRecords = fullMatrix.slice(0, -1);
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+  payload.records.eventRecords = fullMatrix;
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1);
+  payload.records.eventRecords = fullMatrix.map((entry, i) => i === 0
+    ? {
+      ...entry,
+      openClawExcellenceEvidence: {
+        ...entry.openClawExcellenceEvidence,
+        benchmark: { ...entry.openClawExcellenceEvidence.benchmark, independentReviewPassed: false },
+      },
+    }
+    : entry);
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+});
