@@ -79,6 +79,8 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
   assert.equal(projected.tasks[0].merged, false);
   assert.equal(projected.tasks[1].candidateCommitted, true);
+  assert.equal(projected.localSourceCandidateProven, true);
+  assert.equal(projected.liveBuildProven, false);
   const spoofed = projectParallelSeedReceiptStatusV1(claims, receipts.map((receipt) =>
     receipt.taskId === 'finished-two' ? { ...receipt, independentGitHeadVerified: false } : receipt), NOW);
   assert.equal(spoofed.tasks[1].candidateCommitted, false);
