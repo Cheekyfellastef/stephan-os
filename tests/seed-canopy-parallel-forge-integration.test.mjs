@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -239,6 +239,13 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(supervised.tasks[0].merged, false);
     assert.equal(supervised.localSourceCandidateProven, true);
     assert.equal(supervised.liveBuildProven, false);
+    const approvalPath = join(stateRoot, 'approvals', TASK_ID + '.json');
+    const validPointer = await readFile(approvalPath, 'utf8');
+    await writeFile(approvalPath, '{}');
+    const noApproval = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
+    assert.equal(JSON.parse(noApproval.stdout).localSourceCandidateProven, false,
+      'local claims and commits cannot replace external owner approval');
+    await writeFile(approvalPath, validPointer);
     const emptyRun = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(emptyRun.code, 0, emptyRun.stderr);
     assert.equal(JSON.parse(emptyRun.stdout).ran, false);
@@ -266,6 +273,27 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(forgedProjection.tasks[0].candidateCommitted, false);
     assert.equal(forgedProjection.liveBuildProven, false);
     assert.equal(git('rev-parse', 'main'), main);
+    // A wholly fabricated clean clone with the approved parent/path/content and
+    // valid owner pointer must still fail canonical linked-worktree identity.
+    await rename(completed.worktree, completed.worktree + '.owned');
+    const clone = command('git', ['clone', '--no-hardlinks', repo, completed.worktree]);
+    assert.equal(clone.status, 0, clone.stderr);
+    const fakeGit = (...args) => {
+      const x = command('git', ['-C', completed.worktree, ...args]);
+      assert.equal(x.status, 0, x.stderr); return x.stdout.trim();
+    };
+    fakeGit('checkout', '-b', 'seed-parallel/' + SEED_ID + '/' + TASK_ID, main);
+    fakeGit('config', 'user.name', 'Fabricated Fixture');
+    fakeGit('config', 'user.email', 'fabricated@example.invalid');
+    await mkdir(join(completed.worktree, 'docs/architecture'), { recursive: true });
+    await writeFile(join(completed.worktree, TARGET), '# Parallel Forge\n\nFixture model-generated source candidate.\n');
+    fakeGit('add', '--', TARGET);
+    fakeGit('commit', '-m', 'fabricated source proof');
+    await writeFile(join(stateRoot, 'receipts', TASK_ID + '.json'), JSON.stringify({
+      ...persisted, commitSha: fakeGit('rev-parse', 'HEAD'),
+    }));
+    const fakeStatus = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
+    assert.equal(JSON.parse(fakeStatus.stdout).localSourceCandidateProven, false);
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
