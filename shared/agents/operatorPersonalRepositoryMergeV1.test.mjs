@@ -1916,6 +1916,45 @@ test('GitHub BLOCKED state still requires exact green check bindings', () => {
   assert.ok(failed.blockers.includes('personal-repository-check-run-not-exact-green'));
 });
 
+test('a successful exact PR build does not require the intentionally excluded live Pages deployment', () => {
+  const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
+  const checks = [checkRun(buildRun, { id: 9401, name: 'build', conclusion: 'success' }),
+    checkRun(buildRun, { id: 9402, name: 'pages-deploy', conclusion: 'skipped' })];
+  const result = validatePersonalRepositoryCheckRuns(checks, [buildRun], [], expectedEvidence);
+  assert.equal(result.valid, true, JSON.stringify(result.blockers));
+  assert.equal(result.evidence[1].disposition, 'pr-pages-deployment-not-requested');
+  const failedBuild = validatePersonalRepositoryCheckRuns([
+    { ...checks[0], conclusion: 'failure' }, checks[1],
+  ], [buildRun], [], expectedEvidence);
+  assert.equal(failedBuild.valid, false);
+});
+
+test('the PR-only deployment exclusion rejects other triggers, failed runs and substituted bindings', () => {
+  const buildRun = { ...workflowRuns().find((run) => run.name === 'Build Stephanos UI'), head_branch: branch };
+  for (const mutation of [
+    { event: 'push' }, { event: 'workflow_dispatch' }, { event: 'schedule' },
+    { event: 'pull_request_target' }, { event: 'issue_comment' },
+    { path: '.github/workflows/unrelated-build.yml' }, { name: 'Unrelated Build' },
+    { conclusion: 'failure' }, { status: 'in_progress' }, { head_branch: 'main' },
+    { pull_requests: [] },
+  ]) {
+    const run = { ...buildRun, ...mutation };
+    const result = validatePersonalRepositoryCheckRuns([
+      checkRun(run, { name: 'pages-deploy', conclusion: 'skipped' }),
+    ], [run], [], expectedEvidence);
+    assert.equal(result.valid, false, JSON.stringify(mutation));
+  }
+  for (const mutation of [
+    { name: 'build' }, { name: 'unknown-check' }, { conclusion: 'failure' },
+    { conclusion: 'cancelled' }, { status: 'in_progress' }, { head_sha: 'f'.repeat(40) },
+    { check_suite: { id: buildRun.check_suite_id + 1 } },
+  ]) {
+    assert.equal(validatePersonalRepositoryCheckRuns([
+      checkRun(buildRun, { name: 'pages-deploy', conclusion: 'skipped', ...mutation }),
+    ], [buildRun], [], expectedEvidence).valid, false, JSON.stringify(mutation));
+  }
+});
+
 test('UNSTABLE admission binds the one failing check to the exact reviewed escalation workflow', () => {
   const escalationRun = escalationWorkflowRun();
   const greenRun = workflowRuns()[0];

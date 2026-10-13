@@ -1478,6 +1478,19 @@ export function validatePersonalRepositoryCheckRuns(
         && text(candidate.run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
       ));
 
+    // The canonical Build workflow deliberately excludes Pages deployment on
+    // pull_request. A bound successful PR build does not require a live-main
+    // deployment; no push, dispatch, unknown path or failed run inherits this.
+    const prPagesDeploymentNotRequested = conclusion === 'skipped'
+      && workflow === 'Build Stephanos UI'
+      && path === '.github/workflows/build-stephanos-ui.yml'
+      && name === 'pages-deploy'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success';
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1489,6 +1502,8 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'neutral-skip';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
+    } else if (prPagesDeploymentNotRequested) {
+      disposition = 'pr-pages-deployment-not-requested';
     } else if (cleanIndependentReviewProved
       && mergeStateStatus === 'UNSTABLE'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow

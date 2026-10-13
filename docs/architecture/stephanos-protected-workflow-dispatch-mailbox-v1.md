@@ -39,6 +39,24 @@ The separate `controller-lane-status` request
 6134973771). This source repair makes no claim of live lane proof or release of
 the original source lease.
 
+The authenticated owner recovery run 38333422069, attempt 1, subsequently
+passed both read-only actor/comment gates and received the real protected
+environment approval. Final collection stopped with mutationAuthority=false
+on personal-repository-check-run-not-exact-green. The captured 19-check estate
+reproduces that rejection: the sole blocked check is pages-deploy in the
+successful Build Stephanos UI pull_request run 38323074626. The source-controlled
+Pages job explicitly excludes pull_request; requiring its live deployment to
+admit a PR would contradict that separation.
+
+The final validator now recognizes that one excluded PR deployment only after
+exact repository/PR/head/base/suite/job binding, canonical workflow/path/name,
+pull_request event, source head branch, and completed successful parent run
+proof. Other skipped, failed or pending checks remain blocked; push, dispatch,
+schedule and issue-comment deployment failures are not made neutral. Required
+workflow and protected approval gates remain independently binding. Run
+38333422069 reached an authority job and must not be rerun or treated as an
+early read-only failure. This source correction is not admission of that run.
+
 ## Purpose
 
 This is the existing #1507 GitHub-hosted owner-command bridge for the narrow lifecycle actions that otherwise strand Stephanos when an active client does not expose GitHub Actions `workflow_dispatch` or draft-to-ready mutation.
