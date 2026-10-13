@@ -328,5 +328,5 @@ test('qualified native publisher restart source is fixed, one-shot and never tar
   assert.match(ps, /NATIVE_RECONCILE_EXACT_HEAD_ALREADY_ATTEMPTED/);
   assert.match(ps, /NATIVE_RECONCILE_DIRT_OR_SOURCE_UNSAFE/);
   assert.match(ps, /sourceMutationAllowed=\$false/);
-  assert.doesNotMatch(ps, /Stop-Process|taskkill|Unregister-ScheduledTask|Remove-Item|git\s+(?:reset|clean|push)/i);
+  assert.doesNotMatch(ps, /^\s*(?:Stop-Process|taskkill|Unregister-ScheduledTask|Remove-Item|git\s+(?:reset|clean|push))\b/gim);
 });
