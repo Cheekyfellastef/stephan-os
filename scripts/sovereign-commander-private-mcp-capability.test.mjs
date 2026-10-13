@@ -9,6 +9,7 @@ const RUNTIME_CALLERS = [
   'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
   'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
 ];
 async function source(path) {
   return readFile(new URL('../' + path, import.meta.url), 'utf8');
