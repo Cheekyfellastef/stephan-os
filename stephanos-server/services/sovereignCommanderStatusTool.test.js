@@ -12,7 +12,7 @@ const HEALTH = Object.freeze({
   ok: true,
   service: 'stephanos-sovereign-commander',
   transport: 'authenticated-http-jsonrpc',
-  capabilityVersion: '2026-10-05-continuous-repair-reporting-v4',
+  capabilityVersion: '2026-10-13-private-mcp-batch-metadata-v5',
   observedAtUtc: new Date(NOW - 1000).toISOString(),
   continuousRepairGuardian: {
     enabled: true, running: false, scheduled: true,
