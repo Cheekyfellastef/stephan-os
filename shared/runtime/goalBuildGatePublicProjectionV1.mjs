@@ -12,10 +12,14 @@ const SAFE_BLOCKER = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,159}$/;
 export function projectPublicGoalGateObservatoryV1(coreStatus = null, {
   sourceHead = '', nowMs = Date.now(),
 } = {}) {
-  if (!HEAD.test(sourceHead) || coreStatus?.sourceHead !== sourceHead
-    || coreStatus?.goalBuildGateEvidence?.sourceHead !== sourceHead) return null;
+  if (!HEAD.test(sourceHead)) return null;
+  const sourceBound = coreStatus?.sourceHead === sourceHead
+    && coreStatus?.goalBuildGateEvidence?.sourceHead === sourceHead;
+  // Pages receives all 23 named gates even before the steward starts. In that
+  // case all are unverified. An absent/stale core record NEVER makes green.
   const obs = projectGoalBuildGateObservatoryV1({
-    statusRecords: [coreStatus], nowMs, staleAfterMs: 3 * 60_000,
+    statusRecords: sourceBound ? [coreStatus] : [],
+    nowMs, staleAfterMs: 3 * 60_000,
   });
   return Object.freeze({
     schemaVersion: PUBLIC_GOAL_GATE_SCHEMA_V1,
