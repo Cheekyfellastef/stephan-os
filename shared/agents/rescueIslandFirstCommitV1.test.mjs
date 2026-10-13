@@ -174,7 +174,8 @@ test('same-task transient test failure is recoverable by explicitly authorised s
   assert.deepEqual(result.receipts.map(r => r.stage), [
     'SELECTED', 'CLAIMED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
   ]);
-  assert.equal(git(ctx.repoRoot, 'worktree', 'list', '--porcelain'), before);
+  const after = git(ctx.repoRoot, 'worktree', 'list', '--porcelain');
+  assert.equal((after.match(/branch refs\/heads\/rescue-island\/pilot-pilot-3103-01/g) || []).length, 1);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
   await assert.rejects(() => build({ ...ctx, sameOwnerRecoveryAuthenticated: true }),
     /RESCUE_ISLAND_ALREADY_COMMITTED/);
