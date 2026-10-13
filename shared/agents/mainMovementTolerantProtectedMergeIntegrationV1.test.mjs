@@ -6,6 +6,7 @@ const workflow = await readFile(
   new URL('../../.github/workflows/operator-merge-approval-gate.yml', import.meta.url),
   'utf8',
 );
+const handoff = await readFile(new URL('../../scripts/prove-protected-workflow-actor-handoff.mjs', import.meta.url), 'utf8');
 const mailbox = await readFile(
   new URL('./protectedWorkflowDispatchMailboxV1.mjs', import.meta.url),
   'utf8',
@@ -30,9 +31,9 @@ test('protected workflow derives material authorization from the owner comment, 
   assert.match(workflow, /authorization_head:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head \}\}/);
   assert.match(workflow, /authorization_head_tree:\s*\$\{\{ steps\.authorization\.outputs\.authorization_head_tree \}\}/);
   assert.match(workflow, /authorization_base:\s*\$\{\{ steps\.authorization\.outputs\.authorization_base \}\}/);
-  assert.match(workflow, /validation\.materialAuthorization\.authorizationHead/);
-  assert.match(workflow, /validation\.materialAuthorization\.authorizationHeadTree/);
-  assert.match(workflow, /validation\.materialAuthorization\.authorizationBase/);
+  assert.match(handoff, /proof\.materialAuthorization\.authorizationHead/);
+  assert.match(handoff, /proof\.materialAuthorization\.authorizationHeadTree/);
+  assert.match(handoff, /proof\.materialAuthorization\.authorizationBase/);
   assert.match(workflow, /STEPHANOS_AUTHORIZATION_HEAD:\s*\$\{\{ needs\.personal-repository-evidence\.outputs\.authorization_head \}\}/);
   assert.match(workflow, /STEPHANOS_AUTHORIZATION_BASE:\s*\$\{\{ needs\.personal-repository-evidence\.outputs\.authorization_base \}\}/);
   assert.match(workflow, /EXPECTED_BASE/);

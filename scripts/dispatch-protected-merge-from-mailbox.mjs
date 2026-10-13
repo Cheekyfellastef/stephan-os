@@ -12,6 +12,8 @@ import {
   buildProtectedWorkflowDispatchRequest,
   extractProtectedWorkflowDispatch,
   validateProtectedWorkflowDispatch,
+  validateProtectedWorkflowActorHandoff,
+  protectedWorkflowAuthorizationCommentSha256,
 } from '../shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
 
 const API = 'https://api.github.com';
@@ -137,6 +139,7 @@ async function main() {
     return;
   }
   if (!authorizationCommentId) fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_COMMENT_ID_INVALID');
+  if (process.env.GITHUB_RUN_ATTEMPT !== '1') fail('PROTECTED_WORKFLOW_DISPATCH_REPLAY_BLOCKED');
 
   const extracted = extractProtectedWorkflowDispatch(body);
   if (!extracted.ok) fail(extracted.blocker, extracted.details);
@@ -171,6 +174,12 @@ async function main() {
 
   if (command.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
     await readExactState(command, { allowDraft: false });
+    const liveComment = await github(`/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/comments/${authorizationCommentId}`);
+    const proof = validateProtectedWorkflowActorHandoff(liveComment, command, {
+      transportActor: authorLogin, transportActorId: event.comment.user.id, expectedCommentId: authorizationCommentId,
+      expectedCommentSha256: protectedWorkflowAuthorizationCommentSha256(event.comment), now: new Date(),
+    });
+    if (!proof.ok) fail(proof.blocker, proof.details);
     const dispatch = buildProtectedWorkflowDispatchRequest(command, { authorizationCommentId });
     if (!dispatch.ok) fail(dispatch.blocker, dispatch.details);
     await github(dispatch.path, { method: dispatch.method, body: dispatch.body, expectedStatus: 204 });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const PROTECTED_WORKFLOW_DISPATCH_SCHEMA = 'stephanos.protected-workflow-dispatch.v1';
@@ -7,6 +8,9 @@ export const PROTECTED_WORKFLOW_READY_OPERATION = 'MARK_PROTECTED_PR_READY';
 export const PROTECTED_WORKFLOW_DISPATCH_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const PROTECTED_WORKFLOW_DISPATCH_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const PROTECTED_WORKFLOW_DISPATCH_AUTHOR = 'Cheekyfellastef';
+export const PROTECTED_WORKFLOW_DISPATCH_AUTHOR_ID = 267490109;
+export const PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR = 'github-actions[bot]';
+export const PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR_ID = 41898282;
 export const PROTECTED_WORKFLOW_DISPATCH_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PROTECTED_WORKFLOW_DISPATCH_WORKFLOW_ID = 'operator-merge-approval-gate.yml';
 export const PROTECTED_WORKFLOW_DISPATCH_MODE = 'user-owned-protected-squash';
@@ -45,6 +49,63 @@ const MATERIAL_AUTHORIZATION_EXPECTATION_FIELDS = Object.freeze([
   'authorizationHead', 'authorizationHeadTree', 'authorizationBase',
 ]);
 const AUTHORIZATION_COMMENT_ISSUE_URL = `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`;
+
+export function protectedWorkflowAuthorizationCommentSha256(comment = {}) {
+  return createHash('sha256').update(String(comment.body ?? ''), 'utf8').digest('hex');
+}
+
+// The carrier never becomes the operator. This proof is created only from a
+// trusted GitHub comment read; callers cannot supply an operator identity.
+export function validateProtectedWorkflowActorHandoff(comment = {}, expected = {}, {
+  transportActor = '', transportActorId = 0, expectedCommentId = 0, expectedCommentSha256 = '', now = new Date(),
+} = {}) {
+  if (![PROTECTED_WORKFLOW_DISPATCH_AUTHOR, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR].includes(transportActor)) {
+    return fail('PROTECTED_WORKFLOW_TRANSPORT_ACTOR_NOT_ALLOWED');
+  }
+  const expectedActorId = transportActor === PROTECTED_WORKFLOW_DISPATCH_AUTHOR
+    ? PROTECTED_WORKFLOW_DISPATCH_AUTHOR_ID : PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR_ID;
+  if (transportActorId !== expectedActorId) return fail('PROTECTED_WORKFLOW_TRANSPORT_ACTOR_ID_MISMATCH');
+  if (comment.user?.id !== PROTECTED_WORKFLOW_DISPATCH_AUTHOR_ID || comment.user?.type !== 'User') {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_AUTHOR_MISMATCH');
+  }
+  const authoredAtMs = Date.parse(comment.created_at);
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  if (!Number.isFinite(authoredAtMs) || !Number.isFinite(nowMs) || authoredAtMs > nowMs
+    || comment.updated_at !== comment.created_at) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_NOT_IMMUTABLE');
+  }
+  if (!positiveInteger(expectedCommentId)) return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_ID_MISMATCH');
+  const commentSha256 = protectedWorkflowAuthorizationCommentSha256(comment);
+  if (expectedCommentSha256 && (!SHA256.test(expectedCommentSha256) || commentSha256 !== expectedCommentSha256)) {
+    return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_DIGEST_MISMATCH');
+  }
+  const validation = validateProtectedWorkflowAuthorizationComment(comment, expected, { now, expectedCommentId });
+  if (!validation.ok) return validation;
+  // Material authorization may remain durable after admission, but the carrier
+  // must have started within the original dispatch window with the exact packet.
+  const freshness = validateProtectedWorkflowDispatch(validation.command, {
+    authorLogin: PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
+    issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
+    now, authoredAt: new Date(authoredAtMs),
+  });
+  if (!freshness.ok) return freshness;
+  const normalized = normalizeAuthorizationExpected(expected);
+  for (const field of [...READY_AUTHORIZATION_IDENTITY_FIELDS,
+    'independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId',
+    'independentReviewArtifactDigest', 'independentReviewPayloadSha256']) {
+    if (validation.command[field] !== normalized[field]) {
+      return fail('PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_IDENTITY_MISMATCH', { field });
+    }
+  }
+  return Object.freeze({
+    ...validation,
+    authorization: Object.freeze({
+      commentId: validation.commentId, commentSha256, requestId: validation.command.requestId,
+      operatorAuthor: PROTECTED_WORKFLOW_DISPATCH_AUTHOR, transportActor,
+      authorizedAtUtc: validation.authoredAtUtc,
+    }),
+  });
+}
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, blocker, details: Object.freeze(details) });
