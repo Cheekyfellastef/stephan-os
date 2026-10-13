@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { makeParallelSeedExactApprovalV1, parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 
 const sourceRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const SEED_ID = 'test-seed-isolated-builder';
@@ -43,6 +44,10 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       path('scripts/seed-canopy-parallel-builder.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelForgeV1.mjs'),
       path('shared/runtime/seedCanopyParallelForgeV1.mjs'));
+    await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-supervisor.mjs'),
+      path('scripts/seed-canopy-parallel-supervisor.mjs'));
+    await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelSupervisorV1.mjs'),
+      path('shared/runtime/seedCanopyParallelSupervisorV1.mjs'));
     await writeFile(path('shared/project/seedGardenProjectionV1.mjs'),
       'export const HIGH_LEVEL_FLYWHEEL_SEEDS_V1 = ' + JSON.stringify([{
         seedId: SEED_ID, issue: '#3096',
@@ -97,10 +102,23 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const env = { ...process.env, HOME: home, USERPROFILE: home,
       STEPHANOS_SEED_LOCAL_PORT: String(port), STEPHANOS_SEED_LOCAL_MODEL: 'mock-fixture-model' };
     const executable = path('scripts/seed-canopy-parallel-builder.mjs');
-    const run = await runAsync(process.execPath, [executable, 'build', manifest, '--execute'],
-      { cwd: repo, env });
+    const supervisor = path('scripts/seed-canopy-parallel-supervisor.mjs');
+    const scope = createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 12);
+    const stateRoot = join(home, '.stephanos', 'seed-parallel', scope);
+    await mkdir(join(stateRoot, 'inbox'), { recursive: true });
+    await mkdir(join(stateRoot, 'approvals'), { recursive: true });
+    const raw = await readFile(manifest, 'utf8');
+    await writeFile(join(stateRoot, 'inbox', TASK_ID + '.json'), raw);
+    const issuedAtUtc = new Date().toISOString();
+    const approval = makeParallelSeedExactApprovalV1({
+      request, manifestSha256: parallelSeedManifestHashV1(raw), nowUtc: issuedAtUtc,
+      expiryUtc: new Date(Date.parse(issuedAtUtc) + 3600000).toISOString(),
+    });
+    await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'), JSON.stringify(approval));
+    const run = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(run.code, 0, run.stderr);
-    const completed = JSON.parse(run.stdout);
+    const completed = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(completed.stage, 'COMMITTED');
     assert.match(completed.commitSha, /^[a-f0-9]{40}$/);
     assert.equal(completed.merged, false);
@@ -112,11 +130,19 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.match(await readFile(worktreeFile, 'utf8'), /Fixture model-generated source candidate/);
     const commit = command('git', ['rev-parse', 'HEAD'], { cwd: completed.worktree });
     assert.equal(commit.stdout.trim(), completed.commitSha);
-    const scope = createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 12);
-    const stateRoot = join(home, '.stephanos', 'seed-parallel', scope);
     const persisted = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(persisted.commitSha, completed.commitSha);
+    const status = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
+    assert.equal(status.code, 0, status.stderr);
+    const supervised = JSON.parse(status.stdout);
+    assert.equal(supervised.taskCount, 1);
+    assert.equal(supervised.tasks[0].candidateCommitted, true);
+    assert.equal(supervised.tasks[0].merged, false);
+    assert.equal(supervised.liveBuildProven, true);
+    const emptyRun = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
+    assert.equal(emptyRun.code, 0, emptyRun.stderr);
+    assert.equal(JSON.parse(emptyRun.stdout).ran, false);
     const claim = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.claim'), 'utf8'));
     assert.equal(claim.targetPath, TARGET);
