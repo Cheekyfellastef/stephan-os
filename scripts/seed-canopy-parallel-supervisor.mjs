@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import {
   createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecutable,
+  inspectBattleBridgeGitTopology,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import { validateParallelSeedBuildRequestV1 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
@@ -142,6 +143,8 @@ async function status() {
         }) : null;
         // A valid exact approval grants only source proposal scope. Also prove
         // this is the canonical registered worktree, not a fabricated clean clone.
+        const canonicalTopology = inspectBattleBridgeGitTopology(root);
+        if (!canonicalTopology.ok) throw new Error(canonicalTopology.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN');
         const canonicalTop = readGit(root, 'rev-parse', '--show-toplevel');
         const treeTop = verifyGit('rev-parse', '--show-toplevel');
         const canonicalCommon = readGit(root, 'rev-parse', '--path-format=absolute', '--git-common-dir');
