@@ -70,6 +70,41 @@
     return (Array.isArray(beacon?.surfaces) ? beacon.surfaces : []).find((item) => item?.id === id) || null;
   }
 
+  // Purely informational public health beacon. Never treat remote gate
+  // statuses as authorisation for a local worker, source lease or merge.
+  function projectRemoteGateLedger(beacon, { head, exactHeadMatch, beaconFresh } = {}) {
+    const raw = beacon?.goalBuildGateObservatory;
+    if (raw?.schemaVersion !== 'stephanos.public-goal-build-gate-observatory.v1'
+      || raw.sourceHead !== head || !Array.isArray(raw.gates) || raw.gates.length !== 23
+      || raw.gates.some((g, i) => g?.id !== i + 1)) return null;
+    const current = exactHeadMatch && beaconFresh && raw.observationStatus === 'EVIDENCE_AVAILABLE';
+    const gates = raw.gates.map(g => {
+      const status = current && ['PASS', 'FAIL', 'WAITING_FOR_PREREQUISITE', 'UNVERIFIED', 'STALE'].includes(g.status)
+        ? g.status : g.status === 'UNVERIFIED' ? 'UNVERIFIED' : 'STALE';
+      return {
+        id: g.id,
+        title: String(g.title || '').slice(0, 120),
+        owner: String(g.owner || '').slice(0, 110),
+        status,
+        typedBlocker: status === 'FAIL' ? String(g.typedBlocker || '').slice(0, 160) : '',
+        waitingOnGate: Number.isInteger(g.waitingOnGate) ? g.waitingOnGate : null,
+        proofRef: /^workspace:status\/(?:stephanos-core-daemon-current|stephanos-native-capacity-current)\.json$/.test(String(g.proofRef || ''))
+          ? g.proofRef : '',
+      };
+    });
+    const names = ['PASS', 'FAIL', 'WAITING_FOR_PREREQUISITE', 'UNVERIFIED', 'STALE'];
+    const counts = Object.fromEntries(names.map(key => [key, gates.filter(g => g.status === key).length]));
+    return {
+      schemaVersion: 'stephanos.goal-build-gate-observatory.v1',
+      diagnosticOnly: true, approvalAuthority: false, mergeAuthority: false,
+      sourceHead: head, observedAtUtc: String(raw.observedAtUtc || ''),
+      observationStatus: current ? 'EVIDENCE_AVAILABLE' : raw.observationStatus === 'UNVERIFIED' ? 'UNVERIFIED' : 'STALE',
+      gates, counts,
+      firstActionableGate: current ? gates.find(g => g.status === 'FAIL')?.id || null : null,
+      simultaneousVetoes: current ? gates.filter(g => g.status === 'FAIL').map(g => g.id) : [],
+    };
+  }
+
   function buildProjection({ beacon, ref, issues, nowMs = Date.now() }) {
     const githubHead = safeSha(ref?.object?.sha);
     const battleBridgeHead = safeSha(beacon?.sourceHead);
@@ -100,6 +135,7 @@
       portfolioSource: 'REMOTE_GITHUB_PUBLIC_PROJECTION',
       finalVerdict: sourceTruth === 'CURRENT' ? 'GOAL_DASHBOARD_REMOTE_CURRENT' : 'GOAL_DASHBOARD_REMOTE_DEGRADED',
       goals,
+      goalBuildGateObservatory: projectRemoteGateLedger(beacon, { head: battleBridgeHead, exactHeadMatch, beaconFresh }),
       activeLaneCount: null,
       queueDispatcher: {
         dispatcherState: workerState,
