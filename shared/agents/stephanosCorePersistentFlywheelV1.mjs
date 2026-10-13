@@ -3,6 +3,9 @@ import { createHash } from 'node:crypto';
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
 export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
+// Exact original-source-owner HOLD is not repairable by repeating the same
+// local builder action. Keep hourly bounded checks while watching every refill.
+export const OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS = 60 * 60_000;
 export const OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS = Object.freeze([
   'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
   'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
@@ -139,6 +142,7 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   nowMs = Date.now(),
   lastAttemptAtMs = null,
   cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+  lastBlocker = '', lastAttemptSourceHead = '', sourceHead = '',
 } = {}) {
   const now = finiteMs(nowMs) ?? Date.now();
   const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
@@ -152,6 +156,26 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
       shouldRepair: false,
       reason: 'OCTOPUS_SELF_HEAL_NOT_REQUIRED',
       retryAfterMs: 0,
+    });
+  }
+
+  // A held historical source-writer receipt cannot be synthesized by the
+  // Core. Suppress redundant attempts on the same source only while the
+  // canonical refill independently still observes Programme HOLD. A new
+  // source head or lifted HOLD re-arms the regular five-minute repair path.
+  const ownerProofMissing = [
+    'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+  ].includes(String(lastBlocker).trim().toUpperCase());
+  const sameExactSource = /^[0-9a-f]{40}$/.test(String(sourceHead).toLowerCase())
+    && String(lastAttemptSourceHead).toLowerCase() === String(sourceHead).toLowerCase();
+  const sinceLastAttemptMs = lastAttempt === null ? null : Math.max(0, now - lastAttempt);
+  if (ownerProofMissing && sameExactSource && octopusSummary?.octopusProgrammeHeld === true
+    && sinceLastAttemptMs !== null && sinceLastAttemptMs < OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS) {
+    return Object.freeze({
+      shouldRepair: false,
+      reason: 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT',
+      retryAfterMs: OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS - sinceLastAttemptMs,
     });
   }
 
