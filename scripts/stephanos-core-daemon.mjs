@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
@@ -45,6 +45,9 @@ import {
   SOVEREIGN_COMMANDER_OPERATION,
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
+import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
+import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
@@ -271,6 +274,12 @@ let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
 let lastOctopusSelfHealVerdict = 'NOT_RUN';
 let lastOctopusSelfHealBlocker = '';
+let lastNativeGateProbeAtMs = 0;
+let lastNativeGateRouting = null;
+let lastGateSignedPublicationAtMs = 0;
+let lastGateSignedPublicationVerdict = 'NOT_COMMISSIONED';
+let lastGateStewardActionKey = '';
+let lastGateStewardAttemptAtMs = null;
 let lastOctopusSelfHealSourceHead = '';
 let lastOctopusSelfHealProgrammeBlockerIdentity = '';
 let lastOctopusSelfHealAttemptCount = 0;
@@ -816,6 +825,69 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     blocker: lastOctopusSelfHealBlocker,
     needsRepair: flywheel?.octopusNeedsRepair === true,
   });
+  // Only use existing canonical evidence and the existing locked daemon.
+  // Never make the heartbeat depend on this optional read-only observer.
+  // Share one bounded native capacity probe per minute across existing
+  // heartbeats. The signer and publisher own their own trust boundaries.
+  if (Date.parse(timestampUtc) - lastNativeGateProbeAtMs >= 60_000) {
+    lastNativeGateProbeAtMs = Date.parse(timestampUtc);
+    try {
+      lastNativeGateRouting = await readVerifiedStephanosNativeRoutingCandidate({
+        root: workspaceRoot, repoRoot, env: process.env,
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+        nowUtc: timestampUtc,
+      });
+    } catch { lastNativeGateRouting = null; }
+  }
+  const nativeRouting = lastNativeGateRouting;
+  const gateEvidence = projectCoreGateEvidenceV1({
+    sourceHead: state.sourceHead, observedAtUtc: timestampUtc, state,
+    refillSummary: lastRefillSummary,
+    lastRepairBlocker: lastOctopusSelfHealBlocker,
+    lastRepairSourceHead: lastOctopusSelfHealSourceHead,
+    nativeRouting,
+  });
+  // Raw Core facts are only shadow-mode suggestions; the public observatory
+  // intentionally rejects them until separately pinned, signed, immutable
+  // status+proof records exist. Never convert a proposal into a PASS.
+  const gateSteward = planCoreGateStewardV1({
+    sourceHead: state.sourceHead,
+    gates: gateEvidence.ok ? gateEvidence.evidence.gates : [],
+  }, {
+    nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
+    previousActionKey: lastGateStewardActionKey,
+    previousAttemptAtMs: lastGateStewardAttemptAtMs,
+  });
+  // Persist the last diagnostic suggestion across heartbeats. This does not
+  // execute it, open a lease, or claim custody of the original worker.
+  if (gateSteward.decision === 'PROPOSE_EXISTING_AUTHORITY_ACTION' && gateSteward.proofKey) {
+    lastGateStewardActionKey = gateSteward.proofKey;
+    lastGateStewardAttemptAtMs = Date.parse(timestampUtc);
+  }
+  // Optional, independently commissioned private signing key, never in Git
+  // or the Shared Workspace. Lack of key leaves all 23 observable gates
+  // UNVERIFIED and does not hinder the Core heartbeat.
+  if (gateEvidence.ok && !state.gamingActive
+    && Date.parse(timestampUtc) - lastGateSignedPublicationAtMs >= 60_000) {
+    lastGateSignedPublicationAtMs = Date.parse(timestampUtc);
+    try {
+      const keyFile = resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-private.pem');
+      const meta = await lstat(keyFile);
+      if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) {
+        lastGateSignedPublicationVerdict = 'SIGNING_KEY_NOT_QUALIFIED';
+      } else {
+        const outcome = await publishSignedCoreGateEvidenceV1({
+          root: workspaceRoot, repoRoot, sourceHead: state.sourceHead,
+          observedAtUtc: timestampUtc, coreEvidence: gateEvidence.evidence,
+          signingPrivateKeyPem: await readFile(keyFile, 'utf8'),
+        });
+        lastGateSignedPublicationVerdict = outcome.reason;
+      }
+    } catch {
+      lastGateSignedPublicationVerdict = 'GATE_SIGNING_AUTHORITY_NOT_COMMISSIONED';
+    }
+  }
   const outerBridgeState = sovereignOuterBridge.snapshot();
   const common = {
     // Core's separately persisted heartbeat is the fallback diagnostic if
@@ -828,6 +900,9 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     outerBridgeLastVerdict: String(outerBridgeState.lastResult?.finalVerdict || 'NOT_RUN').slice(0, 120),
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
+    goalBuildGateEvidence: gateEvidence.evidence,
+    goalConveyorGateSteward: gateSteward,
+    goalBuildGateSignedPublisherVerdict: lastGateSignedPublicationVerdict,
     processId: process.pid,
     readiness: state.readiness,
     daemonHealthy: state.daemonHealthy,
