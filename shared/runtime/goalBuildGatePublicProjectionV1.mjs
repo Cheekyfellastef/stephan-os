@@ -39,7 +39,7 @@ export function projectPublicGoalGateObservatoryV1(coreStatus = null, {
       status: g.status,
       typedBlocker: SAFE_BLOCKER.test(g.typedBlocker || '') ? g.typedBlocker : '',
       waitingOnGate: g.waitingOnGate,
-      proofRef: ALLOWED_REFS.has(g.proofRef) ? g.proofRef : '',
+      proofRef: ALLOWED_REFS.has(g.proofRef) || /^workspace:proof\/goal-gate-(?:[1-9]|1[0-9]|2[0-3])$/.test(String(g.proofRef || '')) ? g.proofRef : '',
       observedAtUtc: g.observedAtUtc,
     }))),
   });
