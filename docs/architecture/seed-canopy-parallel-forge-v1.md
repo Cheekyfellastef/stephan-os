@@ -6,6 +6,8 @@ Owner: #3096. Independence requested by the operator on 13 October 2026.
 
 This is a small **second authoring route** for canonical Seed Canopy outcomes when the normal goal admission -> Mission Worker -> lease chain is stalled. The selection and model-backed isolated file authoring **do not invoke** that chain. It reads the same source-backed canonical high-level seed roster but does not invent live Seed Canopy pressure, change canonical goal state or count itself as a completed goal.
 
+The first executable qualification is deliberately **documentation-only**. Source logic candidates must use a separately qualified execution sandbox before they can be built or tested by a local model; an isolated Git worktree is not an OS security sandbox.
+
 It is NOT a second protected merge service, a second daemon, a bypass for active owner custody, or a replacement for runtime observation. A separate source authoring worktree can coexist safely only for **resource-disjoint, explicitly scoped** tasks. If source ownership overlaps, do not execute: use the existing owner and review the conflict first.
 
 ## Running on an authorized Battle Bridge checkout
@@ -63,3 +65,37 @@ This PR proves source implementation and (when green) source tests. It does NOT 
 When many seed tasks exist, never run multiple tasks against the same target file. Use distinct task IDs and per-goal worktrees. Retry by a fresh task ID **only after** inspecting any previous worktree and preserved receipt; never silently discard an unfinished source artifact.
 
 The operator should see this route as **Parallel Forge / Source proposal**, with claim, local model, test, source publication, review, and merge shown separately. Do not display all-green until all required independent receipts exist.
+
+
+## Independent supervisor: no old controller or conveyor dependency
+
+The standalone supervisor is an executable entrypoint. It reads a small operator-owned inbox instead of enrolling another logical goal controller:
+
+    node scripts/seed-canopy-parallel-supervisor.mjs inbox
+    node scripts/seed-canopy-parallel-supervisor.mjs status
+
+The first command prints the absolute local stateRoot. Create its inbox folder and place a narrowly scoped JSON manifest at:
+
+    <stateRoot>/inbox/<task-id>.json
+
+The file must have the exact request schema shown above and a filename matching its taskId. Do not put passwords, bearer tokens or general shell instructions in manifests.
+
+**Approve the exact bytes in a genuine local terminal** after examining the source ownership and currently open PR estate for target-path overlap:
+
+    node scripts/seed-canopy-parallel-supervisor.mjs approve <task-id>
+
+The supervisor prints the seed, owner, target, base, tests and SHA-256 of the approved manifest, then requires an interactive phrase. Approval binds **one** exact manifest for at most 24 hours and grants source-candidate authoring only.
+
+Run at most one eligible task:
+
+    node scripts/seed-canopy-parallel-supervisor.mjs run-once
+
+The supervisor rechecks the current manifest hash immediately before launching the independent builder. Malformed or expired entries are ignored or blocked individually. An interrupted task keeps its own claim, worktree and receipt; the supervisor never auto-releases a claim or destroys an unfinished source candidate. A target-specific claim also prevents two different task IDs from editing the same path. Neither claim touches the existing core goal lease.
+
+These are operator-invoked entrypoints today. No Task Scheduler service, automatic approvals, auto-push, independent review bypass or continuous unattended mutation has been installed or proven. A future scheduled supervisor can invoke run-once only after the local fixture, live Battle Bridge model and reboot-recovery acceptance tests are green. Any source publication must still go through the protected PR/review workflow.
+
+## Isolated end-to-end fixture
+
+The test at tests/seed-canopy-parallel-forge-integration.test.mjs constructs a disposable Git repository with a canonical seed fixture and a **mock loopback Ollama server**, then proves real worktree creation, one file edit, actual tests, a local commit, durable receipts, main unchanged and refusal of duplicate retries. This is a genuine Git execution proof using simulated model output, not live inference, deployment or autonomous completion.
+
+Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed.
