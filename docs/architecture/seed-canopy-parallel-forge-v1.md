@@ -99,3 +99,11 @@ These are operator-invoked entrypoints today. No Task Scheduler service, automat
 The test at tests/seed-canopy-parallel-forge-integration.test.mjs constructs a disposable Git repository with a canonical seed fixture and a **mock loopback Ollama server**, then proves real worktree creation, one file edit, actual tests, a local commit, durable receipts, main unchanged and refusal of duplicate retries. This is a genuine Git execution proof using simulated model output, not live inference, deployment or autonomous completion.
 
 Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed.
+
+## Sovereign Commander fast mailbox observation
+
+A remote ChatGPT/iPad session does not need Remote Desktop Commander meter to **observe** Battle Bridge. Use the already-installed Sovereign relay fast carrier, which consumes the same protected GitHub issue #2808 commands through `scripts/battle-bridge-sovereign-relay-daemon.mjs`. It is not a second unrestricted endpoint or a new execution authority. The fast relay normally polls HOT at 2.5 seconds, WARM at 5 seconds and IDLE at 15 seconds; its scheduled GitHub mailbox fallback retains the same request identity and guards.
+
+Already-admitted remote actions `visibility-snapshot` and `battle-bridge-observe` can establish machine/service/model-readiness truth. On 13 October 2026 a read-only `visibility-snapshot` request was accepted at 14:49:58.793Z and completed at 14:50:04.101Z with verdict `SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE`. Its in-flight relay status was `FAST_CHECKING` with two carrier failures, so that receipt alone cannot attribute the delivery to the fast carrier rather than fallback. It proved Ollama and Sovereign Commander reachable, not successful execution of Parallel Forge. The Core daemon separately remained degraded.
+
+**Do not** route source manifests or arbitrary shell through this public mailbox. After review/merge and live local qualification, add a separately reviewed *fixed read-only* `parallel-forge-status` action to Sovereign Commander, returning only sanitised exact-identity task and source proof counters. Installing/running the builder still requires its own exact task approval and private runtime transport, with no new remote arbitrary-command power.
