@@ -11,6 +11,7 @@ import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents
 import { resolveSharedWorkspacePath } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
 export * from './battle-bridge-outbound-health-beacon-core.mjs';
@@ -567,13 +568,20 @@ function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualified
 
 export function buildBattleBridgeOutboundBeacon(args = {}) {
   const base = core.buildBattleBridgeOutboundBeacon(args);
-  return augmentRecordWithWorkerWatchdog(
+  const augmented = augmentRecordWithWorkerWatchdog(
     base,
     args.statusRecords?.workerWatchdog || null,
     args.qualifiedRepairPolicies || [],
     args.statusRecords?.sovereignRepair || null,
     args.statusRecords?.controllerLaneStatus || null,
   );
+  return Object.freeze({
+    ...augmented,
+    goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(
+      args.statusRecords?.coreGateStatus || null,
+      { sourceHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
+    ),
+  });
 }
 
 function digestRecord(record) {
@@ -754,13 +762,13 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
   const workerWatchdogRecord = readJsonBounded(join(workspaceRoot, ...WORKER_WATCHDOG_SPEC.path.split('/')));
   const sovereignRepairRecord = readJsonBounded(join(workspaceRoot, ...SOVEREIGN_REPAIR_SPEC.path.split('/')));
   const controllerLaneStatusRecord = readJsonBounded(join(workspaceRoot, ...CONTROLLER_LANE_STATUS_SPEC.path.split('/')));
-  const record = augmentRecordWithWorkerWatchdog(
-    coreResult.record,
-    workerWatchdogRecord,
-    [],
-    sovereignRepairRecord,
-    controllerLaneStatusRecord,
-  );
+  const coreGateStatus = readJsonBounded(join(workspaceRoot, 'status', 'stephanos-core-daemon-current.json'));
+  const record = Object.freeze({
+    ...augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord, [], sovereignRepairRecord, controllerLaneStatusRecord),
+    goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(coreGateStatus, {
+      sourceHead: coreResult.record.sourceHead, nowMs: Date.parse(coreResult.record.observedAtUtc),
+    }),
+  });
   const publication = requestedPublish(repoRoot, core.buildBattleBridgeOutboundBeaconBody(record));
   const mirror = typeof options.mirror === 'function' ? options.mirror : mirrorBattleBridgeCompleteStateToSharedWorkspace;
   const workspaceMirror = mirror({ workspaceRoot, repoRoot, record });
