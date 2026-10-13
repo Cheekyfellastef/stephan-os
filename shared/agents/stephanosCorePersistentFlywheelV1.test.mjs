@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+  OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
@@ -105,6 +106,85 @@ test('Octopus self-heal decision fires only for unhealthy build truth and respec
   );
   assert.equal(healthy.shouldRepair, false);
   assert.equal(healthy.reason, 'OCTOPUS_SELF_HEAL_NOT_REQUIRED');
+});
+
+test('canonical HOLD blocker fingerprint changes rearm the self-heal decision', () => {
+  const identity = summarizePersistentRefillSweep({ok:true, conveyorResult:{programmeStatus:'HOLD',programmeBlockers:['source-mutation-lease-held','original-owner-proof-missing','source-mutation-lease-held']}});
+  assert.equal(identity.refillCanonicalProgrammeBlockerIdentity,'original-owner-proof-missing|source-mutation-lease-held');
+  const reordered = summarizePersistentRefillSweep({ok:true,conveyorResult:{programmeStatus:'HOLD',programmeBlockers:['original-owner-proof-missing','source-mutation-lease-held']}});
+  assert.equal(reordered.refillCanonicalProgrammeBlockerIdentity, identity.refillCanonicalProgrammeBlockerIdentity);
+  for(const conveyorResult of [{programmeStatus:'READY',programmeBlockers:['same']},{programmeStatus:'HOLD',programmeBlockers:[]},{programmeStatus:'HOLD',programmeBlockers:['bad blocker']},{programmeStatus:'HOLD',programmeBlockers:[null]},{programmeStatus:'HOLD',programmeBlockers:Array(21).fill('held')}]) {
+    assert.equal(summarizePersistentRefillSweep({ok:true,conveyorResult}).refillCanonicalProgrammeBlockerIdentity,'');
+  }
+});
+
+test('Octopus holds repeated missing original-owner receipt repairs but preserves re-admission detection', () => {
+  const source = 'a'.repeat(40);
+  const at = 100_000;
+  const options = {
+    nowMs: at + 10 * 60_000,
+    lastAttemptAtMs: at,
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastAttemptSourceHead: source,
+    sourceHead: source,
+    programmeBlockerIdentity: 'source-mutation-lease-held',
+    lastAttemptProgrammeBlockerIdentity: 'source-mutation-lease-held',
+  };
+  const held = { octopusNeedsRepair: true, octopusProgrammeHeld: true };
+  const suppressed = projectOctopusSelfHealDecision(held, options);
+  assert.equal(suppressed.shouldRepair, false);
+  assert.equal(suppressed.reason, 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT');
+  assert.equal(suppressed.retryAfterMs, OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS - 10 * 60_000);
+  assert.equal(projectOctopusSelfHealDecision(held,
+    { ...options, programmeBlockerIdentity: 'terminal-pair-currently-active' }).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(held,
+    { ...options, programmeBlockerIdentity: '' }).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(held,
+    { ...options, lastAttemptProgrammeBlockerIdentity: '' }).shouldRepair, true);
+
+  // Canonical refill still runs every cycle. Once Programme HOLD is cleared
+  // or a new exact source is deployed, don't wait for the owner recheck.
+  assert.equal(projectOctopusSelfHealDecision(
+    { ...held, octopusProgrammeHeld: false }, options,
+  ).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, sourceHead: 'b'.repeat(40) },
+  ).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, lastBlocker: 'BACKEND_UNHEALTHY' },
+  ).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, lastBlocker: 'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN' },
+  ).reason, 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT');
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, nowMs: at + OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS + 1 },
+  ).shouldRepair, true);
+  // The one-hour recheck opens at the exact deadline, not one millisecond later.
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, nowMs: at + OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS },
+  ).shouldRepair, true);
+  // Hex source identity is case-insensitive: a representation change is not a new deployment.
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, sourceHead: source.toUpperCase() },
+  ).reason, 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT');
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, sourceHead: '' },
+  ).shouldRepair, true);
+  assert.equal(projectOctopusSelfHealDecision(
+    { ...held, octopusNeedsRepair: false }, options,
+  ).reason, 'OCTOPUS_SELF_HEAL_NOT_REQUIRED');
+});
+
+test('Core wires typed original owner HOLD to bounded self-heal rather than another writer', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /lastBlocker: lastOctopusSelfHealBlocker/);
+  assert.match(source, /lastAttemptSourceHead: lastOctopusSelfHealSourceHead/);
+  assert.match(source, /programmeBlockerIdentity: lastRefillSummary\.refillCanonicalProgrammeBlockerIdentity/);
+  assert.match(source, /lastAttemptProgrammeBlockerIdentity: lastOctopusSelfHealProgrammeBlockerIdentity/);
+  assert.match(source, /lastOctopusSelfHealProgrammeBlockerIdentity = lastRefillSummary\.refillCanonicalProgrammeBlockerIdentity/);
+  assert.match(source, /lastOctopusSelfHealSourceHead = sourceHead/);
+  assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
+  assert.match(source, /duplicateSchedulerAllowed: false/);
 });
 
 test('single missing exact worker grant without an active lane is an explicit idle wait, never execution proof', () => {
