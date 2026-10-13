@@ -1774,14 +1774,25 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     'PROVE_END_TO_END_TASK_PARITY',
     'PROVE_SOVEREIGN_ENDURANCE',
   ]);
-  const hasRungProof = (rung, agentId) => proved.some((record) => {
+  // Rejected qualification/parity self-attestations are neither rung proof
+  // nor countable proof telemetry. Only accepted observational rung evidence
+  // enters this display total; authority-bearing claims await trusted review.
+  const isAdmittedRungRecord = (record, rung, agentId = '') => {
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
-      || evidence.rung !== rung) return false;
-    // Observations attributed to one agent never certify another agent.
-    if (agentId && (evidence.agentId !== agentId || actorId(record) !== agentId)) return false;
-    return true;
+      || evidence.rung !== rung || !contract.growthRungs.includes(rung)
+      || rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
+      || rung === 'PROVE_END_TO_END_TASK_PARITY') return false;
+    return !agentId || (evidence.agentId === agentId && actorId(record) === agentId);
+  };
+  const admittedProofRecords = proved.filter((record) => {
+    const rung = record.openClawExcellenceEvidence?.rung;
+    return agentScopedRungs.has(rung)
+      ? agents.some((agentId) => isAdmittedRungRecord(record, rung, agentId))
+      : isAdmittedRungRecord(record, rung);
   });
+  const hasRungProof = (rung, agentId) => admittedProofRecords.some((record) =>
+    isAdmittedRungRecord(record, rung, agentId));
   const rungProof = contract.growthRungs.map((rung) => {
     if (rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
       || rung === 'PROVE_END_TO_END_TASK_PARITY') {
@@ -1831,7 +1842,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     currentRung,
     nextGrowthRung: planted && firstMissing >= 0 ? contract.growthRungs[firstMissing] : '',
     pressureState: !planted ? 'UNKNOWN' : currentGaps.length || firstMissing >= 0 ? 'ACTIVE' : 'CURRENT',
-    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    proofCount: planted ? admittedProofRecords.flatMap(proofRefs).length : null,
     rungProofCount: planted ? rungProof.filter(Boolean).length : null,
     currentGaps: Object.freeze(currentGaps),
     latestEvidenceAt: planted ? safeTime(latest || heartbeat) : '',
