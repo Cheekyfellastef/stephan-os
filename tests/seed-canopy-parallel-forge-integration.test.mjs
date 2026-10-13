@@ -40,6 +40,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       await mkdir(path(folder), { recursive: true });
     }
     await mkdir(home, { recursive: true });
+    const governorDir = join(home, 'Documents', 'Stephanos-openclaw-workspace', 'vr');
+    await mkdir(governorDir, { recursive: true });
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, localModelAllowed: true }));
     await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'),
       path('scripts/seed-canopy-parallel-builder.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelForgeV1.mjs'),
@@ -48,6 +53,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       path('scripts/seed-canopy-parallel-supervisor.mjs'));
     await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelSupervisorV1.mjs'),
       path('shared/runtime/seedCanopyParallelSupervisorV1.mjs'));
+    await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelResourceV1.mjs'),
+      path('shared/runtime/seedCanopyParallelResourceV1.mjs'));
     await writeFile(path('shared/project/seedGardenProjectionV1.mjs'),
       'export const HIGH_LEVEL_FLYWHEEL_SEEDS_V1 = ' + JSON.stringify([{
         seedId: SEED_ID, issue: '#3096',
@@ -70,6 +77,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const main = git('rev-parse', 'main');
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
+        if (req.url === '/api/ps' && req.method === 'GET') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ models: [{ name: 'mock-fixture-model' }] }));
+          return;
+        }
         if (req.url !== '/api/generate' || req.method !== 'POST') {
           res.writeHead(404); res.end(); return;
         }
