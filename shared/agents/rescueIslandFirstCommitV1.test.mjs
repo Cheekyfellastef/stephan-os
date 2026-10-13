@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -136,6 +136,67 @@ test('untrusted manifest, scope, gaming and approval paths remain held', async (
   await assert.rejects(() => build({
     ...ctx, observed: { ...ctx.observed, runnerResourceMode: 'GPU' },
   }), /RESCUE_ISLAND_PREFLIGHT_HELD/);
+});
+
+
+test('read-only preflight refuses nested or symlink-aliased receipt/worktree roots BEFORE source mutation', async () => {
+  const ctx = await fixture();
+  for (const patch of [
+    { receiptRoot: join(ctx.repoRoot, '.private-receipts') },
+    { worktreeRoot: join(ctx.repoRoot, 'private-worktrees') },
+    { receiptRoot: join(ctx.worktreeRoot, 'receipts') },
+  ]) await assert.rejects(() => build({ ...ctx, ...patch }),
+    /RESCUE_ISLAND_ROOT_BOUNDARY_INVALID/);
+  const alias = join(ctx.worktreeRoot, '..', 'repo-link');
+  await symlink(ctx.repoRoot, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(() => build({ ...ctx, receiptRoot: join(alias, 'hidden-receipts') }),
+    /RESCUE_ISLAND_ROOT_BOUNDARY_INVALID/);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('same-task transient test failure is recoverable by explicitly authorised same owner, never via a duplicate claim', async () => {
+  const ctx = await fixture();
+  let failedOnce = false;
+  const failingRunner = (cmd, args, options) => {
+    if (!failedOnce) {
+      failedOnce = true;
+      return { status: 1, stdout: '', stderr: 'one-time test outage' };
+    }
+    return spawnSync(cmd, args, options);
+  };
+  await assert.rejects(() => build({ ...ctx, runTest: failingRunner }),
+    /RESCUE_ISLAND_FOCUSED_TEST_FAILED/);
+  const before = git(ctx.repoRoot, 'worktree', 'list', '--porcelain');
+  assert.match(before, /rescue-island\/pilot-pilot-3103-01/);
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_DUPLICATE_CLAIM/);
+  const result = await build({ ...ctx, sameOwnerRecoveryAuthenticated: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.receipts.map(r => r.stage), [
+    'SELECTED', 'CLAIMED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
+  ]);
+  assert.equal(git(ctx.repoRoot, 'worktree', 'list', '--porcelain'), before);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+  await assert.rejects(() => build({ ...ctx, sameOwnerRecoveryAuthenticated: true }),
+    /RESCUE_ISLAND_ALREADY_COMMITTED/);
+});
+
+test('same-owner recovery denies changed task fingerprint and missing blocked proof', async () => {
+  const ctx = await fixture();
+  let failedOnce = false;
+  await assert.rejects(() => build({
+    ...ctx, runTest: (cmd, args, options) => {
+      if (!failedOnce) {
+        failedOnce = true;
+        return { status: 1, stderr: 'outage' };
+      }
+      return spawnSync(cmd, args, options);
+    },
+  }), /RESCUE_ISLAND_FOCUSED_TEST_FAILED/);
+  await assert.rejects(() => build({
+    ...ctx, sameOwnerRecoveryAuthenticated: true,
+    task: { ...ctx.task, content: CONTENT + '\nSILENTLY ALTERED\n' },
+  }), /RESCUE_ISLAND_RECOVERY_OWNER_OR_TASK_MISMATCH/);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
 });
 
 test('no privileged public CLI, scheduler, mailbox, network write, merge or lease authority exists in pilot module', async () => {
