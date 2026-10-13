@@ -71,3 +71,33 @@ export async function verifySeedParallelOwnerGitHubApprovalV1({
     commentId: comment.id,
   });
 }
+
+ 
+// Title truth is presentation-only. Never let an unavailable GitHub read
+// manufacture an owning issue title, or change the separately verified grant.
+export async function resolveSeedParallelOwnerIssueLabelV1(issueRef, {
+  fetchFn = fetch,
+} = {}) {
+  const raw = String(issueRef || '').trim();
+  const fallback = Object.freeze({ label: raw + ' — title unavailable from current evidence', issueTitleTruth: 'UNAVAILABLE' });
+  const match = raw.match(/^#([1-9][0-9]{0,6})$/);
+  if (!match) return fallback;
+  const number = Number(match[1]);
+  try {
+    const response = await fetchFn('https://api.github.com/repos/' + REPO + '/issues/' + number, {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Stephanos-Seed-Parallel-Forge' },
+      signal: AbortSignal.timeout(5000),
+      redirect: 'error',
+    });
+    if (response?.status !== 200) return fallback;
+    const body = await response.text();
+    if (Buffer.byteLength(body, 'utf8') > 12000) return fallback;
+    const issue = JSON.parse(body);
+    const title = typeof issue?.title === 'string' ? issue.title.trim() : '';
+    if (issue?.number !== number || !title || title.length > 180 || /[\x00-\x1f\x7f]/.test(title))
+      return fallback;
+    return Object.freeze({ label: raw + ' — ' + title, issueTitleTruth: 'CURRENT_CANONICAL_GITHUB' });
+  } catch {
+    return fallback;
+  }
+}
