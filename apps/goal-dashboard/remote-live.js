@@ -88,7 +88,7 @@
         status,
         typedBlocker: status === 'FAIL' ? String(g.typedBlocker || '').slice(0, 160) : '',
         waitingOnGate: Number.isInteger(g.waitingOnGate) ? g.waitingOnGate : null,
-        proofRef: /^workspace:status\/(?:stephanos-core-daemon-current|stephanos-native-capacity-current)\.json$/.test(String(g.proofRef || ''))
+        proofRef: /^(?:workspace:status\/(?:stephanos-core-daemon-current|stephanos-native-capacity-current)\.json|workspace:proof\/goal-gate-(?:[1-9]|1[0-9]|2[0-3]))$/.test(String(g.proofRef || ''))
           ? g.proofRef : '',
       };
     });
