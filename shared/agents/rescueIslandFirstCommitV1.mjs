@@ -7,7 +7,8 @@ import { lstat, mkdir, open, readFile, realpath, stat, unlink, writeFile } from 
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { inspectRescueIslandCandidateV1 } from './rescueIslandPreflightV1.mjs';
 import { resolveBattleBridgeGitExecutable, createBattleBridgeMinimalChildEnvironment,
-  battleBridgeGitFixedConfigArgs, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
+  battleBridgeGitFixedConfigArgs, validateBattleBridgeLocalGitConfiguration,
+  inspectBattleBridgeGitTopology } from './battleBridgeExecutionBoundaryV1.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
 const TASK = /^[a-z0-9][a-z0-9-]{7,63}$/;
@@ -149,6 +150,7 @@ export async function constructIsolatedRescueIslandPilotV1({
       ownerIssueTitle: task.issueTitle, taskClass: 'BOUNDED_SOURCE_PROPOSAL',
       baseHead: task.baseHead, targetPaths: [task.targetPath],
       worktreeBranch: 'rescue-island/pilot-' + task.taskId,
+      worktreeIdentity: observed?.worktreeIdentity,
       operatorApproval: 'EXTERNAL_OWNER_PROOF_REQUIRED',
       reviewPolicy: 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED',
       allowMerge: false, allowDeploy: false, allowCanonicalLeaseBypass: false,
@@ -164,6 +166,11 @@ export async function constructIsolatedRescueIslandPilotV1({
   if (!repoRoot || !worktreeRoot || !receiptRoot)
     fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
   const canonicalRoot = await physicalRoot(repoRoot);
+  // Cover metadata authority, not just Git's advertised working top-level.
+  // The canonical checkout must own a physical .git directory, without gitfile,
+  // junction/symlink, common-dir, graft or object-alternate redirections.
+  if (!inspectBattleBridgeGitTopology(canonicalRoot).ok)
+    fail('RESCUE_ISLAND_GIT_METADATA_BOUNDARY_INVALID');
   const gitTopLevel = await physicalRoot(git(canonicalRoot, ['rev-parse', '--show-toplevel'], runGit));
   if (lower(gitTopLevel) !== lower(canonicalRoot))
     fail('RESCUE_ISLAND_REPOSITORY_TOP_LEVEL_MISMATCH');
@@ -174,6 +181,8 @@ export async function constructIsolatedRescueIslandPilotV1({
   const proofs = await physicalRoot(receiptRoot);
   if (overlaps(canonicalRoot, treeRoot) || overlaps(canonicalRoot, proofs)
       || overlaps(treeRoot, proofs)) fail('RESCUE_ISLAND_ROOT_BOUNDARY_INVALID');
+  if (observed.worktreeIdentity !== digest(lower(join(treeRoot, task.taskId))))
+    fail('RESCUE_ISLAND_WORKTREE_IDENTITY_MISMATCH');
   if (await physicalRoot(repoRoot) !== canonicalRoot)
     fail('RESCUE_ISLAND_CANONICAL_ROOT_MOVED');
   if (git(canonicalRoot, ['rev-parse', 'HEAD'], runGit) !== task.baseHead

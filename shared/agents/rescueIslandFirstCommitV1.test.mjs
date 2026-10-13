@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -20,7 +21,7 @@ const status = (command, args, cwd) => {
 const git = (cwd, ...args) => status('git', ['-C', cwd, ...args], cwd);
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'rescue-island-3103-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rescue-island-3103-')));
   const repoRoot = join(root, 'checkout');
   const worktreeRoot = join(root, 'isolated-worktrees');
   const receiptRoot = join(root, 'island-private-receipts');
@@ -54,6 +55,8 @@ async function fixture() {
   const observed = {
     repository: task.repository, mainHead: head, observedAtUtc: NOW,
     worktreeHead: head, worktreeBranch: 'rescue-island/pilot-' + task.taskId,
+    worktreeIdentity: createHash('sha256').update(process.platform === 'win32'
+      ? join(worktreeRoot, task.taskId).toLowerCase() : join(worktreeRoot, task.taskId)).digest('hex'),
     scopeResolutionScan: 'INDEPENDENT_READ_ONLY',
     scopeResolutions: [{ path: task.targetPath, canonicalPath: task.targetPath, repositoryContained: true }],
     canonicalOwnerScan: 'INDEPENDENT_READ_ONLY',
@@ -240,8 +243,32 @@ test('Git top-level, not a caller subdirectory, owns the isolation boundary', as
   const ctx = await fixture();
   const sub = join(ctx.repoRoot, 'shared');
   await assert.rejects(() => build({ ...ctx, repoRoot: sub,
-    receiptRoot: join(ctx.repoRoot, 'hidden-receipts') }), /RESCUE_ISLAND_REPOSITORY_TOP_LEVEL_MISMATCH/);
+    receiptRoot: join(ctx.repoRoot, 'hidden-receipts') }), /RESCUE_ISLAND_GIT_METADATA_BOUNDARY_INVALID|RESCUE_ISLAND_REPOSITORY_TOP_LEVEL_MISMATCH/);
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('Git metadata aliases cannot mutate another checkout', async () => {
+  const ctx = await fixture();
+  const aliasCheckout = join(ctx.repoRoot, '..', 'false-checkout');
+  await mkdir(aliasCheckout);
+  await symlink(join(ctx.repoRoot, '.git'), join(aliasCheckout, '.git'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(() => build({ ...ctx, repoRoot: aliasCheckout }),
+    /RESCUE_ISLAND_GIT_METADATA_BOUNDARY_INVALID/);
+  assert.equal(git(ctx.repoRoot, 'branch', '--list', 'rescue-island/*'), '');
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+test('config-driven SSH signing cannot invoke another executable', async () => {
+  const ctx = await fixture();
+  git(ctx.repoRoot, 'config', 'commit.gpgSign', 'true');
+  git(ctx.repoRoot, 'config', 'gpg.format', 'ssh');
+  git(ctx.repoRoot, 'config', 'gpg.ssh.program', 'arbitrary-executable');
+  let testsExecuted = false;
+  await assert.rejects(() => build({ ...ctx,
+    runTest: () => { testsExecuted = true; return { status: 0 }; } }), /RESCUE_ISLAND_GIT_CONFIGURATION_UNTRUSTED/);
+  assert.equal(testsExecuted, false);
+  assert.equal(git(ctx.repoRoot, 'branch', '--list', 'rescue-island/*'), '');
 });
 
 test('local Git filters cannot execute at the source mutation boundary', async () => {

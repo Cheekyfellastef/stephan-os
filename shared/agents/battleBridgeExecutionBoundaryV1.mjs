@@ -26,6 +26,8 @@ export function battleBridgeCanonicalRepositoryArgs(repoRoot) {
 // monitor, credential commands, or recursive submodule execution.
 export const BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS = Object.freeze([
   '-c', 'core.hooksPath=NUL',
+  '-c', 'commit.gpgSign=false',
+  '-c', 'tag.gpgSign=false',
   '-c', 'core.fsmonitor=false',
   '-c', 'core.trustctime=true',
   '-c', 'core.checkStat=default',
@@ -181,7 +183,9 @@ export function validateBattleBridgeLocalGitConfiguration(output = '') {
     || entry.key === 'interactive.difffilter'
     || entry.key === 'sequence.editor'
     || entry.key === 'core.editor'
-    || entry.key === 'gpg.program'
+    || entry.key.startsWith('gpg.')
+    || (entry.key === 'commit.gpgsign' && entry.value.toLowerCase() !== 'false')
+    || (entry.key === 'tag.gpgsign' && entry.value.toLowerCase() !== 'false')
     || entry.key.startsWith('http.')
   ));
   const ok = remoteUrls.length === 1
