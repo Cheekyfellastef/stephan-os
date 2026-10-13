@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   assertQualifiableExactHeadReceiptV1,
   validateOwnerEscalationCommentV1,
@@ -119,4 +120,16 @@ test('untrusted PR data can never set review authority by adding a flag', () => 
   assert.throws(() => assertQualifiableExactHeadReceiptV1(
     input, { ...receipt, verdict: 'STEPHANOS_REVIEW_PASS' },
   ), /REVIEW_IDENTITY/);
+});
+
+test('trusted workflow keeps review and qualified P2 in one fail-closed step', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/stephanos-exact-head-review.yml', import.meta.url), 'utf8');
+  const adapter = readFileSync(new URL('./exact-head-qualified-escalation-v1.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
+  assert.match(workflow, /run: node scripts\/exact-head-qualified-escalation-v1\.mjs review-proof\/input\.json review-proof\/receipt\.json/);
+  assert.match(workflow, /GH_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(workflow, /name: Gate hosted review on its own GitHub installation API budget/);
+  assert.match(adapter, /const receipt = reviewExactHead\(input\)/);
+  assert.match(adapter, /flag: 'wx', mode: 0o600/);
+  assert.match(adapter, /APPROVAL|mergeAuthority: false/);
 });
