@@ -157,12 +157,14 @@ async function build(request) {
     await saveReceipt(request, stage, { worktree, claimProof: branch + '@' + head });
     const target = await safeTarget(worktree, request.targetPath);
     let current = '';
+    let targetExisted = false;
     try {
       current = await readFile(target, 'utf8');
+      targetExisted = true;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
-    const sha = current ? createHash('sha256').update(current).digest('hex') : null;
+    const sha = targetExisted ? createHash('sha256').update(current).digest('hex') : null;
     if (sha !== request.expectedTargetSha256) throw new Error('TARGET_CONTENT_HASH_MISMATCH');
     const proposal = await localModelWrite(request, current, checked.seed);
     await mkdir(dirname(target), { recursive: true });
