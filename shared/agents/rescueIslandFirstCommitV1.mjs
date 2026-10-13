@@ -3,7 +3,7 @@
 // scheduler, mailbox verb, merge, deployment, or unattended run is registered.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readFile, realpath, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { inspectRescueIslandCandidateV1 } from './rescueIslandPreflightV1.mjs';
 
@@ -13,6 +13,11 @@ const SAFE_DOC = /^docs\/architecture\/rescue-island-pilot-[a-z0-9-]+\.md$/;
 const REPO = 'Cheekyfellastef/stephan-os';
 
 const digest = (s) => createHash('sha256').update(s).digest('hex');
+const fingerprint = (task) => digest(JSON.stringify(immutableFields.map((key) => task[key])));
+async function exists(path) {
+  try { await stat(path); return true; }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
 const text = (s) => String(s ?? '').trim();
 const lower = (v) => process.platform === 'win32' ? v.toLowerCase() : v;
 const overlaps = (left, right) => {
@@ -113,6 +118,7 @@ function receipt(stage, task, extras = {}) {
 export async function constructIsolatedRescueIslandPilotV1({
   task, observed, nowUtc, repoRoot, worktreeRoot, receiptRoot,
   approvalAuthenticated = false, ownershipAuthenticated = false,
+  sameOwnerRecoveryAuthenticated = false,
   runGit = spawnSync, runTest = spawnSync,
 } = {}) {
   if (!validateRescueIslandPilotTaskV1(task, nowUtc))
@@ -163,39 +169,100 @@ export async function constructIsolatedRescueIslandPilotV1({
       || overlaps(await physicalRoot(repoRoot), treeRoot)
       || overlaps(await physicalRoot(repoRoot), proofs))
     fail('RESCUE_ISLAND_ROOT_BOUNDARY_CHANGED');
-  const claim = await open(join(claimDir, task.taskId + '.json'), 'wx')
-    .catch(() => fail('RESCUE_ISLAND_DUPLICATE_CLAIM'));
+  const claimPath = join(claimDir, task.taskId + '.json');
+  const recoveryLockPath = join(claimDir, task.taskId + '.recovery.lock');
+  const taskFingerprint = fingerprint(task);
+  let claim;
+  let recovering = false;
+  let recoveryLock;
+  try { claim = await open(claimPath, 'wx'); }
+  catch (error) {
+    if (error.code !== 'EEXIST') fail('RESCUE_ISLAND_CLAIM_IO_FAILED');
+    if (sameOwnerRecoveryAuthenticated !== true)
+      fail('RESCUE_ISLAND_DUPLICATE_CLAIM');
+    let previous;
+    try { previous = JSON.parse(await readFile(claimPath, 'utf8')); }
+    catch { fail('RESCUE_ISLAND_PREVIOUS_CLAIM_UNREADABLE'); }
+    if (previous.taskId !== task.taskId || previous.head !== task.baseHead
+        || previous.workerId !== task.workerId
+        || previous.fingerprint !== taskFingerprint)
+      fail('RESCUE_ISLAND_RECOVERY_OWNER_OR_TASK_MISMATCH');
+    if (await exists(join(claimDir, task.taskId + '.ISOLATED_COMMIT.json')))
+      fail('RESCUE_ISLAND_ALREADY_COMMITTED');
+    if (!await exists(join(claimDir, task.taskId + '.BLOCKED.json')))
+      fail('RESCUE_ISLAND_CLAIM_IN_FLIGHT');
+    try { recoveryLock = await open(recoveryLockPath, 'wx'); }
+    catch { fail('RESCUE_ISLAND_RECOVERY_ALREADY_IN_PROGRESS'); }
+    recovering = true;
+  }
   const stages = [];
   const append = async (stage, extra = {}) => {
     const proof = receipt(stage, task, extra);
+    const path = join(claimDir, task.taskId + '.' + stage + '.json');
+    if (recovering && await exists(path)) {
+      let previous;
+      try { previous = JSON.parse(await readFile(path, 'utf8')); }
+      catch { fail('RESCUE_ISLAND_RECOVERY_RECEIPT_UNREADABLE'); }
+      if (previous.schemaVersion !== proof.schemaVersion
+          || previous.workerId !== proof.workerId
+          || previous.taskId !== proof.taskId
+          || previous.sourceHead !== proof.sourceHead
+          || previous.targetPath !== proof.targetPath
+          || previous.stage !== stage)
+        fail('RESCUE_ISLAND_RECOVERY_RECEIPT_MISMATCH');
+      stages.push(Object.freeze(previous));
+      return;
+    }
+    await writeFile(path, JSON.stringify(proof) + '\n', { flag: 'wx' });
     stages.push(proof);
-    await writeFile(join(proofs, 'claims', task.taskId + '.' + stage + '.json'),
-      JSON.stringify(proof) + '\n', { flag: 'wx' });
   };
   try {
-    await claim.writeFile(JSON.stringify({ taskId: task.taskId, head: task.baseHead }) + '\n');
-    await claim.close();
+    if (claim) {
+      await claim.writeFile(JSON.stringify({
+        taskId: task.taskId, head: task.baseHead,
+        workerId: task.workerId, fingerprint: taskFingerprint,
+      }) + '\n');
+      await claim.close();
+    }
+    if (recoveryLock) await recoveryLock.close();
     await append('SELECTED');
     await append('CLAIMED');
     // Git worktree add is restricted to the task-derived unique branch.
     // No force, no direct main update, no cleanup of pre-existing directories.
-    git(canonicalRoot, ['worktree', 'add', '-b', branch, worktree, task.baseHead], runGit);
+    if (recovering && await exists(worktree)) {
+      const checkedOutBranch = git(worktree, ['symbolic-ref', '--short', 'HEAD'], runGit);
+      const existingHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
+      if (checkedOutBranch !== branch || !SHA.test(existingHead))
+        fail('RESCUE_ISLAND_RECOVERY_WORKTREE_MISMATCH');
+    } else {
+      git(canonicalRoot, ['worktree', 'add', '-b', branch, worktree, task.baseHead], runGit);
+    }
     await append('PHYSICAL_PICKUP', { worktreeCreated: true });
     const output = resolve(worktree, task.targetPath);
     if (!output.startsWith(resolve(worktree) + (process.platform === 'win32' ? '\\' : '/')))
       fail('RESCUE_ISLAND_PATH_ESCAPES_WORKTREE');
     await mkdir(dirname(output), { recursive: true });
-    await writeFile(output, task.content, { flag: 'wx' });
+    if (recovering && await exists(output)) {
+      if (await readFile(output, 'utf8') !== task.content)
+        fail('RESCUE_ISLAND_RECOVERY_SOURCE_MISMATCH');
+    } else {
+      await writeFile(output, task.content, { flag: 'wx' });
+    }
     await append('EDITED', { sha256: digest(task.content) });
     const testResultHash = nodeTest(worktree, task.testPath, runTest);
     await append('TESTED', { testResultHash });
-    git(worktree, ['add', '--', task.targetPath], runGit);
-    const staged = git(worktree, ['diff', '--cached', '--name-only'], runGit);
-    if (staged !== task.targetPath) fail('RESCUE_ISLAND_STAGED_SCOPE_MISMATCH');
-    git(worktree, ['-c', 'core.hooksPath=/dev/null',
-      '-c', 'user.name=Rescue Island Proposal',
-      '-c', 'user.email=rescue-island@users.noreply.github.com',
-      'commit', '-m', 'Bounded Rescue Island pilot proposal (' + task.taskId + ')'], runGit);
+    const currentHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
+    if (currentHead === task.baseHead) {
+      git(worktree, ['add', '--', task.targetPath], runGit);
+      const staged = git(worktree, ['diff', '--cached', '--name-only'], runGit);
+      if (staged !== task.targetPath) fail('RESCUE_ISLAND_STAGED_SCOPE_MISMATCH');
+      git(worktree, ['-c', 'core.hooksPath=/dev/null',
+        '-c', 'user.name=Rescue Island Proposal',
+        '-c', 'user.email=rescue-island@users.noreply.github.com',
+        'commit', '-m', 'Bounded Rescue Island pilot proposal (' + task.taskId + ')'], runGit);
+    } else if (!recovering) {
+      fail('RESCUE_ISLAND_UNEXPECTED_WORKTREE_HEAD');
+    }
     const head = git(worktree, ['rev-parse', 'HEAD'], runGit);
     const parent = git(worktree, ['rev-parse', 'HEAD^'], runGit);
     const changed = git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit);
@@ -219,5 +286,9 @@ export async function constructIsolatedRescueIslandPilotV1({
     await append('BLOCKED', { blocker: text(error?.code || error?.message).slice(0,160) })
       .catch(() => {});
     throw error;
+  } finally {
+    // A crash retains a recovery lock and requires operator-owned reconciliation.
+    // No branch/worktree/claim deletion, no lease seizure or fresh owner minted.
+    if (recovering) await unlink(recoveryLockPath).catch(() => {});
   }
 }
