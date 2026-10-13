@@ -137,3 +137,46 @@ test('no commissioned signing key cannot create a signed gate receipt', async ()
   assert.equal(res.ok, false);
   assert.equal(wrote, false);
 });
+
+test('independent per-gate cooldown does not park native capacity behind original custody HOLD', async () => {
+  const gates = raw().evidence.gates;
+  const base = { sourceHead: head, gates };
+  const first = planCoreGateStewardV1(base, { nowMs });
+  assert.equal(first.nextAction.gateId, 8);
+  const ledger = [{ key: first.proofKey, atMs: nowMs }];
+  const second = planCoreGateStewardV1(base, {
+    nowMs: nowMs + 1000, previousAttempts: ledger,
+    previousActionKey: first.proofKey, previousAttemptAtMs: nowMs,
+  });
+  assert.equal(second.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
+  assert.equal(second.nextAction.gateId, 13);
+  assert.deepEqual(second.coolingGateIds, [8]);
+  ledger.push({ key: second.proofKey, atMs: nowMs + 1000 });
+  const third = planCoreGateStewardV1(base, {
+    nowMs: nowMs + 2000, previousAttempts: ledger,
+  });
+  assert.equal(third.nextAction.gateId, 7);
+  // All independently observed failures have separate cooldowns, without
+  // turning a proposal into an execution or an authority grant.
+  ledger.push({ key: third.proofKey, atMs: nowMs + 2000 });
+  const fourth = planCoreGateStewardV1(base, {
+    nowMs: nowMs + 3000, previousAttempts: ledger,
+  });
+  assert.equal(fourth.nextAction.gateId, 9);
+  ledger.push({ key: fourth.proofKey, atMs: nowMs + 3000 });
+  const allCooling = planCoreGateStewardV1(base, {
+    nowMs: nowMs + 4000, previousAttempts: ledger,
+  });
+  assert.equal(allCooling.nextAction, null);
+  assert.equal(allCooling.decision, 'SAME_EVIDENCE_COOLDOWN');
+  assert.ok(allCooling.retryAfterMs > 0);
+  assert.equal(allCooling.autoExecuteAllowed, false);
+  assert.equal(allCooling.leaseOverrideAllowed, false);
+  const sourceChanged = planCoreGateStewardV1({ sourceHead: 'b'.repeat(40), gates },
+    { nowMs: nowMs + 4000, previousAttempts: ledger });
+  assert.equal(sourceChanged.nextAction.gateId, 8);
+  const coreSource = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(coreSource, /previousAttempts: lastGateStewardAttempts/);
+  assert.match(coreSource, /lastGateStewardAttempts = \[/);
+  assert.match(coreSource, /\.slice\(-23\)/);
+});
