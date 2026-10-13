@@ -159,6 +159,14 @@ test('Octopus holds repeated missing original-owner receipt repairs but preserve
   assert.equal(projectOctopusSelfHealDecision(
     held, { ...options, nowMs: at + OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS + 1 },
   ).shouldRepair, true);
+  // The one-hour recheck opens at the exact deadline, not one millisecond later.
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, nowMs: at + OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS },
+  ).shouldRepair, true);
+  // Hex source identity is case-insensitive: a representation change is not a new deployment.
+  assert.equal(projectOctopusSelfHealDecision(
+    held, { ...options, sourceHead: source.toUpperCase() },
+  ).reason, 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT');
   assert.equal(projectOctopusSelfHealDecision(
     held, { ...options, sourceHead: '' },
   ).shouldRepair, true);
@@ -173,6 +181,7 @@ test('Core wires typed original owner HOLD to bounded self-heal rather than anot
   assert.match(source, /lastAttemptSourceHead: lastOctopusSelfHealSourceHead/);
   assert.match(source, /programmeBlockerIdentity: lastRefillSummary\.refillCanonicalProgrammeBlockerIdentity/);
   assert.match(source, /lastAttemptProgrammeBlockerIdentity: lastOctopusSelfHealProgrammeBlockerIdentity/);
+  assert.match(source, /lastOctopusSelfHealProgrammeBlockerIdentity = lastRefillSummary\\.refillCanonicalProgrammeBlockerIdentity/);
   assert.match(source, /lastOctopusSelfHealSourceHead = sourceHead/);
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
   assert.match(source, /duplicateSchedulerAllowed: false/);
