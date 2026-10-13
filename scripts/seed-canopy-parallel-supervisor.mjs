@@ -14,7 +14,8 @@ import {
   projectParallelSeedReceiptStatusV1,
 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import {
-  SEED_PARALLEL_APPROVAL_REF_SCHEMA, verifySeedParallelOwnerGitHubApprovalV1,
+  SEED_PARALLEL_APPROVAL_REF_SCHEMA, validateSeedParallelApprovalReferenceV1,
+  verifySeedParallelOwnerGitHubApprovalV1,
 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -58,7 +59,8 @@ async function inboxCandidates() {
       const reference = await maybeJson(pathFor('approvals', taskId));
       // Limit GitHub traffic: only a small batch of eligible, unclaimed task references
       // is authenticated per supervisor cycle. Never continuously poll for approval.
-      const shouldVerify = !existingClaim && !existingReceipt && Boolean(reference)
+      const shouldVerify = !existingClaim && !existingReceipt
+        && validateSeedParallelApprovalReferenceV1(reference)
         && approvalVerifications < 4;
       if (shouldVerify) approvalVerifications += 1;
       const verification = shouldVerify
@@ -91,6 +93,8 @@ async function status() {
     const expectedClaim = claims.find((claim) => claim.taskId === receipt.taskId);
     if (expectedClaim && receipt.stage === 'COMMITTED'
       && /^[a-f0-9]{40}$/.test(receipt.commitSha || '')
+      && /^[a-f0-9]{64}$/.test(receipt.proposedSha256 || '')
+      && /^[a-f0-9]{40}$/.test(expectedClaim.baseSha || '')
       && receipt.seedId === expectedClaim.seedId
       && receipt.targetPath === expectedClaim.targetPath) {
       const worktree = pathFor('worktrees', expectedClaim.taskId, '');
@@ -103,9 +107,26 @@ async function status() {
       const head = verifyGit('rev-parse', 'HEAD');
       const branch = verifyGit('branch', '--show-current');
       const clean = verifyGit('status', '--porcelain', '--untracked-files=all');
+      const parentLine = verifyGit('rev-list', '--parents', '-n', '1', 'HEAD');
+      const parents = parentLine?.split(' ') || [];
+      const committedPaths = verifyGit('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD');
+      const committedTree = verifyGit('rev-parse', 'HEAD^{tree}');
+      let contentSha256 = null;
+      try {
+        // A mutable receipt or unrelated second commit must never impersonate the
+        // original single-file, exact-base source proposal.
+        const content = await readFile(join(worktree, expectedClaim.targetPath));
+        contentSha256 = createHash('sha256').update(content).digest('hex');
+      } catch {
+        contentSha256 = null;
+      }
       independentGitHeadVerified = Boolean(head === receipt.commitSha
         && branch === 'seed-parallel/' + expectedClaim.seedId + '/' + expectedClaim.taskId
-        && clean === '' && receipt.exactBaseSha === expectedClaim.baseSha);
+        && clean === '' && receipt.exactBaseSha === expectedClaim.baseSha
+        && parents.length === 2 && parents[0] === head && parents[1] === expectedClaim.baseSha
+        && committedPaths === expectedClaim.targetPath
+        && /^[a-f0-9]{40}$/.test(committedTree || '')
+        && contentSha256 === receipt.proposedSha256);
     }
     receipts.push({ ...receipt, independentGitHeadVerified });
   }
