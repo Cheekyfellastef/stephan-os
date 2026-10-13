@@ -14,6 +14,7 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
+  coreGamingProtectionFromGovernor,
   projectStephanosCoreDaemonState,
   shouldReloadStephanosCoreDaemon,
 } from '../shared/agents/stephanosCoreDaemonV1.mjs';
@@ -73,7 +74,7 @@ const lockPath = resolve(localStateRoot, 'stephanos-core-daemon.lock.json');
 const workerHeartbeatPath = resolve(workspaceRoot, 'status', 'mission-orchestrator-worker-heartbeat.json');
 const sourceLeasePath = resolve(workspaceRoot, 'status', 'source-mutation-lease-current.json');
 const coreStatusPath = resolve(workspaceRoot, 'status', 'stephanos-core-daemon-current.json');
-const gamingStatePath = resolve(workspaceRoot, 'status', 'vr-resource-governor-current.json');
+const gamingStatePath = resolve(workspaceRoot, 'vr', 'vr-resource-governor-current.json');
 const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 const HEARTBEAT_MS = 15_000;
 const FLYWHEEL_FALLBACK_MS = DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
@@ -167,10 +168,11 @@ async function fileAgeMs(path) {
 
 async function gamingActive() {
   try {
-    const value = JSON.parse(await readFile(gamingStatePath, 'utf8'));
-    return value?.active === true;
+    return coreGamingProtectionFromGovernor(JSON.parse(await readFile(gamingStatePath, 'utf8')));
   } catch {
-    return false;
+    // No authoritative gaming truth means no new local CPU/GPU-intensive work.
+    // Do not block separately hosted GitHub Actions or lightweight heartbeats.
+    return true;
   }
 }
 
