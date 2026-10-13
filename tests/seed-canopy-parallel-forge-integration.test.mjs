@@ -109,6 +109,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await mkdir(join(stateRoot, 'approvals'), { recursive: true });
     const raw = await readFile(manifest, 'utf8');
     await writeFile(join(stateRoot, 'inbox', TASK_ID + '.json'), raw);
+    const direct = await runAsync(process.execPath, [
+      path('scripts/seed-canopy-parallel-builder.mjs'), 'build', manifest, '--execute',
+    ], { cwd: repo, env });
+    assert.notEqual(direct.code, 0);
+    assert.match(direct.stderr, /EXACT_LOCAL_OPERATOR_APPROVAL_MISSING_OR_UNREADABLE/);
     const issuedAtUtc = new Date().toISOString();
     const approval = makeParallelSeedExactApprovalV1({
       request, manifestSha256: parallelSeedManifestHashV1(raw), nowUtc: issuedAtUtc,
