@@ -199,12 +199,12 @@ test('native task install cannot falsely certify a stale signed capacity receipt
       observed += 1;
       return { ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' };
     },
-    sleep: async (ms) => { assert.equal(ms, 2000); slept += 1; },
+    sleep: async (ms) => { assert.equal(ms, 10_000); slept += 1; },
   });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID');
-  assert.equal(observed, 5);
-  assert.equal(slept, 4);
+  assert.equal(observed, 16);
+  assert.equal(slept, 15);
 });
 
 test('native task installation requires an exact signed routing candidate', async () => {
@@ -226,4 +226,28 @@ test('native task installation requires an exact signed routing candidate', asyn
   });
   assert.equal(pass.ok, true);
   assert.equal(pass.attempt, 1);
+});
+
+test('cold-start native capacity may become signed-current after the old 8s window', async () => {
+  let checked = 0, sleeps = 0;
+  const candidate = {
+    sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+    taskClass: 'FOCUSED_REPAIR', sourceMutationAllowed: true,
+    mergeAuthority: false, leaseSeizureAllowed: false,
+  };
+  const result = await proveNativePublisherSignedReadbackV1({
+    expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+    verify: async () => {
+      checked++;
+      return checked < 13
+        ? { ok: false, reason: 'STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING' }
+        : { ok: true, candidate };
+    },
+    sleep: async delay => { assert.equal(delay, 10000); sleeps++; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.attempt, 13);
+  assert.equal(checked, 13);
+  assert.equal(sleeps, 12);
+  assert.equal(result.finalVerdict, 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_CAPACITY_LIVE_PROVEN');
 });
