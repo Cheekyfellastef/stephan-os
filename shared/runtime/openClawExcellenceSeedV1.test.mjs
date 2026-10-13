@@ -208,6 +208,7 @@ test('fabricated ten-question, adversarial-test, operator-approval and reviewer 
   }));
   const seed = view(payload).openClawExcellenceSeedGrowth;
   assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.proofCount, 0);
   assert.equal(seed.pressureState, 'ACTIVE');
 });
 
@@ -238,6 +239,25 @@ test('agent-authored complete benchmark matrix cannot forge reviewer independenc
       },
     })));
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 0);
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.proofCount, 0);
+});
+
+test('only source-admitted observational records count as OpenClaw proof', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [
+    event('INVENTORY_BOTH_AGENTS'),
+    event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone'),
+    event('QUALIFY_AGENT_SPECIFIC_SKILLS'),
+    event('PROVE_END_TO_END_TASK_PARITY', 'openclaw-standalone'),
+    event('INVENTORY_BOTH_AGENTS', 'intruder'),
+    { ...event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone'),
+      participantId: 'openclaw-local', eventId: 'spoofed-standalone-inventory' },
+    { ...event('INVENTORY_BOTH_AGENTS'), eventId: 'unsigned-prose',
+      openClawExcellenceEvidence: null },
+  ];
+  const seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 1);
+  assert.equal(seed.proofCount, 2);
 });
 
 test('stale feed or stale source freshness cannot plant a fresh seed or show current/dispatch work', () => {
