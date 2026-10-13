@@ -36,7 +36,8 @@
       if (record?.repository !== REPOSITORY || Number(record?.issueNumber) !== BEACON_ISSUE) return null;
       if (!safeSha(record?.sourceHead)) return null;
       if (!Number.isFinite(observedMs(record?.observedAtUtc))) return null;
-      return record;
+      return { ...record, ownerCommentAuthenticated:
+        comment?.user?.login === 'Cheekyfellastef' && comment?.user?.id === 267490109 };
     } catch {
       return null;
     }
@@ -77,7 +78,8 @@
     if (raw?.schemaVersion !== 'stephanos.public-goal-build-gate-observatory.v1'
       || raw.sourceHead !== head || !Array.isArray(raw.gates) || raw.gates.length !== 23
       || raw.gates.some((g, i) => g?.id !== i + 1)) return null;
-    const current = exactHeadMatch && beaconFresh && raw.observationStatus === 'EVIDENCE_AVAILABLE';
+    const current = beacon?.ownerCommentAuthenticated === true
+      && exactHeadMatch && beaconFresh && raw.observationStatus === 'EVIDENCE_AVAILABLE';
     const gates = raw.gates.map(g => {
       const status = current && ['PASS', 'FAIL', 'WAITING_FOR_PREREQUISITE', 'UNVERIFIED', 'STALE'].includes(g.status)
         ? g.status : g.status === 'UNVERIFIED' ? 'UNVERIFIED' : 'STALE';
