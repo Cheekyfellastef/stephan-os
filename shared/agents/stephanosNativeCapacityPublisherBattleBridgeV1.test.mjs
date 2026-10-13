@@ -331,3 +331,38 @@ test('qualified native publisher restart source is fixed, one-shot and never tar
   assert.match(ps, /sourceMutationAllowed=\$false/);
   assert.doesNotMatch(ps, /^\s*(?:Stop-Process|taskkill|Unregister-ScheduledTask|Remove-Item|git\s+(?:reset|clean|push))\b/gim);
 });
+
+test('same-head signed capacity predating StartNow never proves new publication', async () => {
+  const result = await proveNativePublisherSignedReadbackV1({
+    expectedHead: HEAD, repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+    notBeforeUtc: NOW.toISOString(),
+    verify: async () => ({ ok: true, candidate: {
+      sourceHead: HEAD, repository: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
+      taskClass: 'FOCUSED_REPAIR', capacityObservedAtUtc: '2026-09-22T17:49:59.000Z',
+      sourceMutationAllowed: true, mergeAuthority: false, leaseSeizureAllowed: false,
+    } }),
+    sleep: async () => {},
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'STEPHANOS_NATIVE_PUBLISHER_POST_START_SIGNED_RECEIPT_UNPROVEN');
+  assert.equal(result.attempt, 16);
+});
+
+test('stale publisher clears its status without losing a prior authenticated stale head', async () => {
+  for (const [laterReason, expected] of [
+    ['STEPHANOS_NATIVE_ROUTING_TRUTH_MISSING', 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID'],
+    ['STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch', 'STEPHANOS_NATIVE_SOURCE_AUTHORITY_INVALID:authority-id-binding-mismatch'],
+  ]) {
+    let probes = 0;
+    const result = await proveNativePublisherSignedReadbackV1({
+      notBeforeUtc: NOW.toISOString(), expectedHead: HEAD,
+      repositoryRoot: '/repo', env: { USERPROFILE: '/operator' },
+      verify: async () => ({ ok: false, reason: ++probes === 1
+        ? 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' : laterReason }),
+      sleep: async () => {},
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, expected);
+    assert.equal(probes, 16);
+  }
+});
