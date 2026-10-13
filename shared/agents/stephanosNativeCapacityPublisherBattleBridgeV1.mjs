@@ -105,7 +105,9 @@ export async function proveNativePublisherSignedReadbackV1({
 } = {}) {
   // Task registration and StartNow do not prove a fresh signed capacity record.
   let lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_STATUS_NOT_YET_PROVEN';
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  // Local model cold starts are bounded by a 120s qualification timeout.
+  // Poll for up to 150s so a healthy first 27B load is not falsely rejected.
+  for (let attempt = 1; attempt <= 16; attempt += 1) {
     try {
       const v = await verify({
         nowUtc: now().toISOString(),
@@ -132,10 +134,10 @@ export async function proveNativePublisherSignedReadbackV1({
     } catch {
       lastReason = 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_UNAVAILABLE';
     }
-    if (attempt < 5) await sleep(2000);
+    if (attempt < 16) await sleep(10_000);
   }
   return Object.freeze({
-    ok: false, attempt: 5, sourceHead: expectedHead, reason: lastReason,
+    ok: false, attempt: 16, sourceHead: expectedHead, reason: lastReason,
     finalVerdict: 'STEPHANOS_NATIVE_PUBLISHER_SIGNED_READBACK_HELD',
   });
 }
