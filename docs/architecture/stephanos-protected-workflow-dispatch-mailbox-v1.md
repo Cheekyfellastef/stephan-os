@@ -2,6 +2,43 @@
 
 Status: source-built; live only after protected admission and an exact receipt proves a real lifecycle action.
 
+## Authenticated fast-mailbox actor handoff
+
+The canonical mailbox is now #2808. Its owner-authored issue-comment event
+dispatches the protected merge workflow using `github-actions[bot]`. That is a
+carrier identity; it does not inherit `Cheekyfellastef`'s operator permissions.
+The direct owner transport remains supported. Other carriers fail closed.
+
+`prove-protected-workflow-actor-handoff.mjs` reads the exact comment from GitHub
+and verifies the canonical issue, owner, comment ID, unchanged created/updated
+timestamps, and every dispatched branch/head/tree/base and review
+run/attempt/artifact/archive/payload hash. The workflow must start inside the
+comment's ten-minute dispatch window. Its original server-authenticated start
+time remains binding after an operator spends time at the protected approval
+gate. Reruns cannot renew that window or execute a second attempt.
+
+The initial trusted read produces a SHA-256 of the entire comment body. That
+digest crosses the read-only evidence/approval handoff and is independently
+rechecked by the existing final collector in evidence, approve and merge modes.
+The evidence packet binds both the owner and the actual carrier to the digest.
+No caller-supplied operator identity or overridden `GITHUB_TRIGGERING_ACTOR`
+is used. Ready mode continues to require its existing direct owner actor.
+
+Prior owner and bot transports both participate in the existing replay fence.
+Only its existing complete all-attempt read-only failure proof can qualify a
+prior failure for a fresh dispatch; missing jobs or any reached authority job
+remain blocking. The protected environment, immutable independent review,
+ruleset proof and exact final source checks remain required.
+
+Incident: owner comment 6134973687 for PR #3085 dispatched run 38325327489,
+which failed at the first actor gate because the carrier was the bot. That
+expired command is evidence of the incident, not a fresh dispatch authority.
+The separate `controller-lane-status` request
+`plus-fast-mailbox-lane-proof-20261013-0006-v1` is terminal `BLOCKED` with
+`SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_RECEIPT_INVALID` (comment
+6134973771). This source repair makes no claim of live lane proof or release of
+the original source lease.
+
 ## Purpose
 
 This is the existing #1507 GitHub-hosted owner-command bridge for the narrow lifecycle actions that otherwise strand Stephanos when an active client does not expose GitHub Actions `workflow_dispatch` or draft-to-ready mutation.

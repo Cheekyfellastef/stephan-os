@@ -1,3 +1,4 @@
+import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -985,6 +986,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const expectedMailboxAuthorizationKeys = [
     'authorizedAtUtc',
     'commentId',
+    'commentSha256',
     'operatorAuthor',
     'requestId',
     'transportActor',
@@ -998,11 +1000,14 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     && strictPositiveInteger(mailboxAuthorization.commentId)
     && text(mailboxAuthorization.requestId)
     && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
-    && text(mailboxAuthorization.transportActor).toLowerCase() === nativeOwnerActor
+    && SHA256_PATTERN.test(text(mailboxAuthorization.commentSha256))
+    && [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR].includes(text(mailboxAuthorization.transportActor).toLowerCase())
     && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
     && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
   );
-  const expectedActor = nativeOwnerActor;
+  const expectedActor = mailboxAuthorizationValid ? text(mailboxAuthorization.transportActor).toLowerCase() : nativeOwnerActor;
+  // A transport switch must not hide a prior source-matching authority attempt.
+  const replayActors = [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR];
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1037,7 +1042,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     const candidateActor = personalRepositoryDispatchActor(candidate);
     const sourceMatching = text(candidate?.name) === expectedTitle
       || text(candidate?.display_title) === expectedTitle;
-    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    if (!sourceMatching || (candidateActor && !replayActors.includes(candidateActor))) continue;
     const candidateBase = text(candidate?.head_sha).toLowerCase();
     const exactIdentity = Boolean(
       candidateId
@@ -1051,7 +1056,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       && SHA_PATTERN.test(candidateBase)
       && text(candidate?.head_branch) === 'main'
       && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
-      && candidateActor === expectedActor
+      && replayActors.includes(candidateActor)
     );
     if (!exactIdentity) {
       malformedPriorRunIds.push(candidateId || 0);

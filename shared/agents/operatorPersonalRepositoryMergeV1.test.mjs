@@ -1287,10 +1287,11 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
-test('mailbox authorization binds the exact owner actor and rejects legacy bot or lookalike transport identities', () => {
+test('mailbox authorization separates the owner from the authenticated carrier and requires immutable comment proof', () => {
   const mailboxAuthorization = {
     authorizedAtUtc: '2026-09-20T11:55:03Z',
     commentId: 5749628881,
+    commentSha256: 'a'.repeat(64),
     operatorAuthor: 'Cheekyfellastef',
     requestId: 'multiplexer-control-plane-protected-merge-2300-cdb875c6-20260920-v1',
     transportActor: 'Cheekyfellastef',
@@ -1302,7 +1303,7 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
   assert.equal(ready.valid, true);
   assert.deepEqual(ready.currentMismatches, []);
 
-  for (const transportActor of ['github-actions[bot]', 'lookalike-operator']) {
+  for (const transportActor of ['lookalike-operator']) {
     const blocked = validatePersonalRepositoryDispatchExecution(
       dispatchExecutionInput(),
       {
@@ -1326,6 +1327,27 @@ test('mailbox authorization binds the exact owner actor and rejects legacy bot o
   assert.equal(wrongRunActor.valid, false);
   assert.deepEqual(wrongRunActor.currentMismatches, ['triggering-actor']);
   assert.ok(wrongRunActor.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+  const botInput = dispatchExecutionInput({ run: dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } }) });
+  const botProof = { ...mailboxAuthorization, transportActor: 'github-actions[bot]' };
+  assert.equal(validatePersonalRepositoryDispatchExecution(botInput, {
+    ...expectedDispatchExecution, mailboxAuthorization: botProof,
+  }).valid, true);
+  for (const mutation of [{ operatorAuthor: 'github-actions[bot]' }, { commentSha256: '' }, { commentId: 0 }]) {
+    assert.equal(validatePersonalRepositoryDispatchExecution(botInput, {
+      ...expectedDispatchExecution, mailboxAuthorization: { ...botProof, ...mutation },
+    }).valid, false);
+  }
+  assert.equal(validatePersonalRepositoryDispatchExecution(botInput, expectedDispatchExecution).valid, false);
+  // Replays remain visible when a subsequent request changes transport.
+  for (const currentActor of ['Cheekyfellastef', 'github-actions[bot]']) {
+    for (const priorActor of ['Cheekyfellastef', 'github-actions[bot]']) {
+      const blocked = validatePersonalRepositoryDispatchExecution(dispatchExecutionInput({
+        run: dispatchRun({ triggering_actor: { login: currentActor } }),
+        priorRuns: [dispatchRun({ id: runId + 10, triggering_actor: { login: priorActor } })],
+      }), { ...expectedDispatchExecution, mailboxAuthorization: { ...mailboxAuthorization, transportActor: currentActor } });
+      assert.deepEqual(blocked.replayRunIds, [runId + 10]);
+    }
+  }
 });
 
 test('prior authority jobs bind one complete canonical parent-run envelope', () => {
