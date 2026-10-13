@@ -1740,7 +1740,12 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const contract = buildOpenClawExcellenceSeedV1();
   const expectedSource = 'shared/runtime/openClawExcellenceSeedV1.mjs';
   const records = payload.records || {};
-  const heartbeat = list(records.statusRecords).find((record) => {
+  // A fresh leaf heartbeat cannot overrule the containing stale/error feed.
+  const feedCurrent = payload.state === 'ready'
+    && list(payload.errors).length === 0
+    && (payload.projection?.sourceFreshness?.truth === undefined
+      || payload.projection.sourceFreshness.truth === 'CURRENT');
+  const heartbeat = feedCurrent ? list(records.statusRecords).find((record) => {
     const stamp = Date.parse(record?.timestampUtc);
     return record.statusId === OPENCLAW_EXCELLENCE_MISSION_ID
       && record.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
@@ -1750,7 +1755,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       && record.seedHeartbeat.contractSource === expectedSource
       && Number.isFinite(stamp)
       && stamp <= nowMs && nowMs - stamp <= 60 * 60 * 1000;
-  });
+  }) : null;
   const planted = Boolean(heartbeat);
   const relevant = planted ? [
     ...list(records.goalRecords),
@@ -1769,33 +1774,23 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     'PROVE_END_TO_END_TASK_PARITY',
     'PROVE_SOVEREIGN_ENDURANCE',
   ]);
-  const hasRungProof = (rung, agentId, taskClass = '') => proved.some((record) => {
+  const hasRungProof = (rung, agentId) => proved.some((record) => {
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
       || evidence.rung !== rung) return false;
-    // A claimed proof for Standalone cannot be published under Local's identity.
-    // Runtime authentication is still owned by Shared Workspace ingress, not this projection.
+    // Observations attributed to one agent never certify another agent.
     if (agentId && (evidence.agentId !== agentId || actorId(record) !== agentId)) return false;
-    if (rung !== 'PROVE_END_TO_END_TASK_PARITY') return true;
-    const benchmark = evidence.benchmark;
-    return contract.taskClasses.includes(taskClass)
-      && benchmark?.schemaVersion === 'stephanos.openclaw-codex-comparative-task.v1'
-      && benchmark.taskClass === taskClass
-      && benchmark.sameTaskInputs === true
-      && benchmark.codexSuccessful === true
-      && benchmark.openClawSuccessful === true
-      && benchmark.independentReviewPassed === true
-      && text(benchmark.taskFingerprint).length >= 16
-      && text(benchmark.codexProofRef)
-      && text(benchmark.openClawProofRef)
-      && proofRefs(record).includes(benchmark.codexProofRef)
-      && proofRefs(record).includes(benchmark.openClawProofRef);
+    return true;
   });
   const rungProof = contract.growthRungs.map((rung) => {
-    if (rung === 'PROVE_END_TO_END_TASK_PARITY') {
-      // Each agent must prove every declared task class on matched inputs.
-      return agents.every((id) => contract.taskClasses.every((taskClass) =>
-        hasRungProof(rung, id, taskClass)));
+    if (rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
+      || rung === 'PROVE_END_TO_END_TASK_PARITY') {
+      // Fail closed: Shared Workspace events/refs and success booleans are not
+      // authenticated ten-question exams, independent reviewer decisions or
+      // operator approvals. This presentation projection cannot authenticate
+      // the immutable task/head and authority-bound external receipts; a
+      // separate trusted admission contract must first be implemented.
+      return false;
     }
     return agentScopedRungs.has(rung)
       ? agents.every((id) => hasRungProof(rung, id))
@@ -1823,7 +1818,10 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     stage: currentRung,
     healthState: !planted ? 'AWAITING_LIVE_PROOF' : currentGaps.length
       ? 'AGENT_CAPABILITY_GAPS_PRESENT' : firstMissing < 0 ? 'EVIDENCE_COMPLETE_RETEST_REQUIRED' : 'LEARNING',
-    sourceTruth: planted ? truthFromRecord(heartbeat) : 'UNKNOWN',
+    sourceTruth: !feedCurrent
+      ? (payload.state === 'stale' || payload.projection?.sourceFreshness?.truth === 'STALE'
+        ? 'STALE' : 'UNKNOWN')
+      : planted ? truthFromRecord(heartbeat) : 'UNKNOWN',
     northStar: contract.northStar,
     operatingLoop: contract.operatingLoop,
     growthRungs: contract.growthRungs,
