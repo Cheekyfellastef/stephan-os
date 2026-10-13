@@ -2,6 +2,14 @@ export const PARALLEL_SEED_RESOURCE_PREFLIGHT_SCHEMA = 'stephanos.seed-parallel-
 
 export const SEED_PARALLEL_GOVERNOR_MAX_AGE_MS = 30000;
 
+// Architectural hold, not a configurable approval flag. The canonical governor
+// evicts Ollama, but has no registered llama.cpp router PID/model lease or
+// independently verified zero-residency acknowledgement. HTTP cancellation and
+// self-reported /models argv cannot establish that missing resource custody.
+// Only a separately implemented and qualified canonical governor adapter may
+// remove this hold. No environment variable or caller JSON can override it.
+export const SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = false;
+
 // Shared freshness predicate for the on-demand canonical governor reconcile and
 // the final independent pre-inference safety verdict. Never infer idle from age.
 export function isParallelSeedGovernorSnapshotFreshV1(governor, nowMs = Date.now()) {
@@ -21,6 +29,8 @@ export function isParallelSeedLocalWorkAllowedV1(governor, nowMs = Date.now()) {
 
 export function checkParallelSeedModelResourceV1({ governor, modelInventory, selectedModel, nowMs = Date.now() } = {}) {
   const reasons = [];
+  if (!SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED)
+    reasons.push('RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED');
   if (governor?.schemaVersion !== 'stephanos.vr-resource-governor.v1') reasons.push('VR_GOVERNOR_TRUTH_MISSING');
   if (governor?.active !== false || governor?.phase !== 'NORMAL'
     || governor?.localModelAllowed !== true)
@@ -51,6 +61,8 @@ export function checkParallelSeedModelResourceV1({ governor, modelInventory, sel
     ok: reasons.length === 0,
     selectedModel: typeof selectedModel === 'string' ? selectedModel : '',
     alreadyLoaded: selectedIsLoaded,
+    residencyCustodyProven: false,
+    liveInferenceQualified: false,
     reasonCodes: Object.freeze(reasons),
     addedModelResidencyAllowed: false,
     gamingResourceProtectionRequired: true,

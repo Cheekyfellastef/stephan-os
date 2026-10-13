@@ -12,6 +12,23 @@ It is NOT a second protected merge service, a second daemon, a bypass for active
 
 ## Running on an authorized Battle Bridge checkout
 
+**Current execution status: HELD — RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED.**
+The source intentionally disables production model execution before endpoint
+access, governor reconciliation, task claim or worktree creation. The canonical
+Windows governor owns Ollama eviction, not the independent llama.cpp router.
+HTTP cancellation, `autoload=false`, loaded-model argv and fresh idle snapshots
+cannot prove zero GPU/VRAM residency on a gaming transition. No caller JSON,
+operator approval file or environment variable overrides this architectural hold.
+
+The following route describes the retained experimental interface only. Before
+enabling it, #3096 must supply a separately reviewed canonical router PID/model
+residency lease with verified zero-residency acknowledgement on interruption, or
+a qualified bounded CPU-only owned child and verified process-tree cessation.
+The real host must prove game-transition release and unchanged gaming performance.
+The integration test explicitly modifies copies in an ephemeral fixture to mock
+custody and GitHub approval; its source edit/tests/commit receipts are sandbox
+proof only. This PR does not install, start, evict or terminate any real model.
+
 Prerequisites: Node.js 20.11+, Git, an authenticated checkout with local main up to date, the canonical Windows Gaming Resource Governor, and a **separately qualified, already running llama.cpp router** bound to 127.0.0.1:8080 (or the explicitly configured `STEPHANOS_SEED_LOCAL_PORT`). The router must have the selected `qwen3-coder:30b` model **already loaded**. Unlike Ollama's `/api/generate`, llama.cpp supports `/v1/completions?autoload=false`: a request for a subsequently evicted model must **fail rather than load it**. `GET /models` must attest the exact model as `status.value: "loaded"`. The launcher/operational qualification of this model server is **not** supplied or proven by this PR; do not treat Ollama on port 11434 as a replacement. The default model can be changed through `STEPHANOS_SEED_LOCAL_MODEL` only for an approved manifest. The worker performs a live Windows Reconcile before and immediately prior to inference, checks governor state every 500ms during inference, and performs a separate live Windows Reconcile every 15 seconds so a healthy idle governor need not continuously rewrite its snapshot. Any gaming/VR protection, stale/unknown state or failed live reconcile aborts inference. A configured router must additionally disable sleeping model workers (no `--sleep-idle-seconds`), since waking a sleeping child can load model memory even when the router request has `autoload=false`. This host runtime setting, actual cancellation time and gaming-transition VRAM release all require a separate Battle Bridge acceptance trial. Cancellation is best-effort for an already executing process; governor remains the eviction owner. No remote paid inference provider is introduced. Without the qualified local router, execution fails closed and no source change is claimed.
 
 Read source-backed seed candidates:

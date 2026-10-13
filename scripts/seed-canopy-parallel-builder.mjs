@@ -2,7 +2,7 @@
 // Bounded parallel source authoring through an already resident local llama.cpp router.
 // Its per-request autoload=false contract prevents an evicted model reloading.
 // Deliberately does not call the canonical scheduler, Goal Worker or Core Daemon.
-import { readFile, mkdir, writeFile, rename, lstat } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, lstat, realpath } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join, dirname, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -22,7 +22,7 @@ import {
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1 } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -100,6 +100,10 @@ async function saveReceipt(request, stage, more = {}) {
 }
 
 async function localModelPreflight() {
+  // Hold BEFORE endpoint access, governor reconcile, claim, worktree or inference.
+  // Aborting HTTP cannot evict an unmanaged router's GPU/VRAM residency.
+  if (!SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED)
+    throw new Error('RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED');
   const selectedModel = process.env.STEPHANOS_SEED_LOCAL_MODEL || 'qwen3-coder:30b';
   const port = Number(process.env.STEPHANOS_SEED_LOCAL_PORT || 8080);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
@@ -325,7 +329,8 @@ async function build(request, manifestSha256) {
     const head = await processExec('git', ['rev-parse', '--verify', 'refs/heads/main']);
     if (head !== request.baseSha) throw new Error('EXACT_BASE_MAIN_MOVED');
     const isRepo = await processExec('git', ['rev-parse', '--show-toplevel']);
-    if (resolve(isRepo).toLowerCase() !== repoRoot.toLowerCase()) throw new Error('NOT_EXPECTED_REPOSITORY');
+    if ((await realpath(isRepo)).toLowerCase() !== (await realpath(repoRoot)).toLowerCase())
+      throw new Error('NOT_EXPECTED_REPOSITORY');
     await mkdir(dirname(worktree), { recursive: true });
     // Worktree + separate seed-forge branch is the claim. Never touch a shared source lease.
     await processExec('git', ['worktree', 'add', '-b', branch, worktree, request.baseSha]);

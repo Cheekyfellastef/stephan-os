@@ -7,11 +7,13 @@ const idle = { schemaVersion: 'stephanos.vr-resource-governor.v1',
   active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date(NOW - 1000).toISOString() };
 const loaded = { data: [{ id: 'qwen3-coder:30b', status: { value: 'loaded', args: ['llama-server', '-ctx', '4096'] } }] };
 
-test('already resident local coding model is eligible only with explicit idle VR governor', () => {
+test('resident router remains held without canonical governor custody even with fresh idle proof', () => {
   const result = checkParallelSeedModelResourceV1({
     governor: idle, modelInventory: loaded, selectedModel: 'qwen3-coder:30b', nowMs: NOW,
   });
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, false);
+  assert.ok(result.reasonCodes.includes('RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED'));
+  assert.equal(result.residencyCustodyProven, false);
   assert.equal(result.alreadyLoaded, true);
   assert.equal(result.addedModelResidencyAllowed, false);
 });
@@ -54,7 +56,7 @@ test('a live canonical reconcile can restore idle freshness without trusting sta
   assert.equal(isParallelSeedGovernorSnapshotFreshV1(reconciled, NOW), true);
   assert.equal(checkParallelSeedModelResourceV1({
     governor: reconciled, modelInventory: loaded, selectedModel: 'qwen3-coder:30b', nowMs: NOW,
-  }).ok, true);
+  }).ok, false);
   assert.equal(checkParallelSeedModelResourceV1({
     governor: { ...reconciled, active: true, localModelAllowed: false },
     modelInventory: loaded, selectedModel: 'qwen3-coder:30b', nowMs: NOW,

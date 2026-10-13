@@ -47,8 +47,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
         active: false, phase: 'NORMAL', localModelAllowed: true, updatedAtUtc: new Date().toISOString() }));
-    await copyFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'),
-      path('scripts/seed-canopy-parallel-builder.mjs'));
+    const builderModule = await readFile(join(sourceRoot, 'scripts/seed-canopy-parallel-builder.mjs'), 'utf8');
+    // The fixture supplies its own fresh governor; never run production Windows
+    // resource reconciliation or model workloads in a temporary test checkout.
+    await writeFile(path('scripts/seed-canopy-parallel-builder.mjs'),
+      builderModule.replaceAll("process.platform === 'win32'", 'false'));
     await copyFile(join(sourceRoot, 'shared/agents/battleBridgeExecutionBoundaryV1.mjs'),
       path('shared/agents/battleBridgeExecutionBoundaryV1.mjs'));
     await copyFile(join(sourceRoot, 'shared/agents/battleBridgeWindowsHosts.mjs'),
@@ -68,8 +71,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await writeFile(path('shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs'),
       approvalModule.replace(githubLiteral,
         "('http://127.0.0.1:' + process.env.STEPHANOS_SEED_LOCAL_PORT + '/repos/') + REPO + '/issues/comments/'"));
-    await copyFile(join(sourceRoot, 'shared/runtime/seedCanopyParallelResourceV1.mjs'),
-      path('shared/runtime/seedCanopyParallelResourceV1.mjs'));
+    const resourceModule = await readFile(join(sourceRoot,
+      'shared/runtime/seedCanopyParallelResourceV1.mjs'), 'utf8');
+    const custodyAnchor = 'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = false';
+    assert.ok(resourceModule.includes(custodyAnchor));
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
     await writeFile(path('shared/project/seedGardenProjectionV1.mjs'),
       'export const HIGH_LEVEL_FLYWHEEL_SEEDS_V1 = ' + JSON.stringify([{
         seedId: SEED_ID, issue: '#3096',
@@ -89,7 +95,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('config', 'user.email', 'fixture@example.invalid');
     git('add', '.');
     git('commit', '-m', 'fixture baseline');
-    const main = git('rev-parse', 'main');
+    let main = git('rev-parse', 'main');
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
         if (req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
@@ -175,6 +181,27 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     };
     await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'),
       JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    // Production must reject even a valid owner approval before any router call
+    // or new task claim. Only this ephemeral fixture uses a mocked custody gate.
+    const held = await runAsync(process.execPath, [executable, 'build', manifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(held.code, 0);
+    assert.match(held.stderr, /RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED/);
+    const { access } = await import('node:fs/promises');
+    await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'),
+      resourceModule.replace(custodyAnchor, 'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = true'));
+    git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
+    git('commit', '-m', 'fixture-only mocked custody');
+    // Bind all fixture approval evidence to its new exact fixture base.
+    main = git('rev-parse', 'main');
+    request.baseSha = main;
+    const fixtureRaw = JSON.stringify(request);
+    await writeFile(manifest, fixtureRaw);
+    await writeFile(join(stateRoot, 'inbox', TASK_ID + '.json'), fixtureRaw);
+    ownerComment.body = '```stephanos-seed-parallel-owner-approval\n' + JSON.stringify(
+      makeParallelSeedExactApprovalV1({ request, manifestSha256: parallelSeedManifestHashV1(fixtureRaw),
+        nowUtc: issuedAtUtc, expiryUtc: new Date(Date.parse(issuedAtUtc) + 3600000).toISOString() })
+    ) + '\n```';
     const run = await runAsync(process.execPath, [supervisor, 'run-once'], { cwd: repo, env });
     assert.equal(run.code, 0, run.stderr);
     // GitHub may return the live canonical issue title or be unavailable.
