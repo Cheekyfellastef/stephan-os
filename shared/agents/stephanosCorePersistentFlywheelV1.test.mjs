@@ -181,7 +181,7 @@ test('Core wires typed original owner HOLD to bounded self-heal rather than anot
   assert.match(source, /lastAttemptSourceHead: lastOctopusSelfHealSourceHead/);
   assert.match(source, /programmeBlockerIdentity: lastRefillSummary\.refillCanonicalProgrammeBlockerIdentity/);
   assert.match(source, /lastAttemptProgrammeBlockerIdentity: lastOctopusSelfHealProgrammeBlockerIdentity/);
-  assert.match(source, /lastOctopusSelfHealProgrammeBlockerIdentity = lastRefillSummary\\.refillCanonicalProgrammeBlockerIdentity/);
+  assert.match(source, /lastOctopusSelfHealProgrammeBlockerIdentity = lastRefillSummary\.refillCanonicalProgrammeBlockerIdentity/);
   assert.match(source, /lastOctopusSelfHealSourceHead = sourceHead/);
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
   assert.match(source, /duplicateSchedulerAllowed: false/);
