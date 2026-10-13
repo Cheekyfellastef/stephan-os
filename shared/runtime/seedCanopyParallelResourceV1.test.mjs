@@ -66,6 +66,9 @@ test('direct autoload-capable Ollama generation is not an admissible Seed Forge 
   assert.match(worker, /\/v1\/completions\?autoload=false/);
   assert.match(worker, /GAME_PRIORITY_ABORTED_LOCAL_INFERENCE/);
   assert.match(worker, /clearInterval\(gameWatch\)/);
+  assert.match(worker, /const refreshWatch = process\.platform === 'win32' \? setInterval/);
+  assert.match(worker, /GAME_PRIORITY_GOVERNOR_LIVE_REFRESH_FAILED/);
+  assert.match(worker, /if \(refreshWatch\) clearInterval\(refreshWatch\)/);
   assert.doesNotMatch(worker, /'\/api\/generate'/);
   assert.doesNotMatch(worker, /'\/api\/ps'/);
 });
