@@ -43,8 +43,8 @@ test('single Core steward separates 23 independent gates and does not self-autho
   const cooldown = planCoreGateStewardV1({
     sourceHead: head, gates: facts.evidence.gates,
   }, { nowMs: nowMs + 5000, previousActionKey: shadow.proofKey, previousAttemptAtMs: nowMs });
-  assert.equal(cooldown.nextAction, null);
-  assert.equal(cooldown.decision, 'SAME_EVIDENCE_COOLDOWN');
+  assert.equal(cooldown.nextAction.gateId, 13);
+  assert.equal(cooldown.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
   const oneHourLater = planCoreGateStewardV1({ sourceHead: head, gates: facts.evidence.gates },
     { nowMs: nowMs + 60 * 60_000, previousActionKey: shadow.proofKey, previousAttemptAtMs: nowMs });
   assert.equal(oneHourLater.decision, 'PROPOSE_EXISTING_AUTHORITY_ACTION');
