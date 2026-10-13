@@ -46,7 +46,7 @@ test('parallel lease and capacity vetoes both remain visible, downstream stages 
   const r = projectGoalBuildGateObservatoryV1({ statusRecords: statusRecords(entries), nowMs: t0 });
   assert.deepEqual(r.simultaneousVetoes, [7, 8, 9, 13]);
   assert.equal(r.firstActionableGate, 7);
-  assert.equal(r.gates[13].status, 'WAITING_FOR_PREREQUISITE');
+  assert.equal(r.gates[13].status, 'UNVERIFIED'); // independent resource gate not yet reached
   assert.equal(r.gates[15].status, 'WAITING_FOR_PREREQUISITE');
   assert.equal(r.gates[18].status, 'WAITING_FOR_PREREQUISITE');
   assert.equal(r.gates[12].status, 'FAIL');
