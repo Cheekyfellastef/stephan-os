@@ -1620,6 +1620,7 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     nativePublisherObservedHead: safeTelemetrySha(packet?.nativePublisherObservedHead),
     nativePublisherHeadMatchesExpected: packet?.nativePublisherHeadMatchesExpected === true,
     nativePublisherDiagnosticReason: safeTelemetryText(packet?.nativePublisherDiagnosticReason, 120).toUpperCase(),
+    nativePublisherDiagnosticBinding: safeTelemetryText(packet?.nativePublisherDiagnosticBinding, 45).toUpperCase(),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -2224,6 +2225,7 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     nativePublisherObservedHead: safeTelemetrySha(inner?.nativePublisherObservedHead),
     nativePublisherHeadMatchesExpected: inner?.nativePublisherHeadMatchesExpected === true,
     nativePublisherDiagnosticReason: token(inner?.nativePublisherDiagnosticReason, 120),
+    nativePublisherDiagnosticBinding: token(inner?.nativePublisherDiagnosticBinding, 45),
     elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
     controllerValid: inner?.controllerValid === true,
@@ -3192,6 +3194,7 @@ export function readNativeCapacityPublisherHeadDiagnosticV1({
     nativePublisherObservedHead: '',
     nativePublisherHeadMatchesExpected: false,
     nativePublisherDiagnosticReason: reason,
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
   });
   const target = safeTelemetrySha(expectedHead);
   if (!target) return unknown('NATIVE_PUBLISHER_EXPECTED_HEAD_INVALID');
@@ -3220,6 +3223,8 @@ export function readNativeCapacityPublisherHeadDiagnosticV1({
     nativePublisherDiagnosticReason: observed === target
       ? 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED'
       : 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD',
+    // A separate unsigned status read is not the same signed snapshot.
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
   });
 }
 
@@ -3230,14 +3235,24 @@ export async function readNativeCapacityProgrammeTelemetry({
   diagnosticReader = readNativeCapacityPublisherHeadDiagnosticV1,
 } = {}) {
   const sourceHead = safeTelemetrySha(expectedHead);
-  let diagnostic;
-  try { diagnostic = diagnosticReader({ expectedHead }); }
-  catch { diagnostic = null; }
-  if (diagnostic?.nativePublisherDiagnosticOnly !== true) {
-    diagnostic = readNativeCapacityPublisherHeadDiagnosticV1({ expectedHead, readStatus: () => { throw new Error('UNAVAILABLE'); } });
-  }
+  // The signed router is authoritative. A separately sampled unsigned file
+  // may have advanced in the meantime and must never contradict a signed PASS.
+  const unsignedDiagnostic = () => {
+    let diagnostic;
+    try { diagnostic = diagnosticReader({ expectedHead }); }
+    catch { diagnostic = null; }
+    if (diagnostic?.nativePublisherDiagnosticOnly !== true) {
+      diagnostic = readNativeCapacityPublisherHeadDiagnosticV1({
+        expectedHead, readStatus: () => { throw new Error('UNAVAILABLE'); },
+      });
+    }
+    return {
+      ...diagnostic,
+      nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+    };
+  };
   const unknown = (reason) => Object.freeze({
-    ...diagnostic,
+    ...unsignedDiagnostic(),
     nativeCapacityVerified: false,
     nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
     nativeCapacityModel: '',
@@ -3272,7 +3287,13 @@ export async function readNativeCapacityProgrammeTelemetry({
     return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
   }
   return Object.freeze({
-    ...diagnostic,
+    // Bind the visible head to the SAME signed verifier candidate. Never
+    // report the raced unsigned file as if it were that signed record.
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: sourceHead,
+    nativePublisherHeadMatchesExpected: true,
+    nativePublisherDiagnosticReason: 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD',
+    nativePublisherDiagnosticBinding: 'SIGNED_VERIFIER_CANDIDATE',
     nativeCapacityVerified: true,
     nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
     nativeCapacityModel: safeTelemetryText(candidate.model, 120),

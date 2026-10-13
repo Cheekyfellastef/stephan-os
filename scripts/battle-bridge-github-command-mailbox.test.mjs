@@ -3111,6 +3111,7 @@ test('gate-13 publisher head diagnostics distinguish stale unsigned claims witho
   assert.equal(mismatch.nativePublisherObservedHead, stale);
   assert.equal(mismatch.nativePublisherHeadMatchesExpected, false);
   assert.equal(mismatch.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD');
+  assert.equal(mismatch.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
   assert.doesNotMatch(JSON.stringify(mismatch), /CANARY_SECRET/);
   const sameUnsigned = readNativeCapacityPublisherHeadDiagnosticV1({
     expectedHead: target, readStatus: () => status(target),
@@ -3125,6 +3126,35 @@ test('gate-13 publisher head diagnostics distinguish stale unsigned claims witho
   assert.equal(verifiedGateStillFails.nativeCapacityVerified, false);
   assert.equal(verifiedGateStillFails.nativeCapacitySourceHead, '');
   assert.equal(verifiedGateStillFails.nativePublisherHeadMatchesExpected, true);
+  assert.equal(verifiedGateStillFails.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
+  // A publisher update between the verifier read and a separate file read
+  // must not generate contradictory "signed green + stale unsigned head".
+  let unsignedCalls = 0;
+  const signedResult = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({
+      ok: true,
+      candidate: {
+        sourceHead: target,
+        repository: 'Cheekyfellastef/stephan-os',
+        taskClass: 'FOCUSED_REPAIR',
+        sourceMutationAllowed: true,
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+        model: 'qwen-test', capacityReceiptId: 'signed-test',
+      },
+    }),
+    diagnosticReader: () => {
+      unsignedCalls += 1;
+      return mismatch;
+    },
+  });
+  assert.equal(signedResult.nativeCapacityVerified, true);
+  assert.equal(signedResult.nativePublisherObservedHead, target);
+  assert.equal(signedResult.nativePublisherHeadMatchesExpected, true);
+  assert.equal(signedResult.nativePublisherDiagnosticBinding, 'SIGNED_VERIFIER_CANDIDATE');
+  assert.equal(signedResult.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD');
+  assert.equal(unsignedCalls, 0);
   const invalid = readNativeCapacityPublisherHeadDiagnosticV1({
     expectedHead: target, readStatus: () => status('not-a-sha'),
   });
