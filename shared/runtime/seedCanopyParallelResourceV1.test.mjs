@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1 } from './seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1 } from './seedCanopyParallelResourceV1.mjs';
 
 const NOW = Date.parse('2026-10-13T16:00:00.000Z');
 const idle = { schemaVersion: 'stephanos.vr-resource-governor.v1',
@@ -64,6 +64,15 @@ test('a live canonical reconcile can restore idle freshness without trusting sta
   }, NOW), false, 'future proof is not admissible');
 });
 
+test('local post-inference test stage parks on game, cooldown, stale or corrupt governor proof', () => {
+  assert.equal(isParallelSeedLocalWorkAllowedV1(idle, NOW), true);
+  for (const state of [
+    null, {}, { ...idle, phase: 'GAMING' }, { ...idle, phase: 'COOLDOWN' },
+    { ...idle, active: true }, { ...idle, localModelAllowed: false },
+    { ...idle, updatedAtUtc: new Date(NOW - 31000).toISOString() },
+  ]) assert.equal(isParallelSeedLocalWorkAllowedV1(state, NOW), false);
+});
+
 test('direct autoload-capable Ollama generation is not an admissible Seed Forge route', async () => {
   const { readFile } = await import('node:fs/promises');
   const worker = await readFile(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url), 'utf8');
@@ -73,6 +82,9 @@ test('direct autoload-capable Ollama generation is not an admissible Seed Forge 
   assert.match(worker, /const refreshWatch = process\.platform === 'win32' \? setInterval/);
   assert.match(worker, /GAME_PRIORITY_GOVERNOR_LIVE_REFRESH_FAILED/);
   assert.match(worker, /if \(refreshWatch\) clearInterval\(refreshWatch\)/);
+  assert.match(worker, /if \(gamingGuarded\) await assertHeavyLocalGamingHeadroom\(\)/);
+  assert.match(worker, /GAME_PRIORITY_LOCAL_TEST_ABORTED/);
+  assert.match(worker, /await processExec\(process\.execPath, \['--test', path\], worktree, 120000, true\)/);
   assert.doesNotMatch(worker, /'\/api\/generate'/);
   assert.doesNotMatch(worker, /'\/api\/ps'/);
 });
