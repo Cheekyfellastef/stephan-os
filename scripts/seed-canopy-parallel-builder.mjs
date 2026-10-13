@@ -117,6 +117,17 @@ async function build(request) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
+  // Exclusive per-task reservation, not a global source lease. Concurrent attempts
+  // cannot overwrite a receipt or silently rerun an unfinished candidate.
+  await mkdir(dirname(receiptPath), { recursive: true });
+  try {
+    await writeFile(join(dirname(receiptPath), request.taskId + '.claim'),
+      JSON.stringify({ seedId: request.seedId, ownerIssue: request.ownerIssue,
+        baseSha: request.baseSha, targetPath: request.targetPath }) + '\n', { flag: 'wx' });
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error('TASK_ALREADY_CLAIMED_INSPECT_EXISTING_ARTIFACT');
+    throw error;
+  }
   let stage = 'SELECTED';
   try {
     await saveReceipt(request, stage);
