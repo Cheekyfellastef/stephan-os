@@ -6,9 +6,9 @@ PR #3120 proved a real independently reviewed protected merge via GitHub without
 
 ## Implemented
 
-- `readChatgptGithubGoalEstateV1`: fixed read-only GraphQL query, one target GitHub issue, default-branch SHA, and complete open-PR changed-file inventories, capped at six 40-PR pages and 100 changed files per PR. Every page is validated for coherent main head, issue identity, PR count, duplicates, and cursor progress. Errors and incomplete scopes hold closed.
+- `readChatgptGithubGoalEstateV1`: fixed read-only GraphQL query, one target GitHub issue, default-branch SHA, and complete open-PR changed-file inventories, capped at six 40-PR pages and 100 changed files per PR. Each claim retains the observed PR-head SHA and a head-bound reference; a SHA-256 snapshot binds all PR heads and paths, so changed source cannot inherit an earlier inventory fingerprint. Every page is validated for coherent main head, issue identity, PR count, duplicates, and cursor progress. Errors and incomplete scopes hold closed.
 - `planChatgptGithubAuthenticatedDiscoveryV1`: feeds GitHub-observed issue/title/head/PR claims into the existing `planChatgptGithubGoalCandidatesV1` selector. An active same-task ChatGPT branch or overlapping PR paths blocks the affected task. No auto-run capability results.
-- Independent 13-case Node regression suite for genuine pagination, task/path collision, denied credentials, quota errors, source changes, partial GraphQL responses, unknown physical ownership, unsafe scope and incomplete pagination.
+- Independent 14-case Node regression suite covering pagination, exact PR-head and path-bound snapshot digest changes, task/path collision, denied credentials, quota errors, source changes, partial GraphQL responses, unknown physical ownership, unsafe scope and incomplete pagination.
 
 ## Crucial separation of GitHub versus Battle Bridge truth
 
