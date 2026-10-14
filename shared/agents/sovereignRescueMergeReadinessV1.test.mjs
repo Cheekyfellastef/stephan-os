@@ -145,7 +145,7 @@ test('review payload must be extracted from the exact digest-verified ZIP archiv
   const substituted = fixture(); substituted.reviewArchiveBytes = Buffer.from(substituted.reviewArchiveBytes);
   substituted.reviewArchiveBytes[33] ^= 1;
   held(substituted, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
-  const otherPayload = fixture(); otherPayload.reviewArtifact.payloadSha256 = 'e'.repeat(64);
+  const otherPayload = fixture(); otherPayload.reviewArtifact = { ...otherPayload.reviewArtifact, payloadSha256: 'e'.repeat(64) };
   held(otherPayload, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
   const alteredMetadata = fixture(); alteredMetadata.reviewArtifactMetadata.artifacts[0].digest = `sha256:${'f'.repeat(64)}`;
   held(alteredMetadata, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
