@@ -33,10 +33,10 @@ function validPaths(value) {
 }
 function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
-    && value.every((item) => TASK_ID.test(item?.taskId || '')
+    && value.every((item) => typeof item?.taskId === 'string' && TASK_ID.test(item.taskId)
       && Number.isSafeInteger(item?.ownerIssueNumber) && item.ownerIssueNumber > 0
       && typeof item?.worktreeBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(item.worktreeBranch)
-      && DIGEST.test(item?.worktreeIdentity || '')
+      && typeof item?.worktreeIdentity === 'string' && DIGEST.test(item.worktreeIdentity)
       && Array.isArray(item?.targetPaths) && item.targetPaths.length > 0
       && item.targetPaths.length <= 3 && item.targetPaths.every(repositoryPath));
 }
