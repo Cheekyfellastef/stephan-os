@@ -1,10 +1,27 @@
 // Read-only preparation for the existing protected merge workflow. Input data
 // cannot authenticate itself; this module grants no dispatch or merge authority.
-import { validateIndependentReviewArtifact, validateIndependentReviewArtifactSet } from './operatorMergeReviewArtifactV1.mjs';
-import { validatePersonalRepositoryReadOnlyPriorFailure } from './operatorPersonalRepositoryMergeV1.mjs';
+import { createHash } from 'node:crypto';
+import {
+  INDEPENDENT_REVIEW_ARTIFACT_FILE,
+  INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION,
+  validateIndependentReviewArtifact,
+  validateIndependentReviewArtifactSet,
+} from './operatorMergeReviewArtifactV1.mjs';
+import { validateIndependentReviewWorkflowRun } from './operatorMergeApprovalGate.mjs';
+import {
+  extractPersonalRepositoryArtifactZip,
+  validatePersonalRepositoryReadOnlyPriorFailure,
+} from './operatorPersonalRepositoryMergeV1.mjs';
 import { validateProtectedMergeCheckRows } from './protectedMergeCheckClassifierV1.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+// Only this immutable, read-only parent source is eligible for a plain v1
+// review. Every other Rescue Island head is conservatively high risk.
+const REVIEWED_READ_ONLY_PARENT = Object.freeze({
+  number: 3104,
+  head: 'da3c57b967964449d723fc005c747096c7b295c4',
+});
+const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const SHA = /^[a-f0-9]{40}$/;
 const stringSha = value => typeof value === 'string' && SHA.test(value);
 const uniqueIds = items => items.every(item => typeof item?.id === 'string' && item.id)
@@ -48,10 +65,58 @@ export function inspectSovereignRescueMergeReadinessV1(input = {}) {
     expectedHead: head, expectedBaseSha: base,
     workflowRunId: artifact.workflowRunId, workflowRunAttempt: artifact.workflowRunAttempt,
   };
-  const review = validateIndependentReviewArtifact(artifact, reviewOptions);
   const metadata = validateIndependentReviewArtifactSet(input.reviewArtifactMetadata || {}, reviewOptions);
-  if (!review.valid || artifact.reviewMode !== 'clean-independent' || !metadata.valid)
+  // API metadata is not the archive. The caller must separately obtain the
+  // actual ZIP bytes from the canonical run and prove its SHA-256 and payload.
+  let archivedArtifact = null;
+  const bytes = input.reviewArchiveBytes;
+  const archiveValid = (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array)
+    && bytes.length > 0 && bytes.length <= 256 * 1024
+    && metadata.valid && bytes.length === metadata.sizeInBytes
+    && SHA256.test(metadata.archiveDigest)
+    && `sha256:${createHash('sha256').update(bytes).digest('hex')}` === metadata.archiveDigest;
+  if (archiveValid) {
+    try {
+      archivedArtifact = JSON.parse(extractPersonalRepositoryArtifactZip(
+        bytes, INDEPENDENT_REVIEW_ARTIFACT_FILE,
+      ).toString('utf8'));
+    } catch {
+      // A malformed, truncated, or substituted archive is a hold, not proof.
+    }
+  }
+  if (!archivedArtifact || archivedArtifact.payloadSha256 !== artifact.payloadSha256)
+    blockers.push('DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
+  const review = validateIndependentReviewArtifact(archivedArtifact || {}, reviewOptions);
+  if (!review.valid || archivedArtifact?.reviewMode !== 'clean-independent' || !metadata.valid)
     blockers.push('EXACT_HEAD_BASE_CLEAN_REVIEW_ARTIFACT_REQUIRED');
+
+  // The immutable artifact must also belong to a successful, exact PR-bound
+  // workflow run and its successful specialist-review job. Never infer this
+  // merely from a valid artifact created before a workflow subsequently failed.
+  const jobInventory = input.reviewWorkflowJobsInventory;
+  const workflow = validateIndependentReviewWorkflowRun(
+    input.reviewWorkflowRun || {}, inventory(jobInventory, 100) ? jobInventory.items : [], {
+      repository: REPOSITORY,
+      prNumber: pr.number,
+      expectedHead: head,
+      expectedBranch: pr.head?.ref,
+      expectedBaseBranch: 'main',
+      expectedBaseSha: base,
+      expectedWorkflowId: input.reviewWorkflowId,
+      workflowRunId: artifact.workflowRunId,
+      workflowRunAttempt: artifact.workflowRunAttempt,
+    },
+  );
+  if (!inventory(jobInventory, 100) || !workflow.valid)
+    blockers.push('EXACT_SUCCESSFUL_REVIEW_RUN_AND_JOBS_REQUIRED');
+
+  const knownReadOnlyParent = pr.number === REVIEWED_READ_ONLY_PARENT.number
+    && head === REVIEWED_READ_ONLY_PARENT.head;
+  if (!knownReadOnlyParent
+    && (archivedArtifact?.schemaVersion !== INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION
+      || review.specialist?.valid !== true)) {
+    blockers.push('QUALIFIED_SPECIALIST_REVIEW_REQUIRED');
+  }
 
   if (!inventory(input.priorRuns, 200) || !Array.isArray(input.priorJobSets)
       || input.priorJobSets.length > 8) {
