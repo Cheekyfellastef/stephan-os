@@ -10,7 +10,7 @@ const owner = () => Object.fromEntries(sources.map(source => [source, {
 const candidate = (issueNumber, taskId, path) => ({
   issueNumber,taskId,issueTitle:'Goal: '+issueNumber,issueState:'open',sourceHead:HEAD,riskTier:'low',
   taskClass:'docs-only', paths:[path],ownershipEvidence:owner(),
-  openPrEvidence:{mainHead:HEAD,observedAtUtc:NOW,claims:[]},
+  openPrEvidence:{mainHead:HEAD,observedAtUtc:NOW,evidenceRef:'github/pr-list',claims:[]},
 });
 const run = (...candidates) => plan({mainHead:HEAD,nowUtc:NOW,candidates});
 test('one stuck goal cannot stop unrelated, safely inventoried work', () => {
@@ -61,4 +61,15 @@ test('deterministic work selection not affected by candidate order',()=>{
   const b=candidate(1574,'first-task','docs/first.md');
   assert.equal(run(a,b).suggestedForIndependentVerification,'first-task');
   assert.equal(run(b,a).suggestedForIndependentVerification,'first-task');
+});
+
+test('source class may not be disguised to edit executable code', () => {
+  const c=candidate(1574,'false-doc-scope','scripts/windows/mutate.ps1');
+  assert.ok(run(c).decisions[0].blockers.includes('SCOPE_INVALID_OR_OVERLAPPING'));
+});
+test('unknown PR scope and invalid planner inputs stay held', () => {
+  const c=candidate(1574,'unknown-pr-scope','docs/new.md');
+  c.openPrEvidence.claims=[{issueNumber:42,paths:[]}];
+  assert.ok(run(c).decisions[0].blockers.includes('GITHUB_PR_INVENTORY_UNPROVEN'));
+  assert.equal(plan(null).disposition,'PLANNING_ONLY_NOT_EXECUTION_AUTHORITY');
 });
