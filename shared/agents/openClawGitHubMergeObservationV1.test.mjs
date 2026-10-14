@@ -64,6 +64,12 @@ test('intentional pull-request Pages skip is neutral only when its Build Stephan
     { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
   ];
   assert.equal(validateProtectedMergeCheckRows(checks), true);
+  for (const event of [undefined, 'push', 'workflow_dispatch', 'schedule', 'pull_request_target']) {
+    const fromWrongEvent = checks.map(row => row.name === 'pages-deploy'
+      ? { ...row, event } : row);
+    assert.equal(validateProtectedMergeCheckRows(fromWrongEvent), false,
+      'Pages skip must prove pull_request event, not ' + event);
+  }
   const missingBuildSuccess = checks.filter(row => row.workflow !== 'Build Stephanos UI'
     || row.name === 'pages-deploy');
   assert.equal(validateProtectedMergeCheckRows(missingBuildSuccess), false);
