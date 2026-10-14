@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { inspectOriginalSourceCustodyCensusV1 as inspect,
+  ORIGINAL_SOURCE_CUSTODY_CENSUS_SCHEMA as schema,
+} from './originalSourceCustodyInspectionV1.mjs';
+const now = '2026-10-14T14:00:00.000Z';
+const good = () => ({
+  schemaVersion: schema, repository: 'Cheekyfellastef/stephan-os',
+  originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+  inspectionMode: 'UNPRIVILEGED_READ_ONLY',
+  inspectedAtUtc: now, checkoutPresent: true, aclReadable: true,
+  candidateProcessCount: 0, stephanosScheduledTaskCount: 5,
+  unknownObservations: [], historicalExecutionOutcome: 'UNKNOWN',
+  originalReceiptReconstructed: false, independentWindowsExclusionProven: false,
+  outOfJobWriterExclusionProven: false, sourceAclDenialProven: false,
+  independentOperatorApprovalProven: false,
+  leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+  finalVerdict: 'INSPECTION_ONLY_CUSTODY_HOLD',
+});
+test('apparently clean local census cannot grant source custody or release', () => {
+  const result = inspect(good(), { nowUtc: now });
+  assert.equal(result.observable, true);
+  assert.equal(result.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+  assert.equal(result.leaseReleaseAuthorized, false);
+  assert.equal(result.safeToCancelOriginal, false);
+  assert.deepEqual(result.blockers, [
+    'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+    'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+  ]);
+  assert.equal(Object.isFrozen(result.blockers), true);
+});
+test('process candidates and unavailable observations remain visible', () => {
+  const input = good();
+  input.candidateProcessCount = 2;
+  input.unknownObservations = ['TASK_INVENTORY_UNAVAILABLE'];
+  const result = inspect(input, { nowUtc: now });
+  assert.equal(result.observable, true);
+  assert.ok(result.blockers.includes('ORIGINAL_PROCESS_CANDIDATES_PRESENT'));
+  assert.ok(result.blockers.includes('TASK_INVENTORY_UNAVAILABLE'));
+  assert.equal(result.leaseReleaseAuthorized, false);
+});
+test('forged proof flags, wrong identities, stale and missing telemetry HOLD', () => {
+  const attempts = [
+    { leaseReleaseAuthorized: true }, { independentWindowsExclusionProven: true },
+    { independentOperatorApprovalProven: true }, { sourceAclDenialProven: true },
+    { originalReceiptReconstructed: true }, { historicalExecutionOutcome: 'COMPLETED' },
+    { sourceMutationAuthorized: true },
+    { outOfJobWriterExclusionProven: true },
+    { inspectionMode: 'PRIVILEGED' }, { originalLeaseId: 'other' },
+    { candidateProcessCount: -1 }, { stephanosScheduledTaskCount: NaN },
+    { unknownObservations: ['FALSE_PROOF'] },
+    { inspectedAtUtc: '2026-10-13T14:00:00.000Z' },
+  ];
+  for (const override of attempts) {
+    const result = inspect({ ...good(), ...override }, { nowUtc: now });
+    assert.equal(result.observable, false, JSON.stringify(override));
+    assert.equal(result.leaseReleaseAuthorized, false);
+    assert.ok(result.blockers.includes('CENSUS_UNTRUSTED_OR_STALE'));
+  }
+});
+test('malformed snapshots do not throw or assume safe defaults', () => {
+  for (const value of [null, undefined, [], 1, {}, { ...good(), unknownObservations: null }]) {
+    const result = inspect(value, { nowUtc: now });
+    assert.equal(result.observable, false);
+    assert.equal(result.safeToCancelOriginal, false);
+  }
+});
