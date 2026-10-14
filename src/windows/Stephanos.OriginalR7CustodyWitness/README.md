@@ -1,0 +1,47 @@
+# Native Windows custody witness SCM host (Goal #3123)
+
+STATUS: SOURCE-ONLY. This is a buildable .NET 8 Windows Service Control
+Manager host for the exact original #2962/r7 custody witness. It is NOT the
+privileged Windows proof issuer, is NOT installed and cannot release a lease.
+
+## What the code proves
+
+- Fixed service identity: StephanosOriginalR7CustodyWitness
+- Fixed historical lease: critical-2962-elastic-goal-r7-lease
+- Windows-only, Session-0, non-interactive SCM invocation, no arguments
+- The actual process token must contain the specific NT SERVICE service SID
+  and must not be LocalSystem, an interactive user or an arbitrary service
+- Even after identity passes, startup is refused with
+  WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED
+
+The intentionally failing final gate prevents a user account, Core daemon or
+unsigned service from presenting a running process as credible custody.
+There are no protected keys, receipts, service installer, remote endpoints,
+network handlers, read-write access to the source checkout or generic shell.
+
+## Remaining service implementation
+
+1. Independently provision a dedicated Windows service identity and a
+   separate, restricted original-source writer identity, without touching
+   the original eight uncommitted Battle Bridge checkout entries.
+2. With a qualified OS specialist, implement actual machine-level actor
+   identification and deny original writers access, including direct,
+   WMI/COM, service and Scheduled Task launch routes. Validate durable
+   protected audit, actual negative write attempts and trustworthy clock.
+   Never use an empty process listing or an ACL string as sole proof.
+3. Independently provision the witness Ed25519 private key outside source,
+   relay, GitHub and OpenClaw access. Sign ONLY validated native OS evidence,
+   not caller-provided booleans. A separate protected operator signer approves
+   the exact witness digest and original r7 lease digest.
+4. Connect to the already implemented
+   stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js
+   verifier, preserving eligibility-only, historical outcome UNKNOWN and
+   denial of direct source or lease authority.
+5. Require real independent Windows security specialist review, protected
+   merge and a separate explicitly owner-approved privileged installation.
+6. Only the canonical original-mission cancellation and compare-and-release
+   reconciler can release the exact historical lease; real SELECT, CLAIM,
+   PICKUP, BUILD, TEST, MERGE and unattended refill proof follows.
+
+This package intentionally has NO installer or release command. Testing source
+or opening a PR is NOT a machine custody receipt, deployment or build proof.
