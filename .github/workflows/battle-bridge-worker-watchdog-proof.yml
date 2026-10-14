@@ -62,6 +62,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Prove protected mailbox owner handoff does not launch a bot merge run
+        run: node --test scripts/dispatch-protected-merge-from-mailbox.test.mjs
+
       - name: Parse Node sources
         run: |
           node --check scripts/battle-bridge-worker-watchdog-policy.mjs
