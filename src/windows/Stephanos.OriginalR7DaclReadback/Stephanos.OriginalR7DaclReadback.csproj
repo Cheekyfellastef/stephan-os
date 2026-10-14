@@ -6,7 +6,4 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="8.0.0" />
-  </ItemGroup>
 </Project>
