@@ -5,6 +5,11 @@ export const PROTECTED_MERGE_REQUIRED_WORKFLOWS = Object.freeze([
 ]);
 
 const PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS = new Set([
+  // Pages deployment is intentionally excluded from pull_request. The same
+  // workflow's required source/test jobs must still include a SUCCESS.
+  // Do not neutralize this skip on push or dispatch without the exact PR
+  // check context; this classifier consumes only gh pr checks for a PR.
+  'Build Stephanos UI\0pages-deploy',
   'Exact-Head Review Dispatch\0coordinate',
   'Exact-Head Review Dispatch\0retry',
 ]);
