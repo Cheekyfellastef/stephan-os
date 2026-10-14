@@ -87,7 +87,9 @@ export function inspectSovereignRescueMergeReadinessV1(input = {}) {
   if (!archivedArtifact || archivedArtifact.payloadSha256 !== artifact.payloadSha256)
     blockers.push('DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
   const review = validateIndependentReviewArtifact(archivedArtifact || {}, reviewOptions);
-  if (!review.valid || archivedArtifact?.reviewMode !== 'clean-independent' || !metadata.valid)
+  const suppliedReview = validateIndependentReviewArtifact(artifact, reviewOptions);
+  if (!review.valid || !suppliedReview.valid
+      || archivedArtifact?.reviewMode !== 'clean-independent' || !metadata.valid)
     blockers.push('EXACT_HEAD_BASE_CLEAN_REVIEW_ARTIFACT_REQUIRED');
 
   // The immutable artifact must also belong to a successful, exact PR-bound
