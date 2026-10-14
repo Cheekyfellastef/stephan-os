@@ -47,6 +47,7 @@ import {
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
@@ -872,8 +873,23 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     previousAttemptAtMs: lastGateStewardAttemptAtMs,
     previousAttempts: lastGateStewardAttempts,
   });
-  // Persist the last diagnostic suggestion across heartbeats. This does not
-  // execute it, open a lease, or claim custody of the original worker.
+  // The Gate Steward can now execute its exact, qualified READ-ONLY Gate 13
+  // probe without awaiting external privileged actions. Original Windows
+  // custody, task restart and protected approvals remain held.
+  const gateReadOnlyExecution = await executeCoreGateReadOnlyActionV1(gateSteward, {
+    sourceHead: state.sourceHead,
+    observedAtUtc: timestampUtc,
+    nowUtc: new Date().toISOString(),
+    gamingProtected: state.gamingActive,
+    probeNativeRouting: () => readVerifiedStephanosNativeRoutingCandidate({
+      root: workspaceRoot, repoRoot, env: process.env,
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+      nowUtc: new Date().toISOString(),
+    }),
+  });
+  // Persist the last diagnostic suggestion across heartbeats. Protected
+  // mutation stays with its independent owner, never with this read-only probe.
   if (gateSteward.decision === 'PROPOSE_EXISTING_AUTHORITY_ACTION' && gateSteward.proofKey) {
     const proposedAtMs = Date.parse(timestampUtc);
     lastGateStewardActionKey = gateSteward.proofKey;
@@ -922,6 +938,7 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     sourceHead: state.sourceHead,
     goalBuildGateEvidence: gateEvidence.evidence,
     goalConveyorGateSteward: gateSteward,
+    goalConveyorGateReadOnlyExecution: gateReadOnlyExecution,
     goalBuildGateSignedPublisherVerdict: lastGateSignedPublicationVerdict,
     processId: process.pid,
     readiness: state.readiness,
