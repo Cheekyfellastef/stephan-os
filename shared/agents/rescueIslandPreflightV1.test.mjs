@@ -189,6 +189,18 @@ test('mixed-case worktree digest claims cannot evade cross-conveyor ownership', 
   }
 });
 
+test('malformed candidate worktree identities never throw or grant authority with existing claims', () => {
+  for (const invalid of [undefined, null, 17, {}, ['e'.repeat(64)]]) {
+    const result = evaluate({ worktreeIdentity: invalid }, {
+      canonicalClaims: [{ taskId: 'different-canonical-task', targetPaths: ['different/file.md'] }],
+    });
+    assert.equal(result.preflight, 'HELD');
+    assert.ok(result.blockers.includes('ISOLATED_RUNNER_NOT_PROVEN'));
+    assert.equal(result.sourceMutationAllowed, false);
+    assert.equal(result.workerStartAllowed, false);
+  }
+});
+
 test('complete independent scope scan accepts all permitted claim inventory paths', () => {
   const canonicalClaims = Array.from({ length: 512 }, (_, i) => ({
     taskId: `canonical-task-${i}`,
