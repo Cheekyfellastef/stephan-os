@@ -57,6 +57,33 @@ test('parseable gh checks status 1 reaches canonical classifier', () => {
   assert.equal(validateProtectedMergeCheckRows(observation.checkPayload), true);
 });
 
+test('intentional pull-request Pages skip is neutral only when its Build Stephanos UI workflow has real successful checks', () => {
+  const checks = [
+    ...successfulRequiredChecks(),
+    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'SKIPPED' },
+    { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
+  ];
+  assert.equal(validateProtectedMergeCheckRows(checks), true);
+  const missingBuildSuccess = checks.filter(row => row.workflow !== 'Build Stephanos UI'
+    || row.name === 'pages-deploy');
+  assert.equal(validateProtectedMergeCheckRows(missingBuildSuccess), false);
+  const skippedBuild = checks.map(row => row.workflow === 'Build Stephanos UI'
+    && row.name !== 'pages-deploy' ? { ...row, state: 'SKIPPED' } : row);
+  assert.equal(validateProtectedMergeCheckRows(skippedBuild), false);
+  assert.equal(validateProtectedMergeCheckRows([
+    ...successfulRequiredChecks(),
+    { name: 'build', workflow: 'Build Stephanos UI', state: 'SKIPPED' },
+  ]), false);
+  assert.equal(validateProtectedMergeCheckRows([
+    ...successfulRequiredChecks(),
+    { name: 'pages-deploy', workflow: 'PR Clean Guard', state: 'SKIPPED' },
+  ]), false);
+  assert.equal(validateProtectedMergeCheckRows([
+    ...successfulRequiredChecks(),
+    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'FAILURE' },
+  ]), false);
+});
+
 test('canonical classifier still blocks a genuine failed required workflow', () => {
   const rows = successfulRequiredChecks().map((row, index) => (
     index === 0 ? { ...row, state: 'FAILURE' } : row
