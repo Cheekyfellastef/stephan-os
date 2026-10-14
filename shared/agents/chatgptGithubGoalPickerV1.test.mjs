@@ -4,12 +4,13 @@ import { planChatgptGithubGoalCandidatesV1 as plan } from './chatgptGithubGoalPi
 const HEAD = 'a'.repeat(40);
 const NOW = '2026-10-14T17:30:00.000Z';
 const sources = ['canonical', 'seed', 'island', 'chatgpt'];
-const owner = () => Object.fromEntries(sources.map(source => [source, {
+const owner = (issueNumber,taskId,path) => Object.fromEntries(sources.map(source => [source, {
+  issueNumber,taskId,paths:[path],
   disposition:'VERIFIED_UNCLAIMED',mainHead:HEAD,observedAtUtc:NOW,evidenceRef:'trusted-ref/'+source,
 }]));
 const candidate = (issueNumber, taskId, path) => ({
   issueNumber,taskId,issueTitle:'Goal: '+issueNumber,issueState:'open',sourceHead:HEAD,riskTier:'low',
-  taskClass:'docs-only', paths:[path],ownershipEvidence:owner(),
+  taskClass:'docs-only', paths:[path],ownershipEvidence:owner(issueNumber,taskId,path),
   openPrEvidence:{mainHead:HEAD,observedAtUtc:NOW,evidenceRef:'github/pr-list',claims:[]},
 });
 const run = (...candidates) => plan({mainHead:HEAD,nowUtc:NOW,candidates});
@@ -72,4 +73,21 @@ test('unknown PR scope and invalid planner inputs stay held', () => {
   c.openPrEvidence.claims=[{issueNumber:42,paths:[]}];
   assert.ok(run(c).decisions[0].blockers.includes('GITHUB_PR_INVENTORY_UNPROVEN'));
   assert.equal(plan(null).disposition,'PLANNING_ONLY_NOT_EXECUTION_AUTHORITY');
+});
+
+test('borrowed identity- or path-scoped ownership attestations cannot qualify a different task',()=>{
+  const c=candidate(1574,'real-task','docs/real.md');
+  const v=c.ownershipEvidence.seed;
+  v.taskId='other-task';
+  assert.ok(run(c).decisions[0].blockers.includes('CROSS_SYSTEM_OWNERSHIP_UNPROVEN'));
+  v.taskId='real-task';v.paths=['docs/other.md'];
+  assert.ok(run(c).decisions[0].blockers.includes('CROSS_SYSTEM_OWNERSHIP_UNPROVEN'));
+  v.paths=['docs/real.md'];v.issueNumber=1903;
+  assert.ok(run(c).decisions[0].blockers.includes('CROSS_SYSTEM_OWNERSHIP_UNPROVEN'));
+});
+test('reserved generated and metadata segments reject case aliases',()=>{
+  for(const path of ['docs/Dist/wrong.md','docs/.GiT/config.md','docs/Node_Modules/readme.md']){
+    const c=candidate(1574,'case-alias',path);
+    assert.ok(run(c).decisions[0].blockers.includes('SCOPE_INVALID_OR_OVERLAPPING'),path);
+  }
 });
