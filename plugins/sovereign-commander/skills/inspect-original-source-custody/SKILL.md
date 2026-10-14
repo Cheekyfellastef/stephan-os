@@ -1,6 +1,6 @@
 ---
 name: inspect-original-source-custody
-description: Fail-closed original #2962/r7 Windows custody inspection and commissioning handoff for the existing Stephanos recovery path; never forge a terminal receipt or release a lease.
+description: "Fail-closed original #2962/r7 Windows custody inspection and commissioning handoff for the existing Stephanos recovery path; never forge a terminal receipt or release a lease."
 ---
 
 # Inspect original source custody (#2961 / #2962)
