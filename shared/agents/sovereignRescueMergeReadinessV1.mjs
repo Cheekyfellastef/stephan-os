@@ -19,7 +19,7 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 // review. Every other Rescue Island head is conservatively high risk.
 const REVIEWED_READ_ONLY_PARENT = Object.freeze({
   number: 3104,
-  head: 'da3c57b967964449d723fc005c747096c7b295c4',
+  head: '4637edd199611659f434c4e142231f9f634b4efc',
 });
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const SHA = /^[a-f0-9]{40}$/;
