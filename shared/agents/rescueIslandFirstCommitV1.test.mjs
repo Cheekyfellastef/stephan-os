@@ -259,6 +259,16 @@ test('Git metadata aliases cannot mutate another checkout', async () => {
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
 });
 
+test('nested Git ref reparse points cannot redirect a task branch outside custody', async () => {
+  const ctx = await fixture();
+  const externalRefs = join(ctx.repoRoot, '..', 'outside-task-refs');
+  await mkdir(externalRefs);
+  await symlink(externalRefs, join(ctx.repoRoot, '.git', 'refs', 'heads', 'rescue-island'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_GIT_METADATA_BOUNDARY_INVALID/);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+});
+
 test('config-driven SSH signing cannot invoke another executable', async () => {
   const ctx = await fixture();
   git(ctx.repoRoot, 'config', 'commit.gpgSign', 'true');
