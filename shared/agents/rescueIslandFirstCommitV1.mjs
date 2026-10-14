@@ -89,17 +89,18 @@ const exactKeys = (v, keys) =>
  * comment and independent ownership/OS observations BEFORE calling run.
  */
 export function validateRescueIslandPilotTaskV1(task, nowUtc) {
-  const now = Date.parse(nowUtc);
-  const expires = Date.parse(task?.expiresAtUtc);
+  const now = typeof nowUtc === 'string' ? Date.parse(nowUtc) : NaN;
+  const expires = typeof task?.expiresAtUtc === 'string'
+    ? Date.parse(task.expiresAtUtc) : NaN;
   return Boolean(exactKeys(task, immutableFields)
     && task.schemaVersion === 'stephanos.rescue-island-pilot-task.v1'
     && task.repository === REPO
     && task.issueNumber === 3103
     && task.issueTitle === 'Rescue Island: two independent proof-gated builders outside Goal Conveyor'
-    && TASK.test(task.taskId)
+    && typeof task.taskId === 'string' && TASK.test(task.taskId)
     && task.workerId === 'rescue-island-01'
-    && SHA.test(task.baseHead)
-    && SAFE_DOC.test(task.targetPath)
+    && typeof task.baseHead === 'string' && SHA.test(task.baseHead)
+    && typeof task.targetPath === 'string' && SAFE_DOC.test(task.targetPath)
     && task.targetPath === 'docs/architecture/rescue-island-pilot-' + task.taskId + '.md'
     && task.testPath === 'shared/agents/rescueIslandPreflightV1.test.mjs'
     && typeof task.content === 'string'
