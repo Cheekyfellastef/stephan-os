@@ -85,14 +85,13 @@ const BROKER_READS = Object.freeze([
     jq: '{ref,object:{sha:.object.sha}}' }),
 ]);
 
-function trustedSharedGithubObservation(spec, commentId, workspaceRoot, nowMs) {
+function trustedSharedGithubObservation(spec, commentId, nowMs) {
   const endpoint = spec.id === 'comment'
     ? ROOT.slice(1) + '/issues/comments/' + commentId : spec.endpoint;
   const observed = readBrokeredGithubJson({
     key: 'rescue-island:3109:' + commentId + ':' + spec.id,
     endpoint,
     args: ['--jq', spec.jq],
-    workspaceRoot,
     ttlMs: 1000,
     maxStaleMs: 1000,
     timeoutMs: BROKER_TIMEOUT_MS,
@@ -124,7 +123,7 @@ function trustedSharedGithubObservation(spec, commentId, workspaceRoot, nowMs) {
  */
 export async function readRescueIslandPilotGithubFactsV1({
   commentId, task, nowUtc = new Date().toISOString(),
-  consumedCommentIds = [], workspaceRoot,
+  consumedCommentIds = [],
 } = {}) {
   if (!safeCommentId(commentId)) return blocker('COMMENT_ID_UNTRUSTED');
   const statedMs = typeof nowUtc === 'string' ? Date.parse(nowUtc) : NaN;
@@ -134,7 +133,7 @@ export async function readRescueIslandPilotGithubFactsV1({
     return blocker('OBSERVATION_TIME_NOT_LIVE');
   const payloads = [];
   for (const spec of BROKER_READS) {
-    const result = trustedSharedGithubObservation(spec, commentId, workspaceRoot, liveNowMs);
+    const result = trustedSharedGithubObservation(spec, commentId, liveNowMs);
     if (!result.ok) return blocker(result.blocker);
     payloads.push(result.payload);
   }
