@@ -24,6 +24,20 @@ test('fixed read-only query reads complete PR estate and real issue metadata',as
   assert.equal(r.crossSystemOwnershipAuthenticated,false);
   assert.equal(r.sourceMutationAllowed,false);
 });
+test('every claim binds the exact PR head and snapshot fingerprints all claimed paths',async()=>{
+ const a=await read({...base,fetchImpl:fake(response([pr(7,'docs/alpha.md')])).fetchImpl});
+ const b=await read({...base,fetchImpl:fake(response([pr(7,'docs/alpha.md',{headRefOid:OTHER})])).fetchImpl});
+ const c=await read({...base,fetchImpl:fake(response([pr(7,'docs/beta.md')])).fetchImpl});
+ assert.equal(a.openPrEvidence.claims[0].headSha,HEAD);
+ assert.equal(b.openPrEvidence.claims[0].headSha,OTHER);
+ assert.equal(b.openPrEvidence.claims[0].evidenceRef,`github:graphql:pr-7:head-${OTHER}`);
+ assert.equal(a.snapshotSha256.length,64);
+ assert.notEqual(a.snapshotSha256,b.snapshotSha256);
+ assert.notEqual(a.snapshotSha256,c.snapshotSha256);
+ assert.notEqual(a.openPrEvidence.evidenceRef,b.openPrEvidence.evidenceRef);
+ assert.ok(a.openPrEvidence.evidenceRef.endsWith(a.snapshotSha256));
+ assert.equal(a.sourceMutationAllowed,false);
+});
 test('paginates all open PRs rather than taking first page as free ownership',async()=>{
  const f=fake(response([pr(1,'docs/a.md')],{count:2,hasNextPage:true,cursor:'CURSOR_1'}),response([pr(2,'docs/b.md')],{count:2}));
  const r=await read({...base,fetchImpl:f.fetchImpl});assert.equal(r.pagesFetched,2);assert.equal(r.openPrCount,2);
