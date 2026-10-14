@@ -58,6 +58,8 @@ export function inspectRescueIslandGithubReadFactsV1({
   return Object.freeze({
     ...blocker('EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED'),
     verdict: 'GITHUB_FACTS_STRUCTURALLY_VERIFIED',
+    blockers: Object.freeze([]),
+    nextRequiredProof: 'EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED',
     sourceHead: first,
     commentId,
     taskId: task.taskId,
