@@ -105,6 +105,11 @@ test('Windows census is fixed, redacted, no arbitrary commands, signer or mutati
   assert.match(script, /Get-CimInstance -ClassName Win32_Service/);
   assert.match(script, /Get-ScheduledTask -ErrorAction Stop/);
   assert.match(script, /Win32_Process/);
+  // A protected Windows process may hide CommandLine: treat it as UNKNOWN,
+  // never as an absent original writer.
+  assert.match(script, /\$null -eq \$_\.CommandLine/);
+  assert.match(script, /if \(\$unreadable\.Count -gt 0\)/);
+  assert.match(script, /\$unknown \+= 'PROCESS_ENUMERATION_UNAVAILABLE'/);
   assert.match(script, /COMMISSIONING_NOT_PROVEN/);
   assert.match(script, /leaseReleaseAuthorized = \$false/);
   assert.match(script, /sourceMutationAuthorized = \$false/);
