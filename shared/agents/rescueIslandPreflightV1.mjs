@@ -109,8 +109,13 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
   else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
+    // Caller-controlled task data is never proof of ownership. Reject invalid
+    // identities later without letting malformed input crash the read-only gate.
+    const candidateWorktreeIdentity = typeof t.worktreeIdentity === 'string'
+      && DIGEST.test(t.worktreeIdentity) ? t.worktreeIdentity.toLowerCase() : null;
     if (claims.some(claim => normalizedPath(claim.worktreeBranch) === normalizedPath(t.worktreeBranch)
-        || claim.worktreeIdentity.toLowerCase() === t.worktreeIdentity.toLowerCase()))
+        || (candidateWorktreeIdentity !== null
+          && claim.worktreeIdentity.toLowerCase() === candidateWorktreeIdentity)))
       blockers.push('BRANCH_OR_WORKTREE_ALREADY_OWNED');
     const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
     if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
