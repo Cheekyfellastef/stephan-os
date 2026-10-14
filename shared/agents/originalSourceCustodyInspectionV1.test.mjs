@@ -65,3 +65,13 @@ test('malformed snapshots do not throw or assume safe defaults', () => {
     assert.equal(result.safeToCancelOriginal, false);
   }
 });
+
+test('Sovereign Commander custody skill bumps both plugin cache identities together', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const manifest = JSON.parse(await readFile(new URL('../../plugins/sovereign-commander/plugin.json', import.meta.url), 'utf8'));
+  const codexManifest = JSON.parse(await readFile(new URL('../../plugins/sovereign-commander/.codex-plugin/plugin.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.name, 'sovereign-commander');
+  assert.equal(codexManifest.name, manifest.name);
+  assert.equal(manifest.version, codexManifest.version);
+  assert.equal(manifest.version, '1.0.7');
+});
