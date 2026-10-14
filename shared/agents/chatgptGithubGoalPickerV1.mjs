@@ -22,6 +22,7 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
  * interprets caller flags as authorisation or claims physical execution.
  */
 export function planChatgptGithubGoalCandidatesV1(input = {}) {
+  input = plain(input) ? input : {};
   const now = Date.parse(input.nowUtc);
   const main = input.mainHead;
   const common = [];
@@ -48,6 +49,8 @@ export function planChatgptGithubGoalCandidatesV1(input = {}) {
       blockers.push('PILOT_TASK_CLASS_UNQUALIFIED');
     if (!Array.isArray(c.paths) || !c.paths.length || c.paths.length > 6 ||
         c.paths.some(path => !pathSafe(path)) ||
+        (c.taskClass === 'docs-only' && c.paths.some(path => !/^docs\/.+\.md$/i.test(path))) ||
+        (c.taskClass === 'tests-only' && c.paths.some(path => !/^(shared|tests)\/.+\.test\.mjs$/i.test(path))) ||
         c.paths.some((path, i) => c.paths.slice(i + 1).some(other => overlapping(path, other))))
       blockers.push('SCOPE_INVALID_OR_OVERLAPPING');
     // Per-candidate proof, not a global lease/wait. Unknown only holds THIS task.
@@ -61,7 +64,8 @@ export function planChatgptGithubGoalCandidatesV1(input = {}) {
     const prs = c.openPrEvidence;
     if (!plain(prs) || prs.mainHead !== main || !fresh(prs.observedAtUtc, now) ||
         !Array.isArray(prs.claims) || prs.claims.length > 500 ||
-        prs.claims.some(p => !plain(p) || !Array.isArray(p.paths) || p.paths.some(path => !pathSafe(path))))
+        typeof prs.evidenceRef !== 'string' || !prs.evidenceRef.trim() ||
+        prs.claims.some(p => !plain(p) || !Array.isArray(p.paths) || !p.paths.length || p.paths.some(path => !pathSafe(path))))
       blockers.push('GITHUB_PR_INVENTORY_UNPROVEN');
     else if (Array.isArray(c.paths) && c.paths.every(pathSafe) &&
       prs.claims.some(p => p.taskId === c.taskId ||
