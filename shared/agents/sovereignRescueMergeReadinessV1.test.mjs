@@ -1,17 +1,47 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { inspectSovereignRescueMergeReadinessV1 as inspect } from './sovereignRescueMergeReadinessV1.mjs';
 import { buildIndependentReviewArtifact } from './operatorMergeReviewArtifactV1.mjs';
 import { PROTECTED_MERGE_REQUIRED_WORKFLOWS } from './protectedMergeCheckClassifierV1.mjs';
 
 const repo = 'Cheekyfellastef/stephan-os';
-const head = 'a'.repeat(40), base = 'b'.repeat(40), now = '2026-10-14T10:00:00.000Z';
+const head = 'da3c57b967964449d723fc005c747096c7b295c4', base = 'b'.repeat(40), now = '2026-10-14T10:00:00.000Z';
+const crcTable = Array.from({ length: 256 }, (_, initial) => {
+  let crc = initial;
+  for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  return crc >>> 0;
+});
+function storedReviewZip(payload) {
+  const data = Buffer.from(JSON.stringify(payload), 'utf8');
+  const name = Buffer.from('independent-review-result.json');
+  let crc = 0xffffffff;
+  for (const byte of data) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  crc = (crc ^ 0xffffffff) >>> 0;
+  const local = Buffer.alloc(30 + name.length);
+  local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(10, 4);
+  local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22); local.writeUInt16LE(name.length, 26);
+  name.copy(local, 30);
+  const central = Buffer.alloc(46 + name.length);
+  central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(10, 6); central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(data.length, 20); central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(name.length, 28); name.copy(central, 46);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10); end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(local.length + data.length, 16);
+  return Buffer.concat([local, data, central, end]);
+}
 const fixture = () => {
   const reviewArtifact = buildIndependentReviewArtifact({ repository: repo, prNumber: 3104,
     branch: 'rescue-island/preflight-v1-3103', sourceHead: head, baseSha: base,
     workflowRunId: 100, workflowRunAttempt: 1, createdAtUtc: now,
     analysis: { findings: [], counts: { P0: 0, P1: 0, P2: 0 }, verdict: 'clean',
       proofRefs: ['proofs/diff/complete'], finalVerdict: 'INDEPENDENT_SECURITY_REVIEW_CLEAN' } });
+  const reviewArchiveBytes = storedReviewZip(reviewArtifact);
+  const reviewArchiveDigest = `sha256:${createHash('sha256').update(reviewArchiveBytes).digest('hex')}`;
   return { repository: repo, nowUtc: now, observedAtUtc: now, mainHead: base,
     pullRequest: { number: 3104, title: 'Rescue Island preflight', state: 'open', merged: false,
       draft: false, mergeable: true, mergeable_state: 'unstable',
@@ -19,9 +49,21 @@ const fixture = () => {
       base: { sha: base, ref: 'main', repo: { full_name: repo } } },
     threads: { hasMore: false, totalCount: 1, items: [{ id: 'thread-1', is_resolved: true }] },
     checkRows: PROTECTED_MERGE_REQUIRED_WORKFLOWS.map(workflow => ({ workflow, name: 'proof', state: 'SUCCESS', sourceHead: head })),
+    reviewArchiveBytes,
+    reviewWorkflowId: 101,
+    reviewWorkflowRun: { id: 100, run_attempt: 1, workflow_id: 101,
+      name: 'Independent Merge Security Review', display_title: 'Independent Merge Security Review',
+      path: `${repo}/.github/workflows/independent-merge-security-review.yml@refs/heads/main`,
+      event: 'pull_request_target', repository: { full_name: repo },
+      status: 'completed', conclusion: 'success',
+      pull_requests: [{ number: 3104, head: { sha: head, ref: 'rescue-island/preflight-v1-3103' },
+        base: { sha: base, ref: 'main' } }] },
+    reviewWorkflowJobsInventory: { hasMore: false, totalCount: 1, items: [
+      { name: 'independent-security-review', run_attempt: 1, status: 'completed', conclusion: 'success' },
+    ] },
     reviewArtifact, reviewArtifactMetadata: { total_count: 1, artifacts: [{ id: 200,
-      name: reviewArtifact.artifactName, expired: false, size_in_bytes: 4096,
-      digest: `sha256:${'c'.repeat(64)}`, workflow_run: { id: 100 } }] },
+      name: reviewArtifact.artifactName, expired: false, size_in_bytes: reviewArchiveBytes.length,
+      digest: reviewArchiveDigest, workflow_run: { id: 100 } }] },
     priorRuns: { hasMore: false, totalCount: 0, items: [] }, priorJobSets: [],
   };
 };
@@ -84,4 +126,36 @@ test('different-base failed attempt uses existing continuation only after fresh 
   assert.equal(inspect(x).verdict, 'STRUCTURALLY_READY_FOR_PROTECTED_REVALIDATION');
   x.reviewArtifact = { ...x.reviewArtifact, baseSha: 'd'.repeat(40) };
   held(x, 'EXACT_HEAD_BASE_CLEAN_REVIEW_ARTIFACT_REQUIRED');
+});
+
+test('successful review artifact uploaded by a later-failing workflow is never sufficient', () => {
+  const failed = fixture(); failed.reviewWorkflowRun.conclusion = 'failure';
+  held(failed, 'EXACT_SUCCESSFUL_REVIEW_RUN_AND_JOBS_REQUIRED');
+  const failedJob = fixture(); failedJob.reviewWorkflowJobsInventory.items[0].conclusion = 'failure';
+  held(failedJob, 'EXACT_SUCCESSFUL_REVIEW_RUN_AND_JOBS_REQUIRED');
+  const wrongRun = fixture(); wrongRun.reviewWorkflowRun.id = 999;
+  held(wrongRun, 'EXACT_SUCCESSFUL_REVIEW_RUN_AND_JOBS_REQUIRED');
+  const incomplete = fixture(); incomplete.reviewWorkflowJobsInventory.hasMore = true;
+  held(incomplete, 'EXACT_SUCCESSFUL_REVIEW_RUN_AND_JOBS_REQUIRED');
+});
+
+test('review payload must be extracted from the exact digest-verified ZIP archive', () => {
+  const absent = fixture(); delete absent.reviewArchiveBytes;
+  held(absent, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
+  const substituted = fixture(); substituted.reviewArchiveBytes = Buffer.from(substituted.reviewArchiveBytes);
+  substituted.reviewArchiveBytes[33] ^= 1;
+  held(substituted, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
+  const otherPayload = fixture(); otherPayload.reviewArtifact.payloadSha256 = 'e'.repeat(64);
+  held(otherPayload, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
+  const alteredMetadata = fixture(); alteredMetadata.reviewArtifactMetadata.artifacts[0].digest = `sha256:${'f'.repeat(64)}`;
+  held(alteredMetadata, 'DIGEST_VERIFIED_REVIEW_ARCHIVE_REQUIRED');
+});
+
+test('every other Rescue Island source head requires independently validated specialist v2 review', () => {
+  const child = fixture();
+  child.pullRequest.number = 3105;
+  child.pullRequest.head.sha = 'd'.repeat(40);
+  held(child, 'QUALIFIED_SPECIALIST_REVIEW_REQUIRED');
+  const changedParent = fixture(); changedParent.pullRequest.head.sha = 'e'.repeat(40);
+  held(changedParent, 'QUALIFIED_SPECIALIST_REVIEW_REQUIRED');
 });
