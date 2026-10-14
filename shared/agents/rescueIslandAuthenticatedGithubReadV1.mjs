@@ -73,7 +73,6 @@ export function inspectRescueIslandGithubReadFactsV1({
 // The existing shared GitHub Observation Broker owns repository-wide cooldown,
 // publication-safe caching, single-reader locks and bounded CLI wall-clock
 // deadlines. Only four fixed endpoints and projections are admitted here.
-const BROKER_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BROKER_TIMEOUT_MS = 10_000;
 const BROKER_READS = Object.freeze([
   Object.freeze({ id: 'main-open', endpoint: ROOT.slice(1) + '/git/ref/heads/main',
@@ -128,12 +127,14 @@ export async function readRescueIslandPilotGithubFactsV1({
   consumedCommentIds = [], workspaceRoot,
 } = {}) {
   if (!safeCommentId(commentId)) return blocker('COMMENT_ID_UNTRUSTED');
-  const nowMs = Date.parse(nowUtc);
-  if (typeof nowUtc !== 'string' || !Number.isFinite(nowMs))
-    return blocker('OBSERVATION_TIME_UNTRUSTED');
+  const statedMs = typeof nowUtc === 'string' ? Date.parse(nowUtc) : NaN;
+  const liveNowMs = Date.now();
+  // Never allow an externally supplied clock to bypass shared cooldown.
+  if (!Number.isFinite(statedMs) || Math.abs(statedMs - liveNowMs) > 5_000)
+    return blocker('OBSERVATION_TIME_NOT_LIVE');
   const payloads = [];
   for (const spec of BROKER_READS) {
-    const result = trustedSharedGithubObservation(spec, commentId, workspaceRoot, nowMs);
+    const result = trustedSharedGithubObservation(spec, commentId, workspaceRoot, liveNowMs);
     if (!result.ok) return blocker(result.blocker);
     payloads.push(result.payload);
   }
