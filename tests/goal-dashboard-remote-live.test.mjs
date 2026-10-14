@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 // Hosted / local gate parity must run the same signer and steward regressions.
 import '../shared/runtime/goalConveyorGateStewardV1.test.mjs';
+// Exercise the disjoint, read-only GitHub-first fallback in the existing hosted build suite.
+import '../shared/agents/chatgptGithubGoalPickerV1.test.mjs';
 
 const source = readFileSync(new URL('../apps/goal-dashboard/remote-live.js', import.meta.url), 'utf8');
 const deployWorkflow = readFileSync(new URL('../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
