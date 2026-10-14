@@ -282,6 +282,9 @@ let lastGateSignedPublicationAtMs = 0;
 let lastGateSignedPublicationVerdict = 'NOT_COMMISSIONED';
 let lastGateStewardActionKey = '';
 let lastGateStewardAttemptAtMs = null;
+// One bounded cooldown per independent gate/evidence reason. In-memory only:
+// Core may re-propose after a restart, but never writes/executes an approval.
+let lastGateStewardAttempts = [];
 let lastOctopusSelfHealSourceHead = '';
 let lastOctopusSelfHealProgrammeBlockerIdentity = '';
 let lastOctopusSelfHealAttemptCount = 0;
@@ -867,12 +870,20 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
     previousActionKey: lastGateStewardActionKey,
     previousAttemptAtMs: lastGateStewardAttemptAtMs,
+    previousAttempts: lastGateStewardAttempts,
   });
   // Persist the last diagnostic suggestion across heartbeats. This does not
   // execute it, open a lease, or claim custody of the original worker.
   if (gateSteward.decision === 'PROPOSE_EXISTING_AUTHORITY_ACTION' && gateSteward.proofKey) {
+    const proposedAtMs = Date.parse(timestampUtc);
     lastGateStewardActionKey = gateSteward.proofKey;
-    lastGateStewardAttemptAtMs = Date.parse(timestampUtc);
+    lastGateStewardAttemptAtMs = proposedAtMs;
+    lastGateStewardAttempts = [
+      ...lastGateStewardAttempts.filter(entry =>
+        entry.key !== gateSteward.proofKey &&
+        entry.atMs >= proposedAtMs - 60 * 60_000 && entry.atMs <= proposedAtMs),
+      { key: gateSteward.proofKey, atMs: proposedAtMs },
+    ].slice(-23);
   }
   // Optional, independently commissioned private signing key, never in Git
   // or the Shared Workspace. Lack of key leaves all 23 observable gates
