@@ -35,9 +35,9 @@ function parseArgs(args) {
 async function main() {
   const input = parseArgs(process.argv.slice(2));
   if (input.help) { process.stdout.write(HELP + '\n'); return; }
-  const result = await fetchPinnedGithubSkillV2(input, { token: process.env.GITHUB_TOKEN || '' });
+  const result = await fetchPinnedGithubSkillV2(input);
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-  if (result.verdict !== 'SOURCE_VERIFIED_REVIEW_REQUIRED') process.exitCode = 2;
+  if (result.verdict !== 'GITHUB_SOURCE_OBSERVED_REVIEW_REQUIRED') process.exitCode = 2;
 }
 main().catch(() => {
   // Never echo a fetch exception, arbitrary response text, token, or local path.
