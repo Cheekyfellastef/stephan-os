@@ -201,6 +201,23 @@ test('malformed candidate worktree identities never throw or grant authority wit
   }
 });
 
+test('string-coercible claim identities cannot masquerade as authenticated inventories', () => {
+  for (const inventory of ['canonicalClaims', 'seedClaims', 'islandClaims']) {
+    for (const invalid of [
+      { worktreeIdentity: ['d'.repeat(64)] },
+      { taskId: ['another-task-01'] },
+    ]) {
+      const result = evaluate({}, { [inventory]: [{
+        taskId: 'another-task-01', targetPaths: ['different/file.md'], ...invalid,
+      }] });
+      assert.equal(result.preflight, 'HELD');
+      assert.ok(result.blockers.includes('CROSS_SYSTEM_OWNERSHIP_UNPROVEN'));
+      assert.equal(result.sourceMutationAllowed, false);
+      assert.equal(result.workerStartAllowed, false);
+    }
+  }
+});
+
 test('complete independent scope scan accepts all permitted claim inventory paths', () => {
   const canonicalClaims = Array.from({ length: 512 }, (_, i) => ({
     taskId: `canonical-task-${i}`,
