@@ -30,7 +30,7 @@ export function preparePinnedGithubSkillSourceV2(input = {}) {
   const repositoryUrl = text(input.repositoryUrl);
   const revision = text(input.revision).toLowerCase();
   const path = text(input.skillPath);
-  const match = GITHUB_REPOSITORY.exec(repositoryUrl);
+  const match = repositoryUrl.match(GITHUB_REPOSITORY);
   if (!match || [match[1], match[2]].some(part => part === '.' || part === '..')) {
     return hold('GITHUB_REPOSITORY_INVALID');
   }
