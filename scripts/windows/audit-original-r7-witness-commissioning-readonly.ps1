@@ -28,8 +28,19 @@ try {
 try {
     # Count only. The result does NOT prove that detached or WMI/COM
     # writers have stopped. Never publish commands, PIDs, accounts or paths.
-    $matches = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-        Where-Object { ([string]$_.CommandLine).Contains($leaseId) })
+    $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    # An unreadable/null CommandLine is an UNKNOWN writer, not a clean
+    # observation. Protected and other-principal processes may hide it.
+    # Do not publish raw command lines, identities or PIDs.
+    $unreadable = @($processes | Where-Object {
+        $null -eq $_.CommandLine -or [string]::IsNullOrWhiteSpace([string]$_.CommandLine)
+    })
+    if ($unreadable.Count -gt 0) {
+        $unknown += 'PROCESS_ENUMERATION_UNAVAILABLE'
+    }
+    $matches = @($processes | Where-Object {
+        $null -ne $_.CommandLine -and ([string]$_.CommandLine).Contains($leaseId)
+    })
     $candidates = $matches.Count
 } catch {
     $unknown += 'PROCESS_ENUMERATION_UNAVAILABLE'
