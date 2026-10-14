@@ -99,6 +99,26 @@ function parseSupervisorStatus(result) {
   }
 }
 
+// A new Mission Worker cannot reconstruct a missing terminal receipt from the
+// historical #2962 source writer. Repeated start/discovery calls under that
+// specific HOLD just re-enter the damaged segment. Hand the case back to the
+// existing original-owner quarantine and exact lease reconciler instead.
+const ORIGINAL_OWNER_RECOVERY_BLOCKERS = new Set([
+  'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+  'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+  'REPAIR_ORIGINAL_EXECUTION_HISTORY_UNVERIFIED',
+  'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING',
+  'REPAIR_ORIGINAL_WORK_STILL_IN_FLIGHT',
+  'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED',
+  'ORIGINAL_SOURCE_FENCE_PROOF_UNVERIFIED',
+]);
+
+function originalOwnerRecoveryBlocker(result) {
+  const status = parseSupervisorStatus(result);
+  const blocker = text(status?.blocker).toUpperCase();
+  return ORIGINAL_OWNER_RECOVERY_BLOCKERS.has(blocker) ? blocker : '';
+}
+
 function supervisorFlowGreen(result) {
   const status = parseSupervisorStatus(result);
   if (result?.ok !== true || status?.ok !== true) return false;
@@ -214,6 +234,30 @@ export function runSovereignCommanderGoalBuilderRepair({
   steps.push(compactStep(STEPS.supervisor, initialSupervisor));
   const initialLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, initialLaneStatus));
+
+  const originalHold = originalOwnerRecoveryBlocker(initialSupervisor);
+  if (originalHold) {
+    // This is a fail-closed repair handoff, not a second scheduler or source
+    // writer. Only the established #2961/#2962 original-owner path can
+    // commission the physical Windows exclusion proof and reconcile r7.
+    return Object.freeze({
+      ok: false,
+      schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+      repairApplied: false,
+      blocker: originalHold,
+      steps: Object.freeze(steps),
+      recoveryOwner: '#2961',
+      originalSourceLeaseHeld: true,
+      nextAutomaticAction: 'PROVE_ORIGINAL_WRITER_EXCLUSION_AND_RECONCILE_CANONICAL_LEASE',
+      canonicalGoalFabricOnly: true,
+      sourceMutationDelegatedToMissionWorker: true,
+      duplicateSchedulerAllowed: false,
+      leaseSeizureAllowed: false,
+      mergeAuthority: false,
+      arbitraryShellAllowed: false,
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED',
+    });
+  }
 
   if (supervisorFlowGreen(initialSupervisor) && laneStatusGreen(initialLaneStatus)) {
     return Object.freeze({

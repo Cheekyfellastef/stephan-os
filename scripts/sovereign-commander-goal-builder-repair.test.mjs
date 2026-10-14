@@ -141,6 +141,70 @@ test('goal builder does not forgive a current hard-red host as stale evidence de
   assert.equal(result.repairApplied, true);
 });
 
+test('missing historical r7 receipt hands off to original owner without restarting the worker', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') {
+        return supervisorStatus({
+          finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+          daemonMayReportGreen: false,
+          blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+        });
+      }
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+          refillHealth: 'AMBER',
+          refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+        });
+      }
+      throw new Error('The historical receipt cannot be repaired by relaunching a worker');
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, false);
+  assert.equal(result.originalSourceLeaseHeld, true);
+  assert.equal(result.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+  assert.equal(result.recoveryOwner, '#2961');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED');
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+});
+
+test('unknown authority HOLD remains fail closed and cannot take original-owner shortcut', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') {
+        return supervisorStatus({
+          finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+          daemonMayReportGreen: false,
+          blocker: 'CANONICAL_PROGRAMME_HOLD_REPAIR_REQUIRED',
+        });
+      }
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+          refillHealth: 'AMBER',
+          refillState: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+        });
+      }
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.originalSourceLeaseHeld, undefined);
+  assert.equal(result.repairApplied, true);
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor', 'controller-lane-status',
+    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'fleet-goal-supervisor', 'controller-lane-status',
+  ]);
+});
+
 test('goal builder repair heals only worker and heartbeat before re-dispatching', () => {
   const calls = [];
   let supervisorCalls = 0;
