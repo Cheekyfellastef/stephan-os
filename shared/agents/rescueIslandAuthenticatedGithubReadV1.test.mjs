@@ -47,6 +47,8 @@ test('bounded four-GET owner observation is structurally ready but holds all mut
   assert.equal(x.verdict,'GITHUB_FACTS_STRUCTURALLY_VERIFIED');
   assert.equal(x.readOnlyRequestCount,4);
   assert.equal(x.sourceHead,HEAD);
+  assert.deepEqual(x.blockers,[]);
+  assert.equal(x.nextRequiredProof,'EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED');
   for(const key of ['approvalAuthenticated','ownershipAuthenticated','independentClaimsAuthenticated',
     'gamingBudgetAuthenticated','physicalPickupAllowed','sourceMutationAllowed',
     'canonicalLeaseAccessAllowed','seedForgeQueueAccessAllowed','mergeAllowed','liveRunnerRegistered'])
