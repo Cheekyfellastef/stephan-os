@@ -139,7 +139,7 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
       tags: ['openclaw-related'],
       provenance: 'EXTERNAL_DRAFT_NOT_INSTALLED',
     }));
-  const gateRepair = deriveGateSkillIntakeV1(feed.goalBuildGateObservatory, { feedState: feed.state });
+  const gateRepair = deriveGateSkillIntakeV1(feed.projection?.goalBuildGateObservatory, { feedState: feed.state });
   const skillCandidates = [
     ...gateRepair.skillCandidates,
     ...externalDrafts,

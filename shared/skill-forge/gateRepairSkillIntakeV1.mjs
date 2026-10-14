@@ -7,7 +7,7 @@ const REASON = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,159}$/;
 const MAX_AGE_MS = 10 * 60_000;
 const GATE_COUNT = 23;
 const EXTERNAL_AUTHORITY_GATES = new Set([1, 7, 8, 9, 10, 11, 12, 16, 21, 22, 23]);
-const MISSING_CAPABILITY = /(?:^|[.:_-])(?:SKILL|CAPABILITY|TOOL|FIXED_VERB)[.:_-](?:MISSING|UNAVAILABLE|UNSUPPORTED|NOT_FOUND)(?:$|[.:_-])/i;
+const MISSING_CAPABILITY = /(?:^|[.:_-])(?:(?:SKILL|CAPABILITY|TOOL|FIXED_VERB)[.:_-](?:MISSING|UNAVAILABLE|UNSUPPORTED|NOT_FOUND)|(?:MISSING|UNAVAILABLE|UNSUPPORTED|NOT_FOUND)[.:_-](?:SKILL|CAPABILITY|TOOL|FIXED_VERB))(?:$|[.:_-])/i;
 const text = value => String(value ?? '').trim();
 
 function empty(reason) {

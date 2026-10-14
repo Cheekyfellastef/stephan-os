@@ -75,3 +75,13 @@ test('stale, unsigned, inconsistent or unavailable ledger cannot fabricate revie
     assert.equal(result.executeAllowed, false);
   }
 });
+
+test('missing-first blocker spellings are admitted to capability review on non-authority gates', () => {
+  const input = ledger();
+  failed(input, 14, 'MISSING_CAPABILITY');
+  failed(input, 15, 'MISSING_SKILL');
+  const result = deriveGateSkillIntakeV1(input, { feedState: 'ready', nowMs });
+  assert.deepEqual(result.requests.map(item => item.route), ['SKILL_REVIEW_DRAFT', 'SKILL_REVIEW_DRAFT']);
+  assert.equal(result.skillCandidates.length, 2);
+  assert.ok(result.skillCandidates.every(item => item.status === 'DRAFT' && item.permissionLevel === 'PROPOSE_ONLY'));
+});
