@@ -1,0 +1,29 @@
+name: External Skill Intake Tests
+
+on:
+  pull_request:
+    paths:
+      - 'shared/skill-forge/externalSkillIntakeV1.mjs'
+      - 'shared/skill-forge/externalSkillIntakeV1.test.mjs'
+      - 'shared/skill-forge/skillGrowthProjectionV1.mjs'
+      - 'shared/skill-forge/skillGrowthProjectionV1.test.mjs'
+      - 'scripts/skills/stage-external-skill-review.mjs'
+      - '.github/workflows/external-skill-intake-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-skill-intake-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate read-only staging script
+        run: node --check scripts/skills/stage-external-skill-review.mjs
+      - name: Verify external skill quarantine and canonical projection
+        run: node --test shared/skill-forge/externalSkillIntakeV1.test.mjs shared/skill-forge/skillGrowthProjectionV1.test.mjs
