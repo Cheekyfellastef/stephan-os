@@ -75,7 +75,8 @@ export function inspectRescueIslandGithubReadFactsV1({
 async function readGithubJson(path, token) {
   if (typeof path !== 'string' || !path.startsWith(ROOT + '/')
       || path.includes('?') || path.includes('#') || path.includes('..')
-      || !/^\/[A-Za-z0-9._/-]+$/.test(path)) throw new Error('ISLAND_GITHUB_PATH_DENIED');
+      || !path.split('/').every((segment, index) => index === 0 ? segment === ''
+        : /^[A-Za-z0-9._-]+$/.test(segment))) throw new Error('ISLAND_GITHUB_PATH_DENIED');
   return new Promise((resolve, reject) => {
     let ended = false, total = 0;
     const fail = (code) => { if (ended) return; ended = true; reject(new Error(code)); };
