@@ -6,7 +6,7 @@ import { buildIndependentReviewArtifact } from './operatorMergeReviewArtifactV1.
 import { PROTECTED_MERGE_REQUIRED_WORKFLOWS } from './protectedMergeCheckClassifierV1.mjs';
 
 const repo = 'Cheekyfellastef/stephan-os';
-const head = 'da3c57b967964449d723fc005c747096c7b295c4', base = 'b'.repeat(40), now = '2026-10-14T10:00:00.000Z';
+const head = '4637edd199611659f434c4e142231f9f634b4efc', base = 'b'.repeat(40), now = '2026-10-14T10:00:00.000Z';
 const crcTable = Array.from({ length: 256 }, (_, initial) => {
   let crc = initial;
   for (let i = 0; i < 8; i += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
