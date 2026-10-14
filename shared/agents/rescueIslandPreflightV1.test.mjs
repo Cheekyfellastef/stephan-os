@@ -218,6 +218,43 @@ test('string-coercible claim identities cannot masquerade as authenticated inven
   }
 });
 
+test('every candidate and observation identity requires a primitive string without coercion', () => {
+  const cases = [
+    ['taskId', task().taskId, 'EXACT_TASK_AND_ISSUE_TITLE_REQUIRED', 'task'],
+    ['baseHead', HEAD, 'BASE_OR_SCOPE_INVALID', 'task'],
+    ['worktreeIdentity', task().worktreeIdentity, 'ISOLATED_RUNNER_NOT_PROVEN', 'task'],
+    ['worktreeBranch', task().worktreeBranch, 'ISOLATED_RUNNER_NOT_PROVEN', 'task'],
+    ['mainHead', HEAD, 'MAIN_HEAD_OR_EVIDENCE_NOT_FRESH', 'observations'],
+    ['scopeInventoryDigest', HASH, 'CROSS_SYSTEM_OWNERSHIP_UNPROVEN', 'observations'],
+  ];
+  for (const [field, valid, blocker, side] of cases) {
+    for (const invalid of [undefined, null, 17, true, [valid], new String(valid),
+      { toString() { throw new Error('identity coercion must never run'); } }, Symbol(field)]) {
+      const t = task();
+      const p = evidence();
+      p.canonicalClaims = [{ taskId: 'other-canonical-task', ownerIssueNumber: 9999,
+        worktreeBranch: 'other-system/task', worktreeIdentity: 'd'.repeat(64),
+        targetPaths: ['different/file.md'] }];
+      p.scopeResolutions = [...t.targetPaths, 'different/file.md']
+        .map(path => ({ path, canonicalPath: path, repositoryContained: true }));
+      if (side === 'task') t[field] = invalid;
+      else p[field] = invalid;
+      // Matching references must not turn non-string identities into proof.
+      if (field === 'baseHead' || field === 'mainHead') {
+        t.baseHead = p.mainHead = p.worktreeHead = invalid;
+      }
+      if (field === 'worktreeIdentity') p.worktreeIdentity = invalid;
+      if (field === 'worktreeBranch') p.worktreeBranch = invalid;
+      const result = inspect({ task: t, observations: p, nowUtc: NOW });
+      assert.equal(result.preflight, 'HELD', `${side}.${field}`);
+      assert.ok(result.blockers.includes(blocker), `${side}.${field}: ${result.blockers}`);
+      assert.equal(result.workerStartAllowed, false);
+      assert.equal(result.sourceMutationAllowed, false);
+      if (field === 'taskId') assert.equal(result.taskId, '');
+    }
+  }
+});
+
 test('complete independent scope scan accepts all permitted claim inventory paths', () => {
   const canonicalClaims = Array.from({ length: 512 }, (_, i) => ({
     taskId: `canonical-task-${i}`,

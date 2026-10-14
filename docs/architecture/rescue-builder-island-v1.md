@@ -47,6 +47,27 @@ caller-selected digest. A clean checkout alone is insufficient.
 These are structural requirements for the future authenticated adapter; the
 classifier itself does not perform a filesystem scan or authenticate its input.
 
+### Typed identity design review and convergence invariant
+
+Repeated fixes to claim digests exposed one shared defect class: regular
+expressions coerce their operands, while equality and collision checks assume
+primitive strings. Candidate and observation fields had the same defect as
+the previously repaired claim inventory. Fixing each offending value separately
+would leave the contract inconsistent.
+
+All regex-validated task IDs and hashes now cross one primitive-string predicate
+before format validation, comparison, canonicalization or receipt emission.
+Matching object references are never identity proof; malformed task IDs are
+omitted from result receipts. Path and branch checks already require strings.
+The adversarial matrix exercises every candidate/observation ID or hash format
+boundary with missing values, primitives of the wrong type, arrays, boxed strings,
+throwing coercion methods and symbols, including matching forged references.
+The invariant is HELD without coercion, exceptions or execution authority.
+
+This is source validation only. It adds no authenticated approval or ownership
+adapter and cannot qualify production pickup. The complete preflight still needs
+independent exact-head review; these tests do not constitute that review.
+
 ## Next independently reviewed slice, before any actual source mutation
 
 1. Qualify an existing source-builder library for reuse without importing its canonical queue/lease consumer. Audit it for implicit controller calls, source dirt handling and process model custody.
