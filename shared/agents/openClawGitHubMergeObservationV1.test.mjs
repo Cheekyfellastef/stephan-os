@@ -60,7 +60,7 @@ test('parseable gh checks status 1 reaches canonical classifier', () => {
 test('intentional pull-request Pages skip is neutral only when its Build Stephanos UI workflow has real successful checks', () => {
   const checks = [
     ...successfulRequiredChecks(),
-    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'SKIPPED' },
+    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'SKIPPED', event: 'pull_request' },
     { name: 'coordinate', workflow: 'Exact-Head Review Dispatch', state: 'SKIPPED' },
   ];
   assert.equal(validateProtectedMergeCheckRows(checks), true);
@@ -80,7 +80,7 @@ test('intentional pull-request Pages skip is neutral only when its Build Stephan
   ]), false);
   assert.equal(validateProtectedMergeCheckRows([
     ...successfulRequiredChecks(),
-    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'FAILURE' },
+    { name: 'pages-deploy', workflow: 'Build Stephanos UI', state: 'FAILURE', event: 'pull_request' },
   ]), false);
 });
 
