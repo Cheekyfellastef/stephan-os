@@ -64,6 +64,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   const fixedValues = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_VALUE_${index}`]);
   assert.equal(fixedKeys.includes('core.hooksPath'), true);
   assert.equal(fixedValues[fixedKeys.indexOf('core.hooksPath')], 'NUL');
+  assert.equal(fixedValues[fixedKeys.indexOf('commit.gpgSign')], 'false');
+  assert.equal(fixedValues[fixedKeys.indexOf('tag.gpgSign')], 'false');
   assert.equal(fixedValues[fixedKeys.indexOf('core.trustctime')], 'true');
   assert.equal(fixedValues[fixedKeys.indexOf('core.checkStat')], 'default');
   assert.equal(fixedValues[fixedKeys.indexOf('core.ignoreStat')], 'false');
@@ -73,6 +75,16 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
   assert.equal(result.PATH.includes('attacker'), false);
   assert.equal(result.PATH.includes('C:\\Windows\\System32\\WindowsPowerShell\\v1.0'), true);
+});
+
+test('all Git signing program families and signing activation are rejected', () => {
+  const base = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+  assert.equal(validateBattleBridgeLocalGitConfiguration(base).ok, true);
+  for (const assignment of ['commit.gpgsign\ntrue', 'tag.gpgsign\ntrue',
+    'gpg.program\nattacker', 'gpg.ssh.program\nattacker', 'gpg.x509.program\nattacker',
+    'gpg.openpgp.program\nattacker', 'gpg.format\nssh']) {
+    assert.equal(validateBattleBridgeLocalGitConfiguration(base + assignment + '\0').ok, false, assignment);
+  }
 });
 
 test('Git topology rejects graft, common-dir, and object-alternate redirects', () => {
@@ -100,7 +112,7 @@ test('Git topology rejects linked critical metadata descendants', () => {
   mkdirSync(path.join(root, '.git'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
   writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  symlinkSync(target, path.join(root, '.git', 'objects'), 'dir');
+  symlinkSync(target, path.join(root, '.git', 'objects'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(inspectBattleBridgeGitTopology(root).blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
 });
 

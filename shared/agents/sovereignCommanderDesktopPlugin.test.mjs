@@ -23,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.3');
+  assert.equal(plugin.version, '1.0.5');
   assert.equal(plugin.mcpServers, './.mcp.json');
   assert.equal(plugin.skills, './skills');
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
@@ -49,7 +49,7 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.3');
+  assert.equal(plugin.version, '1.0.5');
   assert.equal(plugin.skills, './skills/');
   assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
   assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');

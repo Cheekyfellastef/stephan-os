@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
@@ -250,10 +251,11 @@ export function createSharedWorkspaceDashboardPollingContract(input = {}) {
   });
 }
 
-function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs, proofRecords = [], goalGateTrust = {}) {
   return Object.freeze({
     ...projection,
     autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, proofRecords, ...goalGateTrust, nowMs, staleAfterMs }),
   });
 }
 
@@ -332,7 +334,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
-  }), records.statusRecords, nowMs, staleAfterMs);
+  }), records.statusRecords, nowMs, staleAfterMs, records.proofRecords, input.goalGateTrust || {});
   const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
   const brainState = resolved.ok
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })

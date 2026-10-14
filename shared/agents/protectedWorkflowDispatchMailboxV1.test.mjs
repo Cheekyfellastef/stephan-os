@@ -17,6 +17,8 @@ import {
   extractProtectedWorkflowDispatch,
   validateProtectedWorkflowAuthorizationComment,
   validateProtectedWorkflowDispatch,
+  validateProtectedWorkflowActorHandoff,
+  protectedWorkflowAuthorizationCommentSha256,
 } from './protectedWorkflowDispatchMailboxV1.mjs';
 
 const NOW = new Date('2026-08-30T06:50:00.000Z');
@@ -68,8 +70,50 @@ const authorizationComment = Object.freeze({
   id: AUTHORIZATION_COMMENT_ID,
   issue_url: `https://api.github.com/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}`,
   created_at: AUTHORED.toISOString(),
-  user: Object.freeze({ login: PROTECTED_WORKFLOW_DISPATCH_AUTHOR }),
+  updated_at: AUTHORED.toISOString(),
+  user: Object.freeze({ login: PROTECTED_WORKFLOW_DISPATCH_AUTHOR, id: 267490109, type: 'User' }),
   body: `before\n\`\`\`${PROTECTED_WORKFLOW_DISPATCH_MARKER}\n${JSON.stringify(baseCommand)}\n\`\`\`\nafter`,
+});
+
+test('actor handoff authenticates the exact immutable owner packet for either carrier', () => {
+  for (const transportActor of [PROTECTED_WORKFLOW_DISPATCH_AUTHOR, 'github-actions[bot]']) {
+    const proof = validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, {
+      transportActor, transportActorId: transportActor === PROTECTED_WORKFLOW_DISPATCH_AUTHOR ? 267490109 : 41898282,
+      expectedCommentId: AUTHORIZATION_COMMENT_ID, now: NOW,
+    });
+    assert.equal(proof.ok, true, proof.blocker);
+    assert.equal(proof.authorization.operatorAuthor, PROTECTED_WORKFLOW_DISPATCH_AUTHOR);
+    assert.equal(proof.authorization.transportActor, transportActor);
+    assert.match(proof.authorization.commentSha256, /^[a-f0-9]{64}$/);
+  }
+});
+
+test('handoff fails closed for altered comment, stale transport and every detached source/review hash', () => {
+  const options = { transportActor: 'github-actions[bot]', transportActorId: 41898282, expectedCommentId: AUTHORIZATION_COMMENT_ID, now: NOW };
+  for (const field of ['expectedHead', 'expectedHeadTree', 'expectedBase', 'independentReviewArtifactDigest', 'independentReviewPayloadSha256']) {
+    assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, {
+      ...baseCommand, [field]: field === 'independentReviewArtifactDigest' ? `sha256:${'a'.repeat(64)}` : 'a'.repeat(field.includes('Sha256') ? 64 : 40),
+    }, options).ok, false, field);
+  }
+  for (const field of ['independentReviewRunId', 'independentReviewRunAttempt', 'independentReviewArtifactId']) {
+    assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, { ...baseCommand, [field]: baseCommand[field] + 1 }, options).ok, false, field);
+  }
+  for (const comment of [
+    { ...authorizationComment, user: { login: 'github-actions[bot]' } },
+    { ...authorizationComment, user: { ...authorizationComment.user, id: 41898282 } },
+    { ...authorizationComment, updated_at: NOW.toISOString() },
+    { ...authorizationComment, updated_at: undefined },
+    { ...authorizationComment, created_at: 'invalid' },
+    { ...authorizationComment, id: AUTHORIZATION_COMMENT_ID + 1 },
+    { ...authorizationComment, issue_url: authorizationComment.issue_url.replace('/2808', '/3085') },
+  ]) assert.equal(validateProtectedWorkflowActorHandoff(comment, baseCommand, options).ok, false);
+  assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActor: 'lookalike' }).ok, false);
+  assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, transportActorId: 267490109 }).ok, false);
+  assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, now: new Date('2026-08-30T07:10:00Z') }).ok, false);
+  assert.equal(validateProtectedWorkflowActorHandoff(authorizationComment, baseCommand, { ...options, now: new Date('2026-08-30T06:48:00Z') }).ok, false);
+  assert.equal(validateProtectedWorkflowActorHandoff({ ...authorizationComment, body: authorizationComment.body + 'changed' }, baseCommand, {
+    ...options, expectedCommentSha256: protectedWorkflowAuthorizationCommentSha256(authorizationComment),
+  }).blocker, 'PROTECTED_WORKFLOW_AUTHORIZATION_COMMENT_DIGEST_MISMATCH');
 });
 
 function validate(candidate = baseCommand, overrides = {}) {
