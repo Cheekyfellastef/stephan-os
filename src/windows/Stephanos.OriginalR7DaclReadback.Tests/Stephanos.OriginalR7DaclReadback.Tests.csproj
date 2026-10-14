@@ -9,6 +9,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
-    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="8.0.0" />
   </ItemGroup>
 </Project>
