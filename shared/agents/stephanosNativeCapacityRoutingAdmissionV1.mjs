@@ -252,6 +252,9 @@ export async function readVerifiedStephanosNativeRoutingCandidate(options = {}) 
     queueDepth: payload.queueDepth,
     p95StartLatencySeconds: payload.p95StartLatencySeconds,
     capacityReceiptId: payload.receiptId,
+    // Directly from the independently verified Ed25519 receipt payload.
+    // Used to distinguish post-install publication from a cached old receipt.
+    capacityObservedAtUtc: text(receiptValidation.payload.observedAtUtc),
     authorityReceiptIds: frozen([expectedAuthorityId]),
     proofRefs: frozen([...proofRefs]),
     sourceMutationAllowed: true,
