@@ -9,6 +9,12 @@ const PATH = /^[A-Za-z0-9][A-Za-z0-9._/-]{1,219}$/;
 const MAX_EVIDENCE_AGE_MS = 90_000;
 const REPO = 'Cheekyfellastef/stephan-os';
 
+// Identity validation is a typed boundary, never a string conversion. Apply the
+// same invariant to candidates, inventories, observations and receipt output.
+function stringMatches(value, pattern) {
+  return typeof value === 'string' && pattern.test(value);
+}
+
 function repositoryPath(raw) {
   return typeof raw === 'string' && PATH.test(raw)
     && !raw.includes('//') && !raw.endsWith('/')
@@ -20,7 +26,7 @@ function validPath(raw) {
     && !raw.split('/').some((segment) => segment.toLowerCase() === 'node_modules')
     && !overlaps(raw, 'apps/stephanos/dist');
 }
-function normalizedPath(value) { return String(value || '').toLowerCase(); }
+function normalizedPath(value) { return typeof value === 'string' ? value.toLowerCase() : ''; }
 function overlaps(left, right) {
   const a = normalizedPath(left);
   const b = normalizedPath(right);
@@ -33,10 +39,10 @@ function validPaths(value) {
 }
 function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
-    && value.every((item) => typeof item?.taskId === 'string' && TASK_ID.test(item.taskId)
+    && value.every((item) => stringMatches(item?.taskId, TASK_ID)
       && Number.isSafeInteger(item?.ownerIssueNumber) && item.ownerIssueNumber > 0
       && typeof item?.worktreeBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(item.worktreeBranch)
-      && typeof item?.worktreeIdentity === 'string' && DIGEST.test(item.worktreeIdentity)
+      && stringMatches(item?.worktreeIdentity, DIGEST)
       && Array.isArray(item?.targetPaths) && item.targetPaths.length > 0
       && item.targetPaths.length <= 3 && item.targetPaths.every(repositoryPath));
 }
@@ -82,13 +88,13 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
       || t.repository !== REPO || t.island !== 'RESCUE_ISLAND'
       || t.inbox !== 'RESCUE_ISLAND_OPERATOR_ONLY') blockers.push('ISOLATION_IDENTITY_INVALID');
   if (!RESCUE_ISLAND_WORKERS.includes(t.workerId)) blockers.push('WORKER_IDENTITY_UNQUALIFIED');
-  if (!TASK_ID.test(t.taskId || '')
+  if (!stringMatches(t.taskId, TASK_ID)
       || !Number.isSafeInteger(t.ownerIssueNumber) || t.ownerIssueNumber <= 0
       || typeof t.ownerIssueTitle !== 'string'
       || !t.ownerIssueTitle.trim() || t.ownerIssueTitle.length > 240)
     blockers.push('EXACT_TASK_AND_ISSUE_TITLE_REQUIRED');
   if (t.taskClass !== 'BOUNDED_SOURCE_PROPOSAL') blockers.push('TASK_CLASS_NOT_ADMITTED');
-  if (!HEAD.test(t.baseHead || '') || !validPaths(t.targetPaths))
+  if (!stringMatches(t.baseHead, HEAD) || !validPaths(t.targetPaths))
     blockers.push('BASE_OR_SCOPE_INVALID');
   if (t.operatorApproval !== 'EXTERNAL_OWNER_PROOF_REQUIRED'
       || t.reviewPolicy !== 'INDEPENDENT_PROTECTED_REVIEW_REQUIRED'
@@ -96,7 +102,7 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
       || t.allowCanonicalLeaseBypass !== false || t.allowArbitraryShell !== false)
     blockers.push('AUTHORITY_POLICY_INVALID');
   if (!recentTimestamp(p.observedAtUtc, nowUtc)
-      || p.repository !== REPO || !HEAD.test(p.mainHead || '')
+      || p.repository !== REPO || !stringMatches(p.mainHead, HEAD)
       || p.mainHead !== t.baseHead)
     blockers.push('MAIN_HEAD_OR_EVIDENCE_NOT_FRESH');
   if (p.canonicalOwnerScan !== 'INDEPENDENT_READ_ONLY'
@@ -105,14 +111,14 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
       || !validClaims(p.canonicalClaims)
       || !validClaims(p.seedClaims)
       || !validClaims(p.islandClaims)
-      || !DIGEST.test(p.scopeInventoryDigest || ''))
+      || !stringMatches(p.scopeInventoryDigest, DIGEST))
     blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
   else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
     // Caller-controlled task data is never proof of ownership. Reject invalid
     // identities later without letting malformed input crash the read-only gate.
-    const candidateWorktreeIdentity = typeof t.worktreeIdentity === 'string'
-      && DIGEST.test(t.worktreeIdentity) ? t.worktreeIdentity.toLowerCase() : null;
+    const candidateWorktreeIdentity = stringMatches(t.worktreeIdentity, DIGEST)
+      ? t.worktreeIdentity.toLowerCase() : null;
     if (claims.some(claim => normalizedPath(claim.worktreeBranch) === normalizedPath(t.worktreeBranch)
         || (candidateWorktreeIdentity !== null
           && claim.worktreeIdentity.toLowerCase() === candidateWorktreeIdentity)))
@@ -133,7 +139,7 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('GAMING_OR_RESOURCE_CUSTODY_UNPROVEN');
   if (p.isolatedWorktreeClean !== true || p.independentRunnerQualified !== true
       || p.worktreeHead !== t.baseHead
-      || !DIGEST.test(t.worktreeIdentity || '') || p.worktreeIdentity !== t.worktreeIdentity
+      || !stringMatches(t.worktreeIdentity, DIGEST) || p.worktreeIdentity !== t.worktreeIdentity
       || typeof t.worktreeBranch !== 'string'
       || !/^rescue-island\/[a-z0-9][a-z0-9._-]{5,100}$/.test(t.worktreeBranch)
       || p.worktreeBranch !== t.worktreeBranch)
@@ -146,7 +152,7 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     schemaVersion: RESCUE_ISLAND_PREFLIGHT_SCHEMA,
     island: 'RESCUE_ISLAND',
     workerId: RESCUE_ISLAND_WORKERS.includes(t.workerId) ? t.workerId : '',
-    taskId: TASK_ID.test(t.taskId || '') ? t.taskId : '',
+    taskId: stringMatches(t.taskId, TASK_ID) ? t.taskId : '',
     preflight: uniqueBlockers.length === 0 ? 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED'
       : 'HELD',
     blockers: uniqueBlockers,
