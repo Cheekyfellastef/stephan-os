@@ -271,6 +271,14 @@ test('config-driven SSH signing cannot invoke another executable', async () => {
   assert.equal(git(ctx.repoRoot, 'branch', '--list', 'rescue-island/*'), '');
 });
 
+test('Git CRLF normalization cannot replace the exact approved committed bytes', async () => {
+  const ctx = await fixture();
+  ctx.task.content = '# Rescue Island pilot\r\n\r\nExact approved CRLF bytes.\r\n';
+  git(ctx.repoRoot, 'config', 'core.autocrlf', 'input');
+  await assert.rejects(() => build(ctx), /RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN/);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+});
+
 test('local Git filters cannot execute at the source mutation boundary', async () => {
   const ctx = await fixture();
   git(ctx.repoRoot, 'config', 'filter.untrusted.clean', 'arbitrary-command');
