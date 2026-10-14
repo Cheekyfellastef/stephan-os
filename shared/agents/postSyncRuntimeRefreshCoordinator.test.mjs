@@ -451,3 +451,34 @@ test('projection publishes counts and target proofs but no changed path values',
   assert.equal(projection.changedPathCount, 1);
   assert.doesNotMatch(JSON.stringify(projection), /stephanos-server\/server\.js/);
 });
+
+test('new Sovereign Commander skill manifests and full nine-file skill pack classify to real refresh', () => {
+  const paths = [
+    'plugins/sovereign-commander/.codex-plugin/plugin.json',
+    'plugins/sovereign-commander/plugin.json',
+    'plugins/sovereign-commander/skills/commission-original-source-custody/SKILL.md',
+    'plugins/sovereign-commander/skills/repair-build-conveyors/SKILL.md',
+    'plugins/sovereign-commander/skills/repair-sovereign-fast-bridge/SKILL.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'shared/agents/sovereignCommanderDesktopPlugin.test.mjs',
+    'shared/agents/sovereignGoalRecoveryTriageV1.mjs',
+    'shared/agents/sovereignGoalRecoveryTriageV1.test.mjs',
+  ];
+  const observed = classifyPostSyncRefresh(paths);
+  assert.equal(observed.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(observed.automaticExecutionAllowed, true);
+  assert.deepEqual(observed.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
+  assert.equal(observed.unknownPathCount, 0);
+  assert.equal(observed.changedPathCount, paths.length);
+});
+
+test('Sovereign Commander manifest allowance stays exact, rejects unrelated plugin entrypoint', () => {
+ const result=classifyPostSyncRefresh(['plugins/untrusted-plugin/plugin.json']);
+ assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+ assert.equal(result.automaticExecutionAllowed,false);
+ assert.equal(result.unknownPathCount,1);
+});

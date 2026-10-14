@@ -57,6 +57,8 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/windows/repair-openclaw-full-stack.ps1',
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+  'plugins/sovereign-commander/plugin.json',
+  'plugins/sovereign-commander/.codex-plugin/plugin.json',
 ]);
 
 const NATURAL_EXACT = new Set([
