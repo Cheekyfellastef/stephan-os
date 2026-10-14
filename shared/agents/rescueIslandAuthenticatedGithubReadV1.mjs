@@ -1,7 +1,7 @@
 // #3109: four bounded GitHub GETs, on an allowlisted repository, for an
 // independently observed owner comment/issue/current-main identity. No writer.
 // This does NOT authenticate canonical/Seed/Island ownership or allow pickup.
-import { request as httpsRequest } from 'node:https';
+import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
 import { inspectRescueIslandPilotOwnerIntakeV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 export const RESCUE_ISLAND_GITHUB_READ_SCHEMA = 'stephanos.rescue-island-github-read.v1';
@@ -70,93 +70,76 @@ export function inspectRescueIslandGithubReadFactsV1({
   });
 }
 
-// Only a concrete public GitHub REST path below ROOT can be requested.
-// Never accept arbitrary URL, host, headers, shell or an injected transport.
-async function readGithubJson(path, token) {
-  if (typeof path !== 'string' || !path.startsWith(ROOT + '/')
-      || path.includes('?') || path.includes('#') || path.includes('..')
-      || !path.split('/').every((segment, index) => index === 0 ? segment === ''
-        : /^[A-Za-z0-9._-]+$/.test(segment))) throw new Error('ISLAND_GITHUB_PATH_DENIED');
-  return new Promise((resolve, reject) => {
-    let ended = false, total = 0;
-    const fail = (code) => { if (ended) return; ended = true; reject(new Error(code)); };
-    const headers = {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'stephanos-rescue-island-owner-read-v1',
-      'X-GitHub-Api-Version': '2022-11-28',
-      'Cache-Control': 'no-cache',
-    };
-    if (typeof token === 'string' && token.length > 0) {
-      if (token.length > 512 || /[\r\n]/.test(token)) return fail('ISLAND_GITHUB_TOKEN_INVALID');
-      headers.Authorization = 'Bearer ' + token;
-    }
-    const req = httpsRequest({
-      hostname: 'api.github.com', port: 443, protocol: 'https:',
-      method: 'GET', path, headers, timeout: READ_TIMEOUT_MS,
-    }, res => {
-      if (res.statusCode !== 200) {
-        res.resume();
-        fail(res.statusCode === 403 || res.statusCode === 429
-          ? 'ISLAND_GITHUB_RATE_LIMIT_HOLD'
-          : res.statusCode >= 500 ? 'ISLAND_GITHUB_TRANSIENT_READ_UNAVAILABLE'
-            : 'ISLAND_GITHUB_READ_DENIED');
-        return;
-      }
-      const chunks = [];
-      res.on('data', bytes => {
-        if (ended) return;
-        total += bytes.length;
-        if (total > MAX_BYTES) {
-          req.destroy();
-          fail('ISLAND_GITHUB_RESPONSE_TOO_LARGE');
-        } else chunks.push(bytes);
-      });
-      res.on('end', () => {
-        if (ended) return;
-        ended = true;
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
-        catch { reject(new Error('ISLAND_GITHUB_RESPONSE_INVALID')); }
-      });
-      res.on('error', () => fail('ISLAND_GITHUB_RESPONSE_ABORTED'));
-    });
-    req.on('timeout', () => req.destroy(new Error('ISLAND_GITHUB_TIMEOUT')));
-    req.on('error', () => fail('ISLAND_GITHUB_NETWORK_UNAVAILABLE'));
-    req.end();
+// The existing shared GitHub Observation Broker owns repository-wide cooldown,
+// publication-safe caching, single-reader locks and bounded CLI wall-clock
+// deadlines. Only four fixed endpoints and projections are admitted here.
+const BROKER_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const BROKER_TIMEOUT_MS = 10_000;
+const BROKER_READS = Object.freeze([
+  Object.freeze({ id: 'main-open', endpoint: ROOT.slice(1) + '/git/ref/heads/main',
+    jq: '{ref,object:{sha:.object.sha}}' }),
+  Object.freeze({ id: 'issue', endpoint: ROOT.slice(1) + '/issues/' + ISSUE,
+    jq: '{number,title,state,url,pull_request}' }),
+  Object.freeze({ id: 'comment', endpoint: null,
+    jq: '{id,url,issue_url,user:{login:.user.login,type:.user.type,id:.user.id},author_association,created_at,updated_at,body}' }),
+  Object.freeze({ id: 'main-close', endpoint: ROOT.slice(1) + '/git/ref/heads/main',
+    jq: '{ref,object:{sha:.object.sha}}' }),
+]);
+
+function trustedSharedGithubObservation(spec, commentId, workspaceRoot, nowMs) {
+  const endpoint = spec.id === 'comment'
+    ? ROOT.slice(1) + '/issues/comments/' + commentId : spec.endpoint;
+  const observed = readBrokeredGithubJson({
+    key: 'rescue-island:3109:' + commentId + ':' + spec.id,
+    endpoint,
+    args: ['--jq', spec.jq],
+    workspaceRoot,
+    ttlMs: 1000,
+    maxStaleMs: 1000,
+    timeoutMs: BROKER_TIMEOUT_MS,
+    nowMs,
   });
+  // Never use stale/error-cache observations for approval-bearing evidence.
+  // The common broker persists cooldown; a future controller invocation must
+  // respect it rather than independently hammering GitHub.
+  if (observed?.reason === 'GITHUB_RATE_LIMIT_BACKOFF' || observed?.rateLimitHold)
+    return { ok: false, blocker: 'ISLAND_GITHUB_SHARED_RATE_LIMIT_HOLD' };
+  if (observed?.ok !== true || observed.source !== 'UPSTREAM_REFRESH'
+      || observed.ageMs !== 0)
+    return { ok: false, blocker: observed?.ok
+      ? 'ISLAND_GITHUB_FRESH_OBSERVATION_REQUIRED'
+      : 'ISLAND_GITHUB_SHARED_OBSERVATION_UNAVAILABLE' };
+  const payload = observed.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_BYTES)
+    return { ok: false, blocker: 'ISLAND_GITHUB_RESPONSE_INVALID_OR_OVERSIZE' };
+  return { ok: true, payload };
 }
 
 /**
- * Production-safe to READ, not to EXECUTE: this function performs exact fixed
- * TLS GETs and then *only* structural admission. Every authority remains false.
- * A later independently reviewed local wrapper must prove OS/claims/gaming and
- * rebind this observation before calling #3105's isolated mutation engine.
+ * Production-safe to READ, not to EXECUTE. This uses the existing trusted
+ * shared Github broker and its 10-second wall-clock child timeout. No direct
+ * HTTPS/socket retry loop, no fresh read while the broker is holding 403/429,
+ * no stale cache promoted into owner approval, and no arbitrary endpoint.
+ * A separate reviewed OS host still has to prove claims, worktrees and gaming.
  */
 export async function readRescueIslandPilotGithubFactsV1({
   commentId, task, nowUtc = new Date().toISOString(),
-  consumedCommentIds = [], token = process.env.GITHUB_TOKEN || '',
+  consumedCommentIds = [], workspaceRoot,
 } = {}) {
   if (!safeCommentId(commentId)) return blocker('COMMENT_ID_UNTRUSTED');
-  if (typeof nowUtc !== 'string' || !Number.isFinite(Date.parse(nowUtc)))
+  const nowMs = Date.parse(nowUtc);
+  if (typeof nowUtc !== 'string' || !Number.isFinite(nowMs))
     return blocker('OBSERVATION_TIME_UNTRUSTED');
-  const commentPath = ROOT + '/issues/comments/' + commentId;
-  try {
-    // Sequential bounded reads hold a single API request at a time. The final
-    // read detects any change to main during the owner/task observation.
-    const initialMain = await readGithubJson(URLS.main, token);
-    const issue = await readGithubJson(URLS.issue, token);
-    const comment = await readGithubJson(commentPath, token);
-    const finalMain = await readGithubJson(URLS.main, token);
-    return inspectRescueIslandGithubReadFactsV1({
-      issue, comment, initialMain, finalMain, commentId, task, nowUtc, consumedCommentIds,
-    });
-  } catch (e) {
-    const reason = String(e?.message || '');
-    const allowed = new Set([
-      'ISLAND_GITHUB_PATH_DENIED','ISLAND_GITHUB_TOKEN_INVALID','ISLAND_GITHUB_RATE_LIMIT_HOLD',
-      'ISLAND_GITHUB_TRANSIENT_READ_UNAVAILABLE','ISLAND_GITHUB_READ_DENIED',
-      'ISLAND_GITHUB_RESPONSE_TOO_LARGE','ISLAND_GITHUB_RESPONSE_INVALID',
-      'ISLAND_GITHUB_RESPONSE_ABORTED','ISLAND_GITHUB_TIMEOUT','ISLAND_GITHUB_NETWORK_UNAVAILABLE',
-    ]);
-    return blocker(allowed.has(reason) ? reason : 'ISLAND_GITHUB_OBSERVATION_FAILED');
+  const payloads = [];
+  for (const spec of BROKER_READS) {
+    const result = trustedSharedGithubObservation(spec, commentId, workspaceRoot, nowMs);
+    if (!result.ok) return blocker(result.blocker);
+    payloads.push(result.payload);
   }
+  return inspectRescueIslandGithubReadFactsV1({
+    initialMain: payloads[0], issue: payloads[1],
+    comment: payloads[2], finalMain: payloads[3],
+    commentId, task, nowUtc, consumedCommentIds,
+  });
 }
