@@ -82,7 +82,8 @@ export function assessPinnedGithubContentsV2(input = {}, contents = {}) {
   const observedGitBlobSha = createHash('sha1').update(blobHeader).update(bytes).digest('hex');
   if (observedGitBlobSha !== contents.sha.toLowerCase()) return hold('GIT_BLOB_DIGEST_MISMATCH');
   let skillMd;
-  try { skillMd = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  // Preserve the UTF-8 BOM in the string, so the candidate digest and source-byte digest agree.
+  try { skillMd = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
   catch { return hold('SKILL_CONTENT_NOT_UTF8'); }
   if (skillMd.includes('\0')) return hold('SKILL_CONTENT_HAS_NUL');
 
@@ -98,6 +99,8 @@ export function assessPinnedGithubContentsV2(input = {}, contents = {}) {
       licenseSpdx: input.licenseSpdx,
     },
   });
+  const rawContentSha256 = createHash('sha256').update(bytes).digest('hex');
+  if (candidate.contentSha256 !== rawContentSha256) return hold('SOURCE_CANDIDATE_DIGEST_MISMATCH');
   const sourceProof = Object.freeze({
     schemaVersion: PINNED_GITHUB_SKILL_INTAKE_SCHEMA,
     repositoryUrl: prepared.repositoryUrl,
@@ -105,9 +108,9 @@ export function assessPinnedGithubContentsV2(input = {}, contents = {}) {
     skillPath: prepared.skillPath,
     sourceUrl: prepared.sourceUrl,
     gitBlobSha1: observedGitBlobSha,
-    contentSha256: candidate.contentSha256,
+    contentSha256: rawContentSha256,
     contentBytes: bytes.length,
-    verification: 'PINNED_GITHUB_CONTENTS_API_BLOB_MATCHED',
+    verification: 'SELF_CONSISTENT_UNAUTHENTICATED_BYTES',
     publisherIdentityVerified: false,
     licenseVerified: false,
     dependenciesVerified: false,
@@ -115,9 +118,9 @@ export function assessPinnedGithubContentsV2(input = {}, contents = {}) {
   });
   return Object.freeze({
     schemaVersion: PINNED_GITHUB_SKILL_INTAKE_SCHEMA,
-    verdict: candidate.verdict === 'REVIEW_REQUIRED' ? 'SOURCE_VERIFIED_REVIEW_REQUIRED' : 'SOURCE_VERIFIED_DRAFT_BLOCKED',
+    verdict: candidate.verdict === 'REVIEW_REQUIRED' ? 'UNTRUSTED_BYTES_MATCHED_REVIEW_REQUIRED' : 'UNTRUSTED_BYTES_MATCHED_DRAFT_BLOCKED',
     blocker: candidate.verdict === 'REVIEW_REQUIRED' ? '' : 'CANDIDATE_STRUCTURAL_REVIEW_BLOCKED',
-    sourceVerified: true,
+    sourceVerified: false,
     sourceProof, candidate,
     canInstall: false, canExecute: false, canGrantPermissions: false,
   });
@@ -144,19 +147,20 @@ async function readBoundedBody(response) {
   return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), length).toString('utf8');
 }
 
-export async function fetchPinnedGithubSkillV2(input = {}, { fetchFn = fetch, token = '' } = {}) {
+// Only this fixed-origin transport may promote locally consistent bytes to a
+// source observation. Callers cannot substitute a transport or supply credentials.
+export async function fetchPinnedGithubSkillV2(input = {}) {
   const prepared = preparePinnedGithubSkillSourceV2(input);
   if (prepared.verdict !== 'SOURCE_READ_PREPARED') return prepared;
-  if (typeof fetchFn !== 'function') return hold('GITHUB_SOURCE_TRANSPORT_MISSING');
   let response;
   try {
-    response = await fetchFn(prepared.sourceUrl, {
+    response = await fetch(prepared.sourceUrl, {
       method: 'GET', redirect: 'error',
       headers: {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'stephanos-skill-foundry-v2',
-        ...(text(token) ? { Authorization: 'Bearer ' + token } : {}),
+        ...(text(process.env.GITHUB_TOKEN) ? { Authorization: 'Bearer ' + process.env.GITHUB_TOKEN } : {}),
       },
       signal: AbortSignal.timeout(10000),
     });
@@ -169,6 +173,17 @@ export async function fetchPinnedGithubSkillV2(input = {}, { fetchFn = fetch, to
       && limit > 0 && remaining < Math.max(10, Math.ceil(limit * 0.2))) return hold('GITHUB_API_RESERVE_HOLD');
   try {
     const contents = JSON.parse(await readBoundedBody(response));
-    return assessPinnedGithubContentsV2(input, contents);
+    const localObservation = assessPinnedGithubContentsV2(input, contents);
+    if (localObservation.verdict !== 'UNTRUSTED_BYTES_MATCHED_REVIEW_REQUIRED') return localObservation;
+    return Object.freeze({
+      ...localObservation,
+      verdict: 'GITHUB_SOURCE_OBSERVED_REVIEW_REQUIRED',
+      sourceVerified: true,
+      sourceProof: Object.freeze({
+        ...localObservation.sourceProof,
+        verification: 'PINNED_GITHUB_CONTENTS_API_BLOB_MATCHED',
+        transport: 'FIXED_ORIGIN_TLS_GET',
+      }),
+    });
   } catch { return hold('GITHUB_CONTENTS_RESPONSE_INVALID'); }
 }
