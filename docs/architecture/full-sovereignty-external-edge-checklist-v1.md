@@ -17,6 +17,17 @@ The existing `FULL_SOVEREIGNTY_DIMENSIONS_V1` remains the dimension roster; this
 
 Until a trusted witness exists, status is `UNVERIFIED`, not `PASS`. A failed external-offline trial is `FAIL` with a typed blocker; a missing prerequisite is `WAITING_FOR_PREREQUISITE`. Review/CI/merge/source/physical runtime are distinct proof stages.
 
+## Per-dimension verdict contract (not a new registry)
+
+For every row, the original owner must attach an evidence packet to the **existing** canonical seed/goal record. A reviewer should be able to reproduce the verdict without relying on this document, a self-declared status flag or a UI card. The packet identifies the dimension, owner issue and task, exact source and served head, principal and physical worker (when applicable), tested external edge, deliberate outage window, trusted witness/receipt reference, result, independent reviewer, and remaining dependency or next original-owner repair.
+
+- **`UNVERIFIED`**: no independently authenticated, current, source-bound offline trial exists. Passing CI, a source proposal, a selected task or an accepted dispatch never changes this verdict.
+- **`WAITING_FOR_PREREQUISITE`**: a named immutable approval, lease, security, Windows custody, gaming-governor or qualified-provider gate prevents a safe trial. Record the first gate and original owner; do not manufacture a capability gap.
+- **`FAIL`**: a qualified offline trial shows loss, duplicate execution, unsafe resource use, unverifiable custody or inability to recover. Preserve the failing trace and route the smallest correction to its existing owner.
+- **`PASS`**: the same qualified operation was independently observed both with the edge present and absent, with correct bounded behavior, matching source/runtime identities and terminal receipts. For inherently external operations, offline `PENDING` with durable identity and later exactly-once guarded delivery is the acceptable behavior; an offline claim of remote completion is not.
+
+A verdict must name the **specific function and external edge tested**. One passing dimension cannot certify the other fifteen, and a rung-1 checklist cannot satisfy the later full-blackout endurance rung. Do not advance #3026 from document publication, ordinary PR checks or an unreviewed evidence packet alone.
+
 ## Coverage checklist: every existing dimension
 
 | Canonical dimension | External-edge audit question | Acceptance witness |
