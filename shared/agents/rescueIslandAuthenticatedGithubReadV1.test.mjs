@@ -93,6 +93,7 @@ test('native GitHub reader is hard-bound to fixed TLS GETs and never executes sh
   assert.match(source,/GITHUB_RATE_LIMIT_BACKOFF/);
   assert.match(source,/spec\.jq/);
   assert.match(source,/OBSERVATION_TIME_NOT_LIVE/);
+  assert.doesNotMatch(source,/workspaceRoot/);
   assert.doesNotMatch(source,/httpsRequest|execSync|child_process|method: 'POST'|sourceMutationAllowed: true|approvalAuthenticated: true/);
 });
 
