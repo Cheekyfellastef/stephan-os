@@ -33,10 +33,10 @@ function validPaths(value) {
 }
 function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
-    && value.every((item) => TASK_ID.test(item?.taskId || '')
+    && value.every((item) => typeof item?.taskId === 'string' && TASK_ID.test(item.taskId)
       && Number.isSafeInteger(item?.ownerIssueNumber) && item.ownerIssueNumber > 0
       && typeof item?.worktreeBranch === 'string' && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(item.worktreeBranch)
-      && DIGEST.test(item?.worktreeIdentity || '')
+      && typeof item?.worktreeIdentity === 'string' && DIGEST.test(item.worktreeIdentity)
       && Array.isArray(item?.targetPaths) && item.targetPaths.length > 0
       && item.targetPaths.length <= 3 && item.targetPaths.every(repositoryPath));
 }
@@ -46,7 +46,7 @@ function validClaims(value) {
 // A lexical path, boolean, or caller-supplied digest never authenticates this scan.
 function canonicalScopes(p, paths) {
   if (p.scopeResolutionScan !== 'INDEPENDENT_READ_ONLY'
-      || !Array.isArray(p.scopeResolutions) || p.scopeResolutions.length > 1539)
+      || !Array.isArray(p.scopeResolutions) || p.scopeResolutions.length > 4611)
     return null;
   const resolved = new Map();
   for (const item of p.scopeResolutions) {
@@ -109,8 +109,13 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
     blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
   else if (validPaths(t.targetPaths)) {
     const claims = [...p.canonicalClaims, ...p.seedClaims, ...p.islandClaims];
+    // Caller-controlled task data is never proof of ownership. Reject invalid
+    // identities later without letting malformed input crash the read-only gate.
+    const candidateWorktreeIdentity = typeof t.worktreeIdentity === 'string'
+      && DIGEST.test(t.worktreeIdentity) ? t.worktreeIdentity.toLowerCase() : null;
     if (claims.some(claim => normalizedPath(claim.worktreeBranch) === normalizedPath(t.worktreeBranch)
-        || claim.worktreeIdentity === t.worktreeIdentity))
+        || (candidateWorktreeIdentity !== null
+          && claim.worktreeIdentity.toLowerCase() === candidateWorktreeIdentity)))
       blockers.push('BRANCH_OR_WORKTREE_ALREADY_OWNED');
     const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
     if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
