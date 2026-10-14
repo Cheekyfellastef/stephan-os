@@ -14,6 +14,10 @@ const SHA = /^[a-f0-9]{40}$/;
 const TASK = /^[a-z0-9][a-z0-9-]{7,63}$/;
 const SAFE_DOC = /^docs\/architecture\/rescue-island-pilot-[a-z0-9-]+\.md$/;
 const REPO = 'Cheekyfellastef/stephan-os';
+const PILOT_ISSUES = Object.freeze({
+  3103: 'Rescue Island: two independent proof-gated builders outside Goal Conveyor',
+  3109: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+});
 
 const digest = (s) => createHash('sha256').update(s).digest('hex');
 const fingerprint = (task) => digest(JSON.stringify(immutableFields.map((key) => task[key])));
@@ -95,8 +99,9 @@ export function validateRescueIslandPilotTaskV1(task, nowUtc) {
   return Boolean(exactKeys(task, immutableFields)
     && task.schemaVersion === 'stephanos.rescue-island-pilot-task.v1'
     && task.repository === REPO
-    && task.issueNumber === 3103
-    && task.issueTitle === 'Rescue Island: two independent proof-gated builders outside Goal Conveyor'
+    && Number.isSafeInteger(task.issueNumber)
+    && Object.hasOwn(PILOT_ISSUES, task.issueNumber)
+    && task.issueTitle === PILOT_ISSUES[task.issueNumber]
     && typeof task.taskId === 'string' && TASK.test(task.taskId)
     && task.workerId === 'rescue-island-01'
     && typeof task.baseHead === 'string' && SHA.test(task.baseHead)
