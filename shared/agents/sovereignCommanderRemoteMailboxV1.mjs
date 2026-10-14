@@ -3330,8 +3330,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.processId === shape.command.remoteAction
       && projection.status === 0;
     if (!actionEnvelopeComplete || !acceptance) {
+      // Preserve the precise *safe* gate that failed through the existing
+      // public mailbox executionBlocker projection. Previously all these
+      // distinct live failures collapsed into RECEIPT_INVALID, hiding whether
+      // the Commander action ran, returned a valid envelope, or lost stdout.
+      // Do not expose the raw MCP payload, stdout, file paths or credentials.
+      const executionBlocker = projection.ok !== true
+        ? 'AI_COMMANDER_ACTION_ENVELOPE_MISSING'
+        : projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+          ? 'AI_COMMANDER_ACTION_COMPLETION_UNVERIFIED'
+          : !PROOF_HASH_PATTERN.test(projection.proofHash)
+            ? 'AI_COMMANDER_ACTION_PROOF_HASH_MISSING'
+            : projection.processId !== shape.command.remoteAction
+              ? 'AI_COMMANDER_ACTION_ID_MISMATCH'
+              : projection.status !== 0
+                ? 'AI_COMMANDER_ACTION_STATUS_NOT_ZERO'
+                : 'AI_COMMANDER_TYPED_ACCEPTANCE_MISSING';
       return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        executionBlocker,
         proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
         processIdMatch: projection.processId === shape.command.remoteAction,
         successfulStatus: projection.status === 0,
@@ -3347,6 +3364,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED', {
         remoteAction: shape.command.remoteAction,
         acceptanceBlocker: acceptance.blocker,
+        executionBlocker: acceptance.blocker,
         toolCalled: acceptance.toolCalled,
         healthAvailable: acceptance.healthAvailable,
         acceptanceProofHash: acceptance.proofHash,
