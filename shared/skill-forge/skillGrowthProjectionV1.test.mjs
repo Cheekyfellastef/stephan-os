@@ -48,3 +48,37 @@ test('a claimed ACTIVE record does not count as installed without recipient exac
   assert.equal(proven.summary.provenActiveTargets, 1);
   assert.equal(proven.observedActors.find(a => a.id === 'openclaw-standalone').skillCount, 1);
 });
+
+
+test('canonical external intake is an uninstalled review draft, never an ACTIVE agent skill', () => {
+  const externalSkillIntake = {
+    schemaVersion: 'stephanos.external-skill-review.v1',
+    verdict: 'REVIEW_REQUIRED',
+    targetActor: 'openclaw-local',
+    name: 'Imported example',
+    claimedRegistry: 'github',
+    sourceRevision: 'a'.repeat(40),
+    contentSha256: 'b'.repeat(64),
+    status: 'ACTIVE',
+    instructionSignals: [],
+  };
+  const view = deriveSkillGrowthObservatoryV1({
+    payload: { state: 'ready', records: { capabilityRecords: [
+      { externalSkillIntake },
+    ] } },
+  });
+  assert.equal(view.summary.proposals, 1);
+  assert.equal(view.summary.publishedSkillRecords, 0);
+  assert.equal(view.summary.provenActiveTargets, 0);
+  assert.equal(view.skillCandidates[0].status, 'DRAFT');
+  assert.equal(view.skillCandidates[0].permissionLevel, 'PROPOSE_ONLY');
+  assert.equal(view.skillCandidates[0].provenance, 'EXTERNAL_DRAFT_NOT_INSTALLED');
+
+  const untrusted = deriveSkillGrowthObservatoryV1({ payload: {
+    state: 'ready', records: { capabilityRecords: [
+      { externalSkillIntake: { ...externalSkillIntake, targetActor: 'openclaw-standalone' } },
+      { externalSkillIntake: { ...externalSkillIntake, contentSha256: 'unverified' } },
+    ] },
+  } });
+  assert.equal(untrusted.summary.proposals, 0);
+});
