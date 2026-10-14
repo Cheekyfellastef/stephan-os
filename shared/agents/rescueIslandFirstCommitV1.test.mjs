@@ -354,3 +354,24 @@ test('no privileged public CLI, scheduler, mailbox, network write, merge or leas
   assert.match(source, /merge[dA-Za-z]*: false/);
   assert.doesNotMatch(source, /missionOrchestratorWorker|seedCanopyParallelBuilder|criticalBacklogConveyor/);
 });
+
+test('pilot task identities and expiry must be primitive before coercive parsing', async () => {
+  const ctx = await fixture();
+  const throwOnCoercion = { [Symbol.toPrimitive]() { throw new Error('UNTRUSTED_COERCION_CALLED'); } };
+  const invalidTasks = [
+    { taskId: [ctx.task.taskId] },
+    { baseHead: [ctx.task.baseHead] },
+    { targetPath: throwOnCoercion },
+    { expiresAtUtc: [ctx.task.expiresAtUtc] },
+    { expiresAtUtc: throwOnCoercion },
+    { expiresAtUtc: new Date(ctx.task.expiresAtUtc) },
+  ];
+  for (const variant of invalidTasks) {
+    const task = { ...ctx.task, ...variant };
+    assert.equal(validate(task, NOW), false, Object.keys(variant).join(','));
+    await assert.rejects(() => build({ ...ctx, task }),
+      /RESCUE_ISLAND_EXTERNAL_TASK_INVALID/);
+  }
+  assert.equal(validate(ctx.task, throwOnCoercion), false);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
