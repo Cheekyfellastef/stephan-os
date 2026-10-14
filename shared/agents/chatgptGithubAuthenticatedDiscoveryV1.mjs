@@ -1,5 +1,6 @@
 // #1574. Read-only, authenticated GitHub evidence acquisition for ChatGPT-first goals.
 // Source adapter only: no queue, runtime worker, scheduler, or claim authority.
+import { createHash } from 'node:crypto';
 import { planChatgptGithubGoalCandidatesV1 } from './chatgptGithubGoalPickerV1.mjs';
 
 export const CHATGPT_GITHUB_DISCOVERY_SCHEMA = 'stephanos.chatgpt-github-authenticated-discovery.v1';
@@ -100,20 +101,29 @@ export async function readChatgptGithubGoalEstateV1({
       seenPrs.add(pr.number);
       const branchMatch = /^chatgpt\/goal-[0-9]+-([a-z0-9][a-z0-9-]{2,63})$/.exec(pr.headRefName);
       claims.push(Object.freeze({ prNumber: pr.number, taskId: branchMatch?.[1] || null,
+        headSha: pr.headRefOid,
+        evidenceRef: `github:graphql:pr-${pr.number}:head-${pr.headRefOid}`,
         paths: Object.freeze(pr.files.nodes.map(file => file.path)),
       }));
     }
     if (!prs.pageInfo.hasNextPage) {
       if (claims.length !== total)
         return blocked('GITHUB_PR_COUNT_MISMATCH');
+      // Bind every PR number, exact observed head and its full path inventory
+      // into this GitHub-only observation. Any PR update invalidates the digest.
+      // A new trusted read is still mandatory before source reservation.
+      const snapshotSha256 = createHash('sha256').update(JSON.stringify({
+        mainHead, issueNumber, issueTitle, claims,
+      }), 'utf8').digest('hex');
       return Object.freeze({
         schemaVersion: CHATGPT_GITHUB_DISCOVERY_SCHEMA,
         repository: REPO,
         disposition: 'GITHUB_SOURCE_ESTATE_READ_ONLY',
         mainHead, issueNumber, issueTitle, issueState: 'open',
         readAtUtc: nowUtc, pagesFetched: page + 1, openPrCount: total,
+        snapshotSha256,
         openPrEvidence: Object.freeze({mainHead, observedAtUtc: nowUtc,
-          evidenceRef: `github:graphql:issue-${issueNumber}:main-${mainHead}:prs-${total}`,
+          evidenceRef: `github:graphql:issue-${issueNumber}:main-${mainHead}:snapshot-sha256-${snapshotSha256}`,
           claims: Object.freeze(claims)}),
         authenticatedGoalAndPrEvidence: true,
         crossSystemOwnershipAuthenticated: false,
