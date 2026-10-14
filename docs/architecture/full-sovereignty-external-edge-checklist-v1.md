@@ -1,6 +1,6 @@
 # Full Sovereignty: external-edge acceptance inventory V1
 
-Owner seed: [#3026](https://github.com/Cheekyfellastef/stephan-os/issues/3026)
+Owner seed: [#3026 — Seed: Stephanos Full Sovereignty for Every Function, Zero External Critical Dependencies](https://github.com/Cheekyfellastef/stephan-os/issues/3026)
 Canonical sources: `shared/runtime/fullSovereigntySeedV1.mjs`, `shared/project/seedGardenProjectionV1.mjs`.
 This is a **source-backed acceptance packet for growth rung 1**, not evidence that external dependence has been removed, a worker has picked up the task, or any production gate has passed.
 
@@ -40,14 +40,14 @@ Until a trusted witness exists, status is `UNVERIFIED`, not `PASS`. A failed ext
 
 ## First safe evidence sequence
 
-1. **Inventory only.** Reconcile the 16 current dimensions against existing owners (#2968, #1898, #2519, #2670, #2972 and #2593), source files, current installed capabilities and known dependencies. Identify unanswered questions as `UNVERIFIED`.
+1. **Inventory only.** Reconcile the 16 current dimensions against existing owners: [#2968 — Seed: Stephanos Sovereign Meter Independence across all metered services](https://github.com/Cheekyfellastef/stephan-os/issues/2968), [#1898 — Programme: Zero-Codex Continuity and Provider Parity V1](https://github.com/Cheekyfellastef/stephan-os/issues/1898), [#2519 — Build Sovereign Commander as the unmetered Battle Bridge control surface](https://github.com/Cheekyfellastef/stephan-os/issues/2519), [#2670 — Mission: Stephanos Whole-System Capability Closure](https://github.com/Cheekyfellastef/stephan-os/issues/2670), [#2972 — Seed: Continuous Goal Conveyor & Fleet Care](https://github.com/Cheekyfellastef/stephan-os/issues/2972), and [#2593 — Goal: Stephanos Core Daemon and meter-free Sovereign inspection](https://github.com/Cheekyfellastef/stephan-os/issues/2593), source files, current installed capabilities and known dependencies. Identify unanswered questions as `UNVERIFIED`.
 2. **Choose one disjoint execution slice.** Select a narrowly scoped existing seed-derived capability gap, prove no canonical Goal Dashboard, Seed Canopy or Rescue Island owner already holds the same task, file, worktree or writer lease.
-3. **Obtain a real independent build.** The currently held Seed Canopy Parallel Forge [#3097](https://github.com/Cheekyfellastef/stephan-os/pull/3097) cannot be enabled merely by a passing fixture or this checklist. Its independent llama.cpp router still lacks gaming-governor residency custody and zero-VRAM acknowledgement. The CPU-only alternative likewise needs a qualified process-tree kill contract. Source-only GitHub proposals can be reviewed independently, but must not masquerade as Battle Bridge physical PICKUP.
+3. **Obtain a real independent build.** The currently held Seed Canopy Parallel Forge [#3097 — Bootstrap independent Seed Canopy Parallel Forge (#3096)](https://github.com/Cheekyfellastef/stephan-os/pull/3097) cannot be enabled merely by a passing fixture or this checklist. Its independent llama.cpp router still lacks gaming-governor residency custody and zero-VRAM acknowledgement. The CPU-only alternative likewise needs a qualified process-tree kill contract. Source-only GitHub proposals can be reviewed independently, but must not masquerade as Battle Bridge physical PICKUP.
 4. **Return proof to the same seed.** Publish immutable worker identity, task/owner/source scope, source/test receipt, protected-review/merge result and exact served/runtime receipt separately. Only authenticated domain-specific acceptance advances a seed rung.
 5. **Repeat unattended.** Verify a second eligible, non-overlapping seed under the same policy with no human courier, including restart and gaming protection, before calling hourly-controller seed pickup operational.
 
 ## Explicit holds
 
-- Historical original #2962/r7 source-writer custody is not released by a seed-side task.
+- Historical original [#2962 — Goal: Repair Native Capacity Publisher generated-dist source gate mismatch](https://github.com/Cheekyfellastef/stephan-os/issues/2962) revision-7 source-writer custody is not released by a seed-side task.
 - No arbitrary shell, merged-main mutation, auto-install, auto-approve, self-review, protected merge or gaming-mode CPU/GPU/VRAM use is authorized by this document.
 - This is **rung-1 acceptance criteria in source**, not a completed live external-edge inventory. Each row needs its own current trusted evidence and assigned original owner before it can be assessed.
