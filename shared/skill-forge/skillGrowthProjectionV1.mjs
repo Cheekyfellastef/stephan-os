@@ -109,7 +109,37 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     provenance: 'LEARNING_DRAFT_NOT_INSTALLED',
     learningState: event.learningState,
   })])).values()];
+  // Typed external intake packets may be projected only if they were already
+  // published through the canonical Shared Workspace capability feed.
+  // They remain review drafts even if an untrusted payload claims ACTIVE.
+  const externalDrafts = capabilityRecords
+    .map(record => record?.externalSkillIntake)
+    .filter(packet => packet?.schemaVersion === 'stephanos.external-skill-review.v1'
+      && packet?.verdict === 'REVIEW_REQUIRED'
+      && packet?.targetActor === 'openclaw-local'
+      && /^[a-f0-9]{64}$/.test(packet?.contentSha256 || ''))
+    .map(packet => Object.freeze({
+      id: 'external-' + packet.contentSha256.slice(0, 20),
+      name: text(packet.name, 'External skill candidate').slice(0, 100),
+      category: 'External SKILL.md intake',
+      status: 'DRAFT',
+      riskLevel: packet.instructionSignals?.length ? 'HIGH' : 'MEDIUM',
+      permissionLevel: 'PROPOSE_ONLY',
+      plainEnglishSummary: 'Pinned external skill source staged for independent review; not installed.',
+      whySuggested: 'Claimed registry: ' + text(packet.claimedRegistry, 'UNKNOWN').slice(0, 32)
+        + ' · Source revision: ' + text(packet.sourceRevision, 'UNVERIFIED').slice(0, 64),
+      allowedTouches: ['Display structural review result and source digest'],
+      forbiddenTouches: [
+        'No automatic external downloads, execution, installation, permission changes, merges or promotions.',
+        'No transfer beyond OpenClaw Local without independent target qualification.',
+      ],
+      rollbackPath: 'Reject or archive the review draft; no runtime capability was changed.',
+      evidence: [{ type: 'content-sha256', summary: packet.contentSha256 }],
+      tags: ['openclaw-related'],
+      provenance: 'EXTERNAL_DRAFT_NOT_INSTALLED',
+    }));
   const skillCandidates = [
+    ...externalDrafts,
     ...rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
     ...learnedDrafts,
   ];
