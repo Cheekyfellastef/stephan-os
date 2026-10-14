@@ -86,9 +86,19 @@ test('bad comment ID returns before any network and never turns caller data into
 });
 test('native GitHub reader is hard-bound to fixed TLS GETs and never executes shell/write',async()=>{
   const source=await readFile(new URL('./rescueIslandAuthenticatedGithubReadV1.mjs',import.meta.url),'utf8');
-  assert.match(source,/hostname: 'api.github.com'/);
-  assert.match(source,/method: 'GET'/);
-  assert.match(source,/readGithubJson\(URLS\.main/);
-  assert.match(source,/readGithubJson\(URLS\.issue/);
-  assert.doesNotMatch(source,/spawnSync|execSync|child_process|method: 'POST'|sourceMutationAllowed: true|approvalAuthenticated: true/);
+  assert.match(source,/readBrokeredGithubJson/);
+  assert.match(source,/BROKER_TIMEOUT_MS = 10_000/);
+  assert.match(source,/UPSTREAM_REFRESH/);
+  assert.match(source,/ISLAND_GITHUB_SHARED_RATE_LIMIT_HOLD/);
+  assert.match(source,/GITHUB_RATE_LIMIT_BACKOFF/);
+  assert.match(source,/spec\.jq/);
+  assert.match(source,/OBSERVATION_TIME_NOT_LIVE/);
+  assert.doesNotMatch(source,/httpsRequest|execSync|child_process|method: 'POST'|sourceMutationAllowed: true|approvalAuthenticated: true/);
+});
+
+test('shared broker reader refuses caller-controlled time before any GitHub call',async()=>{
+  const x=await read({commentId:123,task:facts().task,nowUtc:'2001-01-01T00:00:00.000Z'});
+  assert.equal(x.verdict,'HELD');
+  assert.ok(x.blockers.includes('OBSERVATION_TIME_NOT_LIVE'));
+  assert.equal(x.sourceMutationAllowed,false);
 });
