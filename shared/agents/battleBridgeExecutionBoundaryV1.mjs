@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
@@ -298,6 +298,36 @@ export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync, 
       return Object.freeze({ ok: false, blocker, pathname });
     } catch (error) {
       if (error?.code !== 'ENOENT') return Object.freeze({ ok: false, blocker: 'CANONICAL_GIT_TOPOLOGY_UNPROVEN', pathname });
+    }
+  }
+  // Git may traverse nested refs, worktree administrative directories and
+  // loose-object fan-out paths, not just the named parents above. A junction
+  // below a verified parent is still a write outside canonical custody.
+  // Bound the scan so an enormous/untrusted metadata tree fails closed rather
+  // than consuming unbounded Battle Bridge resources.
+  const metadataRoots = ['refs', 'objects', 'worktrees', 'logs', 'info'];
+  let scanned = 0;
+  for (const rootRelative of metadataRoots) {
+    const queue = [rootRelative];
+    while (queue.length > 0) {
+      const relative = queue.pop();
+      let entries;
+      try {
+        entries = readdirSync(path.resolve(gitDirectory, relative), { withFileTypes: true });
+      } catch (error) {
+        if (error?.code === 'ENOENT' && relative === rootRelative) break;
+        return Object.freeze({ ok: false, blocker: 'CANONICAL_GIT_METADATA_SCAN_FAILED' });
+      }
+      scanned += entries.length;
+      if (scanned > 25000)
+        return Object.freeze({ ok: false, blocker: 'CANONICAL_GIT_METADATA_SCAN_LIMIT_EXCEEDED' });
+      for (const entry of entries) {
+        const child = path.join(relative, entry.name);
+        const expectedType = entry.isDirectory() ? 'directory' : 'file';
+        const failure = inspectEntry(child, expectedType, { stable: false });
+        if (failure) return failure;
+        if (entry.isDirectory()) queue.push(child);
+      }
     }
   }
   return Object.freeze({ ok: true, blocker: '', stableIdentities: Object.freeze(stableIdentities) });
