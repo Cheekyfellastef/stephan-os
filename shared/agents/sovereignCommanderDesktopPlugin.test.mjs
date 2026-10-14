@@ -23,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.5');
+  assert.equal(plugin.version, '1.0.6');
   assert.equal(plugin.mcpServers, './.mcp.json');
   assert.equal(plugin.skills, './skills');
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
@@ -49,7 +49,7 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.5');
+  assert.equal(plugin.version, '1.0.6');
   assert.equal(plugin.skills, './skills/');
   assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
   assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');
@@ -97,4 +97,13 @@ test('Plus/cloud orchestration contract is source-pinned to the private plugin s
   assert.match(skill, /original source-binding\/custody\/lease disagreements remain held|source-binding\/custody\/lease disagreements remain held/);
   assert.match(skill, /ChatGPT Plus may assist but is not a required source/);
   assert.doesNotMatch(skill, /bypass the (?:original|protected) lease/i);
+});
+
+
+test('sovereign recovery skill pack is present with explicit boundaries',async()=>{
+ for (const relative of ['repair-build-conveyors','repair-sovereign-fast-bridge','commission-original-source-custody']) {
+   const skill = await readFile(new URL('../../plugins/sovereign-commander/skills/'+relative+'/SKILL.md', import.meta.url), 'utf8');
+   assert.match(skill,/^---\nname: /);
+   assert.match(skill,/source|Sovereign|custody|capabilit/i);
+ }
 });
