@@ -35,7 +35,7 @@ export function validateProtectedMergeCheckRows(checks) {
       continue;
     }
     if (state === 'SKIPPED' && PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS.has(identity)
-      && (identity !== 'Build Stephanos UI\\0pages-deploy' || check?.event === 'pull_request')) continue;
+      && (identity !== 'Build Stephanos UI\0pages-deploy' || check?.event === 'pull_request')) continue;
     return false;
   }
 
