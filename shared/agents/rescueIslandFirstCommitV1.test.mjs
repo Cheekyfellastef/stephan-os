@@ -375,3 +375,41 @@ test('pilot task identities and expiry must be primitive before coercive parsing
   assert.equal(validate(ctx.task, throwOnCoercion), false);
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
 });
+
+test('selected child issue #3109 physically constructs one scoped isolated source commit in test checkout', async () => {
+  const ctx = await fixture();
+  const taskId = 'pilot-3109-01';
+  const targetPath = 'docs/architecture/rescue-island-pilot-' + taskId + '.md';
+  ctx.task = {
+    ...ctx.task,
+    issueNumber: 3109,
+    issueTitle: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+    taskId,
+    targetPath,
+  };
+  ctx.observed = {
+    ...ctx.observed,
+    worktreeBranch: 'rescue-island/pilot-' + taskId,
+    worktreeIdentity: createHash('sha256').update(process.platform === 'win32'
+      ? join(ctx.worktreeRoot, taskId).toLowerCase() : join(ctx.worktreeRoot, taskId)).digest('hex'),
+    scopeResolutions: [{ path: targetPath, canonicalPath: targetPath, repositoryContained: true }],
+  };
+  assert.equal(validate(ctx.task, ctx.nowUtc), true);
+  const result = await build(ctx);
+  assert.equal(result.ok, true);
+  assert.equal(result.reviewRequired, true);
+  assert.equal(result.merged, false);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+  assert.equal(git(join(ctx.worktreeRoot, taskId), 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'), targetPath);
+  assert.ok(result.receipts.some(x => x.stage === 'PHYSICAL_PICKUP'));
+  assert.ok(result.receipts.some(x => x.stage === 'ISOLATED_COMMIT'));
+});
+
+test('pilot issue expansion remains exact-id-and-title and rejects unrelated issue', async () => {
+  const ctx = await fixture();
+  assert.equal(validate({ ...ctx.task, issueNumber: 3109 }, ctx.nowUtc), false);
+  assert.equal(validate({
+    ...ctx.task, issueNumber: 3110,
+    issueTitle: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+  }, ctx.nowUtc), false);
+});
