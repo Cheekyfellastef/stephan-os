@@ -283,7 +283,7 @@ test('config-driven SSH signing cannot invoke another executable', async () => {
 
 test('Git CRLF normalization cannot replace the exact approved committed bytes', async () => {
   const ctx = await fixture();
-  ctx.task.content = '# Rescue Island pilot\r\n\r\nExact approved CRLF bytes.\r\n';
+  ctx.task.content = '# Rescue Island pilot\n\nExact approved CRLF bytes.\r\nSecond line.\r\n';
   git(ctx.repoRoot, 'config', 'core.autocrlf', 'input');
   await assert.rejects(() => build(ctx), /RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN/);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
