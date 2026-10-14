@@ -6,8 +6,7 @@ const SOURCES = Object.freeze(['canonical', 'seed', 'island', 'chatgpt']);
 const MAX_AGE_MS = 10 * 60 * 1000;
 const pathSafe = value => typeof value === 'string' && /^[a-zA-Z0-9_./-]{1,240}$/.test(value)
   && !value.startsWith('/') && !value.includes('\\')
-  && !value.split('/').some(part => !part || part === '.' || part === '..' || part === 'node_modules' || part === '.git')
-  && !value.split('/').includes('dist');
+  && !value.split('/').some(part => !part || part === '.' || part === '..' || ['node_modules', '.git', 'dist'].includes(part.toLowerCase()));
 const overlapping = (a, b) => {
   const x = a.toLowerCase(); const y = b.toLowerCase();
   return x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
@@ -15,6 +14,9 @@ const overlapping = (a, b) => {
 const fresh = (when, now) => typeof when === 'string' && Number.isFinite(Date.parse(when))
   && Date.parse(when) <= now && now - Date.parse(when) <= MAX_AGE_MS;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const sameScope = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.length > 0
+  && a.every(pathSafe) && b.every(pathSafe)
+  && a.map(path => path.toLowerCase()).sort().every((path, i) => path === b.map(v => v.toLowerCase()).sort()[i]);
 
 /**
  * Stateless, work-conserving *planning* step. Inventory and issue data MUST
@@ -59,6 +61,7 @@ export function planChatgptGithubGoalCandidatesV1(input = {}) {
       const v = ownership[source];
       return !plain(v) || v.disposition !== 'VERIFIED_UNCLAIMED' ||
         v.mainHead !== main || !fresh(v.observedAtUtc, now) ||
+        v.issueNumber !== c.issueNumber || v.taskId !== c.taskId || !sameScope(v.paths, c.paths) ||
         typeof v.evidenceRef !== 'string' || !v.evidenceRef.trim();
     })) blockers.push('CROSS_SYSTEM_OWNERSHIP_UNPROVEN');
     const prs = c.openPrEvidence;
