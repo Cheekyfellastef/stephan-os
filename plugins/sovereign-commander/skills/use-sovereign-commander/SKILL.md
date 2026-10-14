@@ -157,3 +157,11 @@ tool use, durable memory and retrieval, the same execution command fabric
 and actual receipts. ChatGPT Plus may assist but is not a required source of
 ongoing local execution. Its usage allowance, GitHub's quota, and separately
 billed API calls cannot be erased by a plugin upgrade.
+
+### Rescue Island merge and commissioning
+
+For Rescue Island merge, test or commissioning requests, follow
+[merge-and-commission-rescue-island](../merge-and-commission-rescue-island/SKILL.md)
+before any protected dispatch. Check complete technical thread resolution and
+prior protected attempts first. The read-only readiness helper and skill grant
+no merge, runtime, lease or commissioning authority.
