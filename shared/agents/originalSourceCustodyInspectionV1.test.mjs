@@ -75,3 +75,14 @@ test('Sovereign Commander custody skill bumps both plugin cache identities toget
   assert.equal(manifest.version, codexManifest.version);
   assert.equal(manifest.version, '1.0.7');
 });
+
+test('Skill YAML description preserves original custody trigger instead of truncating at #', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const content = await readFile(new URL('../../plugins/sovereign-commander/skills/inspect-original-source-custody/SKILL.md', import.meta.url), 'utf8');
+  const frontmatter = content.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  assert.ok(frontmatter, 'skill must have YAML frontmatter');
+  const description = frontmatter[1].split('\n').find(line => line.startsWith('description: '));
+  assert.ok(description, 'skill description must be defined');
+  assert.match(description, /^description: ["'][^"']*#2962\/r7[^"']*["']$/, 'quoted YAML must preserve the exact custody trigger');
+  assert.match(description, /never forge a terminal receipt or release a lease/i);
+});
