@@ -117,8 +117,12 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
   const ledger = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
   assert.ok(coverage, 'missing acceptance coverage table');
   assert.ok(ledger, 'missing original-owner discovery table');
-  const rows = (section) => [...section.matchAll(/^\\| \`([^\`]+)\` \\| ([^\\n]+)$/gm)]
-    .map(([, dimension, cells]) => ({ dimension, cells: cells.split('|').map((cell) => cell.trim()).filter(Boolean) }));
+  const rows = (section) => section.split('\n')
+    .filter((line) => line.startsWith('| `'))
+    .map((line) => {
+      const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
+      return { dimension: cells[0].replaceAll('`', ''), cells: cells.slice(1) };
+    });
   const expected = [...FULL_SOVEREIGNTY_DIMENSIONS_V1];
   const coverageRows = rows(coverage);
   const ownerRows = rows(ledger);
@@ -129,8 +133,8 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
     assert.ok(row.cells.every(Boolean));
   }
   for (const row of ownerRows) {
-    assert.match(row.cells[0], /UNRESOLVED|#\\d+/, 'owner must be an existing issue or explicitly unresolved');
+    assert.ok(row.cells[0].includes('UNRESOLVED') || row.cells[0].includes('#'), 'owner must be an existing issue or explicitly unresolved');
   }
-  assert.match(markdown, /Every row remains \`UNVERIFIED\`/);
+  assert.ok(markdown.includes('Every row remains `UNVERIFIED`'));
   assert.match(markdown, /not evidence that external dependence has been removed/);
 });
