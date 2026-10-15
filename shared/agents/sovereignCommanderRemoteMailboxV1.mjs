@@ -2220,8 +2220,17 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
     ], { timeout: 10_000, maxBuffer: 16 * 1024 });
     const script = committed.stdout;
-    const encoded = committed.ok && script.length > 0 && script.length <= 12_000
-      ? Buffer.from(script, 'utf16le').toString('base64') : '';
+    // -EncodedCommand has no PSScriptRoot. Bind only the single fixed path
+    // assignment from the committed script to the already verified repo root.
+    // The path is base64-embedded, never shell-interpolated or caller supplied.
+    const rootAnchor = "$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\\..'))";
+    const rootB64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const rooted = script.split(rootAnchor).length === 2
+      ? script.replace(rootAnchor,
+        "$repoRoot = [System.IO.Path]::GetFullPath([System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('" + rootB64 + "')))")
+      : '';
+    const encoded = committed.ok && rooted.length > 0 && rooted.length <= 12_000
+      ? Buffer.from(rooted, 'utf16le').toString('base64') : '';
     if (!encoded || encoded.length > 32_000) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_CUSTODY_COMMITTED_SCRIPT_UNAVAILABLE', {
         remoteAction: 'original-source-custody-census', originalLeaseHeld: true,
