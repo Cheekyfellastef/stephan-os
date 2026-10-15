@@ -165,15 +165,9 @@ function laneStatusGreen(result) {
   // owners. If only their evidence is stale, a current/valid logical fabric
   // with no current hard-red host and no current runnable-work claim remains
   // safe for the canonical scheduler + mission worker to operate.
-  // Stale-host tolerance still requires per-selected-goal physical pickup.
-  // An unrelated material lane never satisfies this proof.
-  const selectedLogicalGoals = status?.logical?.selectedForAdmission;
-  const selectedPickupCount = status?.lanes?.selectedMaterialPickupProvenCount;
-  const noUnprovenSelectedPickup = Number.isSafeInteger(selectedLogicalGoals)
-    && selectedLogicalGoals >= 0
-    && (selectedLogicalGoals === 0
-      || (Number.isSafeInteger(selectedPickupCount)
-        && selectedPickupCount === selectedLogicalGoals));
+  // The same per-selected-goal proof applies to stale-host tolerance;
+  // it cannot be satisfied by an unrelated occupied material lane.
+  const noUnprovenSelectedPickup = allSelectedPickupProven;
   return finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED'
     && refillHealth === 'AMBER'
     && refillState === 'TELEMETRY_STALE_OR_INCOMPLETE'
