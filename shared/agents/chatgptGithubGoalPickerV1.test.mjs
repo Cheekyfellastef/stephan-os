@@ -109,12 +109,8 @@ test('competing eligible proposals are serialised deterministically by source sc
 });
 
 test('ancestor path contention cannot produce two eligible tasks or a global idle switch', () => {
-  const ancestor=candidate(1574,'parent-scope','docs/architecture');
-  ancestor.taskClass='tests-only'; ancestor.paths=['tests/recovery.test.mjs'];
-  ancestor.ownershipEvidence=owner(1574,'parent-scope','tests/recovery.test.mjs');
-  const child=candidate(1903,'child-scope','tests/recovery.test.mjs');
-  child.taskClass='tests-only';
-  child.ownershipEvidence=owner(1903,'child-scope','tests/recovery.test.mjs');
+  const ancestor=candidate(1574,'parent-scope','docs/overlap.md');
+  const child=candidate(1903,'child-scope','docs/overlap.md/child.md');
   const held=candidate(2962,'historical-lease','docs/stuck.md');
   held.ownershipEvidence.canonical.disposition='CLAIMED';
   const spare=candidate(3103,'spare-source','docs/independent.md');
