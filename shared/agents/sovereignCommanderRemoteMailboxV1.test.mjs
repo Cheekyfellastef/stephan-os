@@ -8,6 +8,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
+  SOVEREIGN_COMMANDER_REMOTE_SINGLE_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
@@ -3173,4 +3174,33 @@ test('single maintenance action reports a runner timeout as bounded failure inst
   assert.equal(result.publicReceiptSafe, true);
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
+});
+test('single read-only command cannot consume the entire outbox lease through sequential MCP discovery', async () => {
+  const base = mcpFetch();
+  let nowMs = 1_000;
+  const fetchFn = async (url, options = {}) => {
+    const message = url.endsWith('/mcp') ? JSON.parse(options.body || '{}') : {};
+    const response = await base.fetchFn(url, options);
+    if (message.method === 'tools/list') {
+      nowMs = 1_000 + SOVEREIGN_COMMANDER_REMOTE_SINGLE_TOTAL_TIMEOUT_MS + 1;
+    }
+    return response;
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status-stephanos-core-daemon' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      nowFn: () => nowMs,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_TOTAL_DEADLINE_EXCEEDED');
+  assert.equal(result.publicReceiptSafe, true);
+  const calls = base.calls.filter(item => item.url.endsWith('/mcp'))
+    .map(item => JSON.parse(item.options.body || '{}'));
+  assert.equal(calls.some(call => call.params?.name === 'get_config'), false);
+  assert.equal(calls.some(call => call.params?.name === 'maintenance_action'), false);
 });
