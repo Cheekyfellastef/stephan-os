@@ -91,3 +91,47 @@ test('reserved generated and metadata segments reject case aliases',()=>{
     assert.ok(run(c).decisions[0].blockers.includes('SCOPE_INVALID_OR_OVERLAPPING'),path);
   }
 });
+
+test('competing eligible proposals are serialised deterministically by source scope', () => {
+  const first = candidate(1574,'scope-first','docs/shared.md');
+  const later = candidate(1903,'scope-later','DOCS/SHARED.md');
+  const disjoint = candidate(2961,'disjoint-task','docs/free.md');
+  for (const order of [[later,disjoint,first],[first,later,disjoint]]) {
+    const r = run(...order);
+    const byTask = Object.fromEntries(r.decisions.map(d => [d.taskId,d]));
+    assert.equal(r.suggestedForIndependentVerification,'scope-first');
+    assert.equal(byTask['scope-first'].disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
+    assert.ok(byTask['scope-later'].blockers.includes('BATCH_SCOPE_COLLISION_DEFERRED'));
+    assert.equal(byTask['disjoint-task'].disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
+    assert.equal(r.sourceMutationAllowed,false);
+    assert.equal(r.physicalPickupProven,false);
+  }
+});
+
+test('ancestor path contention cannot produce two eligible tasks or a global idle switch', () => {
+  const ancestor=candidate(1574,'parent-scope','docs/architecture');
+  ancestor.taskClass='tests-only'; ancestor.paths=['tests/recovery.test.mjs'];
+  ancestor.ownershipEvidence=owner(1574,'parent-scope','tests/recovery.test.mjs');
+  const child=candidate(1903,'child-scope','tests/recovery.test.mjs');
+  child.taskClass='tests-only';
+  child.ownershipEvidence=owner(1903,'child-scope','tests/recovery.test.mjs');
+  const held=candidate(2962,'historical-lease','docs/stuck.md');
+  held.ownershipEvidence.canonical.disposition='CLAIMED';
+  const spare=candidate(3103,'spare-source','docs/independent.md');
+  const r=run(child,spare,held,ancestor);
+  const byTask=Object.fromEntries(r.decisions.map(d=>[d.taskId,d]));
+  assert.ok(byTask['child-scope'].blockers.includes('BATCH_SCOPE_COLLISION_DEFERRED'));
+  assert.equal(byTask['parent-scope'].disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
+  assert.equal(byTask['spare-source'].disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
+  assert.equal(byTask['historical-lease'].disposition,'HELD');
+});
+
+test('held or unproven proposal cannot starve an independently eligible overlapping proposal', () => {
+  const held=candidate(1574,'unproven-proposal','docs/one.md');
+  held.ownershipEvidence.island.observedAtUtc='2026-10-12T10:00:00.000Z';
+  const ready=candidate(1903,'verified-proposal','docs/one.md');
+  const result=run(held,ready);
+  assert.ok(result.decisions[0].blockers.includes('CROSS_SYSTEM_OWNERSHIP_UNPROVEN'));
+  assert.equal(result.decisions[1].disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
+  assert.equal(result.suggestedForIndependentVerification,'verified-proposal');
+});
