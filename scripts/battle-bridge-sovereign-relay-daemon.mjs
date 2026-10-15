@@ -201,8 +201,11 @@ export function buildSovereignRelayInFlightStatus({
   const cycleAgeMs = Math.max(0, timestamp.getTime() - cycleStartedAtMs);
   const fastCycleStalled = cycleAgeMs >= SOVEREIGN_RELAY_FAST_STALL_MS;
   const priorCarrierHealthy = previousStatus?.carrierHealthy === true;
-  const fallbackCovered = fastCycleStalled
-    || boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
+  // Both fast and scheduled mailbox consumers use the same exclusive guard.
+  // A stalled fast child may still own that guard, so elapsed time alone can
+  // never attest that the scheduled fallback is capable of physical pickup.
+  const fallbackCovered = !fastCycleStalled
+    && boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
   // Preserve the last settled failure throughout an in-flight cycle. Otherwise
   // each heartbeat erases the blocker exactly when remote diagnostics need it.
   const priorBlocker = priorCarrierHealthy ? '' : boundedText(previousStatus?.blocker || '');
@@ -212,7 +215,7 @@ export function buildSovereignRelayInFlightStatus({
       status: fallbackCovered || (!priorCarrierHealthy && consecutiveCarrierFailures > 0)
         ? 'ATTENTION_REQUIRED' : 'READY',
       summary: fastCycleStalled
-        ? 'Fast relay cycle stalled; independent mailbox fallback remains in service.'
+        ? 'Fast relay cycle stalled; scheduled mailbox pickup remains unproven.'
         : 'Sovereign relay guard cycle is in flight.',
     }),
     schema: SOVEREIGN_RELAY_SCHEMA,
@@ -227,9 +230,9 @@ export function buildSovereignRelayInFlightStatus({
     heartbeatAtUtc: timestamp.toISOString(),
     fastCycleAgeMs: cycleAgeMs,
     fastCycleStalled,
-    deliveryState: fallbackCovered ? 'FALLBACK_COVERED' : 'FAST_CHECKING',
+    deliveryState: fastCycleStalled ? 'RECOVERING' : fallbackCovered ? 'FALLBACK_COVERED' : 'FAST_CHECKING',
     carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
-    blocker: fastCycleStalled ? 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED' : priorBlocker,
+    blocker: priorBlocker || (fastCycleStalled ? 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED' : ''),
     guardVerdict: boundedText(previousStatus?.guardVerdict || ''),
     lastCarrierHealthyAtUtc: previousStatus?.lastCarrierHealthyAtUtc || null,
     scheduledMailboxFallbackExpected: true,
