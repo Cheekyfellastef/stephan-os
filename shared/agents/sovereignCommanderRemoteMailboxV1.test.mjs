@@ -3174,3 +3174,70 @@ test('single maintenance action reports a runner timeout as bounded failure inst
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
 });
+test('mobile original r7 census is fixed immutable-source and remains custody HOLD', async () => {
+  const invocations = [];
+  const census = {
+    schemaVersion: 'stephanos.original-source-custody-readonly-census.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectionMode: 'UNPRIVILEGED_READ_ONLY',
+    inspectedAtUtc: new Date().toISOString(),
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 7,
+    unknownObservations: [],
+    historicalExecutionOutcome: 'UNKNOWN', originalReceiptReconstructed: false,
+    independentWindowsExclusionProven: false, outOfJobWriterExclusionProven: false,
+    sourceAclDenialProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'INSPECTION_ONLY_CUSTODY_HOLD',
+    privateSecret: 'PRIVATE_HOST_PATH_DO_NOT_RETURN',
+  };
+  const spawn = (_exe, args) => {
+    invocations.push(args);
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('show')) return { status: 0, stdout: '# immutable script', stderr: '' };
+    if (args.includes('-EncodedCommand')) return { status: 0, stdout: JSON.stringify(census), stderr: '' };
+    return { status: 1, stdout: '', stderr: 'blocked' };
+  };
+  const { fetchFn, calls } = mcpFetch();
+  const examine = () => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'original-source-custody-census' }),
+    { spawnSyncFn: spawn, readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const result = await examine();
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD');
+  assert.equal(result.inspection.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+  assert.equal(result.inspection.leaseReleaseAuthorized, false);
+  assert.equal(result.privilegedWindowsWitnessCommissioned, false);
+  assert.equal(result.inspection.candidateProcessCount, 0);
+  assert.match(JSON.stringify(result), /INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_HOST_PATH_DO_NOT_RETURN/);
+  assert.equal(invocations.some(args => args.includes('-File')), false);
+  assert.equal(invocations.some(args => args.includes('show')
+    && args.includes(HEAD + ':scripts/windows/inspect-original-source-custody-readonly.ps1')), true);
+  assert.equal(calls.some(call => JSON.stringify(call).includes('maintenance_action')), false);
+  census.leaseReleaseAuthorized = true;
+  const forged = await examine();
+  assert.equal(forged.ok, false);
+  assert.equal(forged.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+  census.leaseReleaseAuthorized = false;
+  census.inspectedAtUtc = '2020-01-01T00:00:00.000Z';
+  const stale = await examine();
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+});
+test('mobile original r7 census rejects caller supplied executable targets or authority', () => {
+  for (const payload of [{pid:1},{path:'C:\\private'},{script:'evil'}, {signer:'self'}, {leaseReleaseAuthorized:true}]) {
+    const verdict = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction:'original-source-custody-census', ...payload,
+    }));
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '', remotePlan:['original-source-custody-census'],
+  })).ok, false);
+});
