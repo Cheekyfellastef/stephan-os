@@ -68,7 +68,7 @@ test('remote census executes only pinned HEAD script; never returns stdout, keys
     calls.push(args);
     if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
     if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
-    if (args.includes('show')) return { status: 0, stdout: '# already reviewed fixed read-only census', stderr: '' };
+    if (args.includes('show')) return { status: 0, stdout: "$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\\\\..'))\\n# approved fixed read-only census", stderr: '' };
     if (args.includes('-EncodedCommand')) {
       return { status: 0, stdout: JSON.stringify(census({ forbiddenPath: 'C:\\secret' })), stderr: 'SECRET STDERR' };
     }
