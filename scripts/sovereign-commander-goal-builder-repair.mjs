@@ -146,6 +146,14 @@ function laneStatusGreen(result) {
   const refillHealth = text(status?.lanes?.refillHealth).toUpperCase();
   const refillState = text(status?.lanes?.refillState).toUpperCase();
   const finalVerdict = text(status?.finalVerdict).toUpperCase();
+  // A green headline cannot override missing physical pickup for selected goals.
+  // The same pickup gate applies to both green and stale-telemetry projections.
+  const selectedCount = status?.logical?.selectedForAdmission;
+  const materialCount = status?.lanes?.activeMaterialLaneCount;
+  const selectedPickupUnproven = typeof selectedCount === 'number'
+    && Number.isSafeInteger(selectedCount) && selectedCount > 0
+    && !(typeof materialCount === 'number' && Number.isSafeInteger(materialCount) && materialCount > 0);
+  if (selectedPickupUnproven) return false;
   if (
     finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY'
     && refillHealth === 'GREEN'
