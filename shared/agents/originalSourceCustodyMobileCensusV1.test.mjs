@@ -7,7 +7,7 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const HEAD = 'e42d31670da802cc15d4c323dd8dcff10a03033f';
-const when = '2026-10-15T15:20:00.000Z';
+const when = new Date().toISOString();
 const census = (overrides = {}) => ({
   schemaVersion: 'stephanos.original-source-custody-readonly-census.v1',
   repository: 'Cheekyfellastef/stephan-os',
@@ -83,7 +83,7 @@ test('remote census executes only pinned HEAD script; never returns stdout, keys
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
-    expiresAt: '2026-10-15T15:25:00.000Z',
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
     remoteAction: 'original-source-custody-census',
   };
   assert.equal(validateSovereignCommanderRemoteCommandShape(command).ok, true);
