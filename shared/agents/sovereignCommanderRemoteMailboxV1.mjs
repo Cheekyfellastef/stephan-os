@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -18,6 +19,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'controller-lane-status',
   'visibility-snapshot',
   'cpu-pressure-snapshot',
+  'original-source-custody-census',
   'publish-controller-activity',
   'repair-ui-4173',
   'restart-stephanos-runtime',
@@ -86,6 +88,7 @@ const ALLOWED_FIELDS = new Set([
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
+const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -560,6 +563,28 @@ function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead
       && proof.seedVisible === true;
   }
   return false;
+}
+
+// Only typed, redacted census blockers may cross the public GitHub mailbox.
+export function projectOriginalSourceCustodyRemoteCensusV1(raw, { nowUtc = new Date().toISOString() } = {}) {
+  if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 8_000) return null;
+  let input = null;
+  try { input = JSON.parse(raw); } catch { return null; }
+  const checked = inspectOriginalSourceCustodyCensusV1(input, { nowUtc });
+  if (!checked.observable || checked.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD') return null;
+  return Object.freeze({
+    schemaVersion: checked.schemaVersion,
+    originalLeaseId: checked.originalLeaseId,
+    observable: true,
+    blockers: checked.blockers,
+    historicallyMissingReceiptStillMissing: true,
+    independentWindowsExclusionProven: false,
+    independentlySignedOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAuthorized: false,
+    safeToCancelOriginal: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  });
 }
 
 function safeBattleBridgeObservationProjection(value = {}, processId = '') {
@@ -2188,6 +2213,46 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // The canonical owner-attested GitHub mailbox already supplies fixed authority.
   // Sample directly in this existing process, not by recycling the long-lived
   // Commander: diagnostic observation must never start a repair guardian.
+  // Fixed, source-pinned, read-only r7 census. Never execute a dirty checkout script
+  // or promote process counts to privileged source-writer custody evidence.
+  if (shape.command.remoteAction === 'original-source-custody-census') {
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 16 * 1024 });
+    const script = committed.stdout;
+    const encoded = committed.ok && script.length > 0 && script.length <= 12_000
+      ? Buffer.from(script, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CUSTODY_COMMITTED_SCRIPT_UNAVAILABLE', {
+        remoteAction: 'original-source-custody-census', originalLeaseHeld: true,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 12 * 1024 });
+    const custody = sampled.ok ? projectOriginalSourceCustodyRemoteCensusV1(sampled.stdout) : null;
+    if (!custody) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CUSTODY_CENSUS_RECEIPT_INVALID', {
+        remoteAction: 'original-source-custody-census', readOnly: true,
+        sampleStatus: sampled.status, originalLeaseHeld: true,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true, finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+      remoteAction: 'original-source-custody-census', sourceHead: shape.expectedHead,
+      custody, proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, custody })).digest('hex'),
+      readOnly: true, executionSurface: 'sovereign-exact-head-readonly-census',
+      vendorMeterRequired: false, externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false, sourceMutationAllowed: false,
+      leaseReleaseAuthorized: false, serviceInstallAuthorized: false,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({ ...result, result });
+  }
+
   if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
     // Read exactly the blob from the SHA-approved immutable Git tree.
     // Never execute a checkout pathname: diff --quiet can be bypassed by
