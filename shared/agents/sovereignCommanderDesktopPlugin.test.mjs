@@ -23,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.6');
+  assert.equal(plugin.version, '1.0.8');
   assert.equal(plugin.mcpServers, './.mcp.json');
   assert.equal(plugin.skills, './skills');
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
@@ -49,7 +49,7 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.6');
+  assert.equal(plugin.version, '1.0.8');
   assert.equal(plugin.skills, './skills/');
   assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
   assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');
@@ -106,4 +106,21 @@ test('sovereign recovery skill pack is present with explicit boundaries',async()
    assert.match(skill,/^---\nname: /);
    assert.match(skill,/source|Sovereign|custody|capabilit/i);
  }
+});
+
+test('next source release inventories guarded meter-free, parity, repair and runtime-proof skills', async () => {
+  const extra = [
+    ['meter-free-battle-bridge-files', /public GitHub|public repo/i],
+    ['remote-commander-parity', /original|existing.*#2573|canonical issue #2573/i],
+    ['repair-stephanos-continuously', /original.*(lease|goal)|protected merge/i],
+    ['verify-sovereign-runtime', /ACCEPTED.*terminal|terminal.*ACCEPTED/i],
+  ];
+  for (const [name, boundary] of extra) {
+    const source = await readFile(new URL('../../plugins/sovereign-commander/skills/' + name + '/SKILL.md', import.meta.url), 'utf8');
+    assert.match(source, /^---\nname: /);
+    assert.match(source, boundary);
+    assert.match(source, /not|never|no |without/i);
+  }
+  assert.equal(JSON.parse(manifest).version, '1.0.8');
+  assert.equal(JSON.parse(portableManifest).version, '1.0.8');
 });
