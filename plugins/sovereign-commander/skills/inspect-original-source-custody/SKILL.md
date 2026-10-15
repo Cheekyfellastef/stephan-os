@@ -25,9 +25,3 @@ The independent **Rescue Island** (#3103 / #3109) can progress previously unclai
 No assumed elevated permissions, no blanket PowerShell installation or `Set-Acl` against the running checkout, no force-release, process kill, false attestation, manual GitHub status pretending to be a machine proof, unattended run from this read-only diagnostic, or protected merge without immutable independent qualified review. Gaming mode preserves Battle Bridge CPU/GPU performance.
 
 **Production blocker:** independent privileged OS witness provisioning plus separate operator signing and live commissioning are still required. This skill and census intentionally do not implement those privileged actions.
-
-## Mobile fixed custody census (source candidate)
-
-An exact-head-bound mobile mailbox command `original-source-custody-census` is proposed to execute only the already merged read-only Windows census script from an immutable Git object, never its dirty checkout copy. The existing 5-minute-fresh `inspectOriginalSourceCustodyCensusV1` schema rejects fabricated authority and exposes only bounded counts and typed blockers. A zero-process census still reports `ORIGINAL_SOURCE_CUSTODY_HOLD`.
-
-**Independent Windows/security specialist review is mandatory before protected merge or live use of this new remote script execution surface.** This is not physical writer exclusion, privileged installation, isolated keys, signed witness, historical receipt or lease release. Preserve original lease and dirty entries, unrelated conveyors and gaming safeguards.
