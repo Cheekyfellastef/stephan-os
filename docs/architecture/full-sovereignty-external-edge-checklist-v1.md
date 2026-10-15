@@ -51,6 +51,31 @@ A verdict must name the **specific function and external edge tested**. One pass
 | `offline-restart-and-recovery` | Can the PC and required local services recover without cloud sign-in? | Physical cold restart + signed service/worker/served-head proof |
 | `proof-and-continuous-audit` | Are success displays derived from mutable claims rather than authenticated source/runtime receipts? | Exact-head provenance, fresh external witness and negative forgery tests |
 
+## Rung-1 owner-discovery ledger (routing only, not admission)
+
+The following are **candidate existing issue scopes**, not authenticated writer assignments, source leases, independent reviewer decisions or proof of an installed capability. They are derived from the currently named canonical owner goals. `UNRESOLVED` explicitly means no sufficiently specific original owner has been established by this source-only audit. Every row remains `UNVERIFIED` until the original owner independently authenticates its current source, principal, scope, physical receipt and acceptance witness. Never infer source ownership or advance a seed rung from this table.
+
+| Canonical dimension | Existing owner candidate, or discovery gap | First original-domain evidence to request |
+| --- | --- | --- |
+| `local-ai-inference-and-router` | #1898 | Qualified provider-neutral local inference and gaming zero-residency proof |
+| `memory-and-workspace-state` | UNRESOLVED | Authenticated local durable read/write and restart witness |
+| `goals-and-approvals` | #2972 | Original-owner approval/admission under an external-control-plane outage |
+| `local-observation-and-search` | #2519 | Local authenticated observation without a paid relay |
+| `local-coding-building-and-testing` | #1898 / #2972 | Same-worker offline source/test commit and custody receipt |
+| `independent-local-review` | #1898 | Qualified independent non-hosted reviewer and negative forgery proof |
+| `worker-and-controller-endurance` | #2972 / #2593 | Two simultaneous admitted source/test workers and terminal receipts |
+| `core-daemon-self-repair` | #2593 | Boot-safe single-instance repair across restart |
+| `sovereign-commander-remote-operation` | #2519 | Private guarded command with authenticated terminal result |
+| `storage-backup-and-restore` | UNRESOLVED | Operator-controlled backup restoration and integrity witness |
+| `local-security-and-telemetry` | UNRESOLVED | Independent tamper-evidence and local audit continuity |
+| `network-disconnect-tolerance` | UNRESOLVED | Disconnected task identity, bounded replay and recovery proof |
+| `graceful-external-integration-queue` | UNRESOLVED | Durable offline PENDING and guarded exactly-once delivery |
+| `provider-and-meter-independence` | #2968 / #1898 | Real alternate qualified worker after all provider meters exhaust |
+| `offline-restart-and-recovery` | #2593 | Physical cold restart and signed served-head proof |
+| `proof-and-continuous-audit` | #2670 | Independent source/worker/served correlation and forgery rejection |
+
+**Admission boundary:** Before any implementation, the existing Seed Canopy owner must verify the named issue's exact current title, owner, scope and non-overlap against original Goal Dashboard, Seed Canopy and Rescue Island writers. An unresolved candidate routes to original-owner discovery, **not** a new controller, lease, queue, PR or authority grant. This ledger has no claim to the Battle Bridge, GPU, Windows custody or protected merge approvals.
+
 ## First safe evidence sequence
 
 1. **Inventory only.** Reconcile the 16 current dimensions against existing owners: [#2968 — Seed: Stephanos Sovereign Meter Independence across all metered services](https://github.com/Cheekyfellastef/stephan-os/issues/2968), [#1898 — Programme: Zero-Codex Continuity and Provider Parity V1](https://github.com/Cheekyfellastef/stephan-os/issues/1898), [#2519 — Build Sovereign Commander as the unmetered Battle Bridge control surface](https://github.com/Cheekyfellastef/stephan-os/issues/2519), [#2670 — Mission: Stephanos Whole-System Capability Closure](https://github.com/Cheekyfellastef/stephan-os/issues/2670), [#2972 — Seed: Continuous Goal Conveyor & Fleet Care](https://github.com/Cheekyfellastef/stephan-os/issues/2972), and [#2593 — Goal: Stephanos Core Daemon and meter-free Sovereign inspection](https://github.com/Cheekyfellastef/stephan-os/issues/2593), source files, current installed capabilities and known dependencies. Identify unanswered questions as `UNVERIFIED`.
