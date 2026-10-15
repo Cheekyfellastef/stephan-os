@@ -112,13 +112,8 @@ $busyGraceActive = $false
 if ($null -ne $status -and $status.PSObject.Properties['heartbeatAtUtc']) {
     try {
         $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
-        # Future-dated heartbeat timestamps are not evidence of a live writer.
-        # Do not clamp negative age to zero: that would manufacture freshness.
-        $ageSeconds = ([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds
-        if ($ageSeconds -ge 0) {
-            $heartbeatAgeSeconds = [int]$ageSeconds
-            $heartbeatFresh = [bool]($heartbeatAgeSeconds -le $coreHeartbeatFreshSeconds)
-        }
+        $heartbeatAgeSeconds = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        $heartbeatFresh = [bool]($heartbeatAgeSeconds -le $coreHeartbeatFreshSeconds)
     } catch {}
 }
 if ($null -ne $status) {
