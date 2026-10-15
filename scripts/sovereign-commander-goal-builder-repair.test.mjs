@@ -405,3 +405,26 @@ test('selected logical work without material pickup never lets stale controllers
   assert.equal(result.duplicateSchedulerAllowed, false);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });
+
+test('green lane headline cannot conceal selected goals without physical worker pickup', () => {
+  const calls = [];
+  const repaired = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+          refillHealth: 'GREEN',
+          selectedForAdmission: 3,
+          activeMaterialLaneCount: 0,
+        });
+      }
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.repairApplied, true);
+  assert.equal(repaired.blocker, 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN');
+  assert.ok(calls.includes('start-mission-orchestrator-worker'));
+});
