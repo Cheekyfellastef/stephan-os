@@ -2199,8 +2199,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
     ], { timeout: 10_000, maxBuffer: 12 * 1024 });
     const sourceBytes = committed.stdout;
+    // EncodedCommand has no script file path: explicitly bind PSScriptRoot to
+    // the canonical repository's scripts/windows directory. The committed
+    // census body is appended verbatim; no checkout copy can be swapped in.
+    const rootBase64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const fixedPrelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("'
+      + rootBase64 + '"))) "scripts\\windows"\r\n';
     const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
-      ? Buffer.from(sourceBytes, 'utf16le').toString('base64') : '';
+      ? Buffer.from(fixedPrelude + sourceBytes, 'utf16le').toString('base64') : '';
     if (!encoded || encoded.length > 32_000) return fail(
       'SOVEREIGN_CUSTODY_CENSUS_COMMITTED_SOURCE_UNAVAILABLE',
       { publicReceiptSafe: true, secretMaterialReturned: false },
