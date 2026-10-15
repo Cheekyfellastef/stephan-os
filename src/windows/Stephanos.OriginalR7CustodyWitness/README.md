@@ -9,8 +9,13 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
 - Fixed service identity: StephanosOriginalR7CustodyWitness
 - Fixed historical lease: critical-2962-elastic-goal-r7-lease
 - Windows-only, Session-0, non-interactive SCM invocation, no arguments
-- The actual process token must contain the specific NT SERVICE service SID
-  and must not be LocalSystem, an interactive user or an arbitrary service
+- The actual process token must belong to the exact pinned virtual service
+  account, or restricted LocalService (S-1-5-19) with the pinned *enabled*
+  NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
+- Reject administrator membership, LocalSystem, an interactive user and
+  arbitrary service accounts, even if they carry a matching service SID.
+- This is a token-isolation source hardening step only, not real Windows
+  principal provisioning, ACL enforcement, signer isolation or runtime proof.
 - Even after identity passes, startup is refused with
   WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED
 

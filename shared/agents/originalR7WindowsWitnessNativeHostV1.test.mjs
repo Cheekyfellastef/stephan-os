@@ -14,7 +14,10 @@ test('native Windows witness host requires real SCM and its exact service identi
   assert.match(program, /FixedServiceName = "StephanosOriginalR7CustodyWitness"/);
   assert.match(program, /FixedLeaseId = "critical-2962-elastic-goal-r7-lease"/);
   assert.match(program, /NTAccount\(\s*"NT SERVICE", FixedServiceName\)/);
-  assert.match(program, /identity\.Groups\?\.Contains\(expected\)/);
+  assert.match(program, /principal\.IsInRole\(expected\)/);
+  assert.match(program, /exactVirtualServiceAccount = actual\?\.Equals\(expected\) == true/);
+  assert.match(program, /actual\?\.Value == "S-1-5-19"/);
+  assert.match(program, /principal\.IsInRole\(WindowsBuiltInRole\.Administrator\)/);
   assert.match(program, /!serviceSidPresent \|\| identity\.IsSystem/);
   assert.match(program, /Process\.GetCurrentProcess\(\)\.SessionId != 0/);
   assert.match(program, /Environment\.UserInteractive/);
@@ -36,4 +39,12 @@ test('project cannot run as native generic mutable helper', () => {
   assert.doesNotMatch(program, /\b(?:GetCommandLineArgs|Environment\.GetEnvironmentVariable|Console\.ReadLine|StreamReader)\b/);
   assert.match(program, /return 2;/);
   assert.match(program, /return 3;/);
+});
+
+test('service SID cannot be carried by an unrelated or elevated Windows principal', () => {
+  assert.match(program, /\(!exactVirtualServiceAccount && !localServiceWithEnabledSid\)/);
+  assert.match(program, /identity\.IsSystem \|\| elevatedAdministrator/);
+  assert.doesNotMatch(program, /identity\.Groups\?\.Contains\(expected\)/);
+  assert.doesNotMatch(program, /(?:RunAs|TokenImpersonationLevel|LogonUser|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)/);
+  assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
 });
