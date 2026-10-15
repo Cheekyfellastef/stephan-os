@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  FULL_SOVEREIGNTY_DIMENSIONS_V1,
   FULL_SOVEREIGNTY_ISSUE,
   FULL_SOVEREIGNTY_MISSION_ID,
   buildFullSovereigntySeedV1,
@@ -106,4 +108,29 @@ test('stale source heartbeat cannot release build work', () => {
     timestampUtc: '2026-10-11T15:00:00.000Z',
   })] });
   assert.deepEqual(pressure(stale), []);
+});
+
+test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimensions', () => {
+  // This checks SOURCE CONTRACT CONSISTENCY, never physical seed pickup or a PASS verdict.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const coverage = markdown.split('## Coverage checklist: every existing dimension')[1]?.split('## Rung-1 owner-discovery ledger')[0];
+  const ledger = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
+  assert.ok(coverage, 'missing acceptance coverage table');
+  assert.ok(ledger, 'missing original-owner discovery table');
+  const rows = (section) => [...section.matchAll(/^\\| \`([^\`]+)\` \\| ([^\\n]+)$/gm)]
+    .map(([, dimension, cells]) => ({ dimension, cells: cells.split('|').map((cell) => cell.trim()).filter(Boolean) }));
+  const expected = [...FULL_SOVEREIGNTY_DIMENSIONS_V1];
+  const coverageRows = rows(coverage);
+  const ownerRows = rows(ledger);
+  assert.deepEqual(coverageRows.map((row) => row.dimension), expected, 'coverage table drift or duplicate');
+  assert.deepEqual(ownerRows.map((row) => row.dimension), expected, 'owner ledger drift or duplicate');
+  for (const row of [...coverageRows, ...ownerRows]) {
+    assert.equal(row.cells.length, 2, 'each dimension needs two nonempty evidence/owner cells');
+    assert.ok(row.cells.every(Boolean));
+  }
+  for (const row of ownerRows) {
+    assert.match(row.cells[0], /UNRESOLVED|#\\d+/, 'owner must be an existing issue or explicitly unresolved');
+  }
+  assert.match(markdown, /Every row remains \`UNVERIFIED\`/);
+  assert.match(markdown, /not evidence that external dependence has been removed/);
 });
