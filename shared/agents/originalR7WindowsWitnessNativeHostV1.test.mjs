@@ -18,7 +18,7 @@ test('native Windows witness host requires real SCM and its exact service identi
   assert.match(program, /exactVirtualServiceAccount = actual\?\.Equals\(expected\) == true/);
   assert.match(program, /actual\?\.Value == "S-1-5-19"/);
   assert.match(program, /principal\.IsInRole\(WindowsBuiltInRole\.Administrator\)/);
-  assert.match(program, /!serviceSidPresent \|\| identity\.IsSystem/);
+  assert.match(program, /identity\.IsSystem \|\| elevatedAdministrator/);
   assert.match(program, /Process\.GetCurrentProcess\(\)\.SessionId != 0/);
   assert.match(program, /Environment\.UserInteractive/);
   assert.match(program, /args\.Length != 0/);
