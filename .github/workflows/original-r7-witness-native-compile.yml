@@ -35,3 +35,4 @@ jobs:
           Write-Output 'WINDOWS_R7_WITNESS_INSTALLED=false'
           Write-Output 'WINDOWS_R7_WITNESS_SIGNING_ENABLED=false'
           Write-Output 'ORIGINAL_R7_LEASE_RELEASED=false'
+# TEMPORARY VALIDATION ONLY: remove before any protected source merge.
