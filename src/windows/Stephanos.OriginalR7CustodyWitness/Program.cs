@@ -65,9 +65,17 @@ internal sealed class OriginalR7CustodyWitnessService : ServiceBase
             throw new InvalidOperationException("WINDOWS_WITNESS_SERVICE_SID_NOT_PROVISIONED");
         }
 
-        bool serviceSidPresent = actual?.Equals(expected) == true
-            || (identity.Groups?.Contains(expected) ?? false);
-        if (!serviceSidPresent || identity.IsSystem)
+        // A raw group list can include deny-only SIDs, and an unrelated
+        // elevated service account could carry the same service SID. A valid
+        // witness must use its own virtual account, or a restricted LocalService
+        // token with the *enabled* pinned service SID. Never run as an admin.
+        WindowsPrincipal principal = new(identity);
+        bool exactVirtualServiceAccount = actual?.Equals(expected) == true;
+        bool localServiceWithEnabledSid = actual?.Value == "S-1-5-19"
+            && principal.IsInRole(expected);
+        bool elevatedAdministrator = principal.IsInRole(WindowsBuiltInRole.Administrator);
+        if ((!exactVirtualServiceAccount && !localServiceWithEnabledSid)
+            || identity.IsSystem || elevatedAdministrator)
         {
             throw new InvalidOperationException("WINDOWS_WITNESS_SERVICE_SID_NOT_ISOLATED");
         }
