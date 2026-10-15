@@ -1,7 +1,0 @@
-# Goal #3123: Windows custody service account isolation before commissioning
-
-This source-only hardening constrains the native `StephanosOriginalR7CustodyWitness` token to either the precise SCM virtual service account, or LocalService with the service-specific **enabled** SID. A raw `WindowsIdentity.Groups` hit is not treated as proof because a deny-only SID may appear in a group listing. An administrator membership, LocalSystem or unrelated account is rejected. The existing Session 0, SCM/noninteractive and no-arguments restrictions remain.
-
-The service still unconditionally fails startup with `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED`. The code changes **no** machine account, ACL, Scheduled Task, service registration, source checkout, private key or lease. A Windows-native build and qualified independent Windows service review must be obtained before treating this as installable, and protected deployment requires separate scoped owner approval.
-
-This is necessary but wholly insufficient for prospective custody. Exact original writer SID and reentry routes, live negative write probes, protected audit logs, two separate OS-protected signing roots, signed current original-r7 attestation, canonical quarantine and lease CAS and genuine pickup/merge/refill receipts are still required. Historical revision-7 outcome remains UNKNOWN. Keep the held lease and eight dirty Battle Bridge checkout entries untouched.
