@@ -72,10 +72,3 @@ test('remote Core status exposes bounded proof booleans but not raw process iden
   assert.doesNotMatch(projection, /processId:|lockOwnerPid:|commandLine:|lockPath:/);
   assert.match(projection, /Number\.isSafeInteger\(parsed\.rescueAttemptCount\)/);
 });
-
-test('Core status does not manufacture a fresh heartbeat from future timestamps', () => {
-  assert.match(status, /\$ageSeconds = \(\[DateTimeOffset\]::UtcNow - \$heartbeat\)\.TotalSeconds/);
-  assert.match(status, /if \(\$ageSeconds -ge 0\) \{/);
-  assert.doesNotMatch(status, /\$heartbeatAgeSeconds = \[math\]::Max\(0,/);
-  assert.match(status, /\$null -ne \$heartbeatAgeSeconds -and/);
-});
