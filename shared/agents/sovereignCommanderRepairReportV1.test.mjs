@@ -136,3 +136,18 @@ test('repair reporting publishes blocked truth to current status and event strea
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test('repair report preserves missing or invalid heartbeat age as unknown, not zero', () => {
+  for (const heartbeatAgeSeconds of [undefined, null, -1, 'not-a-number']) {
+    const report = buildSovereignCommanderRepairReport({
+      repair: {
+        ok: false, blocker: 'CORE_HEARTBEAT_UNPROVEN', sourceHead: HEAD,
+        core: { heartbeatAgeSeconds, heartbeatFresh: false, busyGraceActive: false },
+      },
+      cycleId: 'unknown-heartbeat',
+    });
+    assert.equal(report.status.verification.heartbeatAgeSeconds, null);
+    assert.equal(report.status.verification.heartbeatFresh, false);
+    assert.equal(report.status.status, 'ATTENTION_REQUIRED');
+  }
+});
