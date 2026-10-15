@@ -3220,7 +3220,7 @@ test('mobile original r7 census is fixed immutable-source and remains custody HO
   assert.ok(encodedCommand);
   const decodedScript = Buffer.from(encodedCommand[encodedCommand.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
   assert.match(decodedScript, /PSScriptRoot = Join-Path/);
-  assert.match(decodedScript, /scripts\\\\windows/);
+  assert.ok(decodedScript.includes('scripts\\windows'));
   assert.ok(decodedScript.endsWith('# immutable script'));
   assert.equal(invocations.some(args => args.includes('show')
     && args.includes(HEAD + ':scripts/windows/inspect-original-source-custody-readonly.ps1')), true);
