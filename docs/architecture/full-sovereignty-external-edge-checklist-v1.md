@@ -26,6 +26,8 @@ For every row, the original owner must attach an evidence packet to the **existi
 - **`FAIL`**: a qualified offline trial shows loss, duplicate execution, unsafe resource use, unverifiable custody or inability to recover. Preserve the failing trace and route the smallest correction to its existing owner.
 - **`PASS`**: the same qualified operation was independently observed both with the edge present and absent, with correct bounded behavior, matching source/runtime identities and terminal receipts. For inherently external operations, offline `PENDING` with durable identity and later exactly-once guarded delivery is the acceptable behavior; an offline claim of remote completion is not.
 
+For the worker-endurance dimension, prove both seed workers were **physically executing at the same time**, with distinct canonical seed/task IDs, one mutation writer and source scope per task, authenticated same-worker SELECT→CLAIM→PICKUP chains, overlapping execution timestamps, disjoint resource custody and independently checkable source/test mutations and terminal receipts. Two sequential tasks, a CI fixture, a queued dispatch, or one worker handling two labels cannot satisfy parallel pickup. An independent unattended repeat must preserve the same admission and gaming safeguards.
+
 A verdict must name the **specific function and external edge tested**. One passing dimension cannot certify the other fifteen, and a rung-1 checklist cannot satisfy the later full-blackout endurance rung. Do not advance #3026 from document publication, ordinary PR checks or an unreviewed evidence packet alone.
 
 ## Coverage checklist: every existing dimension
@@ -38,7 +40,7 @@ A verdict must name the **specific function and external edge tested**. One pass
 | `local-observation-and-search` | Can host/device state be inspected with no third-party relay or quota? | Machine-authenticated local probe and offline-mode receipts |
 | `local-coding-building-and-testing` | Can safe bounded source/test construction run without Codex, GitHub Actions or a metered remote shell? | Exact path/worker/commit/test proof in isolated custody |
 | `independent-local-review` | Does a hosted reviewer remain required for source qualification? | Independently qualified local reviewer, non-self-review and adversarial artifact proof |
-| `worker-and-controller-endurance` | Does worker pickup require a cloud controller or metered schedule? | Two sequential unattended SELECT–CLAIM–physical PICKUP–terminal cycles |
+| `worker-and-controller-endurance` | Does worker pickup require a cloud controller or metered schedule? | Two overlapping, independently admitted, resource-disjoint seed SELECT–CLAIM–physical PICKUP–source/test executions with separate terminal receipts, plus an unattended repeat cycle |
 | `core-daemon-self-repair` | Does repair stop when an external API or chat session is unavailable? | Daemon survival and bounded repair after network loss/restart |
 | `sovereign-commander-remote-operation` | Is a paid cloud relay essential to operator-controlled remote machine observation/action? | Authorized private route, local fallback, terminal receipt and operator scope |
 | `storage-backup-and-restore` | Are backups dependent on a cloud account or inaccessible keys? | Restored local snapshot and verified integrity with cloud disconnected |
