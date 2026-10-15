@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -14,6 +15,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'original-source-custody-census',
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
@@ -86,6 +88,7 @@ const ALLOWED_FIELDS = new Set([
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
+const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -1949,6 +1952,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       actionId === 'status'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
+      || actionId === 'original-source-custody-census'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
@@ -2188,6 +2192,69 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // The canonical owner-attested GitHub mailbox already supplies fixed authority.
   // Sample directly in this existing process, not by recycling the long-lived
   // Commander: diagnostic observation must never start a repair guardian.
+  if (shape.command.remoteAction === 'original-source-custody-census') {
+    // Single fixed unprivileged sampler. Never execute the mutable checkout
+    // script or accept user-supplied process IDs, paths, launch arguments or keys.
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const sourceBytes = committed.stdout;
+    const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
+      ? Buffer.from(sourceBytes, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) return fail(
+      'SOVEREIGN_CUSTODY_CENSUS_COMMITTED_SOURCE_UNAVAILABLE',
+      { publicReceiptSafe: true, secretMaterialReturned: false },
+    );
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 16 * 1024 });
+    let rawCensus = null;
+    try {
+      if (sampled.ok && sampled.stdout.length <= 8_000) rawCensus = JSON.parse(sampled.stdout);
+    } catch {}
+    const custody = inspectOriginalSourceCustodyCensusV1(rawCensus);
+    if (!sampled.ok || custody.observable !== true
+      || custody.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD') {
+      return fail('SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE', {
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const inspection = Object.freeze({
+      originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+      inspectedAtUtc: rawCensus.inspectedAtUtc,
+      checkoutPresent: rawCensus.checkoutPresent,
+      aclReadable: rawCensus.aclReadable,
+      candidateProcessCount: rawCensus.candidateProcessCount,
+      stephanosScheduledTaskCount: rawCensus.stephanosScheduledTaskCount,
+      blockers: custody.blockers,
+      historicalExecutionOutcome: 'UNKNOWN',
+      independentWindowsExclusionProven: false,
+      independentOperatorApprovalProven: false,
+      leaseReleaseAuthorized: false,
+      sourceMutationAuthorized: false,
+      finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    });
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+      remoteAction: 'original-source-custody-census',
+      sourceHead: observedHead,
+      inspection,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, inspection })).digest('hex'),
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+      originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+      sourceMutationAllowed: false, arbitraryShellAllowed: false,
+      mergeAuthority: false, vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result,
+    });
+  }
+
   if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
     // Read exactly the blob from the SHA-approved immutable Git tree.
     // Never execute a checkout pathname: diff --quiet can be bypassed by
