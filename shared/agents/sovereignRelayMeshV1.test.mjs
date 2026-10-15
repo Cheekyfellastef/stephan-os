@@ -340,7 +340,7 @@ test('relay retains settled carrier failure while the next guard cycle is in fli
   assert.equal(status.duplicateExecutionAllowed, false);
 });
 
-test('fast relay that remains in flight beyond stall threshold uses safe mailbox fallback', () => {
+test('stalled fast relay reports recovery without asserting unproven shared-lock fallback', () => {
   assert.equal(SOVEREIGN_RELAY_FAST_STALL_MS, 90_000);
   const now = new Date('2026-10-15T18:50:00.000Z');
   const previousStatus = { carrierHealthy: true, blocker: '' };
@@ -359,9 +359,33 @@ test('fast relay that remains in flight beyond stall threshold uses safe mailbox
   assert.equal(stalled.carrierHealthy, false);
   assert.equal(stalled.status, 'ATTENTION_REQUIRED');
   assert.equal(stalled.fastCycleStalled, true);
-  assert.equal(stalled.deliveryState, 'FALLBACK_COVERED');
+  assert.equal(stalled.deliveryState, 'RECOVERING');
+  assert.equal(stalled.fallbackCovered, false);
+  assert.equal(stalled.scheduledMailboxFallbackExpected, true);
   assert.equal(stalled.blocker, 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED');
   assert.equal(stalled.duplicateExecutionAllowed, false);
   assert.equal(stalled.retryIdentityPreserved, true);
   assert.equal(stalled.sourceMutationAllowed, false);
+});
+
+test('stalled relay preserves prior carrier blocker without claiming fallback coverage', () => {
+  const now = new Date('2026-10-15T19:00:00.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS + 10),
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    },
+    consecutiveCarrierFailures: 3,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.deliveryState, 'RECOVERING');
+  assert.equal(status.fallbackCovered, false);
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.duplicateExecutionAllowed, false);
 });
