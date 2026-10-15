@@ -1,38 +1,22 @@
-# Original r7 independent Windows custody witness: commissioning audit V1
+# Goal #3123: read-only Windows witness commissioning projection
 
-Parent: #2961, original attempt #2962 revision 7. This design deliberately keeps **diagnostics**, **physical Windows custody**, **cryptographic approval** and **canonical lease reconciliation** separate.
+**Source-only and non-authoritative.** This narrowly scoped change provides a JavaScript parser for an untrusted commissioning-census JSON observation and tests that every result stays on HOLD. It does NOT include an executable Windows census, a Windows service installer, an OS exclusion witness, a signer or source/lease authority.
 
-## Scope of this PR
+## What this change does
 
-- Add `scripts/windows/audit-original-r7-witness-commissioning-readonly.ps1`: fixed no-argument Windows PowerShell 5.1 census for service `StephanosOriginalR7CustodyWitness`, the exact `critical-2962-elastic-goal-r7-lease` process-candidate count, and number of Stephanos scheduled tasks. It emits one redacted JSON observation. It does not emit command lines, PIDs, accounts, private paths, tokens or public/private key data.
-- Add `shared/agents/originalR7WitnessCommissioningAuditV1.mjs`: strict bounded-time, exact-identity projection of that observation into explicit gaps. A running service and zero visible process candidates **never grant** an OS exclusion witness, actual signer, lease release, source mutation, operator approval or real building.
-- Tests cover absent/stopped service, unknown inventory, forged/caller-supplied privilege flags, stale/mismatched identities and prohibited Windows mutations.
+- Adds `projectOriginalR7WitnessCommissioningAuditV1` under `shared/agents/`, bound to the existing exact repository, historical `critical-2962-elastic-goal-r7-lease`, and `StephanosOriginalR7CustodyWitness` service identity.
+- Requires a fresh exact-format observation and rejects malformed, stale, identity-mismatched or user-forged privilege fields.
+- Exposes opaque blockers for absent/unhealthy service and incomplete process/task inventory.
+- Treats even `RUNNING` plus zero observed processes as insufficient for actual source denial.
+- Every projection always denies authenticated witness, source mutation, privileged install, operator approval, physical pickup and lease release. Historical execution remains `UNKNOWN`.
+- Retains negative regression tests for malicious authority assertions, stale timestamps, absent service and hidden/unknown inventory.
 
-The audit is **not an independent witness service**. It cannot prove all writers stopped, negative write tests, WMI/COM/task denial or enforce an ACL. Its precise purpose is to identify the outstanding native host commissioning steps without accidentally accepting untrusted inventory as a privileged receipt. This code has no installer, signer or source change under the original r7 custody lease.
+## Windows-script security boundary remains separate
 
-## Actual native witness service required next
+The previously proposed `scripts/windows/audit-original-r7-witness-commissioning-readonly.ps1` is **not in this final PR diff or protected main**. It remains in the prior PR branch history for audit, but cannot be installed or treated as reviewed production code. Its independent review returned a P0 `unsupported-high-risk-surface`: a qualified authenticated Windows security specialist must review exact script bytes, identity, current head/base and fixed operation before that script can be separately proposed for protected merge or use on Battle Bridge. Removing it from the present PR does **not** convert the rejected Windows script into a reviewed capability.
 
-The real production component must be a **separately installed and protected Windows service**, outside the Stephanos source tree, with one narrowly commissioned SID and an OS-protected signing key that neither source builder nor Core daemon can read or invoke freely.
+This projection is usable only with trustworthy separately obtained input for *diagnostics*. Untrusted input is never physical writer-exclusion proof. No online Battle Bridge observation, authorized Windows service commissioning, old-writer principal negative write tests, protected signer keys or canonical cancellation/CAS is claimed.
 
-Required provisioning and independent assurance:
+## Remaining physical acceptance
 
-1. Preserve the real Battle Bridge checkout and all eight previously observed dirty entries. Capture exact source identity, original `r7` lease digest and custody history from the canonical mission/lease store with immutable timestamps. Do not infer old execution success from current process state.
-2. On a separately authorised protected Windows session, commission `StephanosOriginalR7CustodyWitness` under its own dedicated service principal with least privilege and enforce protected audit log / configuration ACLs. Its signer key must be outside the repository, GitHub, relay, source-worker, OpenClaw and user-writable locations. Prove the actual token SID, service executable identity, permissions and inability of ordinary source writers to use its key.
-3. Independently identify the **exact original source writer principals**, all direct descendants and eligible out-of-job launch routes. Enforce prospective denial at the OS boundary: exact original worktree ACL, job/process ownership, scheduled task and service re-entry, WMI/COM and direct starts. Verify with actual negative attempts for each applicable route and a positive control showing that unrelated Stephanos and gaming remain functional. If any original principal can still mutate source, refuse attestation.
-4. Repeat the physical checks after a bounded observation interval with trustworthy Windows event/audit instrumentation; bind the non-spoofable evidence log and deny-policy digest, exact lease/mission/execution ID, worktree, branch, head and current timestamp. Fail closed if a route is unobservable, protection expires, checkout changes unexpectedly, or proof depends solely on process count or boolean flags.
-5. Only after **independent security specialist review of the actual service code, signer isolation and host ACLs**, allow the protected service to create an Ed25519 OS witness signature domain `stephanos.legacy-orphan-os-witness.v1\0` with the exact claims required by `stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js`. Never allow the caller to provide allegedly observed booleans or signing keys.
-6. A distinct protected operator signer, independent of the witness service and source worker, reviews the exact evidence digest, approves **quarantine original execution only**, and signs under `stephanos.legacy-orphan-operator-approval.v1\0`. Neither signature is a reconstructed historical completion receipt. Keep private keys, trusted public-key pins, and protected evidence files outside checkout and mailbox.
-7. Existing `authenticateLegacyOrphanQuarantine`, exact mission/store lock, durable cancellation audit and lease CAS reconciler must all verify the latest evidence. An authenticated **eligibility-only** witness cannot release the lease by itself. Only the existing canonical cancellation/reconciler may do so, with a separate scoped operator approval.
-8. Following legitimate release, prove real work selection, claim, **physical pickup**, source edits, tests, protected merge, deployment and two unattended refill cycles. Independent Seed Canopy and Rescue Island remain separate and should operate on disjoint unclaimed work while this repair proceeds.
-
-## Acceptance before live commissioning
-
-- Independently reviewed Windows service source, pinned executable bytes, dedicated service SID, auditable least-privilege host deployment, isolated keys and negative tests for all writer-reentry routes.
-- Machine-sourced, independently protected evidence for actual Windows ACL denial and out-of-job writer non-access. No raw paths, tokens or PIDs in public receipts.
-- Independent signing roots: signer cannot use operator key, operator cannot use witness service key, worker cannot use either.
-- Signed current original-r7 bound attestation accepted by existing verifier with `eligibilityOnly=true`, `leaseReleaseAuthority=false`, historical outcome `UNKNOWN`. Stale/replayed/mismatched records rejected.
-- No new generic executor or controller, no source checkout mutation, no force-push, no unqualified service installation, no skipped specialist/protected approval.
-
-## Status boundary
-
-This PR builds a **first read-only commissioning audit**, not the privileged service. The source can merge only after independent review; no Windows task/service/ACL installation should run from this change. The original lease remains on HOLD until the *separate* actual native issuer, operator signing and canonical reconciliation are verified.
+The original source revision-7 lease remains HOLD. A separately provisioned and least-privileged native Windows witness must identify all original source-writer/re-entry routes (direct, WMI/COM, services and Scheduled Tasks), enforce independently verified exclusion on the exact original write paths, prove current negative writes and durable protected audit, and use two independent OS-protected Ed25519 signing roots. Only the existing `authenticateLegacyOrphanQuarantine` verifier and canonical mission cancellation/reconciler can allow the narrow approved quarantine/release; historical outcome remains `UNKNOWN`. Keep existing Battle Bridge dirty entries, unrelated gaming resources and Seed/Rescue source ownership untouched.

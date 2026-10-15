@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import {
   ORIGINAL_R7_WITNESS_AUDIT_SCHEMA,
   projectOriginalR7WitnessCommissioningAuditV1 as project,
@@ -95,24 +94,4 @@ test('forged eligibility, authority, wrong identity, unknown evidence or old sna
   for (const value of [null, undefined, {}, [], 1]) {
     assert.equal(inspect(value).observable, false);
   }
-});
-
-test('Windows census is fixed, redacted, no arbitrary commands, signer or mutation surface', async () => {
-  const script = await readFile(
-    new URL('../../scripts/windows/audit-original-r7-witness-commissioning-readonly.ps1', import.meta.url),
-    'utf8',
-  );
-  assert.match(script, /Get-CimInstance -ClassName Win32_Service/);
-  assert.match(script, /Get-ScheduledTask -ErrorAction Stop/);
-  assert.match(script, /Win32_Process/);
-  // A protected Windows process may hide CommandLine: treat it as UNKNOWN,
-  // never as an absent original writer.
-  assert.match(script, /\$null -eq \$_\.CommandLine/);
-  assert.match(script, /if \(\$unreadable\.Count -gt 0\)/);
-  assert.match(script, /\$unknown \+= 'PROCESS_ENUMERATION_UNAVAILABLE'/);
-  assert.match(script, /COMMISSIONING_NOT_PROVEN/);
-  assert.match(script, /leaseReleaseAuthorized = \$false/);
-  assert.match(script, /sourceMutationAuthorized = \$false/);
-  assert.doesNotMatch(script, /(?:^|\n)\s*param\s*\(/i);
-  assert.doesNotMatch(script, /\b(?:Set-Acl|Stop-Process|Start-Process|New-Service|Set-Service|Restart-Service|Register-ScheduledTask|Unregister-ScheduledTask|Start-ScheduledTask|Stop-ScheduledTask|Invoke-Expression|Invoke-RestMethod|Invoke-WebRequest|Remove-Item|Set-ItemProperty|New-ItemProperty|git\s+(?:push|reset|merge))\b/i);
 });
