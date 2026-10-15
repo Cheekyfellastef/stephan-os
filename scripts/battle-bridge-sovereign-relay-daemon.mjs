@@ -212,7 +212,7 @@ export function buildSovereignRelayInFlightStatus({
   return Object.freeze({
     ...relayWorkspaceStatus({
       timestampUtc,
-      status: fallbackCovered || (!priorCarrierHealthy && consecutiveCarrierFailures > 0)
+      status: fastCycleStalled || fallbackCovered || (!priorCarrierHealthy && consecutiveCarrierFailures > 0)
         ? 'ATTENTION_REQUIRED' : 'READY',
       summary: fastCycleStalled
         ? 'Fast relay cycle stalled; scheduled mailbox pickup remains unproven.'
