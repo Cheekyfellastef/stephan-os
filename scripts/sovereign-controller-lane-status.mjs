@@ -248,6 +248,19 @@ export function buildSovereignControllerLaneStatus({
     refillState = 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
   }
 
+  // Reuse the per-goal build-truth witness. Global material-lane occupancy
+  // cannot attest that any particular selected goal was physically picked up.
+  const selectedMaterialPickupProvenCount = buildStephanosBuildTruth({
+    capturedAtUtc: new Date(safeNowMs).toISOString(),
+    physical,
+    logical,
+    lanes: { activeMaterialLaneCount, refillHealth, refillState },
+  }).goals.filter((goal) => (
+    goal.selectedForAdmission === true
+    && goal.state === 'BUILDING'
+    && goal.proofRefs.length > 0
+  )).length;
+
   const finalVerdict = refillHealth === 'RED'
     ? 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED'
     : refillHealth === 'AMBER'
@@ -265,6 +278,7 @@ export function buildSovereignControllerLaneStatus({
     lanes: Object.freeze({
       targetMaterialLanes,
       activeMaterialLaneCount,
+      selectedMaterialPickupProvenCount,
       activeLaneClaimCount,
       reportedMaterialLaneCountSum,
       occupancyPercent: targetMaterialLanes > 0
