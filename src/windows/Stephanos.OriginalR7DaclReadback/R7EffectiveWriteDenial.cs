@@ -1,0 +1,246 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
+
+namespace Stephanos.OriginalR7DaclReadback;
+
+// A native observation, NEVER a signed custody assertion. In particular,
+// a denied open does not prove the absence of old writable handles/mappings,
+// alternate tokens, task/service authority, COM/WMI reentry or key isolation.
+public sealed record R7EffectiveWriteObservation(
+    string Classification,
+    bool OriginalTokenMatched,
+    bool DataWriteOpenDenied,
+    bool DaclWriteOpenDenied,
+    bool OwnerWriteOpenDenied,
+    bool TargetIdentityStable,
+    bool OriginalPrincipalOwnsTarget,
+    bool TokenHasBypassAuthority)
+{
+    public bool AuthenticatedOsWitness => false;
+    public bool LeaseReleaseAuthorized => false;
+    public bool SourceMutationAuthorized => false;
+    public bool HistoricalReceiptReconstructed => false;
+}
+
+public static class R7EffectiveWriteDenial
+{
+    private const uint FileWriteData = 0x2; // FILE_ADD_FILE for directories
+    private const uint FileAppendData = 0x4;
+    private const uint WriteDac = 0x40000;
+    private const uint WriteOwner = 0x80000;
+    private const uint ReadControl = 0x20000;
+    private const uint ReadAttributes = 0x80;
+    private const uint ShareReadWriteDelete = 0x7;
+    private const uint OpenExisting = 3;
+    private const uint OpenReparsePointAndBackupSemantics = 0x02200000;
+    private const uint ReparseAttribute = 0x400;
+    private const int AccessDenied = 5;
+    private const int InsufficientBuffer = 122;
+    private const int MaxTokenBytes = 65536;
+
+    private static R7EffectiveWriteObservation Held(string code, bool matched = false)
+        => new(code, matched, false, false, false, false, false, true);
+
+    // The host must supply a real retained OS token for the independently
+    // identified original principal. Never manufacture a token from a SID,
+    // drop its privileges/groups, or use the witness's token as a substitute.
+    // This method performs OPEN_EXISTING access requests only. It does not
+    // create files, modify data/ACLs, adjust privileges or launch processes.
+    public static R7EffectiveWriteObservation Observe(
+        string targetPath, SafeAccessTokenHandle originalToken, string expectedOriginalSid)
+    {
+        if (!OperatingSystem.IsWindows() || originalToken is null
+            || originalToken.IsClosed || originalToken.IsInvalid)
+            return Held("R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE");
+        bool retained = false;
+        try
+        {
+            originalToken.DangerousAddRef(ref retained);
+            SecurityIdentifier expected = new(expectedOriginalSid);
+            using WindowsIdentity identity = new(originalToken.DangerousGetHandle());
+            if (identity.User is null || !identity.User.Equals(expected))
+                return Held("R7_NATIVE_ORIGINAL_TOKEN_IDENTITY_MISMATCH");
+
+            // The token remains unmodified. Disabled privileges are included:
+            // a writer can enable a privilege already present in its token.
+            bool bypass = HasBypassAuthority(originalToken, identity);
+            string path = NormalizeLocalPath(targetPath);
+            if (!AncestorsAreOrdinary(path))
+                return Held("R7_NATIVE_TARGET_REPARSE_OR_UNAVAILABLE", true);
+
+            using SafeFileHandle before = Open(path, ReadControl | ReadAttributes);
+            if (before.IsInvalid || !TryIdentity(before, out FileIdentity first))
+                return Held("R7_NATIVE_TARGET_IDENTITY_UNAVAILABLE", true);
+            SecurityIdentifier? owner = ReadOwner(before);
+            if (owner is null) return Held("R7_NATIVE_TARGET_OWNER_UNAVAILABLE", true);
+
+            // Never let failed impersonation fall through to the service's
+            // identity. RunImpersonated throws and restores on every exit.
+            var opens = WindowsIdentity.RunImpersonated(originalToken, () => new[] {
+                Request(path, FileWriteData),
+                Request(path, FileAppendData),
+                Request(path, WriteDac),
+                Request(path, WriteOwner)
+            });
+
+            using SafeFileHandle after = Open(path, ReadControl | ReadAttributes);
+            bool stable = !after.IsInvalid && TryIdentity(after, out FileIdentity last)
+                && first == last && AncestorsAreOrdinary(path);
+            bool owns = owner.Equals(expected);
+            bool dataDenied = opens[0] == AccessDenied && opens[1] == AccessDenied;
+            bool daclDenied = opens[2] == AccessDenied;
+            bool ownerDenied = opens[3] == AccessDenied;
+            string classification = !stable ? "R7_NATIVE_TARGET_CHANGED"
+                : opens.Any(code => code != 0 && code != AccessDenied)
+                    ? "R7_NATIVE_ACCESS_RESULT_UNKNOWN"
+                : !dataDenied ? "R7_NATIVE_ORIGINAL_TOKEN_CAN_WRITE"
+                : owns ? "R7_NATIVE_DATA_DENIED_BUT_ORIGINAL_WRITER_OWNS_TARGET"
+                : bypass ? "R7_NATIVE_DATA_DENIED_BUT_TOKEN_CAN_BYPASS_POLICY"
+                : !daclDenied || !ownerDenied ? "R7_NATIVE_POLICY_REWRITE_NOT_DENIED"
+                : "R7_NATIVE_OPEN_DENIAL_OBSERVED_NOT_CUSTODY";
+            return new(classification, true, dataDenied, daclDenied, ownerDenied,
+                stable, owns, bypass);
+        }
+        catch
+        {
+            // Private Windows paths, SID, token, DACL and exception messages
+            // must not escape through any public mailbox projection.
+            return Held("R7_NATIVE_WRITE_PROBE_FAILED_CLOSED");
+        }
+        finally { if (retained) originalToken.DangerousRelease(); }
+    }
+
+    private static string NormalizeLocalPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)
+            || path.Length > 240 || path.Contains('\0') || path.StartsWith(@"\\")
+            || path.Length < 4 || !char.IsAsciiLetter(path[0]) || path[1] != ':'
+            || path[2] != '\\' || path.AsSpan(2).Contains(':'))
+            throw new ArgumentException();
+        string[] parts = path[3..].Split('\\');
+        if (parts.Any(p => p.Length == 0 || p is "." or ".."
+            || p.EndsWith('.') || p.EndsWith(' '))) throw new ArgumentException();
+        return Path.GetFullPath(path);
+    }
+
+    private static bool AncestorsAreOrdinary(string path)
+    {
+        string? current = path;
+        for (int count = 0; current is not null && count < 128; count++)
+        {
+            using SafeFileHandle handle = Open(current, ReadAttributes);
+            if (handle.IsInvalid || !GetFileInformationByHandle(handle, out ByHandleInfo info)
+                || (info.Attributes & ReparseAttribute) != 0) return false;
+            DirectoryInfo? parent = Directory.GetParent(current);
+            if (parent is null) return true;
+            current = parent.FullName;
+        }
+        return false;
+    }
+
+    private static SafeFileHandle Open(string path, uint access)
+        => CreateFileW(path, access, ShareReadWriteDelete, IntPtr.Zero,
+            OpenExisting, OpenReparsePointAndBackupSemantics, IntPtr.Zero);
+
+    private static int Request(string path, uint access)
+    {
+        using SafeFileHandle handle = Open(path, access);
+        return handle.IsInvalid ? Marshal.GetLastWin32Error() : 0;
+    }
+
+    private readonly record struct FileIdentity(uint Volume, uint High, uint Low);
+
+    private static bool TryIdentity(SafeFileHandle handle, out FileIdentity identity)
+    {
+        identity = default;
+        if (!GetFileInformationByHandle(handle, out ByHandleInfo info)
+            || (info.Attributes & ReparseAttribute) != 0 || info.Links != 1) return false;
+        identity = new(info.VolumeSerial, info.IndexHigh, info.IndexLow);
+        return true;
+    }
+
+    private static SecurityIdentifier? ReadOwner(SafeFileHandle handle)
+    {
+        uint code = GetSecurityInfo(handle, 1 /* SE_FILE_OBJECT */, 1 /* OWNER */,
+            out IntPtr owner, out _, out _, out _, out IntPtr descriptor);
+        if (code != 0 || descriptor == IntPtr.Zero) return null;
+        try { return owner == IntPtr.Zero ? null : new SecurityIdentifier(owner); }
+        finally { LocalFree(descriptor); }
+    }
+
+    private static bool HasBypassAuthority(SafeAccessTokenHandle token, WindowsIdentity identity)
+    {
+        if (identity.IsSystem) return true;
+        SecurityIdentifier administrators = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+        // Include deny-only Administrators membership. A split admin token is
+        // insufficient evidence that an old actor cannot regain elevation.
+        if (identity.Groups?.Contains(administrators) == true) return true;
+        byte[] elevation = TokenBytes(token, 18 /* TokenElevationType */);
+        if (BitConverter.ToInt32(elevation) != 1 /* TokenElevationTypeDefault */) return true;
+        byte[] privileges = TokenBytes(token, 3 /* TokenPrivileges */);
+        uint count = BitConverter.ToUInt32(privileges);
+        if (count > 256 || privileges.Length != 4 + count * 12) throw new InvalidDataException();
+        foreach (string name in new[] { "SeBackupPrivilege", "SeRestorePrivilege",
+            "SeTakeOwnershipPrivilege", "SeDebugPrivilege", "SeTcbPrivilege",
+            "SeImpersonatePrivilege", "SeAssignPrimaryTokenPrivilege", "SeCreateTokenPrivilege",
+            "SeLoadDriverPrivilege" })
+        {
+            if (!LookupPrivilegeValueW(null, name, out Luid expected)) throw new Win32Exception();
+            for (int i = 0; i < count; i++)
+            {
+                int at = 4 + i * 12;
+                if (BitConverter.ToUInt32(privileges, at) == expected.Low
+                    && BitConverter.ToInt32(privileges, at + 4) == expected.High) return true;
+            }
+        }
+        return false;
+    }
+
+    private static byte[] TokenBytes(SafeAccessTokenHandle token, int kind)
+    {
+        if (GetTokenInformation(token, kind, IntPtr.Zero, 0, out int size)
+            || Marshal.GetLastWin32Error() != InsufficientBuffer
+            || size < 4 || size > MaxTokenBytes) throw new Win32Exception();
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformation(token, kind, buffer, size, out int actual)
+                || actual != size) throw new Win32Exception();
+            byte[] bytes = new byte[size];
+            Marshal.Copy(buffer, bytes, 0, size);
+            return bytes;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleInfo
+    {
+        internal uint Attributes;
+        internal System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+        internal uint VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { internal uint Low; internal int High; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string name, uint access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleInfo info);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int kind,
+        IntPtr buffer, int size, out int actual);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint information,
+        out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
+}
