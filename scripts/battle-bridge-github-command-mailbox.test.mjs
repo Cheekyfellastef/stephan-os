@@ -3356,3 +3356,62 @@ test('native capacity public projection rejects unverifiable head and untrusted 
     assert.doesNotMatch(JSON.stringify(posted), /Users|private-model/i);
   }
 });
+
+test('Island physical readback survives normal and core public mailbox projection without writer authority', () => {
+  const sha = 'a'.repeat(40);
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    privatePath: 'PRIVATE_ISLAND_PATH_NEVER_PUBLISH',
+  };
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+    remoteAction: 'rescue-island-readonly-boundary',
+    sourceHead: sha, proofHash: 'b'.repeat(64),
+    sourceMutationAllowed: false, originalSourceLeaseReleaseAllowed: false,
+    mergeAuthority: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    rescueIslandBoundary: scope, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'island-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: sha,
+    acceptedAt: '2026-10-16T20:20:00.000Z',
+    heartbeatAt: '2026-10-16T20:20:02.000Z',
+    completedAt: '2026-10-16T20:20:02.000Z', proofRefs: [],
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'island-readback-001', result: inner,
+    },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const out = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const observed = out.result.result.rescueIslandBoundary;
+    assert.equal(observed?.finalVerdict, 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED', String(limit));
+    assert.equal(observed.readOnly, true);
+    assert.equal(observed.workerStartAllowed, false);
+    assert.equal(observed.originalSourceLeaseReleaseAllowed, false);
+    assert.equal(observed.gamingBudgetAuthenticated, false);
+    assert.doesNotMatch(JSON.stringify(out), /PRIVATE_ISLAND_PATH_NEVER_PUBLISH/);
+  }
+  inner.rescueIslandBoundary = { ...scope, workerStartAllowed: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.rescueIslandBoundary, null);
+  inner.rescueIslandBoundary = scope;
+  inner.originalSourceLeaseReleaseAllowed = true;
+  const escalated = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(escalated.result.result.rescueIslandBoundary, null);
+});
