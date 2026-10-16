@@ -31,10 +31,12 @@ import {
 import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   listLatestSharedWorkspaceParticipantStatuses,
   resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
@@ -379,7 +381,24 @@ export function validateChatGptSharedWorkspaceResponseBody(body = '') {
   const errors = [];
   if (!content.startsWith(CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER)) errors.push('missing-response-marker');
   if (Buffer.byteLength(content, 'utf8') > MAX_COMMENT_BYTES) errors.push('response-body-too-large');
-  if (UNSAFE_REMOTE_TEXT.test(content)) errors.push('unsafe-response-text');
+  // JSON escaping is transport syntax, not a filesystem path. Inspect decoded
+  // keys and values as well as the prose outside the one JSON block.
+  const blocks = [...content.matchAll(/```json\s*([\s\S]*?)\s*```/gi)];
+  if (blocks.length !== 1) errors.push('response-json-block-invalid');
+  else {
+    try {
+      const payload = JSON.parse(blocks[0][1]);
+      const unsafeValue = (value) => {
+        if (typeof value === 'string') return UNSAFE_REMOTE_TEXT.test(value);
+        if (!value || typeof value !== 'object') return false;
+        return Object.entries(value).some(([key, child]) => UNSAFE_REMOTE_TEXT.test(key) || unsafeValue(child));
+      };
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) errors.push('response-json-invalid');
+      if (unsafeValue(payload) || UNSAFE_REMOTE_TEXT.test(content.replace(blocks[0][0], ''))) errors.push('unsafe-response-text');
+    } catch {
+      errors.push('response-json-invalid');
+    }
+  }
   return Object.freeze({ valid: errors.length === 0, errors });
 }
 
@@ -654,6 +673,71 @@ async function persistOnce({
   return writeAtomicJsonFn(workspaceRoot, segments, record, { repoRoot, nowMs });
 }
 
+// Publication may fail after an authenticated Q&A has already completed in the
+// authoritative workspace. Expiry forbids new cognition, not delivery of that
+// exact durable result. Recovery requires the original accepted receipt, exact
+// question, correlated answer and already-persisted private Canvas handoff.
+async function acceptedQaReceipt(request, readRecord) {
+  if (request.operation !== CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) return null;
+  const receiptId = receiptIdFor(request);
+  const loaded = await readRecord(['receipts', `${receiptId}.json`]);
+  const record = loaded?.record;
+  if (!loaded?.ok || record?.disposition !== 'BRIDGE_VERIFIED_PASS:WORKSPACE_QA_PASS') return null;
+  const atMs = Date.parse(text(record.timestampUtc));
+  if (!Number.isFinite(atMs)
+    || !validateSharedWorkspaceRecord(record, { nowMs: atMs }).valid
+    || record.kind !== SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
+    || record.receiptId !== receiptId
+    || record.participantId !== CHATGPT_BRIDGE_PARTICIPANT_ID
+    || record.receivedRecordId !== request.requestId
+    || record.correlationId !== request.correlationId
+    || text(record.relatedIssue) !== text(request.relatedGoal)
+    || text(record.relatedPr) !== text(request.relatedPr)) return null;
+  return record;
+}
+
+async function recoverPersistedQaPublication({ request, observed, nowMs, readRecord, verifyRequestFn, persistConversationCanvasFn, paths, readFileFn }) {
+  const receipt = await acceptedQaReceipt(request, readRecord);
+  if (!receipt) return null;
+  const blocked = (reason) => ({ ok: false, reason });
+  const atMs = Date.parse(receipt.timestampUtc);
+  if (atMs > nowMs || atMs < Date.parse(request.timestampUtc)) return blocked('WORKSPACE_QA_RECOVERY_TIME_REJECTED');
+  const verification = verifyRequestFn(request, {
+    authenticated: observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER,
+    transportConfigured: true,
+    replayStore: createInMemoryReplayStore(),
+    nowMs: atMs,
+    timestampUtc: receipt.timestampUtc,
+  });
+  if (!verification.accepted) return blocked('WORKSPACE_QA_RECOVERY_AUTHORIZATION_REJECTED');
+  const suppliedQuestion = request.boundedPayload?.questionRecord;
+  const question = await readRecord(qaQuestionSegments(suppliedQuestion));
+  if (!question?.ok || !sameJson(question.record, suppliedQuestion)
+    || !qaRequestLineageMatches(request, question.record)
+    || !decodeStephanosWorkspaceQuestionRecord(question.record, { workspaceValidationOptions: { nowMs: atMs } }).valid) {
+    return blocked('WORKSPACE_QA_RECOVERY_QUESTION_REJECTED');
+  }
+  const answer = await readRecord(qaAnswerSegments(question.record));
+  if (!answer?.ok || text(answer.record?.timestampUtc) !== receipt.timestampUtc
+    || !qaAnswerLineageMatches(question.record, answer.record)
+    || !decodeStephanosWorkspaceAnswerRecord(answer.record, {
+      expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+      workspaceValidationOptions: { nowMs: atMs },
+    }).valid) return blocked('WORKSPACE_QA_RECOVERY_ANSWER_REJECTED');
+  const canvas = await persistConversationCanvasFn({
+    questionRecord: question.record,
+    answerRecord: answer.record,
+    workspaceRoot: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    nowMs: atMs,
+    readWorkspaceRecordFn: ({ segments }) => readRecord(segments),
+    readFileFn,
+    writeAtomicJsonFn: async () => ({ ok: false, reason: 'RECOVERY_REQUIRES_EXISTING_CANVAS_HANDOFF', bytes: 0 }),
+  });
+  if (!canvas?.ok || canvas.resumed !== true) return blocked('WORKSPACE_QA_RECOVERY_CANVAS_REJECTED');
+  return { ok: true, verification, questionRecord: question.record, answerRecord: answer.record, canvas, atMs };
+}
+
 export async function runChatGptSharedWorkspaceGitHubRelay({
   now = new Date(),
   env = process.env,
@@ -679,6 +763,16 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
+  const readRecord = (segments) => readWorkspaceRecordFn({
+    workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, segments, readFileFn,
+  });
+  const rejectedCompletionNeedsRecovery = async (request, completionId) => {
+    if (request.operation !== CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) return false;
+    const completion = await readRecord(['receipts', `${completionId}.json`]);
+    return completion?.ok
+      && completion.record?.disposition === 'RELAY_COMPLETE:BLOCKED_EXPIRED_REQUEST:REQUEST_REJECTED'
+      && Boolean(await acceptedQaReceipt(request, readRecord));
+  };
   let observed = adapter.readRequest();
   if (!observed?.ok) {
     return Object.freeze({
@@ -699,7 +793,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       repoRoot: paths.repoRoot,
       receiptId: cachedCompletionReceiptId,
       readFileFn,
-    })) {
+    }) && !await rejectedCompletionNeedsRecovery(cachedRequest, cachedCompletionReceiptId)) {
       return Object.freeze({
         ok: true,
         schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
@@ -748,7 +842,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     repoRoot: paths.repoRoot,
     receiptId: completionReceiptId,
     readFileFn,
-  })) {
+  }) && !await rejectedCompletionNeedsRecovery(request, completionReceiptId)) {
     return Object.freeze({
       ok: true,
       schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
@@ -761,7 +855,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   }
 
   const replayStore = createInMemoryReplayStore();
-  const verification = parsed.ok
+  let verification = parsed.ok
     ? verifyRequestFn(request, {
         authenticated: observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER,
         transportConfigured: true,
@@ -787,8 +881,26 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
   let answerWrite = { ok: true, reason: 'NO_ANSWER_WRITE_REQUIRED', bytes: 0 };
   let canvasPersistence = { ok: true, classification: 'NO_CANVAS_PERSISTENCE_REQUIRED', persisted: false, resumed: false };
+  const publicationRecovery = parsed.ok && verification.responseStatus === 'BLOCKED_EXPIRED_REQUEST'
+    ? await recoverPersistedQaPublication({ request, observed, nowMs, readRecord, verifyRequestFn, persistConversationCanvasFn, paths, readFileFn })
+    : null;
 
-  if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
+  if (publicationRecovery && !publicationRecovery.ok) {
+    // Preserve the accepted audit and any old rejection; invalid recovery must
+    // never replace authoritative success with a new terminal expiry result.
+    return Object.freeze({ ok: false, schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
+      classification: 'CHATGPT_SHARED_WORKSPACE_QA_PUBLICATION_RECOVERY_BLOCKED',
+      requestId: text(request.requestId), reason: publicationRecovery.reason, responsePublished: false });
+  }
+  if (publicationRecovery?.ok) {
+    verification = publicationRecovery.verification;
+    workspaceRecord = publicationRecovery.questionRecord;
+    answerRecord = publicationRecovery.answerRecord;
+    primaryWrite = { ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true };
+    answerWrite = { ...primaryWrite };
+    canvasPersistence = publicationRecovery.canvas;
+    deliveryStatus = 'WORKSPACE_QA_PASS';
+  } else if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
     if (request.operation === 'READ_CURRENT_STATUS') {
       const [loadStatus, workspaceProjection, participantStatusLoad] = await Promise.all([
         headTruthEvidenceLoader({
@@ -1131,7 +1243,17 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       summary: workspaceRecord.summary,
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
-    sanitizedAnswer: sanitizedConversationAnswerProjection(answerRecord, nowMs),
+    sanitizedAnswer: publicationRecovery?.ok ? {
+      ...sanitizedConversationAnswerProjection(answerRecord, publicationRecovery.atMs),
+      answeredAtUtc: answerRecord.timestampUtc,
+      freshness: staleQaQuestion(answerRecord, nowMs) ? 'STALE' : 'RECENT',
+    } : sanitizedConversationAnswerProjection(answerRecord, nowMs),
+    ...(publicationRecovery?.ok ? { publicationRecovery: {
+      classification: 'EXACT_PERSISTED_QA_PUBLICATION_RECOVERED',
+      acceptedAtUtc: new Date(publicationRecovery.atMs).toISOString(),
+      cognitionRepeated: false,
+      authorityWidening: false,
+    } } : {}),
     conversationCanvasHandoff: canvasPersistence?.ok && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
       ? {
           classification: text(canvasPersistence.classification),
@@ -1210,6 +1332,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     responseWrite: compactWriteResult(responseWrite),
     completionWrite: compactWriteResult(completionWrite),
     responsePublished: responseWrite.ok === true,
+    publicationRecovered: publicationRecovery?.ok === true,
   });
 }
 

@@ -155,7 +155,7 @@ jobs:
         run: node --test scripts/battle-bridge-github-command-mailbox.test.mjs
 
       - name: Test participant bridge contract and live relay
-        run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
+        run: node --test shared/agents/chatGptParticipantBridgeV1.test.mjs shared/agents/chatGptParticipantBridgeV1.qa-relay.test.mjs shared/agents/chatGptParticipantBridgeV1.qa-canvas-relay.test.mjs scripts/chatgpt-shared-workspace-github-relay.test.mjs
 
       - name: Test visibility observer, mirror and combined runner
         run: node --test shared/agents/remoteCodexTaskVisibility.test.mjs scripts/remote-codex-task-visibility-observer.test.mjs scripts/remote-codex-github-mirror-publisher.test.mjs scripts/battle-bridge-worker-watchdog-runner.test.mjs scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
