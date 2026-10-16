@@ -3415,3 +3415,62 @@ test('Island physical readback survives normal and core public mailbox projectio
   const escalated = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(escalated.result.result.rescueIslandBoundary, null);
 });
+
+test('mobile custody census survives normal and core public receipt projections without secrets', () => {
+  const head = 'a'.repeat(40);
+  const inspection = {
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc: '2026-10-15T15:30:00.000Z',
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 6,
+    blockers: ['INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED', 'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN'],
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    rawPrivateHostPath: 'PRIVATE_CUSTODY_HOST_PATH',
+  };
+  const inner = {
+    ok: true, remoteAction: 'original-source-custody-census',
+    finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+    sourceHead: head, proofHash: 'b'.repeat(64),
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    inspection, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mobile-custody-census-receipt-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE', expectedHead: head,
+    acceptedAt: '2026-10-15T15:30:00.000Z',
+    heartbeatAt: '2026-10-15T15:30:02.000Z',
+    completedAt: '2026-10-15T15:30:02.000Z', proofRefs: [],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'mobile-custody-census-receipt-001', result: inner },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const publicReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const projected = publicReceipt.result.result.originalSourceCustodyCensus;
+    assert.ok(projected, 'custody census missing at limit ' + limit);
+    assert.equal(projected.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+    assert.equal(projected.candidateProcessCount, 0);
+    assert.equal(projected.stephanosScheduledTaskCount, 6);
+    assert.equal(projected.leaseReleaseAuthorized, false);
+    assert.deepEqual(projected.blockers, inspection.blockers);
+    assert.doesNotMatch(JSON.stringify(publicReceipt), /PRIVATE_CUSTODY_HOST_PATH/);
+  }
+  inner.inspection = { ...inspection, leaseReleaseAuthorized: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, candidateProcessCount: 1_000_001 };
+  const unbounded = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(unbounded.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, blockers: [...inspection.blockers, 'SECRET_PATH_C:\\private'] };
+  const injected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(injected.result.result.originalSourceCustodyCensus, null);
+  assert.doesNotMatch(JSON.stringify(injected), /SECRET_PATH_C:/);
+});
