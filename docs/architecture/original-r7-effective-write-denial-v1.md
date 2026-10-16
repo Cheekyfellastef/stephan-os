@@ -18,7 +18,10 @@ regain elevation is not attested as safely excluded.
 Object identity comes from open Windows handles (volume and file index), is
 checked before/after impersonation, and refuses hard-linked files and reparse
 points. Ancestors must be readable and non-reparse. Alternate data streams,
-UNC/device names, traversal and ambiguous trailing characters are refused.
+UNC/device names (including DOS devices with extensions), traversal, alternate
+separators, wildcard characters and ambiguous trailing characters are refused.
+The supplied path must already equal its full normalized form; evidence is
+never silently rebound to a different normalized target.
 All output is bounded static classifications and booleans: no SID, path,
 process ID, token content, ACL, native exception text or private file data.
 
@@ -38,7 +41,7 @@ Run the existing test project with .NET 8 on Windows:
 dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
 ```
 
-An actual host test executed 31 checks successfully on 16 October 2026. These
+An actual host test executed 54 checks successfully on 16 October 2026. These
 are test-process tokens and disposable files, **not the original r7 actor or
 production source**. No positive production custody claim follows.
 

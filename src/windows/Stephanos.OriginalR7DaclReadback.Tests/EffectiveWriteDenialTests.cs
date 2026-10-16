@@ -61,12 +61,19 @@ internal static class EffectiveWriteDenialTests
                 "MISSING_REAL_TOKEN_MUST_FAIL_CLOSED");
 
             foreach (string bad in new[] { "relative.txt", @"\\server\share\probe.txt",
-                file + ":stream", Path.Combine(scratch, "..", "probe.txt"), file + "." })
+                file + ":stream", Path.Combine(scratch, "..", "probe.txt"), file + ".",
+                // Before normalization hardening this resolves to the real
+                // existing writable sentinel and produced a stable observation.
+                scratch + "/../" + Path.GetFileName(scratch) + "\\probe.txt",
+                scratch + "\\NUL.txt", scratch + "\\COM1.txt", scratch + "\\LPT\u00b9.txt",
+                scratch + "\\NUL .txt", scratch + "\\*.txt" })
             {
                 var malformed = R7EffectiveWriteDenial.Observe(bad, identity.AccessToken, sid);
                 NoAuthority(malformed);
                 Check(!malformed.DataWriteOpenDenied && !malformed.TargetIdentityStable,
                     "NON_CANONICAL_PATH_MUST_NOT_CREATE_PROOF");
+                Check(malformed.Classification == "R7_NATIVE_WRITE_PROBE_FAILED_CLOSED",
+                    "NON_CANONICAL_PATH_MUST_BE_REJECTED_BEFORE_NATIVE_OPEN");
             }
 
             // The ACL changes only this disposable test file. The native

@@ -116,14 +116,27 @@ public static class R7EffectiveWriteDenial
     private static string NormalizeLocalPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)
-            || path.Length > 240 || path.Contains('\0') || path.StartsWith(@"\\")
+            || path.Length > 240 || path.Contains('/') || path.Contains('\0') || path.StartsWith(@"\\")
             || path.Length < 4 || !char.IsAsciiLetter(path[0]) || path[1] != ':'
             || path[2] != '\\' || path.AsSpan(2).Contains(':'))
             throw new ArgumentException();
         string[] parts = path[3..].Split('\\');
         if (parts.Any(p => p.Length == 0 || p is "." or ".."
-            || p.EndsWith('.') || p.EndsWith(' '))) throw new ArgumentException();
-        return Path.GetFullPath(path);
+            || p.EndsWith('.') || p.EndsWith(' ')
+            || p.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || IsDosDevice(p))) throw new ArgumentException();
+        string canonical = Path.GetFullPath(path);
+        if (!string.Equals(path, canonical, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException();
+        return canonical;
+    }
+
+    private static bool IsDosDevice(string component)
+    {
+        string stem = component.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+        return stem is "CON" or "PRN" or "AUX" or "NUL"
+            || (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT"))
+                && "123456789\u00b9\u00b2\u00b3".Contains(stem[3]));
     }
 
     private static bool AncestorsAreOrdinary(string path)
