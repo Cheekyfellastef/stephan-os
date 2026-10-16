@@ -103,23 +103,35 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
 
   return Object.freeze({
     async runOnce({issueNumber, commentId} = {}) {
-      let task, lease, head, prNumber = 0, phase = 'INTAKE', previous, sequence = 0;
+      let task, lease, head, prNumber = 0, phase = 'INTAKE', previous, sequence = 0, sinkFailed = false;
       const receipts = [];
       async function checkpoint(state, nextPhase, proofRefs, blocker = '') {
         const evidence = {phase:nextPhase, sourceRefs:proofRefs, commentSha256:task.commentSha256,
           reservationId:lease.reservationId, branch:task.branch, head:head || task.expectedMain, prNumber};
         const evidenceSha256 = hash(JSON.stringify(evidence));
         const evidenceRef = `proofs/chatgpt-${commentId}-${sequence + 1}-${evidenceSha256}.json`;
-        const receipt = createExecutionReceipt({repository:REPO, issueNumber, prNumber,
+        const timestampUtc = now();
+        if (!Number.isFinite(Date.parse(timestampUtc))
+          || (previous && Date.parse(timestampUtc) <= Date.parse(previous.timestampUtc)))
+          stop('EXECUTION_RECEIPT_CLOCK_NOT_ADVANCED');
+        // #1568 chain identity is immutable. This execution began before a PR
+        // existed; bind its later PR in the immutable evidence, not by changing
+        // prNumber midway through the same execution.
+        const receipt = createExecutionReceipt({repository:REPO, issueNumber, prNumber:0,
           branch:task.branch, sourceHead:head || task.expectedMain,
           workerId:'chatgpt-github', workerType:'github-first',
           executionId:`chatgpt-${commentId}`, leaseKey:`chatgpt-${commentId}`,
-          timestampUtc:now(), state, phase:nextPhase, sequence:sequence + 1,
+          timestampUtc, state, phase:nextPhase, sequence:sequence + 1,
           predecessorReceiptId:previous?.receiptId || '', blocker,
           proofRefs:[evidenceRef], expectedNextAction:'Continue the same canonical reservation and PR through existing CI, independent review and protected merge.'});
         if (!validateExecutionReceipt(receipt).valid) stop('EXECUTION_RECEIPT_INVALID');
         // Host writes via #1568 store; loss of durable checkpoint stops new writes.
-        await appendReceipt(receipt, {task, lease, head, prNumber, evidence, evidenceRef, evidenceSha256});
+        let persisted;
+        try { persisted = await appendReceipt(receipt, {task, lease, head, prNumber, evidence, evidenceRef, evidenceSha256}); }
+        catch { sinkFailed = true; stop('EXECUTION_RECEIPT_PERSISTENCE_UNPROVEN'); }
+        if (persisted?.ok !== true || persisted.evidenceSha256 !== evidenceSha256) {
+          sinkFailed = true; stop('EXECUTION_RECEIPT_PERSISTENCE_UNPROVEN');
+        }
         previous = receipt; sequence++; receipts.push(receipt); phase = nextPhase;
       }
       try {
@@ -178,7 +190,13 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
       } catch (error) {
         // No retry, lease release, branch deletion, replacement PR or false completion.
         // An uncertain write remains uncertain until the SAME reservation is reconciled.
-        return {verdict:'HELD', blocker:error.code || 'HOST_ADAPTER_OR_RECEIPT_FAILURE', phase,
+        const blocker = error.code || 'HOST_ADAPTER_OR_RECEIPT_FAILURE';
+        const failedAtPhase = phase;
+        if (previous && !sinkFailed) {
+          try { await checkpoint('failed','SOURCE_TASK_HELD',previous.proofRefs,blocker); }
+          catch { /* Return the original blocker and preserve last durable checkpoint. */ }
+        }
+        return {verdict:'HELD', blocker, phase:failedAtPhase,
           taskId:task?.taskId, branch:task?.branch, head, prNumber,
           reservationId:lease?.reservationId, receipts, merged:false, unattendedRefillProven:false};
       }

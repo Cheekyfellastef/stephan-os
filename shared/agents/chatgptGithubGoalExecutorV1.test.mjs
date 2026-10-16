@@ -71,7 +71,8 @@ async function harness(t, options = {}) {
     if (url===`${ROOT}/pulls/3140`) return response(pull);
     throw new Error('unexpected fixture request '+url);
   };
-  const host = {token:'test-only-not-a-credential',fetchImpl,authority,now:()=>NOW,
+  let clock=Date.parse(NOW);
+  const host = {token:'test-only-not-a-credential',fetchImpl,authority,now:()=>new Date(clock++).toISOString(),
     readCustody:async({task})=>({inventory,ownershipEvidence:options.noCustody?undefined:
       Object.fromEntries(['canonical','seed','island','chatgpt'].map(source=>[source,{
         disposition:'VERIFIED_UNCLAIMED',mainHead:MAIN,observedAtUtc:NOW,issueNumber:1574,
@@ -79,12 +80,15 @@ async function harness(t, options = {}) {
     verifyReservation:async()=>Boolean(claim)&&!ownershipLost,
     appendReceipt:async(receipt,context)=>{
       if(options.receiptFailure===receipt.phase)throw new Error('disk full');
+      if(options.falseAck)return {ok:false};
       await mkdir(join(root,'proofs'),{recursive:true});
       await writeFile(join(root,context.evidenceRef),JSON.stringify(context.evidence),{flag:'wx'});
-      await appendExecutionReceipt(root,receipt);
+      const persisted=await appendExecutionReceipt(root,receipt);
+      if(persisted.ok!==true){const e=new Error(JSON.stringify(persisted));e.code=persisted.reason||persisted.finalVerdict;throw e;}
       receipts.push(receipt);
       if(context.prNumber)durable={issueNumber:1574,commentId:123456,taskId:task.taskId,branch:context.task.branch,
         head:context.head,prNumber:context.prNumber,reservationId:context.lease.reservationId};
+      return {ok:true,evidenceSha256:context.evidenceSha256};
     }, readExecution:async()=>durable,
     confirmProtectedMerge:async()=>options.protectedProof!==false,
     completeAndRefill:async()=>{completed=true;return{completed:true};}};
@@ -100,9 +104,11 @@ test('real canonical reservation and disk receipt chain surround one CAS commit 
   assert.equal(r.verdict,'PR_OPEN',JSON.stringify(r));assert.equal(h.committed,true);
   assert.equal(h.reservations,1);assert.equal(r.githubPickupProven,true);assert.equal(r.battleBridgePickupProven,false);
   const history=await readExecutionReceiptHistory(h.root,{executionId:'chatgpt-123456'});
-  assert.equal(h.receipts.length,5);assert.ok(history);
+  assert.equal(h.receipts.length,5);assert.equal(history.ok,true,JSON.stringify(history));
+  assert.equal(history.receipts.length,5);
   assert.deepEqual(h.receipts.map(r=>r.state),['queued','accepted','started','progress','progress']);
   assert.equal(h.receipts.at(-1).sourceHead,HEAD);
+  assert.ok(h.receipts.every(r=>r.prNumber===0),'pre-PR execution identity must stay stable');
   assert.equal(JSON.parse(await readFile(join(h.root,h.receipts.at(-1).proofRefs[0]),'utf8')).head,HEAD);
   assert.equal(h.calls.filter(c=>c.method==='POST'&&c.url.endsWith('/pulls')).length,1);
   assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).verdict,
@@ -156,6 +162,8 @@ test('lost commit acknowledgment never retries, creates replacement or calls com
   const r=await h.run();assert.equal(r.blocker,'GITHUB_WRITE_OUTCOME_UNKNOWN');
   assert.equal(h.calls.filter(c=>c.body?.query?.startsWith('mutation(')).length,1);
   assert.equal(h.pull,null);assert.equal(h.completed,false);assert.equal(r.reservationId,'reservation-1574');
+  assert.equal(h.receipts.at(-1).state,'failed');
+  assert.equal(h.receipts.at(-1).blocker,'GITHUB_WRITE_OUTCOME_UNKNOWN');
 });
 
 test('receipt sink failure before pickup prevents source commit',async t=>{
@@ -198,4 +206,17 @@ test('changed head invalidates continuation even if GitHub says merged',async t=
 test('host custody, canonical authority and protected collector cannot be supplied in task fields',async t=>{
   const h=await harness(t);assert.throws(()=>create({...h.host,readCustody:undefined}),/trusted host/);
   assert.throws(()=>create({...h.host,authority:null}),/canonical construction/);
+});
+
+test('negative durable acknowledgment prevents branch/source writes',async t=>{
+  const h=await harness(t,{falseAck:true});const r=await h.run();
+  assert.equal(r.blocker,'EXECUTION_RECEIPT_PERSISTENCE_UNPROVEN');
+  assert.equal(h.calls.some(c=>c.url.endsWith('/git/refs')),false);
+});
+
+test('clock failing to advance cannot create an invalid canonical receipt chain',async t=>{
+  const h=await harness(t);const fixed=create({...h.host,now:()=>NOW});
+  const r=await fixed.runOnce({issueNumber:1574,commentId:123456});
+  assert.equal(r.blocker,'EXECUTION_RECEIPT_CLOCK_NOT_ADVANCED');assert.equal(h.committed,false);
+  assert.equal(h.calls.some(c=>c.url.endsWith('/git/refs')),false);
 });

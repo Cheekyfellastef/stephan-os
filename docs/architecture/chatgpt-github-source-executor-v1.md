@@ -78,9 +78,13 @@ from task-selected modules, URLs, paths, executable strings or goal content.
   merely check that an earlier local JavaScript object exists.
 - `appendReceipt` must write `context.evidence` create-only at
   `context.evidenceRef`, verify its SHA-256, and durably append the validated
-  receipt through #1568 machinery BEFORE returning. Store original task/comment
+  receipt through #1568 machinery BEFORE returning `{ok:true,evidenceSha256}`.
+  False/missing acknowledgment or wrong artifact digest stops execution. Store original task/comment
   digest, canonical reservation and exact branch/head/PR metadata for recovery.
   An API acknowledgment without durable evidence is insufficient.
+  This chain begins before PR creation, so its immutable `prNumber` stays zero;
+  its later PR/head binding lives in the hashed evidence and recovery record.
+  Receipt times must strictly advance; a broken clock is held, never fabricated.
 - `readExecution` must resolve that original canonical record, not caller JSON.
   `confirmProtectedMerge` must use the existing independent exact-head review
   and protected merge artifact collector, including environment approval. A PR
@@ -91,6 +95,8 @@ from task-selected modules, URLs, paths, executable strings or goal content.
 - Use an already-approved GitHub App/user credential whose source publication
   actually triggers CI. Never put credentials in comments, receipts or source.
 
+The existing bounded construction authority is a source contract. A production
+`reserveConstructionLane` host binding was not found in repository source.
 The Battle Bridge four-domain custody reader and persistent reservation host
 binding have not been commissioned by adding this file. No current service,
 timer, source writer, protected action, or lease was changed. A direct factory
