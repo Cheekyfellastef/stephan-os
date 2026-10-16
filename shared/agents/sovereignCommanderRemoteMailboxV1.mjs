@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
-import { parseRescueIslandBoundaryStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
+import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -2797,7 +2797,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
+    'rescue-island-readonly-boundary']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -2939,8 +2940,27 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
     // Do not treat a generic successful maintenance call as an OS-scope proof.
     // The fixed native child must publish its own one-line, closed-world result.
+    const nativeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const candidate = Object.keys(nativeEnvelope).length > 0 ? nativeEnvelope : failedEnvelope;
+    const nativeProcessId = text(candidate?.command?.plan?.processId);
+    const nativeStatus = candidate?.structuredContent?.status;
+    const nativeStdout = candidate?.structuredContent?.stdout;
+    const held = parseRescueIslandBoundaryHeldStdoutV1(nativeStdout, nativeProcessId);
+    if (held && nativeProcessId === shape.command.remoteAction
+        && nativeStatus === 1
+        && candidate?.ok === false
+        && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: held.blocker,
+        rescueIslandBoundary: held,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
     const readback = parseRescueIslandBoundaryStdoutV1(
-      rawMaintenance?.structuredContent?.stdout, projection.processId,
+      nativeStdout, nativeProcessId,
     );
     if (projection.ok !== true
       || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
