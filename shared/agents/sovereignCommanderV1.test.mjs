@@ -509,3 +509,31 @@ test('Rescue Island one-shot probe is only a fixed read-only action with no call
   assert.equal(command.mergeAuthority, false);
   assert.equal(command.arbitraryUnboundedCommandAllowed, false);
 });
+
+test('registered Rescue Island source-only probe exercises a real physical path census', async () => {
+  const { inspectRescueIslandLocalBoundaryV1 } = await import(
+    '../../scripts/rescue-island-boundary-probe.mjs'
+  );
+  const parent = await mkdtemp(join(tmpdir(), 'island-boundary-live-test-'));
+  try {
+    const root = join(parent, 'canonical');
+    await mkdir(join(root, '.git'), { recursive: true });
+    await mkdir(join(root, 'docs', 'architecture'), { recursive: true });
+    await mkdir(join(root, 'shared', 'agents'), { recursive: true });
+    for (const target of ['rescueIslandFirstCommitV1.mjs', 'rescueIslandPreflightV1.test.mjs']) {
+      await writeFile(join(root, 'shared', 'agents', target), '// fixture\\n');
+    }
+    const safe = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(safe.ok, true);
+    assert.equal(safe.observedPathCount, 3);
+    assert.equal(safe.sourceMutationAllowed, false);
+    assert.equal(safe.independentOwnershipAuthenticated, false);
+    assert.equal(safe.originalSourceLeaseReleaseAllowed, false);
+    await rm(join(root, '.git'), { recursive: true });
+    const held = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(held.ok, false);
+    assert.equal(held.workerStartAllowed, false);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
