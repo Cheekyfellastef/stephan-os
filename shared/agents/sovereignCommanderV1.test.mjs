@@ -504,7 +504,7 @@ test('Rescue Island one-shot probe is only a fixed read-only action with no call
   assert.equal(command.plan.processId, 'rescue-island-readonly-boundary');
   assert.equal(command.plan.kind, 'fixed-process');
   assert.equal(command.plan.args.length, 1);
-  assert.match(command.plan.args[0], /rescue-island-boundary-probe\\.mjs$/);
+  assert.match(command.plan.args[0], /rescue-island-boundary-probe\.mjs$/);
   assert.doesNotMatch(JSON.stringify(command.plan), /Remove-Item|untrusted/);
   assert.equal(command.mergeAuthority, false);
   assert.equal(command.arbitraryUnboundedCommandAllowed, false);
