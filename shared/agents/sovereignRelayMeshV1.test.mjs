@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+  SOVEREIGN_RELAY_FAST_STALL_MS,
   SOVEREIGN_RELAY_FAST_POLL_MS,
   SOVEREIGN_RELAY_HOT_POLL_MS,
   SOVEREIGN_RELAY_IDLE_POLL_MS,
@@ -312,4 +313,79 @@ test('architecture makes the transport mesh additive and keeps every fallback', 
   assert.match(architecture, /OpenAI Secure MCP Tunnel.*fallback/i);
   assert.match(architecture, /Remote Desktop Commander.*fallback/i);
   assert.match(architecture, /no single transport.*critical path/i);
+});
+
+test('relay retains settled carrier failure while the next guard cycle is in flight', () => {
+  const now = new Date('2026-10-15T18:39:40.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - 10_000,
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      lastCarrierHealthyAtUtc: '2026-10-15T18:30:00.000Z',
+    },
+    consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.deliveryState, 'FALLBACK_COVERED');
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.lastCarrierHealthyAtUtc, '2026-10-15T18:30:00.000Z');
+  assert.equal(status.scheduledMailboxFallbackExpected, true);
+  assert.equal(status.retryIdentityPreserved, true);
+  assert.equal(status.duplicateExecutionAllowed, false);
+});
+
+test('stalled fast relay reports recovery without asserting unproven shared-lock fallback', () => {
+  assert.equal(SOVEREIGN_RELAY_FAST_STALL_MS, 90_000);
+  const now = new Date('2026-10-15T18:50:00.000Z');
+  const previousStatus = { carrierHealthy: true, blocker: '' };
+  const before = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS - 1),
+  });
+  assert.equal(before.carrierHealthy, true);
+  assert.equal(before.deliveryState, 'FAST_CHECKING');
+  assert.equal(before.fastCycleStalled, false);
+  const stalled = buildSovereignRelayInFlightStatus({
+    now, previousStatus, sourceHead: 'f'.repeat(40),
+    cycleStartedAtMs: now.getTime() - SOVEREIGN_RELAY_FAST_STALL_MS,
+  });
+  assert.equal(stalled.daemonHealthy, true);
+  assert.equal(stalled.carrierHealthy, false);
+  assert.equal(stalled.status, 'ATTENTION_REQUIRED');
+  assert.equal(stalled.fastCycleStalled, true);
+  assert.equal(stalled.deliveryState, 'RECOVERING');
+  assert.equal(stalled.fallbackCovered, false);
+  assert.equal(stalled.scheduledMailboxFallbackExpected, true);
+  assert.equal(stalled.blocker, 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED');
+  assert.equal(stalled.duplicateExecutionAllowed, false);
+  assert.equal(stalled.retryIdentityPreserved, true);
+  assert.equal(stalled.sourceMutationAllowed, false);
+});
+
+test('stalled relay preserves prior carrier blocker without claiming fallback coverage', () => {
+  const now = new Date('2026-10-15T19:00:00.000Z');
+  const status = buildSovereignRelayInFlightStatus({
+    now,
+    cycleStartedAtMs: now.getTime() - (SOVEREIGN_RELAY_FAST_STALL_MS + 10),
+    previousStatus: {
+      carrierHealthy: false,
+      blocker: 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS',
+      guardVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    },
+    consecutiveCarrierFailures: 3,
+    sourceHead: 'e'.repeat(40),
+  });
+  assert.equal(status.carrierHealthy, false);
+  assert.equal(status.status, 'ATTENTION_REQUIRED');
+  assert.equal(status.deliveryState, 'RECOVERING');
+  assert.equal(status.fallbackCovered, false);
+  assert.equal(status.blocker, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+  assert.equal(status.guardVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+  assert.equal(status.duplicateExecutionAllowed, false);
 });

@@ -60,19 +60,24 @@ Run the existing test project with .NET 8 on Windows:
 dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
 ```
 
-The previously recorded host test executed 77 checks successfully on 16 October 2026,
-before these additional sandbox, object-type and wording changes. The new exact
-head has not yet passed native Windows tests or independent specialist review.
-That prior run,
-including a real native short-name alias and same-SID restricted-token rejection.
-The normal host token is itself filtered: the public entry point correctly
-rejects it. The test suite exercises the private kernel mechanism separately
-with that unchanged test token and reports
-`R7_NATIVE_UNFILTERED_ENTRYPOINT_CASE_AVAILABLE=false`. This is not a passing
-unfiltered public-entrypoint acceptance; that proof remains required before
-production integration. These are test-process tokens and disposable files,
-**not the original r7 actor or production source**. No positive production
-custody claim follows.
+The immutable hosted Windows run
+[38866215526](https://github.com/Cheekyfellastef/stephan-os/actions/runs/38866215526)
+passed all 77 native checks at source head
+`a51f83d27c1492bf13b716b6b1ec2d9a31b9a497`, including the sandbox,
+object-type and supplied-token wording changes. That disposable runner exercised
+the public unfiltered-token entry path and a real short-name alias. Its scratch
+file was not owned by the current user SID; tests classified the actual native
+owner and access results instead of assuming ownership.
+
+An earlier local host had a filtered token: the public entry point correctly
+rejected it, while tests exercised the private kernel mechanism separately with
+that unchanged test token and reported
+`R7_NATIVE_UNFILTERED_ENTRYPOINT_CASE_AVAILABLE=false`. These are distinct
+machine observations. Neither the hosted runner nor the earlier local test
+authenticates the original r7 launch token or production source custody.
+Fresh exact-head CI and independent Windows/security specialist review remain
+required after any source or base integration. Hosted test success is not
+specialist acceptance or commissioning.
 
 ## Required specialist decision before production integration
 
