@@ -77,6 +77,11 @@ test('registration missing exact descendant list or immutable launch identity fa
     { ...registration, routerExecutableSha256: 'A'.repeat(64) },
     { ...registration, routerPid: '4100' },
     { ...registration, registeredDescendants: [{ pid: 4101, startedAtUtc: 'invalid' }] },
+    { ...registration, registeredDescendants: [{ pid: registration.routerPid, startedAtUtc: registration.routerStartedAtUtc }] },
+    { ...registration, registeredDescendants: [
+      registration.registeredDescendants[0],
+      { ...registration.registeredDescendants[0], startedAtUtc: '2026-10-16T17:42:00.000Z' },
+    ] },
   ]) {
     const result = check(snapshot, r);
     assert.equal(result.processTreeAbsentCandidate, false);
