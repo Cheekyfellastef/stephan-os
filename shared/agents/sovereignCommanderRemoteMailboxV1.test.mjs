@@ -3253,3 +3253,20 @@ test('single maintenance action has an overall budget across health, MCP setup a
   });
   assert.equal(actualMaintenance.length, 0);
 });
+
+
+test('Island boundary remote action permits only a fixed read-only probe and no caller path', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'rescue-island-readonly-boundary',
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.command.remoteAction, 'rescue-island-readonly-boundary');
+  for (const field of [{ targetPath: 'C:\\\\private' }, { args: ['--write'] },
+    { workerId: 'rescue-island-01' }, { command: 'git add .' }]) {
+    const value = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction: 'rescue-island-readonly-boundary', ...field,
+    }));
+    assert.equal(value.ok, false);
+    assert.equal(value.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+});
