@@ -491,3 +491,21 @@ test('Sovereign file metadata inspection does not return file contents', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('Rescue Island one-shot probe is only a fixed read-only action with no caller arguments', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'rescue-island-readonly-boundary',
+      command: 'Remove-Item C:\\\\* -Recurse',
+      customTargetPath: 'C:\\\\untrusted' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'rescue-island-readonly-boundary');
+  assert.equal(command.plan.kind, 'fixed-process');
+  assert.equal(command.plan.args.length, 1);
+  assert.match(command.plan.args[0], /rescue-island-boundary-probe\\.mjs$/);
+  assert.doesNotMatch(JSON.stringify(command.plan), /Remove-Item|untrusted/);
+  assert.equal(command.mergeAuthority, false);
+  assert.equal(command.arbitraryUnboundedCommandAllowed, false);
+});
