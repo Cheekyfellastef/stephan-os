@@ -18,7 +18,8 @@ Administrators membership. Privilege qualification is closed-world: only
 enable a privilege or regain elevation is not attested as safely excluded.
 
 Native token qualification rejects IsTokenRestricted, TokenHasRestrictions
-(including previously filtered tokens), AppContainer, sandbox-inert and UIAccess
+(including previously filtered tokens), AppContainer, sandbox-inert, TokenIsSandboxed
+and UIAccess
 forms before any target access probe. The result says `SuppliedTokenSidMatched`,
 not that a historical original token was authenticated. The separate
 `OriginalPrincipalProvenanceAuthenticated` claim is permanently false in this
@@ -31,13 +32,16 @@ Object identity comes from retained Windows handles (volume and file index)
 and the handle-resolved, normalized native final path. The object and every
 ancestor remain open without DELETE sharing throughout the probe. Native name
 binding rejects 8.3 aliases in any component and volume namespace substitutions;
-the object identity is checked before/after impersonation. Hard-linked files
+the object identity is checked before/after impersonation. Hard-linked files, directories presented as source files,
 and reparse points are refused. Ancestors must be readable and non-reparse. Alternate data streams,
 UNC/device names (including DOS devices with extensions), traversal, alternate
 separators, wildcard characters and ambiguous trailing characters are refused.
 The supplied path must already equal its full normalized form; evidence is
 never silently rebound to a different normalized target.
-All output is bounded static classifications and booleans: no SID, path,
+All positive classifications refer only to the supplied token or principal;
+no classification authenticates the original historical writer. A directory is
+rejected before access-denial evidence is emitted. All output is bounded static
+classifications and booleans: no SID, path,
 process ID, token content, ACL, native exception text or private file data.
 
 ## Real native tests
@@ -56,7 +60,10 @@ Run the existing test project with .NET 8 on Windows:
 dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
 ```
 
-An actual host test executed 77 checks successfully on 16 October 2026,
+The previously recorded host test executed 77 checks successfully on 16 October 2026,
+before these additional sandbox, object-type and wording changes. The new exact
+head has not yet passed native Windows tests or independent specialist review.
+That prior run,
 including a real native short-name alias and same-SID restricted-token rejection.
 The normal host token is itself filtered: the public entry point correctly
 rejects it. The test suite exercises the private kernel mechanism separately

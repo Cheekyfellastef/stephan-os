@@ -39,6 +39,7 @@ public static class R7EffectiveWriteDenial
     private const uint OpenExisting = 3;
     private const uint OpenReparsePointAndBackupSemantics = 0x02200000;
     private const uint ReparseAttribute = 0x400;
+    private const uint DirectoryAttribute = 0x10;
     private const int AccessDenied = 5;
     private const int InsufficientBuffer = 122;
     private const int MaxTokenBytes = 65536;
@@ -57,7 +58,7 @@ public static class R7EffectiveWriteDenial
     {
         if (!OperatingSystem.IsWindows() || originalToken is null
             || originalToken.IsClosed || originalToken.IsInvalid)
-            return Held("R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE");
+            return Held("R7_NATIVE_SUPPLIED_TOKEN_UNAVAILABLE");
         bool retained = false;
         try
         {
@@ -66,6 +67,7 @@ public static class R7EffectiveWriteDenial
                 || TokenFlag(originalToken, 21 /* TokenHasRestrictions: ever filtered */)
                 || TokenFlag(originalToken, 29 /* TokenIsAppContainer */)
                 || TokenFlag(originalToken, 15 /* TokenSandBoxInert */)
+                || TokenFlag(originalToken, 47 /* TokenIsSandboxed: independent sandbox flag */)
                 || TokenFlag(originalToken, 26 /* TokenUIAccess */))
                 return Held("R7_NATIVE_FILTERED_OR_SPECIAL_TOKEN_UNQUALIFIED");
             return SampleSuppliedTokenAccess(targetPath, originalToken, expectedOriginalSid);
@@ -84,7 +86,7 @@ public static class R7EffectiveWriteDenial
     {
         if (!OperatingSystem.IsWindows() || originalToken is null
             || originalToken.IsClosed || originalToken.IsInvalid)
-            return Held("R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE");
+            return Held("R7_NATIVE_SUPPLIED_TOKEN_UNAVAILABLE");
         bool retained = false;
         try
         {
@@ -92,7 +94,7 @@ public static class R7EffectiveWriteDenial
             SecurityIdentifier expected = new(expectedOriginalSid);
             using WindowsIdentity identity = new(originalToken.DangerousGetHandle());
             if (identity.User is null || !identity.User.Equals(expected))
-                return Held("R7_NATIVE_ORIGINAL_TOKEN_IDENTITY_MISMATCH");
+                return Held("R7_NATIVE_SUPPLIED_TOKEN_IDENTITY_MISMATCH");
 
             // The token remains unmodified. Disabled privileges are included:
             // a writer can enable a privilege already present in its token.
@@ -123,8 +125,8 @@ public static class R7EffectiveWriteDenial
             string classification = !stable ? "R7_NATIVE_TARGET_CHANGED"
                 : opens.Any(code => code != 0 && code != AccessDenied)
                     ? "R7_NATIVE_ACCESS_RESULT_UNKNOWN"
-                : !dataDenied ? "R7_NATIVE_ORIGINAL_TOKEN_CAN_WRITE"
-                : owns ? "R7_NATIVE_DATA_DENIED_BUT_ORIGINAL_WRITER_OWNS_TARGET"
+                : !dataDenied ? "R7_NATIVE_SUPPLIED_TOKEN_CAN_WRITE"
+                : owns ? "R7_NATIVE_DATA_DENIED_BUT_SUPPLIED_PRINCIPAL_OWNS_TARGET"
                 : bypass ? "R7_NATIVE_DATA_DENIED_BUT_TOKEN_CAN_BYPASS_POLICY"
                 : !daclDenied || !ownerDenied ? "R7_NATIVE_POLICY_REWRITE_NOT_DENIED"
                 : "R7_NATIVE_OPEN_DENIAL_OBSERVED_NOT_CUSTODY";
@@ -237,7 +239,8 @@ public static class R7EffectiveWriteDenial
     {
         identity = default;
         if (!GetFileInformationByHandle(handle, out ByHandleInfo info)
-            || (info.Attributes & ReparseAttribute) != 0 || info.Links != 1) return false;
+            || (info.Attributes & (ReparseAttribute | DirectoryAttribute)) != 0
+            || info.Links != 1) return false;
         identity = new(info.VolumeSerial, info.IndexHigh, info.IndexLow);
         return true;
     }

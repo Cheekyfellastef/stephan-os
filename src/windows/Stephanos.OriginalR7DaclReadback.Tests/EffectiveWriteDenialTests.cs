@@ -68,7 +68,7 @@ internal static class EffectiveWriteDenialTests
             NoAuthority(writable);
             Check(writable.SuppliedTokenSidMatched && writable.TargetIdentityStable,
                 "REAL_TOKEN_" + writable.Classification);
-            Check(!writable.DataWriteOpenDenied && writable.Classification == "R7_NATIVE_ORIGINAL_TOKEN_CAN_WRITE",
+            Check(!writable.DataWriteOpenDenied && writable.Classification == "R7_NATIVE_SUPPLIED_TOKEN_CAN_WRITE",
                 "WRITABLE_FILE_MUST_NOT_BE_REPORTED_DENIED");
 
             StringBuilder shortPath = new(512);
@@ -92,7 +92,7 @@ internal static class EffectiveWriteDenialTests
             using SafeAccessTokenHandle invalid = new(IntPtr.Zero);
             var missingToken = R7EffectiveWriteDenial.Observe(file, invalid, sid);
             NoAuthority(missingToken);
-            Check(missingToken.Classification == "R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE",
+            Check(missingToken.Classification == "R7_NATIVE_SUPPLIED_TOKEN_UNAVAILABLE",
                 "MISSING_REAL_TOKEN_MUST_FAIL_CLOSED");
 
             // Self-restriction is test setup only. No production token is
@@ -140,7 +140,7 @@ internal static class EffectiveWriteDenialTests
                 "KERNEL_MUST_DENY_BOTH_WRITE_AND_APPEND_OPENS");
             Check(observed.SuppliedPrincipalOwnsTarget && !observed.DaclWriteOpenDenied,
                 "OWNER_CAN_STILL_REWRITE_DACL_AND_MUST_NOT_BE_TREATED_AS_CONTAINED");
-            Check(observed.Classification == "R7_NATIVE_DATA_DENIED_BUT_ORIGINAL_WRITER_OWNS_TARGET",
+            Check(observed.Classification == "R7_NATIVE_DATA_DENIED_BUT_SUPPLIED_PRINCIPAL_OWNS_TARGET",
                 "DATA_DENIAL_MUST_NOT_HIDE_OWNER_BYPASS");
             Check(File.ReadAllText(file) == "unchanged sentinel", "PROBE_MUST_NOT_CHANGE_FILE_CONTENTS");
             RestoreAcl(file, original);
@@ -173,7 +173,9 @@ internal static class EffectiveWriteDenialTests
 
             var directory = SampleKernel(scratch, identity.AccessToken, sid);
             NoAuthority(directory);
-            Check(!directory.DataWriteOpenDenied, "WRITABLE_DIRECTORY_MUST_FAIL_DENIAL");
+            Check(!directory.DataWriteOpenDenied && !directory.TargetIdentityStable
+                && directory.Classification == "R7_NATIVE_TARGET_NONCANONICAL_OR_UNAVAILABLE",
+                "DIRECTORY_MUST_BE_REJECTED_AS_NON_FILE_BEFORE_WRITE_PROBES");
             Console.WriteLine($"R7_EFFECTIVE_WRITE_PROBE_CHECKS_PASSED={checks}");
         }
         finally
