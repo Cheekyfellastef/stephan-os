@@ -136,7 +136,7 @@ test('rejects replayed challenges, missing trust and injected keys', () => {
   for (const context of [
     { ...trusted, challenge: otherChallenge }, { ...trusted, challenge: 'not-random' },
     { ...trusted, publicKeyPem: otherKeys.publicKey.export({ type: 'spki', format: 'pem' }) },
-    { ...trusted, publicKeyPem: undefined }, undefined,
+    { ...trusted, publicKeyPem: undefined }, null,
   ]) {
     assert.equal(signedCheck(evidence, signature, context).signedEvidenceCandidateComplete, false);
   }
@@ -149,7 +149,8 @@ test('rejects malformed, substituted and wrong-algorithm signatures', () => {
   for (const candidate of [
     null, {}, { ...signature, signatureBase64: '' },
     { ...signature, signatureBase64: 'AAAA' },
-    { ...signature, signatureBase64: signature.signatureBase64.slice(0, -2) + '==' },
+    { ...signature, signatureBase64:
+      (signature.signatureBase64[0] === 'A' ? 'B' : 'A') + signature.signatureBase64.slice(1) },
     signed(evidence, CHALLENGE, otherKeys.privateKey),
   ]) {
     assert.equal(signedCheck(evidence, candidate).signedEvidenceCandidateComplete, false);
