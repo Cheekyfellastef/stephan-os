@@ -451,3 +451,93 @@ test('projection publishes counts and target proofs but no changed path values',
   assert.equal(projection.changedPathCount, 1);
   assert.doesNotMatch(JSON.stringify(projection), /stephanos-server\/server\.js/);
 });
+
+test('new Sovereign Commander skill manifests and full nine-file skill pack classify to real refresh', () => {
+  const paths = [
+    'plugins/sovereign-commander/.codex-plugin/plugin.json',
+    'plugins/sovereign-commander/plugin.json',
+    'plugins/sovereign-commander/skills/commission-original-source-custody/SKILL.md',
+    'plugins/sovereign-commander/skills/repair-build-conveyors/SKILL.md',
+    'plugins/sovereign-commander/skills/repair-sovereign-fast-bridge/SKILL.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'shared/agents/sovereignCommanderDesktopPlugin.test.mjs',
+    'shared/agents/sovereignGoalRecoveryTriageV1.mjs',
+    'shared/agents/sovereignGoalRecoveryTriageV1.test.mjs',
+  ];
+  const observed = classifyPostSyncRefresh(paths);
+  assert.equal(observed.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(observed.automaticExecutionAllowed, true);
+  assert.deepEqual(observed.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
+  assert.equal(observed.unknownPathCount, 0);
+  assert.equal(observed.changedPathCount, paths.length);
+});
+
+test('Sovereign Commander manifest allowance stays exact, rejects unrelated plugin entrypoint', () => {
+ const result=classifyPostSyncRefresh(['plugins/untrusted-plugin/plugin.json']);
+ assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+ assert.equal(result.automaticExecutionAllowed,false);
+ assert.equal(result.unknownPathCount,1);
+});
+
+test('versioned Sovereign manifests never claim desktop skill activation from the HTTP daemon alone', async () => {
+  const changedPaths = ['plugins/sovereign-commander/plugin.json'];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.pluginHostActivationRequired, true);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+
+  const onlyDaemon = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: { refreshSovereignCommander: async () => pass() },
+  });
+  assert.equal(onlyDaemon.ok, false);
+  assert.equal(onlyDaemon.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+  assert.equal(onlyDaemon.safeRefreshesCompleted, true);
+  assert.equal(buildPostSyncRefreshProjection(onlyDaemon, { beforeHead: A, afterHead: B }).pluginHostActivationRequired, true);
+
+  const fakeHost = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshSovereignCommander: async () => pass(),
+      verifySovereignPluginHost: async () => ({ ...pass(), desktopPluginHostHandshakeVerified: false, loadedManifestVerified: true }),
+    },
+  });
+  assert.equal(fakeHost.ok, false);
+  assert.equal(fakeHost.blocker, 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN');
+
+  const wrongHead = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshSovereignCommander: async () => pass(),
+      verifySovereignPluginHost: async () => ({
+        ...pass(A), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
+      }),
+    },
+  });
+  assert.equal(wrongHead.ok, false);
+
+  const witnessed = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshSovereignCommander: async () => pass(),
+      verifySovereignPluginHost: async () => ({
+        ...pass(), desktopPluginHostHandshakeVerified: true, loadedManifestVerified: true,
+      }),
+    },
+  });
+  assert.equal(witnessed.ok, true);
+  assert.equal(witnessed.finalVerdict, 'POST_SYNC_RUNTIME_REFRESH_PASS');
+});
+
+test('ordinary Commander script refreshes remain independent of desktop-plugin reattachment', async () => {
+  const changedPaths = ['scripts/sovereign-commander-http.mjs'];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: { refreshSovereignCommander: async () => pass() },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.plan.pluginHostActivationRequired, false);
+});

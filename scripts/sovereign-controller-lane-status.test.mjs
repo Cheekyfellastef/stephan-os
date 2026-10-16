@@ -667,3 +667,53 @@ test('normal controller pulse continues publishing both snapshots', async () => 
   });
   assert.deepEqual(calls, ['status', 'truth', 'marker']);
 });
+
+test('selected pickup count requires matching worker-bound goal proof on its current host', () => {
+  const controllers = fleet().controllers.map((item, index) => index === 0
+    ? {
+        ...item,
+        proofRefs: ['proof-goal-123'],
+        materialLanes: [
+          {
+            laneId: 'lane-proven-123',
+            goalId: '#123',
+            workerId: 'mission-worker-1',
+            proofRef: 'proof-goal-123',
+            lastMaterialActionAtUtc: '2026-10-02T14:29:30.000Z',
+          },
+          { laneId: 'unrelated-material-lane', goalId: '#999' },
+        ],
+      }
+    : item);
+  const logicalFabric = logical({
+    controllers: [
+      {
+        goalIssueNumber: 123, goalRef: '#123',
+        hostControllerId: 'controller-1',
+        selectedForAdmission: true,
+      },
+      {
+        goalIssueNumber: 456, goalRef: '#456',
+        hostControllerId: 'controller-1',
+        selectedForAdmission: true,
+      },
+    ],
+  });
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({ controllers }),
+    logicalFabric,
+    now: NOW,
+  });
+  assert.equal(result.logical.selectedForAdmission, 2);
+  assert.equal(result.lanes.selectedMaterialPickupProvenCount, 1);
+  assert.ok(result.lanes.activeMaterialLaneCount > 1);
+
+  const withoutCustody = controllers.map((item, index) => index === 0
+    ? { ...item, proofRefs: [] } : item);
+  const blocked = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({ controllers: withoutCustody }),
+    logicalFabric,
+    now: NOW,
+  });
+  assert.equal(blocked.lanes.selectedMaterialPickupProvenCount, 0);
+});
