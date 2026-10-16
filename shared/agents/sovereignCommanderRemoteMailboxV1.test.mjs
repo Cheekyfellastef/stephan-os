@@ -3485,6 +3485,8 @@ test('Island scope readback is bound to nested native execution, not outer MCP c
   });
   assert.equal(tampered.ok, false);
   assert.equal(tampered.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
-  assert.equal(tampered.executionBlocker, 'ISLAND_NATIVE_MARKER_OR_SCOPE_DENIED');
+  // Unlike a native status=1 trusted denial, a forged successful marker has no
+  // typed denial reason and must stay a generic invalid receipt.
+  assert.equal(tampered.executionBlocker, undefined);
   assert.doesNotMatch(JSON.stringify(tampered), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
 });
