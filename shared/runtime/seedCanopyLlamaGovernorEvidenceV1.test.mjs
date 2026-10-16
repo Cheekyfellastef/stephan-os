@@ -11,6 +11,8 @@ const identity = {
   routerStartedAtUtc: '2026-10-16T11:58:00.000Z',
   modelId: 'qwen3-coder:30b',
   governorInstanceId: 'boot-1',
+  routerExecutableSha256: 'a'.repeat(64),
+  routerJobIdentity: 'job-3096-boot-1',
 };
 const evidence = {
   schemaVersion: LLAMA_GOVERNOR_EVIDENCE_SCHEMA,
@@ -51,4 +53,43 @@ test('rejects noncanonical timestamp formats even when Date.parse accepts them',
     assert.equal(check({ ...evidence, observedAtUtc: value }).evidenceCandidateComplete, false, value);
   }
   assert.equal(check(evidence, { ...identity, routerStartedAtUtc: '2026-10-16' }).evidenceCandidateComplete, false);
+});
+
+test('rejects executable substitution even with matching PID, model and governor', () => {
+  const forged = { ...evidence, routerExecutableSha256: 'b'.repeat(64) };
+  const result = check(forged);
+  assert.equal(result.evidenceCandidateComplete, false);
+  assert.ok(result.reasonCodes.includes('ROUTER_EXECUTABLE_NOT_BOUND'));
+  assert.equal(result.safetyHoldMayBeRemoved, false);
+});
+
+test('rejects a different, missing or malformed Windows Job identity', () => {
+  for (const value of ['job-3096-attacker', '', null, {}, 'job with spaces']) {
+    const result = check({ ...evidence, routerJobIdentity: value });
+    assert.equal(result.evidenceCandidateComplete, false, String(value));
+    assert.ok(result.reasonCodes.includes('ROUTER_JOB_NOT_BOUND'));
+  }
+});
+
+test('rejects absent or invalid expected executable/Job custody values', () => {
+  for (const changed of [
+    { routerExecutableSha256: null }, { routerExecutableSha256: 'A'.repeat(64) },
+    { routerExecutableSha256: 'a'.repeat(63) }, { routerJobIdentity: undefined },
+    { routerJobIdentity: 'bad/job/path' }, { routerJobIdentity: ' '.repeat(8) },
+  ]) {
+    const result = check(evidence, { ...identity, ...changed });
+    assert.equal(result.evidenceCandidateComplete, false, JSON.stringify(changed));
+    assert.ok(result.reasonCodes.includes('EXPECTED_IDENTITY_MISSING'));
+    assert.equal(result.productionInferenceQualified, false);
+  }
+});
+
+test('identity fields cannot be omitted from otherwise complete evidence', () => {
+  for (const key of ['routerExecutableSha256', 'routerJobIdentity']) {
+    const missing = { ...evidence };
+    delete missing[key];
+    const result = check(missing);
+    assert.equal(result.evidenceCandidateComplete, false, key);
+    assert.equal(result.safetyHoldMayBeRemoved, false);
+  }
 });
