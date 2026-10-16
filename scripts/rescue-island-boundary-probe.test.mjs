@@ -87,3 +87,22 @@ test('production CLI refuses dynamic arguments and keeps its one-line bounded ma
   assert.equal(parsed.blocker, 'RESCUE_ISLAND_PROBE_ARGUMENTS_FORBIDDEN');
   assert.equal(parsed.sourceMutationAllowed, false);
 });
+
+
+test('local scanner reports only source-typed OS denial, never host filenames', async t => {
+  const { root } = await fixture(t);
+  const denied = await probe(root, { scan: async () => ({
+    schemaVersion: 'stephanos.rescue-island-physical-scope-observation.v1',
+    ok: false, blocker: 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+  }) });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.blocker, 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED');
+  assert.equal(denied.observedPathCount, 0);
+  assert.equal(denied.workerStartAllowed, false);
+  const unknown = await probe(root, { scan: async () => ({
+    schemaVersion: 'stephanos.rescue-island-physical-scope-observation.v1',
+    ok: false, blocker: 'NATIVE_PRIVATE_ERROR_DETAIL',
+  }) });
+  assert.equal(unknown.blocker, 'OS_SCOPE_OBSERVATION_HELD');
+  assert.doesNotMatch(JSON.stringify(unknown), /NATIVE_PRIVATE/);
+});
