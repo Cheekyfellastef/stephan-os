@@ -2939,8 +2939,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
     // Do not treat a generic successful maintenance call as an OS-scope proof.
     // The fixed native child must publish its own one-line, closed-world result.
+    // The authenticated MCP completion may wrap the real fixed-process
+    // execution record in one or more structuredContent envelopes. The
+    // successful command identity and exit status must be checked on the
+    // SAME normalized native envelope, never on caller-provided task JSON.
+    const nativeExecution = findMaintenanceExecutionEnvelope(rawMaintenance);
+    const nativeStdout = nativeExecution?.structuredContent?.stdout;
     const readback = parseRescueIslandBoundaryStdoutV1(
-      rawMaintenance?.structuredContent?.stdout, projection.processId,
+      nativeStdout, projection.processId,
     );
     if (projection.ok !== true
       || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
@@ -2948,8 +2954,19 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       || projection.processId !== shape.command.remoteAction
       || projection.status !== 0
       || !readback) {
+      const diagnostic = projection.processId !== shape.command.remoteAction
+        ? 'ISLAND_NATIVE_PROCESS_ID_MISMATCH'
+        : projection.status !== 0
+          ? 'ISLAND_NATIVE_EXIT_NOT_ZERO_OR_UNOBSERVED'
+          : typeof nativeStdout !== 'string' || nativeStdout.length === 0
+            ? 'ISLAND_NATIVE_OUTPUT_NOT_OBSERVED'
+            : !readback ? 'ISLAND_NATIVE_MARKER_OR_SCOPE_DENIED'
+              : 'ISLAND_COMMAND_ENVELOPE_UNTRUSTED';
       return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        // One typed enum only, never native stdout, paths, process IDs or
+        // custody hints. Still no worker admission when diagnostics are known.
+        executionBlocker: diagnostic,
         publicReceiptSafe: true,
         secretMaterialReturned: false,
       });
