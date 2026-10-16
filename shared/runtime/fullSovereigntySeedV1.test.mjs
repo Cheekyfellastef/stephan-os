@@ -172,3 +172,11 @@ test('sovereignty owner references retain exact canonical titles at first mentio
     assert.equal(firstMentionIsTitleBound(renamed, issue, title), false);
   }
 });
+
+test('offline external-edge acceptance requires remote idempotency or verified reconciliation', () => {
+  // A durable local queue alone cannot prove exactly-once remote delivery.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  assert.match(markdown, /remote idempotency or independently verified reconciliation prevents duplicates/);
+  assert.match(markdown, /Without a remote idempotency contract, report delivery as `UNVERIFIED`/);
+  assert.doesNotMatch(markdown, /later exactly-once guarded delivery is the acceptable behavior/);
+});
