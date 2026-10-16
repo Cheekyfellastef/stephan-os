@@ -226,6 +226,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   const compiledCapabilityWorkCount = integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount);
   const capabilityWorkRemainingCount = Math.max(remoteParityGapCount, compiledCapabilityWorkCount);
   const nativeCapabilityWorkPending = compiledCapabilityWorkCount > remoteParityGapCount;
+  const nativeGapSourceDegraded = commanderParity?.nativeGapSourceHealth === 'DEGRADED';
 
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
@@ -265,9 +266,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     flywheelLearningPromotionCount: integer(commanderParity?.flywheelLearning?.promotedLessonIds?.length),
     capabilityWorkRemainingCount,
     nativeCapabilityWorkPending,
-    zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0,
-    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0,
-    daemonMayReportGreen: capabilityWorkRemainingCount === 0,
+    nativeGapSourceHealth: text(commanderParity?.nativeGapSourceHealth),
+    zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
+    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded,
+    daemonMayReportGreen: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -279,7 +281,9 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: nativeCapabilityWorkPending
+    finalVerdict: nativeGapSourceDegraded
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED'
+      : nativeCapabilityWorkPending
       ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING'
       : remoteParityGapCount > 0
       ? dispatchCount > 0

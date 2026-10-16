@@ -86,6 +86,22 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED');
 });
 
+test('unavailable native event feed cannot produce idle green despite unrelated dispatch', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult(),
+    reconcileCommanderParity: async () => parityResult({
+      nativeGapSourceHealth: 'DEGRADED',
+      capabilityCompiler: { buildableCapabilityCount: 0, nativeGapCandidateCount: 0 },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED');
+  assert.equal(result.mergeAuthority, false);
+});
+
 test('one-minute supervisor contains no synchronous provider refresh or source-build execution path', () => {
   for (const forbidden of [
     'refreshGitHubLifeboatLane7Capacity',

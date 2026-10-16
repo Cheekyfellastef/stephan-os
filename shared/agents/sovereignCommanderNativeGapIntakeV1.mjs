@@ -37,6 +37,7 @@ function eventIdentity(record, nowMs) {
 
 export function extractSovereignNativeCapabilityGapsV1(events = [], {
   nowUtc = new Date().toISOString(),
+  priorGaps = [],
 } = {}) {
   const parsedNow = Date.parse(nowUtc);
   const nowMs = Number.isFinite(parsedNow) ? parsedNow : Date.now();
@@ -53,6 +54,30 @@ export function extractSovereignNativeCapabilityGapsV1(events = [], {
     // Never count duplicate event IDs twice.
     group.events.set(item.eventId, item.timestampUtc);
   }
+  // Prior accepted gap observations remain pending even when their discovery
+  // event ages beyond the intake window or the event reader goes degraded.
+  // This is retention of a *proposal*, never proof of activation or authority.
+  // Do not accept arbitrary prior status rows without original event identity.
+  for (const prior of (Array.isArray(priorGaps) ? priorGaps : []).slice(0, SOVEREIGN_NATIVE_GAP_MAX_CANDIDATES)) {
+    if (!prior || !ID.test(String(prior.capabilityId || ''))
+      || prior.origin !== 'sovereign-native-event'
+      || prior.state !== 'BUILDABLE_GAP'
+      || prior.sourceIsRuntimeParityProof !== false
+      || prior.constructionAdmissionAllowed !== false
+      || !Array.isArray(prior.evidenceEventIds)
+      || !prior.evidenceEventIds.length) continue;
+    const ids = prior.evidenceEventIds.slice(0, 3);
+    if (ids.some((id) => !EVENT_ID.test(String(id)))) continue;
+    let group = byCapability.get(prior.capabilityId);
+    if (!group) {
+      group = { capabilityId: prior.capabilityId, events: new Map() };
+      byCapability.set(prior.capabilityId, group);
+    }
+    for (const id of ids) group.events.set(id, 'RETAINED_UNTIL_PROVEN_CLOSED');
+    const count = Number(prior.observationCount);
+    group.retainedCount = Math.max(group.retainedCount || 0,
+      Number.isSafeInteger(count) && count > 0 ? Math.min(count, 1_000_000) : ids.length);
+  }
   const ordered = [...byCapability.values()]
     .sort((a, b) => a.capabilityId.localeCompare(b.capabilityId));
   const gaps = Object.freeze(ordered.slice(0, SOVEREIGN_NATIVE_GAP_MAX_CANDIDATES).map((group) =>
@@ -60,7 +85,7 @@ export function extractSovereignNativeCapabilityGapsV1(events = [], {
       capabilityId: group.capabilityId,
       origin: 'sovereign-native-event',
       state: 'BUILDABLE_GAP',
-      observationCount: group.events.size,
+      observationCount: Math.max(group.events.size, group.retainedCount || 0),
       evidenceEventIds: Object.freeze([...group.events.keys()].sort().slice(0, 3)),
       sourceIsRuntimeParityProof: false,
       constructionAdmissionAllowed: false,

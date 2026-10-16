@@ -58,6 +58,25 @@ test('reject forged, unrelated, stale, future and non-gap events without source 
   assert.equal(result.finalVerdict, 'SOVEREIGN_NATIVE_GAP_NO_QUALIFIED_EVENTS');
 });
 
+test('retains the same uncompleted native gap after its original discovery event expires', () => {
+  const old = nativeEvent('windows-service-ownership', 'sovereign-gap-one');
+  const first = extractSovereignNativeCapabilityGapsV1([old], {
+    nowUtc: '2026-10-12T11:10:00.000Z',
+  });
+  const later = extractSovereignNativeCapabilityGapsV1([old], {
+    nowUtc: '2026-10-22T11:10:00.000Z', priorGaps: first.gaps,
+  });
+  assert.equal(later.candidateCount, 1);
+  assert.equal(later.gaps[0].capabilityId, 'windows-service-ownership');
+  assert.equal(later.gaps[0].constructionAdmissionAllowed, false);
+  assert.equal(later.proofOfNewExecutableCapability, false);
+  const denied = extractSovereignNativeCapabilityGapsV1([], {
+    nowUtc: '2026-10-22T11:10:00.000Z',
+    priorGaps: [{ ...first.gaps[0], sourceIsRuntimeParityProof: true }],
+  });
+  assert.equal(denied.candidateCount, 0);
+});
+
 test('large native learning history reports truncation but does not make a new scheduler', () => {
   const events = Array.from({ length: 20 }, (_, i) =>
     nativeEvent(`bounded-gap-${i}`, `sovereign-gap-${i}`));

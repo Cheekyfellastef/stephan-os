@@ -51,6 +51,7 @@ function supervisorStatus({
   runningMissionCount = 0,
   heldGoalCount = 0,
   capabilityCompilerWorkCount = 0,
+  nativeGapSourceHealth = 'VALIDATED',
   blocker = '',
 } = {}) {
   return {
@@ -65,6 +66,7 @@ function supervisorStatus({
       runningMissionCount,
       heldGoalCount,
       capabilityCompilerWorkCount,
+      nativeGapSourceHealth,
       finalVerdict,
     }) + '\n',
   };
@@ -385,6 +387,25 @@ test('pending native skill cannot be greened by unrelated dispatch or held goals
   ]);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
   assert.equal(result.mergeAuthority, false);
+});
+
+test('degraded native skill intake remains blocked despite unrelated dispatch', () => {
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        daemonMayReportGreen: false,
+        nativeGapSourceHealth: 'DEGRADED',
+        dispatchCount: 2,
+        heldGoalCount: 1,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NATIVE_GAP_INTAKE_UNVERIFIED');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
+  assert.equal(result.arbitraryShellAllowed, false);
 });
 
 test('goal builder flow stays healthy while autonomous parity work is actively dispatched', () => {
