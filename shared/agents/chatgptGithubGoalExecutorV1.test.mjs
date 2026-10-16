@@ -25,7 +25,7 @@ async function harness(t, options = {}) {
   const comment = {id:123456, issue_url:`${ROOT}/issues/1574`, user:{login:'Cheekyfellastef',id:267490109,type:'User'},
     author_association:'OWNER', created_at:NOW, updated_at:NOW,
     body:'```stephanos-chatgpt-source-task\n'+JSON.stringify(task)+'\n```', ...options.comment};
-  let branch = null, committed = false, pull = null, durable = null;
+  let branch = null, committed = false, pull = null, durable = null, branchReads = 0;
   let claim = null, reservations = 0, ownershipLost = false, completed = false;
   const calls = [], receipts = [];
   const inventory = {constructionLanes:[],integrationLane:null,completedGoalIds:[]};
@@ -52,20 +52,32 @@ async function harness(t, options = {}) {
       if (branch || options.branchExists) return response({},422);
       branch=body.sha; return response({ref:body.ref,object:{sha:branch}},201);
     }
-    if (url===`${ROOT}/git/ref/heads/chatgpt/goal-1574-bounded-test`)
+    if (url===`${ROOT}/git/ref/heads/chatgpt/goal-1574-bounded-test`) {
+      branchReads++;
+      if(options.expireDuringRead&&branchReads===2)clock=Date.parse(task.expiresAt);
       return response({object:{sha:options.branchMoved?MERGED:branch}});
+    }
     if (url==='https://api.github.com/graphql' && body.query.startsWith('mutation(')) {
       if (options.casConflict) return response({errors:[{message:'expectedHeadOid mismatch'}]});
       assert.equal(body.variables.input.expectedHeadOid,branch);
       branch=HEAD; committed=true;
       if(options.loseAfterCommit)ownershipLost=true;
+      if(options.loseCommitAck&&!options.commitAckLost){options.commitAckLost=true;throw new Error('commit ack lost');}
       return response({data:{createCommitOnBranch:{commit:{oid:HEAD,tree:{oid:'d'.repeat(40)}}}}});
     }
     if (url===`${ROOT}/compare/${MAIN}...${HEAD}`)
       return response({status:'ahead',ahead_by:1,total_commits:1,
         files:options.compareFiles||task.edits.map(e=>({filename:e.path,status:'added'}))});
+    if (url.startsWith(`${ROOT}/contents/`)) {
+      const edit=task.edits.find(e=>url===`${ROOT}/contents/${e.path}?ref=${HEAD}`);
+      assert.ok(edit);
+      return response({type:'file',path:edit.path,encoding:'base64',
+        content:Buffer.from(options.wrongBytes?'wrong source':edit.content).toString('base64')});
+    }
+    if (url.startsWith(`${ROOT}/pulls?state=all&head=`))return response(pull?[pull]:[]);
     if (url===`${ROOT}/pulls`){
       pull={number:3140,head:{sha:HEAD,ref:body.head,repo:{full_name:REPO}},base:{ref:'main',repo:{full_name:REPO}},merged:false};
+      if(options.losePrAck&&!options.prAckLost){options.prAckLost=true;throw new Error('PR ack lost');}
       return response(pull,201);
     }
     if (url===`${ROOT}/pulls/3140`) return response(pull);
@@ -86,8 +98,9 @@ async function harness(t, options = {}) {
       const persisted=await appendExecutionReceipt(root,receipt);
       if(persisted.ok!==true){const e=new Error(JSON.stringify(persisted));e.code=persisted.reason||persisted.finalVerdict;throw e;}
       receipts.push(receipt);
-      if(context.prNumber)durable={issueNumber:1574,commentId:123456,taskId:task.taskId,branch:context.task.branch,
-        head:context.head,prNumber:context.prNumber,reservationId:context.lease.reservationId};
+      durable={issueNumber:1574,commentId:123456,taskId:task.taskId,branch:context.task.branch,
+        head:context.head,prNumber:context.prNumber,reservationId:context.lease.reservationId,
+        lease:context.lease,commentSha256:context.task.commentSha256};
       return {ok:true,evidenceSha256:context.evidenceSha256};
     }, readExecution:async()=>durable,
     confirmProtectedMerge:async()=>options.protectedProof!==false,
@@ -219,4 +232,51 @@ test('clock failing to advance cannot create an invalid canonical receipt chain'
   const r=await fixed.runOnce({issueNumber:1574,commentId:123456});
   assert.equal(r.blocker,'EXECUTION_RECEIPT_CLOCK_NOT_ADVANCED');assert.equal(h.committed,false);
   assert.equal(h.calls.some(c=>c.url.endsWith('/git/refs')),false);
+});
+
+test('recover a successful commit with a lost acknowledgment without another source mutation',async t=>{
+  const h=await harness(t,{loseCommitAck:true});const r=await h.run();
+  assert.equal(r.blocker,'GITHUB_WRITE_OUTCOME_UNKNOWN');assert.equal(h.committed,true);
+  const recovered=await h.executor.reconcile({issueNumber:1574,commentId:123456});
+  assert.equal(recovered.verdict,'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE',JSON.stringify(recovered));
+  assert.equal(h.durable.head,HEAD);assert.equal(h.durable.prNumber,3140);assert.equal(h.reservations,1);
+  assert.equal(h.calls.filter(c=>c.body?.query?.startsWith('mutation(')).length,1);
+  assert.equal(h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST').length,1);
+});
+
+test('recover a successful PR POST with lost acknowledgment by discovering the SAME PR',async t=>{
+  const h=await harness(t,{losePrAck:true});assert.equal((await h.run()).blocker,'GITHUB_WRITE_OUTCOME_UNKNOWN');
+  assert.ok(h.pull);
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).verdict,
+    'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE');
+  assert.equal(h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST').length,1);
+  assert.equal(h.calls.filter(c=>c.body?.query?.startsWith('mutation(')).length,1);
+  const again=await h.executor.reconcile({issueNumber:1574,commentId:123456});
+  assert.equal(again.verdict,'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE');
+});
+
+test('recovery rejects unapproved source bytes and never reruns source construction',async t=>{
+  const opts={loseCommitAck:true};const h=await harness(t,opts);await h.run();
+  opts.wrongBytes=true;
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).blocker,
+    'PUBLISHED_SOURCE_BYTES_UNPROVEN');
+  assert.equal(h.calls.filter(c=>c.body?.query?.startsWith('mutation(')).length,1);
+  assert.equal(h.pull,null);
+});
+
+test('expiry during final paginated/ref observation prevents CAS source write',async t=>{
+  const h=await harness(t,{expireDuringRead:true});const r=await h.run();
+  assert.equal(r.blocker,'OWNER_TASK_EXPIRED');assert.equal(h.committed,false);
+});
+
+test('recovery cannot replace the original owner comment with a changed approval',async t=>{
+  const h=await harness(t,{loseCommitAck:true});await h.run();h.comment.body+='\nchanged';
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).blocker,
+    'ORIGINAL_RESERVATION_OR_APPROVAL_UNPROVEN');assert.equal(h.pull,null);
+});
+
+test('closed unmerged PR is a typed hold rather than completion or automatic replacement',async t=>{
+  const h=await harness(t);await h.run();h.pull.state='closed';
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).blocker,
+    'PR_CLOSED_UNMERGED_PRESERVE_SOURCE');assert.equal(h.completed,false);
 });

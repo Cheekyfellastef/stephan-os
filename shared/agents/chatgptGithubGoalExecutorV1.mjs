@@ -52,7 +52,7 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
     catch { stop(method === 'GET' ? 'GITHUB_RESPONSE_INVALID' : 'GITHUB_WRITE_OUTCOME_UNKNOWN'); }
   }
 
-  async function intake(issueNumber, commentId) {
+  async function intake(issueNumber, commentId, {recoveryReadOnly = false} = {}) {
     if (!positive(issueNumber) || !positive(commentId)) stop('INTAKE_ID_INVALID');
     const comment = await request(`${ROOT}/issues/comments/${commentId}`);
     const clock = Date.parse(now());
@@ -61,7 +61,7 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
       || comment.user?.type !== 'User' || comment.author_association !== 'OWNER'
       || comment.created_at !== comment.updated_at || !Number.isFinite(clock)
       || !Number.isFinite(Date.parse(comment.created_at)) || Date.parse(comment.created_at) > clock
-      || clock - Date.parse(comment.created_at) > 600_000
+      || (!recoveryReadOnly && clock - Date.parse(comment.created_at) > 600_000)
       || typeof comment.body !== 'string' || Buffer.byteLength(comment.body) > 64 * 1024)
       stop('OWNER_INTAKE_UNAUTHENTICATED_OR_STALE');
     const matches = [...comment.body.matchAll(new RegExp('```' + MARKER + '\\s*([\\s\\S]*?)```', 'g'))];
@@ -72,7 +72,8 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
       || task.schemaVersion !== SCHEMA || !/^[a-z0-9][a-z0-9-]{2,39}$/.test(task.taskId)
       || typeof task.expectedMain !== 'string' || !SHA.test(task.expectedMain)
       || !['docs-only','tests-only'].includes(task.taskClass)
-      || !Number.isFinite(Date.parse(task.expiresAt)) || Date.parse(task.expiresAt) <= clock
+      || !Number.isFinite(Date.parse(task.expiresAt)) || (!recoveryReadOnly && Date.parse(task.expiresAt) <= clock)
+      || Date.parse(task.expiresAt) <= Date.parse(comment.created_at)
       || Date.parse(task.expiresAt) > Date.parse(comment.created_at) + 600_000
       || !Array.isArray(task.edits) || !task.edits.length || task.edits.length > 6
       || task.edits.some(edit => !exact(edit,['path','content'])
@@ -99,6 +100,38 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
     await estate(task); // Complete current PR inventory, not a caller's empty list.
     const ref = await request(`${ROOT}/git/ref/heads/${task.branch}`);
     if (ref.object?.sha !== task.expectedMain) stop('BRANCH_MOVED_NO_OVERWRITE');
+    // Slow paginated reads may consume the remaining authorization window.
+    if (Date.parse(task.expiresAt) <= Date.parse(now())) stop('OWNER_TASK_EXPIRED');
+    if (await verifyReservation({task, lease}) !== true) stop('CANONICAL_RESERVATION_LOST');
+  }
+
+  async function verifySource(task, head) {
+    const compare = await request(`${ROOT}/compare/${task.expectedMain}...${head}`);
+    if (compare.status !== 'ahead' || compare.ahead_by !== 1 || compare.total_commits !== 1
+      || !Array.isArray(compare.files) || compare.files.length !== task.paths.length
+      || compare.files.some(f=>!task.paths.includes(f.filename) || !['added','modified'].includes(f.status)))
+      stop('PUBLISHED_SOURCE_SCOPE_UNPROVEN');
+    // Recovery must prove approved bytes, not merely a similar path inventory.
+    for (const edit of task.edits) {
+      const file = await request(`${ROOT}/contents/${edit.path}?ref=${head}`);
+      if (file.type !== 'file' || file.path !== edit.path || file.encoding !== 'base64'
+        || typeof file.content !== 'string'
+        || !Buffer.from(file.content.replace(/\s/g,''),'base64').equals(Buffer.from(edit.content)))
+        stop('PUBLISHED_SOURCE_BYTES_UNPROVEN');
+    }
+  }
+
+  async function publishPull(task, lease, head) {
+    const fresh = await estate(task);
+    if (fresh.openPrEvidence.claims.some(c=>c.paths.some(p=>task.paths.some(owned=>overlap(p,owned)))))
+      stop('POST_COMMIT_PR_COLLISION_HELD');
+    const current = await intake(task.issueNumber,task.commentId);
+    if (current.commentSha256 !== task.commentSha256) stop('OWNER_TASK_CHANGED');
+    if (await verifyReservation({task,lease}) !== true) stop('CANONICAL_RESERVATION_LOST');
+    if (Date.parse(task.expiresAt) <= Date.parse(now())) stop('OWNER_TASK_EXPIRED');
+    return request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:false,
+      title:`Goal #${task.issueNumber}: ${task.taskId}`,
+      body:`Bounded GitHub source task under #${task.issueNumber}. Owner intake comment ${task.commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nExisting CI, independent exact-head review and operator-protected merge are required. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
   }
 
   return Object.freeze({
@@ -160,6 +193,7 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
         await checkpoint('started','GITHUB_PICKUP_PROVEN',previous.proofRefs);
         // Explicit API compare-and-swap: REST PATCH refs alone is not expected-head CAS.
         await live(task, lease);
+        if (Date.parse(task.expiresAt) <= Date.parse(now())) stop('OWNER_TASK_EXPIRED');
         const result = await request('https://api.github.com/graphql','POST',{query:COMMIT,variables:{input:{
           branch:{repositoryNameWithOwner:REPO, branchName:task.branch}, expectedHeadOid:task.expectedMain,
           message:{headline:`Goal #${issueNumber}: ${task.taskId}`},
@@ -167,20 +201,12 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
         head = result?.data?.createCommitOnBranch?.commit?.oid;
         if (result?.errors?.length || typeof head !== 'string' || !SHA.test(head) || head === task.expectedMain)
           stop('SOURCE_COMMIT_UNPROVEN_RECONCILE_SAME_BRANCH');
-        const compare = await request(`${ROOT}/compare/${task.expectedMain}...${head}`);
-        if (compare.status !== 'ahead' || compare.ahead_by !== 1 || compare.total_commits !== 1
-          || !Array.isArray(compare.files) || compare.files.length !== task.paths.length
-          || compare.files.some(f=>!task.paths.includes(f.filename) || !['added','modified'].includes(f.status)))
-          stop('PUBLISHED_SOURCE_SCOPE_UNPROVEN');
+        await verifySource(task,head);
         await checkpoint('progress','SOURCE_COMMIT_PROVEN',[`https://github.com/${REPO}/commit/${head}`]);
         if (await verifyReservation({task, lease}) !== true) stop('CANONICAL_RESERVATION_LOST');
-        const fresh = await estate(task);
-        if (fresh.openPrEvidence.claims.some(c=>c.paths.some(p=>task.paths.some(owned=>overlap(p,owned)))))
-          stop('POST_COMMIT_PR_COLLISION_HELD');
-        const pull = await request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:false,
-          title:`Goal #${issueNumber}: ${task.taskId}`,
-          body:`Bounded GitHub source task under #${issueNumber}. Owner intake comment ${commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nExisting CI, independent exact-head review and operator-protected merge are required. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
+        const pull = await publishPull(task,lease,head);
         if (!positive(pull.number) || pull.head?.sha !== head || pull.head?.ref !== task.branch
+          || pull.head?.repo?.full_name !== REPO || pull.base?.repo?.full_name !== REPO
           || pull.base?.ref !== 'main') stop('PR_PUBLICATION_UNPROVEN');
         prNumber = pull.number;
         await checkpoint('progress','PR_OPEN_AWAITING_CI_AND_INDEPENDENT_REVIEW',
@@ -206,19 +232,62 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
       if (!positive(issueNumber) || !positive(commentId)) stop('INTAKE_ID_INVALID');
       // Never trust a caller's receipt or merge assertion, or re-parse expired
       // approval to create a new lane. Resolve the original persisted execution.
-      const execution = await readExecution({issueNumber, commentId});
+      let execution = await readExecution({issueNumber, commentId});
       if (!execution || execution.issueNumber !== issueNumber || execution.commentId !== commentId
-        || !positive(execution.prNumber) || !SHA.test(execution.head || '')
         || !/^[a-z0-9][a-z0-9-]{2,39}$/.test(execution.taskId || '')
         || execution.branch !== `chatgpt/goal-${issueNumber}-${execution.taskId}`)
         return {verdict:'HELD', blocker:'DURABLE_EXECUTION_UNPROVEN'};
+      if (!positive(execution.prNumber) || !SHA.test(execution.head || '')) {
+        try {
+          // A write may have executed before its acknowledgment was lost. Inspect
+          // the SAME reserved branch and all matching PRs before any new write.
+          const task = await intake(issueNumber,commentId,{recoveryReadOnly:true});
+          if (execution.commentSha256 !== task.commentSha256 || execution.branch !== task.branch
+            || !execution.lease || await verifyReservation({task,lease:execution.lease}) !== true)
+            stop('ORIGINAL_RESERVATION_OR_APPROVAL_UNPROVEN');
+          const ref = await request(`${ROOT}/git/ref/heads/${task.branch}`);
+          const head = ref.object?.sha;
+          if (!SHA.test(head || '') || head === task.expectedMain)
+            stop('SOURCE_NOT_STARTED_NO_REEXECUTION');
+          if (SHA.test(execution.head || '') && execution.head !== head) stop('RECOVERY_SOURCE_HEAD_CHANGED');
+          await verifySource(task,head);
+          const pulls = await request(`${ROOT}/pulls?state=all&head=Cheekyfellastef:${task.branch}&base=main&per_page=2`);
+          if (!Array.isArray(pulls) || pulls.length > 1) stop('RECOVERY_PR_AMBIGUOUS');
+          const pull = pulls[0] || await publishPull(task,execution.lease,head);
+          if (!positive(pull?.number) || pull.head?.sha !== head || pull.head?.ref !== task.branch
+            || pull.head?.repo?.full_name !== REPO || pull.base?.repo?.full_name !== REPO || pull.base?.ref !== 'main')
+            stop('RECOVERY_PR_IDENTITY_UNPROVEN');
+          const evidence = {phase:'SOURCE_PUBLICATION_RECOVERED',commentSha256:task.commentSha256,
+            reservationId:execution.lease.reservationId,branch:task.branch,head,prNumber:pull.number,
+            originalExecutionId:`chatgpt-${commentId}`};
+          const evidenceSha256 = hash(JSON.stringify(evidence));
+          const evidenceRef = `proofs/chatgpt-${commentId}-recovery-${evidenceSha256}.json`;
+          // A distinct read-only recovery receipt does not reopen a terminal
+          // source execution, dispatch a writer, acquire a lease or replay CAS.
+          const receipt = createExecutionReceipt({repository:REPO,issueNumber,prNumber:0,branch:task.branch,
+            sourceHead:head,workerId:'chatgpt-github',workerType:'github-first',
+            executionId:`chatgpt-${commentId}-recovery`,leaseKey:`chatgpt-${commentId}`,
+            timestampUtc:now(),state:'queued',phase:'SOURCE_PUBLICATION_RECOVERED',sequence:1,
+            proofRefs:[evidenceRef],expectedNextAction:'Continue the original PR through existing protected review and merge.'});
+          if (!validateExecutionReceipt(receipt).valid) stop('RECOVERY_RECEIPT_INVALID');
+          const persisted = await appendReceipt(receipt,{task,lease:execution.lease,head,prNumber:pull.number,
+            evidence,evidenceRef,evidenceSha256});
+          if (persisted?.ok !== true || persisted.evidenceSha256 !== evidenceSha256)
+            stop('RECOVERY_RECEIPT_PERSISTENCE_UNPROVEN');
+          execution = {...execution,head,prNumber:pull.number};
+        } catch (error) {
+          return {verdict:'HELD',blocker:error.code || 'RECOVERY_HOST_OR_RECEIPT_FAILURE',branch:execution.branch};
+        }
+      }
       const pull = await request(`${ROOT}/pulls/${execution.prNumber}`);
       if (pull.number !== execution.prNumber || pull.head?.sha !== execution.head
         || pull.head?.ref !== execution.branch || pull.head?.repo?.full_name !== REPO
         || pull.base?.repo?.full_name !== REPO || pull.base?.ref !== 'main')
         return {verdict:'HELD', blocker:'PR_IDENTITY_CHANGED'};
       if (pull.merged !== true || !SHA.test(pull.merge_commit_sha || ''))
-        return {verdict:'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE', prNumber:execution.prNumber};
+        return pull.state === 'closed'
+          ? {verdict:'HELD',blocker:'PR_CLOSED_UNMERGED_PRESERVE_SOURCE',prNumber:execution.prNumber}
+          : {verdict:'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE', prNumber:execution.prNumber};
       // Separate trusted collector proves actual protected workflow/environment,
       // exact reviewed head/base and immutable review artifact. We never approve.
       if (await confirmProtectedMerge({execution, pull}) !== true)

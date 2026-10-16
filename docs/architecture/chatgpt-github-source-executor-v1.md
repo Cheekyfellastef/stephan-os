@@ -44,8 +44,15 @@ authority, so it does not depend on unmerged picker bytes.
 
 No request is retried internally. A timeout/lost acknowledgment after a write
 returns `GITHUB_WRITE_OUTCOME_UNKNOWN` with the same reservation and branch.
-Reconcile that branch before further source mutation; never create a replacement
-branch or PR. Receipt sink failure prevents subsequent writes. Repeating intake
+`reconcile` reads that original canonical record even before its head/PR is known,
+authenticates the original comment digest and active reservation, inspects that
+same branch and verifies both its exact one-commit scope and every approved byte.
+It discovers any existing PR before publishing a missing one. Missing source is
+never re-executed. Expired authority permits read-only recovery of an existing
+publication; it cannot authorize a new PR POST. A separate read-only recovery
+receipt binds discoveries to the original task/reservation without reopening a
+terminal source execution. Never create a replacement branch or PR.
+Receipt sink failure prevents subsequent writes. Repeating intake
 must encounter the canonical reservation fence rather than reacquire a lane.
 
 ## Owner intake
@@ -85,6 +92,9 @@ from task-selected modules, URLs, paths, executable strings or goal content.
   This chain begins before PR creation, so its immutable `prNumber` stays zero;
   its later PR/head binding lives in the hashed evidence and recovery record.
   Receipt times must strictly advance; a broken clock is held, never fabricated.
+  Persist original comment digest, task, lease and recovery metadata at EVERY
+  checkpoint, including pre-commit/pre-PR and failure checkpoints. Recovery must
+  not require the fields whose write acknowledgments may have been lost.
 - `readExecution` must resolve that original canonical record, not caller JSON.
   `confirmProtectedMerge` must use the existing independent exact-head review
   and protected merge artifact collector, including environment approval. A PR
