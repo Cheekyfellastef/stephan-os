@@ -45,3 +45,10 @@ test('requires gaming, process tree, model and VRAM evidence together', () => {
     assert.equal(check({ ...evidence, [key]: false }).evidenceCandidateComplete, false, key);
   }
 });
+
+test('rejects noncanonical timestamp formats even when Date.parse accepts them', () => {
+  for (const value of ['2026-10-16', '2026-10-16T11:59:59Z', 'Fri, 16 Oct 2026 11:59:59 GMT']) {
+    assert.equal(check({ ...evidence, observedAtUtc: value }).evidenceCandidateComplete, false, value);
+  }
+  assert.equal(check(evidence, { ...identity, routerStartedAtUtc: '2026-10-16' }).evidenceCandidateComplete, false);
+});
