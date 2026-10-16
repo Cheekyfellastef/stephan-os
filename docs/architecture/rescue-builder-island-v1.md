@@ -78,3 +78,30 @@ independent exact-head review; these tests do not constitute that review.
 6. Only then qualify bounded unattended Island refill. Dashboard consumes Island receipts as *observer*, not owner, and must not aggregate its counts into canonical 0/15.
 
 No authority is inferred from a new issue, branch, unit test, checked status, a free canonical lane slot, or a read-only preflight. All eight pre-existing dirty Battle Bridge entries remain untouched.
+
+
+## #3109 physical path observer slice (read-only)
+
+`shared/agents/rescueIslandPhysicalScopeObservationV1.mjs` supplies an actual
+filesystem readback for a bounded candidate/claim path set. It requires a physical
+canonical checkout with a real .git directory, a path allowlist, and no existing
+symlink/junction/redirected ancestor, escaping physical path, case-colliding
+path, or regular-file ancestor. A missing target records only the last existing
+ancestor: the final source write must recheck and bind a no-follow handle.
+
+The observer returns `LOCAL_READ_ONLY_UNAUTHENTICATED`, **never**
+`INDEPENDENT_READ_ONLY`: it does not prove who gathered the paths, whether
+all three claimant inventories were complete, a stable write handle, the
+original r7 writer exclusion, fresh gaming capacity, operator approval or
+machine-signed authority. No registration as a worker, daemon or remote action.
+A future trusted Island host must gather the complete canonical/Seed/Island
+claims itself, supply their exact paths, run the observer under an independently
+reviewed OS identity, and recheck after approval immediately before a held
+one-shot builder; no caller may simply relabel its output as authenticated.
+
+Focused test:
+`node --test shared/agents/rescueIslandPhysicalScopeObservationV1.test.mjs`.
+Tests cover existing and missing files, path coercion/traversal, physical
+symlink aliases including internal aliases, redirects appearing after a prior
+safe scan, non-directory ancestors and missing .git. This source slice does
+not satisfy the separate #3109 first physical pickup acceptance criteria.

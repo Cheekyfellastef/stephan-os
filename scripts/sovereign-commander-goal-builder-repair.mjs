@@ -122,6 +122,15 @@ function originalOwnerRecoveryBlocker(result) {
 function supervisorFlowGreen(result) {
   const status = parseSupervisorStatus(result);
   if (result?.ok !== true || status?.ok !== true) return false;
+  // A native capability draft has no proven pickup merely because a different
+  // mission was dispatched or a goal was held. Keep this gap non-green until
+  // the exact capability itself has qualified and executed.
+  if (Number.isSafeInteger(status.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return false;
+  // A compiler batch limit is never proof that older native requests vanished.
+  if (Number.isSafeInteger(status.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return false;
+  if (status.nativeGapSourceHealth === 'DEGRADED') return false;
   const autonomyPending = status?.daemonMayReportGreen === false;
   const autonomousWorkActive = Number(status?.dispatchCount) > 0
     || Number(status?.runningMissionCount) > 0;
@@ -131,6 +140,11 @@ function supervisorFlowGreen(result) {
 
 function supervisorFlowBlocker(result) {
   const status = parseSupervisorStatus(result);
+  if (status?.nativeGapSourceHealth === 'DEGRADED') return 'NATIVE_GAP_INTAKE_UNVERIFIED';
+  if (Number.isSafeInteger(status?.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return 'NATIVE_UPLIFT_PENDING';
+  if (Number.isSafeInteger(status?.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return 'NATIVE_UPLIFT_PENDING';
   const blocker = text(status?.blocker);
   if (SAFE_BLOCKER.test(blocker)) return blocker;
   const verdict = text(status?.finalVerdict);
@@ -146,6 +160,16 @@ function laneStatusGreen(result) {
   const refillHealth = text(status?.lanes?.refillHealth).toUpperCase();
   const refillState = text(status?.lanes?.refillState).toUpperCase();
   const finalVerdict = text(status?.finalVerdict).toUpperCase();
+  // A green headline cannot override missing physical pickup for selected goals.
+  // The same pickup gate applies to both green and stale-telemetry projections.
+  const selectedCount = status?.logical?.selectedForAdmission;
+  const selectedPickupCount = status?.lanes?.selectedMaterialPickupProvenCount;
+  const selectedCountValid = Number.isSafeInteger(selectedCount) && selectedCount >= 0;
+  const allSelectedPickupProven = selectedCountValid
+    && (selectedCount === 0
+      || (Number.isSafeInteger(selectedPickupCount)
+        && selectedPickupCount === selectedCount));
+  if (!allSelectedPickupProven) return false;
   if (
     finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY'
     && refillHealth === 'GREEN'
@@ -155,14 +179,9 @@ function laneStatusGreen(result) {
   // owners. If only their evidence is stale, a current/valid logical fabric
   // with no current hard-red host and no current runnable-work claim remains
   // safe for the canonical scheduler + mission worker to operate.
-  const selectedLogicalGoals = Number(status?.logical?.selectedForAdmission);
-  const provenActiveMaterialLanes = Number(status?.lanes?.activeMaterialLaneCount);
-  // Stale continuity hosts are not proof that selected logical goals were
-  // actually claimed. Never return repair-green for selected work when no
-  // material pickup has been evidenced; keep the canonical worker repair live.
-  const noUnprovenSelectedPickup = Number.isSafeInteger(selectedLogicalGoals)
-    && Number.isSafeInteger(provenActiveMaterialLanes)
-    && (selectedLogicalGoals === 0 || provenActiveMaterialLanes > 0);
+  // The same per-selected-goal proof applies to stale-host tolerance;
+  // it cannot be satisfied by an unrelated occupied material lane.
+  const noUnprovenSelectedPickup = allSelectedPickupProven;
   return finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED'
     && refillHealth === 'AMBER'
     && refillState === 'TELEMETRY_STALE_OR_INCOMPLETE'
@@ -176,8 +195,9 @@ function laneStatusGreen(result) {
 
 function laneStatusBlocker(result) {
   const status = parseControllerLaneStatus(result);
-  if (Number(status?.logical?.selectedForAdmission) > 0
-      && Number(status?.lanes?.activeMaterialLaneCount) === 0) {
+  if (Number.isSafeInteger(status?.logical?.selectedForAdmission)
+      && status.logical.selectedForAdmission > 0
+      && status?.lanes?.selectedMaterialPickupProvenCount !== status.logical.selectedForAdmission) {
     return 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN';
   }
   const refillState = text(status?.lanes?.refillState);

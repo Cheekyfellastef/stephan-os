@@ -1,0 +1,43 @@
+name: Native Windows r7 Access Probe Proof
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
+      - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
+      - '.github/workflows/original-r7-native-windows-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-r7-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-r7-probe:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile and execute native Windows probe regressions
+        shell: pwsh
+        run: |
+          dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Identify non-production evidence boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'GITHUB_RUNNER_NATIVE_PROBE_ONLY=true'
+          Write-Output 'ORIGINAL_R7_WRITER_CONTAINMENT_PROVED=false'
+          Write-Output 'BATTLE_BRIDGE_WINDOWS_WITNESS_COMMISSIONED=false'
+          Write-Output 'ORIGINAL_R7_LEASE_RELEASED=false'
