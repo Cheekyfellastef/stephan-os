@@ -3432,3 +3432,59 @@ test('failed fixed Island probe supplies only a typed hold, not source authority
   assert.equal(response.rescueIslandBoundary?.mergeAllowed, false);
   assert.doesNotMatch(JSON.stringify(response), /PRIVATE_NATIVE_ERROR/);
 });
+
+test('Island scope readback is bound to nested native execution, not outer MCP content', async () => {
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const inner = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+    structuredContent: {
+      status: 0, errorCode: '',
+      stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(scope) + '\n',
+      stderr: 'NATIVE_PRIVATE_STDERR',
+    },
+  };
+  const outer = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    structuredContent: inner,
+    contentText: 'UNTRUSTED_PRIVATE_OUTER_TEXT',
+  };
+  const inspect = async payload => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: payload }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const success = await inspect(outer);
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(success.rescueIslandBoundary?.observedPathCount, 3);
+  assert.equal(success.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.doesNotMatch(JSON.stringify(success), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+  const tampered = await inspect({
+    ...outer, structuredContent: {
+      ...inner,
+      structuredContent: {
+        ...inner.structuredContent,
+        stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='
+          + JSON.stringify({ ...scope, workerStartAllowed: true }) + '\n',
+      },
+    },
+  });
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+  assert.equal(tampered.executionBlocker, 'ISLAND_NATIVE_MARKER_OR_SCOPE_DENIED');
+  assert.doesNotMatch(JSON.stringify(tampered), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+});
