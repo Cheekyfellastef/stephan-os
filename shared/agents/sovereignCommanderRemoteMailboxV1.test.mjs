@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -3252,4 +3253,80 @@ test('single maintenance action has an overall budget across health, MCP setup a
     return body.method === 'tools/call' && body.params?.name === 'maintenance_action';
   });
   assert.equal(actualMaintenance.length, 0);
+});
+
+test('75 logical goals produce a complete remote lane receipt through the real strict mailbox parser', async () => {
+  const source = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-16T20:47:30.459Z',
+    physical: {
+      expected: 5, building: 0, amber: 0, red: 5, unknown: 0,
+      allCurrent: false, allObservedEnabled: false,
+      finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+      controllers: Array.from({ length: 5 }, (_, index) => ({
+        controllerId: `controller-${index}`,
+        title: `Controller ${index}`,
+        freshness: 'STALE', activityState: 'WAITING',
+        trafficLight: 'RED', blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+        materialLaneCount: 0, activeLaneCount: 0,
+        parkedLaneCount: 0, safeEligibleWorkRemaining: 0,
+        materialLanes: [{ proofRef: 'PRIVATE_PROOF_DO_NOT_EXPOSE' }],
+      })),
+    },
+    logical: {
+      current: true, valid: true, observedAtUtc: '2026-10-16T20:47:30.459Z',
+      physicalControllerCount: 5, total: 75, active: 0,
+      tracking: 70, parked: 5, retired: 0, selectedForAdmission: 17,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [],
+      controllers: Array.from({ length: 75 }, (_, index) => ({
+        logicalControllerId: `logical-${index}`,
+        title: `PRIVATE_GOAL_${index}_${'x'.repeat(220)}`,
+        workerPath: 'PRIVATE_WORKER_PATH_DO_NOT_EXPOSE',
+        selectedForAdmission: index < 17,
+      })),
+    },
+    lanes: {
+      targetMaterialLanes: 15, activeMaterialLaneCount: 0,
+      selectedMaterialPickupProvenCount: 0, activeLaneClaimCount: 0,
+      reportedMaterialLaneCountSum: 0, occupancyPercent: 0,
+      freeTargetLaneSlots: 15, runnableBacklogCount: 0,
+      parkedPhysicalLaneCount: 0, reportedSafeEligibleWorkMax: 0,
+      reportedSafeEligibleWorkSum: 0,
+      refillHealth: 'AMBER', refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+    },
+    readOnly: true, arbitraryShellAllowed: false,
+    sourceMutationAllowed: false, mergeAuthority: false,
+    secretMaterialIncluded: false, unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(source)) > 16 * 1024);
+  const remote = projectBoundedRemoteControllerLaneStatus(source);
+  const stdout = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='
+    + JSON.stringify(remote) + '\\n';
+  assert.ok(Buffer.byteLength(stdout) < 12 * 1024);
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'controller-lane-status' } },
+    structuredContent: { ok: true, status: 0, stdout, stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'controller-lane-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn, env: { USERPROFILE: 'C:\\\\Users\\\\Operator' } },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE');
+  assert.equal(result.controllerLaneStatus.logical.total, 75);
+  assert.equal(result.controllerLaneStatus.logical.selectedForAdmission, 17);
+  assert.equal(result.controllerLaneStatus.physical.red, 5);
+  assert.equal(result.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  assert.equal(result.controllerLaneStatus.unknownMeansGreen, false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_GOAL_'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_WORKER_PATH'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_PROOF'), false);
 });
