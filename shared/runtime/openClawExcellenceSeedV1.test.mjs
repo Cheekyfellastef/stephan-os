@@ -355,3 +355,21 @@ test('stale agent evidence cannot advance a newly refreshed OpenClaw seed heartb
   assert.equal(fresh.proofCount, 2);
   assert.equal(fresh.nextGrowthRung, 'VERIFY_UPSTREAM_RELEASE_AND_SKILL_SAFETY');
 });
+
+
+test('newest valid OpenClaw heartbeat wins regardless of record order or invalid newer pulses', () => {
+  const earlier = heartbeat('2026-10-13T14:05:00.000Z');
+  const latest = heartbeat('2026-10-13T14:36:00.000Z');
+  const spoofed = { ...heartbeat('2026-10-13T14:39:00.000Z'), relatedIssue: '#1657' };
+  for (const statusRecords of [
+    [earlier, latest, spoofed],
+    [spoofed, latest, earlier],
+  ]) {
+    const seed = view(feed({ statusRecords })).openClawExcellenceSeedGrowth;
+    assert.equal(seed.planted, true);
+    assert.equal(seed.sourceTruth, 'CURRENT');
+    assert.equal(seed.latestEvidenceAt, '2026-10-13T14:36:00.000Z');
+    assert.equal(seed.proofCount, 0);
+    assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+  }
+});

@@ -1745,7 +1745,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     && list(payload.errors).length === 0
     && (payload.projection?.sourceFreshness?.truth === undefined
       || payload.projection.sourceFreshness.truth === 'CURRENT');
-  const heartbeat = feedCurrent ? list(records.statusRecords).find((record) => {
+  const heartbeat = feedCurrent ? latestByTime(list(records.statusRecords).filter((record) => {
     const stamp = Date.parse(record?.timestampUtc);
     return record.statusId === OPENCLAW_EXCELLENCE_MISSION_ID
       && record.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
@@ -1755,7 +1755,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       && record.seedHeartbeat.contractSource === expectedSource
       && Number.isFinite(stamp)
       && stamp <= nowMs && nowMs - stamp <= 60 * 60 * 1000;
-  }) : null;
+  })) : null;
   const planted = Boolean(heartbeat);
   const relevant = planted ? [
     ...list(records.goalRecords),
