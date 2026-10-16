@@ -32,3 +32,16 @@ Do not transfer Local credentials, allowlists, tools, models, trust results, or 
 - `INSTALLED_AND_VERIFIED`: approved installation and rollback verified on the exact recipient with an independent runtime witness. This does not establish Codex parity.
 
 If an adapter is missing, reconcile one deduplicated capability request through existing [#1903](https://github.com/Cheekyfellastef/stephan-os/issues/1903) / Skill Forge intake under the original task identity. No new controller, scheduler, queue, authority or self-reviewer is created here. The original #2962/r7 custody HOLD and #3097 local inference gaming HOLD remain binding.
+
+## Negative acceptance matrix (mandatory fail-closed)
+
+| Candidate evidence | Expected result | Original-owner remedy |
+| --- | --- | --- |
+| Upstream skill URL without pinned revision and independently verified content digest | `REJECTED`; never fetch and execute it as trusted code | Pin publisher, revision, digest, licence and complete quarantine review |
+| Skill manifest addressed to Local but proposed for Standalone | `WAITING_FOR_PREREQUISITE`; no permission or exam inheritance | Obtain Standalone-specific scope, tests, reviewer and operator approval |
+| Self-authored reviewer PASS or CI-only approval | `UNVERIFIED`; no qualification or protected merge | Independent qualified exact-head review and authentic protected approval |
+| Correct source SHA but missing installed runtime principal or served digest | `UNVERIFIED`; no `INSTALLED_AND_VERIFIED` | Collect machine-authenticated recipient/runtime installation and rollback receipts |
+| Gaming active or GPU/CPU/model process-tree eviction unproven | `WAITING_FOR_PREREQUISITE`; do not start local inference or heavy tests | Independently qualify zero-residency governor or bounded CPU-only process-tree route |
+| Unknown Windows writer/descendant/relaunch custody or mismatched lease CAS | `WAITING_FOR_PREREQUISITE`; do not release or substitute another writer | Original-owner signed custody and source-digest/head evidence |
+
+These rows are **acceptance expectations**, not simulated pass receipts. A proposed skill must not be counted as installed, and a GitHub source change must not be counted as physical OpenClaw PICKUP.
