@@ -254,6 +254,72 @@ export async function loadSharedIntelligenceThreadRecordsV1({
   });
 }
 
+/**
+ * Read-only recovery of the existing canonical conversation. No second transcript store,
+ * memory promotion, control authority or caller-defined thread selector.
+ * Return a bounded viewport window, while validating the full retained thread.
+ */
+export async function readSharedIntelligenceConversationForWorkspaceV1({
+  repoRoot = process.cwd(),
+  env = process.env,
+  nowMs = Date.now(),
+  limit = 64,
+  readdirFn = readdir,
+  lstatFn = lstat,
+  readFileFn = readFile,
+} = {}) {
+  const loaded = await loadSharedIntelligenceThreadRecordsV1({
+    threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+    repoRoot, env, readdirFn, lstatFn, readFileFn,
+  });
+  if (!loaded.ok) {
+    return Object.freeze({
+      ok: false, classification: loaded.classification,
+      threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+      turns: Object.freeze([]), errors: loaded.errors, authority: zeroAuthority(),
+    });
+  }
+  if (!loaded.records.length) {
+    return Object.freeze({
+      ok: true, classification: 'SHARED_INTELLIGENCE_THREAD_EMPTY',
+      threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+      turns: Object.freeze([]), totalRetained: 0, lastTurnAtUtc: '',
+      errors: Object.freeze([]), authority: zeroAuthority(),
+    });
+  }
+  const projection = buildStephanosSharedConversationThread(loaded.records, {
+    threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+    workspaceValidationOptions: {
+      nowMs,
+      staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+    },
+  });
+  if (!projection.valid) {
+    return Object.freeze({
+      ok: false, classification: 'SHARED_INTELLIGENCE_THREAD_REJECTED',
+      threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+      turns: Object.freeze([]), errors: projection.errors, authority: zeroAuthority(),
+    });
+  }
+  const boundedLimit = Math.max(1, Math.min(80, Number.isInteger(limit) ? limit : 64));
+  const thread = projection.thread;
+  const turns = thread.transcript.slice(-boundedLimit).map((turn) => Object.freeze({
+    turnId: turn.turnId,
+    senderParticipantId: turn.senderParticipantId,
+    replyToTurnId: turn.replyToTurnId,
+    timestampUtc: turn.timestampUtc,
+    text: turn.text,
+  }));
+  return Object.freeze({
+    ok: true, classification: 'SHARED_INTELLIGENCE_THREAD_RECOVERED',
+    threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+    turns: Object.freeze(turns),
+    totalRetained: thread.turnCount,
+    lastTurnAtUtc: thread.lastTurnAtUtc,
+    errors: Object.freeze([]), authority: zeroAuthority(),
+  });
+}
+
 function knowledgeTwinFromThread(thread, observedAtUtc) {
   if (!thread?.transcript?.length) return null;
   const items = thread.transcript.map((turn) => ({

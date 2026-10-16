@@ -21,6 +21,9 @@ test('Build Stephanos UI fans independent proof families into five parallel jobs
 
 test('stateful suites remain serial only inside their isolated parallel job', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
-  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
+  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 6);
+  assert.match(workflow, /name: Prove Stephanos AI iPad recovery and canonical memory/);
+  assert.match(workflow, /tests\/stephanos-ai-ipad-scroll-bridge\.test\.mjs/);
+  assert.match(workflow, /stephanos-server\/services\/sharedIntelligenceContinuityService\.test\.js/);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
