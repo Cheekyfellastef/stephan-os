@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import * as duplicateGuard from './protectedWorkflowDispatchMailboxV1.mjs';
 import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
@@ -373,6 +374,8 @@ test('merge schema still requires fresh independent review identity', () => {
 
 test('protected mailbox refuses a second identical run before any workflow dispatch', () => {
   const { inspectProtectedWorkflowDuplicateDispatchRuns: inspect } = duplicateGuard;
+  const HEAD = baseCommand.expectedHead;
+  const BASE = baseCommand.expectedBase;
   const expected = { expectedHead: HEAD, expectedBase: BASE };
   const run = (status, overrides = {}) => ({
     id: 38967178500, name: 'Protected operator merge ' + HEAD,
