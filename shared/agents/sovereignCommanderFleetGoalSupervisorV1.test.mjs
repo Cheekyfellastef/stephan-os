@@ -86,6 +86,22 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED');
 });
 
+test('unavailable native event feed cannot produce idle green despite unrelated dispatch', async () => {
+  const result = await runSupervisor({
+    conveyor: async () => conveyorResult(),
+    reconcileCommanderParity: async () => parityResult({
+      nativeGapSourceHealth: 'DEGRADED',
+      capabilityCompiler: { buildableCapabilityCount: 0, nativeGapCandidateCount: 0 },
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.dispatchCount, 1);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED');
+  assert.equal(result.mergeAuthority, false);
+});
+
 test('one-minute supervisor contains no synchronous provider refresh or source-build execution path', () => {
   for (const forbidden of [
     'refreshGitHubLifeboatLane7Capacity',
@@ -201,6 +217,56 @@ test('one-minute supervisor reconciles Remote Commander capability parity before
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
   assert.equal(result.duplicateSchedulerAllowed, false);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+});
+
+test('native Sovereign skill gaps cannot be reported as green idle or as a proven builder pickup', async () => {
+  for (const dispatchCount of [0, 1]) {
+    const result = await runSupervisor({
+      reconcileCommanderParity: async () => parityResult({
+        buildableGapCount: 0,
+        capabilityCompiler: {
+          buildableCapabilityCount: 1,
+          nativeGapCandidateCount: 1,
+          skillForgeCandidates: [{ status: 'DRAFT', activationAllowed: false }],
+          automaticCapabilityConstructionAllowed: false,
+        },
+      }),
+      conveyor: async () => conveyorResult({
+        elasticAdmission: { activeMissions: [], runnableMissions: [] },
+        elasticIgnition: { availableSlots: 3, dispatchCount, dispatched: [], held: [] },
+      }),
+    });
+    assert.equal(result.ok, true, 'observation completed, not construction');
+    assert.equal(result.capabilityParityBuildableGapCount, 0);
+    assert.equal(result.capabilityCompilerWorkCount, 1);
+    assert.equal(result.capabilityWorkRemainingCount, 1);
+    assert.equal(result.nativeCapabilityWorkPending, true);
+    assert.equal(result.zeroGapInvariantSatisfied, false);
+    assert.equal(result.capabilityParityClosureRequired, true);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+    assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+    assert.equal(result.mergeAuthority, false);
+  }
+});
+
+test('native drafts do not hide unresolved Remote Commander parity gaps', async () => {
+  const result = await runSupervisor({
+    reconcileCommanderParity: async () => parityResult({
+      buildableGapCount: 2,
+      capabilityCompiler: { buildableCapabilityCount: 3, nativeGapCandidateCount: 1 },
+    }),
+    conveyor: async () => conveyorResult({
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 3, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+  });
+  assert.equal(result.capabilityWorkRemainingCount, 3);
+  assert.equal(result.nativeCapabilityWorkPending, true);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.capabilityParityBuildableGapCount, 2);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
 });
 
 test('parked backlog with all selected goals proven held routes exact repair causes, never false green', async () => {
@@ -405,4 +471,30 @@ test('admission diagnostic never exposes arbitrary local exception paths via sup
   assert.equal(result.elasticAdmissionReasonCode, '');
   assert.equal(JSON.stringify(result).includes('private-keys'), false);
   assert.equal(result.daemonMayReportGreen, false);
+});
+
+
+test('more pending native proposals than compiler slots never resolve to idle green', async () => {
+  for (const dispatchCount of [0, 2]) {
+    const result = await runSupervisor({
+      reconcileCommanderParity: async () => parityResult({
+        nativeGapSourceHealth: 'VALIDATED',
+        nativeGapIntake: { candidateTotalCount: 5, retainedCount: 5, candidateCount: 2 },
+        capabilityCompiler: { buildableCapabilityCount: 0 },
+      }),
+      conveyor: async () => conveyorResult({
+        elasticAdmission: { activeMissions: [], runnableMissions: [] },
+        elasticIgnition: { availableSlots: 3, dispatchCount, dispatched: [], held: [] },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.nativeGapCandidateTotalCount, 5);
+    assert.equal(result.capabilityWorkRemainingCount, 5);
+    assert.equal(result.nativeCapabilityWorkPending, true);
+    assert.equal(result.capabilityParityClosureRequired, true);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.zeroGapInvariantSatisfied, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+    assert.equal(result.mergeAuthority, false);
+  }
 });

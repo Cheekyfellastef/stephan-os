@@ -60,10 +60,11 @@ function blockedResult(blocker, details = {}) {
     capabilityParityBoundaryHoldCount: integer(details.commanderParity?.boundaryHoldCount),
     capabilityCompilerVerdict: text(details.commanderParity?.capabilityCompiler?.finalVerdict),
     capabilityCompilerWorkCount: integer(details.commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    nativeGapCandidateTotalCount: integer(details.commanderParity?.nativeGapIntake?.candidateTotalCount),
     flywheelLearningVerdict: text(details.commanderParity?.flywheelLearning?.finalVerdict),
     flywheelLearningPromotionCount: integer(details.commanderParity?.flywheelLearning?.promotedLessonIds?.length),
-    zeroGapInvariantSatisfied: integer(details.commanderParity?.buildableGapCount) === 0,
-    capabilityParityClosureRequired: integer(details.commanderParity?.buildableGapCount) > 0,
+    zeroGapInvariantSatisfied: false,
+    capabilityParityClosureRequired: true,
     // An admission/proof failure must not be green even when parity has zero known gaps.
     daemonMayReportGreen: false,
     mustContinueUntilZero: true,
@@ -219,6 +220,21 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     );
   }
 
+  // A native skill gap is still real work even when Remote Commander parity is
+  // already green. A draft alone never proves construction or live activation.
+  // Reuse the canonical #2573 owner; never manufacture a parallel worker.
+  const remoteParityGapCount = integer(commanderParity?.buildableGapCount);
+  const compiledCapabilityWorkCount = integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount);
+  // The compiler admits only the first bounded batch; the retained backlog
+  // is larger and must not be equated with completed or absent work.
+  const nativeGapCandidateTotalCount = integer(commanderParity?.nativeGapIntake?.candidateTotalCount);
+  const capabilityWorkRemainingCount = Math.max(
+    remoteParityGapCount, compiledCapabilityWorkCount, nativeGapCandidateTotalCount,
+  );
+  const nativeCapabilityWorkPending = nativeGapCandidateTotalCount > 0
+    || compiledCapabilityWorkCount > remoteParityGapCount;
+  const nativeGapSourceDegraded = commanderParity?.nativeGapSourceHealth === 'DEGRADED';
+
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
     && dispatchCount === 0
@@ -253,11 +269,15 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     capabilityParityBoundaryHoldCount: integer(commanderParity?.boundaryHoldCount),
     capabilityCompilerVerdict: text(commanderParity?.capabilityCompiler?.finalVerdict),
     capabilityCompilerWorkCount: integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    nativeGapCandidateTotalCount,
     flywheelLearningVerdict: text(commanderParity?.flywheelLearning?.finalVerdict),
     flywheelLearningPromotionCount: integer(commanderParity?.flywheelLearning?.promotedLessonIds?.length),
-    zeroGapInvariantSatisfied: integer(commanderParity?.buildableGapCount) === 0,
-    capabilityParityClosureRequired: integer(commanderParity?.buildableGapCount) > 0,
-    daemonMayReportGreen: integer(commanderParity?.buildableGapCount) === 0,
+    capabilityWorkRemainingCount,
+    nativeCapabilityWorkPending,
+    nativeGapSourceHealth: text(commanderParity?.nativeGapSourceHealth),
+    zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
+    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded,
+    daemonMayReportGreen: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -269,7 +289,11 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: integer(commanderParity?.buildableGapCount) > 0
+    finalVerdict: nativeGapSourceDegraded
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED'
+      : nativeCapabilityWorkPending
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING'
+      : remoteParityGapCount > 0
       ? dispatchCount > 0
         ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE'
         : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING'

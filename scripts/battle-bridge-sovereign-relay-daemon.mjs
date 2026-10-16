@@ -19,6 +19,9 @@ export const SOVEREIGN_RELAY_FAST_POLL_MS = SOVEREIGN_RELAY_HOT_POLL_MS;
 export const SOVEREIGN_RELAY_CHILD_TIMEOUT_MS = 16 * 60 * 1000;
 export const SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS = 10_000;
 export const SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES = 3;
+// A fast relay cannot be considered live while one guard cycle stalls for minutes.
+// The independently scheduled mailbox retains custody and deduplication.
+export const SOVEREIGN_RELAY_FAST_STALL_MS = 90_000;
 
 const SOURCE_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 
@@ -195,16 +198,29 @@ export function buildSovereignRelayInFlightStatus({
 } = {}) {
   const timestamp = now instanceof Date ? now : new Date(now);
   const timestampUtc = timestamp.toISOString();
-  const fallbackCovered = boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
+  const cycleAgeMs = Math.max(0, timestamp.getTime() - cycleStartedAtMs);
+  const fastCycleStalled = cycleAgeMs >= SOVEREIGN_RELAY_FAST_STALL_MS;
+  const priorCarrierHealthy = previousStatus?.carrierHealthy === true;
+  // Both fast and scheduled mailbox consumers use the same exclusive guard.
+  // A stalled fast child may still own that guard, so elapsed time alone can
+  // never attest that the scheduled fallback is capable of physical pickup.
+  const fallbackCovered = !fastCycleStalled
+    && boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
+  // Preserve the last settled failure throughout an in-flight cycle. Otherwise
+  // each heartbeat erases the blocker exactly when remote diagnostics need it.
+  const priorBlocker = priorCarrierHealthy ? '' : boundedText(previousStatus?.blocker || '');
   return Object.freeze({
     ...relayWorkspaceStatus({
       timestampUtc,
-      status: 'READY',
-      summary: 'Sovereign relay guard cycle is in flight.',
+      status: fastCycleStalled || fallbackCovered || (!priorCarrierHealthy && consecutiveCarrierFailures > 0)
+        ? 'ATTENTION_REQUIRED' : 'READY',
+      summary: fastCycleStalled
+        ? 'Fast relay cycle stalled; scheduled mailbox pickup remains unproven.'
+        : 'Sovereign relay guard cycle is in flight.',
     }),
     schema: SOVEREIGN_RELAY_SCHEMA,
     daemonHealthy: true,
-    carrierHealthy: previousStatus?.carrierHealthy === true,
+    carrierHealthy: !fastCycleStalled && priorCarrierHealthy,
     carrier: 'github-command-mailbox',
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
@@ -212,8 +228,13 @@ export function buildSovereignRelayInFlightStatus({
     cycleInFlight: true,
     cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
     heartbeatAtUtc: timestamp.toISOString(),
-    deliveryState: fallbackCovered ? 'FALLBACK_COVERED' : 'FAST_CHECKING',
+    fastCycleAgeMs: cycleAgeMs,
+    fastCycleStalled,
+    deliveryState: fastCycleStalled ? 'RECOVERING' : fallbackCovered ? 'FALLBACK_COVERED' : 'FAST_CHECKING',
     carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
+    blocker: priorBlocker || (fastCycleStalled ? 'SOVEREIGN_RELAY_GUARD_CYCLE_STALLED' : ''),
+    guardVerdict: boundedText(previousStatus?.guardVerdict || ''),
+    lastCarrierHealthyAtUtc: previousStatus?.lastCarrierHealthyAtUtc || null,
     scheduledMailboxFallbackExpected: true,
     fallbackCovered,
     duplicateExecutionAllowed: false,

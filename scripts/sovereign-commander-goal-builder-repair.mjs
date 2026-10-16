@@ -122,6 +122,15 @@ function originalOwnerRecoveryBlocker(result) {
 function supervisorFlowGreen(result) {
   const status = parseSupervisorStatus(result);
   if (result?.ok !== true || status?.ok !== true) return false;
+  // A native capability draft has no proven pickup merely because a different
+  // mission was dispatched or a goal was held. Keep this gap non-green until
+  // the exact capability itself has qualified and executed.
+  if (Number.isSafeInteger(status.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return false;
+  // A compiler batch limit is never proof that older native requests vanished.
+  if (Number.isSafeInteger(status.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return false;
+  if (status.nativeGapSourceHealth === 'DEGRADED') return false;
   const autonomyPending = status?.daemonMayReportGreen === false;
   const autonomousWorkActive = Number(status?.dispatchCount) > 0
     || Number(status?.runningMissionCount) > 0;
@@ -131,6 +140,11 @@ function supervisorFlowGreen(result) {
 
 function supervisorFlowBlocker(result) {
   const status = parseSupervisorStatus(result);
+  if (status?.nativeGapSourceHealth === 'DEGRADED') return 'NATIVE_GAP_INTAKE_UNVERIFIED';
+  if (Number.isSafeInteger(status?.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return 'NATIVE_UPLIFT_PENDING';
+  if (Number.isSafeInteger(status?.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return 'NATIVE_UPLIFT_PENDING';
   const blocker = text(status?.blocker);
   if (SAFE_BLOCKER.test(blocker)) return blocker;
   const verdict = text(status?.finalVerdict);

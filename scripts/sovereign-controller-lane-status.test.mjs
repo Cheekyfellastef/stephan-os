@@ -9,6 +9,7 @@ import {
   buildSharedWorkspaceStephanosBuildTruthRecord,
   buildStephanosBuildTruth,
   buildSovereignControllerLaneStatus,
+  projectBoundedRemoteControllerLaneStatus,
   runSovereignControllerLaneStatus,
   SOVEREIGN_CONTROLLER_LANE_STATUS_FILE,
   writeControllerLaneSpecializedStatus,
@@ -716,4 +717,92 @@ test('selected pickup count requires matching worker-bound goal proof on its cur
     now: NOW,
   });
   assert.equal(blocked.lanes.selectedMaterialPickupProvenCount, 0);
+});
+
+
+test('remote snapshot-only receipt stays complete under the 16 KiB Commander stdout cap with 75 logical goals', async () => {
+  const longGoals = Array.from({ length: 75 }, (_, index) => ({
+    logicalControllerId: `logical-${index}`,
+    goalIssueNumber: 3000 + index,
+    goalRef: `#${3000 + index}`,
+    goalTitle: `LONG_PRIVATE_GOAL_DETAIL_${'x'.repeat(180)}_${index}`,
+    lifecycle: 'TRACKING',
+    continuityState: 'TRACKING',
+    route: 'CANONICAL',
+    hostControllerId: `controller-${index % 5 + 1}`,
+    hostControllerTitle: 'Canonical Controller',
+    executionOwner: 'canonical-mission-worker',
+    selectedForAdmission: index < 17,
+    retired: false,
+  }));
+  const source = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers: fleet().controllers.map((item) => ({
+        ...item,
+        materialLanes: Array.from({ length: 15 }, (_, n) => ({
+          laneId: `${item.controllerId}-${n}`,
+          proofRef: `private-proof-${'q'.repeat(100)}`,
+        })),
+      })),
+    }),
+    logicalFabric: logical({
+      logicalControllerCount: 75,
+      controllers: longGoals,
+    }),
+    now: NOW,
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(source), 'utf8') > 16 * 1024);
+  let remoteLine = '';
+  let publishCount = 0;
+  const result = await runSovereignControllerLaneStatus({
+    snapshotOnly: true,
+    collectStatusFn: async () => source,
+    publishStatusFn: async () => { publishCount += 1; },
+    publishBuildTruthFn: async () => { publishCount += 1; },
+    emitFn: (value) => { remoteLine += value; },
+  });
+  assert.equal(result, source);
+  assert.equal(publishCount, 0);
+  assert.ok(Buffer.byteLength(remoteLine, 'utf8') < 12 * 1024);
+  assert.ok(remoteLine.startsWith('SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='));
+  const parsed = JSON.parse(remoteLine.split('=', 1)[0] === ''
+    ? '{}' : remoteLine.slice(remoteLine.indexOf('=') + 1));
+  assert.equal(parsed.schemaVersion, source.schemaVersion);
+  assert.equal(parsed.logical.total, 75);
+  assert.equal(parsed.logical.selectedForAdmission, 17);
+  assert.equal(parsed.physical.controllers.length, 5);
+  assert.equal(parsed.lanes.activeMaterialLaneCount, source.lanes.activeMaterialLaneCount);
+  assert.equal(parsed.lanes.refillHealth, source.lanes.refillHealth);
+  assert.equal(parsed.readOnly, true);
+  assert.equal(parsed.sourceMutationAllowed, false);
+  assert.equal(parsed.unknownMeansGreen, false);
+  assert.equal('controllers' in parsed.logical, false);
+  assert.equal('materialLanes' in parsed.physical.controllers[0], false);
+  assert.equal(remoteLine.includes('LONG_PRIVATE_GOAL_DETAIL_'), false);
+  assert.equal(remoteLine.includes('private-proof-'), false);
+});
+
+test('bounded remote projection rejects manufactured authority and keeps full local publishing unchanged', async () => {
+  const source = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet(), logicalFabric: logical(), now: NOW,
+  });
+  assert.throws(() => projectBoundedRemoteControllerLaneStatus({
+    ...source, sourceMutationAllowed: true,
+  }), /CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID/);
+  assert.throws(() => projectBoundedRemoteControllerLaneStatus({
+    ...source, unknownMeansGreen: true,
+  }), /CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID/);
+  let localLine = '';
+  let publications = 0;
+  await runSovereignControllerLaneStatus({
+    snapshotOnly: false,
+    collectStatusFn: async () => source,
+    publishStatusFn: async () => { publications += 1; },
+    publishBuildTruthFn: async () => { publications += 1; },
+    emitFn: (value) => { localLine += value; },
+  });
+  assert.equal(publications, 2);
+  const full = JSON.parse(localLine.slice(localLine.indexOf('=') + 1));
+  assert.equal(full.logical.controllers.length, source.logical.controllers.length);
+  assert.deepEqual(full, source);
 });

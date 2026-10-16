@@ -50,6 +50,9 @@ function supervisorStatus({
   dispatchCount = 0,
   runningMissionCount = 0,
   heldGoalCount = 0,
+  capabilityCompilerWorkCount = 0,
+  nativeGapCandidateTotalCount = 0,
+  nativeGapSourceHealth = 'VALIDATED',
   blocker = '',
 } = {}) {
   return {
@@ -63,6 +66,9 @@ function supervisorStatus({
       dispatchCount,
       runningMissionCount,
       heldGoalCount,
+      capabilityCompilerWorkCount,
+      nativeGapCandidateTotalCount,
+      nativeGapSourceHealth,
       finalVerdict,
     }) + '\n',
   };
@@ -357,6 +363,53 @@ test('goal builder repair never false-greens pending autonomous uplift with no d
   ]);
 });
 
+test('pending native skill cannot be greened by unrelated dispatch or held goals', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING',
+        daemonMayReportGreen: false,
+        capabilityCompilerWorkCount: 1,
+        dispatchCount: 1,
+        heldGoalCount: 1,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NATIVE_UPLIFT_PENDING');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor', 'controller-lane-status',
+    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'fleet-goal-supervisor', 'controller-lane-status',
+  ]);
+  assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
+  assert.equal(result.mergeAuthority, false);
+});
+
+test('degraded native skill intake remains blocked despite unrelated dispatch', () => {
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        daemonMayReportGreen: false,
+        nativeGapSourceHealth: 'DEGRADED',
+        dispatchCount: 2,
+        heldGoalCount: 1,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NATIVE_GAP_INTAKE_UNVERIFIED');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
 test('goal builder flow stays healthy while autonomous parity work is actively dispatched', () => {
   const calls = [];
   const result = runSovereignCommanderGoalBuilderRepair({
@@ -472,4 +525,29 @@ test('every selected goal with worker-bound material pickup may pass without rep
   assert.equal(result.ok, true);
   assert.equal(result.repairApplied, false);
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+});
+
+
+test('uncompiled native gap backlog prevents green when unrelated missions dispatch', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING',
+        daemonMayReportGreen: false,
+        dispatchCount: 2,
+        heldGoalCount: 1,
+        capabilityCompilerWorkCount: 0,
+        nativeGapCandidateTotalCount: 5,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NATIVE_UPLIFT_PENDING');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(calls.filter((id) => id === 'fleet-goal-supervisor').length, 2);
 });

@@ -78,3 +78,46 @@ test('stale relay expectation cannot outrank a separately proven Tailscale route
   assert.equal(result.relayHeartbeatCurrent, false);
   assert.equal(result.selectedRoute, 'TAILSCALE_PRIVATE');
 });
+
+test('shared-guard stall cannot make scheduled mailbox available by expectation alone', () => {
+  const stalled = relay({
+    carrierHealthy: false,
+    deliveryState: 'RECOVERING',
+    cycleInFlight: true,
+    fastCycleStalled: true,
+    scheduledMailboxFallbackExpected: true,
+  });
+  const blocked = projectChatHandoffContinuity({
+    directHandoffStatus: 'REJECTED',
+    localSovereignCommanderAvailable: false,
+    scheduledMailboxAvailable: false,
+    tailscalePrivateAvailable: false,
+    sovereignRelay: stalled,
+  }, { nowMs: NOW });
+  assert.equal(blocked.selectedRoute, 'HOLD_NO_ADMITTED_TRANSPORT');
+  assert.equal(blocked.duplicateDispatchAllowed, false);
+
+  const proved = projectChatHandoffContinuity({
+    directHandoffStatus: 'REJECTED',
+    localSovereignCommanderAvailable: false,
+    scheduledMailboxAvailable: true,
+    tailscalePrivateAvailable: false,
+    sovereignRelay: stalled,
+  }, { nowMs: NOW });
+  assert.equal(proved.selectedRoute, 'SCHEDULED_GITHUB_MAILBOX');
+});
+
+test('FALLBACK_COVERED without independently proven scheduled pickup does not authorize route selection', () => {
+  const result = projectChatHandoffContinuity({
+    directHandoffStatus: 'REJECTED',
+    localSovereignCommanderAvailable: false,
+    scheduledMailboxAvailable: false,
+    tailscalePrivateAvailable: true,
+    sovereignRelay: relay({
+      carrierHealthy: false,
+      deliveryState: 'FALLBACK_COVERED',
+      scheduledMailboxFallbackExpected: true,
+    }),
+  }, { nowMs: NOW });
+  assert.equal(result.selectedRoute, 'TAILSCALE_PRIVATE');
+});

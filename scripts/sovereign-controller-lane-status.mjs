@@ -622,6 +622,69 @@ export async function collectSovereignControllerLaneStatus({
   });
 }
 
+// The existing Sovereign Commander fixed-process boundary preserves at most
+// 16 KiB of stdout. The full 75-goal logical fabric can exceed that and truncate
+// the JSON line, turning a healthy *observation transport* into an invalid
+// receipt. Emit an allowlisted count/host/physical summary ONLY for the remote
+// --snapshot-only verb. The full local publisher and build-truth evidence remain
+// unchanged. No lease, admission or physical-pickup authority is conferred.
+export function projectBoundedRemoteControllerLaneStatus(status = {}) {
+  if (status?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+      || status?.ok !== true
+      || status?.readOnly !== true
+      || status?.arbitraryShellAllowed !== false
+      || status?.sourceMutationAllowed !== false
+      || status?.mergeAuthority !== false
+      || status?.secretMaterialIncluded !== false
+      || status?.unknownMeansGreen !== false) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID');
+  }
+  const pick = (source, keys) => Object.fromEntries(
+    keys.filter((key) => source?.[key] !== undefined).map((key) => [key, source[key]]),
+  );
+  return Object.freeze({
+    ...pick(status, [
+      'schemaVersion', 'ok', 'capturedAtUtc', 'finalVerdict',
+      'readOnly', 'arbitraryShellAllowed', 'sourceMutationAllowed',
+      'mergeAuthority', 'secretMaterialIncluded', 'unknownMeansGreen',
+    ]),
+    physical: Object.freeze({
+      ...pick(status.physical, [
+        'expected', 'building', 'amber', 'red', 'unknown', 'allCurrent',
+        'allObservedEnabled', 'finalVerdict',
+      ]),
+      controllers: Object.freeze((status.physical?.controllers || []).slice(0, 5)
+        .map((row) => Object.freeze(pick(row, [
+          'controllerId', 'title', 'freshness', 'activityState', 'trafficLight',
+          'materialLaneCount', 'activeLaneCount', 'parkedLaneCount',
+          'safeEligibleWorkRemaining', 'blocker',
+        ])))),
+    }),
+    logical: Object.freeze({
+      ...pick(status.logical, [
+        'current', 'valid', 'observedAtUtc', 'physicalControllerCount', 'total',
+        'active', 'tracking', 'parked', 'retired', 'selectedForAdmission',
+        'finalVerdict',
+      ]),
+      hostLoads: Object.freeze((status.logical?.hostLoads || []).slice(0, 5)
+        .map((host) => Object.freeze(pick(host, [
+          'controllerId', 'title', 'logicalControllerCount', 'activeCount',
+          'trackingCount', 'parkedCount',
+        ])))),
+    }),
+    lanes: Object.freeze(pick(status.lanes, [
+      'targetMaterialLanes', 'activeMaterialLaneCount',
+      'selectedMaterialPickupProvenCount', 'activeLaneClaimCount',
+      'reportedMaterialLaneCountSum', 'occupancyPercent', 'freeTargetLaneSlots',
+      'runnableBacklogCount', 'parkedPhysicalLaneCount',
+      'currentPhysicalControllerCount', 'stalePhysicalControllerCount',
+      'nonCurrentPhysicalControllerCount', 'currentPhysicalHardRedCount',
+      'reportedSafeEligibleWorkMax', 'reportedSafeEligibleWorkSum',
+      'refillHealth', 'refillState',
+    ])),
+  });
+}
+
 // The MCP fixed read-only diagnostic must not wait on mutable Shared Workspace
 // publications. The periodic publisher keeps both existing writes unchanged.
 export async function runSovereignControllerLaneStatus(options = {}) {
@@ -630,7 +693,15 @@ export async function runSovereignControllerLaneStatus(options = {}) {
     await (options.publishStatusFn || publishSharedWorkspaceControllerLaneStatus)(status, options);
     await (options.publishBuildTruthFn || publishSharedWorkspaceStephanosBuildTruth)(buildStephanosBuildTruth(status), options);
   }
-  (options.emitFn || ((line) => process.stdout.write(line)))(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  const output = options.snapshotOnly === true
+    ? projectBoundedRemoteControllerLaneStatus(status)
+    : status;
+  const line = `${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(output)}\n`;
+  // Never silently truncate a purported complete structured receipt.
+  if (options.snapshotOnly === true && Buffer.byteLength(line, 'utf8') > 12 * 1024) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_OUTPUT_TOO_LARGE');
+  }
+  (options.emitFn || ((value) => process.stdout.write(value)))(line);
   return status;
 }
 
