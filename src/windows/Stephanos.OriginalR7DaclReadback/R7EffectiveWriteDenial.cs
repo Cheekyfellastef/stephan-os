@@ -12,15 +12,16 @@ namespace Stephanos.OriginalR7DaclReadback;
 // alternate tokens, task/service authority, COM/WMI reentry or key isolation.
 public sealed record R7EffectiveWriteObservation(
     string Classification,
-    bool OriginalTokenMatched,
+    bool SuppliedTokenSidMatched,
     bool DataWriteOpenDenied,
     bool DaclWriteOpenDenied,
     bool OwnerWriteOpenDenied,
     bool TargetIdentityStable,
-    bool OriginalPrincipalOwnsTarget,
+    bool SuppliedPrincipalOwnsTarget,
     bool TokenHasBypassAuthority)
 {
     public bool AuthenticatedOsWitness => false;
+    public bool OriginalPrincipalProvenanceAuthenticated => false;
     public bool LeaseReleaseAuthorized => false;
     public bool SourceMutationAuthorized => false;
     public bool HistoricalReceiptReconstructed => false;
@@ -46,11 +47,39 @@ public static class R7EffectiveWriteDenial
         => new(code, matched, false, false, false, false, false, true);
 
     // The host must supply a real retained OS token for the independently
-    // identified original principal. Never manufacture a token from a SID,
+    // identified original principal. SID equality alone is NOT authentication
+    // of historical identity or an unmodified token's provenance. Never manufacture a token from a SID,
     // drop its privileges/groups, or use the witness's token as a substitute.
     // This method performs OPEN_EXISTING access requests only. It does not
     // create files, modify data/ACLs, adjust privileges or launch processes.
     public static R7EffectiveWriteObservation Observe(
+        string targetPath, SafeAccessTokenHandle originalToken, string expectedOriginalSid)
+    {
+        if (!OperatingSystem.IsWindows() || originalToken is null
+            || originalToken.IsClosed || originalToken.IsInvalid)
+            return Held("R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE");
+        bool retained = false;
+        try
+        {
+            originalToken.DangerousAddRef(ref retained);
+            if (IsTokenRestricted(originalToken)
+                || TokenFlag(originalToken, 21 /* TokenHasRestrictions: ever filtered */)
+                || TokenFlag(originalToken, 29 /* TokenIsAppContainer */)
+                || TokenFlag(originalToken, 15 /* TokenSandBoxInert */)
+                || TokenFlag(originalToken, 26 /* TokenUIAccess */))
+                return Held("R7_NATIVE_FILTERED_OR_SPECIAL_TOKEN_UNQUALIFIED");
+            return SampleSuppliedTokenAccess(targetPath, originalToken, expectedOriginalSid);
+        }
+        catch { return Held("R7_NATIVE_TOKEN_QUALIFICATION_FAILED_CLOSED"); }
+        finally { if (retained) originalToken.DangerousRelease(); }
+    }
+
+    // Private mechanism: actual access facts for the supplied token, without
+    // historical identity or qualification claims. The public entry point
+    // admits it only after native token-form checks. Tests exercise this
+    // mechanism separately from that admission, without claiming original
+    // writer authentication or a qualified token on the test machine.
+    private static R7EffectiveWriteObservation SampleSuppliedTokenAccess(
         string targetPath, SafeAccessTokenHandle originalToken, string expectedOriginalSid)
     {
         if (!OperatingSystem.IsWindows() || originalToken is null
@@ -271,6 +300,24 @@ public static class R7EffectiveWriteDenial
         finally { Marshal.FreeHGlobal(buffer); }
     }
 
+    private static bool TokenFlag(SafeAccessTokenHandle token, int kind)
+    {
+        // These classes have a fixed DWORD result. Unlike variable-length
+        // token information, a zero-length sizing query is not portable for
+        // every fixed flag class. Query the documented four-byte result.
+        IntPtr buffer = Marshal.AllocHGlobal(4);
+        try
+        {
+            Marshal.WriteInt32(buffer, 1); // unread/untouched means HOLD
+            if (!GetTokenInformation(token, kind, buffer, 4, out int actual)
+                || (actual != 4 && !(kind == 21 && actual == 1))) throw new Win32Exception();
+            // Windows returns TokenHasRestrictions as BOOLEAN on this host;
+            // other documented flags have a DWORD result. Both are nonzero=true.
+            return actual == 1 ? Marshal.ReadByte(buffer) != 0 : Marshal.ReadInt32(buffer) != 0;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleInfo
     {
@@ -293,6 +340,9 @@ public static class R7EffectiveWriteDenial
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int kind,
         IntPtr buffer, int size, out int actual);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsTokenRestricted(SafeAccessTokenHandle token);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);

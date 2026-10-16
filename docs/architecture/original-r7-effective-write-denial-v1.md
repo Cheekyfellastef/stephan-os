@@ -17,6 +17,16 @@ Administrators membership. Privilege qualification is closed-world: only
 `SeRelabelPrivilege` and future unknown LUIDs, remains held. A writer that can
 enable a privilege or regain elevation is not attested as safely excluded.
 
+Native token qualification rejects IsTokenRestricted, TokenHasRestrictions
+(including previously filtered tokens), AppContainer, sandbox-inert and UIAccess
+forms before any target access probe. The result says `SuppliedTokenSidMatched`,
+not that a historical original token was authenticated. The separate
+`OriginalPrincipalProvenanceAuthenticated` claim is permanently false in this
+component. These checks cannot establish that a caller supplied the original
+unmodified launch token; that requires independently authenticated native launch
+provenance (including native token identity/modification binding) at the service
+boundary before commissioning/signing. A same-SID token is insufficient.
+
 Object identity comes from retained Windows handles (volume and file index)
 and the handle-resolved, normalized native final path. The object and every
 ancestor remain open without DELETE sharing throughout the probe. Native name
@@ -46,10 +56,16 @@ Run the existing test project with .NET 8 on Windows:
 dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
 ```
 
-An actual host test executed 71 checks successfully on 16 October 2026,
-including a real native short-name alias (available on that test volume). These
-are test-process tokens and disposable files, **not the original r7 actor or
-production source**. No positive production custody claim follows.
+An actual host test executed 77 checks successfully on 16 October 2026,
+including a real native short-name alias and same-SID restricted-token rejection.
+The normal host token is itself filtered: the public entry point correctly
+rejects it. The test suite exercises the private kernel mechanism separately
+with that unchanged test token and reports
+`R7_NATIVE_UNFILTERED_ENTRYPOINT_CASE_AVAILABLE=false`. This is not a passing
+unfiltered public-entrypoint acceptance; that proof remains required before
+production integration. These are test-process tokens and disposable files,
+**not the original r7 actor or production source**. No positive production
+custody claim follows.
 
 ## Required specialist decision before production integration
 

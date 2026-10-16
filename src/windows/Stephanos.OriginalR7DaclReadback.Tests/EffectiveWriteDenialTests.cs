@@ -8,6 +8,13 @@ using Stephanos.OriginalR7DaclReadback;
 
 internal static class EffectiveWriteDenialTests
 {
+    // These lower-level kernel tests never qualify the supplied token as the
+    // original writer. Public admission is tested separately and must reject
+    // a filtered test identity rather than silently testing a stripped token.
+    private static R7EffectiveWriteObservation SampleKernel(string path, SafeAccessTokenHandle token, string sid)
+        => (R7EffectiveWriteObservation)typeof(R7EffectiveWriteDenial)
+            .GetMethod("SampleSuppliedTokenAccess", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { path, token, sid })!;
     private static void RestoreAcl(string file, FileSecurity original)
     {
         // SetAccessControl persists only modified sections. A previously
@@ -26,6 +33,7 @@ internal static class EffectiveWriteDenialTests
     private static void NoAuthority(R7EffectiveWriteObservation observation)
     {
         Check(!observation.AuthenticatedOsWitness && !observation.LeaseReleaseAuthorized
+            && !observation.OriginalPrincipalProvenanceAuthenticated
             && !observation.SourceMutationAuthorized && !observation.HistoricalReceiptReconstructed,
             "NATIVE_PROBE_MUST_NOT_GRANT_AUTHORITY");
     }
@@ -46,9 +54,19 @@ internal static class EffectiveWriteDenialTests
         string sid = identity.User!.Value;
         try
         {
-            var writable = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+            var publicEntry = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+            NoAuthority(publicEntry);
+            bool qualifiedFormAvailable = publicEntry.Classification != "R7_NATIVE_FILTERED_OR_SPECIAL_TOKEN_UNQUALIFIED";
+            if (!qualifiedFormAvailable)
+                Check(!publicEntry.SuppliedTokenSidMatched && !publicEntry.DataWriteOpenDenied,
+                    "FILTERED_HOST_TOKEN_MUST_BE_REJECTED_AT_PUBLIC_BOUNDARY");
+            else
+                Check(publicEntry.SuppliedTokenSidMatched && publicEntry.TargetIdentityStable,
+                    "UNFILTERED_HOST_TOKEN_ENTRYPOINT_MUST_RUN_NATIVE_PROBE");
+            Console.WriteLine("R7_NATIVE_UNFILTERED_ENTRYPOINT_CASE_AVAILABLE=" + qualifiedFormAvailable.ToString().ToLowerInvariant());
+            var writable = SampleKernel(file, identity.AccessToken, sid);
             NoAuthority(writable);
-            Check(writable.OriginalTokenMatched && writable.TargetIdentityStable,
+            Check(writable.SuppliedTokenSidMatched && writable.TargetIdentityStable,
                 "REAL_TOKEN_" + writable.Classification);
             Check(!writable.DataWriteOpenDenied && writable.Classification == "R7_NATIVE_ORIGINAL_TOKEN_CAN_WRITE",
                 "WRITABLE_FILE_MUST_NOT_BE_REPORTED_DENIED");
@@ -59,16 +77,16 @@ internal static class EffectiveWriteDenialTests
                 && !string.Equals(shortPath.ToString(), file, StringComparison.OrdinalIgnoreCase);
             if (nativeAliasAvailable)
             {
-                var aliasObservation = R7EffectiveWriteDenial.Observe(shortPath.ToString(), identity.AccessToken, sid);
+                var aliasObservation = SampleKernel(shortPath.ToString(), identity.AccessToken, sid);
                 NoAuthority(aliasObservation);
                 Check(!aliasObservation.TargetIdentityStable && !aliasObservation.DataWriteOpenDenied,
                     "NATIVE_SHORT_NAME_ALIAS_MUST_FAIL_CLOSED");
             }
             Console.WriteLine("R7_NATIVE_SHORT_NAME_ALIAS_TEST_AVAILABLE=" + nativeAliasAvailable.ToString().ToLowerInvariant());
 
-            var wrong = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, "S-1-5-21-1000-2000-3000-4000");
+            var wrong = SampleKernel(file, identity.AccessToken, "S-1-5-21-1000-2000-3000-4000");
             NoAuthority(wrong);
-            Check(!wrong.OriginalTokenMatched && !wrong.DataWriteOpenDenied,
+            Check(!wrong.SuppliedTokenSidMatched && !wrong.DataWriteOpenDenied,
                 "WRONG_PRINCIPAL_MUST_NOT_BE_PROBED");
 
             using SafeAccessTokenHandle invalid = new(IntPtr.Zero);
@@ -76,6 +94,22 @@ internal static class EffectiveWriteDenialTests
             NoAuthority(missingToken);
             Check(missingToken.Classification == "R7_NATIVE_ORIGINAL_TOKEN_UNAVAILABLE",
                 "MISSING_REAL_TOKEN_MUST_FAIL_CLOSED");
+
+            // Self-restriction is test setup only. No production token is
+            // filtered, impersonated to pass a denial, or claimed historical.
+            Check(CreateRestrictedToken(identity.AccessToken, 1 /* DISABLE_MAX_PRIVILEGE */,
+                0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out SafeAccessTokenHandle filtered),
+                "RESTRICTED_TEST_TOKEN_SETUP_FAILED");
+            using (filtered)
+            {
+                using WindowsIdentity restrictedIdentity = new(filtered.DangerousGetHandle());
+                Check(restrictedIdentity.User?.Value == sid, "RESTRICTED_TOKEN_RETAINS_SAME_SID");
+                var rejected = R7EffectiveWriteDenial.Observe(file, filtered, sid);
+                NoAuthority(rejected);
+                Check(rejected.Classification == "R7_NATIVE_FILTERED_OR_SPECIAL_TOKEN_UNQUALIFIED"
+                    && !rejected.SuppliedTokenSidMatched && !rejected.DataWriteOpenDenied,
+                    "FILTERED_SAME_SID_TOKEN_MUST_BE_REJECTED_BEFORE_TARGET_PROBE");
+            }
 
             foreach (string bad in new[] { "relative.txt", @"\\server\share\probe.txt",
                 file + ":stream", Path.Combine(scratch, "..", "probe.txt"), file + ".",
@@ -85,7 +119,7 @@ internal static class EffectiveWriteDenialTests
                 scratch + "\\NUL.txt", scratch + "\\COM1.txt", scratch + "\\LPT\u00b9.txt",
                 scratch + "\\NUL .txt", scratch + "\\*.txt" })
             {
-                var malformed = R7EffectiveWriteDenial.Observe(bad, identity.AccessToken, sid);
+                var malformed = SampleKernel(bad, identity.AccessToken, sid);
                 NoAuthority(malformed);
                 Check(!malformed.DataWriteOpenDenied && !malformed.TargetIdentityStable,
                     "NON_CANONICAL_PATH_MUST_NOT_CREATE_PROOF");
@@ -100,11 +134,11 @@ internal static class EffectiveWriteDenialTests
                 FileSystemRights.WriteData | FileSystemRights.AppendData,
                 AccessControlType.Deny));
             new FileInfo(file).SetAccessControl(denied);
-            var observed = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+            var observed = SampleKernel(file, identity.AccessToken, sid);
             NoAuthority(observed);
             Check(observed.DataWriteOpenDenied && observed.TargetIdentityStable,
                 "KERNEL_MUST_DENY_BOTH_WRITE_AND_APPEND_OPENS");
-            Check(observed.OriginalPrincipalOwnsTarget && !observed.DaclWriteOpenDenied,
+            Check(observed.SuppliedPrincipalOwnsTarget && !observed.DaclWriteOpenDenied,
                 "OWNER_CAN_STILL_REWRITE_DACL_AND_MUST_NOT_BE_TREATED_AS_CONTAINED");
             Check(observed.Classification == "R7_NATIVE_DATA_DENIED_BUT_ORIGINAL_WRITER_OWNS_TARGET",
                 "DATA_DENIAL_MUST_NOT_HIDE_OWNER_BYPASS");
@@ -117,27 +151,27 @@ internal static class EffectiveWriteDenialTests
             appendAllowed.AddAccessRule(new FileSystemAccessRule(identity.User,
                 FileSystemRights.WriteData, AccessControlType.Deny));
             new FileInfo(file).SetAccessControl(appendAllowed);
-            var partial = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+            var partial = SampleKernel(file, identity.AccessToken, sid);
             NoAuthority(partial);
             Check(!partial.DataWriteOpenDenied, "WRITE_ONLY_DENY_CANNOT_PROVE_APPEND_DENIAL");
             RestoreAcl(file, original);
 
             using (var locked = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
             {
-                var sharing = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+                var sharing = SampleKernel(file, identity.AccessToken, sid);
                 NoAuthority(sharing);
                 Check(!sharing.DataWriteOpenDenied, "SHARING_VIOLATION_MUST_NOT_COUNT_AS_ACCESS_DENIAL");
             }
 
             string alias = Path.Combine(scratch, "alias.txt");
             Check(CreateHardLinkW(alias, file, IntPtr.Zero), "SCRATCH_HARD_LINK_SETUP_FAILED");
-            var hardlink = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, sid);
+            var hardlink = SampleKernel(file, identity.AccessToken, sid);
             NoAuthority(hardlink);
             Check(!hardlink.DataWriteOpenDenied && !hardlink.TargetIdentityStable,
                 "HARD_LINK_ALIAS_MUST_NOT_BE_ATTESTED_AS_AN_ISOLATED_TARGET");
             File.Delete(alias);
 
-            var directory = R7EffectiveWriteDenial.Observe(scratch, identity.AccessToken, sid);
+            var directory = SampleKernel(scratch, identity.AccessToken, sid);
             NoAuthority(directory);
             Check(!directory.DataWriteOpenDenied, "WRITABLE_DIRECTORY_MUST_FAIL_DENIAL");
             Console.WriteLine($"R7_EFFECTIVE_WRITE_PROBE_CHECKS_PASSED={checks}");
@@ -214,4 +248,9 @@ internal static class EffectiveWriteDenialTests
     private static extern bool CreateHardLinkW(string alias, string existing, IntPtr security);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathNameW(string path, StringBuilder shortPath, uint length);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateRestrictedToken(SafeAccessTokenHandle existing, uint flags,
+        uint disableCount, IntPtr disableSids, uint privilegeCount, IntPtr deletePrivileges,
+        uint restrictCount, IntPtr restrictSids, out SafeAccessTokenHandle restricted);
 }
