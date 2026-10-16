@@ -227,3 +227,63 @@ test('invalid native event feed degrades intake but preserves canonical remote p
   assert.equal(saved.nativeGapIntake.sourceErrorCount, 1);
   assert.equal(saved.capabilityParity.parityPresentCount, 1);
 });
+
+
+test('native capability inventory survives seven-day expiry beyond two compiler slots', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-multi-native-'));
+  const { createSharedWorkspaceEventRecord } = await import('../shared/agents/sharedAgentWorkspaceStore.mjs');
+  const events = Array.from({ length: 5 }, (_, i) => createSharedWorkspaceEventRecord({
+    eventId: `sovereign-multi-gap-${i}`, participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-12T11:00:00.000Z', eventKind: 'capability-gap',
+    capabilityFailure: { failureClass: 'CAPABILITY_GAP', genuineCapabilityFailure: true,
+      capabilityId: `missing-native-${i}`, targetRefs: ['goal:#2573'] },
+  }));
+  const args = { paths: { workspaceRoot, repoRoot: 'C:/repo' }, readQueue: async () => [] };
+  const first = await reconcileSovereignCommanderCapabilityParity({
+    ...args, now: new Date('2026-10-12T11:20:00.000Z'),
+    readNativeEvents: async () => ({ records: events, errors: [] }),
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.nativeGapIntake.candidateTotalCount, 5);
+  assert.equal(first.nativeGapIntake.retainedCount, 5);
+  assert.equal(first.capabilityCompiler.nativeGapCandidateCount, 2);
+  const later = await reconcileSovereignCommanderCapabilityParity({
+    ...args, now: new Date('2026-10-23T11:20:00.000Z'),
+    readNativeEvents: async () => ({ records: [], errors: [] }),
+  });
+  assert.equal(later.nativeGapIntake.candidateTotalCount, 5);
+  assert.equal(later.nativeGapIntake.retainedCount, 5);
+  assert.equal(later.nativeGapSourceHealth, 'VALIDATED');
+  assert.equal(later.finalVerdict, 'SOVEREIGN_COMMANDER_NATIVE_CAPABILITY_GAPS_TRACKED');
+  const persisted = JSON.parse(await readFile(join(workspaceRoot, 'status',
+    `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`), 'utf8'));
+  assert.equal(persisted.nativeGapIntake.retainedGaps.length, 5);
+  assert.equal(persisted.nativeGapIntake.gaps.length, 2);
+  assert.equal(persisted.mergeAuthority, false);
+});
+
+test('native inventory overflow survives as an explicit degraded source warning', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-native-overflow-'));
+  const { createSharedWorkspaceEventRecord } = await import('../shared/agents/sharedAgentWorkspaceStore.mjs');
+  const events = Array.from({ length: 129 }, (_, i) => createSharedWorkspaceEventRecord({
+    eventId: `sovereign-overflow-gap-${i}`, participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-12T11:00:00.000Z', eventKind: 'capability-gap',
+    capabilityFailure: { failureClass: 'CAPABILITY_GAP', genuineCapabilityFailure: true,
+      capabilityId: `overflow-native-${String(i).padStart(3, '0')}`, targetRefs: ['goal:#2573'] },
+  }));
+  const args = { paths: { workspaceRoot, repoRoot: 'C:/repo' }, readQueue: async () => [] };
+  const first = await reconcileSovereignCommanderCapabilityParity({
+    ...args, now: new Date('2026-10-12T11:20:00.000Z'),
+    readNativeEvents: async () => ({ records: events, errors: [] }),
+  });
+  assert.equal(first.nativeGapSourceHealth, 'DEGRADED');
+  const later = await reconcileSovereignCommanderCapabilityParity({
+    ...args, now: new Date('2026-10-23T11:20:00.000Z'),
+    readNativeEvents: async () => ({ records: [], errors: [] }),
+  });
+  assert.equal(later.nativeGapSourceHealth, 'DEGRADED');
+  assert.equal(later.nativeGapIntake.retentionTruncated, false);
+  const persisted = JSON.parse(await readFile(join(workspaceRoot, 'status',
+    `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`), 'utf8'));
+  assert.equal(persisted.nativeGapIntake.retentionTruncated, true);
+});
