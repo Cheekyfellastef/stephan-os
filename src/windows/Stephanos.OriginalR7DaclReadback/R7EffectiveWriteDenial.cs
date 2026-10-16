@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Stephanos.OriginalR7DaclReadback;
@@ -68,13 +69,10 @@ public static class R7EffectiveWriteDenial
             // a writer can enable a privilege already present in its token.
             bool bypass = HasBypassAuthority(originalToken, identity);
             string path = NormalizeLocalPath(targetPath);
-            if (!AncestorsAreOrdinary(path))
-                return Held("R7_NATIVE_TARGET_REPARSE_OR_UNAVAILABLE", true);
-
-            using SafeFileHandle before = Open(path, ReadControl | ReadAttributes);
-            if (before.IsInvalid || !TryIdentity(before, out FileIdentity first))
-                return Held("R7_NATIVE_TARGET_IDENTITY_UNAVAILABLE", true);
-            SecurityIdentifier? owner = ReadOwner(before);
+            using NativeTarget? before = NativeTarget.TryOpen(path);
+            if (before is null || !TryIdentity(before.Handle, out FileIdentity first))
+                return Held("R7_NATIVE_TARGET_NONCANONICAL_OR_UNAVAILABLE", true);
+            SecurityIdentifier? owner = ReadOwner(before.Handle);
             if (owner is null) return Held("R7_NATIVE_TARGET_OWNER_UNAVAILABLE", true);
 
             // Never let failed impersonation fall through to the service's
@@ -86,9 +84,9 @@ public static class R7EffectiveWriteDenial
                 Request(path, WriteOwner)
             });
 
-            using SafeFileHandle after = Open(path, ReadControl | ReadAttributes);
-            bool stable = !after.IsInvalid && TryIdentity(after, out FileIdentity last)
-                && first == last && AncestorsAreOrdinary(path);
+            using NativeTarget? after = NativeTarget.TryOpen(path);
+            bool stable = after is not null && TryIdentity(after.Handle, out FileIdentity last)
+                && first == last;
             bool owns = owner.Equals(expected);
             bool dataDenied = opens[0] == AccessDenied && opens[1] == AccessDenied;
             bool daclDenied = opens[2] == AccessDenied;
@@ -139,20 +137,60 @@ public static class R7EffectiveWriteDenial
                 && "123456789\u00b9\u00b2\u00b3".Contains(stem[3]));
     }
 
-    private static bool AncestorsAreOrdinary(string path)
+    // Target identity belongs to retained native handles, not to a normalized
+    // .NET string. Keep the object and every ancestor open without DELETE
+    // sharing while probing, and require Windows' normalized final path to
+    // match the supplied path. This rejects 8.3 aliases (including ancestors),
+    // SUBST/other namespace aliases and reparse redirections without forbidding
+    // legitimate long filenames merely because they contain a tilde.
+    private sealed class NativeTarget : IDisposable
     {
-        string? current = path;
-        for (int count = 0; current is not null && count < 128; count++)
+        private readonly List<SafeFileHandle> handles = new();
+        internal SafeFileHandle Handle => handles[0];
+
+        internal static NativeTarget? TryOpen(string path)
         {
-            using SafeFileHandle handle = Open(current, ReadAttributes);
-            if (handle.IsInvalid || !GetFileInformationByHandle(handle, out ByHandleInfo info)
-                || (info.Attributes & ReparseAttribute) != 0) return false;
-            DirectoryInfo? parent = Directory.GetParent(current);
-            if (parent is null) return true;
-            current = parent.FullName;
+            NativeTarget target = new();
+            try
+            {
+                string? current = path;
+                for (int count = 0; current is not null && count < 128; count++)
+                {
+                    SafeFileHandle handle = CreateFileW(current,
+                        count == 0 ? ReadControl | ReadAttributes : ReadAttributes,
+                        3 /* FILE_SHARE_READ | FILE_SHARE_WRITE; never DELETE */,
+                        IntPtr.Zero, OpenExisting, OpenReparsePointAndBackupSemantics, IntPtr.Zero);
+                    target.handles.Add(handle);
+                    if (handle.IsInvalid || !GetFileInformationByHandle(handle, out ByHandleInfo info)
+                        || (info.Attributes & ReparseAttribute) != 0) break;
+                    DirectoryInfo? parent = Directory.GetParent(current);
+                    if (parent is null)
+                    {
+                        StringBuilder finalPath = new(512);
+                        uint length = GetFinalPathNameByHandleW(target.Handle, finalPath,
+                            (uint)finalPath.Capacity, 0 /* FILE_NAME_NORMALIZED | VOLUME_NAME_DOS */);
+                        if (length > 0 && length < finalPath.Capacity
+                            && NativeNameMatches(path, finalPath.ToString())) return target;
+                        break;
+                    }
+                    current = parent.FullName;
+                }
+            }
+            catch { target.Dispose(); throw; }
+            target.Dispose();
+            return null;
         }
-        return false;
+
+        public void Dispose()
+        {
+            for (int i = handles.Count - 1; i >= 0; i--) handles[i].Dispose();
+            handles.Clear();
+        }
     }
+
+    private static bool NativeNameMatches(string supplied, string native)
+        => native.StartsWith(@"\\?\", StringComparison.Ordinal)
+            && string.Equals(supplied, native[4..], StringComparison.OrdinalIgnoreCase);
 
     private static SafeFileHandle Open(string path, uint access)
         => CreateFileW(path, access, ShareReadWriteDelete, IntPtr.Zero,
@@ -248,6 +286,9 @@ public static class R7EffectiveWriteDenial
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleInfo info);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,
+        StringBuilder path, uint length, uint flags);
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int kind,

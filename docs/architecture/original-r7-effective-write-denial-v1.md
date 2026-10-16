@@ -17,9 +17,12 @@ Administrators membership. Privilege qualification is closed-world: only
 `SeRelabelPrivilege` and future unknown LUIDs, remains held. A writer that can
 enable a privilege or regain elevation is not attested as safely excluded.
 
-Object identity comes from open Windows handles (volume and file index), is
-checked before/after impersonation, and refuses hard-linked files and reparse
-points. Ancestors must be readable and non-reparse. Alternate data streams,
+Object identity comes from retained Windows handles (volume and file index)
+and the handle-resolved, normalized native final path. The object and every
+ancestor remain open without DELETE sharing throughout the probe. Native name
+binding rejects 8.3 aliases in any component and volume namespace substitutions;
+the object identity is checked before/after impersonation. Hard-linked files
+and reparse points are refused. Ancestors must be readable and non-reparse. Alternate data streams,
 UNC/device names (including DOS devices with extensions), traversal, alternate
 separators, wildcard characters and ambiguous trailing characters are refused.
 The supplied path must already equal its full normalized form; evidence is
@@ -43,7 +46,8 @@ Run the existing test project with .NET 8 on Windows:
 dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
 ```
 
-An actual host test executed 64 checks successfully on 16 October 2026. These
+An actual host test executed 71 checks successfully on 16 October 2026,
+including a real native short-name alias (available on that test volume). These
 are test-process tokens and disposable files, **not the original r7 actor or
 production source**. No positive production custody claim follows.
 
@@ -55,11 +59,25 @@ closed. Its next integration must first establish the original principal set
 from independently trusted machine evidence. A current task's user, guessed
 SID or queue correlation cannot silently substitute for native provenance.
 
+### Target-binding design invariant
+
+The supplied path is only a request. The retained native object is the evidence
+identity. Accepting normalized text or checking just the final filename does
+not qualify every Windows namespace component. The probe therefore acquires
+the target and full ancestor chain, excludes reparse tags, retains no-DELETE
+handles, and compares the handle's Windows-normalized final DOS path with the
+entire supplied path before any original-token access request. Volume/file ID
+and native-name qualification must still agree after the requests. Pure policy
+tests cover file and ancestor aliases; a real GetShortPathName regression runs
+when the volume provides a different short spelling. Unknown native resolution
+holds. This invariant replaces name-pattern-based alias qualification.
+
 The independent Windows authority reviewer must qualify:
 
 1. The old principal inventory and alternate/linked tokens, existing writable
    handles and mapped views. Open denial is prospective and cannot revoke an
-   already obtained handle. A before/after file ID is not a continuous race lock.
+   already obtained handle. Retained name guards and before/after IDs are not
+   revocation of old writable handles/mapped sections or continuous custody.
 2. Exact source/worktree, Git common-directory, parent rename and alias scope,
    including every descendant, alternate stream and remaining write credential.
    This primitive observes one object; it cannot assert whole-tree containment.

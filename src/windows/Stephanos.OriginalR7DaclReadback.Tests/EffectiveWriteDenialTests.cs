@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Reflection;
+using System.Text;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
@@ -32,6 +33,7 @@ internal static class EffectiveWriteDenialTests
     internal static void Run()
     {
         PrivilegePolicyChecks();
+        NativeNamePolicyChecks();
         string temp = Path.GetFullPath(Path.GetTempPath());
         string scratch = Path.GetFullPath(Path.Combine(temp, "stephanos-r7-native-probe-" + Guid.NewGuid().ToString("N")));
         if (!scratch.StartsWith(temp.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
@@ -50,6 +52,19 @@ internal static class EffectiveWriteDenialTests
                 "REAL_TOKEN_" + writable.Classification);
             Check(!writable.DataWriteOpenDenied && writable.Classification == "R7_NATIVE_ORIGINAL_TOKEN_CAN_WRITE",
                 "WRITABLE_FILE_MUST_NOT_BE_REPORTED_DENIED");
+
+            StringBuilder shortPath = new(512);
+            uint shortLength = GetShortPathNameW(file, shortPath, (uint)shortPath.Capacity);
+            bool nativeAliasAvailable = shortLength > 0 && shortLength < shortPath.Capacity
+                && !string.Equals(shortPath.ToString(), file, StringComparison.OrdinalIgnoreCase);
+            if (nativeAliasAvailable)
+            {
+                var aliasObservation = R7EffectiveWriteDenial.Observe(shortPath.ToString(), identity.AccessToken, sid);
+                NoAuthority(aliasObservation);
+                Check(!aliasObservation.TargetIdentityStable && !aliasObservation.DataWriteOpenDenied,
+                    "NATIVE_SHORT_NAME_ALIAS_MUST_FAIL_CLOSED");
+            }
+            Console.WriteLine("R7_NATIVE_SHORT_NAME_ALIAS_TEST_AVAILABLE=" + nativeAliasAvailable.ToString().ToLowerInvariant());
 
             var wrong = R7EffectiveWriteDenial.Observe(file, identity.AccessToken, "S-1-5-21-1000-2000-3000-4000");
             NoAuthority(wrong);
@@ -136,6 +151,24 @@ internal static class EffectiveWriteDenialTests
         }
     }
 
+    private static void NativeNamePolicyChecks()
+    {
+        MethodInfo policy = typeof(R7EffectiveWriteDenial).GetMethod("NativeNameMatches",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        bool Match(string supplied, string native)
+            => (bool)policy.Invoke(null, new object[] { supplied, native })!;
+        Check(Match(@"C:\source\LongFilename.txt", @"\\?\C:\source\LongFilename.txt"),
+            "EXACT_NATIVE_NORMALIZED_NAME_MUST_MATCH");
+        Check(!Match(@"C:\source\LONGFI~1.TXT", @"\\?\C:\source\LongFilename.txt"),
+            "SHORT_FILE_ALIAS_CANNOT_BIND_LONG_NATIVE_NAME");
+        Check(!Match(@"C:\LONGDI~1\probe.txt", @"\\?\C:\LongDirectory\probe.txt"),
+            "SHORT_ANCESTOR_ALIAS_CANNOT_BIND_LONG_NATIVE_NAME");
+        Check(!Match(@"C:\source\probe.txt", @"\\?\D:\source\probe.txt"),
+            "VOLUME_NAMESPACE_ALIAS_MUST_NOT_BIND");
+        Check(!Match(@"C:\source\probe.txt", @"C:\source\probe.txt"),
+            "MISSING_NATIVE_NAMESPACE_PREFIX_MUST_NOT_BIND");
+    }
+
     private static void PrivilegePolicyChecks()
     {
         MethodInfo policy = typeof(R7EffectiveWriteDenial).GetMethod("HasUnqualifiedPrivileges",
@@ -179,4 +212,6 @@ internal static class EffectiveWriteDenialTests
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkW(string alias, string existing, IntPtr security);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathNameW(string path, StringBuilder shortPath, uint length);
 }
