@@ -166,3 +166,31 @@ test('stale signed evidence remains rejected even with valid signature', () => {
   assert.equal(result.signedEvidenceCandidateComplete, false);
   assert.ok(result.reasonCodes.includes('EVIDENCE_NOT_FRESH'));
 });
+
+test('rejects truthy object, control-character and unbounded model/governor identities', () => {
+  for (const [key, values] of Object.entries({
+    modelId: [{ name: 'qwen3-coder:30b' }, ['qwen3-coder:30b'], 'qwen\\n30b', 'x'.repeat(193), ''],
+    governorInstanceId: [{ id: 'boot-1' }, ['boot-1'], 'boot\\n1', 'x'.repeat(129), ''],
+  })) {
+    for (const value of values) {
+      // The same object reference on both sides previously passed equality.
+      const forgedIdentity = { ...identity, [key]: value };
+      const forgedEvidence = { ...evidence, [key]: value };
+      const result = evaluateLlamaGovernorEvidenceV1(forgedEvidence, forgedIdentity, NOW);
+      assert.equal(result.evidenceCandidateComplete, false, key + ': ' + String(value));
+      assert.ok(result.reasonCodes.includes('EXPECTED_IDENTITY_MISSING'));
+      assert.equal(result.productionInferenceQualified, false);
+      assert.equal(result.safetyHoldMayBeRemoved, false);
+    }
+  }
+});
+
+test('signed evidence rejects a matching non-string identity even with a valid signature', () => {
+  const forged = { ...evidence, modelId: { name: 'qwen3-coder:30b' } };
+  const forgedIdentity = { ...identity, modelId: forged.modelId };
+  const attestation = signed(forged);
+  const result = evaluateSignedLlamaGovernorEvidenceV1(forged, forgedIdentity, attestation, trusted, NOW);
+  assert.equal(result.signedEvidenceCandidateComplete, false);
+  assert.ok(result.reasonCodes.includes('EXPECTED_IDENTITY_MISSING'));
+  assert.equal(result.safetyHoldMayBeRemoved, false);
+});

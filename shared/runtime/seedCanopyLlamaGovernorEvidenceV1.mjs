@@ -9,19 +9,27 @@ const isCanonicalUtc = value => typeof value === 'string' && Number.isFinite(Dat
 const isSha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const isJobIdentity = value => typeof value === 'string'
   && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
+// Identity values must be bounded immutable text, not truthy objects that can
+// be serialized differently between signature creation and verification.
+const isModelId = value => typeof value === 'string'
+  && /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,191}$/.test(value);
+const isGovernorInstanceId = value => typeof value === 'string'
+  && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
 
 export function evaluateLlamaGovernorEvidenceV1(evidence, identity, nowMs = Date.now()) {
   const reasons = [];
   if (evidence?.schemaVersion !== LLAMA_GOVERNOR_EVIDENCE_SCHEMA)
     reasons.push('EVIDENCE_SCHEMA_UNKNOWN');
   if (!identity || !Number.isSafeInteger(identity.routerPid) || identity.routerPid <= 0
-    || !isCanonicalUtc(identity.routerStartedAtUtc) || !identity.modelId || !identity.governorInstanceId
+    || !isCanonicalUtc(identity.routerStartedAtUtc)
+    || !isModelId(identity.modelId) || !isGovernorInstanceId(identity.governorInstanceId)
     || !isSha256(identity.routerExecutableSha256) || !isJobIdentity(identity.routerJobIdentity))
     reasons.push('EXPECTED_IDENTITY_MISSING');
   if (!evidence || !identity || evidence.routerPid !== identity.routerPid
     || evidence.routerStartedAtUtc !== identity.routerStartedAtUtc
     || evidence.modelId !== identity.modelId
-    || evidence.governorInstanceId !== identity.governorInstanceId)
+    || evidence.governorInstanceId !== identity.governorInstanceId
+    || !isModelId(evidence.modelId) || !isGovernorInstanceId(evidence.governorInstanceId))
     reasons.push('ROUTER_IDENTITY_NOT_BOUND');
   // A recycled PID and matching start time cannot establish executable or Job
   // custody; these are independently bound parts of the expected launch identity.
