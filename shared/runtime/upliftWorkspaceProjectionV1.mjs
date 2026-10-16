@@ -1767,7 +1767,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   // timestamp is not proof that work happened, even with a current feed.
   const observed = relevant.filter((record) => {
     const stamp = recordTimeMs(record);
-    return stamp > 0 && stamp <= nowMs;
+    return stamp > 0 && stamp <= nowMs && nowMs - stamp <= 60 * 60 * 1000;
   });
   // Latest evidence must be admitted proof, not a forged or rejected PASS event.
   // The source-bound heartbeat is the baseline when no admissible rung proof exists.

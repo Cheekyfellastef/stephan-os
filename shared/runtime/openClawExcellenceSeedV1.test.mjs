@@ -330,3 +330,28 @@ test('rejected or impersonated agent claims cannot refresh the last admitted evi
   assert.equal(seed.proofCount, 1);
   assert.equal(seed.latestEvidenceAt, '2026-10-13T14:38:00.000Z');
 });
+
+
+test('stale agent evidence cannot advance a newly refreshed OpenClaw seed heartbeat', () => {
+  const inventory = 'INVENTORY_BOTH_AGENTS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [
+    { ...event(inventory, 'openclaw-local'), timestampUtc: '2026-10-13T12:38:00.000Z' },
+    { ...event(inventory, 'openclaw-standalone'), timestampUtc: '2026-10-13T12:39:00.000Z' },
+  ];
+  const stale = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(stale.planted, true);
+  assert.equal(stale.rungProofCount, 0);
+  assert.equal(stale.proofCount, 0);
+  assert.equal(stale.nextGrowthRung, inventory);
+  assert.equal(stale.latestEvidenceAt, '2026-10-13T14:35:00.000Z');
+  payload.records.eventRecords.push(event(inventory, 'openclaw-local'));
+  const partial = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(partial.rungProofCount, 0);
+  assert.equal(partial.proofCount, 1);
+  payload.records.eventRecords.push(event(inventory, 'openclaw-standalone'));
+  const fresh = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(fresh.rungProofCount, 1);
+  assert.equal(fresh.proofCount, 2);
+  assert.equal(fresh.nextGrowthRung, 'VERIFY_UPSTREAM_RELEASE_AND_SKILL_SAFETY');
+});
