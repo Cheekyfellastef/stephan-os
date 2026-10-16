@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   projectRescueIslandBoundaryResultV1, parseRescueIslandBoundaryStdoutV1,
-  RESCUE_ISLAND_BOUNDARY_MARKER,
+  RESCUE_ISLAND_BOUNDARY_MARKER, parseRescueIslandBoundaryHeldStdoutV1,
 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 const raw = () => ({
@@ -46,4 +46,30 @@ test('forged grants, unexpected fields, incomplete scope and wrong action all fa
   assert.equal(parseRescueIslandBoundaryStdoutV1(line(raw()) + 'PRIVATE_PATH\n', 'rescue-island-readonly-boundary'), null);
   assert.equal(parseRescueIslandBoundaryStdoutV1(line(raw()).repeat(70), 'rescue-island-readonly-boundary'), null);
   assert.equal(parseRescueIslandBoundaryStdoutV1(RESCUE_ISLAND_BOUNDARY_MARKER + '{', 'rescue-island-readonly-boundary'), null);
+});
+
+
+test('typed OS denial is bounded and never interpretable as completed physical pickup', () => {
+  const held = {
+    ...raw(), ok: false, blocker: 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+    observedPathCount: 0, physicalScopeReadback: 'HELD',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_BLOCKED',
+  };
+  const parse = value => parseRescueIslandBoundaryHeldStdoutV1(
+    line(value), 'rescue-island-readonly-boundary');
+  assert.equal(projectRescueIslandBoundaryResultV1(held), null);
+  const readback = parse(held);
+  assert.equal(readback?.ok, false);
+  assert.equal(readback?.blocker, 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED');
+  assert.equal(readback?.workerStartAllowed, false);
+  assert.equal(readback?.originalSourceLeaseReleaseAllowed, false);
+  for (const spoof of [
+    { ...held, blocker: 'HOST_PRIVATE_PATH' },
+    { ...held, sourceMutationAllowed: true },
+    { ...held, ok: true },
+    { ...held, observedPathCount: 3 },
+    { ...held, unexpectedField: 'LEAK' },
+  ]) assert.equal(parse(spoof), null);
+  assert.equal(parseRescueIslandBoundaryHeldStdoutV1(line(held), 'unrelated-action'), null);
+  assert.equal(parseRescueIslandBoundaryHeldStdoutV1(line(held) + 'second line\n', 'rescue-island-readonly-boundary'), null);
 });
