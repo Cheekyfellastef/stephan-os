@@ -1,5 +1,7 @@
 import test from 'node:test';
 import '../../tests/conversational-intelligence-experience-seed.test.mjs';
+// Keep OpenClaw's fail-closed seed proofs in the existing surface-ignition CI suite.
+import './openClawExcellenceSeedV1.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
 
