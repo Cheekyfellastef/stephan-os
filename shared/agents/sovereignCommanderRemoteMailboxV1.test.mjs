@@ -3304,7 +3304,7 @@ test('75 logical goals produce a complete remote lane receipt through the real s
   assert.ok(Buffer.byteLength(JSON.stringify(source)) > 16 * 1024);
   const remote = projectBoundedRemoteControllerLaneStatus(source);
   const stdout = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='
-    + JSON.stringify(remote) + '\\n';
+    + JSON.stringify(remote) + '\n';
   assert.ok(Buffer.byteLength(stdout) < 12 * 1024);
   const maintenance = {
     ok: true,
@@ -3317,7 +3317,7 @@ test('75 logical goals produce a complete remote lane receipt through the real s
   const result = await executeSovereignCommanderRemoteOnBattleBridge(
     command({ remoteAction: 'controller-lane-status' }),
     { spawnSyncFn: spawnForHead(), readFileFn: readToken,
-      fetchFn, env: { USERPROFILE: 'C:\\\\Users\\\\Operator' } },
+      fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
   );
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE');
