@@ -1761,7 +1761,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     ...list(records.goalRecords),
     ...allRecords(payload),
   ].filter((record) => record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
-      || record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE) : [];
+      && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE) : [];
   // Only observed, time-bounded evidence may influence authority-bearing
   // growth rungs, proof totals, latest proof time or gap pressure. A future
   // timestamp is not proof that work happened, even with a current feed.

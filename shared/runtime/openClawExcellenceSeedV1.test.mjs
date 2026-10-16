@@ -373,3 +373,30 @@ test('newest valid OpenClaw heartbeat wins regardless of record order or invalid
     assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
   }
 });
+
+
+test('OpenClaw gap pressure rejects records cross-bound to another mission or issue', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const gap = {
+    ...event('INVENTORY_BOTH_AGENTS'),
+    eventId: 'agent-inventory-gap',
+    status: 'BLOCKED',
+    reason: 'missing capability: agent skill inventory',
+    gapId: 'openclaw-agent-inventory-gap',
+    capabilityId: 'openclaw-agent-inventory',
+  };
+  payload.records.eventRecords = [
+    { ...gap, eventId: 'foreign-mission-gap', missionId: 'unrelated-mission' },
+    { ...gap, eventId: 'foreign-issue-gap', relatedIssue: '#1657' },
+  ];
+  const rejected = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(rejected.planted, true);
+  assert.deepEqual(rejected.currentGaps, []);
+  assert.equal(rejected.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+  assert.equal(rejected.pressureState, 'ACTIVE');
+  payload.records.eventRecords.push(gap);
+  const admitted = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(admitted.currentGaps.length, 1);
+  assert.equal(admitted.currentGaps[0].capabilityId, 'openclaw-agent-inventory');
+  assert.match(admitted.nextBestAction, /missing capability: agent skill inventory/);
+});
