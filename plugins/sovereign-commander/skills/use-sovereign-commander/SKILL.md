@@ -165,3 +165,8 @@ For Rescue Island merge, test or commissioning requests, follow
 before any protected dispatch. Check complete technical thread resolution and
 prior protected attempts first. The read-only readiness helper and skill grant
 no merge, runtime, lease or commissioning authority.
+
+
+## Build-conveyor sovereign recovery skill pack (v1.0.6)
+
+For the user's goal-to-build unblocking requests, use [repair-build-conveyors](../repair-build-conveyors/SKILL.md) and its read-only executable triage `shared/agents/sovereignGoalRecoveryTriageV1.mjs`. For iPad/cloud transport diagnosis, use [repair-sovereign-fast-bridge](../repair-sovereign-fast-bridge/SKILL.md). For privileged #2962/r7 original source custody requirements, use [commission-original-source-custody](../commission-original-source-custody/SKILL.md). These skills add typed gap intake and guarded operator action guidance; they are not proof of an installed OS writer, independent witness signer, live Island pickup or GPU-safe Seed Forge.
