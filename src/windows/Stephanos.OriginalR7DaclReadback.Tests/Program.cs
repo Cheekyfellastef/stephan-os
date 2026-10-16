@@ -65,14 +65,19 @@ internal static class Program
             Check(!vanished.PolicyShapeObserved, "MISSING_DIRECTORY_MUST_FAIL");
             AssertNotCustody(vanished);
 
+            EffectiveWriteDenialTests.Run();
+
             Console.WriteLine("R7_DACL_NATIVE_READBACK_TESTS_PASSED=true");
             Console.WriteLine("R7_DACL_ORIGINAL_WRITER_TESTED=false");
             Console.WriteLine("R7_DACL_ORIGINAL_LEASE_RELEASED=false");
             return 0;
         }
-        catch
+        catch (Exception error)
         {
             Console.Error.WriteLine("R7_DACL_NATIVE_READBACK_TESTS_FAILED");
+            Console.Error.WriteLine("R7_DACL_TEST_EXCEPTION_TYPE=" + error.GetType().Name);
+            if (System.Text.RegularExpressions.Regex.IsMatch(error.Message, "^[A-Z0-9_]{1,120}$"))
+                Console.Error.WriteLine("R7_DACL_TEST_FAILURE_CODE=" + error.Message);
             return 1;
         }
         finally
