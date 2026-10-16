@@ -138,10 +138,24 @@ internal static class EffectiveWriteDenialTests
             NoAuthority(observed);
             Check(observed.DataWriteOpenDenied && observed.TargetIdentityStable,
                 "KERNEL_MUST_DENY_BOTH_WRITE_AND_APPEND_OPENS");
-            Check(observed.SuppliedPrincipalOwnsTarget && !observed.DaclWriteOpenDenied,
-                "OWNER_CAN_STILL_REWRITE_DACL_AND_MUST_NOT_BE_TREATED_AS_CONTAINED");
-            Check(observed.Classification == "R7_NATIVE_DATA_DENIED_BUT_SUPPLIED_PRINCIPAL_OWNS_TARGET",
-                "DATA_DENIAL_MUST_NOT_HIDE_OWNER_BYPASS");
+            // Runner-created files may be owned by the user SID or by an
+            // enabled Administrators SID. Never manufacture owner evidence
+            // from identity.User: classify the actual native owner/readback.
+            Console.WriteLine("R7_NATIVE_SCRATCH_OWNER_SID_MATCHED="
+                + observed.SuppliedPrincipalOwnsTarget.ToString().ToLowerInvariant());
+            string expectedPolicyClassification = observed.SuppliedPrincipalOwnsTarget
+                ? "R7_NATIVE_DATA_DENIED_BUT_SUPPLIED_PRINCIPAL_OWNS_TARGET"
+                : observed.TokenHasBypassAuthority
+                    ? "R7_NATIVE_DATA_DENIED_BUT_TOKEN_CAN_BYPASS_POLICY"
+                    : !observed.DaclWriteOpenDenied || !observed.OwnerWriteOpenDenied
+                        ? "R7_NATIVE_POLICY_REWRITE_NOT_DENIED"
+                        : "R7_NATIVE_OPEN_DENIAL_OBSERVED_NOT_CUSTODY";
+            Check(observed.Classification == expectedPolicyClassification,
+                "NATIVE_OWNER_AND_TOKEN_POLICY_MUST_MATCH_ACTUAL_ACCESS_FACTS");
+            Check(observed.Classification != "R7_NATIVE_OPEN_DENIAL_OBSERVED_NOT_CUSTODY"
+                || (!observed.SuppliedPrincipalOwnsTarget && !observed.TokenHasBypassAuthority
+                    && observed.DaclWriteOpenDenied && observed.OwnerWriteOpenDenied),
+                "NATIVE_PROBE_MUST_NOT_REPORT_DENIAL_WITH_A_KNOWN_REWRITE_PATH");
             Check(File.ReadAllText(file) == "unchanged sentinel", "PROBE_MUST_NOT_CHANGE_FILE_CONTENTS");
             RestoreAcl(file, original);
 
