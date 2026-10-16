@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 import { createRuntimeStatusModel } from './runtimeStatusModel.mjs';
 import { deriveExpectedProviderEligibility, evaluateRuntimeGuardrails } from './runtimeGuardrails.mjs';
+// Include read-only Windows process census adversarial tests in hosted guardrail CI.
+import './seedCanopyLlamaWindowsCensusV1.test.mjs';
 
 test('deriveExpectedProviderEligibility keeps provider truth derived from finalRoute semantics', () => {
   const eligibility = deriveExpectedProviderEligibility({
