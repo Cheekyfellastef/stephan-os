@@ -3396,3 +3396,39 @@ test('live Island scope needs an exact machine marker before public DONE', async
     assert.doesNotMatch(JSON.stringify(denied), /RAW PRIVATE|PRIVATE CENSUS/);
   }
 });
+
+
+test('failed fixed Island probe supplies only a typed hold, not source authority', async () => {
+  const denied = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: false, blocker: 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+    observedPathCount: 0, physicalScopeReadback: 'HELD',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_BLOCKED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const stdout = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(denied) + '\n';
+  const response = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        structuredContent: {
+          status: 1, stdout, stderr: 'PRIVATE_NATIVE_ERROR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD');
+  assert.equal(response.executionBlocker, 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED');
+  assert.equal(response.rescueIslandBoundary?.readOnly, true);
+  assert.equal(response.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(response.rescueIslandBoundary?.mergeAllowed, false);
+  assert.doesNotMatch(JSON.stringify(response), /PRIVATE_NATIVE_ERROR/);
+});
