@@ -379,7 +379,8 @@ test('persistent refill stays behind genuine gaming protection without latching 
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
   assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
-  assert.match(source, /return value\?\.active === true;/);
+  assert.match(source, /coreGamingProtectionFromGovernor\(JSON\.parse\(await readFile\(gamingStatePath, 'utf8'\)\)\)/);
+  assert.match(source, /const gamingStatePath = resolve\(workspaceRoot, 'vr', 'vr-resource-governor-current\.json'\)/);
   assert.doesNotMatch(source, /gaming\|vr\|flat/);
 });
 

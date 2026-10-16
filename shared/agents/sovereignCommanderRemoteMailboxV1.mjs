@@ -363,13 +363,31 @@ async function settleWithinDeadline(promise, timeoutMs) {
 
 async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
+  const deadlineMs = boundedRemoteNetworkTimeoutMs(timeoutMs);
+  let timer = null;
   try {
-    const response = await fetchFn(url, { ...options, signal: controller.signal });
-    const bodyText = await response.text();
-    return Object.freeze({ response, bodyText });
+    // AbortSignal alone is advisory: a broken/custom transport or its body
+    // reader can ignore it and strand an ACCEPTED mailbox child until the
+    // outbox guard kills it. Race the *whole* request including response.text.
+    // Timeout does NOT prove remote cancellation and never permits replay.
+    return await Promise.race([
+      Promise.resolve().then(async () => {
+        const response = await fetchFn(url, { ...options, signal: controller.signal });
+        const bodyText = await response.text();
+        return Object.freeze({ response, bodyText });
+      }),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          const error = new Error('SOVEREIGN_COMMANDER_REMOTE_TRANSPORT_DEADLINE_EXCEEDED');
+          error.name = 'AbortError';
+          error.code = 'ABORT_ERR';
+          reject(error);
+        }, deadlineMs);
+      }),
+    ]);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -2128,26 +2146,35 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // recycle, health, MCP setup or maintenance work. The parent outbox guard gives
   // the child 15 minutes; plans get eight minutes total so a bounded terminal
   // receipt still has generous publication margin.
-  const planStartedAtMs = remotePlanRequested ? Number(nowFn()) : null;
+  // A single action previously had only per-MCP-call timeouts. Several slow
+  // setup calls could cumulatively exceed the parent's 15-minute child guard
+  // and leave ACCEPTED without a terminal receipt. Bound the full operation
+  // (single action OR plan) to eight minutes, from source identity onward.
+  const planStartedAtMs = Number(nowFn());
   const remainingPlanTimeoutMs = (perCallTimeoutMs = networkTimeoutMs) => (
-    remotePlanRequested
-      ? sovereignCommanderRemotePlanStepTimeoutMs({
-        startedAtMs: planStartedAtMs,
-        nowMs: Number(nowFn()),
-        perCallTimeoutMs,
-      })
-      : boundedRemoteNetworkTimeoutMs(perCallTimeoutMs)
+    sovereignCommanderRemotePlanStepTimeoutMs({
+      startedAtMs: planStartedAtMs,
+      nowMs: Number(nowFn()),
+      perCallTimeoutMs,
+    })
   );
-  const planDeadlineFailure = (details = {}) => fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
-    stepIndex: 0,
-    remoteAction: shape.command.remotePlan?.[0] || '',
-    remotePlan: shape.command.remotePlan || [],
-    stepCount: 0,
-    completedSteps: Object.freeze([]),
-    publicReceiptSafe: true,
-    secretMaterialReturned: false,
-    ...details,
-  });
+  const planDeadlineFailure = (details = {}) => fail(
+    remotePlanRequested
+      ? 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED'
+      : 'SOVEREIGN_COMMANDER_REMOTE_ACTION_DEADLINE_EXCEEDED',
+    {
+      ...(remotePlanRequested ? {
+        stepIndex: 0,
+        remotePlan: shape.command.remotePlan,
+        stepCount: 0,
+        completedSteps: Object.freeze([]),
+      } : {}),
+      remoteAction: remotePlanRequested ? shape.command.remotePlan[0] : shape.command.remoteAction,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+      ...details,
+    },
+  );
   const boundedPlanFetch = remotePlanRequested
     ? async (url, fetchOptions = {}) => {
       const remainingMs = remainingPlanTimeoutMs(networkTimeoutMs);
@@ -3330,8 +3357,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.processId === shape.command.remoteAction
       && projection.status === 0;
     if (!actionEnvelopeComplete || !acceptance) {
+      // Preserve the precise *safe* gate that failed through the existing
+      // public mailbox executionBlocker projection. Previously all these
+      // distinct live failures collapsed into RECEIPT_INVALID, hiding whether
+      // the Commander action ran, returned a valid envelope, or lost stdout.
+      // Do not expose the raw MCP payload, stdout, file paths or credentials.
+      const executionBlocker = projection.ok !== true
+        ? 'AI_COMMANDER_ACTION_ENVELOPE_MISSING'
+        : projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+          ? 'AI_COMMANDER_ACTION_COMPLETION_UNVERIFIED'
+          : !PROOF_HASH_PATTERN.test(projection.proofHash)
+            ? 'AI_COMMANDER_ACTION_PROOF_HASH_MISSING'
+            : projection.processId !== shape.command.remoteAction
+              ? 'AI_COMMANDER_ACTION_ID_MISMATCH'
+              : projection.status !== 0
+                ? 'AI_COMMANDER_ACTION_STATUS_NOT_ZERO'
+                : 'AI_COMMANDER_TYPED_ACCEPTANCE_MISSING';
       return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        executionBlocker,
         proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
         processIdMatch: projection.processId === shape.command.remoteAction,
         successfulStatus: projection.status === 0,
@@ -3347,6 +3391,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       return fail('SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED', {
         remoteAction: shape.command.remoteAction,
         acceptanceBlocker: acceptance.blocker,
+        executionBlocker: acceptance.blocker,
         toolCalled: acceptance.toolCalled,
         healthAvailable: acceptance.healthAvailable,
         acceptanceProofHash: acceptance.proofHash,

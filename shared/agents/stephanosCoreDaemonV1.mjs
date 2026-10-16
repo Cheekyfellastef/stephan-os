@@ -11,6 +11,16 @@ function finiteAge(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+// The Windows gaming governor publishes to Shared Workspace/vr, not status.
+// Missing, corrupt, or contradictory state must never authorise a local CPU
+// build. External GitHub runners are independent of this Core admission gate.
+export function coreGamingProtectionFromGovernor(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)
+    || state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+    || typeof state.active !== 'boolean') return true;
+  return state.active !== false || state.phase !== 'NORMAL';
+}
+
 export function shouldReloadStephanosCoreDaemon(initialHead, currentHead) {
   const initial = String(initialHead || '').trim().toLowerCase();
   const current = String(currentHead || '').trim().toLowerCase();

@@ -257,6 +257,7 @@ test('a failed local AI Commander probe gives a typed public-safe blocker, never
   assert.equal(blocked.ok, false);
   assert.equal(blocked.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_BLOCKED');
   assert.equal(blocked.acceptanceBlocker, 'AI_COMMANDER_CHAT_HTTP_404');
+  assert.equal(blocked.executionBlocker, 'AI_COMMANDER_CHAT_HTTP_404');
   assert.equal(blocked.toolCalled, false);
   assert.equal(JSON.stringify(blocked).includes('SECRET_PRIVATE'), false);
   assert.equal(JSON.stringify(blocked).includes('Users'), false);
@@ -272,6 +273,14 @@ test('a failed local AI Commander probe gives a typed public-safe blocker, never
   const rejected = await execute(forgedEnvelope);
   assert.equal(rejected.ok, false);
   assert.equal(rejected.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID');
+  assert.equal(rejected.executionBlocker, 'AI_COMMANDER_TYPED_ACCEPTANCE_MISSING');
+  assert.equal(JSON.stringify(rejected).includes('SECRET_PRIVATE'), false);
+
+  const absentEnvelope = await execute({});
+  assert.equal(absentEnvelope.ok, false);
+  assert.equal(absentEnvelope.blocker, 'SOVEREIGN_COMMANDER_REMOTE_AI_CHAT_ACCEPTANCE_RECEIPT_INVALID');
+  assert.equal(absentEnvelope.executionBlocker, 'AI_COMMANDER_ACTION_ENVELOPE_MISSING');
+  assert.equal(JSON.stringify(absentEnvelope).includes('SECRET_PRIVATE'), false);
 
   const passedPayload = {
     ...payload,
@@ -3164,4 +3173,83 @@ test('single maintenance action reports a runner timeout as bounded failure inst
   assert.equal(result.publicReceiptSafe, true);
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
+});
+test('read-only single action exits when MCP request ignores AbortSignal (no 16-minute ACCEPTED hang)', async () => {
+  const base = mcpFetch();
+  let stalledCalls = 0;
+  const fetchFn = (url, options = {}) => {
+    if (url.endsWith('/mcp')) {
+      stalledCalls += 1;
+      return new Promise(() => {}); // Intentionally never honours options.signal.
+    }
+    return base.fetchFn(url, options);
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status-stephanos-core-daemon' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 12,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(stalledCalls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZE_FAILED');
+  assert.equal(result.sourceMutationAllowed, undefined);
+});
+
+test('read-only single action exits when MCP response body never settles', async () => {
+  const base = mcpFetch();
+  const fetchFn = async (url, options = {}) => {
+    const value = await base.fetchFn(url, options);
+    if (url.endsWith('/mcp')) return { ...value, text: () => new Promise(() => {}) };
+    return value;
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-observe' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 12,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZE_FAILED');
+});
+
+test('single maintenance action has an overall budget across health, MCP setup and execution', async () => {
+  const base = mcpFetch();
+  let nowMs = 10_000;
+  const fetchFn = async (url, options = {}) => {
+    const message = url.endsWith('/mcp') ? JSON.parse(options.body || '{}') : {};
+    const value = await base.fetchFn(url, options);
+    if (message.method === 'tools/list') {
+      nowMs += SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS + 1;
+    }
+    return value;
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status-stephanos-core-daemon' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      nowFn: () => nowMs,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_DEADLINE_EXCEEDED');
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  const actualMaintenance = base.calls.filter((call) => {
+    if (!call.url.endsWith('/mcp')) return false;
+    const body = JSON.parse(call.options.body || '{}');
+    return body.method === 'tools/call' && body.params?.name === 'maintenance_action';
+  });
+  assert.equal(actualMaintenance.length, 0);
 });
