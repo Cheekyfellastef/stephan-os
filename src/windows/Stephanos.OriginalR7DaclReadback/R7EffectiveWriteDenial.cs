@@ -193,21 +193,25 @@ public static class R7EffectiveWriteDenial
         if (identity.Groups?.Contains(administrators) == true) return true;
         byte[] elevation = TokenBytes(token, 18 /* TokenElevationType */);
         if (BitConverter.ToInt32(elevation) != 1 /* TokenElevationTypeDefault */) return true;
-        byte[] privileges = TokenBytes(token, 3 /* TokenPrivileges */);
+        return HasUnqualifiedPrivileges(TokenBytes(token, 3 /* TokenPrivileges */));
+    }
+
+    private static bool HasUnqualifiedPrivileges(byte[] privileges)
+    {
+        if (privileges.Length < 4) throw new InvalidDataException();
         uint count = BitConverter.ToUInt32(privileges);
         if (count > 256 || privileges.Length != 4 + count * 12) throw new InvalidDataException();
-        foreach (string name in new[] { "SeBackupPrivilege", "SeRestorePrivilege",
-            "SeTakeOwnershipPrivilege", "SeDebugPrivilege", "SeTcbPrivilege",
-            "SeImpersonatePrivilege", "SeAssignPrimaryTokenPrivilege", "SeCreateTokenPrivilege",
-            "SeLoadDriverPrivilege" })
+        // Closed-world qualification, rather than a list of known dangerous
+        // privileges that silently admits an omitted or newly added privilege.
+        // Only ordinary traversal notification is admitted. Every other
+        // present privilege (including disabled SeRelabelPrivilege) holds.
+        if (!LookupPrivilegeValueW(null, "SeChangeNotifyPrivilege", out Luid traversal))
+            throw new Win32Exception();
+        for (int i = 0; i < count; i++)
         {
-            if (!LookupPrivilegeValueW(null, name, out Luid expected)) throw new Win32Exception();
-            for (int i = 0; i < count; i++)
-            {
-                int at = 4 + i * 12;
-                if (BitConverter.ToUInt32(privileges, at) == expected.Low
-                    && BitConverter.ToInt32(privileges, at + 4) == expected.High) return true;
-            }
+            int at = 4 + i * 12;
+            if (BitConverter.ToUInt32(privileges, at) != traversal.Low
+                || BitConverter.ToInt32(privileges, at + 4) != traversal.High) return true;
         }
         return false;
     }

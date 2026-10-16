@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
@@ -30,6 +31,7 @@ internal static class EffectiveWriteDenialTests
 
     internal static void Run()
     {
+        PrivilegePolicyChecks();
         string temp = Path.GetFullPath(Path.GetTempPath());
         string scratch = Path.GetFullPath(Path.Combine(temp, "stephanos-r7-native-probe-" + Guid.NewGuid().ToString("N")));
         if (!scratch.StartsWith(temp.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
@@ -133,6 +135,46 @@ internal static class EffectiveWriteDenialTests
             Directory.Delete(scratch, recursive: true);
         }
     }
+
+    private static void PrivilegePolicyChecks()
+    {
+        MethodInfo policy = typeof(R7EffectiveWriteDenial).GetMethod("HasUnqualifiedPrivileges",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        bool Denied(byte[] bytes) => (bool)policy.Invoke(null, new object[] { bytes })!;
+        byte[] Inventory(uint attributes, params Luid[] ids)
+        {
+            byte[] bytes = new byte[4 + ids.Length * 12];
+            BitConverter.GetBytes((uint)ids.Length).CopyTo(bytes, 0);
+            for (int i = 0; i < ids.Length; i++)
+            {
+                BitConverter.GetBytes(ids[i].Low).CopyTo(bytes, 4 + i * 12);
+                BitConverter.GetBytes(ids[i].High).CopyTo(bytes, 8 + i * 12);
+                BitConverter.GetBytes(attributes).CopyTo(bytes, 12 + i * 12);
+            }
+            return bytes;
+        }
+        // These are policy fixtures, never an OS token or production proof.
+        // No privilege is granted, enabled or removed from the test process.
+        Check(LookupPrivilegeValueW(null, "SeChangeNotifyPrivilege", out Luid safe), "SAFE_LUID_LOOKUP_FAILED");
+        Check(LookupPrivilegeValueW(null, "SeRelabelPrivilege", out Luid relabel), "RELABEL_LUID_LOOKUP_FAILED");
+        Check(!Denied(Inventory(0)), "EMPTY_PRIVILEGE_INVENTORY_IS_QUALIFIED");
+        Check(!Denied(Inventory(2, safe)), "ONLY_TRAVERSAL_PRIVILEGE_IS_QUALIFIED");
+        Check(Denied(Inventory(0, relabel)), "DISABLED_RELABEL_PRIVILEGE_MUST_HOLD");
+        Check(Denied(Inventory(2, relabel)), "ENABLED_RELABEL_PRIVILEGE_MUST_HOLD");
+        Check(Denied(Inventory(0, new Luid { Low = uint.MaxValue, High = int.MaxValue })),
+            "UNKNOWN_FUTURE_PRIVILEGE_MUST_HOLD");
+        Check(Denied(Inventory(0, safe, relabel)), "SAFE_PRIVILEGE_CANNOT_HIDE_UNQUALIFIED_ONE");
+        try { Denied(new byte[3]); throw new InvalidOperationException("TRUNCATED_NATIVE_BUFFER_MUST_THROW"); }
+        catch (TargetInvocationException error) when (error.InnerException is InvalidDataException) { checks++; }
+        try { Denied(new byte[] { 1, 0, 0, 0 }); throw new InvalidOperationException("INCOMPLETE_NATIVE_PRIVILEGES_MUST_THROW"); }
+        catch (TargetInvocationException error) when (error.InnerException is InvalidDataException) { checks++; }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { internal uint Low; internal int High; }
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
