@@ -306,3 +306,27 @@ test('future-dated OpenClaw proof cannot advance seed rungs or inflate proof tot
   assert.equal(work.length, 1);
   assert.equal(work[0].pressureKey, 'seed-3094:rung:inventory_both_agents');
 });
+
+test('rejected or impersonated agent claims cannot refresh the last admitted evidence time', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  payload.records.eventRecords = [
+    { ...event('QUALIFY_AGENT_SPECIFIC_SKILLS', 'openclaw-local'),
+      timestampUtc: '2026-10-13T14:39:00.000Z' },
+    { ...event('PROVE_END_TO_END_TASK_PARITY', 'openclaw-standalone'),
+      timestampUtc: '2026-10-13T14:39:30.000Z' },
+    { ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+      eventId: 'impersonated-inventory', participantId: 'openclaw-standalone',
+      timestampUtc: '2026-10-13T14:39:45.000Z' },
+  ];
+  let seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.proofCount, 0);
+  assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.latestEvidenceAt, '2026-10-13T14:35:00.000Z');
+  payload.records.eventRecords.push({
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    timestampUtc: '2026-10-13T14:38:00.000Z',
+  });
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.proofCount, 1);
+  assert.equal(seed.latestEvidenceAt, '2026-10-13T14:38:00.000Z');
+});

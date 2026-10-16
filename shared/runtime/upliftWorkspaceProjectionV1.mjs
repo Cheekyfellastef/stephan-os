@@ -1769,7 +1769,8 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     const stamp = recordTimeMs(record);
     return stamp > 0 && stamp <= nowMs;
   });
-  const latest = latestByTime(observed);
+  // Latest evidence must be admitted proof, not a forged or rejected PASS event.
+  // The source-bound heartbeat is the baseline when no admissible rung proof exists.
   const proved = observed.filter((record) => record !== heartbeat
     && record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
     && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
@@ -1852,7 +1853,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     proofCount: planted ? admittedProofRecords.flatMap(proofRefs).length : null,
     rungProofCount: planted ? rungProof.filter(Boolean).length : null,
     currentGaps: Object.freeze(currentGaps),
-    latestEvidenceAt: planted ? safeTime(latest || heartbeat) : '',
+    latestEvidenceAt: planted ? safeTime(latestByTime([heartbeat, ...admittedProofRecords]) || heartbeat) : '',
     nextBestAction: !planted
       ? 'Publish the #3094 exact-source-bound seed heartbeat; prove Local and Standalone runtime separately.'
       : currentGaps.length
