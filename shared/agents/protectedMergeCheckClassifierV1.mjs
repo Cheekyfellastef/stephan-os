@@ -5,6 +5,11 @@ export const PROTECTED_MERGE_REQUIRED_WORKFLOWS = Object.freeze([
 ]);
 
 const PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS = new Set([
+  // Pages deployment is intentionally excluded from pull_request. The same
+  // workflow's required source/test jobs must still include a SUCCESS.
+  // This skip requires an explicitly proved pull_request event. A push or
+  // workflow_dispatch on the same commit is NOT a neutral PR Pages skip.
+  'Build Stephanos UI\0pages-deploy',
   'Exact-Head Review Dispatch\0coordinate',
   'Exact-Head Review Dispatch\0retry',
 ]);
@@ -29,7 +34,8 @@ export function validateProtectedMergeCheckRows(checks) {
       successfulRequiredWorkflows.add(workflow);
       continue;
     }
-    if (state === 'SKIPPED' && PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS.has(identity)) continue;
+    if (state === 'SKIPPED' && PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS.has(identity)
+      && (identity !== 'Build Stephanos UI\0pages-deploy' || check?.event === 'pull_request')) continue;
     return false;
   }
 
