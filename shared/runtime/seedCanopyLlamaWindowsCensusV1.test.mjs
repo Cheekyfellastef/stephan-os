@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { LLAMA_WINDOWS_CENSUS_SCHEMA, assessLlamaWindowsProcessCensusV1 } from './seedCanopyLlamaWindowsCensusV1.mjs';
 
@@ -11,6 +12,8 @@ const registration = Object.freeze({
 const snapshot = {
   schemaVersion: LLAMA_WINDOWS_CENSUS_SCHEMA,
   observedAtUtc: '2026-10-16T17:59:59.000Z',
+  enumerationStartedAtUtc: '2026-10-16T17:59:58.000Z',
+  enumerationFinishedAtUtc: '2026-10-16T17:59:59.000Z',
   enumerationComplete: true,
   processes: [{ pid: 120, parentPid: 4, startedAtUtc: '2026-10-16T17:00:00.000Z' }],
 };
@@ -59,6 +62,13 @@ test('parent lineage catches unregistered children and grandchildren', () => {
 test('untrustworthy census freshness, completeness and schema fail closed', () => {
   for (const s of [
     { ...snapshot, observedAtUtc: '2026-10-16T17:59:54.000Z' },
+    { ...snapshot, enumerationStartedAtUtc: undefined },
+    { ...snapshot, enumerationFinishedAtUtc: undefined },
+    { ...snapshot, enumerationStartedAtUtc: '2026-10-16T17:59:50.000Z' },
+    { ...snapshot, enumerationStartedAtUtc: '2026-10-16T18:00:00.000Z' },
+    { ...snapshot, enumerationFinishedAtUtc: '2026-10-16T17:59:57.000Z' },
+    { ...snapshot, enumerationFinishedAtUtc: '2026-10-16T18:00:00.000Z' },
+    { ...snapshot, enumerationStartedAtUtc: '2026-10-16' },
     { ...snapshot, observedAtUtc: '2026-10-16T18:00:01.000Z' },
     { ...snapshot, observedAtUtc: '2026-10-16' },
     { ...snapshot, enumerationComplete: 'true' },
@@ -93,4 +103,27 @@ test('caller supplied qualified, custody and model claims cannot bypass the HOLD
     mayLiftInferenceHold: true, gamingActive: false, gpuResidencyReleased: true });
   assert.equal(result.mayLiftInferenceHold, false);
   assert.equal(result.zeroResidencyProven, false);
+});
+
+test('registration launched after census begins cannot look absent', () => {
+  const lateRouter = check(snapshot, { ...registration,
+    routerStartedAtUtc: '2026-10-16T17:59:58.500Z' });
+  assert.ok(lateRouter.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
+  assert.equal(lateRouter.processTreeAbsentCandidate, false);
+  const lateChild = check(snapshot, { ...registration,
+    registeredDescendants: [{ pid: 4101, startedAtUtc: '2026-10-16T17:59:58.500Z' }] });
+  assert.ok(lateChild.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
+  assert.equal(lateChild.mayLiftInferenceHold, false);
+  assert.equal(lateChild.processTreeAbsentCandidate, false);
+});
+
+test('Windows collector captures bounded observation window around process enumeration', () => {
+  // Static source contract only: CI cannot establish a live Windows/VRAM witness.
+  const script = readFileSync(new URL('../../scripts/windows/get-seed-canopy-llama-process-census-v1.ps1', import.meta.url), 'utf8');
+  const started = script.indexOf('$enumerationStarted = Format-Utc');
+  const scan = script.indexOf('Get-CimInstance -ClassName Win32_Process');
+  const finished = script.indexOf('$enumerationFinished = Format-Utc');
+  assert.ok(started >= 0 && started < scan && scan < finished);
+  assert.match(script, /enumerationStartedAtUtc = \$enumerationStarted/);
+  assert.match(script, /enumerationFinishedAtUtc = \$enumerationFinished/);
 });

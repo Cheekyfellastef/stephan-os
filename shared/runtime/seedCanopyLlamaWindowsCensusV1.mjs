@@ -26,6 +26,17 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
     || !Number.isFinite(observed) || observed > nowMs
     || nowMs - observed > LLAMA_WINDOWS_CENSUS_MAX_AGE_MS)
     reasons.push('CENSUS_NOT_FRESH');
+  // A late completion timestamp must never hide a slow/racing enumeration.
+  // This is still an unsigned, read-only candidate and cannot authorize inference.
+  const started = Date.parse(snapshot?.enumerationStartedAtUtc || '');
+  const finished = Date.parse(snapshot?.enumerationFinishedAtUtc || '');
+  if (!utc(snapshot?.enumerationStartedAtUtc)
+    || !utc(snapshot?.enumerationFinishedAtUtc)
+    || !Number.isFinite(started) || !Number.isFinite(finished)
+    || started > finished || finished !== observed
+    || started > nowMs || nowMs - started > LLAMA_WINDOWS_CENSUS_MAX_AGE_MS
+    || finished - started > LLAMA_WINDOWS_CENSUS_MAX_AGE_MS)
+    reasons.push('CENSUS_OBSERVATION_WINDOW_INVALID');
   if (snapshot?.enumerationComplete !== true)
     reasons.push('PROCESS_ENUMERATION_INCOMPLETE');
 
@@ -47,6 +58,12 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
     });
   }
 
+  // A router or registered child launched during enumeration may escape the
+  // initial scan. Require the entire registered launch tree to predate it.
+  if (Number.isFinite(started)
+    && (Date.parse(registration.routerStartedAtUtc) > started
+      || registration.registeredDescendants.some(d => Date.parse(d.startedAtUtc) > started)))
+    reasons.push('LAUNCH_OVERLAPS_CENSUS');
   const byPid = new Map();
   for (const process of processes) {
     if (byPid.has(process.pid)) reasons.push('DUPLICATE_PROCESS_PID');

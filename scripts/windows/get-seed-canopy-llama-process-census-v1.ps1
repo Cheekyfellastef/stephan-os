@@ -15,6 +15,7 @@ function Format-Utc {
         'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture)
 }
 
+$enumerationStarted = Format-Utc -Value ([datetime]::UtcNow)
 $complete = $true
 $records = @()
 $routerHash = $null
@@ -48,10 +49,12 @@ try {
     $records = @()
     $routerHash = $null
 }
-$observed = Format-Utc -Value ([datetime]::UtcNow)
+$enumerationFinished = Format-Utc -Value ([datetime]::UtcNow)
 $result = [ordered]@{
     schemaVersion = 'stephanos.llama-windows-census.v1'
-    observedAtUtc = $observed
+    observedAtUtc = $enumerationFinished
+    enumerationStartedAtUtc = $enumerationStarted
+    enumerationFinishedAtUtc = $enumerationFinished
     enumerationComplete = [bool]$complete
     processes = @($records)
     routerExecutableSha256 = $routerHash
