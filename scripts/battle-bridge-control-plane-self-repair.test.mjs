@@ -61,7 +61,7 @@ function workerWatchdogReceipt() {
   return {
     taskName: 'Stephanos Mission Orchestrator Worker Watchdog',
     installed: true,
-    intervalMinutes: 1,
+    intervalMinutes: 5,
     atLogon: true,
     hidden: true,
     runLevel: 'Limited',
@@ -98,7 +98,7 @@ function beaconReceipt() {
     taskName: 'Stephanos Battle Bridge Outbound Health Beacon',
     installed: true,
     startedNow: true,
-    intervalMinutes: 1,
+    intervalMinutes: 10,
     atLogon: true,
     hidden: true,
     runLevel: 'Limited',
