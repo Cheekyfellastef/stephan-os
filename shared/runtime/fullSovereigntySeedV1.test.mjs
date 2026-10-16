@@ -138,3 +138,37 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
   assert.ok(markdown.includes('Every row remains `UNVERIFIED`'));
   assert.match(markdown, /not evidence that external dependence has been removed/);
 });
+
+test('sovereignty owner references retain exact canonical titles at first mention', () => {
+  // Source-only regression for the independent owner-title review finding.
+  // These reviewed issue-title snapshots are not authority or custody assignments.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const titles = new Map([
+    ['3026', 'Seed: Stephanos Full Sovereignty for Every Function, Zero External Critical Dependencies'],
+    ['2968', 'Seed: Stephanos Sovereign Meter Independence across all metered services'],
+    ['1898', 'Programme: Zero-Codex Continuity and Provider Parity V1'],
+    ['2519', 'Build Sovereign Commander as the unmetered Battle Bridge control surface'],
+    ['2670', 'Mission: Stephanos Whole-System Capability Closure'],
+    ['2972', 'Seed: Continuous Goal Conveyor & Fleet Care'],
+    ['2593', 'Goal: Stephanos Core Daemon and meter-free Sovereign inspection'],
+    ['2962', 'Goal: Repair Native Capacity Publisher generated-dist source gate mismatch'],
+  ]);
+  const exactLink = (issue, title) =>
+    `[#${issue} — ${title}](https://github.com/Cheekyfellastef/stephan-os/issues/${issue})`;
+  const firstMentionIsTitleBound = (document, issue, title) => {
+    const first = document.indexOf(`#${issue}`);
+    return first >= 0 && document.indexOf(exactLink(issue, title)) === first - 1;
+  };
+  assert.deepEqual([...buildFullSovereigntySeedV1().existingOwnerIssueRefs].sort(),
+    [...titles.keys()].filter((issue) => issue !== '3026' && issue !== '2962').map((issue) => `#${issue}`).sort(),
+    'owner-title snapshot must track the canonical owner roster');
+  for (const [issue, title] of titles) {
+    assert.equal(firstMentionIsTitleBound(markdown, issue, title), true,
+      `#${issue} must first appear with its exact canonical title and issue URL`);
+    const stripped = markdown.replace(exactLink(issue, title), `#${issue}`);
+    const renamed = markdown.replace(exactLink(issue, title),
+      exactLink(issue, 'Incorrect owner title'));
+    assert.equal(firstMentionIsTitleBound(stripped, issue, title), false);
+    assert.equal(firstMentionIsTitleBound(renamed, issue, title), false);
+  }
+});
