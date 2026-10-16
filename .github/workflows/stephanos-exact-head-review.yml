@@ -9,6 +9,8 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: read
+  actions: read
 
 concurrency:
   group: ${{ github.event_name == 'pull_request_target' && format('stephanos-exact-head-review-pr-{0}', github.event.pull_request.number) || format('stephanos-exact-head-review-comment-{0}', github.event.comment.id) }}
@@ -132,7 +134,7 @@ jobs:
           test "${ADMITTED_TARGETS}" = "[{\"prNumber\":${PR_NUMBER}}]"
 
       - name: Run trusted engine regressions
-        run: node --test scripts/exact-head-review.test.mjs
+        run: node --test scripts/exact-head-review.test.mjs scripts/exact-head-qualified-escalation-v1.test.mjs
 
       - name: Build immutable exact-head review input
         env:
@@ -171,8 +173,13 @@ jobs:
           }));
           NODE
 
-      - name: Review exact head with trusted engine
-        run: node scripts/exact-head-review.mjs review-proof/input.json review-proof/receipt.json
+      # One atomic fail-closed gate. The trusted reviewer emits immutable P2
+      # findings; only independent authenticated evidence can qualify them.
+      # There is deliberately no continue-on-error anywhere in this workflow.
+      - name: Review exact head and require independently qualified escalation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/exact-head-qualified-escalation-v1.mjs review-proof/input.json review-proof/receipt.json
 
       - name: Upload SHA-bound review receipt
         if: ${{ always() && steps.github_budget.outcome == 'success' }}
