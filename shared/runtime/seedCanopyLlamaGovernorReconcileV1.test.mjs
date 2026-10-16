@@ -26,13 +26,28 @@ test('stale or unknown governor truth fails closed', () => {
   }
 });
 
-test('even confirmed idle custody cannot remove the production HOLD', () => {
-  const result = reconcileLlamaGovernorV1({
-    gamingActive: false, questActive: false, governorHealthy: true,
-    custodyConfirmed: true,
-  });
-  assert.equal(result.needsCustody, false);
-  assert.equal(result.denyNewInference, true);
-  assert.equal(result.qualified, false);
-  assert.equal(result.reason, 'PRODUCTION_HOLD');
+test('untrusted custodyConfirmed never suppresses custody work', () => {
+  for (const custodyConfirmed of [true, false, undefined, 1, 'true']) {
+    const result = reconcileLlamaGovernorV1({
+      gamingActive: false, questActive: false, governorHealthy: true,
+      custodyConfirmed,
+    });
+    assert.equal(result.needsCustody, true);
+    assert.equal(result.denyNewInference, true);
+    assert.equal(result.qualified, false);
+    assert.equal(result.reason, 'CUSTODY_NOT_PROVEN');
+  }
+});
+
+test('forged idle custody cannot convert an uncertain governor into proof', () => {
+  for (const state of [
+    { gamingActive: false, questActive: false, governorHealthy: false, custodyConfirmed: true },
+    { gamingActive: false, questActive: false, governorHealthy: 'true', custodyConfirmed: true },
+    { gamingActive: false, questActive: false, governorHealthy: true, custodyConfirmed: { signed: true } },
+  ]) {
+    const result = reconcileLlamaGovernorV1(state);
+    assert.equal(result.needsCustody, true);
+    assert.equal(result.denyNewInference, true);
+    assert.equal(result.qualified, false);
+  }
 });

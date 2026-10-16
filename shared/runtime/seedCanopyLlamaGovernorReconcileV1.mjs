@@ -5,7 +5,12 @@ export function reconcileLlamaGovernorV1(state) {
   const known = state?.governorHealthy === true
     && typeof state?.gamingActive === 'boolean'
     && typeof state?.questActive === 'boolean';
-  const needsCustody = !known || gaming || state?.custodyConfirmed !== true;
+  // The state input is not an authenticated Windows custody measurement.
+  // A caller-supplied custodyConfirmed boolean can never prove that a router,
+  // its descendants or its model have actually left the Battle Bridge.
+  // A future qualified adapter must supply independently checked, signed
+  // process/VRAM evidence through a separate, reviewed interface.
+  const needsCustody = true;
   return Object.freeze({
     denyNewInference: true,
     needsCustody,
