@@ -472,3 +472,29 @@ test('admission diagnostic never exposes arbitrary local exception paths via sup
   assert.equal(JSON.stringify(result).includes('private-keys'), false);
   assert.equal(result.daemonMayReportGreen, false);
 });
+
+
+test('more pending native proposals than compiler slots never resolve to idle green', async () => {
+  for (const dispatchCount of [0, 2]) {
+    const result = await runSupervisor({
+      reconcileCommanderParity: async () => parityResult({
+        nativeGapSourceHealth: 'VALIDATED',
+        nativeGapIntake: { candidateTotalCount: 5, retainedCount: 5, candidateCount: 2 },
+        capabilityCompiler: { buildableCapabilityCount: 0 },
+      }),
+      conveyor: async () => conveyorResult({
+        elasticAdmission: { activeMissions: [], runnableMissions: [] },
+        elasticIgnition: { availableSlots: 3, dispatchCount, dispatched: [], held: [] },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.nativeGapCandidateTotalCount, 5);
+    assert.equal(result.capabilityWorkRemainingCount, 5);
+    assert.equal(result.nativeCapabilityWorkPending, true);
+    assert.equal(result.capabilityParityClosureRequired, true);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.zeroGapInvariantSatisfied, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING');
+    assert.equal(result.mergeAuthority, false);
+  }
+});
