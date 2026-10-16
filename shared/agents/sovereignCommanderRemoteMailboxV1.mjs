@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
+import { parseRescueIslandBoundaryStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -19,6 +20,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
@@ -3004,6 +3006,47 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: convergenceResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
+    // Do not treat a generic successful maintenance call as an OS-scope proof.
+    // The fixed native child must publish its own one-line, closed-world result.
+    const readback = parseRescueIslandBoundaryStdoutV1(
+      rawMaintenance?.structuredContent?.stdout, projection.processId,
+    );
+    if (projection.ok !== true
+      || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection.proofHash)
+      || projection.processId !== shape.command.remoteAction
+      || projection.status !== 0
+      || !readback) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      rescueIslandBoundary: readback,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      originalSourceLeaseReleaseAllowed: false,
+      mergeAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 

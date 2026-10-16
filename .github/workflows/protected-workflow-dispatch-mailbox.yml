@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: protected-workflow-dispatch-mailbox-${{ github.event.comment.id || github.run_id }}
+  group: protected-workflow-dispatch-mailbox-${{ github.event.comment.user.login || github.run_id }}
   cancel-in-progress: false
 
 jobs:
