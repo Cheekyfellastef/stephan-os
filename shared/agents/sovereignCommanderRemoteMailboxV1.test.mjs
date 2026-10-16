@@ -3330,3 +3330,69 @@ test('75 logical goals produce a complete remote lane receipt through the real s
   assert.equal(JSON.stringify(result).includes('PRIVATE_WORKER_PATH'), false);
   assert.equal(JSON.stringify(result).includes('PRIVATE_PROOF'), false);
 });
+
+test('Island boundary remote action permits only a fixed read-only probe and no caller path', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'rescue-island-readonly-boundary',
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.command.remoteAction, 'rescue-island-readonly-boundary');
+  for (const field of [{ targetPath: 'C:\\\\private' }, { args: ['--write'] },
+    { workerId: 'rescue-island-01' }, { command: 'git add .' }]) {
+    const value = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction: 'rescue-island-readonly-boundary', ...field,
+    }));
+    assert.equal(value.ok, false);
+    assert.equal(value.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+});
+
+test('live Island scope needs an exact machine marker before public DONE', async () => {
+  const clean = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const run = async output => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        contentText: 'RAW PRIVATE NATIVE DATA',
+        structuredContent: {
+          ok: true, status: 0,
+          stdout: output, stderr: 'PRIVATE CENSUS STDERR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  const safe = await run('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\n');
+  assert.equal(safe.ok, true);
+  assert.equal(safe.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(safe.rescueIslandBoundary?.readOnly, true);
+  assert.equal(safe.rescueIslandBoundary?.sourceMutationAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.originalSourceLeaseReleaseAllowed, false);
+  assert.doesNotMatch(JSON.stringify(safe), /RAW PRIVATE|PRIVATE CENSUS/);
+
+  for (const output of [
+    'private success without child proof',
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify({ ...clean, workerStartAllowed: true }),
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\nPRIVATE FILE',
+  ]) {
+    const denied = await run(output);
+    assert.equal(denied.ok, false);
+    assert.equal(denied.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+    assert.equal(denied.sourceMutationAllowed, undefined);
+    assert.doesNotMatch(JSON.stringify(denied), /RAW PRIVATE|PRIVATE CENSUS/);
+  }
+});

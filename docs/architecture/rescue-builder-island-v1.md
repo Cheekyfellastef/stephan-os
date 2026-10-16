@@ -105,3 +105,23 @@ Tests cover existing and missing files, path coercion/traversal, physical
 symlink aliases including internal aliases, redirects appearing after a prior
 safe scan, non-directory ancestors and missing .git. This source slice does
 not satisfy the separate #3109 first physical pickup acceptance criteria.
+
+
+## #3109 fixed Sovereign Commander physical-boundary probe
+
+The optional source-owned `rescue-island-readonly-boundary` action runs only
+`scripts/rescue-island-boundary-probe.mjs` at the canonical installed source
+head. It takes no arguments or task-controlled paths, performs no Git writes,
+tests, owner approvals, process launches or filesystem mutations, and returns
+a bounded, non-secret OS source-scope check. The transport must still verify
+its exact current-main and authenticated MCP source identity.
+
+A successful readback confirms only that three hard-coded Island source paths
+had canonical, unredirected ancestors at the instant scanned. It is **not**
+the physical SELECT/CLAIM/PICKUP/EDIT/TEST/COMMIT proof, nor signed custody
+of the Windows source writers or CPU/gaming budget. All resulting execution,
+merge, canonical-lease release and Seed Forge access flags remain false. The
+runtime is not commissioned merely because the PR merges or the action
+returns DONE. A separate Windows-specialist-reviewed Island-owned host must
+prove all three claim inventories and secure the target write before
+the existing bounded first-commit engine is exposed.
