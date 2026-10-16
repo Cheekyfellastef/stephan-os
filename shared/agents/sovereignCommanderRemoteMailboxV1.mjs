@@ -17,6 +17,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
