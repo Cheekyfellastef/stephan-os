@@ -3010,6 +3010,45 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+
+/**
+ * #3109: constant-vocabulary native Island diagnostic. It examines only the
+ * fixed process identity, exit status and closed-world marker shape, and NEVER
+ * publishes stdout, stderr, process arguments, paths, environment or tokens.
+ * It grants no source mutation authority, even when the marker is positive.
+ */
+export function diagnoseRescueIslandNativeReceiptInvalidV1({
+  envelope, expectedAction, projection, positive, negative,
+} = {}) {
+  if (expectedAction !== 'rescue-island-readonly-boundary')
+    return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).length === 0)
+    return 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  if (envelope?.command?.plan?.processId !== expectedAction)
+    return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
+  const status = envelope?.structuredContent?.status;
+  if (!Number.isInteger(status)) return 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE';
+  const stdout = envelope?.structuredContent?.stdout;
+  if (typeof stdout !== 'string') return 'ISLAND_NATIVE_STDOUT_UNAVAILABLE';
+  if (Buffer.byteLength(stdout, 'utf8') > 4096)
+    return 'ISLAND_NATIVE_STDOUT_TOO_LARGE';
+  const lines = stdout.trimEnd().split(/\r?\n/);
+  if (lines.length !== 1) return 'ISLAND_NATIVE_STDOUT_LINES_INVALID';
+  if (!lines[0].startsWith('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='))
+    return 'ISLAND_NATIVE_MARKER_NOT_OBSERVED';
+  if (!positive && !negative) return 'ISLAND_NATIVE_MARKER_REJECTED';
+  if (negative) return 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID';
+  if (positive && status !== 0) return 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH';
+  if (positive && (projection?.ok !== true
+      || projection?.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection?.proofHash || '')
+      || projection?.processId !== expectedAction
+      || projection?.status !== 0))
+    return 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID';
+  return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
+}
+
   if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
     // Do not treat a generic successful maintenance call as an OS-scope proof.
     // The fixed native child must publish its own one-line, closed-world result.
@@ -3043,6 +3082,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       || !readback) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        executionBlocker: diagnoseRescueIslandNativeReceiptInvalidV1({
+          envelope: candidate,
+          expectedAction: shape.command.remoteAction,
+          projection, positive: readback, negative: held,
+        }),
         publicReceiptSafe: true,
         secretMaterialReturned: false,
       });
