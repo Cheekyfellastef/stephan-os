@@ -80,9 +80,19 @@ internal sealed class OriginalR7CustodyWitnessService : ServiceBase
             throw new InvalidOperationException("WINDOWS_WITNESS_SERVICE_SID_NOT_ISOLATED");
         }
 
-        // Correct SCM identity is only a necessary prerequisite. A running
-        // process cannot establish original-writer exclusion. No protected
-        // OS enforcement, audit or separate signer is commissioned yet.
+        // Independently check the fixed SCM registration and exact image
+        // that Windows launched. This prevents an isolated service token
+        // alone from being mistaken for a correctly commissioned host.
+        // A positive shape result still grants NO custody or signing rights.
+        OriginalR7ScmObservation scm = OriginalR7ScmPreflight.Inspect();
+        if (!scm.ScmConfigurationObserved)
+        {
+            throw new InvalidOperationException(scm.Classification);
+        }
+
+        // Registry shape + SCM identity are only prerequisites. Original
+        // writer containment, protected audit, independent signer and real
+        // negative write/re-entry proof have not been commissioned.
         throw new InvalidOperationException("WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED");
     }
 
