@@ -46,8 +46,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $witnessExe -PathType Leaf)) { throw 'WITNESS_NATIVE_BINARY_MISSING' }
           # Main rejects any argument with exit 2 before calling ServiceBase.Run.
           # This proves the negative guard executes on real Windows, not OS containment.
-          & $witnessExe '--unapproved-ci-invocation'
-          $rejected = $LASTEXITCODE
+          # Start-Process exposes an expected nonzero native exit without
+          # GitHub Actions pwsh's terminating native-command preference.
+          $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -NoNewWindow -Wait -PassThru
+          $rejected = $child.ExitCode
           if ($rejected -ne 2) { throw "WITNESS_INTERACTIVE_ARGUMENT_DENIAL_NOT_PROVEN: $rejected" }
       - name: Test native witness source and workflow boundaries
         shell: pwsh
