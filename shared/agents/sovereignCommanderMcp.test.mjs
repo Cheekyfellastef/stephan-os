@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import {
   createSovereignCommanderMcpHandler,
   runSovereignCommanderStdioMcpServer,
@@ -184,6 +185,28 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('rescue-island-readonly-boundary'));
+  const island = await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: {
+      actionId: 'rescue-island-readonly-boundary',
+      command: 'UNTRUSTED_ARBITRARY_COMMAND',
+      path: 'C:\\outside',
+      leaseReleaseAllowed: true,
+    },
+  }, { id: 6, isRequest: true, isNotification: false });
+  assert.equal(island.isError, false);
+  assert.equal(observed.length, 3);
+  assert.deepEqual(observed[2].payload, { actionId: 'rescue-island-readonly-boundary' });
+  assert.deepEqual(observed[2].targetPaths, []);
+  assert.equal(JSON.stringify(observed[2]).includes('UNTRUSTED_ARBITRARY_COMMAND'), false);
+  const physical = buildSovereignCommanderCommandV1(observed[2], { repoRoot: 'C:\\repo' });
+  assert.equal(physical.dispatchAllowed, true);
+  assert.equal(physical.plan.kind, 'fixed-process');
+  assert.equal(physical.plan.processId, 'rescue-island-readonly-boundary');
+  assert.equal(physical.plan.args.length, 1);
+  assert.equal(physical.mergeAuthority, false);
+  assert.equal(physical.leaseSeizureAllowed, false);
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {

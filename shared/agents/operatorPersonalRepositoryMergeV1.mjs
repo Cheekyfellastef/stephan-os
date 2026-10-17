@@ -1469,7 +1469,12 @@ export function validatePersonalRepositoryCheckRuns(
         && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
         && text(candidate.check?.head_sha).toLowerCase() === sourceHead
         && text(candidate.check?.status).toLowerCase() === 'completed'
-        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+        && (
+          text(candidate.check?.conclusion).toLowerCase() === 'success'
+          || (cleanIndependentReviewProved
+            && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
+            && text(candidate.check?.conclusion).toLowerCase() === 'failure')
+        )
         && text(candidate.check?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
         && text(candidate.check?.app?.slug) === 'github-actions'
         && strictPositiveInteger(candidate.check?.app?.id) === 15368
@@ -1505,7 +1510,7 @@ export function validatePersonalRepositoryCheckRuns(
     } else if (prPagesDeploymentNotRequested) {
       disposition = 'pr-pages-deployment-not-requested';
     } else if (cleanIndependentReviewProved
-      && mergeStateStatus === 'UNSTABLE'
+      && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
@@ -1535,7 +1540,7 @@ export function validatePersonalRepositoryCheckRuns(
   if (mergeStateStatus === 'UNSTABLE' && admittedReviewEscalations !== 1) {
     blockers.push('personal-repository-review-escalation-check-not-exact');
   }
-  if (['CLEAN', 'BLOCKED'].includes(mergeStateStatus) && admittedReviewEscalations !== 0) {
+  if (mergeStateStatus === 'CLEAN' && admittedReviewEscalations !== 0) {
     blockers.push('personal-repository-clean-state-has-review-escalation');
   }
 

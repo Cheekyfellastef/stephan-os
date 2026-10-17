@@ -10,6 +10,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
@@ -3468,4 +3469,198 @@ test('live Island scope needs an exact machine marker before public DONE', async
     assert.equal(denied.sourceMutationAllowed, undefined);
     assert.doesNotMatch(JSON.stringify(denied), /RAW PRIVATE|PRIVATE CENSUS/);
   }
+});
+
+
+test('failed fixed Island probe supplies only a typed hold, not source authority', async () => {
+  const denied = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: false, blocker: 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+    observedPathCount: 0, physicalScopeReadback: 'HELD',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_BLOCKED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const stdout = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(denied) + '\n';
+  const response = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        structuredContent: {
+          status: 1, stdout, stderr: 'PRIVATE_NATIVE_ERROR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD');
+  assert.equal(response.executionBlocker, 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED');
+  assert.equal(response.rescueIslandBoundary?.readOnly, true);
+  assert.equal(response.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(response.rescueIslandBoundary?.mergeAllowed, false);
+  assert.doesNotMatch(JSON.stringify(response), /PRIVATE_NATIVE_ERROR/);
+});
+
+test('Island scope readback is bound to nested native execution, not outer MCP content', async () => {
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const inner = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+    structuredContent: {
+      status: 0, errorCode: '',
+      stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(scope) + '\n',
+      stderr: 'NATIVE_PRIVATE_STDERR',
+    },
+  };
+  const outer = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    structuredContent: inner,
+    contentText: 'UNTRUSTED_PRIVATE_OUTER_TEXT',
+  };
+  const inspect = async payload => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: payload }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const success = await inspect(outer);
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(success.rescueIslandBoundary?.observedPathCount, 3);
+  assert.equal(success.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.doesNotMatch(JSON.stringify(success), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+  const tampered = await inspect({
+    ...outer, structuredContent: {
+      ...inner,
+      structuredContent: {
+        ...inner.structuredContent,
+        stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='
+          + JSON.stringify({ ...scope, workerStartAllowed: true }) + '\n',
+      },
+    },
+  });
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+  // A forged success must carry only the safe structural diagnostic, not
+  // an OS denial token, granted authority or any of the untrusted marker bytes.
+  assert.equal(tampered.executionBlocker, 'ISLAND_NATIVE_MARKER_REJECTED');
+  assert.doesNotMatch(JSON.stringify(tampered), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+});
+
+
+test('Island invalid-proof diagnostics reveal only constant categories and cannot authorize writers', () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const baseProjection = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), processId, status: 0,
+  };
+  const envelope = (stdout, status = 0, process = processId) => ({
+    ok: status === 0,
+    command: { plan: { processId: process } },
+    structuredContent: { status, stdout, stderr: 'PRIVATE_NATIVE_ROOT_AND_KEYS' },
+  });
+  const inspect = args => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: processId, projection: baseProjection,
+    positive: null, negative: null, ...args,
+  });
+  const tests = [
+    [{ envelope: {} }, 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED'],
+    [{ envelope: envelope('anything', 0, 'other') }, 'ISLAND_NATIVE_PROCESS_BINDING_INVALID'],
+    [{ envelope: { command: { plan: { processId } }, structuredContent: { status: null, stdout: 'private' } } }, 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE'],
+    [{ envelope: { command: { plan: { processId } }, structuredContent: { status: 0 } } }, 'ISLAND_NATIVE_STDOUT_UNAVAILABLE'],
+    [{ envelope: envelope('PRIVATE_SOURCE_ROOT') }, 'ISLAND_NATIVE_MARKER_NOT_OBSERVED'],
+    [{ envelope: envelope('PRIVATE_SOURCE_ROOT' + String.fromCharCode(10) + 'OTHER_DATA') }, 'ISLAND_NATIVE_STDOUT_LINES_INVALID'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=PRIVATE_JSON') }, 'ISLAND_NATIVE_MARKER_REJECTED'],
+    [{ envelope: envelope('X'.repeat(4097)) }, 'ISLAND_NATIVE_STDOUT_TOO_LARGE'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}', 1), negative: { ok: false } }, 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}', 1), positive: { ok: true } }, 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}'), positive: { ok: true },
+      projection: { ...baseProjection, proofHash: '' } }, 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID'],
+  ];
+  for (const [input, expected] of tests) {
+    const observed = inspect(input);
+    assert.equal(observed, expected);
+    assert.match(observed, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(observed, /PRIVATE|ROOT_AND_KEYS|HOST|TOKEN/);
+  }
+  assert.equal(diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: 'other', envelope: envelope('PRIVATE'),
+  }), 'ISLAND_NATIVE_ACTION_NOT_ALLOWED');
+});
+
+test('native Island diagnostic remains negative on contradictory wrapper authority', () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const marker = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}';
+  const envelope = (status) => ({
+    ok: status === 0,
+    command: { plan: { processId } },
+    structuredContent: { status, stdout: marker, stderr: 'PRIVATE_SYSTEM_DETAIL' },
+  });
+  const projection = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), processId, status: 0,
+  };
+  const diagnose = extra => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: processId, envelope: envelope(0), projection,
+    positive: null, negative: null, ...extra,
+  });
+  // Diagnostic invocation must not turn even a success-shaped outer wrapper
+  // into live Island worker admission or an invented boundary success.
+  assert.equal(diagnose({ positive: { ok: true } }),
+    'ISLAND_NATIVE_BOUNDARY_INCONSISTENT');
+  assert.equal(diagnose({ negative: { ok: false } }),
+    'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID');
+  assert.equal(diagnose({ envelope: envelope('0') }),
+    'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE');
+  assert.equal(diagnose({ envelope: envelope(1), positive: { ok: true } }),
+    'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH');
+  for (const value of [
+    diagnose({ positive: { ok: true } }),
+    diagnose({ negative: { ok: false } }),
+    diagnose({ envelope: envelope('0') }),
+  ]) {
+    assert.match(value, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(value, /PRIVATE|PATH|KEY|TOKEN|GRANTED/);
+  }
+});
+
+test('real remote Island malformed success is BLOCKED with only a safe diagnostic token', async () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const response = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId } },
+        contentText: 'PRIVATE_WINDOWS_PATH',
+        structuredContent: { status: 0, stdout: 'PRIVATE_WINDOWS_PATH', stderr: 'PRIVATE_SECRET' },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+  assert.equal(response.executionBlocker, 'ISLAND_NATIVE_MARKER_NOT_OBSERVED');
+  assert.doesNotMatch(JSON.stringify(response), /PRIVATE_WINDOWS_PATH|PRIVATE_SECRET/);
+  assert.equal(response.rescueIslandBoundary, undefined);
+  assert.equal(response.sourceMutationAllowed, undefined);
 });
