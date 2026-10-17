@@ -12,6 +12,14 @@ import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 }
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const SHA40 = /^[a-f0-9]{40}$/;
+// At minimum the actual executable, scorer, and imported reviewer policy
+// bytes must match HEAD, regardless of skip-worktree/assume-unchanged flags.
+const CRITICAL_REVIEW_FILES = Object.freeze([
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'shared/agents/sovereignCalibrationV1.mjs',
+  'scripts/sovereign-reviewer-v1.mjs',
+  'shared/agents/providerNeutralReviewV1.mjs',
+]);
 const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
 const NO_AUTHORITY = Object.freeze({
   independentHostAttestation: false, signatureVerified: false,
@@ -55,6 +63,22 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
       return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
     }
     readGit(['merge-base', '--is-ancestor', base, head]);
+    for (const file of CRITICAL_REVIEW_FILES) {
+      // Git status alone can hide modifications through index flags.
+      // Verify normal tracked index flags and hash actual on-disk bytes,
+      // comparing to the exact committed object. Never checkout/reset.
+      const flags = readGit(['ls-files', '-v', '--', file]);
+      if (flags !== 'H ' + file) {
+        return Object.freeze({ ok: false,
+          reason: 'CALIBRATION_EXECUTABLE_INDEX_FLAGS_UNSAFE' });
+      }
+      const expectedBlob = readGit(['rev-parse', 'HEAD:' + file]);
+      const observedBlob = readGit(['hash-object', '--no-filters', '--', file]);
+      if (!SHA40.test(expectedBlob) || observedBlob !== expectedBlob) {
+        return Object.freeze({ ok: false,
+          reason: 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD' });
+      }
+    }
     return Object.freeze({ ok: true, reason: '' });
   } catch {
     return Object.freeze({ ok: false, reason: 'CALIBRATION_SOURCE_GIT_UNPROVEN' });

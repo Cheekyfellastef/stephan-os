@@ -33,6 +33,16 @@ const gitProof = (overrides = {}) => ({
     assert.equal(options.env.GIT_CONFIG_NOSYSTEM, '1');
     assert.deepEqual(args.slice(0, 2), ['-C', '/tmp/nonproduction-review-fixture']);
     const cmd = args.slice(2).join(' ');
+    const file = args.at(-1);
+    if (cmd.startsWith('ls-files -v -- ')) {
+      return { status: 0, stdout: (overrides.indexFlag || 'H') + ' ' + file + '\n' };
+    }
+    if (cmd.startsWith('rev-parse HEAD:')) {
+      return { status: 0, stdout: (overrides.badExpectedBlob ? 'invalid' : 'c'.repeat(40)) + '\n' };
+    }
+    if (cmd.startsWith('hash-object --no-filters -- ')) {
+      return { status: 0, stdout: (overrides.badWorkingBlob ? 'f'.repeat(40) : 'c'.repeat(40)) + '\n' };
+    }
     const results = {
       'rev-parse HEAD': overrides.head ?? 'a'.repeat(40),
       'symbolic-ref --quiet --short HEAD': overrides.branch ?? 'reviewer/exam-only',
@@ -296,6 +306,25 @@ test('read-only preflight holds missing model, offline service, oversized invent
     const r = await probe(env, { ...gitProof(), fetchImpl });
     assert.equal(r.status,'LOCAL_OLLAMA_PREFLIGHT_HELD');
     noAuthority(r);
+  }
+});
+
+test('calibration refuses Git skip-worktree, assume-unchanged and changed executable bytes', async () => {
+  for (const [scenario, expected] of [
+    [{ indexFlag: 'S' }, 'CALIBRATION_EXECUTABLE_INDEX_FLAGS_UNSAFE'],
+    [{ indexFlag: 'h' }, 'CALIBRATION_EXECUTABLE_INDEX_FLAGS_UNSAFE'],
+    [{ badExpectedBlob: true }, 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD'],
+    [{ badWorkingBlob: true }, 'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD'],
+  ]) {
+    let requestedModel = false;
+    const actual = await run(env, {
+      ...gitProof(scenario),
+      fetchImpl: async () => { requestedModel = true; throw new Error('model must not run'); },
+    });
+    assert.equal(actual.status, 'CALIBRATION_HELD');
+    assert.equal(actual.reason, expected);
+    assert.equal(requestedModel, false);
+    noAuthority(actual);
   }
 });
 

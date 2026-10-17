@@ -120,3 +120,15 @@ unavailable path converter, unexpectedly huge tampered candidate evidence,
 or wedged proof checker from consuming an entire model-exam budget. The
 ordinary fixed one-shot reviewer remains 150 seconds, and all positive
 signals are still candidate-only without qualified security authority.
+
+## Raw-byte source verification against Git HEAD (index-flag bypass closure)
+
+The local Ollama examiner now verifies each of its four critical execution and
+review policy files with fixed read-only Git queries: `ls-files -v` must
+report a normally tracked `H` entry (no skip-worktree/assume-unchanged),
+and `hash-object --no-filters` of the **actual current file bytes** must
+exactly match `rev-parse HEAD:<path>`. This runs before and after the
+bounded ten-case exam. A clean `git status` on its own is insufficient,
+since Git index flags could hide substitutions. Missing, unsafe or modified
+modules fail closed **before** Ollama can be called, with no file changes,
+lease/merge permission or independently qualified reviewer attestation.
