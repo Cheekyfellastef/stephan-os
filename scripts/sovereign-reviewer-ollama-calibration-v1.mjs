@@ -44,7 +44,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
           model, prompt, stream: false, format: 'json',
           options: { temperature: 0, num_ctx: 8192 },
         }),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(45_000), // 10 cases, bounded within 570s WSL wall clock
       });
       if (!response?.ok || typeof response.text !== 'function') {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNAVAILABLE');

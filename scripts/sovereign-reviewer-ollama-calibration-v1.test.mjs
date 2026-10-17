@@ -26,6 +26,8 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
   const result = await run(env, { fetchImpl: async (url, options) => {
     const request = JSON.parse(options.body);
     calls.push({ url, options, request });
+    assert.ok(options.signal instanceof AbortSignal);
+    assert.equal(options.signal.aborted, false);
     const prompt = request.prompt;
     const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
     const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];

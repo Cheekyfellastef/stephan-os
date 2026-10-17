@@ -121,6 +121,9 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     assert.equal(result.reason, 'CALIBRATION_EVIDENCE_UNQUALIFIED');
   }
   assert.equal(calls, 18);
+  // Ten real local calls can take longer than one standard review, but each
+  // attempt has a bounded wall-clock, not a new arbitrary remote command.
+  // Checks apply to the synthetic Windows spawn adapter, not physical WSL.
   const denied = runWindowsSovereignReviewerV1(env, { ...context, mode: 'arbitrary', spawn: () => { throw Error('must not run'); } });
   assert.equal(denied.reason, 'REVIEW_MODE_UNSUPPORTED');
 });
