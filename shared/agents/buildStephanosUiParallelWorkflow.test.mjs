@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 
 const workflowUrl = new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url);
 
-test('Build Stephanos UI fans independent proof families into five parallel jobs', async () => {
+test('Build Stephanos UI fans independent proof families into six isolated parallel jobs', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
-  for (const job of ['scheduler-tests','runtime-guardrail-tests','surface-ignition-tests','vr-research-tests','build']) {
+  for (const job of ['scheduler-tests','runtime-guardrail-tests','surface-ignition-tests','vr-research-tests','build',
+    'sovereign-reviewer-calibration-contract-tests']) {
     assert.match(workflow, new RegExp(`^  ${job}:$`, 'm'));
   }
   assert.doesNotMatch(workflow, /^\s+needs:/m);
@@ -16,11 +17,14 @@ test('Build Stephanos UI fans independent proof families into five parallel jobs
   assert.match(workflow, /node --test --test-concurrency=1 stephanos-ui\/src\/components\/StatusPanel\.render\.test\.mjs/);
   assert.match(workflow, /npm run stephanos:build/);
   assert.match(workflow, /npm run stephanos:verify/);
-  assert.equal((workflow.match(/ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/g) || []).length, 5);
+  assert.match(workflow, /shared\/agents\/sovereignCalibrationV1\.test\.mjs/);
+  assert.match(workflow, /scripts\/sovereign-reviewer-ollama-calibration-v1\.test\.mjs/);
+  assert.match(workflow, /scripts\/sovereign-reviewer-wsl-bridge-v1\.test\.mjs/);
+  assert.equal((workflow.match(/ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/g) || []).length, 6);
 });
 
 test('stateful suites remain serial only inside their isolated parallel job', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
-  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
+  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 6);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
