@@ -143,13 +143,13 @@ test('Windows WSL calibration proof must be re-read at the claimed SHA256', () =
     const r = runWindowsSovereignReviewerV1(env, { ...context, mode: 'calibration',
       spawn: (_, args) => {
         stage++;
-        if (stage <= 2) return { status: 0, stdout: '/mnt/c/safe\\n' };
+        if (stage <= 2) return { status: 0, stdout: '/mnt/c/safe\n' };
         if (stage === 3) return { status: 0,
-          stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(source) + '\\n' };
+          stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(source) + '\n' };
         done++;
         assert.deepEqual(args.slice(0, 3), ['--exec', '/usr/bin/sha256sum', '--']);
         return { status: proofStatus,
-          stdout: hash + '  /mnt/c/safe/' + candidate.proofRef + '\\n' };
+          stdout: hash + '  /mnt/c/safe/' + candidate.proofRef + '\n' };
       },
     });
     return r;
@@ -177,11 +177,14 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     specialistAuthority: false, independentReviewSatisfied: false,
     leaseReleaseAuthority: false, protectedMergeAuthority: false,
   };
-  const run = receipt => runWindowsSovereignReviewerV1(env, {
+  const run = receipt => {
+    let stageCount = 0;
+    return runWindowsSovereignReviewerV1(env, {
     ...context, mode: 'calibration',
     spawn: (_, args) => {
       calls++;
-      const stage = (calls - 1) % 4;
+      stageCount++;
+      const stage = (stageCount - 1) % 4;
       if (stage < 2) return { status: 0, stdout: '/mnt/c/safe\n' };
       if (stage === 2) {
         assert.equal(args.includes('/usr/bin/node'), true);
@@ -193,7 +196,8 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
       assert.equal(args.at(-1), path);
       return { status: 0, stdout: summary.proofSha256 + '  ' + path + '\n' };
     },
-  });
+    });
+  };
   const candidate = run(summary);
   assert.equal(candidate.ok, true);
   assert.equal(candidate.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
@@ -213,7 +217,7 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'CALIBRATION_EVIDENCE_UNQUALIFIED');
   }
-  assert.equal(calls, 32);
+  assert.equal(calls, 25);
   // Ten real local calls can take longer than one standard review, but each
   // attempt has a bounded wall-clock, not a new arbitrary remote command.
   // Checks apply to the synthetic Windows spawn adapter, not physical WSL.
