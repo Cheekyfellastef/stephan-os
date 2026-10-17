@@ -11,3 +11,15 @@ This module is an **in-process callback harness**. A synthetic test pass only va
 Next: have the existing read-only Sovereign Reviewer adapter run these ten challenges on Battle Bridge using an actually independent local model session, publish the bounded response digest to the Shared Workspace, and obtain an independent, source-head-bound auditor attestation via the already merged exam contract. The current Codex-pinned Windows specialist gate remains unchanged until separately qualified independent governance is commissioned. Preserve the original r7 lease HOLD and gaming governor.
 
 Focused test: node --test shared/agents/sovereignCalibrationV1.test.mjs
+
+## Finding taxonomy without leaking the exam answers
+
+The examiner now supplies **all nine possible classification codes** as a
+shared candidate vocabulary (eight serious categories and a general fallback)
+for every randomized challenge. These code names alone are not answer labels:
+the candidate receives no per-case expected code, grade, case name or mapping.
+The private scoring table still demands the exact defect classification at
+P0/P1 and requires the two genuinely safe patches to remain clean. A generic
+fallback is never sufficient to qualify. A new negative/disclosure contract
+test is included in the same hosted CI calibration job. All statuses remain
+candidate-only without protected Windows or specialist authority.
