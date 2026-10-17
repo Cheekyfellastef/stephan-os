@@ -108,8 +108,12 @@ test('caller supplied qualified, custody and model claims cannot bypass the HOLD
 });
 
 test('registration launched after census begins cannot look absent', () => {
+  // Preserve parent-before-child chronology while placing the launch tree
+  // inside the census window. Otherwise registration validation masks the race.
   const lateRouter = check(snapshot, { ...registration,
-    routerStartedAtUtc: '2026-10-16T17:59:58.500Z' });
+    routerStartedAtUtc: '2026-10-16T17:59:58.500Z',
+    registeredDescendants: [{ pid: 4101, startedAtUtc: '2026-10-16T17:59:58.700Z' }],
+  });
   assert.ok(lateRouter.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
   assert.equal(lateRouter.processTreeAbsentCandidate, false);
   const lateChild = check(snapshot, { ...registration,
