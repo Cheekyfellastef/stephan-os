@@ -139,6 +139,7 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
       calls++;
       if (calls % 3 !== 0) return { status: 0, stdout: '/mnt/c/safe\n' };
       assert.equal(args.includes('/usr/bin/node'), true);
+      assert.equal(args.at(-1), '--once', 'fixed calibration CLI is mandatory');
       return { status: 0, stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(receipt) + '\n' };
     },
   });

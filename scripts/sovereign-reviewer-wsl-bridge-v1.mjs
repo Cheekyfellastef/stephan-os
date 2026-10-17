@@ -106,7 +106,8 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const args = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp',
     ...Object.entries(plan.reviewEnv).map(([key, value]) => key + '=' + value),
     'STEPHANOS_SHARED_AGENT_WORKSPACE=' + linuxPaths[1],
-    '/usr/bin/node', linuxPaths[0], ...(mode === 'preflight' ? ['--preflight'] : [])];
+    '/usr/bin/node', linuxPaths[0], ...(mode === 'preflight' ? ['--preflight']
+      : mode === 'calibration' ? ['--once'] : [])];
   const executed = run(args);
   if (executed?.error || executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
   const prefix = mode === 'calibration' ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT='
