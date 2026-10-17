@@ -3606,6 +3606,42 @@ test('Island invalid-proof diagnostics reveal only constant categories and canno
   }), 'ISLAND_NATIVE_ACTION_NOT_ALLOWED');
 });
 
+test('native Island diagnostic remains negative on contradictory wrapper authority', () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const marker = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}';
+  const envelope = (status) => ({
+    ok: status === 0,
+    command: { plan: { processId } },
+    structuredContent: { status, stdout: marker, stderr: 'PRIVATE_SYSTEM_DETAIL' },
+  });
+  const projection = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), processId, status: 0,
+  };
+  const diagnose = extra => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: processId, envelope: envelope(0), projection,
+    positive: null, negative: null, ...extra,
+  });
+  // Diagnostic invocation must not turn even a success-shaped outer wrapper
+  // into live Island worker admission or an invented boundary success.
+  assert.equal(diagnose({ positive: { ok: true } }),
+    'ISLAND_NATIVE_BOUNDARY_INCONSISTENT');
+  assert.equal(diagnose({ negative: { ok: false } }),
+    'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID');
+  assert.equal(diagnose({ envelope: envelope('0') }),
+    'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE');
+  assert.equal(diagnose({ envelope: envelope(1), positive: { ok: true } }),
+    'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH');
+  for (const value of [
+    diagnose({ positive: { ok: true } }),
+    diagnose({ negative: { ok: false } }),
+    diagnose({ envelope: envelope('0') }),
+  ]) {
+    assert.match(value, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(value, /PRIVATE|PATH|KEY|TOKEN|GRANTED/);
+  }
+});
+
 test('real remote Island malformed success is BLOCKED with only a safe diagnostic token', async () => {
   const processId = 'rescue-island-readonly-boundary';
   const response = await executeSovereignCommanderRemoteOnBattleBridge(
