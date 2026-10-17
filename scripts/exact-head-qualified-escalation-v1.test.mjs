@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import { readFileSync } from 'node:fs';
 import {
   assertQualifiableExactHeadReceiptV1,
@@ -165,6 +166,36 @@ test('untrusted PR data can never set review authority by adding a flag', () => 
   assert.throws(() => assertQualifiableExactHeadReceiptV1(
     input, { ...receipt, verdict: 'STEPHANOS_REVIEW_PASS' },
   ), /REVIEW_IDENTITY/);
+});
+
+test('owner escalation workflow parser handles fenced real, forged and malformed heads', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/stephanos-exact-head-review.yml', import.meta.url), 'utf8');
+  // YAML removes ten spaces from the block scalar. Bash requires NODE at col 0.
+  const m = workflow.match(/expected_head="\$\(node --input-type=module <<'NODE'\n([\s\S]*?)^ {10}NODE$/m);
+  assert.ok(m, 'owner parser must have a valid heredoc termination');
+  const parse = (body, prNumber = 3086, repository = input.repository) => {
+    let output = '';
+    runInNewContext(m[1], { process: {
+      env: { COMMENT_BODY: body, REPOSITORY: repository, ISSUE_PR_NUMBER: String(prNumber) },
+      stdout: { write: text => { output += text; } },
+      exit: () => { throw new Error('OWNER_COMMENT_HELD'); },
+    } }, { timeout: 500 });
+    return output;
+  };
+  assert.equal(parse(comment().body), SHA_A);
+  assert.equal(parse(comment().body.replaceAll('\n', '\r\n')), SHA_A);
+  for (const [body, pr, repository] of [
+    [comment().body, 9999, input.repository],
+    [comment().body, 3086, 'other/repository'],
+    ['```stephanos-exact-head-qualified-review-v1\n{}\n```', 3086, input.repository],
+    ['```stephanos-exact-head-qualified-review-v1\nbroken json\n```', 3086, input.repository],
+    [comment({ scope: 'merge' }).body, 3086, input.repository],
+  ]) {
+    assert.throws(() => parse(body, pr, repository), /OWNER_COMMENT_HELD/);
+  }
+  // Wrong head can be read but will be rejected against the live GitHub
+  // PR head in the existing strict identity verification step.
+  assert.equal(parse(comment({ expectedHead: SHA_B }).body), SHA_B);
 });
 
 test('trusted workflow keeps review and qualified P2 in one fail-closed step', () => {
