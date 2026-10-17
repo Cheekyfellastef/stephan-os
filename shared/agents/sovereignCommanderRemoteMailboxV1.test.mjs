@@ -3574,6 +3574,15 @@ test('native Island absent execution envelope distinguishes source denial from M
   });
   const variants = [
     [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['sovereign-commander-process-not-registered'] },
+      blocker:'PRIVATE_SCRIPT_PATH_C:/Users/operator' } }, 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['sovereign-commander-process-not-registered', 'trusted-repository-root-required'] },
+      blocker:'PRIVATE_SID_AND_REPOSITORY_ROOT' } }, 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['PRIVATE_UNRECOGNISED_BLOCKER'] },
+      blocker:'PRIVATE_HOST_PATH' } }, 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
       blocker:'PRIVATE_SCRIPT_PATH_C:/Users/operator' } }, 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN'],
     [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
       command:{plan:{processId:'rescue-island-readonly-boundary'}},

@@ -2152,6 +2152,16 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
         || Array.isArray(observation)) break;
       if (observation.ok === false
         && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+        // Only fixed known Commander command-planning blockers are eligible
+        // for projection. Never copy its raw blocker, plan, cwd or OS paths.
+        // No classification is evidence the running Commander was reloaded.
+        const known = observation.command?.blockers;
+        if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
+          if (known.includes('trusted-repository-root-required'))
+            return 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE';
+          if (known.includes('sovereign-commander-process-not-registered'))
+            return 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED';
+        }
         return 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN';
       }
       if (observation.ok === false
