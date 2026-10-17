@@ -178,13 +178,20 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
 // NOT load a model or modify the host. No user path, URL, tokens, inventory,
 // model metadata or credential fields are copied to public receipts.
 export async function probeLocalSovereignOllamaV1(env = process.env, {
-  fetchImpl = fetch,
+  fetchImpl = fetch, gitSpawn = spawnSync, platform = process.platform,
+  sourceRoot = SOURCE_ROOT, gamingGuard = inspectLocalSovereignGamingPermissionV1,
 } = {}) {
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
     return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
       reason: 'LOCAL_MODEL_NOT_CONFIGURED', ...NO_AUTHORITY });
   }
+  const source = inspectLocalCalibrationGitIdentityV1(env, { gitSpawn, platform, sourceRoot });
+  if (!source.ok) return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: source.reason, ...NO_AUTHORITY });
+  const gaming = gamingGuard(env, { platform });
+  if (!gaming?.ok) return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: gaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN', ...NO_AUTHORITY });
   try {
     const response = await fetchImpl('http://127.0.0.1:11434/api/tags', {
       method: 'GET', signal: AbortSignal.timeout(6000),
@@ -209,7 +216,9 @@ export async function probeLocalSovereignOllamaV1(env = process.env, {
       status: available ? 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
         : 'LOCAL_OLLAMA_PREFLIGHT_HELD',
       reason: available ? '' : 'SELECTED_LOCAL_MODEL_UNAVAILABLE',
-      selectedModelPresent: available, ...NO_AUTHORITY,
+      selectedModelPresent: available,
+      sourceVerified: available, gamingClear: available,
+      ...NO_AUTHORITY,
     });
   } catch {
     return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',

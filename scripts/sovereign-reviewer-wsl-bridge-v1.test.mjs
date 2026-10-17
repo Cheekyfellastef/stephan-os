@@ -100,7 +100,8 @@ test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects f
   };
   const available = {
     status: 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED',
-    selectedModelPresent: true, independentHostAttestation: false,
+    selectedModelPresent: true, sourceVerified: true, gamingClear: true,
+    independentHostAttestation: false,
     signatureVerified: false, specialistAuthority: false,
     protectedMergeAuthority: false, leaseReleaseAuthority: false,
   };
@@ -112,6 +113,8 @@ test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects f
     { ...available, specialistAuthority: true },
     { ...available, leaseReleaseAuthority: true },
     { ...available, selectedModelPresent: false },
+    { ...available, sourceVerified: false },
+    { ...available, gamingClear: false },
     { ...available, status: 'LOCAL_OLLAMA_PREFLIGHT_HELD' },
   ]) {
     const bad = make(fake);

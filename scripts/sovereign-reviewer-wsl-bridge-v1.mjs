@@ -122,6 +122,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   if (mode === 'preflight') {
     if (receipt.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
       || receipt.selectedModelPresent !== true
+      || receipt.sourceVerified !== true || receipt.gamingClear !== true
       || receipt.independentHostAttestation !== false
       || receipt.signatureVerified !== false
       || receipt.specialistAuthority !== false

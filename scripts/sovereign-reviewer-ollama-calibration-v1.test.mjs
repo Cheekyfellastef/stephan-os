@@ -225,9 +225,28 @@ test('local-model exam immediately holds when gaming activates between cases', a
   assert.equal(result.status, 'CALIBRATION_HELD');
   noAuthority(result);
 });
+test('preflight holds dirty source or active gaming before contacting Ollama', async () => {
+  for (const opts of [
+    gitProof({ status: ' M operator-file.txt' }),
+    { ...gitProof(), gamingGuard: () => ({
+      ok: false, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED',
+    }) },
+    { ...gitProof(), gamingGuard: () => ({
+      ok: false, reason: 'CALIBRATION_GOVERNOR_STALE_OR_INVALID',
+    }) },
+  ]) {
+    let calls = 0;
+    const r = await probe(env, { ...opts,
+      fetchImpl: async () => { calls++; throw Error('must not contact Ollama'); },
+    });
+    assert.equal(r.status, 'LOCAL_OLLAMA_PREFLIGHT_HELD');
+    assert.equal(calls, 0);
+    noAuthority(r);
+  }
+});
 test('read-only preflight observes only local Ollama model availability', async () => {
   const calls = [];
-  const ready = await probe(env, { fetchImpl: async (url, options) => {
+  const ready = await probe(env, { ...gitProof(), fetchImpl: async (url, options) => {
     calls.push({ url, options });
     return { ok: true, text: async () => JSON.stringify({models:[
       { name: 'qwen:14b', model: 'qwen:14b' },
@@ -237,7 +256,8 @@ test('read-only preflight observes only local Ollama model availability', async 
   assert.equal(ready.status, 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED');
   assert.equal(ready.selectedModelPresent, true);
   assert.deepEqual(Object.keys(ready).sort(), [
-    'status','reason','selectedModelPresent','independentHostAttestation',
+    'status','reason','selectedModelPresent','sourceVerified','gamingClear',
+    'independentHostAttestation',
     'signatureVerified','specialistAuthority','independentReviewSatisfied',
     'protectedMergeAuthority','sourceMutationAuthority','leaseReleaseAuthority',
     'windowsCommissioningAuthority','physicalPickupProven',
@@ -254,7 +274,7 @@ test('read-only preflight holds missing model, offline service, oversized invent
     async () => ({ok:true,text:async()=>'x'.repeat(32769)}),
     async () => { throw Error('offline') },
   ]) {
-    const r = await probe(env, {fetchImpl});
+    const r = await probe(env, { ...gitProof(), fetchImpl });
     assert.equal(r.status,'LOCAL_OLLAMA_PREFLIGHT_HELD');
     noAuthority(r);
   }

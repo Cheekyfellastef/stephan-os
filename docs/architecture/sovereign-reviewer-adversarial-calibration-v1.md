@@ -88,3 +88,15 @@ cadence. The additional idle heartbeat emits the actual current observation
 through the existing `Invoke-Reconcile` path and never grants permission if
 Watch is stopped or its state is missing/stale. Source CI tests are not proof
 that the native watcher has been deployed to Battle Bridge.
+
+## Integrated no-inference Battle Bridge readiness preflight
+
+The fixed `--preflight` mode now checks the real exact branch/head,
+base ancestry and clean checkout, then the fresh gaming governor, **before**
+performing a read-only loopback Ollama `GET /api/tags`. A positive candidate
+returns explicitly `sourceVerified: true`, `gamingClear: true` and
+`selectedModelPresent: true`; the Windows shell-free bridge rejects any
+missing or forged field. If source is dirty or gaming is active, the preflight
+never contacts Ollama. This does **not** run the ten-case exam or independently
+attest host provenance; the full model runner independently repeats every
+source and gaming check to resist stale preflight results.
