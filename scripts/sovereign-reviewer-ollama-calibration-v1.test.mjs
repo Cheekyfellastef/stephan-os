@@ -4,16 +4,37 @@ import {
   runSovereignOllamaCalibrationV1 as run,
   projectSovereignOllamaCalibrationV1 as project,
   probeLocalSovereignOllamaV1 as probe,
+  inspectLocalCalibrationGitIdentityV1 as inspectGit,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
   STEPHANOS_REVIEW_REPOSITORY: 'Cheekyfellastef/stephan-os',
   STEPHANOS_REVIEW_EXACT_HEAD: 'a'.repeat(40),
   STEPHANOS_REVIEW_EXACT_BASE: 'b'.repeat(40),
+  STEPHANOS_REVIEW_EXACT_BRANCH: 'reviewer/exam-only',
   STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'github-builder',
   STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'implementer-one',
   STEPHANOS_REVIEW_SESSION: 'reviewer-two',
   STEPHANOS_SOVEREIGN_REVIEW_MODEL: 'qwen:14b',
+});
+const gitProof = (overrides = {}) => ({
+  platform: 'linux', sourceRoot: '/tmp/nonproduction-review-fixture',
+  gitSpawn(command, args, options) {
+    assert.equal(command, '/usr/bin/git');
+    assert.equal(options.shell, false);
+    assert.equal(options.env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.deepEqual(args.slice(0, 2), ['-C', '/tmp/nonproduction-review-fixture']);
+    const cmd = args.slice(2).join(' ');
+    const results = {
+      'rev-parse HEAD': overrides.head ?? 'a'.repeat(40),
+      'symbolic-ref --quiet --short HEAD': overrides.branch ?? 'reviewer/exam-only',
+      'status --porcelain --untracked-files=normal': overrides.status ?? '',
+      ['merge-base --is-ancestor ' + 'b'.repeat(40) + ' ' + 'a'.repeat(40)]: '',
+    };
+    return Object.hasOwn(results, cmd) && !(cmd.startsWith('merge-base') && overrides.ancestor === false)
+      ? { status: 0, stdout: results[cmd] + '\n' }
+      : { status: 1, stdout: '' };
+  },
 });
 function noAuthority(r) {
   for (const key of ['independentHostAttestation','signatureVerified','specialistAuthority',
@@ -24,7 +45,7 @@ function noAuthority(r) {
 }
 test('real-model route submits ten fixed untrusted patches only to loopback Ollama', async () => {
   const calls = [];
-  const result = await run(env, { fetchImpl: async (url, options) => {
+  const result = await run(env, { ...gitProof(), fetchImpl: async (url, options) => {
     const request = JSON.parse(options.body);
     calls.push({ url, options, request });
     assert.ok(options.signal instanceof AbortSignal);
@@ -56,7 +77,7 @@ test('unavailable or oversized Ollama responses hold, never pass the exam', asyn
     async () => ({ ok: true, text: async () => 'x'.repeat(65537) }),
     async () => ({ ok: true, text: async () => '{"response": 3}' }),
   ]) {
-    const r = await run(env, { fetchImpl });
+    const r = await run(env, { ...gitProof(), fetchImpl });
     assert.equal(r.status, 'CALIBRATION_HELD');
     noAuthority(project(r));
   }
@@ -69,7 +90,7 @@ test('invalid local model, source and provider identities fail before or during 
   assert.equal(denied.status, 'CALIBRATION_HELD');
   assert.equal(calls, 0);
   const sameProvider = await run({ ...env, STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'sovereign-local-ollama' }, {
-    fetchImpl: async () => { calls++; throw Error('must not call'); },
+    ...gitProof(), fetchImpl: async () => { calls++; throw Error('must not call'); },
   });
   assert.equal(sameProvider.reason, 'EXACT_SOURCE_OR_INDEPENDENT_REVIEW_IDENTITY_MISSING');
   assert.equal(calls, 0);
@@ -121,4 +142,23 @@ test('read-only preflight holds missing model, offline service, oversized invent
     assert.equal(r.status,'LOCAL_OLLAMA_PREFLIGHT_HELD');
     noAuthority(r);
   }
+});
+
+test('calibration refuses dirty, stale, wrong-branch and unrelated WSL checkout before model call', async () => {
+  for (const git of [
+    gitProof({ head: 'f'.repeat(40) }),
+    gitProof({ branch: 'main' }),
+    gitProof({ status: ' M preserved-original-worktree.txt' }),
+    gitProof({ ancestor: false }),
+  ]) {
+    let modelCalls = 0;
+    const outcome = await run(env, {
+      ...git, fetchImpl: async () => { modelCalls++; throw Error('model should never run'); },
+    });
+    assert.equal(outcome.status, 'CALIBRATION_HELD');
+    assert.equal(modelCalls, 0);
+    noAuthority(outcome);
+  }
+  assert.equal(inspectGit(env, gitProof()).ok, true);
+  assert.equal(inspectGit({ ...env, STEPHANOS_REVIEW_EXACT_HEAD: 'unknown' }, gitProof()).ok, false);
 });

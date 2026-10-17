@@ -23,3 +23,14 @@ P0/P1 and requires the two genuinely safe patches to remain clean. A generic
 fallback is never sufficient to qualify. A new negative/disclosure contract
 test is included in the same hosted CI calibration job. All statuses remain
 candidate-only without protected Windows or specialist authority.
+
+## Native clean WSL Git verification before calibration
+
+The fixed calibration executable checks **actual local HEAD, named branch,
+clean working tree and base-as-ancestor** with read-only `/usr/bin/git`
+commands before invoking Ollama. Invalid, stale, dirty or unproven Git
+checkout results in `CALIBRATION_HELD` with zero model calls. No checkout,
+reset, stash, clean or other file mutation is performed. The known eight
+dirty Battle Bridge entries must be preserved; a separately clean reviewer
+checkout is required. Hosted CI uses a mock Git adapter to verify the refusal
+policy, and does not claim physical source custody or model execution.

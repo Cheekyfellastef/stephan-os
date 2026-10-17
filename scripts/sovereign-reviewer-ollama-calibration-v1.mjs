@@ -2,9 +2,14 @@
 // Local Ollama candidate calibration: fixed ten adversarial cases only.
 // No GitHub, arbitrary command, Windows witness, approval or merge capability.
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1 } from '../shared/agents/sovereignCalibrationV1.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
+const SHA40 = /^[a-f0-9]{40}$/;
+const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
 const NO_AUTHORITY = Object.freeze({
   independentHostAttestation: false, signatureVerified: false,
   specialistAuthority: false, independentReviewSatisfied: false,
@@ -17,13 +22,51 @@ function held(reason) {
     status: 'CALIBRATION_HELD', reason, ...NO_AUTHORITY,
   });
 }
+// No calibration can bind to a caller-declared SHA alone. The WSL checkout
+// must be the clean exact HEAD and branch before the local model is invoked.
+// These fixed Git reads NEVER checkout/reset/stash/clean the operator's files.
+export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
+  gitSpawn = spawnSync, platform = process.platform, sourceRoot = SOURCE_ROOT,
+} = {}) {
+  const head = String(env.STEPHANOS_REVIEW_EXACT_HEAD ?? '').toLowerCase();
+  const base = String(env.STEPHANOS_REVIEW_EXACT_BASE ?? '').toLowerCase();
+  const branch = String(env.STEPHANOS_REVIEW_EXACT_BRANCH ?? '');
+  if (platform !== 'linux' || !SHA40.test(head) || !SHA40.test(base)
+    || head === base || !BRANCH.test(branch)
+    || branch.includes('..') || branch.endsWith('/')) {
+    return Object.freeze({ ok: false, reason: 'CALIBRATION_EXACT_SOURCE_IDENTITY_INVALID' });
+  }
+  const readGit = args => {
+    const r = gitSpawn('/usr/bin/git', ['-C', sourceRoot, ...args], {
+      encoding: 'utf8', shell: false, timeout: 12_000, maxBuffer: 4096,
+      env: { PATH: '/usr/bin:/bin', HOME: '/tmp', GIT_CONFIG_NOSYSTEM: '1' },
+    });
+    if (r?.error || r?.status !== 0 || typeof r.stdout !== 'string')
+      throw new Error('LOCAL_GIT_UNAVAILABLE');
+    return r.stdout.trim();
+  };
+  try {
+    if (readGit(['rev-parse', 'HEAD']).toLowerCase() !== head
+      || readGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== branch
+      || readGit(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED' });
+    }
+    readGit(['merge-base', '--is-ancestor', base, head]);
+    return Object.freeze({ ok: true, reason: '' });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'CALIBRATION_SOURCE_GIT_UNPROVEN' });
+  }
+}
 export async function runSovereignOllamaCalibrationV1(env = process.env, {
-  fetchImpl = fetch,
+  fetchImpl = fetch, gitSpawn = spawnSync, platform = process.platform,
+  sourceRoot = SOURCE_ROOT,
 } = {}) {
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
     return held('LOCAL_MODEL_NOT_CONFIGURED');
   }
+  const gitProof = inspectLocalCalibrationGitIdentityV1(env, { gitSpawn, platform, sourceRoot });
+  if (!gitProof.ok) return held(gitProof.reason);
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
