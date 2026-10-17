@@ -72,6 +72,61 @@ jobs:
           Write-Output 'R7_READONLY_WINDOWS_RUNNER_PROBE_PASSED=true'
           Write-Output 'R7_READONLY_WINDOWS_RUNNER_IS_BATTLE_BRIDGE=false'
           Write-Output 'R7_PHYSICAL_EXCLUSION_PROVEN=false'
+      - name: Exercise pinned source through actual Sovereign EncodedCommand transport
+        shell: pwsh
+        run: |
+          # Disposable GitHub Windows runner, NOT original writer or Battle Bridge.
+          $relative = 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
+          $scriptPath = Join-Path $PWD $relative
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          $powershell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+          if (!(Test-Path -LiteralPath $git -PathType Leaf) -or !(Test-Path -LiteralPath $powershell -PathType Leaf)) { throw 'R7_PINNED_NATIVE_EXECUTABLE_NOT_FOUND' }
+          $head = (& $git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}
+        shell: pwsh
+        run: |
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record custody authority boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'HOSTED_WINDOWS_CI_SHAPE_ONLY=true'
+          Write-Output 'ORIGINAL_R7_WRITER_DENIED=false'
+          Write-Output 'BATTLE_BRIDGE_OS_WITNESS_SIGNER_COMMISSIONED=false'
+          Write-Output 'R7_LEASE_RELEASED=false'
+) { throw 'R7_HEAD_UNVERIFIED' }
+          $blobSpec = $head + ':' + $relative
+          $expectedBlob = (& $git rev-parse $blobSpec).Trim()
+          $actualBlob = (& $git hash-object -- $scriptPath).Trim()
+          if ($LASTEXITCODE -ne 0 -or $expectedBlob -ne $actualBlob -or $expectedBlob -notmatch '^[a-f0-9]{40}
+        shell: pwsh
+        run: |
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record custody authority boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'HOSTED_WINDOWS_CI_SHAPE_ONLY=true'
+          Write-Output 'ORIGINAL_R7_WRITER_DENIED=false'
+          Write-Output 'BATTLE_BRIDGE_OS_WITNESS_SIGNER_COMMISSIONED=false'
+          Write-Output 'R7_LEASE_RELEASED=false'
+) { throw 'R7_IMMUTABLE_SCRIPT_BLOB_MISMATCH' }
+          $rootB64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([string]$PWD))
+          $prelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("' + $rootB64 + '"))) "scripts\windows"' + [Environment]::NewLine
+          $scriptBody = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($scriptPath))
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prelude + $scriptBody))
+          if ($encoded.Length -gt 32000) { throw 'R7_FIXED_SCRIPT_TOO_LARGE' }
+          $response = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded)
+          if ($LASTEXITCODE -ne 0 -or $response.Count -ne 1) { throw 'R7_ENCODED_PROBE_EXECUTION_FAILED' }
+          $observed = $response[0] | ConvertFrom-Json -ErrorAction Stop
+          if ($observed.finalVerdict -ne 'COMMISSIONING_NOT_PROVEN' -or $observed.leaseReleaseAuthorized -ne $false -or $observed.sourceMutationAuthorized -ne $false -or $observed.trustRootsVerified -ne $false) {
+            throw 'R7_ENCODED_PROBE_CLAIMED_UNTRUSTED_AUTHORITY'
+          }
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_EXECUTED_ON_WINDOWS=true'
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_IS_BATTLE_BRIDGE=false'
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_ISSUED_CUSTODY=false'
       - name: Test bounded Sovereign receipt against forged authority
         shell: pwsh
         run: |
