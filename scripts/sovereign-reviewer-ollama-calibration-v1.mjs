@@ -137,9 +137,36 @@ export function inspectLocalSovereignGamingPermissionV1(env = process.env, {
     }
   }
 }
+// Model names are mutable tags. Bind a candidate to the same exact 64-hex
+// Ollama digest before and after the exam, with no model load or raw inventory
+// in public evidence. Digest is NOT independent supply-chain attestation.
+export async function observeLocalSovereignOllamaDigestV1(model, {fetchImpl=fetch}={}) {
+  if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function')
+    return Object.freeze({ok:false,reason:'LOCAL_MODEL_NOT_CONFIGURED'});
+  try {
+    const response=await fetchImpl('http://127.0.0.1:11434/api/tags',
+      {method:'GET',signal:AbortSignal.timeout(6000)});
+    if (!response?.ok || typeof response.text !== 'function')
+      return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_NOT_REACHABLE'});
+    const raw=await response.text();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw,'utf8')>32768)
+      return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_MODEL_LIST_UNBOUNDED'});
+    const models=JSON.parse(raw)?.models;
+    if (!Array.isArray(models) || models.length>256)
+      return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_MODEL_LIST_INVALID'});
+    const matches=models.filter(x=>x && typeof x==='object'
+      && (x.name===model || x.model===model));
+    if (matches.length!==1 || !/^[a-f0-9]{64}$/.test(matches[0]?.digest??''))
+      return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_MODEL_DIGEST_UNPROVEN'});
+    return Object.freeze({ok:true,reason:'',digest:matches[0].digest});
+  } catch {
+    return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_DIGEST_READ_UNAVAILABLE'});
+  }
+}
 export async function runSovereignOllamaCalibrationV1(env = process.env, {
   fetchImpl = fetch, gitSpawn = spawnSync, platform = process.platform,
   sourceRoot = SOURCE_ROOT, gamingGuard = inspectLocalSovereignGamingPermissionV1,
+  modelPin = observeLocalSovereignOllamaDigestV1,
 } = {}) {
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
@@ -149,6 +176,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   if (!gitProof.ok) return held(gitProof.reason);
   const gaming = gamingGuard(env, { platform });
   if (!gaming?.ok) return held(gaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN');
+  const beforePin = await modelPin(model, {fetchImpl});
+  if (!beforePin?.ok || !/^[a-f0-9]{64}$/.test(beforePin.digest??''))
+    return held(beforePin?.reason || 'CALIBRATION_MODEL_DIGEST_UNPROVEN');
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
@@ -202,7 +232,10 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   if (!after.ok) return held('CALIBRATION_SOURCE_CHANGED_DURING_EXAM');
   const finalGaming = gamingGuard(env, { platform });
   if (!finalGaming?.ok) return held(finalGaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN');
-  return evaluation;
+  const afterPin=await modelPin(model,{fetchImpl});
+  if (!afterPin?.ok || afterPin.digest!==beforePin.digest)
+    return held('CALIBRATION_MODEL_DIGEST_CHANGED_OR_UNOBSERVED');
+  return Object.freeze({...evaluation,modelDigestSha256:beforePin.digest});
 }
 // Read-only model availability preflight. Ollama's /api/tags endpoint does
 // NOT load a model or modify the host. No user path, URL, tokens, inventory,
@@ -222,38 +255,13 @@ export async function probeLocalSovereignOllamaV1(env = process.env, {
   const gaming = gamingGuard(env, { platform });
   if (!gaming?.ok) return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
     reason: gaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN', ...NO_AUTHORITY });
-  try {
-    const response = await fetchImpl('http://127.0.0.1:11434/api/tags', {
-      method: 'GET', signal: AbortSignal.timeout(6000),
-    });
-    if (!response?.ok || typeof response.text !== 'function') {
-      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
-        reason: 'LOCAL_OLLAMA_NOT_REACHABLE', ...NO_AUTHORITY });
-    }
-    const raw = await response.text();
-    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 32 * 1024) {
-      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
-        reason: 'LOCAL_OLLAMA_MODEL_LIST_UNBOUNDED', ...NO_AUTHORITY });
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed?.models) || parsed.models.length > 256) {
-      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
-        reason: 'LOCAL_OLLAMA_MODEL_LIST_INVALID', ...NO_AUTHORITY });
-    }
-    const available = parsed.models.some(x => x && typeof x === 'object'
-      && (x.name === model || x.model === model));
-    return Object.freeze({
-      status: available ? 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
-        : 'LOCAL_OLLAMA_PREFLIGHT_HELD',
-      reason: available ? '' : 'SELECTED_LOCAL_MODEL_UNAVAILABLE',
-      selectedModelPresent: available,
-      sourceVerified: available, gamingClear: available,
-      ...NO_AUTHORITY,
-    });
-  } catch {
-    return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
-      reason: 'LOCAL_OLLAMA_READ_ONLY_PROBE_FAILED', ...NO_AUTHORITY });
-  }
+  const observed=await observeLocalSovereignOllamaDigestV1(model,{fetchImpl});
+  return Object.freeze({
+    status:observed.ok?'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED':'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason:observed.reason,selectedModelPresent:observed.ok,
+    sourceVerified:observed.ok,gamingClear:observed.ok,
+    modelDigestSha256:observed.ok?observed.digest:'',...NO_AUTHORITY,
+  });
 }
 // A model result is only an untrusted candidate. Preserve a bounded, exact
 // source-bound observation for an independent auditor in the existing Shared
@@ -322,6 +330,7 @@ export function projectSovereignOllamaCalibrationV1(result = {}) {
     && result.completedCases === 10 && result.passedCases === 10
     && result.manifestSha256 === SOVEREIGN_CALIBRATION_MANIFEST_SHA256
     && sha64.test(result.observationsSha256 ?? '')
+    && sha64.test(result.modelDigestSha256 ?? '')
     && result.independentHostAttestation === false
     && result.signatureVerified === false
     && result.specialistAuthority === false
@@ -344,6 +353,7 @@ export function projectSovereignOllamaCalibrationV1(result = {}) {
       && result.passedCases <= 10 ? result.passedCases : 0,
     manifestSha256: sha64.test(result.manifestSha256 ?? '') ? result.manifestSha256 : '',
     observationsSha256: sha64.test(result.observationsSha256 ?? '') ? result.observationsSha256 : '',
+    modelDigestSha256: sha64.test(result.modelDigestSha256 ?? '') ? result.modelDigestSha256 : '',
     ...NO_AUTHORITY,
   });
 }

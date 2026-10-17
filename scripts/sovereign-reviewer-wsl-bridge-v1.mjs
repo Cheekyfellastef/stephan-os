@@ -125,6 +125,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     if (receipt.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
       || receipt.selectedModelPresent !== true
       || receipt.sourceVerified !== true || receipt.gamingClear !== true
+      || !/^[a-f0-9]{64}$/.test(receipt.modelDigestSha256 ?? '')
       || receipt.independentHostAttestation !== false
       || receipt.signatureVerified !== false
       || receipt.specialistAuthority !== false
@@ -148,6 +149,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       || receipt.completedCases !== 10 || receipt.passedCases !== 10
       || !/^[a-f0-9]{64}$/.test(receipt.manifestSha256 ?? '')
       || !/^[a-f0-9]{64}$/.test(receipt.observationsSha256 ?? '')
+      || !/^[a-f0-9]{64}$/.test(receipt.modelDigestSha256 ?? '')
       || receipt.proofRef !== expectedRef
       || !/^[a-f0-9]{64}$/.test(receipt.proofSha256 ?? '')
       || receipt.qualification !== 'PENDING_INDEPENDENT_ATTESTATION'
@@ -178,6 +180,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       ok: true, status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
       sourceHead: receipt.sourceHead, completedCases: 10, passedCases: 10,
       observationsSha256: receipt.observationsSha256,
+      modelDigestSha256: receipt.modelDigestSha256,
       proofRef: receipt.proofRef, proofSha256: receipt.proofSha256,
       qualification: 'PENDING_INDEPENDENT_ATTESTATION',
       approvalAuthority: false, mergeAuthority: false,

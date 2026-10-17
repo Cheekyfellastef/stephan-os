@@ -132,3 +132,13 @@ bounded ten-case exam. A clean `git status` on its own is insufficient,
 since Git index flags could hide substitutions. Missing, unsafe or modified
 modules fail closed **before** Ollama can be called, with no file changes,
 lease/merge permission or independently qualified reviewer attestation.
+
+## Ollama weight-digest pin across the full adversarial exam
+
+A mutable tag is not a stable model identity. Fixed read-only loopback
+`GET /api/tags` now checks that exactly one matching local Ollama model has
+a 64-character content digest **before and after** the ten-case assessment.
+Missing, ambiguous or changed weights HOLD the candidate. Any passing
+candidate record and Windows bridge receipt bind that weight digest to the
+exact checked source HEAD, manifest and observations. This is local unsigned
+model identity only, not an independently audited specialist approval.

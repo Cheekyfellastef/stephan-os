@@ -12,6 +12,7 @@ import {
   inspectLocalCalibrationGitIdentityV1 as inspectGit,
   inspectLocalSovereignGamingPermissionV1 as gaming,
   persistSovereignCalibrationCandidateV1 as persist,
+  observeLocalSovereignOllamaDigestV1 as modelDigest,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
@@ -27,6 +28,7 @@ const env = Object.freeze({
 const gitProof = (overrides = {}) => ({
   platform: 'linux', sourceRoot: '/tmp/nonproduction-review-fixture',
   gamingGuard: allowGaming,
+  modelPin: async () => ({ok:true,digest:'f'.repeat(64)}),
   gitSpawn(command, args, options) {
     assert.equal(command, '/usr/bin/git');
     assert.equal(options.shell, false);
@@ -273,19 +275,55 @@ test('preflight holds dirty source or active gaming before contacting Ollama', a
     noAuthority(r);
   }
 });
+test('model weight pin refuses alias collision, missing digest and wrong model', async () => {
+  for (const [models,expected] of [
+    [[{name:'qwen:14b',digest:'f'.repeat(64)}],true],
+    [[{name:'qwen:14b',digest:'missing'}],false],
+    [[{name:'qwen:14b',digest:'f'.repeat(64)},{model:'qwen:14b',digest:'e'.repeat(64)}],false],
+    [[{name:'another:tag',digest:'f'.repeat(64)}],false],
+  ]) {
+    const r=await modelDigest('qwen:14b',{fetchImpl:async(url,opts)=>{
+      assert.equal(url,'http://127.0.0.1:11434/api/tags');
+      assert.equal(opts.method,'GET');
+      return {ok:true,text:async()=>JSON.stringify({models})};
+    }});
+    assert.equal(r.ok,expected);
+    assert.equal(Object.hasOwn(r,'digest'),expected);
+  }
+});
+test('calibration holds if model weights change during ten cases',async()=>{
+  let pins=0,requests=0;
+  const r=await run(env,{...gitProof(),
+    modelPin:async()=>({ok:true,digest:(++pins===1?'a':'b').repeat(64)}),
+    fetchImpl:async(_url,options)=>{
+      requests++;
+      const prompt=JSON.parse(options.body).prompt;
+      const challengeId=prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const diffSha256=prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return {ok:true,text:async()=>JSON.stringify({model:'qwen:14b',
+        done:true,done_reason:'stop',response:JSON.stringify({
+          challengeId,diffSha256,verdict:'clean',findings:[],
+        })})};
+    }});
+  assert.equal(requests,10);assert.equal(pins,2);
+  assert.equal(r.status,'CALIBRATION_HELD');
+  assert.equal(r.reason,'CALIBRATION_MODEL_DIGEST_CHANGED_OR_UNOBSERVED');
+  noAuthority(project(r));
+});
 test('read-only preflight observes only local Ollama model availability', async () => {
   const calls = [];
   const ready = await probe(env, { ...gitProof(), fetchImpl: async (url, options) => {
     calls.push({ url, options });
     return { ok: true, text: async () => JSON.stringify({models:[
-      { name: 'qwen:14b', model: 'qwen:14b' },
+      { name: 'qwen:14b', model: 'qwen:14b', digest: 'f'.repeat(64) },
       { name: 'other:latest' },
     ]}) };
   }});
   assert.equal(ready.status, 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED');
   assert.equal(ready.selectedModelPresent, true);
+  assert.equal(ready.modelDigestSha256, 'f'.repeat(64));
   assert.deepEqual(Object.keys(ready).sort(), [
-    'status','reason','selectedModelPresent','sourceVerified','gamingClear',
+    'status','reason','selectedModelPresent','sourceVerified','gamingClear','modelDigestSha256',
     'independentHostAttestation',
     'signatureVerified','specialistAuthority','independentReviewSatisfied',
     'protectedMergeAuthority','sourceMutationAuthority','leaseReleaseAuthority',
@@ -358,7 +396,7 @@ test('local candidate proof is source-bound, SHA-verified and no-overwrite, neve
       baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
       completedCases: 10, passedCases: 10,
       manifestSha256: SOVEREIGN_CALIBRATION_MANIFEST_SHA256,
-      observationsSha256: 'd'.repeat(64),
+      observationsSha256: 'd'.repeat(64), modelDigestSha256:'f'.repeat(64),
       independentHostAttestation: false, signatureVerified: false,
       specialistAuthority: false, independentReviewSatisfied: false,
       protectedMergeAuthority: false, sourceMutationAuthority: false,

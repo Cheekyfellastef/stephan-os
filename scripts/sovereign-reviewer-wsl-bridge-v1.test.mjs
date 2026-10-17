@@ -102,6 +102,7 @@ test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects f
   const available = {
     status: 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED',
     selectedModelPresent: true, sourceVerified: true, gamingClear: true,
+    modelDigestSha256:'f'.repeat(64),
     independentHostAttestation: false,
     signatureVerified: false, specialistAuthority: false,
     protectedMergeAuthority: false, leaseReleaseAuthority: false,
@@ -133,6 +134,7 @@ test('Windows WSL calibration proof must be re-read at the claimed SHA256', () =
     baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
     completedCases: 10, passedCases: 10,
     manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
+    modelDigestSha256:'f'.repeat(64),
     proofRef: 'proofs/sovereign-calibration-pr-3059-aaaaaaaaaaaa-dddddddddddd.json',
     proofSha256: 'e'.repeat(64), qualification: 'PENDING_INDEPENDENT_ATTESTATION',
     independentHostAttestation: false, signatureVerified: false,
@@ -173,6 +175,7 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
     completedCases: 10, passedCases: 10,
     manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
+    modelDigestSha256:'f'.repeat(64),
     proofRef: 'proofs/sovereign-calibration-pr-3059-aaaaaaaaaaaa-dddddddddddd.json',
     proofSha256: 'e'.repeat(64), qualification: 'PENDING_INDEPENDENT_ATTESTATION',
     independentHostAttestation: false, signatureVerified: false,
