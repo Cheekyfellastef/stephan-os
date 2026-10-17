@@ -1,9 +1,11 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 import {
   SOVEREIGN_METER_INDEPENDENCE_MISSION_ID,
   SOVEREIGN_METER_INDEPENDENCE_ISSUE,
+  SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1,
   buildSovereignMeterIndependenceSeedV1,
 } from './sovereignMeterIndependenceSeedV1.mjs';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../project/seedGardenProjectionV1.mjs';
@@ -100,6 +102,26 @@ test('missing or merely asserted proof never advances; full typed proof stops re
   assert.equal(meter.nextGrowthRung, '');
   assert.equal(meter.pressureState, 'CURRENT');
   assert.equal(pressure(payload).length, 0);
+});
+
+test('meter-blackout acceptance inventory remains aligned to canonical 12 dimensions', () => {
+  // Source-only acceptance check, never a live blackout or worker pickup.
+  const markdown = readFileSync(new URL('../../docs/architecture/sovereign-meter-blackout-acceptance-v1.md', import.meta.url), 'utf8');
+  const section = markdown.split('## Twelve canonical dimensions')[1]?.split('## Verdict and original-owner routing')[0];
+  assert.ok(section, 'missing bounded meter-specific inventory');
+  const rows = section.split('\n').filter((line) => line.startsWith('| `'));
+  const cells = rows.map((line) => line.split('|').map((value) => value.trim()).filter(Boolean));
+  const dimensions = cells.map((row) => row[0].replaceAll('`', ''));
+  assert.deepEqual(dimensions, [...SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1],
+    'each canonical meter dimension must appear once and in source order');
+  for (const row of cells) {
+    assert.equal(row.length, 3, 'dimension, original owner candidate and verdict are required');
+    assert.ok(row[1].includes('#') || row[1].includes('UNRESOLVED'));
+    assert.equal(row[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
+  }
+  assert.match(markdown, /same original task ID and worker identity/);
+  assert.match(markdown, /Gaming or Quest has absolute priority/);
+  assert.match(markdown, /never from publication of this checklist/);
 });
 
 test('stale heartbeat cannot manufacture a live canonical seed goal', () => {
