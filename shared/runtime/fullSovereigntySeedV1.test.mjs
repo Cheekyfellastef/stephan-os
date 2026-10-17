@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  FULL_SOVEREIGNTY_DIMENSIONS_V1,
   FULL_SOVEREIGNTY_ISSUE,
   FULL_SOVEREIGNTY_MISSION_ID,
   buildFullSovereigntySeedV1,
@@ -106,4 +108,76 @@ test('stale source heartbeat cannot release build work', () => {
     timestampUtc: '2026-10-11T15:00:00.000Z',
   })] });
   assert.deepEqual(pressure(stale), []);
+});
+
+test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimensions', () => {
+  // This checks SOURCE CONTRACT CONSISTENCY, never physical seed pickup or a PASS verdict.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const coverage = markdown.split('## Coverage checklist: every existing dimension')[1]?.split('## Rung-1 owner-discovery ledger')[0];
+  const ledger = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
+  assert.ok(coverage, 'missing acceptance coverage table');
+  assert.ok(ledger, 'missing original-owner discovery table');
+  const rows = (section) => section.split('\n')
+    .filter((line) => line.startsWith('| `'))
+    .map((line) => {
+      const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
+      return { dimension: cells[0].replaceAll('`', ''), cells: cells.slice(1) };
+    });
+  const expected = [...FULL_SOVEREIGNTY_DIMENSIONS_V1];
+  const coverageRows = rows(coverage);
+  const ownerRows = rows(ledger);
+  assert.deepEqual(coverageRows.map((row) => row.dimension), expected, 'coverage table drift or duplicate');
+  assert.deepEqual(ownerRows.map((row) => row.dimension), expected, 'owner ledger drift or duplicate');
+  for (const row of [...coverageRows, ...ownerRows]) {
+    assert.equal(row.cells.length, 2, 'each dimension needs two nonempty evidence/owner cells');
+    assert.ok(row.cells.every(Boolean));
+  }
+  for (const row of ownerRows) {
+    assert.ok(row.cells[0].includes('UNRESOLVED') || row.cells[0].includes('#'), 'owner must be an existing issue or explicitly unresolved');
+  }
+  assert.ok(markdown.includes('Every row remains `UNVERIFIED`'));
+  assert.match(markdown, /not evidence that external dependence has been removed/);
+});
+
+test('sovereignty owner references retain exact canonical titles at first mention', () => {
+  // Source-only regression for the independent owner-title review finding.
+  // These reviewed issue-title snapshots are not authority or custody assignments.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const titles = new Map([
+    ['3026', 'Seed: Stephanos Full Sovereignty for Every Function, Zero External Critical Dependencies'],
+    ['2968', 'Seed: Stephanos Sovereign Meter Independence across all metered services'],
+    ['1898', 'Programme: Zero-Codex Continuity and Provider Parity V1'],
+    ['2519', 'Build Sovereign Commander as the unmetered Battle Bridge control surface'],
+    ['2670', 'Mission: Stephanos Whole-System Capability Closure'],
+    ['2972', 'Seed: Continuous Goal Conveyor & Fleet Care'],
+    ['2593', 'Goal: Stephanos Core Daemon and meter-free Sovereign inspection'],
+    ['2962', 'Goal: Repair Native Capacity Publisher generated-dist source gate mismatch'],
+  ]);
+  const exactLink = (issue, title) =>
+    `[#${issue} — ${title}](https://github.com/Cheekyfellastef/stephan-os/issues/${issue})`;
+  const firstMentionIsTitleBound = (document, issue, title) => {
+    const first = document.indexOf(`#${issue}`);
+    return first >= 0 && document.indexOf(exactLink(issue, title)) === first - 1;
+  };
+  assert.deepEqual([...buildFullSovereigntySeedV1().existingOwnerIssueRefs].sort(),
+    [...titles.keys()].filter((issue) => issue !== '3026' && issue !== '2962').map((issue) => `#${issue}`).sort(),
+    'owner-title snapshot must track the canonical owner roster');
+  for (const [issue, title] of titles) {
+    assert.equal(firstMentionIsTitleBound(markdown, issue, title), true,
+      `#${issue} must first appear with its exact canonical title and issue URL`);
+    const stripped = markdown.replace(exactLink(issue, title), `#${issue}`);
+    const renamed = markdown.replace(exactLink(issue, title),
+      exactLink(issue, 'Incorrect owner title'));
+    assert.equal(firstMentionIsTitleBound(stripped, issue, title), false);
+    assert.equal(firstMentionIsTitleBound(renamed, issue, title), false);
+  }
+});
+
+test('offline external-edge acceptance requires remote idempotency or verified reconciliation', () => {
+  // A durable local queue alone cannot prove exactly-once remote delivery.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  assert.match(markdown, /remote idempotency or independently verified reconciliation prevents duplicates/);
+  assert.match(markdown, /Without remote idempotency or independently verified reconciliation, report delivery as `UNVERIFIED`/);
+  assert.doesNotMatch(markdown, /Without a remote idempotency contract, report delivery as `UNVERIFIED`/);
+  assert.doesNotMatch(markdown, /later exactly-once guarded delivery is the acceptable behavior/);
 });
