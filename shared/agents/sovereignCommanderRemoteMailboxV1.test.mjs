@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -3174,6 +3175,79 @@ test('single maintenance action reports a runner timeout as bounded failure inst
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
 });
+test('mobile original r7 census is fixed immutable-source and remains custody HOLD', async () => {
+  const invocations = [];
+  const census = {
+    schemaVersion: 'stephanos.original-source-custody-readonly-census.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectionMode: 'UNPRIVILEGED_READ_ONLY',
+    inspectedAtUtc: new Date().toISOString(),
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 7,
+    unknownObservations: [],
+    historicalExecutionOutcome: 'UNKNOWN', originalReceiptReconstructed: false,
+    independentWindowsExclusionProven: false, outOfJobWriterExclusionProven: false,
+    sourceAclDenialProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'INSPECTION_ONLY_CUSTODY_HOLD',
+    privateSecret: 'PRIVATE_HOST_PATH_DO_NOT_RETURN',
+  };
+  const spawn = (_exe, args) => {
+    invocations.push(args);
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('show')) return { status: 0, stdout: '# immutable script', stderr: '' };
+    if (args.includes('-EncodedCommand')) return { status: 0, stdout: JSON.stringify(census), stderr: '' };
+    return { status: 1, stdout: '', stderr: 'blocked' };
+  };
+  const { fetchFn, calls } = mcpFetch();
+  const examine = () => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'original-source-custody-census' }),
+    { spawnSyncFn: spawn, readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const result = await examine();
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD');
+  assert.equal(result.inspection.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+  assert.equal(result.inspection.leaseReleaseAuthorized, false);
+  assert.equal(result.privilegedWindowsWitnessCommissioned, false);
+  assert.equal(result.inspection.candidateProcessCount, 0);
+  assert.match(JSON.stringify(result), /INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_HOST_PATH_DO_NOT_RETURN/);
+  assert.equal(invocations.some(args => args.includes('-File')), false);
+  const encodedCommand = invocations.find(args => args.includes('-EncodedCommand'));
+  assert.ok(encodedCommand);
+  const decodedScript = Buffer.from(encodedCommand[encodedCommand.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+  assert.match(decodedScript, /PSScriptRoot = Join-Path/);
+  assert.ok(decodedScript.includes('scripts\\windows'));
+  assert.ok(decodedScript.endsWith('# immutable script'));
+  assert.equal(invocations.some(args => args.includes('show')
+    && args.includes(HEAD + ':scripts/windows/inspect-original-source-custody-readonly.ps1')), true);
+  assert.equal(calls.some(call => JSON.stringify(call).includes('maintenance_action')), false);
+  census.leaseReleaseAuthorized = true;
+  const forged = await examine();
+  assert.equal(forged.ok, false);
+  assert.equal(forged.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+  census.leaseReleaseAuthorized = false;
+  census.inspectedAtUtc = '2020-01-01T00:00:00.000Z';
+  const stale = await examine();
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+});
+test('mobile original r7 census rejects caller supplied executable targets or authority', () => {
+  for (const payload of [{pid:1},{path:'C:\\private'},{script:'evil'}, {signer:'self'}, {leaseReleaseAuthorized:true}]) {
+    const verdict = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction:'original-source-custody-census', ...payload,
+    }));
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '', remotePlan:['original-source-custody-census'],
+  })).ok, false);
+});
 test('read-only single action exits when MCP request ignores AbortSignal (no 16-minute ACCEPTED hang)', async () => {
   const base = mcpFetch();
   let stalledCalls = 0;
@@ -3252,4 +3326,146 @@ test('single maintenance action has an overall budget across health, MCP setup a
     return body.method === 'tools/call' && body.params?.name === 'maintenance_action';
   });
   assert.equal(actualMaintenance.length, 0);
+});
+
+test('75 logical goals produce a complete remote lane receipt through the real strict mailbox parser', async () => {
+  const source = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-16T20:47:30.459Z',
+    physical: {
+      expected: 5, building: 0, amber: 0, red: 5, unknown: 0,
+      allCurrent: false, allObservedEnabled: false,
+      finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+      controllers: Array.from({ length: 5 }, (_, index) => ({
+        controllerId: `controller-${index}`,
+        title: `Controller ${index}`,
+        freshness: 'STALE', activityState: 'WAITING',
+        trafficLight: 'RED', blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+        materialLaneCount: 0, activeLaneCount: 0,
+        parkedLaneCount: 0, safeEligibleWorkRemaining: 0,
+        materialLanes: [{ proofRef: 'PRIVATE_PROOF_DO_NOT_EXPOSE' }],
+      })),
+    },
+    logical: {
+      current: true, valid: true, observedAtUtc: '2026-10-16T20:47:30.459Z',
+      physicalControllerCount: 5, total: 75, active: 0,
+      tracking: 70, parked: 5, retired: 0, selectedForAdmission: 17,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [],
+      controllers: Array.from({ length: 75 }, (_, index) => ({
+        logicalControllerId: `logical-${index}`,
+        title: `PRIVATE_GOAL_${index}_${'x'.repeat(220)}`,
+        workerPath: 'PRIVATE_WORKER_PATH_DO_NOT_EXPOSE',
+        selectedForAdmission: index < 17,
+      })),
+    },
+    lanes: {
+      targetMaterialLanes: 15, activeMaterialLaneCount: 0,
+      selectedMaterialPickupProvenCount: 0, activeLaneClaimCount: 0,
+      reportedMaterialLaneCountSum: 0, occupancyPercent: 0,
+      freeTargetLaneSlots: 15, runnableBacklogCount: 0,
+      parkedPhysicalLaneCount: 0, reportedSafeEligibleWorkMax: 0,
+      reportedSafeEligibleWorkSum: 0,
+      refillHealth: 'AMBER', refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+    },
+    readOnly: true, arbitraryShellAllowed: false,
+    sourceMutationAllowed: false, mergeAuthority: false,
+    secretMaterialIncluded: false, unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(source)) > 16 * 1024);
+  const remote = projectBoundedRemoteControllerLaneStatus(source);
+  const stdout = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='
+    + JSON.stringify(remote) + '\n';
+  assert.ok(Buffer.byteLength(stdout) < 12 * 1024);
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'controller-lane-status' } },
+    structuredContent: { ok: true, status: 0, stdout, stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'controller-lane-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE');
+  assert.equal(result.controllerLaneStatus.logical.total, 75);
+  assert.equal(result.controllerLaneStatus.logical.selectedForAdmission, 17);
+  assert.equal(result.controllerLaneStatus.physical.red, 5);
+  assert.equal(result.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  assert.equal(result.controllerLaneStatus.unknownMeansGreen, false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_GOAL_'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_WORKER_PATH'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_PROOF'), false);
+});
+
+test('Island boundary remote action permits only a fixed read-only probe and no caller path', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'rescue-island-readonly-boundary',
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.command.remoteAction, 'rescue-island-readonly-boundary');
+  for (const field of [{ targetPath: 'C:\\\\private' }, { args: ['--write'] },
+    { workerId: 'rescue-island-01' }, { command: 'git add .' }]) {
+    const value = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction: 'rescue-island-readonly-boundary', ...field,
+    }));
+    assert.equal(value.ok, false);
+    assert.equal(value.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+});
+
+test('live Island scope needs an exact machine marker before public DONE', async () => {
+  const clean = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const run = async output => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        contentText: 'RAW PRIVATE NATIVE DATA',
+        structuredContent: {
+          ok: true, status: 0,
+          stdout: output, stderr: 'PRIVATE CENSUS STDERR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  const safe = await run('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\n');
+  assert.equal(safe.ok, true);
+  assert.equal(safe.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(safe.rescueIslandBoundary?.readOnly, true);
+  assert.equal(safe.rescueIslandBoundary?.sourceMutationAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.originalSourceLeaseReleaseAllowed, false);
+  assert.doesNotMatch(JSON.stringify(safe), /RAW PRIVATE|PRIVATE CENSUS/);
+
+  for (const output of [
+    'private success without child proof',
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify({ ...clean, workerStartAllowed: true }),
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\nPRIVATE FILE',
+  ]) {
+    const denied = await run(output);
+    assert.equal(denied.ok, false);
+    assert.equal(denied.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+    assert.equal(denied.sourceMutationAllowed, undefined);
+    assert.doesNotMatch(JSON.stringify(denied), /RAW PRIVATE|PRIVATE CENSUS/);
+  }
 });

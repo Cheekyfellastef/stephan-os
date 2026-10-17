@@ -113,6 +113,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs'), '--snapshot-only']),
       timeoutMs: 20_000,
     }),
+    'rescue-island-readonly-boundary': frozen({
+      executable: node,
+      args: frozen([nodeFile('rescue-island-boundary-probe.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'visibility-snapshot': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
