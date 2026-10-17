@@ -78,8 +78,8 @@ test('publisher refreshes all six actual seed heartbeats without duplicating the
   assert.equal(first.ok, true);
   assert.equal(first.legacyGoalRetirement.ok, true);
   assert.equal(first.legacyGoalRetirement.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_RETIRED_OR_ABSENT');
-  assert.equal(first.expectedHighLevelSeedCount, 9);
-  assert.equal(first.publishedHighLevelSeedCount, 9);
+  assert.equal(first.expectedHighLevelSeedCount, 10);
+  assert.equal(first.publishedHighLevelSeedCount, 10);
   assert.deepEqual(
     first.seedHeartbeatWrites.map((entry) => entry.seedId).sort(),
     HIGH_LEVEL_FLYWHEEL_SEEDS_V1.map((seed) => seed.seedId).sort(),
@@ -92,7 +92,7 @@ test('publisher refreshes all six actual seed heartbeats without duplicating the
   });
   assert.equal(second.ok, true);
   assert.equal(second.eventWrite.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_PLANTING_EVENT_ALREADY_PRESENT');
-  assert.equal(second.publishedHighLevelSeedCount, 9);
+  assert.equal(second.publishedHighLevelSeedCount, 10);
 
   const status = JSON.parse(await readFile(
     join(root, 'status', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`),

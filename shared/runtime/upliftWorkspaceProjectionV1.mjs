@@ -35,6 +35,11 @@ import {
   FULL_SOVEREIGNTY_MISSION_ID,
   buildFullSovereigntySeedV1,
 } from './fullSovereigntySeedV1.mjs';
+import {
+  OPENCLAW_EXCELLENCE_ISSUE,
+  OPENCLAW_EXCELLENCE_MISSION_ID,
+  buildOpenClawExcellenceSeedV1,
+} from './openClawExcellenceSeedV1.mjs';
 import { GOAL_CONVEYOR_FLEET_CARE_MISSION_ID, GOAL_CONVEYOR_FLEET_CARE_ISSUE, GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1, buildGoalConveyorFleetCareSeedV1 } from './goalConveyorFleetCareSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
@@ -1731,6 +1736,135 @@ function deriveFullSovereigntySeedGrowth(payload = {}) {
 }
 
 
+function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
+  const contract = buildOpenClawExcellenceSeedV1();
+  const expectedSource = 'shared/runtime/openClawExcellenceSeedV1.mjs';
+  const records = payload.records || {};
+  // A fresh leaf heartbeat cannot overrule the containing stale/error feed.
+  const feedCurrent = payload.state === 'ready'
+    && list(payload.errors).length === 0
+    && (payload.projection?.sourceFreshness?.truth === undefined
+      || payload.projection.sourceFreshness.truth === 'CURRENT');
+  const heartbeat = feedCurrent ? latestByTime(list(records.statusRecords).filter((record) => {
+    const stamp = Date.parse(record?.timestampUtc);
+    return record.statusId === OPENCLAW_EXCELLENCE_MISSION_ID
+      && record.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
+      && record.seedHeartbeat?.schemaVersion === 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+      && record.seedHeartbeat.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
+      && record.seedHeartbeat.issueRef === OPENCLAW_EXCELLENCE_ISSUE
+      && record.seedHeartbeat.contractSource === expectedSource
+      && Number.isFinite(stamp)
+      && stamp <= nowMs && nowMs - stamp <= 60 * 60 * 1000;
+  })) : null;
+  const planted = Boolean(heartbeat);
+  const relevant = planted ? [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter((record) => record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
+      && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE) : [];
+  // Only observed, time-bounded evidence may influence authority-bearing
+  // growth rungs, proof totals, latest proof time or gap pressure. A future
+  // timestamp is not proof that work happened, even with a current feed.
+  const observed = relevant.filter((record) => {
+    const stamp = recordTimeMs(record);
+    return stamp > 0 && stamp <= nowMs && nowMs - stamp <= 60 * 60 * 1000;
+  });
+  // Latest evidence must be admitted proof, not a forged or rejected PASS event.
+  // The source-bound heartbeat is the baseline when no admissible rung proof exists.
+  const proved = observed.filter((record) => record !== heartbeat
+    && record?.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
+    && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
+    && isPositiveProofRecord(record) && proofRefs(record).length > 0);
+  const agents = contract.agentIdentities.map((agent) => agent.participantId);
+  const agentScopedRungs = new Set([
+    'INVENTORY_BOTH_AGENTS',
+    'QUALIFY_AGENT_SPECIFIC_SKILLS',
+    'PROVE_END_TO_END_TASK_PARITY',
+    'PROVE_SOVEREIGN_ENDURANCE',
+  ]);
+  // Rejected qualification/parity self-attestations are neither rung proof
+  // nor countable proof telemetry. Only accepted observational rung evidence
+  // enters this display total; authority-bearing claims await trusted review.
+  const isAdmittedRungRecord = (record, rung, agentId = '') => {
+    const evidence = record.openClawExcellenceEvidence;
+    if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
+      || evidence.rung !== rung || !contract.growthRungs.includes(rung)
+      || rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
+      || rung === 'PROVE_END_TO_END_TASK_PARITY') return false;
+    return !agentId || (evidence.agentId === agentId && actorId(record) === agentId);
+  };
+  const admittedProofRecords = proved.filter((record) => {
+    const rung = record.openClawExcellenceEvidence?.rung;
+    return agentScopedRungs.has(rung)
+      ? agents.some((agentId) => isAdmittedRungRecord(record, rung, agentId))
+      : isAdmittedRungRecord(record, rung);
+  });
+  const hasRungProof = (rung, agentId) => admittedProofRecords.some((record) =>
+    isAdmittedRungRecord(record, rung, agentId));
+  const rungProof = contract.growthRungs.map((rung) => {
+    if (rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
+      || rung === 'PROVE_END_TO_END_TASK_PARITY') {
+      // Fail closed: Shared Workspace events/refs and success booleans are not
+      // authenticated ten-question exams, independent reviewer decisions or
+      // operator approvals. This presentation projection cannot authenticate
+      // the immutable task/head and authority-bound external receipts; a
+      // separate trusted admission contract must first be implemented.
+      return false;
+    }
+    return agentScopedRungs.has(rung)
+      ? agents.every((id) => hasRungProof(rung, id))
+      : hasRungProof(rung);
+  });
+  const firstMissing = rungProof.findIndex((done) => !done);
+  const currentRungIndex = planted ? (firstMissing < 0 ? rungProof.length - 1 : firstMissing) : null;
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex];
+  const currentGaps = deriveGapHistory(observed).current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: currentRung,
+    healthState: !planted ? 'AWAITING_LIVE_PROOF' : currentGaps.length
+      ? 'AGENT_CAPABILITY_GAPS_PRESENT' : firstMissing < 0 ? 'EVIDENCE_COMPLETE_RETEST_REQUIRED' : 'LEARNING',
+    sourceTruth: !feedCurrent
+      ? (payload.state === 'stale' || payload.projection?.sourceFreshness?.truth === 'STALE'
+        ? 'STALE' : 'UNKNOWN')
+      : planted ? truthFromRecord(heartbeat) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    agentIdentities: contract.agentIdentities,
+    taskClasses: contract.taskClasses,
+    currentRungIndex,
+    currentRung,
+    nextGrowthRung: planted && firstMissing >= 0 ? contract.growthRungs[firstMissing] : '',
+    pressureState: !planted ? 'UNKNOWN' : currentGaps.length || firstMissing >= 0 ? 'ACTIVE' : 'CURRENT',
+    proofCount: planted ? admittedProofRecords.flatMap(proofRefs).length : null,
+    rungProofCount: planted ? rungProof.filter(Boolean).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: planted ? safeTime(latestByTime([heartbeat, ...admittedProofRecords]) || heartbeat) : '',
+    nextBestAction: !planted
+      ? 'Publish the #3094 exact-source-bound seed heartbeat; prove Local and Standalone runtime separately.'
+      : currentGaps.length
+        ? 'Deduplicate the first evidenced OpenClaw gap to its canonical owner: ' + currentGaps[0].summary
+        : firstMissing >= 0
+          ? contract.growthActions[firstMissing]
+          : 'Continue per-agent updates, skill reviews and fair Codex task-class rebenchmarks with fresh runtime receipts.',
+  });
+}
+
+
 const FLEET_STAGES = Object.freeze([
   'fleet-inventory-verified', 'fleet-health-verified', 'goal-select-claim-proven',
   'worker-pickup-proven', 'goal-build-live-proof', 'blocked-goal-recovered',
@@ -1866,6 +2000,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth({}),
       sovereignMeterIndependenceSeedGrowth: deriveSovereignMeterIndependenceSeedGrowth({}),
       fullSovereigntySeedGrowth: deriveFullSovereigntySeedGrowth({}),
+      openClawExcellenceSeedGrowth: deriveOpenClawExcellenceSeedGrowth({}, options.nowMs),
       goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
@@ -1876,6 +2011,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
         deriveWorkspaceIntegritySeedGrowth({}),
         deriveSovereignMeterIndependenceSeedGrowth({}),
         deriveFullSovereigntySeedGrowth({}),
+        deriveOpenClawExcellenceSeedGrowth({}, options.nowMs),
         deriveGoalConveyorFleetCareSeedGrowth({}, options.nowMs),
       ]),
       stats: Object.freeze({
@@ -1919,6 +2055,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
     workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth(payload),
     sovereignMeterIndependenceSeedGrowth: deriveSovereignMeterIndependenceSeedGrowth(payload),
     fullSovereigntySeedGrowth: deriveFullSovereigntySeedGrowth(payload),
+    openClawExcellenceSeedGrowth: deriveOpenClawExcellenceSeedGrowth(payload, options.nowMs),
     goalConveyorFleetCareSeedGrowth: deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
@@ -1929,6 +2066,7 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       deriveWorkspaceIntegritySeedGrowth(payload),
       deriveSovereignMeterIndependenceSeedGrowth(payload),
       deriveFullSovereigntySeedGrowth(payload),
+      deriveOpenClawExcellenceSeedGrowth(payload, options.nowMs),
       deriveGoalConveyorFleetCareSeedGrowth(payload, options.nowMs),
     ].map((seed) => Object.freeze({ ...seed,
       growthWork: projectSeedGrowthWorkV1(seed.missionId, payload.records.goalRecords,
