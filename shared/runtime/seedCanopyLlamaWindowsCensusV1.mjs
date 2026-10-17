@@ -61,9 +61,11 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
 
   // A router or registered child launched during enumeration may escape the
   // initial scan. Require the entire registered launch tree to predate it.
+  // Equal millisecond timestamps are ambiguous at the scan boundary;
+  // fail closed instead of claiming a launch was fully enumerated.
   if (Number.isFinite(started)
-    && (Date.parse(registration.routerStartedAtUtc) > started
-      || registration.registeredDescendants.some(d => Date.parse(d.startedAtUtc) > started)))
+    && (Date.parse(registration.routerStartedAtUtc) >= started
+      || registration.registeredDescendants.some(d => Date.parse(d.startedAtUtc) >= started)))
     reasons.push('LAUNCH_OVERLAPS_CENSUS');
   const byPid = new Map();
   for (const process of processes) {

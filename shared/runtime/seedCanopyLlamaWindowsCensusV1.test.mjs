@@ -123,6 +123,22 @@ test('registration launched after census begins cannot look absent', () => {
   assert.equal(lateChild.processTreeAbsentCandidate, false);
 });
 
+test('router or descendant launch at the exact scan-start timestamp fails closed', () => {
+  const atStart = snapshot.enumerationStartedAtUtc;
+  const rootAtStart = check(snapshot, { ...registration,
+    routerStartedAtUtc: atStart,
+    registeredDescendants: [{ pid: 4101, startedAtUtc: atStart }],
+  });
+  assert.ok(rootAtStart.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
+  assert.equal(rootAtStart.processTreeAbsentCandidate, false);
+  const childAtStart = check(snapshot, { ...registration,
+    registeredDescendants: [{ pid: 4101, startedAtUtc: atStart }],
+  });
+  assert.ok(childAtStart.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
+  assert.equal(childAtStart.processTreeAbsentCandidate, false);
+  assert.equal(childAtStart.mayLiftInferenceHold, false);
+});
+
 test('Windows collector captures bounded observation window around process enumeration', () => {
   // Static source contract only: CI cannot establish a live Windows/VRAM witness.
   const script = readFileSync(new URL('../../scripts/windows/get-seed-canopy-llama-process-census-v1.ps1', import.meta.url), 'utf8');
