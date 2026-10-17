@@ -11,6 +11,9 @@ $servicePresent = $false
 $serviceStatus = 'NOT_INSTALLED'
 $processCount = $null
 $taskCount = $null
+$publisherTaskPresent = $false
+$publisherTaskState = 'UNKNOWN'
+$publisherLastResultClass = 'UNKNOWN'
 
 try {
     # Pin the service name in the source. Never accept an input name or image.
@@ -49,6 +52,24 @@ try {
     $tasks = @(Get-ScheduledTask -ErrorAction Stop |
         Where-Object { ([string]$_.TaskName).StartsWith('Stephanos') })
     $taskCount = $tasks.Count
+    # Exact task associated with #2962; never infer it owns the R7 lease.
+    # Classifications only. Never emit task principal, action, path or PID.
+    $publisherMatches = @($tasks | Where-Object { [string]$_.TaskName -eq 'Stephanos Native Capacity Publisher' })
+    if ($publisherMatches.Count -eq 0) {
+        $publisherTaskState = 'NOT_FOUND'
+    } elseif ($publisherMatches.Count -ne 1) {
+        $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE'
+    } else {
+        $publisherTaskPresent = $true
+        $state = ([string]$publisherMatches[0].State).ToUpperInvariant()
+        $publisherTaskState = if ($state -in @('READY', 'RUNNING', 'DISABLED', 'QUEUED')) { $state } else { 'UNKNOWN' }
+        try {
+            $info = Get-ScheduledTaskInfo -TaskName 'Stephanos Native Capacity Publisher' -ErrorAction Stop
+            if ($null -ne $info -and $null -ne $info.LastTaskResult) {
+                $publisherLastResultClass = if ([long]$info.LastTaskResult -eq 0) { 'ZERO' } else { 'NONZERO' }
+            } else { $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE' }
+        } catch { $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE' }
+    }
 } catch { $unknown += 'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE' }
 
 try {
@@ -71,6 +92,9 @@ $report = [ordered]@{
     serviceStatus = $serviceStatus
     originalProcessCandidateCount = $processCount
     relatedTaskCount = $taskCount
+    publisherTaskPresent = [bool]$publisherTaskPresent
+    publisherTaskState = $publisherTaskState
+    publisherLastResultClass = $publisherLastResultClass
     unknownObservations = @($unknown | Sort-Object -Unique)
     privilegedServiceSidVerified = $false
     sourceAclDenialEnforced = $false

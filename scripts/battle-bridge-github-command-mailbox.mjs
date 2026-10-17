@@ -1507,6 +1507,10 @@ function safeOriginalR7WitnessReadinessProjection(result = {}) {
     || typeof value.servicePresent !== 'boolean'
     || !['RUNNING', 'STOPPED', 'NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus)
     || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
+    || typeof value.publisherTaskPresent !== 'boolean'
+    || !['RUNNING', 'READY', 'DISABLED', 'QUEUED', 'NOT_FOUND', 'UNKNOWN'].includes(value.publisherTaskState)
+    || !['ZERO', 'NONZERO', 'UNKNOWN'].includes(value.publisherLastResultClass)
+    || value.publisherOriginalWriterAuthenticated !== false
     || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
     || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))
     || ORIGINAL_R7_MANDATORY_HOLDS.some(code => !value.blockers.includes(code))) return null;
@@ -1518,6 +1522,10 @@ function safeOriginalR7WitnessReadinessProjection(result = {}) {
     observedAtUtc: stamp,
     servicePresent: value.servicePresent,
     serviceStatus: value.serviceStatus,
+    publisherTaskPresent: value.publisherTaskPresent,
+    publisherTaskState: value.publisherTaskState,
+    publisherLastResultClass: value.publisherLastResultClass,
+    publisherOriginalWriterAuthenticated: false,
     blockers: Object.freeze([...new Set(value.blockers)]),
     historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
     physicalPickupProven: false, leaseReleaseAuthority: false,

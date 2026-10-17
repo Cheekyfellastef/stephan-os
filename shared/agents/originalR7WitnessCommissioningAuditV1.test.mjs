@@ -17,6 +17,9 @@ const observation = () => ({
   serviceStatus: 'NOT_INSTALLED',
   originalProcessCandidateCount: 0,
   relatedTaskCount: 6,
+  publisherTaskPresent: true,
+  publisherTaskState: 'READY',
+  publisherLastResultClass: 'NONZERO',
   unknownObservations: [],
   privilegedServiceSidVerified: false,
   sourceAclDenialEnforced: false,
@@ -30,6 +33,22 @@ const observation = () => ({
   finalVerdict: 'COMMISSIONING_NOT_PROVEN',
 });
 const inspect = input => project(input, { nowUtc: now });
+
+test('native publisher exact-name task is contextual evidence, not authenticated original R7 writer', () => {
+  const result = inspect(observation());
+  assert.equal(result.observable, true);
+  assert.equal(result.publisherTaskPresent, true);
+  assert.equal(result.publisherTaskState, 'READY');
+  assert.equal(result.publisherLastResultClass, 'NONZERO');
+  assert.equal(result.publisherOriginalWriterAuthenticated, false);
+  assert.equal(result.leaseReleaseAuthority, false);
+  const absent = inspect({ ...observation(),
+    publisherTaskPresent: false, publisherTaskState: 'NOT_FOUND',
+    publisherLastResultClass: 'UNKNOWN',
+  });
+  assert.equal(absent.observable, true);
+  assert.equal(absent.publisherOriginalWriterAuthenticated, false);
+});
 
 test('uncommissioned Windows witness remains an explicit hold', () => {
   const result = inspect(observation());
@@ -89,6 +108,9 @@ test('forged eligibility, authority, wrong identity, unknown evidence or old sna
     { servicePresent: 'true' }, { serviceStatus: 'GREEN' },
     { observedAtUtc: '2026-10-14T19:57:00.000Z' },
     { originalProcessCandidateCount: -1 }, { relatedTaskCount: -1 },
+    { publisherTaskPresent: 'true' }, { publisherTaskState: 'ACTIVE' },
+    { publisherLastResultClass: 1 },
+    { publisherTaskPresent: false, publisherTaskState: 'RUNNING' },
     { unknownObservations: ['CONTENTION_CLEARED'] },
     { privilegedServiceSidVerified: true }, { sourceAclDenialEnforced: true },
     { outOfJobWritersExcluded: true }, { wmiComRelaunchDenied: true },
