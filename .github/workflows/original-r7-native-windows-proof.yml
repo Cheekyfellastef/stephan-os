@@ -7,6 +7,8 @@ on:
     paths:
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
+      - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
+      - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js'
       - '.github/workflows/original-r7-native-windows-proof.yml'
 
 permissions:
@@ -32,6 +34,12 @@ jobs:
         shell: pwsh
         run: |
           dotnet run --project src/windows/Stephanos.OriginalR7DaclReadback.Tests --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test independent R7 signed evidence trust-file handling
+        shell: pwsh
+        run: |
+          # Synthetic signatures prove parser/handle safety only; not Battle Bridge containment.
+          node --test stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Identify non-production evidence boundary
         if: always()
