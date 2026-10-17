@@ -177,6 +177,7 @@ test('offline external-edge acceptance requires remote idempotency or verified r
   // A durable local queue alone cannot prove exactly-once remote delivery.
   const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
   assert.match(markdown, /remote idempotency or independently verified reconciliation prevents duplicates/);
-  assert.match(markdown, /Without a remote idempotency contract, report delivery as `UNVERIFIED`/);
+  assert.match(markdown, /Without remote idempotency or independently verified reconciliation, report delivery as `UNVERIFIED`/);
+  assert.doesNotMatch(markdown, /Without a remote idempotency contract, report delivery as `UNVERIFIED`/);
   assert.doesNotMatch(markdown, /later exactly-once guarded delivery is the acceptable behavior/);
 });
