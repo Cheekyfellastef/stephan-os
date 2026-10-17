@@ -73,3 +73,22 @@ Windows user token cannot stand in for that historical identity.
 
 This package intentionally has NO installer or release command. Testing source
 or opening a PR is NOT a machine custody receipt, deployment or build proof.
+
+## Bounded original-token multi-file negative-open survey (source only)
+
+`OriginalR7WriterScopePreflight.ObserveBoundedFiles` adds a fixed-limit,
+read-only ordinary-file enumeration and individual native OPEN_EXISTING
+DATA/APPEND/WRITE_DAC/WRITE_OWNER access-denial observations using the retained,
+unmodified original-token handle supplied by a separate qualified OS security
+owner. It rejects reparse points, noncanonical paths, unknown ownership/token
+state, missing files, incomplete traversal and all over-budget surveys. It does
+not traverse through junctions, create or edit source entries, or publish paths,
+SIDs or handles.
+
+Even a fully denied bounded sample means **sample only**. It is not a
+whole-source witness because directory create rights, unsampled/replaced
+objects, other actors, existing writable mappings/handles, task/service/WMI/COM
+re-entry, historical outcome, audit and two independently protected signers
+remain unproven. The service does NOT invoke this survey from SCM OnStart and
+the public mailbox CANNOT supply the original token or scope. A CI runner's
+identity remains untrusted; source tests verify fail-closed gates only.

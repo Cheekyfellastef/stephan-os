@@ -160,6 +160,52 @@ using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
         "WRITER_NO_TARGET_NO_DENIAL");
     WriterAlwaysHeld(unknown, "WRITER_NO_TARGET");
 }
+
+void ScopeAlwaysHeld(OriginalR7WriterScopeObservation r, string id)
+{
+    Check(!r.OriginalPrincipalProvenanceAuthenticated, id + "_ORIGINAL_ID_UNKNOWN");
+    Check(!r.AllOriginalSourceWritersExcluded, id + "_WHOLE_SOURCE_UNPROVEN");
+    Check(!r.ExistingWriterHandlesExcluded, id + "_OLD_HANDLES_UNPROVEN");
+    Check(!r.DirectAndTaskRelaunchExcluded, id + "_RELAUNCH_UNPROVEN");
+    Check(!r.ProtectedAuditVerified, id + "_AUDIT_UNPROVEN");
+    Check(!r.SigningAuthorityGranted, id + "_NO_SIGNER");
+    Check(!r.LeaseReleaseAuthorized, id + "_NO_RELEASE");
+}
+OriginalR7WriterScopeObservation sample =
+    OriginalR7WriterScopePreflight.EvaluateCounts(3, 3, true, false);
+Check(sample.BoundedSampleAllDenied, "SCOPE_FINITE_SAMPLE_MATCHED");
+Check(sample.Classification == "R7_BOUNDED_FILE_OPENS_DENIED_NOT_CUSTODY",
+    "SCOPE_SAMPLE_NOT_WHOLE_SOURCE");
+ScopeAlwaysHeld(sample, "SCOPE_SAMPLE");
+var scopeInputs = new (string Name, OriginalR7WriterScopeObservation Report)[]
+{
+    ("EMPTY", OriginalR7WriterScopePreflight.EvaluateCounts(0, 0, true, false)),
+    ("PARTIAL", OriginalR7WriterScopePreflight.EvaluateCounts(3, 2, true, false)),
+    ("OVERFULL", OriginalR7WriterScopePreflight.EvaluateCounts(129, 129, true, false)),
+    ("TRUNCATED", OriginalR7WriterScopePreflight.EvaluateCounts(2, 2, false, false)),
+    ("REPARSE", OriginalR7WriterScopePreflight.EvaluateCounts(2, 2, true, true)),
+    ("OVERCOUNT", OriginalR7WriterScopePreflight.EvaluateCounts(2, 3, true, false)),
+    ("NEGATIVE", OriginalR7WriterScopePreflight.EvaluateCounts(-1, 0, true, false))
+};
+foreach (var (name, report) in scopeInputs)
+{
+    Check(!report.BoundedSampleAllDenied, "SCOPE_" + name + "_NO_SUCCESS");
+    ScopeAlwaysHeld(report, "SCOPE_" + name);
+}
+using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+{
+    var token = identity.AccessToken;
+    string sid = identity.User?.Value ?? "";
+    // An ordinary runner SID can never certify the old r7 writer identity.
+    var invalid = OriginalR7WriterScopePreflight.ObserveBoundedFiles(
+        @"\\untrusted\share", token, sid);
+    Check(!invalid.BoundedSampleAllDenied, "SCOPE_UNTRUSTED_NETWORK_ROOT_DENIED");
+    ScopeAlwaysHeld(invalid, "SCOPE_UNTRUSTED_ROOT");
+    var noToken = OriginalR7WriterScopePreflight.ObserveBoundedFiles(
+        Path.GetTempPath(), new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(IntPtr.Zero), sid);
+    Check(!noToken.BoundedSampleAllDenied, "SCOPE_MISSING_TOKEN_DENIED");
+    ScopeAlwaysHeld(noToken, "SCOPE_MISSING_TOKEN");
+}
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");
