@@ -16,6 +16,7 @@ import {
   createSanitizedCriticalBacklogStatusProjection,
   createSanitizedProgrammeAuthorityStatusProjection,
   readNativeCapacityProgrammeTelemetry,
+  readNativeCapacityPublisherHeadDiagnosticV1,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
@@ -3096,6 +3097,75 @@ test('read-only programme receipt exposes observed original lease identity witho
 });
 
 
+test('gate-13 publisher head diagnostics distinguish stale unsigned claims without granting native capacity', async () => {
+  const target = 'a'.repeat(40), stale = 'b'.repeat(40);
+  const status = sourceHead => JSON.stringify({
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    statusId: 'stephanos-native-capacity-current',
+    capacityReceipt: { payload: { sourceHead, privateKeyPem: 'CANARY_SECRET' } },
+  });
+  const mismatch = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(stale),
+  });
+  assert.equal(mismatch.nativePublisherDiagnosticOnly, true);
+  assert.equal(mismatch.nativePublisherObservedHead, stale);
+  assert.equal(mismatch.nativePublisherHeadMatchesExpected, false);
+  assert.equal(mismatch.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD');
+  assert.equal(mismatch.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
+  assert.doesNotMatch(JSON.stringify(mismatch), /CANARY_SECRET/);
+  const sameUnsigned = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status(target),
+  });
+  assert.equal(sameUnsigned.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED');
+  assert.equal(sameUnsigned.nativePublisherHeadMatchesExpected, true);
+  const verifiedGateStillFails = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({ ok: false, reason: 'STEPHANOS_NATIVE_CAPACITY_RECEIPT_INVALID:SOURCE-HEAD-INVALID' }),
+    diagnosticReader: () => sameUnsigned,
+  });
+  assert.equal(verifiedGateStillFails.nativeCapacityVerified, false);
+  assert.equal(verifiedGateStillFails.nativeCapacitySourceHead, '');
+  assert.equal(verifiedGateStillFails.nativePublisherHeadMatchesExpected, true);
+  assert.equal(verifiedGateStillFails.nativePublisherDiagnosticBinding, 'UNBOUND_UNSIGNED_STATUS');
+  // A publisher update between the verifier read and a separate file read
+  // must not generate contradictory "signed green + stale unsigned head".
+  let unsignedCalls = 0;
+  const signedResult = await readNativeCapacityProgrammeTelemetry({
+    expectedHead: target,
+    verifier: async () => ({
+      ok: true,
+      candidate: {
+        sourceHead: target,
+        repository: 'Cheekyfellastef/stephan-os',
+        taskClass: 'FOCUSED_REPAIR',
+        sourceMutationAllowed: true,
+        mergeAuthority: false,
+        leaseSeizureAllowed: false,
+        model: 'qwen-test', capacityReceiptId: 'signed-test',
+      },
+    }),
+    diagnosticReader: () => {
+      unsignedCalls += 1;
+      return mismatch;
+    },
+  });
+  assert.equal(signedResult.nativeCapacityVerified, true);
+  assert.equal(signedResult.nativePublisherObservedHead, target);
+  assert.equal(signedResult.nativePublisherHeadMatchesExpected, true);
+  assert.equal(signedResult.nativePublisherDiagnosticBinding, 'SIGNED_VERIFIER_CANDIDATE');
+  assert.equal(signedResult.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD');
+  assert.equal(unsignedCalls, 0);
+  const invalid = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => status('not-a-sha'),
+  });
+  assert.equal(invalid.nativePublisherObservedHead, '');
+  assert.equal(invalid.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  const absent = readNativeCapacityPublisherHeadDiagnosticV1({
+    expectedHead: target, readStatus: () => { const e = new Error('absent'); e.code = 'ENOENT'; throw e; },
+  });
+  assert.equal(absent.nativePublisherDiagnosticReason, 'NATIVE_PUBLISHER_STATUS_MISSING');
+});
+
 test('native programme proof checks the signed router and exposes only exact-head bounded truth', async () => {
   const head = 'a'.repeat(40);
   const observed = [];
@@ -3285,4 +3355,122 @@ test('native capacity public projection rejects unverifiable head and untrusted 
     assert.equal(posted.result.result.nativeCapacityReceiptId, '');
     assert.doesNotMatch(JSON.stringify(posted), /Users|private-model/i);
   }
+});
+
+test('Island physical readback survives normal and core public mailbox projection without writer authority', () => {
+  const sha = 'a'.repeat(40);
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    privatePath: 'PRIVATE_ISLAND_PATH_NEVER_PUBLISH',
+  };
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+    remoteAction: 'rescue-island-readonly-boundary',
+    sourceHead: sha, proofHash: 'b'.repeat(64),
+    sourceMutationAllowed: false, originalSourceLeaseReleaseAllowed: false,
+    mergeAuthority: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    rescueIslandBoundary: scope, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'island-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: sha,
+    acceptedAt: '2026-10-16T20:20:00.000Z',
+    heartbeatAt: '2026-10-16T20:20:02.000Z',
+    completedAt: '2026-10-16T20:20:02.000Z', proofRefs: [],
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'island-readback-001', result: inner,
+    },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const out = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const observed = out.result.result.rescueIslandBoundary;
+    assert.equal(observed?.finalVerdict, 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED', String(limit));
+    assert.equal(observed.readOnly, true);
+    assert.equal(observed.workerStartAllowed, false);
+    assert.equal(observed.originalSourceLeaseReleaseAllowed, false);
+    assert.equal(observed.gamingBudgetAuthenticated, false);
+    assert.doesNotMatch(JSON.stringify(out), /PRIVATE_ISLAND_PATH_NEVER_PUBLISH/);
+  }
+  inner.rescueIslandBoundary = { ...scope, workerStartAllowed: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.rescueIslandBoundary, null);
+  inner.rescueIslandBoundary = scope;
+  inner.originalSourceLeaseReleaseAllowed = true;
+  const escalated = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(escalated.result.result.rescueIslandBoundary, null);
+});
+
+test('mobile custody census survives normal and core public receipt projections without secrets', () => {
+  const head = 'a'.repeat(40);
+  const inspection = {
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc: '2026-10-15T15:30:00.000Z',
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 6,
+    blockers: ['INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED', 'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN'],
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    rawPrivateHostPath: 'PRIVATE_CUSTODY_HOST_PATH',
+  };
+  const inner = {
+    ok: true, remoteAction: 'original-source-custody-census',
+    finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+    sourceHead: head, proofHash: 'b'.repeat(64),
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    inspection, codexLastMessage: 'noise-'.repeat(1800),
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'mobile-custody-census-receipt-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE', expectedHead: head,
+    acceptedAt: '2026-10-15T15:30:00.000Z',
+    heartbeatAt: '2026-10-15T15:30:02.000Z',
+    completedAt: '2026-10-15T15:30:02.000Z', proofRefs: [],
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'mobile-custody-census-receipt-001', result: inner },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const publicReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const projected = publicReceipt.result.result.originalSourceCustodyCensus;
+    assert.ok(projected, 'custody census missing at limit ' + limit);
+    assert.equal(projected.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+    assert.equal(projected.candidateProcessCount, 0);
+    assert.equal(projected.stephanosScheduledTaskCount, 6);
+    assert.equal(projected.leaseReleaseAuthorized, false);
+    assert.deepEqual(projected.blockers, inspection.blockers);
+    assert.doesNotMatch(JSON.stringify(publicReceipt), /PRIVATE_CUSTODY_HOST_PATH/);
+  }
+  inner.inspection = { ...inspection, leaseReleaseAuthorized: true };
+  const forged = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(forged.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, candidateProcessCount: 1_000_001 };
+  const unbounded = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(unbounded.result.result.originalSourceCustodyCensus, null);
+  inner.inspection = { ...inspection, blockers: [...inspection.blockers, 'SECRET_PATH_C:\\private'] };
+  const injected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(injected.result.result.originalSourceCustodyCensus, null);
+  assert.doesNotMatch(JSON.stringify(injected), /SECRET_PATH_C:/);
 });

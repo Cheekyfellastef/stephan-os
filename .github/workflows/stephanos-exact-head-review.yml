@@ -173,9 +173,8 @@ jobs:
           }));
           NODE
 
-      # One atomic fail-closed gate. The trusted reviewer emits immutable P2
-      # findings; only independent authenticated evidence can qualify them.
-      # There is deliberately no continue-on-error anywhere in this workflow.
+      # P2 findings never become approval without independently pinned records.
+      # This is an atomic fail-closed qualification check, not a waiver.
       - name: Review exact head and require independently qualified escalation
         env:
           GH_TOKEN: ${{ github.token }}

@@ -99,9 +99,38 @@ function parseSupervisorStatus(result) {
   }
 }
 
+// A new Mission Worker cannot reconstruct a missing terminal receipt from the
+// historical #2962 source writer. Repeated start/discovery calls under that
+// specific HOLD just re-enter the damaged segment. Hand the case back to the
+// existing original-owner quarantine and exact lease reconciler instead.
+const ORIGINAL_OWNER_RECOVERY_BLOCKERS = new Set([
+  'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+  'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+  'REPAIR_ORIGINAL_EXECUTION_HISTORY_UNVERIFIED',
+  'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING',
+  'REPAIR_ORIGINAL_WORK_STILL_IN_FLIGHT',
+  'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED',
+  'ORIGINAL_SOURCE_FENCE_PROOF_UNVERIFIED',
+]);
+
+function originalOwnerRecoveryBlocker(result) {
+  const status = parseSupervisorStatus(result);
+  const blocker = text(status?.blocker).toUpperCase();
+  return ORIGINAL_OWNER_RECOVERY_BLOCKERS.has(blocker) ? blocker : '';
+}
+
 function supervisorFlowGreen(result) {
   const status = parseSupervisorStatus(result);
   if (result?.ok !== true || status?.ok !== true) return false;
+  // A native capability draft has no proven pickup merely because a different
+  // mission was dispatched or a goal was held. Keep this gap non-green until
+  // the exact capability itself has qualified and executed.
+  if (Number.isSafeInteger(status.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return false;
+  // A compiler batch limit is never proof that older native requests vanished.
+  if (Number.isSafeInteger(status.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return false;
+  if (status.nativeGapSourceHealth === 'DEGRADED') return false;
   const autonomyPending = status?.daemonMayReportGreen === false;
   const autonomousWorkActive = Number(status?.dispatchCount) > 0
     || Number(status?.runningMissionCount) > 0;
@@ -111,6 +140,11 @@ function supervisorFlowGreen(result) {
 
 function supervisorFlowBlocker(result) {
   const status = parseSupervisorStatus(result);
+  if (status?.nativeGapSourceHealth === 'DEGRADED') return 'NATIVE_GAP_INTAKE_UNVERIFIED';
+  if (Number.isSafeInteger(status?.nativeGapCandidateTotalCount)
+      && status.nativeGapCandidateTotalCount > 0) return 'NATIVE_UPLIFT_PENDING';
+  if (Number.isSafeInteger(status?.capabilityCompilerWorkCount)
+      && status.capabilityCompilerWorkCount > 0) return 'NATIVE_UPLIFT_PENDING';
   const blocker = text(status?.blocker);
   if (SAFE_BLOCKER.test(blocker)) return blocker;
   const verdict = text(status?.finalVerdict);
@@ -126,6 +160,16 @@ function laneStatusGreen(result) {
   const refillHealth = text(status?.lanes?.refillHealth).toUpperCase();
   const refillState = text(status?.lanes?.refillState).toUpperCase();
   const finalVerdict = text(status?.finalVerdict).toUpperCase();
+  // A green headline cannot override missing physical pickup for selected goals.
+  // The same pickup gate applies to both green and stale-telemetry projections.
+  const selectedCount = status?.logical?.selectedForAdmission;
+  const selectedPickupCount = status?.lanes?.selectedMaterialPickupProvenCount;
+  const selectedCountValid = Number.isSafeInteger(selectedCount) && selectedCount >= 0;
+  const allSelectedPickupProven = selectedCountValid
+    && (selectedCount === 0
+      || (Number.isSafeInteger(selectedPickupCount)
+        && selectedPickupCount === selectedCount));
+  if (!allSelectedPickupProven) return false;
   if (
     finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY'
     && refillHealth === 'GREEN'
@@ -135,14 +179,9 @@ function laneStatusGreen(result) {
   // owners. If only their evidence is stale, a current/valid logical fabric
   // with no current hard-red host and no current runnable-work claim remains
   // safe for the canonical scheduler + mission worker to operate.
-  const selectedLogicalGoals = Number(status?.logical?.selectedForAdmission);
-  const provenActiveMaterialLanes = Number(status?.lanes?.activeMaterialLaneCount);
-  // Stale continuity hosts are not proof that selected logical goals were
-  // actually claimed. Never return repair-green for selected work when no
-  // material pickup has been evidenced; keep the canonical worker repair live.
-  const noUnprovenSelectedPickup = Number.isSafeInteger(selectedLogicalGoals)
-    && Number.isSafeInteger(provenActiveMaterialLanes)
-    && (selectedLogicalGoals === 0 || provenActiveMaterialLanes > 0);
+  // The same per-selected-goal proof applies to stale-host tolerance;
+  // it cannot be satisfied by an unrelated occupied material lane.
+  const noUnprovenSelectedPickup = allSelectedPickupProven;
   return finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED'
     && refillHealth === 'AMBER'
     && refillState === 'TELEMETRY_STALE_OR_INCOMPLETE'
@@ -156,8 +195,9 @@ function laneStatusGreen(result) {
 
 function laneStatusBlocker(result) {
   const status = parseControllerLaneStatus(result);
-  if (Number(status?.logical?.selectedForAdmission) > 0
-      && Number(status?.lanes?.activeMaterialLaneCount) === 0) {
+  if (Number.isSafeInteger(status?.logical?.selectedForAdmission)
+      && status.logical.selectedForAdmission > 0
+      && status?.lanes?.selectedMaterialPickupProvenCount !== status.logical.selectedForAdmission) {
     return 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN';
   }
   const refillState = text(status?.lanes?.refillState);
@@ -214,6 +254,30 @@ export function runSovereignCommanderGoalBuilderRepair({
   steps.push(compactStep(STEPS.supervisor, initialSupervisor));
   const initialLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, initialLaneStatus));
+
+  const originalHold = originalOwnerRecoveryBlocker(initialSupervisor);
+  if (originalHold) {
+    // This is a fail-closed repair handoff, not a second scheduler or source
+    // writer. Only the established #2961/#2962 original-owner path can
+    // commission the physical Windows exclusion proof and reconcile r7.
+    return Object.freeze({
+      ok: false,
+      schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+      repairApplied: false,
+      blocker: originalHold,
+      steps: Object.freeze(steps),
+      recoveryOwner: '#2961',
+      originalSourceLeaseHeld: true,
+      nextAutomaticAction: 'PROVE_ORIGINAL_WRITER_EXCLUSION_AND_RECONCILE_CANONICAL_LEASE',
+      canonicalGoalFabricOnly: true,
+      sourceMutationDelegatedToMissionWorker: true,
+      duplicateSchedulerAllowed: false,
+      leaseSeizureAllowed: false,
+      mergeAuthority: false,
+      arbitraryShellAllowed: false,
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED',
+    });
+  }
 
   if (supervisorFlowGreen(initialSupervisor) && laneStatusGreen(initialLaneStatus)) {
     return Object.freeze({

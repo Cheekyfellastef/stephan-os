@@ -1,3 +1,4 @@
+import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -985,6 +986,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const expectedMailboxAuthorizationKeys = [
     'authorizedAtUtc',
     'commentId',
+    'commentSha256',
     'operatorAuthor',
     'requestId',
     'transportActor',
@@ -998,11 +1000,14 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     && strictPositiveInteger(mailboxAuthorization.commentId)
     && text(mailboxAuthorization.requestId)
     && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
-    && text(mailboxAuthorization.transportActor).toLowerCase() === nativeOwnerActor
+    && SHA256_PATTERN.test(text(mailboxAuthorization.commentSha256))
+    && [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR].includes(text(mailboxAuthorization.transportActor).toLowerCase())
     && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
     && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
   );
-  const expectedActor = nativeOwnerActor;
+  const expectedActor = mailboxAuthorizationValid ? text(mailboxAuthorization.transportActor).toLowerCase() : nativeOwnerActor;
+  // A transport switch must not hide a prior source-matching authority attempt.
+  const replayActors = [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR];
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1037,7 +1042,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     const candidateActor = personalRepositoryDispatchActor(candidate);
     const sourceMatching = text(candidate?.name) === expectedTitle
       || text(candidate?.display_title) === expectedTitle;
-    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    if (!sourceMatching || (candidateActor && !replayActors.includes(candidateActor))) continue;
     const candidateBase = text(candidate?.head_sha).toLowerCase();
     const exactIdentity = Boolean(
       candidateId
@@ -1051,7 +1056,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       && SHA_PATTERN.test(candidateBase)
       && text(candidate?.head_branch) === 'main'
       && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
-      && candidateActor === expectedActor
+      && replayActors.includes(candidateActor)
     );
     if (!exactIdentity) {
       malformedPriorRunIds.push(candidateId || 0);
@@ -1464,7 +1469,12 @@ export function validatePersonalRepositoryCheckRuns(
         && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
         && text(candidate.check?.head_sha).toLowerCase() === sourceHead
         && text(candidate.check?.status).toLowerCase() === 'completed'
-        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+        && (
+          text(candidate.check?.conclusion).toLowerCase() === 'success'
+          || (cleanIndependentReviewProved
+            && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
+            && text(candidate.check?.conclusion).toLowerCase() === 'failure')
+        )
         && text(candidate.check?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
         && text(candidate.check?.app?.slug) === 'github-actions'
         && strictPositiveInteger(candidate.check?.app?.id) === 15368
@@ -1472,6 +1482,19 @@ export function validatePersonalRepositoryCheckRuns(
         && canonicalWorkflowPath(candidate.run, repository) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
         && text(candidate.run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
       ));
+
+    // The canonical Build workflow deliberately excludes Pages deployment on
+    // pull_request. A bound successful PR build does not require a live-main
+    // deployment; no push, dispatch, unknown path or failed run inherits this.
+    const prPagesDeploymentNotRequested = conclusion === 'skipped'
+      && workflow === 'Build Stephanos UI'
+      && path === '.github/workflows/build-stephanos-ui.yml'
+      && name === 'pages-deploy'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success';
 
     let disposition = 'green';
     if (status !== 'completed') {
@@ -1484,8 +1507,10 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'neutral-skip';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
+    } else if (prPagesDeploymentNotRequested) {
+      disposition = 'pr-pages-deployment-not-requested';
     } else if (cleanIndependentReviewProved
-      && mergeStateStatus === 'UNSTABLE'
+      && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
@@ -1515,7 +1540,7 @@ export function validatePersonalRepositoryCheckRuns(
   if (mergeStateStatus === 'UNSTABLE' && admittedReviewEscalations !== 1) {
     blockers.push('personal-repository-review-escalation-check-not-exact');
   }
-  if (['CLEAN', 'BLOCKED'].includes(mergeStateStatus) && admittedReviewEscalations !== 0) {
+  if (mergeStateStatus === 'CLEAN' && admittedReviewEscalations !== 0) {
     blockers.push('personal-repository-clean-state-has-review-escalation');
   }
 
