@@ -117,17 +117,32 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
   const ledger = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
   assert.ok(coverage, 'missing acceptance coverage table');
   assert.ok(ledger, 'missing original-owner discovery table');
-  const rows = (section) => section.split('\n')
-    .filter((line) => line.startsWith('| `'))
-    .map((line) => {
-      const cells = line.split('|').map((cell) => cell.trim()).filter(Boolean);
-      return { dimension: cells[0].replaceAll('`', ''), cells: cells.slice(1) };
+  const rows = (section) => {
+    const tableLines = section.split('\n').map((line) => line.trim())
+      .filter((line) => line.startsWith('|'));
+    assert.equal(tableLines.length, FULL_SOVEREIGNTY_DIMENSIONS_V1.length + 2,
+      'table must have one header, one separator and exactly 16 canonical rows');
+    assert.match(tableLines[1], /^\|\s*---\s*\|\s*---\s*\|\s*---\s*\|$/,
+      'three-column Markdown separator required');
+    return tableLines.slice(2).map((line) => {
+      assert.ok(line.startsWith('|') && line.endsWith('|'), 'complete table row required');
+      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim());
+      assert.equal(cells.length, 3, 'one dimension and two evidence/owner cells required');
+      assert.match(cells[0], /^`[a-z0-9-]+`$/, 'canonical backticked dimension required');
+      return { dimension: cells[0].slice(1, -1), cells: cells.slice(1) };
     });
+  };
   const expected = [...FULL_SOVEREIGNTY_DIMENSIONS_V1];
   const coverageRows = rows(coverage);
   const ownerRows = rows(ledger);
   assert.deepEqual(coverageRows.map((row) => row.dimension), expected, 'coverage table drift or duplicate');
   assert.deepEqual(ownerRows.map((row) => row.dimension), expected, 'owner ledger drift or duplicate');
+  assert.throws(() => rows(coverage.replace('| `local-ai-inference-and-router` |',
+    '| stray-row | audit | UNVERIFIED |\n| `local-ai-inference-and-router` |')),
+    /exactly 16 canonical rows/, 'unexpected table rows must fail closed');
+  assert.throws(() => rows(coverage.replace('| `local-ai-inference-and-router` |',
+    '| `local-ai-inference-and-router` | extra-cell |')),
+    /one dimension and two evidence\/owner cells/, 'extra columns must fail closed');
   for (const row of [...coverageRows, ...ownerRows]) {
     assert.equal(row.cells.length, 2, 'each dimension needs two nonempty evidence/owner cells');
     assert.ok(row.cells.every(Boolean));
