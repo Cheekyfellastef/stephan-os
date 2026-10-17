@@ -83,6 +83,58 @@ test('Windows bridge refuses unsupported platform, fake path, missing identity, 
   assert.equal(poisoned.reason, 'WSL_PATH_TRANSLATION_UNAVAILABLE');
 });
 
+test('preflight safely exposes only closed-list HOLD reasons from fixed Linux stdout', () => {
+  const authority = {
+    independentHostAttestation: false, signatureVerified: false,
+    specialistAuthority: false, independentReviewSatisfied: false,
+    protectedMergeAuthority: false, sourceMutationAuthority: false,
+    leaseReleaseAuthority: false, windowsCommissioningAuthority: false,
+    physicalPickupProven: false,
+  };
+  function read(exitCode, receipt, extra = '') {
+    let n = 0;
+    const result = runWindowsSovereignReviewerV1(env, { ...context, mode: 'preflight',
+      spawn: () => {
+        n++;
+        if (n <= 2) return { status: 0, stdout: '/mnt/c/safe\n' };
+        return { status: exitCode, stdout: extra
+          + 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT=' + JSON.stringify(receipt) + '\n' };
+      },
+    });
+    assert.equal(n, 3);
+    assert.equal(result.ok, false);
+    assert.equal(result.mergeAuthority, false);
+    assert.equal(result.approvalAuthority, false);
+    return result;
+  }
+  for (const reason of [
+    'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED',
+    'CALIBRATION_GAMING_RESOURCE_PROTECTED',
+    'CALIBRATION_GOVERNOR_STALE_OR_INVALID',
+    'LOCAL_OLLAMA_NOT_REACHABLE',
+    'LOCAL_OLLAMA_MODEL_DIGEST_UNPROVEN',
+  ]) {
+    const r = read(2, { status: 'LOCAL_OLLAMA_PREFLIGHT_HELD', reason, ...authority });
+    assert.equal(r.reason, reason);
+  }
+  assert.equal(read(2, { status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: 'C:/secret/private-credential', ...authority }).reason,
+  'LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+  assert.equal(read(2, { status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: 'LOCAL_OLLAMA_NOT_REACHABLE', ...authority,
+    protectedMergeAuthority: true }).reason, 'LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+  assert.equal(read(0, { status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: 'LOCAL_OLLAMA_NOT_REACHABLE', ...authority }).reason,
+  'LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+  const doubled = 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT=' + JSON.stringify({
+    status: 'LOCAL_OLLAMA_PREFLIGHT_HELD', reason: 'LOCAL_OLLAMA_NOT_REACHABLE',
+    ...authority,
+  }) + '\n';
+  assert.equal(read(2, { status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+    reason: 'LOCAL_OLLAMA_NOT_REACHABLE', ...authority }, doubled).reason,
+  'WSL_REVIEWER_EXECUTION_HELD');
+});
+
 test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects forged authority', () => {
   const make = receipt => {
     let called = 0;

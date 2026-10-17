@@ -22,6 +22,30 @@ const VALID_KEYS = Object.freeze([
   'STEPHANOS_SOVEREIGN_REVIEW_MODEL',
   'STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS',
 ]);
+// Closed-list, non-secret reasons returned ONLY from the fixed read-only
+// local preflight. Never surface arbitrary Linux stdout, paths, identities,
+// model inventory, exception text or caller-supplied reason strings.
+const PREFLIGHT_SAFE_HOLD_REASONS = new Set([
+  'LOCAL_MODEL_NOT_CONFIGURED',
+  'CALIBRATION_EXACT_SOURCE_IDENTITY_INVALID',
+  'CALIBRATION_CLEAN_EXACT_CHECKOUT_REQUIRED',
+  'CALIBRATION_EXECUTABLE_INDEX_FLAGS_UNSAFE',
+  'CALIBRATION_EXECUTABLE_BYTES_NOT_HEAD',
+  'CALIBRATION_SOURCE_GIT_UNPROVEN',
+  'CALIBRATION_GOVERNOR_PATH_UNTRUSTED',
+  'CALIBRATION_GOVERNOR_FILE_INVALID',
+  'CALIBRATION_GOVERNOR_STALE_OR_INVALID',
+  'CALIBRATION_GAMING_RESOURCE_PROTECTED',
+  'CALIBRATION_GOVERNOR_UNAVAILABLE',
+  'CALIBRATION_GAMING_RESOURCE_UNPROVEN',
+  'LOCAL_OLLAMA_NOT_REACHABLE',
+  'LOCAL_OLLAMA_MODEL_LIST_UNBOUNDED',
+  'LOCAL_OLLAMA_MODEL_LIST_INVALID',
+  'LOCAL_OLLAMA_MODEL_DIGEST_UNPROVEN',
+  'LOCAL_OLLAMA_DIGEST_READ_UNAVAILABLE',
+  'LOCAL_OLLAMA_READ_ONLY_PROBE_FAILED',
+  'SELECTED_LOCAL_MODEL_UNAVAILABLE',
+]);
 const error = reason => Object.freeze({ ok: false, reason, approvalAuthority: false, mergeAuthority: false });
 
 export function planWindowsSovereignReviewerV1(env, {
@@ -111,15 +135,38 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     '/usr/bin/node', linuxPaths[0], ...(mode === 'preflight' ? ['--preflight']
       : mode === 'calibration' ? ['--once'] : [])];
   const executed = run(args);
-  if (executed?.error || executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
+  if (executed?.error) return error('WSL_REVIEWER_EXECUTION_HELD');
   const prefix = mode === 'calibration' ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT='
     : mode === 'preflight' ? 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT='
     : 'SOVEREIGN_REVIEWER_RESULT=';
-  const marker = String(executed.stdout || '').split('\n')
-    .find(line => line.startsWith(prefix));
-  if (!marker) return error('REVIEWER_RECEIPT_MISSING');
+  // Only a fixed, unique receipt marker can be promoted. Other stdout never
+  // enters the public status and a second marker is an ambiguous HOLD.
+  const markers = String(executed?.stdout || '').split('\n')
+    .filter(line => line.startsWith(prefix));
+  if (mode === 'preflight' && executed?.status === 2) {
+    if (markers.length !== 1) return error('WSL_REVIEWER_EXECUTION_HELD');
+    let heldReceipt;
+    try { heldReceipt = JSON.parse(markers[0].slice(prefix.length)); }
+    catch { return error('WSL_REVIEWER_EXECUTION_HELD'); }
+    if (heldReceipt?.status !== 'LOCAL_OLLAMA_PREFLIGHT_HELD'
+      || !PREFLIGHT_SAFE_HOLD_REASONS.has(heldReceipt.reason)
+      || heldReceipt.independentHostAttestation !== false
+      || heldReceipt.signatureVerified !== false
+      || heldReceipt.specialistAuthority !== false
+      || heldReceipt.independentReviewSatisfied !== false
+      || heldReceipt.protectedMergeAuthority !== false
+      || heldReceipt.sourceMutationAuthority !== false
+      || heldReceipt.leaseReleaseAuthority !== false
+      || heldReceipt.windowsCommissioningAuthority !== false
+      || heldReceipt.physicalPickupProven !== false) {
+      return error('LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+    }
+    return error(heldReceipt.reason);
+  }
+  if (executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
+  if (markers.length !== 1) return error('REVIEWER_RECEIPT_MISSING');
   let receipt;
-  try { receipt = JSON.parse(marker.slice(prefix.length)); }
+  try { receipt = JSON.parse(markers[0].slice(prefix.length)); }
   catch { return error('REVIEWER_RECEIPT_INVALID'); }
   if (mode === 'preflight') {
     if (receipt.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'

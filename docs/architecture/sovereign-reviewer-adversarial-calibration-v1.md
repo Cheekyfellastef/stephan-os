@@ -142,3 +142,16 @@ Missing, ambiguous or changed weights HOLD the candidate. Any passing
 candidate record and Windows bridge receipt bind that weight digest to the
 exact checked source HEAD, manifest and observations. This is local unsigned
 model identity only, not an independently audited specialist approval.
+
+## Safe read-only preflight refusal diagnosis
+
+A real WSL `--preflight` may exit 2 when it correctly refuses a dirty
+checkout, protected VR/flat resources, stale gaming telemetry, unreachable
+Ollama or missing pinned model digest. Previously Windows collapsed **every**
+such refusal into `WSL_REVIEWER_EXECUTION_HELD`, leaving Q2 commissioning
+blind. The fixed bridge now parses exactly one bounded marker even on exit
+2, and returns **only** a closed-list nonsecret reason when all nine
+non-authority fields are explicit false. Unknown reasons, duplicate markers,
+claimed privileged approval, wrong exit codes, raw PIDs/paths and extra
+output remain HOLD with generic messages. No GitHub write, physical Windows
+service mutation, reviewer signing or R7 lease authority is added.
