@@ -80,7 +80,9 @@ test('only a strict owner-authenticated immutable and expiring exact proof match
   ]) assert.throws(() => validateOwnerEscalationCommentV1(c, input, sha, Date.parse(time) + 20_000), /OWNER_PROVENANCE/);
   for (const alteration of [
     { expectedHead: SHA_B }, { expectedBase: SHA_A }, { patchSha256: '1'.repeat(64) },
-    { scope: 'merge' }, { reviewRunId: 0 }, { extra: 'untrusted' },
+    { scope: 'merge' }, { reviewRunId: 0 }, { reviewRunId: '1234' },
+    { reviewArtifactId: '5678' }, { reviewRunAttempt: '1' },
+    { extra: 'untrusted' },
     { expiresAt: '2026-10-13T13:00:00.000Z' },
   ]) {
     assert.throws(() => validateOwnerEscalationCommentV1(
@@ -90,6 +92,49 @@ test('only a strict owner-authenticated immutable and expiring exact proof match
   assert.throws(() => validateOwnerEscalationCommentV1(
     comment(), input, sha, Date.parse('2026-10-13T12:00:00.000Z'),
   ), /OWNER_EXPIRY/);
+});
+
+test('forged marker comments never shadow latest owner escalation', async () => {
+  let requestedRun = false;
+  await assert.rejects(() => qualifyExactHeadReviewV1(input, receipt, {
+    api: async path => {
+      if (path === '/pulls/3086') return {
+        state: 'open', draft: false,
+        head: { sha: SHA_A, repo: { full_name: input.repository } },
+        base: { ref: 'main', sha: SHA_B },
+      };
+      if (path === '/issues/3086') return { comments: 3 };
+      if (path.startsWith('/issues/3086/comments')) return [
+        comment(),
+        comment({}, { user: { login: 'outside-commenter' }, author_association: 'NONE' }),
+        comment({}, { user: { login: 'another-bot' }, author_association: 'CONTRIBUTOR' }),
+      ];
+      if (path === '/actions/runs/1234') { requestedRun = true; return {}; }
+      return {};
+    },
+    download: async () => { throw Error('must not download'); },
+    unzip: async () => { throw Error('must not unpack'); },
+    nowMs: Date.parse(time) + 20_000,
+  }), /REVIEW_RUN_UNBOUND/);
+  assert.equal(requestedRun, true, 'owner-authenticated comment reaches independent review check');
+
+  await assert.rejects(() => qualifyExactHeadReviewV1(input, receipt, {
+    api: async path => {
+      if (path === '/pulls/3086') return {
+        state: 'open', draft: false,
+        head: { sha: SHA_A, repo: { full_name: input.repository } },
+        base: { ref: 'main', sha: SHA_B },
+      };
+      if (path === '/issues/3086') return { comments: 1 };
+      if (path.startsWith('/issues/3086/comments')) return [
+        comment({}, { user: { login: 'outside-commenter' }, author_association: 'NONE' }),
+      ];
+      throw Error('untrusted flow progressed');
+    },
+    download: async () => { throw Error('must not download'); },
+    unzip: async () => { throw Error('must not unpack'); },
+    nowMs: Date.parse(time) + 20_000,
+  }), /OWNER_ESCALATION_NOT_POSTED/);
 });
 
 test('without authenticated GitHub records escalation never becomes approval', async () => {

@@ -22,7 +22,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const fail = reason => { throw new Error('EXACT_HEAD_ESCALATION_BLOCKED:' + reason); };
 const requireProof = (ok, reason) => { if (!ok) fail(reason); };
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const positive = v => Number.isSafeInteger(Number(v)) && Number(v) > 0;
+const positive = v => Number.isSafeInteger(v) && v > 0;
 
 export function validateOwnerEscalationCommentV1(comment, input, patchDigest, nowMs = Date.now()) {
   requireProof(comment?.user?.login === OWNER && comment?.author_association === 'OWNER'
@@ -85,10 +85,17 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     requireProof(Array.isArray(batch), 'OWNER_COMMENT_READ');
     comments.push(...batch);
   }
-  const candidates = comments.filter(c =>
-    String(c?.body || '').includes('stephanos-exact-head-qualified-review-v1'));
-  requireProof(candidates.length > 0, 'OWNER_ESCALATION_NOT_POSTED');
-  const owner = validateOwnerEscalationCommentV1(candidates.at(-1), input,
+  // Untrusted PR commenters may quote this public marker. Only OWNER
+  // provenance can designate the latest owner-issued escalation request;
+  // never let an unrelated bot/comment supersede an authentic owner record.
+  // The chosen owner record still goes through all immutable SHA, artifact,
+  // expiry and no-edit checks below. An expired owner record stays HOLD.
+  const ownerCandidates = comments.filter(c =>
+    c?.user?.login === OWNER && c?.author_association === 'OWNER'
+    && c?.issue_url === 'https://api.github.com/repos/' + REPO + '/issues/' + input.prNumber
+    && String(c?.body || '').includes('stephanos-exact-head-qualified-review-v1'));
+  requireProof(ownerCandidates.length > 0, 'OWNER_ESCALATION_NOT_POSTED');
+  const owner = validateOwnerEscalationCommentV1(ownerCandidates.at(-1), input,
     context.patchSha256, nowMs ?? Date.now());
   const command = {
     reviewRunId: owner.reviewRunId, reviewRunAttempt: owner.reviewRunAttempt,
