@@ -7,10 +7,32 @@ import { buildGoalDashboardEstateSummary } from '../../shared/agents/goalDashboa
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
 import { readSharedConversationUpliftV1 } from './sharedConversationUpliftService.js';
+import { lstat, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import {
   projectGoalBuildConveyorV1,
   projectGoalBuildJourneyV1,
 } from '../../shared/agents/goalBuildConveyorV1.mjs';
+
+// Public verifier only. The private signer is owned by the separate Core
+// machine principal, and neither key nor trust pin travels to the browser.
+async function loadCommissionedGoalGateTrust(input = {}) {
+  const env = input.env || process.env;
+  const expectedSourceHead = String(env.STEPHANOS_GATE_OBSERVATORY_EXPECTED_HEAD || '').toLowerCase();
+  const trustedPublicKeySha256 = String(env.STEPHANOS_GATE_OBSERVATORY_PUBLIC_KEY_SHA256 || '').toLowerCase();
+  if (!/^[a-f0-9]{40}$/.test(expectedSourceHead)
+    || !/^[a-f0-9]{64}$/.test(trustedPublicKeySha256)) return {};
+  try {
+    const profile = String(env.LOCALAPPDATA || '');
+    if (!profile) return {};
+    const p = resolve(profile, 'Stephanos', 'keys', 'stephanos-goal-build-gates-public.pem');
+    const meta = await lstat(p);
+    if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) return {};
+    return { expectedSourceHead, trustedPublicKeySha256, trustedPublicKeyPem: await readFile(p, 'utf8') };
+  } catch {
+    return {};
+  }
+}
 
 export const SHARED_WORKSPACE_DASHBOARD_FEED_ROUTE = '/api/shared-workspace/dashboard-feed';
 export const MISSING_WORKSPACE_NEXT_ACTION = SHARED_WORKSPACE_NEXT_ACTION;
@@ -209,8 +231,10 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const goalGateTrust = await loadCommissionedGoalGateTrust(input);
   const feed = await readSharedWorkspaceDashboardFeed({
     ...input,
+    goalGateTrust,
     root: validation.root,
     recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
   });
@@ -252,6 +276,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
     operationalFacts: feed.operationalFacts,
+    goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);

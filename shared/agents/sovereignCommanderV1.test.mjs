@@ -491,3 +491,49 @@ test('Sovereign file metadata inspection does not return file contents', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('Rescue Island one-shot probe is only a fixed read-only action with no caller arguments', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'rescue-island-readonly-boundary',
+      command: 'Remove-Item C:\\\\* -Recurse',
+      customTargetPath: 'C:\\\\untrusted' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'rescue-island-readonly-boundary');
+  assert.equal(command.plan.kind, 'fixed-process');
+  assert.equal(command.plan.args.length, 1);
+  assert.match(command.plan.args[0], /rescue-island-boundary-probe\.mjs$/);
+  assert.doesNotMatch(JSON.stringify(command.plan), /Remove-Item|untrusted/);
+  assert.equal(command.mergeAuthority, false);
+  assert.equal(command.arbitraryUnboundedCommandAllowed, false);
+});
+
+test('registered Rescue Island source-only probe exercises a real physical path census', async () => {
+  const { inspectRescueIslandLocalBoundaryV1 } = await import(
+    '../../scripts/rescue-island-boundary-probe.mjs'
+  );
+  const parent = await mkdtemp(join(tmpdir(), 'island-boundary-live-test-'));
+  try {
+    const root = join(parent, 'canonical');
+    await mkdir(join(root, '.git'), { recursive: true });
+    await mkdir(join(root, 'docs', 'architecture'), { recursive: true });
+    await mkdir(join(root, 'shared', 'agents'), { recursive: true });
+    for (const target of ['rescueIslandFirstCommitV1.mjs', 'rescueIslandPreflightV1.test.mjs']) {
+      await writeFile(join(root, 'shared', 'agents', target), '// fixture\\n');
+    }
+    const safe = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(safe.ok, true);
+    assert.equal(safe.observedPathCount, 3);
+    assert.equal(safe.sourceMutationAllowed, false);
+    assert.equal(safe.independentOwnershipAuthenticated, false);
+    assert.equal(safe.originalSourceLeaseReleaseAllowed, false);
+    await rm(join(root, '.git'), { recursive: true });
+    const held = await inspectRescueIslandLocalBoundaryV1(root);
+    assert.equal(held.ok, false);
+    assert.equal(held.workerStartAllowed, false);
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});

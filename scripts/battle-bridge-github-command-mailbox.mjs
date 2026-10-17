@@ -1363,6 +1363,110 @@ function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
   return null;
 }
 
+// Read-only Island result has its own authority-denying public receipt contract.
+function safeRescueIslandBoundaryReceiptProjection(value = {}) {
+  if (value?.remoteAction !== 'rescue-island-readonly-boundary'
+      || value?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED'
+      || value?.sourceMutationAllowed !== false
+      || value?.originalSourceLeaseReleaseAllowed !== false
+      || value?.mergeAuthority !== false
+      || value?.publicReceiptSafe !== true
+      || value?.secretMaterialReturned !== false) return null;
+  const scope = value?.rescueIslandBoundary;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+      || scope.schemaVersion !== 'stephanos.rescue-island-boundary-probe.v1'
+      || scope.ok !== true || scope.readOnly !== true
+      || scope.observedPathCount !== 3
+      || scope.physicalScopeReadback !== 'LOCAL_OS_SCOPE_OBSERVED'
+      || scope.finalVerdict !== 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED'
+      || scope.sourceMutationAllowed !== false || scope.workerStartAllowed !== false
+      || scope.independentOwnershipAuthenticated !== false
+      || scope.gamingBudgetAuthenticated !== false
+      || scope.originalSourceLeaseReleaseAllowed !== false
+      || scope.seedForgeQueueAccessAllowed !== false
+      || scope.mergeAllowed !== false || scope.publicReceiptSafe !== true
+      || scope.secretMaterialReturned !== false) return null;
+  // Never serialize native file names, process IDs, raw stdout, secrets or aliases.
+  return Object.freeze({
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Secondary redaction barrier for the single read-only original-r7 census.
+// The public GitHub mailbox must never publish raw process, SID, path or script data.
+const ORIGINAL_CUSTODY_RECEIPT_BLOCKERS = new Set([
+  'ORIGINAL_CHECKOUT_NOT_OBSERVED', 'ORIGINAL_CHECKOUT_ACL_UNOBSERVED',
+  'ORIGINAL_PROCESS_ENUMERATION_UNAVAILABLE', 'ORIGINAL_PROCESS_CANDIDATES_PRESENT',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_PROBE_UNAVAILABLE',
+  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'TASK_INVENTORY_UNAVAILABLE',
+  'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
+  'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+  'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+]);
+function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const value = operationResult?.inspection;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || operationResult.ok !== true
+    || operationResult.finalVerdict !== 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD'
+    || operationResult.originalLeaseReleased !== false
+    || operationResult.privilegedWindowsWitnessCommissioned !== false
+    || operationResult.sourceMutationAllowed !== false
+    || operationResult.arbitraryShellAllowed !== false
+    || operationResult.publicReceiptSafe !== true
+    || operationResult.secretMaterialReturned !== false
+    || value.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease'
+    || value.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD'
+    || value.historicalExecutionOutcome !== 'UNKNOWN'
+    || value.independentWindowsExclusionProven !== false
+    || value.independentOperatorApprovalProven !== false
+    || value.leaseReleaseAuthorized !== false
+    || value.sourceMutationAuthorized !== false
+    || typeof value.checkoutPresent !== 'boolean'
+    || typeof value.aclReadable !== 'boolean') return null;
+  const count = item => item === null || (Number.isSafeInteger(item) && item >= 0 && item <= 1_000_000);
+  if (!count(value.candidateProcessCount) || !count(value.stephanosScheduledTaskCount)) return null;
+  const inspectedAtUtc = value.inspectedAtUtc;
+  const observedMs = Date.parse(inspectedAtUtc);
+  if (typeof inspectedAtUtc !== 'string'
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(inspectedAtUtc)
+    || !Number.isFinite(observedMs)
+    || new Date(observedMs).toISOString() !== inspectedAtUtc) return null;
+  const blockers = value.blockers;
+  if (!Array.isArray(blockers) || blockers.length < 2 || blockers.length > 14
+    || blockers.some(code => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(code))
+    || !blockers.includes('INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED')
+    || !blockers.includes('INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN')) return null;
+  return Object.freeze({
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc,
+    checkoutPresent: value.checkoutPresent,
+    aclReadable: value.aclReadable,
+    candidateProcessCount: value.candidateProcessCount,
+    stephanosScheduledTaskCount: value.stephanosScheduledTaskCount,
+    blockers: Object.freeze([...new Set(blockers)]),
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1405,8 +1509,10 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),
     visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
@@ -1616,6 +1722,11 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     nativeCapacityModel: safeTelemetryText(packet?.nativeCapacityModel, 120),
     nativeCapacitySourceHead: safeTelemetrySha(packet?.nativeCapacitySourceHead),
     nativeCapacityReceiptId: safeTelemetryId(packet?.nativeCapacityReceiptId),
+    nativePublisherDiagnosticOnly: packet?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(packet?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: packet?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: safeTelemetryText(packet?.nativePublisherDiagnosticReason, 120).toUpperCase(),
+    nativePublisherDiagnosticBinding: safeTelemetryText(packet?.nativePublisherDiagnosticBinding, 45).toUpperCase(),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -2216,6 +2327,11 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     nativeCapacityModel: nativeVerified ? nativeModel : '',
     nativeCapacitySourceHead: nativeVerified ? nativeSourceHead : '',
     nativeCapacityReceiptId: nativeVerified ? nativeReceiptId : '',
+    nativePublisherDiagnosticOnly: inner?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(inner?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: inner?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: token(inner?.nativePublisherDiagnosticReason, 120),
+    nativePublisherDiagnosticBinding: token(inner?.nativePublisherDiagnosticBinding, 45),
     elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
     controllerValid: inner?.controllerValid === true,
@@ -2270,6 +2386,9 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
+        rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
+        originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
@@ -3171,13 +3290,78 @@ function programmeAuthorityPacketReady(packet = {}) {
 // Reuse the native capacity router's authenticated signature, authority and freshness
 // gates. No raw Shared Workspace records, paths, keys or signed payloads leave this
 // read-only programme status route. A missing proof must stay explicitly non-green.
+// Independent READ-ONLY diagnostic of the local publisher's *untrusted*
+// source-head claim. This cannot satisfy the signed capacity verifier.
+export function readNativeCapacityPublisherHeadDiagnosticV1({
+  expectedHead = '',
+  readStatus = () => readFileSync(
+    join(sharedWorkspaceRoot, 'status', 'stephanos-native-capacity-current.json'), 'utf8',
+  ),
+} = {}) {
+  const unknown = (reason) => Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: '',
+    nativePublisherHeadMatchesExpected: false,
+    nativePublisherDiagnosticReason: reason,
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+  const target = safeTelemetrySha(expectedHead);
+  if (!target) return unknown('NATIVE_PUBLISHER_EXPECTED_HEAD_INVALID');
+  let record;
+  try {
+    const raw = readStatus();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 64 * 1024) {
+      return unknown('NATIVE_PUBLISHER_STATUS_BOUNDED_READ_FAILED');
+    }
+    record = JSON.parse(raw);
+  } catch (error) {
+    return unknown(error?.code === 'ENOENT'
+      ? 'NATIVE_PUBLISHER_STATUS_MISSING'
+      : 'NATIVE_PUBLISHER_STATUS_READ_FAILED');
+  }
+  if (record?.schemaVersion !== 'shared-agent-workspace-record.v1'
+    || record?.statusId !== 'stephanos-native-capacity-current') {
+    return unknown('NATIVE_PUBLISHER_STATUS_IDENTITY_INVALID');
+  }
+  const observed = safeTelemetrySha(record?.capacityReceipt?.payload?.sourceHead);
+  if (!observed) return unknown('NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  return Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: observed,
+    nativePublisherHeadMatchesExpected: observed === target,
+    nativePublisherDiagnosticReason: observed === target
+      ? 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED'
+      : 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD',
+    // A separate unsigned status read is not the same signed snapshot.
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+}
+
 export async function readNativeCapacityProgrammeTelemetry({
   expectedHead = '',
   nowUtc = new Date().toISOString(),
   verifier = readVerifiedStephanosNativeRoutingCandidate,
+  diagnosticReader = readNativeCapacityPublisherHeadDiagnosticV1,
 } = {}) {
   const sourceHead = safeTelemetrySha(expectedHead);
+  // The signed router is authoritative. A separately sampled unsigned file
+  // may have advanced in the meantime and must never contradict a signed PASS.
+  const unsignedDiagnostic = () => {
+    let diagnostic;
+    try { diagnostic = diagnosticReader({ expectedHead }); }
+    catch { diagnostic = null; }
+    if (diagnostic?.nativePublisherDiagnosticOnly !== true) {
+      diagnostic = readNativeCapacityPublisherHeadDiagnosticV1({
+        expectedHead, readStatus: () => { throw new Error('UNAVAILABLE'); },
+      });
+    }
+    return {
+      ...diagnostic,
+      nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+    };
+  };
   const unknown = (reason) => Object.freeze({
+    ...unsignedDiagnostic(),
     nativeCapacityVerified: false,
     nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
     nativeCapacityModel: '',
@@ -3212,6 +3396,13 @@ export async function readNativeCapacityProgrammeTelemetry({
     return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
   }
   return Object.freeze({
+    // Bind the visible head to the SAME signed verifier candidate. Never
+    // report the raced unsigned file as if it were that signed record.
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: sourceHead,
+    nativePublisherHeadMatchesExpected: true,
+    nativePublisherDiagnosticReason: 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD',
+    nativePublisherDiagnosticBinding: 'SIGNED_VERIFIER_CANDIDATE',
     nativeCapacityVerified: true,
     nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
     nativeCapacityModel: safeTelemetryText(candidate.model, 120),

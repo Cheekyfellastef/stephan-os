@@ -57,20 +57,15 @@ import {
 import {
   evaluateMainMovementTolerantBaseBinding,
 } from '../shared/agents/operatorMergeBaseBindingV1.mjs';
-import {
-  PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
-  PROTECTED_WORKFLOW_DISPATCH_ISSUE,
-  PROTECTED_WORKFLOW_DISPATCH_OPERATION,
-  PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
-  validateProtectedWorkflowAuthorizationComment,
-} from '../shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
+
+import { proveProtectedWorkflowActorHandoff } from './prove-protected-workflow-actor-handoff.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
-const MAILBOX_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR.toLowerCase();
+
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
 class GateError extends Error {
@@ -266,56 +261,12 @@ function mailboxTransportActor(run = {}) {
 }
 
 async function proveMailboxAuthorization(context, run) {
-  const transportActor = mailboxTransportActor(run);
-  if (transportActor !== MAILBOX_TRANSPORT_ACTOR) {
-    fail('Protected merge workflow transport actor is not the canonical owner-dispatched mailbox transport.', {
-      blockers: ['personal-repository-mailbox-transport-actor-mismatch'],
-      transportActor,
-    });
-  }
-  const runStartedAt = new Date(run?.created_at || 0);
-  if (!Number.isFinite(runStartedAt.getTime())) {
-    fail('Protected merge workflow start time is invalid.', {
-      blockers: ['personal-repository-mailbox-run-time-invalid'],
-    });
-  }
-  const comment = await apiJson(
-    `/repos/${context.owner}/${context.repo}/issues/comments/${context.authorizationCommentId}`,
-  );
-  const identity = context.dispatch.identity;
-  const validation = validateProtectedWorkflowAuthorizationComment(comment, {
-    operation: PROTECTED_WORKFLOW_DISPATCH_OPERATION,
-    repository: PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
-    issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
-    operatorApproval: 'operator-approved',
-    mode: identity.mode,
-    prNumber: identity.prNumber,
-    expectedBranch: identity.branch,
-    expectedHead: identity.sourceHead,
-    expectedHeadTree: identity.sourceTree,
-    expectedBase: identity.baseSha,
-    independentReviewRunId: identity.independentReviewWorkflowRunId,
-    independentReviewRunAttempt: identity.independentReviewWorkflowRunAttempt,
-    independentReviewArtifactId: identity.independentReviewArtifactId,
-    independentReviewArtifactDigest: identity.independentReviewArtifactDigest,
-    independentReviewPayloadSha256: identity.independentReviewPayloadSha256,
-  }, {
-    now: runStartedAt,
-    expectedCommentId: context.authorizationCommentId,
+  const proof = await proveProtectedWorkflowActorHandoff({
+    event: context.event, run,
+    readComment: (id) => apiJson(`/repos/${context.owner}/${context.repo}/issues/comments/${id}`),
+    expectedCommentSha256: context.authorizationCommentSha256,
   });
-  if (!validation.ok) {
-    fail('Owner-authored protected merge authorization provenance is missing, stale or mismatched.', {
-      blockers: [validation.blocker],
-      details: validation.details || {},
-    });
-  }
-  return Object.freeze({
-    commentId: validation.commentId,
-    requestId: validation.command.requestId,
-    operatorAuthor: PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
-    transportActor,
-    authorizedAtUtc: validation.authoredAtUtc,
-  });
+  return proof.authorization;
 }
 
 async function currentWorkflowExecution(context) {
@@ -389,7 +340,7 @@ async function currentWorkflowExecution(context) {
     ...execution.currentMismatches,
     ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
-    ...(transportActor === MAILBOX_TRANSPORT_ACTOR ? [] : ['transport-actor']),
+    ...(transportActor === authorization.transportActor.toLowerCase() ? [] : ['transport-actor']),
   ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact mailbox-transported trusted-main execution.', {
@@ -1038,6 +989,7 @@ async function collectEvidence(context, expected = {}) {
     schemaVersion: 'stephanos.personal-repository-evidence.v1',
     ...evidence.identity,
     workflowDefinitionId: execution.definition.id,
+    mailboxAuthorization: execution.authorization,
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
@@ -1103,6 +1055,8 @@ async function postCompletionComment(context, completion, receipt) {
     mainTree: completion.treeSha,
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
+    authorizationCommentId: context.authorizationCommentId,
+    authorizationCommentSha256: context.authorizationCommentSha256,
     environment: receipt.environment,
     independentReviewWorkflowRunId: receipt.independentReviewWorkflowRunId,
     independentReviewWorkflowRunAttempt: receipt.independentReviewWorkflowRunAttempt,
@@ -1146,7 +1100,11 @@ async function main() {
   const runId = positiveInteger(process.env.GITHUB_RUN_ID);
   const runAttempt = positiveInteger(process.env.GITHUB_RUN_ATTEMPT);
   if (!owner || !repo || !runId || !runAttempt) fail('GitHub workflow run identity is incomplete or unsafe.');
-  const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId };
+  const authorizationCommentSha256 = text(process.env.STEPHANOS_AUTHORIZATION_COMMENT_SHA256);
+  if (!/^[a-f0-9]{64}$/.test(authorizationCommentSha256)) {
+    fail('Immutable mailbox authorization comment digest is required.');
+  }
+  const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId, authorizationCommentSha256 };
 
   if (mode === 'evidence') {
     const collected = await collectEvidence(context);

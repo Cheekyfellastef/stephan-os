@@ -8,7 +8,7 @@ $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
 $requiredVersion = '0.2.52'
-$requiredSovereignCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'
+$requiredSovereignCapabilityVersion = '2026-10-13-private-mcp-batch-metadata-v5'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
 $sovereignTaskName = 'Stephanos Sovereign Commander'

@@ -666,15 +666,24 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     if (seenRequestIds.has(validated.command.requestId)) continue;
     const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
     const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
+    // Protected merges bind the PR source head separately from the base on main.
+    // Keep the usual strict head check for every other CONTROL operation.
+    // The bounded merge executor must still verify source/base/review/approval.
+    const expectedMainHead = validated.command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION
+      ? String(validated.command.expectedBase || '').trim().toLowerCase()
+      : expectedHead;
     if (normalizedCurrentHead
       && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
       && SHA_PATTERN.test(expectedHead)
-      && expectedHead !== normalizedCurrentHead) {
+      && (!SHA_PATTERN.test(expectedMainHead) || expectedMainHead !== normalizedCurrentHead)) {
       seenRequestIds.add(validated.command.requestId);
       const superseded = Object.freeze({
         ok: false,
         blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
         expectedHead,
+        // For protected merges expose the rejected main-base SHA separately
+        // from the reviewed PR source SHA. Never conflate the two identities.
+        expectedMainHead,
         githubMainHead: normalizedCurrentHead,
         finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
       });
