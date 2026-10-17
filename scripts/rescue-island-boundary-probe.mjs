@@ -10,6 +10,20 @@ import {
 
 export const RESCUE_ISLAND_BOUNDARY_PROBE_SCHEMA = 'stephanos.rescue-island-boundary-probe.v1';
 export const RESCUE_ISLAND_BOUNDARY_PROBE_MARKER = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=';
+// Only typed, source-controlled denial codes may leave the host.
+const SAFE_SCOPE_DENIAL_CODES = new Set([
+  'RESCUE_ISLAND_SCOPE_INPUT_INVALID',
+  'RESCUE_ISLAND_REPOSITORY_ROOT_UNTRUSTED',
+  'RESCUE_ISLAND_REPOSITORY_ROOT_REDIRECTED',
+  'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+  'RESCUE_ISLAND_SCOPE_ESCAPE',
+  'RESCUE_ISLAND_SCOPE_STAT_UNAVAILABLE',
+  'RESCUE_ISLAND_SCOPE_REDIRECTED',
+  'RESCUE_ISLAND_SCOPE_PARENT_NOT_DIRECTORY',
+  'RESCUE_ISLAND_SCOPE_LEAF_UNTRUSTED',
+  'RESCUE_ISLAND_SCOPE_OS_OBSERVATION_FAILED',
+]);
+
 const CANONICAL_PROBE_SCOPES = Object.freeze([
   'docs/architecture/rescue-island-pilot-pilot-3109-01.md',
   'shared/agents/rescueIslandFirstCommitV1.mjs',
@@ -59,7 +73,8 @@ export async function inspectRescueIslandLocalBoundaryV1(repositoryRoot, {
       || observation.workerStartAllowed !== false
       || observation.leaseReleaseAllowed !== false
       || observation.observedPathCount !== CANONICAL_PROBE_SCOPES.length)
-    return result(false, 'OS_SCOPE_OBSERVATION_HELD');
+    return result(false, SAFE_SCOPE_DENIAL_CODES.has(observation?.blocker)
+      ? observation.blocker : 'OS_SCOPE_OBSERVATION_HELD');
   return result(true, '', CANONICAL_PROBE_SCOPES.length);
 }
 

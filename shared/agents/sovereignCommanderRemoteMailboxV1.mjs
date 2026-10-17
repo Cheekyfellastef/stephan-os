@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
-import { parseRescueIslandBoundaryStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
+import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -2129,6 +2129,44 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
   ]).has(text(value));
 }
 
+/**
+ * #3109: constant-vocabulary native Island diagnostic. It examines only the
+ * fixed process identity, exit status and closed-world marker shape, and NEVER
+ * publishes stdout, stderr, process arguments, paths, environment or tokens.
+ * It grants no source mutation authority, even when the marker is positive.
+ */
+export function diagnoseRescueIslandNativeReceiptInvalidV1({
+  envelope, expectedAction, projection, positive, negative,
+} = {}) {
+  if (expectedAction !== 'rescue-island-readonly-boundary')
+    return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).length === 0)
+    return 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  if (envelope?.command?.plan?.processId !== expectedAction)
+    return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
+  const status = envelope?.structuredContent?.status;
+  if (!Number.isInteger(status)) return 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE';
+  const stdout = envelope?.structuredContent?.stdout;
+  if (typeof stdout !== 'string') return 'ISLAND_NATIVE_STDOUT_UNAVAILABLE';
+  if (Buffer.byteLength(stdout, 'utf8') > 4096)
+    return 'ISLAND_NATIVE_STDOUT_TOO_LARGE';
+  const lines = stdout.trimEnd().split(/\r?\n/);
+  if (lines.length !== 1) return 'ISLAND_NATIVE_STDOUT_LINES_INVALID';
+  if (!lines[0].startsWith('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='))
+    return 'ISLAND_NATIVE_MARKER_NOT_OBSERVED';
+  if (!positive && !negative) return 'ISLAND_NATIVE_MARKER_REJECTED';
+  if (negative) return 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID';
+  if (positive && status !== 0) return 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH';
+  if (positive && (projection?.ok !== true
+      || projection?.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection?.proofHash || '')
+      || projection?.processId !== expectedAction
+      || projection?.status !== 0))
+    return 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID';
+  return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
+}
+
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
   const shape = validateSovereignCommanderRemoteCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -2870,7 +2908,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
+    'rescue-island-readonly-boundary']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -3009,11 +3048,32 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+
+
   if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
     // Do not treat a generic successful maintenance call as an OS-scope proof.
     // The fixed native child must publish its own one-line, closed-world result.
+    const nativeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const candidate = Object.keys(nativeEnvelope).length > 0 ? nativeEnvelope : failedEnvelope;
+    const nativeProcessId = text(candidate?.command?.plan?.processId);
+    const nativeStatus = candidate?.structuredContent?.status;
+    const nativeStdout = candidate?.structuredContent?.stdout;
+    const held = parseRescueIslandBoundaryHeldStdoutV1(nativeStdout, nativeProcessId);
+    if (held && nativeProcessId === shape.command.remoteAction
+        && nativeStatus === 1
+        && candidate?.ok === false
+        && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: held.blocker,
+        rescueIslandBoundary: held,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
     const readback = parseRescueIslandBoundaryStdoutV1(
-      rawMaintenance?.structuredContent?.stdout, projection.processId,
+      nativeStdout, nativeProcessId,
     );
     if (projection.ok !== true
       || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
@@ -3023,6 +3083,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       || !readback) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        executionBlocker: diagnoseRescueIslandNativeReceiptInvalidV1({
+          envelope: candidate,
+          expectedAction: shape.command.remoteAction,
+          projection, positive: readback, negative: held,
+        }),
         publicReceiptSafe: true,
         secretMaterialReturned: false,
       });

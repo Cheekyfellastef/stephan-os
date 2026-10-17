@@ -6,6 +6,7 @@ const root = new URL('../../src/windows/Stephanos.OriginalR7CustodyWitness/', im
 const program = await readFile(new URL('Program.cs', root), 'utf8');
 const project = await readFile(new URL('Stephanos.OriginalR7CustodyWitness.csproj', root), 'utf8');
 const guide = await readFile(new URL('README.md', root), 'utf8');
+const nativeCi = await readFile(new URL('../../.github/workflows/original-r7-native-windows-proof.yml', import.meta.url), 'utf8');
 
 test('native Windows witness host requires real SCM and its exact service identity', () => {
   assert.match(project, /<TargetFramework>net8\.0-windows<\/TargetFramework>/);
@@ -47,4 +48,17 @@ test('service SID cannot be carried by an unrelated or elevated Windows principa
   assert.doesNotMatch(program, /identity\.Groups\?\.Contains\(expected\)/);
   assert.doesNotMatch(program, /(?:RunAs|TokenImpersonationLevel|LogonUser|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)/);
   assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
+});
+
+test('Windows CI compiles real native SCM witness and proves CLI denial without commissioning', () => {
+  assert.match(nativeCi, /src\/windows\/Stephanos\.OriginalR7CustodyWitness\/\*\*/);
+  assert.match(nativeCi, /dotnet build src\/windows\/Stephanos\.OriginalR7CustodyWitness\/Stephanos\.OriginalR7CustodyWitness\.csproj --configuration Release/);
+  assert.match(nativeCi, /--unapproved-ci-invocation/);
+  assert.match(nativeCi, /\$rejected -ne 2/);
+  assert.match(nativeCi, /node --test shared\/agents\/originalR7WindowsWitnessNativeHostV1\.test\.mjs/);
+  assert.match(nativeCi, /persist-credentials: false/);
+  assert.match(nativeCi, /permissions:\s*\n  contents: read/);
+  assert.match(nativeCi, /BATTLE_BRIDGE_WINDOWS_WITNESS_COMMISSIONED=false/);
+  assert.match(nativeCi, /ORIGINAL_R7_LEASE_RELEASED=false/);
+  assert.doesNotMatch(nativeCi, /\b(?:New-Service|Start-Service|Set-Service|Set-Acl|icacls|schtasks|Set-ExecutionPolicy)\b/i);
 });
