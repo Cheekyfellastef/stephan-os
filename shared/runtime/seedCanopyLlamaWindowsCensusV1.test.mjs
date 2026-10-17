@@ -76,6 +76,7 @@ test('untrustworthy census freshness, completeness and schema fail closed', () =
     { ...snapshot, processes: [one(500, 0), one(500, 0)] },
     { ...snapshot, processes: [one(600, 0, 'invalid')] },
     { ...snapshot, processes: null },
+    { ...snapshot, processes: [] },
   ]) {
     assert.equal(check(s).processTreeAbsentCandidate, false, JSON.stringify(s));
   }
@@ -87,6 +88,7 @@ test('registration missing exact descendant list or immutable launch identity fa
     { ...registration, routerExecutableSha256: 'A'.repeat(64) },
     { ...registration, routerPid: '4100' },
     { ...registration, registeredDescendants: [{ pid: 4101, startedAtUtc: 'invalid' }] },
+    { ...registration, registeredDescendants: [{ pid: 4101, startedAtUtc: '2026-10-16T17:39:59.000Z' }] },
     { ...registration, registeredDescendants: [{ pid: registration.routerPid, startedAtUtc: registration.routerStartedAtUtc }] },
     { ...registration, registeredDescendants: [
       registration.registeredDescendants[0],
