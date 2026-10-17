@@ -1,0 +1,48 @@
+name: Original R7 Windows SCM Preflight
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
+      - 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/**'
+      - '.github/workflows/original-r7-scm-preflight.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: original-r7-scm-preflight-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-scm-preflight:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile actual SCM witness service binary
+        shell: pwsh
+        run: |
+          dotnet build src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Execute Windows native SCM registry and identity negative tests
+        shell: pwsh
+        run: |
+          dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record custody authority boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'HOSTED_WINDOWS_CI_SHAPE_ONLY=true'
+          Write-Output 'ORIGINAL_R7_WRITER_DENIED=false'
+          Write-Output 'BATTLE_BRIDGE_OS_WITNESS_SIGNER_COMMISSIONED=false'
+          Write-Output 'R7_LEASE_RELEASED=false'
