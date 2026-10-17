@@ -3,6 +3,8 @@
 // No GitHub, arbitrary command, Windows witness, approval or merge capability.
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { openSync, readFileSync, closeSync, constants, fstatSync } from 'node:fs';
+import { join, isAbsolute, normalize } from 'node:path';
 import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
 
@@ -57,9 +59,62 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     return Object.freeze({ ok: false, reason: 'CALIBRATION_SOURCE_GIT_UNPROVEN' });
   }
 }
+// Protect Battle Bridge VR/flat gaming. Calibrating a local model consumes GPU
+// and CPU, and MUST stop if the independent Windows gaming governor is active,
+// stale, missing or denies heavy models. This only reads its existing state;
+// it never changes game, GPU, Ollama, or daemon operation.
+export function inspectLocalSovereignGamingPermissionV1(env = process.env, {
+  nowMs = Date.now(), openFile = openSync, readFile = readFileSync,
+  statFile = fstatSync, closeFile = closeSync, platform = process.platform,
+} = {}) {
+  const workspace = String(env.STEPHANOS_SHARED_AGENT_WORKSPACE ?? '');
+  if (platform !== 'linux' || !workspace.startsWith('/') || !isAbsolute(workspace)
+    || normalize(workspace) !== workspace
+    || workspace.includes('\0') || workspace.includes('\n')
+    || workspace.includes('\r') || !Number.isSafeInteger(nowMs)) {
+    return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_PATH_UNTRUSTED' });
+  }
+  const file = join(workspace, 'vr', 'vr-resource-governor-current.json');
+  let fd;
+  try {
+    fd = openFile(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = statFile(fd);
+    if (!stat.isFile() || stat.size < 2 || stat.size > 32_768) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_FILE_INVALID' });
+    }
+    const raw = readFile(fd, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > 32_768) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_FILE_INVALID' });
+    }
+    const state = JSON.parse(raw);
+    const when = Date.parse(state?.updatedAtUtc);
+    if (state?.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+      || typeof state.active !== 'boolean'
+      || typeof state.localModelAllowed !== 'boolean'
+      || typeof state.heavyModelAllowed !== 'boolean'
+      || !Number.isFinite(when) || nowMs - when > 30_000
+      || when - nowMs > 5_000) {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_STALE_OR_INVALID' });
+    }
+    if (state.active || state.flatGameActive === true || state.airLinkActive === true
+      || state.virtualAirLinkTestActive === true
+      || state.realAirLinkActive === true || state.prepareLeaseActive === true
+      || state.localModelAllowed !== true || state.heavyModelAllowed !== true
+      || state.ollamaLoadMode === 'off') {
+      return Object.freeze({ ok: false, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' });
+    }
+    return Object.freeze({ ok: true, reason: '' });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_UNAVAILABLE' });
+  } finally {
+    if (fd !== undefined) {
+      try { closeFile(fd); } catch { /* fail-closed caller still rechecks */ }
+    }
+  }
+}
 export async function runSovereignOllamaCalibrationV1(env = process.env, {
   fetchImpl = fetch, gitSpawn = spawnSync, platform = process.platform,
-  sourceRoot = SOURCE_ROOT,
+  sourceRoot = SOURCE_ROOT, gamingGuard = inspectLocalSovereignGamingPermissionV1,
 } = {}) {
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
@@ -67,6 +122,8 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   }
   const gitProof = inspectLocalCalibrationGitIdentityV1(env, { gitSpawn, platform, sourceRoot });
   if (!gitProof.ok) return held(gitProof.reason);
+  const gaming = gamingGuard(env, { platform });
+  if (!gaming?.ok) return held(gaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN');
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
@@ -79,6 +136,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   };
   const evaluation = await evaluateSovereignCalibrationV1(input, {
     invokeModel: async prompt => {
+      // Every candidate inference rechecks the real live gaming governor.
+      const currentGaming = gamingGuard(env, { platform });
+      if (!currentGaming?.ok) throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
       // No prompt, source, model output or token enters a GitHub receipt.
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
         method: 'POST',
@@ -109,6 +169,8 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   // This second native check is read-only and does not reset local changes.
   const after = inspectLocalCalibrationGitIdentityV1(env, { gitSpawn, platform, sourceRoot });
   if (!after.ok) return held('CALIBRATION_SOURCE_CHANGED_DURING_EXAM');
+  const finalGaming = gamingGuard(env, { platform });
+  if (!finalGaming?.ok) return held(finalGaming?.reason || 'CALIBRATION_GAMING_RESOURCE_UNPROVEN');
   return evaluation;
 }
 // Read-only model availability preflight. Ollama's /api/tags endpoint does

@@ -5,6 +5,7 @@ import {
   projectSovereignOllamaCalibrationV1 as project,
   probeLocalSovereignOllamaV1 as probe,
   inspectLocalCalibrationGitIdentityV1 as inspectGit,
+  inspectLocalSovereignGamingPermissionV1 as gaming,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
@@ -19,6 +20,7 @@ const env = Object.freeze({
 });
 const gitProof = (overrides = {}) => ({
   platform: 'linux', sourceRoot: '/tmp/nonproduction-review-fixture',
+  gamingGuard: allowGaming,
   gitSpawn(command, args, options) {
     assert.equal(command, '/usr/bin/git');
     assert.equal(options.shell, false);
@@ -36,6 +38,7 @@ const gitProof = (overrides = {}) => ({
       : { status: 1, stdout: '' };
   },
 });
+const allowGaming = () => ({ ok: true });
 function noAuthority(r) {
   for (const key of ['independentHostAttestation','signatureVerified','specialistAuthority',
     'independentReviewSatisfied','protectedMergeAuthority','sourceMutationAuthority',
@@ -155,6 +158,67 @@ test('calibration checks Git source again after the full ten-model-case exam', a
 });
 
 
+test('gaming-governor refuses absent, stale and active gaming signals before model use', async () => {
+  const state = {
+    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    updatedAtUtc: new Date('2026-10-17T20:00:00.000Z').toISOString(),
+    active: false, flatGameActive: false, airLinkActive: false,
+    localModelAllowed: true, heavyModelAllowed: true,
+    ollamaLoadMode: 'balanced', prepareLeaseActive: false,
+  };
+  const fixedNow = Date.parse(state.updatedAtUtc) + 1_000;
+  const validFile = (change = {}) => ({
+    platform: 'linux', nowMs: fixedNow,
+    openFile(path, flags) {
+      assert.match(path, /vr\/vr-resource-governor-current\.json$/);
+      assert.equal(flags & 131072, 131072, 'O_NOFOLLOW required');
+      return 31;
+    },
+    statFile(fd) {
+      assert.equal(fd, 31);
+      return { isFile: () => true, size: 512 };
+    },
+    readFile(fd, encoding) {
+      assert.equal(fd, 31); assert.equal(encoding, 'utf8');
+      return JSON.stringify({ ...state, ...change });
+    },
+    closeFile(fd) { assert.equal(fd, 31); },
+  });
+  const linuxEnv = { ...env, STEPHANOS_SHARED_AGENT_WORKSPACE: '/mnt/c/Users/Operator/Documents/Stephanos-openclaw-workspace' };
+  assert.equal(gaming(linuxEnv, validFile()).ok, true);
+  for (const altered of [
+    { active: true }, { flatGameActive: true }, { airLinkActive: true },
+    { virtualAirLinkTestActive: true }, { localModelAllowed: false },
+    { heavyModelAllowed: false }, { prepareLeaseActive: true },
+    { updatedAtUtc: '2026-10-17T19:00:00.000Z' },
+    { updatedAtUtc: 'not-a-date' },
+  ]) {
+    const result = gaming(linuxEnv, validFile(altered));
+    assert.equal(result.ok, false);
+  }
+  assert.equal(gaming({ ...linuxEnv, STEPHANOS_SHARED_AGENT_WORKSPACE: '../escape' }, validFile()).ok, false);
+  assert.equal(gaming(linuxEnv, { ...validFile(), openFile() { throw Error('missing'); } }).ok, false);
+});
+test('local-model exam immediately holds when gaming activates between cases', async () => {
+  let games = 0;
+  let modelCalls = 0;
+  const result = await run(env, {
+    ...gitProof(),
+    gamingGuard: () => ({ ok: ++games < 4, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' }),
+    fetchImpl: async (_url, options) => {
+      modelCalls++;
+      const prompt = JSON.parse(options.body).prompt;
+      const id = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const digest = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return {ok: true, text: async () => JSON.stringify({response: JSON.stringify({
+        challengeId: id, diffSha256: digest, verdict:'clean', findings: [],
+      })})};
+    },
+  });
+  assert.equal(modelCalls, 2);
+  assert.equal(result.status, 'CALIBRATION_HELD');
+  noAuthority(result);
+});
 test('read-only preflight observes only local Ollama model availability', async () => {
   const calls = [];
   const ready = await probe(env, { fetchImpl: async (url, options) => {

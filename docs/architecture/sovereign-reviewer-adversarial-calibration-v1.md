@@ -45,3 +45,17 @@ The public result projection now additionally refuses impossible pass counts,
 wrong manifest digest and any claimed protected/privileged authority rather
 than merely copying a caller's `status` field. Even an internally consistent
 candidate is not independently signed, admitted or allowed to merge.
+
+## Battle Bridge gaming resource governor precondition
+
+The ten-case WSL Ollama candidate exam now checks the existing
+`Shared Workspace/vr/vr-resource-governor-current.json` state before
+starting, **before each local inference** and again before emitting any
+candidate result. It uses a bounded read-only `O_NOFOLLOW` file descriptor,
+requires an appropriately fresh native governor timestamp and holds if VR,
+Air Link, a flat game, gaming preparation, model denial or heavy-model
+protection is in effect. Missing/stale data prevents GPU-model loading rather
+than assuming gaming is off. This adds no gaming toggle, background polling,
+Ollama model load during preflight, OS mutation or merge authority. Runtime
+governor protection remains independently responsible for immediate process
+eviction on real headset/game detection.
