@@ -11,5 +11,8 @@
              Link="OriginalR7ScmPreflight.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ImagePinPreflight.cs"
              Link="OriginalR7ImagePinPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterAccessPreflight.cs"
+             Link="OriginalR7WriterAccessPreflight.cs" />
+    <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
   </ItemGroup>
 </Project>

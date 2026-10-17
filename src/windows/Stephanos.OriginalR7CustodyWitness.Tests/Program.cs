@@ -114,6 +114,52 @@ finally
 
 OriginalR7ImagePinObservation liveImage = OriginalR7ImagePinPreflight.Inspect();
 ImageAlwaysHeld(liveImage, "IMAGE_LIVE");
+
+void WriterAlwaysHeld(OriginalR7WriterAccessObservation result, string id)
+{
+    Check(!result.OriginalPrincipalProvenanceAuthenticated, id + "_NO_ORIGINAL_IDENTITY");
+    Check(!result.WholeSourceAndRelaunchExcluded, id + "_NO_SOURCE_EXCLUSION");
+    Check(!result.ProtectedAuditVerified, id + "_NO_PROTECTED_AUDIT");
+    Check(!result.SigningAuthorityGranted, id + "_NO_SIGNER");
+    Check(!result.LeaseReleaseAuthorized, id + "_NO_LEASE");
+}
+using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+{
+    string originalSid = identity.User?.Value
+        ?? throw new InvalidOperationException("R7_TEST_WINDOWS_IDENTITY_UNKNOWN");
+    var noToken = OriginalR7WriterAccessPreflight.ObserveSingleTarget(
+        image, new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(IntPtr.Zero),
+        originalSid);
+    Check(!noToken.OneTargetNegativeWriteProbeObserved, "WRITER_MISSING_TOKEN_NO_DENIAL");
+    WriterAlwaysHeld(noToken, "WRITER_MISSING_TOKEN");
+
+    // The local CI runner's token is NOT the historical #2962 writer token.
+    // Observations may be held as filtered on hosted runners. Never force
+    // another token or manufacture a clean old-writer identity for the test.
+    var actual = OriginalR7WriterAccessPreflight.ObserveSingleTarget(
+        image, identity.AccessToken, originalSid);
+    Check(!actual.OneTargetNegativeWriteProbeObserved,
+        "WRITER_RUNNER_BINARY_NOT_QUALIFIED_ORIGINAL_TARGET");
+    WriterAlwaysHeld(actual, "WRITER_RUNNING_TOKEN");
+    var spoofedSid = OriginalR7WriterAccessPreflight.ObserveSingleTarget(
+        image, identity.AccessToken, "S-1-5-21-1000-2000-3000-4000");
+    Check(!spoofedSid.OneTargetNegativeWriteProbeObserved,
+        "WRITER_FORGED_SID_NO_DENIAL");
+    WriterAlwaysHeld(spoofedSid, "WRITER_FORGED_SID");
+    var invalidPath = OriginalR7WriterAccessPreflight.ObserveSingleTarget(
+        @"\\untrusted\share\file", identity.AccessToken, originalSid);
+    Check(!invalidPath.OneTargetNegativeWriteProbeObserved,
+        "WRITER_UNTRUSTED_TARGET_NO_DENIAL");
+    WriterAlwaysHeld(invalidPath, "WRITER_UNTRUSTED_TARGET");
+
+    // Deliberately malformed input cannot become a privileged service
+    // invocation even with a syntactically valid SID.
+    var unknown = OriginalR7WriterAccessPreflight.ObserveSingleTarget(
+        "", identity.AccessToken, originalSid);
+    Check(!unknown.OneTargetNegativeWriteProbeObserved,
+        "WRITER_NO_TARGET_NO_DENIAL");
+    WriterAlwaysHeld(unknown, "WRITER_NO_TARGET");
+}
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");

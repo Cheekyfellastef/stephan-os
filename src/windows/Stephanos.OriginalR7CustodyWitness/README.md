@@ -30,6 +30,23 @@ unsigned service from presenting a running process as credible custody.
 There are no protected keys, receipts, service installer, remote endpoints,
 network handlers, read-write access to the source checkout or generic shell.
 
+## Native old-writer negative-open probe integration (source only)
+
+The native witness host now references the already independently source-tested
+`Stephanos.OriginalR7DaclReadback` library and exposes an internal
+`OriginalR7WriterAccessPreflight.ObserveSingleTarget` adapter. It asks the OS
+kernel for separate DATA/APPEND/WRITE_DAC/WRITE_OWNER opens under one retained,
+unmodified Windows token and refuses missing, filtered, bypass-capable or
+mismatched tokens and unstable object identity. No writer token acquisition,
+production SID selection, network or CLI trigger, physical enforcement or
+signer is added. The source-only adapter always rejects claims of authenticated
+original provenance, whole-tree/old-handle/relaunch exclusion, audit, signing
+and lease authority, even if one target's negative opens are observed.
+
+The existing SCM host deliberately does **not** invoke this adapter at start:
+no independent authority currently supplies the original r7 token. A runner
+Windows user token cannot stand in for that historical identity.
+
 ## Remaining service implementation
 
 1. Independently provision a dedicated Windows service identity and a
