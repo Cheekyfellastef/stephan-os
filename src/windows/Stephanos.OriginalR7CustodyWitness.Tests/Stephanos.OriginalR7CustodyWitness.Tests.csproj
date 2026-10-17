@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs"
+             Link="OriginalR7ScmPreflight.cs" />
+  </ItemGroup>
+</Project>
