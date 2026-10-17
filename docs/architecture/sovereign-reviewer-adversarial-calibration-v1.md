@@ -75,28 +75,15 @@ an independent auditor signature or immutable host-backed evidence, and cannot
 satisfy a protected exact-head specialist check without external attestation.
 No source file, signing key, service, original lease, or game process is edited.
 
-## Fresh idle governor telemetry without weakening gaming priority
+## Separately reviewed Windows idle-governor heartbeat
 
-The existing Windows VR/flat governor Watch loop now performs a bounded idle
-reconciliation when its existing state timestamp is at least 15 seconds old
-(or invalid). Previously, a permanently idle PC could leave a valid but stale
-JSON indefinitely, making the 30-second local-model freshness check impossible
-to satisfy. This does **not** skip gaming/headset detection: every watcher tick
-still samples signals and immediately executes its existing headset eviction
-path first. Active gaming protection retains its prior rapid 0.5s/5s guard
-cadence. The additional idle heartbeat emits the actual current observation
-through the existing `Invoke-Reconcile` path and never grants permission if
-Watch is stopped or its state is missing/stale. Source CI tests are not proof
-that the native watcher has been deployed to Battle Bridge.
-
-## Integrated no-inference Battle Bridge readiness preflight
-
-The fixed `--preflight` mode now checks the real exact branch/head,
-base ancestry and clean checkout, then the fresh gaming governor, **before**
-performing a read-only loopback Ollama `GET /api/tags`. A positive candidate
-returns explicitly `sourceVerified: true`, `gamingClear: true` and
-`selectedModelPresent: true`; the Windows shell-free bridge rejects any
-missing or forged field. If source is dirty or gaming is active, the preflight
-never contacts Ollama. This does **not** run the ten-case exam or independently
-attest host provenance; the full model runner independently repeats every
-source and gaming check to resist stale preflight results.
+The strict thirty-second freshness check in this reviewer is deliberately
+**not relaxed**. Battle Bridge's inactive VR governor normally updates only
+when its gaming state changes, so an unchanged idle state can become stale.
+The native Windows fifteen-second idle observation repair is preserved in
+[PR #3155](https://github.com/Cheekyfellastef/stephan-os/pull/3155),
+**separately draft and high-risk**, and has NOT been merged or commissioned.
+The normal reviewer branch does not edit Windows governor authority surfaces.
+Until a qualified native Windows specialist admits PR #3155 and its real
+watcher behavior is witnessed, expired governor state keeps local-model
+calibration held. No original dirty checkout files are changed.
