@@ -57,6 +57,7 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
   assert.equal(calls.length, 3);
   assert.equal(calls.every(x => x.command === path.win32.resolve('C:/Windows/System32/wsl.exe') && x.args[0] === '--exec' && x.options.shell === false), true);
   assert.equal(calls.every(x => x.options.env.WSLENV === ''), true);
+  assert.deepEqual(calls.map(x => x.options.timeout), [12_000, 12_000, 150_000]);
   assert.equal(calls.every(x => x.command !== 'wsl.exe'), true, 'never resolve executable from cwd or PATH');
   assert.equal(calls.every(x => path.win32.isAbsolute(x.command)), true, 'absolute Windows executable required');
   assert.deepEqual(calls[2].args.slice(0, 6), ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp', 'STEPHANOS_REVIEW_EXACT_HEAD=' + 'a'.repeat(40)]);
@@ -141,8 +142,9 @@ test('Windows WSL calibration proof must be re-read at the claimed SHA256', () =
   function attempt({ proofStatus = 0, hash = candidate.proofSha256, source = candidate } = {}) {
     let stage = 0;
     const r = runWindowsSovereignReviewerV1(env, { ...context, mode: 'calibration',
-      spawn: (_, args) => {
+      spawn: (_, args, options) => {
         stage++;
+        assert.equal(options.timeout, stage === 3 ? 570_000 : 12_000);
         if (stage <= 2) return { status: 0, stdout: '/mnt/c/safe\n' };
         if (stage === 3) return { status: 0,
           stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(source) + '\n' };
@@ -185,6 +187,8 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
       calls++;
       stageCount++;
       const stage = (stageCount - 1) % 4;
+      assert.equal(args.includes('/usr/bin/sha256sum') || stage < 2
+        ? true : args.includes('/usr/bin/node'), true);
       if (stage < 2) return { status: 0, stdout: '/mnt/c/safe\n' };
       if (stage === 2) {
         assert.equal(args.includes('/usr/bin/node'), true);

@@ -109,3 +109,14 @@ This is shell-free/read-only and has no permission to install, sign, merge or
 release the lease. The hash is not an independent auditor signature or proof
 of privileged original-writer exclusion. Integration tests exercise normal,
 missing, corrupted and forged-hash states.
+
+## Bounded WSL helper-call timeout isolation
+
+In ten-case calibration mode the actual approved fixed Node exam retains its
+570-second total wall-clock budget; **neither** fixed `wslpath` conversion
+nor SHA-256 candidate-proof readback may inherit it. Both use independent
+12-second timeouts with shell-free fixed executable/argv. This prevents an
+unavailable path converter, unexpectedly huge tampered candidate evidence,
+or wedged proof checker from consuming an entire model-exam budget. The
+ordinary fixed one-shot reviewer remains 150 seconds, and all positive
+signals are still candidate-only without qualified security authority.

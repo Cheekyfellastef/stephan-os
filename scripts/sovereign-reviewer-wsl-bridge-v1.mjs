@@ -88,15 +88,17 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     PATH: 'C:\\Windows\\System32;C:\\Windows',
     WSLENV: '',
   };
-  const run = args => spawn(path.win32.resolve('C:/Windows/System32/wsl.exe'), ['--exec', ...args], {
+  const run = (args, timeoutMs = mode === 'calibration' ? 570_000 : 150_000) =>
+    spawn(path.win32.resolve('C:/Windows/System32/wsl.exe'), ['--exec', ...args], {
     encoding: 'utf8', windowsHide: true, shell: false,
-    timeout: mode === 'calibration' ? 570_000 : 150_000,
+    timeout: timeoutMs,
     maxBuffer: 16 * 1024,
     env: minimalEnv,
   });
   const linuxPaths = [];
   for (const windowsPath of [executable, plan.workspace]) {
-    const conversion = run(['/usr/bin/wslpath', '-u', windowsPath]);
+    // A path-only conversion must never hold the long model-exam budget.
+    const conversion = run(['/usr/bin/wslpath', '-u', windowsPath], 12_000);
     const output = text(conversion?.stdout);
     if (conversion?.error || conversion?.status !== 0 || !/^\/[^\r\n\0]+$/.test(output)) {
       return error('WSL_PATH_TRANSLATION_UNAVAILABLE');
@@ -163,7 +165,8 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       || !proofFile.startsWith(linuxPaths[1].replace(/\/+$/, '') + '/')) {
       return error('CALIBRATION_PROOF_PATH_UNSAFE');
     }
-    const observed = run(['/usr/bin/sha256sum', '--', proofFile]);
+    // A malformed / replaced proof cannot tie up GPU-capable WSL for 570s.
+    const observed = run(['/usr/bin/sha256sum', '--', proofFile], 12_000);
     if (observed?.error || observed?.status !== 0) {
       return error('CALIBRATION_PROOF_FILE_UNREADABLE');
     }
