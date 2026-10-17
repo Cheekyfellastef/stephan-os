@@ -123,6 +123,45 @@ test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects f
   }
 });
 
+test('Windows WSL calibration proof must be re-read at the claimed SHA256', () => {
+  let done = 0;
+  const candidate = {
+    status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
+    repository: env.STEPHANOS_REVIEW_REPOSITORY,
+    sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
+    completedCases: 10, passedCases: 10,
+    manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
+    proofRef: 'proofs/sovereign-calibration-pr-3059-aaaaaaaaaaaa-dddddddddddd.json',
+    proofSha256: 'e'.repeat(64), qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+    independentHostAttestation: false, signatureVerified: false,
+    specialistAuthority: false, independentReviewSatisfied: false,
+    leaseReleaseAuthority: false, protectedMergeAuthority: false,
+  };
+  function attempt({ proofStatus = 0, hash = candidate.proofSha256, source = candidate } = {}) {
+    let stage = 0;
+    const r = runWindowsSovereignReviewerV1(env, { ...context, mode: 'calibration',
+      spawn: (_, args) => {
+        stage++;
+        if (stage <= 2) return { status: 0, stdout: '/mnt/c/safe\\n' };
+        if (stage === 3) return { status: 0,
+          stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(source) + '\\n' };
+        done++;
+        assert.deepEqual(args.slice(0, 3), ['--exec', '/usr/bin/sha256sum', '--']);
+        return { status: proofStatus,
+          stdout: hash + '  /mnt/c/safe/' + candidate.proofRef + '\\n' };
+      },
+    });
+    return r;
+  }
+  assert.equal(attempt().ok, true);
+  assert.equal(attempt({ hash: 'f'.repeat(64) }).reason, 'CALIBRATION_PROOF_FILE_HASH_MISMATCH');
+  assert.equal(attempt({ proofStatus: 1 }).reason, 'CALIBRATION_PROOF_FILE_UNREADABLE');
+  assert.equal(attempt({ source: { ...candidate, proofSha256: 'bad' } }).reason,
+    'CALIBRATION_EVIDENCE_UNQUALIFIED');
+  assert.equal(done, 3);
+});
+
 test('Windows WSL bridge accepts only a complete untrusted calibration candidate', () => {
   let calls = 0;
   const summary = {
@@ -142,10 +181,17 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     ...context, mode: 'calibration',
     spawn: (_, args) => {
       calls++;
-      if (calls % 3 !== 0) return { status: 0, stdout: '/mnt/c/safe\n' };
-      assert.equal(args.includes('/usr/bin/node'), true);
-      assert.equal(args.at(-1), '--once', 'fixed calibration CLI is mandatory');
-      return { status: 0, stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(receipt) + '\n' };
+      const stage = (calls - 1) % 4;
+      if (stage < 2) return { status: 0, stdout: '/mnt/c/safe\n' };
+      if (stage === 2) {
+        assert.equal(args.includes('/usr/bin/node'), true);
+        assert.equal(args.at(-1), '--once', 'fixed calibration CLI is mandatory');
+        return { status: 0, stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(receipt) + '\n' };
+      }
+      assert.deepEqual(args.slice(0, 3), ['--exec', '/usr/bin/sha256sum', '--']);
+      const path = '/mnt/c/safe/' + summary.proofRef;
+      assert.equal(args.at(-1), path);
+      return { status: 0, stdout: summary.proofSha256 + '  ' + path + '\n' };
     },
   });
   const candidate = run(summary);
@@ -167,7 +213,7 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'CALIBRATION_EVIDENCE_UNQUALIFIED');
   }
-  assert.equal(calls, 24);
+  assert.equal(calls, 32);
   // Ten real local calls can take longer than one standard review, but each
   // attempt has a bounded wall-clock, not a new arbitrary remote command.
   // Checks apply to the synthetic Windows spawn adapter, not physical WSL.

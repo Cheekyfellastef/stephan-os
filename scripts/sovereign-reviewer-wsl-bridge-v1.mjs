@@ -155,6 +155,22 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       || receipt.leaseReleaseAuthority !== false || receipt.protectedMergeAuthority !== false) {
       return error('CALIBRATION_EVIDENCE_UNQUALIFIED');
     }
+    // Candidate status and a claimed digest alone do not prove a stored
+    // artifact exists. Read the fixed Windows Shared Workspace proof back
+    // through the same shell-free WSL boundary, with no caller path inputs.
+    const proofFile = path.posix.join(linuxPaths[1], expectedRef);
+    if (path.posix.normalize(linuxPaths[1]) !== linuxPaths[1]
+      || !proofFile.startsWith(linuxPaths[1].replace(/\/+$/, '') + '/')) {
+      return error('CALIBRATION_PROOF_PATH_UNSAFE');
+    }
+    const observed = run(['/usr/bin/sha256sum', '--', proofFile]);
+    if (observed?.error || observed?.status !== 0) {
+      return error('CALIBRATION_PROOF_FILE_UNREADABLE');
+    }
+    const expectedLine = receipt.proofSha256 + '  ' + proofFile;
+    if (text(observed?.stdout) !== expectedLine) {
+      return error('CALIBRATION_PROOF_FILE_HASH_MISMATCH');
+    }
     return Object.freeze({
       ok: true, status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
       sourceHead: receipt.sourceHead, completedCases: 10, passedCases: 10,

@@ -97,3 +97,15 @@ model replies fail the ten-case qualification. Requests set `keep_alive: 0`
 to release GPU residence after individual cases. This does not authenticate
 Ollama's binary or prove an independent host/model signature; it preserves
 candidate-only evidence and explicit gaming-governor safeguards.
+
+## Windows bridge independent file-existence and SHA readback
+
+The Windows-to-WSL candidate bridge now performs a bounded fixed-executable
+`/usr/bin/sha256sum -- <SharedWorkspace/proofs/...>` readback after validating
+PR/head-bound file name, candidate model verdict, and 64-character claimed
+digest. It only emits candidate status if the proof file **really exists and
+matches that SHA-256**; missing, unreadable, or changed files are HOLD.
+This is shell-free/read-only and has no permission to install, sign, merge or
+release the lease. The hash is not an independent auditor signature or proof
+of privileged original-writer exclusion. Integration tests exercise normal,
+missing, corrupted and forged-hash states.
