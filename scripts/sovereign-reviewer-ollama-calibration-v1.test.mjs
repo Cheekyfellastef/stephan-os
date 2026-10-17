@@ -5,6 +5,7 @@ import {
   projectSovereignOllamaCalibrationV1 as project,
   probeLocalSovereignOllamaV1 as probe,
   inspectLocalCalibrationGitIdentityV1 as inspectGit,
+  
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
@@ -96,18 +97,64 @@ test('invalid local model, source and provider identities fail before or during 
   assert.equal(calls, 0);
   noAuthority(project(sameProvider));
 });
-test('candidate clean status never becomes independently qualified or approved', () => {
-  const s = project({
+test('public calibration projection rejects forged pass status and authority claims', () => {
+  const sample = {
     status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
     repository: 'Cheekyfellastef/stephan-os', sourceHead: 'a'.repeat(40),
     baseSha: 'b'.repeat(40), completedCases: 10, passedCases: 10,
     manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
-    specialistAuthority: true, independentReviewSatisfied: true,
-    leaseReleaseAuthority: true,
-  });
-  assert.equal(s.status, 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED');
-  noAuthority(s);
+    independentHostAttestation: false, signatureVerified: false,
+    specialistAuthority: false, independentReviewSatisfied: false,
+    protectedMergeAuthority: false, sourceMutationAuthority: false,
+    leaseReleaseAuthority: false, windowsCommissioningAuthority: false,
+    physicalPickupProven: false,
+  };
+  for (const payload of [
+    sample,
+    { ...sample, specialistAuthority: true },
+    { ...sample, leaseReleaseAuthority: true },
+    { ...sample, completedCases: 9 },
+    { ...sample, sourceHead: sample.baseSha },
+    { ...sample, independentHostAttestation: true },
+  ]) {
+    const projected = project(payload);
+    assert.equal(projected.status, 'CALIBRATION_HELD');
+    assert.equal(projected.reason, 'CALIBRATION_RESULT_INCONSISTENT');
+    noAuthority(projected);
+  }
 });
+test('calibration checks Git source again after the full ten-model-case exam', async () => {
+  let gitCalls = 0;
+  let modelCalls = 0;
+  const original = gitProof();
+  const outcome = await run(env, {
+    ...original,
+    gitSpawn(command, args, options) {
+      gitCalls++;
+      // A second inspection sees a newly dirty worktree after ten requests.
+      if (args.includes('status') && gitCalls > 4) {
+        return { status: 0, stdout: ' M changed-during-model-exam.txt\n' };
+      }
+      return original.gitSpawn(command, args, options);
+    },
+    fetchImpl: async (_url, options) => {
+      modelCalls++;
+      const prompt = JSON.parse(options.body).prompt;
+      const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return { ok: true, text: async () => JSON.stringify({
+        response: JSON.stringify({ challengeId, diffSha256,
+          verdict: 'clean', findings: [] }),
+      }) };
+    },
+  });
+  assert.equal(modelCalls, 10);
+  assert.ok(gitCalls >= 7);
+  assert.equal(outcome.status, 'CALIBRATION_HELD');
+  assert.equal(outcome.reason, 'CALIBRATION_SOURCE_CHANGED_DURING_EXAM');
+  noAuthority(project(outcome));
+});
+
 
 test('read-only preflight observes only local Ollama model availability', async () => {
   const calls = [];

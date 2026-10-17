@@ -34,3 +34,14 @@ reset, stash, clean or other file mutation is performed. The known eight
 dirty Battle Bridge entries must be preserved; a separately clean reviewer
 checkout is required. Hosted CI uses a mock Git adapter to verify the refusal
 policy, and does not claim physical source custody or model execution.
+
+## Recheck exact checkout and reject forged candidate projections
+
+The ten-case exam reads Git HEAD/branch/clean status/base ancestry **both before
+and after** local-model execution. Any concurrent checkout/source modification,
+including existing dirty entries, emits `CALIBRATION_SOURCE_CHANGED_DURING_EXAM`
+and suppresses candidate readiness. It never resets or touches local work.
+The public result projection now additionally refuses impossible pass counts,
+wrong manifest digest and any claimed protected/privileged authority rather
+than merely copying a caller's `status` field. Even an internally consistent
+candidate is not independently signed, admitted or allowed to merge.

@@ -4,7 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { evaluateSovereignCalibrationV1 } from '../shared/agents/sovereignCalibrationV1.mjs';
+import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -77,7 +77,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
     reviewerProvider: 'sovereign-local-ollama',
     reviewerSessionId: env.STEPHANOS_REVIEW_SESSION,
   };
-  return evaluateSovereignCalibrationV1(input, {
+  const evaluation = await evaluateSovereignCalibrationV1(input, {
     invokeModel: async prompt => {
       // No prompt, source, model output or token enters a GitHub receipt.
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
@@ -104,6 +104,12 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
       return result.response;
     },
   });
+  // A ten-case exam can span minutes. Never publish a valid candidate if a
+  // concurrent process changed branch, HEAD, base ancestry or worktree.
+  // This second native check is read-only and does not reset local changes.
+  const after = inspectLocalCalibrationGitIdentityV1(env, { gitSpawn, platform, sourceRoot });
+  if (!after.ok) return held('CALIBRATION_SOURCE_CHANGED_DURING_EXAM');
+  return evaluation;
 }
 // Read-only model availability preflight. Ollama's /api/tags endpoint does
 // NOT load a model or modify the host. No user path, URL, tokens, inventory,
@@ -148,12 +154,31 @@ export async function probeLocalSovereignOllamaV1(env = process.env, {
   }
 }
 export function projectSovereignOllamaCalibrationV1(result = {}) {
-  const ok = result.status === 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED';
   const sha40 = /^[a-f0-9]{40}$/;
   const sha64 = /^[a-f0-9]{64}$/;
+  // A displayable candidate must be structurally consistent with the real
+  // private ten-case scorer, not just an untrusted {status:'passed'} object.
+  // Even an internally consistent projection is NOT an auditor signature.
+  const ok = result.status === 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
+    && result.repository === 'Cheekyfellastef/stephan-os'
+    && sha40.test(result.sourceHead ?? '') && sha40.test(result.baseSha ?? '')
+    && result.sourceHead !== result.baseSha
+    && result.completedCases === 10 && result.passedCases === 10
+    && result.manifestSha256 === SOVEREIGN_CALIBRATION_MANIFEST_SHA256
+    && sha64.test(result.observationsSha256 ?? '')
+    && result.independentHostAttestation === false
+    && result.signatureVerified === false
+    && result.specialistAuthority === false
+    && result.independentReviewSatisfied === false
+    && result.protectedMergeAuthority === false
+    && result.sourceMutationAuthority === false
+    && result.leaseReleaseAuthority === false
+    && result.windowsCommissioningAuthority === false
+    && result.physicalPickupProven === false;
   return Object.freeze({
     status: ok ? 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED' : 'CALIBRATION_HELD',
-    reason: ok ? '' : String(result.reason || 'CALIBRATION_UNQUALIFIED').slice(0, 120),
+    reason: ok ? '' : String(result.status === 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
+      ? 'CALIBRATION_RESULT_INCONSISTENT' : result.reason || 'CALIBRATION_UNQUALIFIED').slice(0, 120),
     repository: result.repository === 'Cheekyfellastef/stephan-os' ? result.repository : '',
     sourceHead: sha40.test(result.sourceHead ?? '') ? result.sourceHead : '',
     baseSha: sha40.test(result.baseSha ?? '') ? result.baseSha : '',
