@@ -106,6 +106,51 @@ jobs:
         run: |
           node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package source-only Windows witness binary with exact source checksum
+        shell: pwsh
+        env:
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Distribution staging only. NOT installer, signer or custody proof.
+          $stage = Join-Path $PWD '.r7-witness-ci-staging'
+          New-Item -Path $stage -ItemType Directory -Force | Out-Null
+          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release --output $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $name = 'Stephanos.OriginalR7CustodyWitness.exe'
+          $binary = Join-Path $stage $name
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'R7_PUBLISH_BINARY_MISSING' }
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw 'R7_PACKAGE_SOURCE_HEAD_INVALID' }
+          if ($head -ne $env:EXPECTED_PR_HEAD) { throw 'R7_PACKAGE_HEAD_MISMATCH' }
+          $digest = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -notmatch '^[a-f0-9]{64}$') { throw 'R7_PACKAGE_IMAGE_DIGEST_INVALID' }
+          @(
+            'schemaVersion=stephanos.original-r7-source-only-package.v1',
+            'repository=Cheekyfellastef/stephan-os',
+            'sourceHead=' + $head,
+            'imageFile=' + $name,
+            'imageSha256=' + $digest,
+            'binaryStatus=UNSIGNED_UNCOMMISSIONED',
+            'protectedServiceSidQualified=false',
+            'originalWriterProvenanceAuthenticated=false',
+            'wholeSourceWriterExclusionProven=false',
+            'signingAuthorityProven=false',
+            'operatorApprovalProven=false',
+            'physicalBattleBridgeCommissioned=false',
+            'originalLeaseReleased=false',
+            'historicalOutcome=UNKNOWN'
+          ) | Set-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt') -Encoding UTF8
+          # SHA256 in an unsigned CI manifest is not trusted code identity.
+          Write-Output 'R7_WINDOWS_BINARY_SOURCE_ONLY_STAGED=true'
+          Write-Output 'R7_WINDOWS_BINARY_IS_TRUSTED_ATTESTER=false'
+          Write-Output 'R7_WINDOWS_BINARY_INSTALLED_ON_BATTLE_BRIDGE=false'
+      - name: Retain uncommissioned Windows binary for independent audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: r7-witness-uncommissioned-source-only
+          path: .r7-witness-ci-staging/
+          if-no-files-found: error
+          retention-days: 7
       - name: Record custody authority boundary
         if: always()
         shell: pwsh
