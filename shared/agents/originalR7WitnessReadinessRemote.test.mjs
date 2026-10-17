@@ -34,6 +34,8 @@ const rawObservation = () => ({
   observedAtUtc: new Date().toISOString(),
   servicePresent: true, serviceStatus: 'RUNNING',
   originalProcessCandidateCount: 0, relatedTaskCount: 0, unknownObservations: [],
+  publisherTaskPresent: false, publisherTaskState: 'NOT_FOUND',
+  publisherLastResultClass: 'UNKNOWN',
   privilegedServiceSidVerified: false, sourceAclDenialEnforced: false,
   outOfJobWritersExcluded: false, wmiComRelaunchDenied: false,
   scheduledTaskRelaunchDenied: false, trustRootsVerified: false,
@@ -77,6 +79,9 @@ test('fixed original-r7 readiness action samples immutable Windows script withou
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD');
   assert.equal(result.witnessReadiness.serviceStatus, 'RUNNING');
+  assert.equal(result.witnessReadiness.publisherTaskPresent, false);
+  assert.equal(result.witnessReadiness.publisherTaskState, 'NOT_FOUND');
+  assert.equal(result.witnessReadiness.publisherOriginalWriterAuthenticated, false);
   assert.equal(result.witnessReadiness.authenticatedWitness, false);
   assert.equal(result.witnessReadiness.leaseReleaseAuthority, false);
   assert.equal(result.witnessReadiness.observedAtUtc, observed.observedAtUtc);
@@ -92,6 +97,8 @@ test('fixed original-r7 readiness action samples immutable Windows script withou
     const summary = publicResult.result.result.witnessReadiness;
     assert.equal(summary.servicePresent, true);
     assert.equal(summary.serviceStatus, 'RUNNING');
+    assert.equal(summary.publisherTaskState, 'NOT_FOUND');
+    assert.equal(summary.publisherOriginalWriterAuthenticated, false);
     assert.equal(summary.finalVerdict, 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED');
     assert.equal(summary.leaseReleaseAuthority, false);
     assert.deepEqual(summary.blockers, mandatory);
@@ -129,6 +136,9 @@ test('public readiness summary refuses caller-forged affirmative authority and u
     witnessReadiness: {
       observedAtUtc: '2026-10-17T14:00:00.000Z',
       servicePresent: true, serviceStatus: 'RUNNING',
+      publisherTaskPresent: true, publisherTaskState: 'READY',
+      publisherLastResultClass: 'NONZERO',
+      publisherOriginalWriterAuthenticated: false,
       blockers: mandatory, historicalOutcome: 'UNKNOWN',
       authenticatedWitness: false, physicalPickupProven: false,
       leaseReleaseAuthority: false, sourceMutationAuthority: false,
@@ -139,6 +149,13 @@ test('public readiness summary refuses caller-forged affirmative authority and u
   assert.deepEqual(project().blockers, mandatory);
   inner.witnessReadiness.authenticatedWitness = true;
   assert.equal(project(), null);
+  inner.witnessReadiness.authenticatedWitness = false;
+  inner.witnessReadiness.publisherOriginalWriterAuthenticated = true;
+  assert.equal(project(), null);
+  inner.witnessReadiness.publisherOriginalWriterAuthenticated = false;
+  inner.witnessReadiness.publisherTaskState = 'ACTIVE';
+  assert.equal(project(), null);
+  inner.witnessReadiness.publisherTaskState = 'READY';
   inner.witnessReadiness.authenticatedWitness = false;
   inner.witnessReadiness.blockers = [...mandatory, 'PRIVATE_PATH_C:\\secret'];
   assert.equal(project(), null);
