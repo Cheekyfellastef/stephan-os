@@ -172,11 +172,11 @@ test('trusted workflow keeps review and qualified P2 in one fail-closed step', (
   const adapter = readFileSync(new URL('./exact-head-qualified-escalation-v1.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(workflow, /continue-on-error:\s*true/);
   assert.match(workflow, /run: node scripts\/exact-head-qualified-escalation-v1\.mjs review-proof\/input\.json review-proof\/receipt\.json/);
-  assert.match(workflow, /github\\.event\\.comment\\.user\\.login == 'Cheekyfellastef'/);
-  assert.match(workflow, /github\\.event\\.comment\\.author_association == 'OWNER'/);
-  assert.match(workflow, /startsWith\\(github\\.event\\.comment\\.body, '[^']*stephanos-exact-head-qualified-review-v1'/);
-  assert.match(workflow, /expected_head="\\$\\(node --input-type=module/);
-  assert.match(workflow, /p\\?\\.scope !== 'exact-head-review-only'/);
+  assert.match(workflow, /github\.event\.comment\.user\.login == 'Cheekyfellastef'/);
+  assert.match(workflow, /github\.event\.comment\.author_association == 'OWNER'/);
+  assert.match(workflow, /startsWith\(github\.event\.comment\.body, '[^']*stephanos-exact-head-qualified-review-v1'/);
+  assert.match(workflow, /expected_head="\$\(node --input-type=module/);
+  assert.match(workflow, /p\?\.scope !== 'exact-head-review-only'/);
   assert.match(workflow, /GH_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(workflow, /name: Gate hosted review on its own GitHub installation API budget/);
   assert.match(adapter, /const receipt = reviewExactHead\(input\)/);

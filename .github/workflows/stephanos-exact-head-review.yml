@@ -92,8 +92,8 @@ jobs:
               # run/job/artifact identity and independent security proof.
               # Reject malformed input before spending further GitHub quota.
               expected_head="$(node --input-type=module <<'NODE'
-              const text = String(process.env.COMMENT_BODY || '').replace(/\\r\\n/g, '\\n');
-              const m = text.match(/^```stephanos-exact-head-qualified-review-v1\\n([\\s\\S]{1,5000}?)\\n```(?:\\n|$)/);
+              const text = String(process.env.COMMENT_BODY || '').replace(/\r\n/g, '\n');
+              const m = text.match(/^```stephanos-exact-head-qualified-review-v1\n([\s\S]{1,5000}?)\n```(?:\n|$)/);
               if (!m) process.exit(1);
               let p;
               try { p = JSON.parse(m[1]); } catch { process.exit(1); }
@@ -104,7 +104,7 @@ jobs:
                 || p?.scope !== 'exact-head-review-only'
                 || !/^[a-f0-9]{40}$/.test(p?.expectedHead || '')) process.exit(1);
               process.stdout.write(p.expectedHead);
-              NODE
+          NODE
               )"
             else
               exit 1
