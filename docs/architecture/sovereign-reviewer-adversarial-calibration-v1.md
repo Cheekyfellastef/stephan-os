@@ -74,3 +74,17 @@ fingerprint shape before surfacing candidate readiness. The receipt is *not*
 an independent auditor signature or immutable host-backed evidence, and cannot
 satisfy a protected exact-head specialist check without external attestation.
 No source file, signing key, service, original lease, or game process is edited.
+
+## Fresh idle governor telemetry without weakening gaming priority
+
+The existing Windows VR/flat governor Watch loop now performs a bounded idle
+reconciliation when its existing state timestamp is at least 15 seconds old
+(or invalid). Previously, a permanently idle PC could leave a valid but stale
+JSON indefinitely, making the 30-second local-model freshness check impossible
+to satisfy. This does **not** skip gaming/headset detection: every watcher tick
+still samples signals and immediately executes its existing headset eviction
+path first. Active gaming protection retains its prior rapid 0.5s/5s guard
+cadence. The additional idle heartbeat emits the actual current observation
+through the existing `Invoke-Reconcile` path and never grants permission if
+Watch is stopped or its state is missing/stale. Source CI tests are not proof
+that the native watcher has been deployed to Battle Bridge.
