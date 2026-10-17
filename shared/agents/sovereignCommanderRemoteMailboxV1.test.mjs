@@ -3566,6 +3566,31 @@ test('Island scope readback is bound to nested native execution, not outer MCP c
 });
 
 
+test('native Island absent execution envelope distinguishes source denial from MCP failure without leaking secrets', () => {
+  const inspect = data => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: 'rescue-island-readonly-boundary',
+    envelope: {}, positive: null, negative: null,
+    projection: { ok: false, processId: '', status: null }, ...data,
+  });
+  const variants = [
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      blocker:'PRIVATE_SCRIPT_PATH_C:/Users/operator' } }, 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:'rescue-island-readonly-boundary'}},
+      blocker:'PRIVATE_SID_PROCESS', structuredContent:{ errorCode:'PRIVATE' } } },
+      'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS'],
+    [{ mcpError:true, rawMaintenance:{isError:true, blocker:'PRIVATE_KEY'} },
+      'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'],
+    [{ mcpError:false, rawMaintenance:{} }, 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED'],
+  ];
+  for (const [input, expected] of variants) {
+    const result = inspect(input);
+    assert.equal(result, expected);
+    assert.match(result, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(result, /PRIVATE|C:\\/);
+  }
+});
+
 test('Island invalid-proof diagnostics reveal only constant categories and cannot authorize writers', () => {
   const processId = 'rescue-island-readonly-boundary';
   const baseProjection = {
