@@ -1467,6 +1467,63 @@ function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
   });
 }
 
+// Closed-world public summary for the fixed original-r7 Windows witness readiness
+// observation. A source-only preflight is never permission to install, sign,
+// release the lease, or infer exclusion from an empty process census.
+const ORIGINAL_R7_READINESS_BLOCKERS = new Set([
+  'OS_WITNESS_SERVICE_NOT_OBSERVED', 'OS_WITNESS_SERVICE_NOT_RUNNING',
+  'ORIGINAL_WRITER_PROCESS_INVENTORY_UNAVAILABLE',
+  'ORIGINAL_WRITER_PROCESS_CANDIDATES_PRESENT',
+  'RELATED_SCHEDULED_TASK_INVENTORY_UNAVAILABLE',
+  'SERVICE_ENUMERATION_UNAVAILABLE', 'PROCESS_ENUMERATION_UNAVAILABLE',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_INSPECTION_UNAVAILABLE',
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+]);
+const ORIGINAL_R7_MANDATORY_HOLDS = [
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+];
+function safeOriginalR7WitnessReadinessProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return null;
+  const value = result.witnessReadiness;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || result.ok !== true || result.finalVerdict !== 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD'
+    || result.originalLeaseReleased !== false || result.privilegedWindowsWitnessCommissioned !== false
+    || result.sourceMutationAllowed !== false || result.arbitraryShellAllowed !== false
+    || result.publicReceiptSafe !== true || result.secretMaterialReturned !== false
+    || value.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED'
+    || value.historicalOutcome !== 'UNKNOWN' || value.authenticatedWitness !== false
+    || value.physicalPickupProven !== false || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false
+    || typeof value.servicePresent !== 'boolean'
+    || !['RUNNING', 'STOPPED', 'NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus)
+    || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
+    || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
+    || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))
+    || ORIGINAL_R7_MANDATORY_HOLDS.some(code => !value.blockers.includes(code))) return null;
+  const stamp = value.observedAtUtc;
+  const ms = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== stamp
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(stamp)) return null;
+  return Object.freeze({
+    observedAtUtc: stamp,
+    servicePresent: value.servicePresent,
+    serviceStatus: value.serviceStatus,
+    blockers: Object.freeze([...new Set(value.blockers)]),
+    historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
+    physicalPickupProven: false, leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1510,6 +1567,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
+    witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),

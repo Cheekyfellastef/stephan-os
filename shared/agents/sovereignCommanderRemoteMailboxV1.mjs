@@ -2364,6 +2364,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       });
     }
     const observation = Object.freeze({
+      observedAtUtc: raw.observedAtUtc,
       servicePresent: readiness.servicePresent,
       serviceStatus: readiness.serviceStatus,
       blockers: readiness.blockers,
