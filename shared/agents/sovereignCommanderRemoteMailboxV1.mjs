@@ -2137,12 +2137,35 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
  */
 export function diagnoseRescueIslandNativeReceiptInvalidV1({
   envelope, expectedAction, projection, positive, negative,
+  rawMaintenance, mcpError = false,
 } = {}) {
   if (expectedAction !== 'rescue-island-readonly-boundary')
     return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
-      || Object.keys(envelope).length === 0)
-    return 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+      || Object.keys(envelope).length === 0) {
+    // Do not silently flatten an MCP result that failed before a native
+    // process was launched. No private exception, argv, SID, path or stderr
+    // may enter public GitHub diagnostics. Always keep worker start denied.
+    let observation = rawMaintenance;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (!observation || typeof observation !== 'object'
+        || Array.isArray(observation)) break;
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+        return 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN';
+      }
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+        && observation.command?.plan?.processId === expectedAction
+        && !Number.isInteger(observation.structuredContent?.status)) {
+        return 'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS';
+      }
+      observation = observation.structuredContent;
+    }
+    return mcpError === true
+      ? 'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'
+      : 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  }
   if (envelope?.command?.plan?.processId !== expectedAction)
     return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
   const status = envelope?.structuredContent?.status;
@@ -3087,6 +3110,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           envelope: candidate,
           expectedAction: shape.command.remoteAction,
           projection, positive: readback, negative: held,
+          rawMaintenance,
+          mcpError: actionCall.body?.result?.isError === true,
         }),
         publicReceiptSafe: true,
         secretMaterialReturned: false,
