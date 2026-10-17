@@ -110,11 +110,15 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   let receipt;
   try { receipt = JSON.parse(marker.slice('SOVEREIGN_REVIEWER_RESULT='.length)); }
   catch { return error('REVIEWER_RECEIPT_INVALID'); }
+  const expectedProof = 'proofs/sovereign-review-pr-'
+    + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
+    + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12) + '.json';
   if (receipt.status !== 'LOCAL_REVIEW_EVIDENCE_READY'
     || !SHA.test(receipt.sourceHead)
     || receipt.sourceHead.toLowerCase() !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
     || receipt.prNumber !== Number(plan.reviewEnv.STEPHANOS_REVIEW_PR)
-    || !/^proofs\/sovereign-review-pr-[0-9]+-[a-f0-9]{12}\.json$/.test(receipt.proofRef || '')
+    || receipt.proofRef !== expectedProof
+    || !['clean', 'findings'].includes(receipt.verdict)
     || receipt.mergeAuthority !== false) return error('REVIEWER_RECEIPT_UNBOUND');
   return Object.freeze({
     ok: true, status: 'LOCAL_REVIEW_EVIDENCE_READY',

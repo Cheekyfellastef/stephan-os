@@ -105,5 +105,15 @@ test('Windows bridge refuses forged success, mismatched PR/head, no Linux proof'
   check({ status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: 'a'.repeat(40), prNumber: 3059,
     proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json', mergeAuthority: true },
     'REVIEWER_RECEIPT_UNBOUND');
+  // A formally valid but different proof filename must not be promoted.
+  check({ status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: 'a'.repeat(40), prNumber: 3059,
+    verdict: 'clean', proofRef: 'proofs/sovereign-review-pr-7777-aaaaaaaaaaaa.json', mergeAuthority: false },
+    'REVIEWER_RECEIPT_UNBOUND');
+  check({ status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: 'a'.repeat(40), prNumber: 3059,
+    verdict: 'clean', proofRef: 'proofs/sovereign-review-pr-3059-bbbbbbbbbbbb.json', mergeAuthority: false },
+    'REVIEWER_RECEIPT_UNBOUND');
+  check({ status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: 'a'.repeat(40), prNumber: 3059,
+    verdict: 'approved', proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json', mergeAuthority: false },
+    'REVIEWER_RECEIPT_UNBOUND');
   check({ status: 'SOVEREIGN_REVIEW_HELD', reason: 'LOCAL_MODEL_UNAVAILABLE' }, 'REVIEWER_RECEIPT_UNBOUND');
 });
