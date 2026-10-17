@@ -90,9 +90,18 @@ internal sealed class OriginalR7CustodyWitnessService : ServiceBase
             throw new InvalidOperationException(scm.Classification);
         }
 
-        // Registry shape + SCM identity are only prerequisites. Original
-        // writer containment, protected audit, independent signer and real
-        // negative write/re-entry proof have not been commissioned.
+        // A registry value can pin bytes, but cannot prove the provenance
+        // or immutability of the pin, original writer exclusion or signer trust.
+        // Refuse startup if no fixed-host hash shape is configured.
+        OriginalR7ImagePinObservation imagePin = OriginalR7ImagePinPreflight.Inspect();
+        if (!imagePin.ImageDigestMatchesConfiguredPin)
+        {
+            throw new InvalidOperationException(imagePin.Classification);
+        }
+
+        // Even a successful hash check supplies NO custody or signing rights:
+        // a separately protected OS security owner must authenticate the pin,
+        // original token/handles/re-entry denial, audit and distinct signers.
         throw new InvalidOperationException("WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED");
     }
 

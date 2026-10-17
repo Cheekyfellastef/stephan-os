@@ -64,6 +64,56 @@ foreach (var (name, report) in tests)
 OriginalR7ScmObservation live = OriginalR7ScmPreflight.Inspect();
 AlwaysHeld(live, "LIVE");
 Check(!live.LeaseReleaseAuthorized, "LIVE_CANNOT_RELEASE");
+
+void ImageAlwaysHeld(OriginalR7ImagePinObservation r, string label)
+{
+    Check(!r.IndependentlyProtectedPinProven, label + "_PIN_NOT_TRUSTED");
+    Check(!r.OriginalWriterExclusionProven, label + "_WRITER_NOT_EXCLUDED");
+    Check(!r.SignedWitnessIssued, label + "_NOT_SIGNED");
+    Check(!r.LeaseReleaseAuthorized, label + "_LEASE_HELD");
+}
+var scratchRoot = Path.Combine(Path.GetTempPath(), "r7-pin-probe-" + Guid.NewGuid().ToString("N"));
+try
+{
+    Directory.CreateDirectory(scratchRoot);
+    string fixture = Path.Combine(scratchRoot, "witness-fixture.exe");
+    byte[] first = System.Security.Cryptography.RandomNumberGenerator.GetBytes(512);
+    File.WriteAllBytes(fixture, first);
+    string digest = Convert.ToHexString(
+        System.Security.Cryptography.SHA256.HashData(first)).ToLowerInvariant();
+    var valid = OriginalR7ImagePinPreflight.Evaluate(fixture, digest);
+    Check(valid.ImageDigestMatchesConfiguredPin, "IMAGE_VALID_PIN_MATCHES_BYTES");
+    Check(valid.Classification == "R7_IMAGE_DIGEST_MATCHED_PIN_UNATTESTED",
+        "IMAGE_MATCH_IS_NOT_PRODUCTION_TRUST");
+    ImageAlwaysHeld(valid, "IMAGE_VALID");
+    var missing = OriginalR7ImagePinPreflight.Evaluate(fixture, null);
+    Check(!missing.ImageDigestMatchesConfiguredPin, "IMAGE_MISSING_PIN_DENIED");
+    ImageAlwaysHeld(missing, "IMAGE_MISSING");
+    var wrong = OriginalR7ImagePinPreflight.Evaluate(fixture, new string('0', 64));
+    Check(!wrong.ImageDigestMatchesConfiguredPin, "IMAGE_WRONG_PIN_DENIED");
+    ImageAlwaysHeld(wrong, "IMAGE_WRONG");
+    var uppercase = OriginalR7ImagePinPreflight.Evaluate(fixture, digest.ToUpperInvariant());
+    Check(!uppercase.ImageDigestMatchesConfiguredPin, "IMAGE_NONCANONICAL_DIGEST_DENIED");
+    ImageAlwaysHeld(uppercase, "IMAGE_NONCANONICAL");
+    File.WriteAllBytes(fixture, System.Security.Cryptography.RandomNumberGenerator.GetBytes(512));
+    var changed = OriginalR7ImagePinPreflight.Evaluate(fixture, digest);
+    Check(!changed.ImageDigestMatchesConfiguredPin, "IMAGE_CHANGED_BYTES_DENIED");
+    ImageAlwaysHeld(changed, "IMAGE_CHANGED");
+    var absent = OriginalR7ImagePinPreflight.Evaluate(Path.Combine(scratchRoot,"missing.exe"), digest);
+    Check(!absent.ImageDigestMatchesConfiguredPin, "IMAGE_ABSENT_DENIED");
+    ImageAlwaysHeld(absent, "IMAGE_ABSENT");
+    var traversal = OriginalR7ImagePinPreflight.Evaluate(
+        Path.Combine(scratchRoot,"..",Path.GetFileName(scratchRoot),"witness-fixture.exe"), digest);
+    Check(!traversal.ImageDigestMatchesConfiguredPin, "IMAGE_PATH_TRAVERSAL_DENIED");
+    ImageAlwaysHeld(traversal, "IMAGE_TRAVERSAL");
+}
+finally
+{
+    try { Directory.Delete(scratchRoot, recursive: true); } catch {}
+}
+
+OriginalR7ImagePinObservation liveImage = OriginalR7ImagePinPreflight.Inspect();
+ImageAlwaysHeld(liveImage, "IMAGE_LIVE");
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");

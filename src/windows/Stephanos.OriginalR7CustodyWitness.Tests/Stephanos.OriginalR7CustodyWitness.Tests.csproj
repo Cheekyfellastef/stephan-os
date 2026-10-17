@@ -9,5 +9,7 @@
   <ItemGroup>
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs"
              Link="OriginalR7ScmPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ImagePinPreflight.cs"
+             Link="OriginalR7ImagePinPreflight.cs" />
   </ItemGroup>
 </Project>

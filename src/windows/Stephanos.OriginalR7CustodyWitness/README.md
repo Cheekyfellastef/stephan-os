@@ -14,7 +14,13 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
   NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
 - Reject administrator membership, LocalSystem, an interactive user and
   arbitrary service accounts, even if they carry a matching service SID.
-- This is a token-isolation source hardening step only, not real Windows
+- A fixed Windows service Parameters registry value, PinnedImageSha256, may
+  be checked against the bytes of the currently launched image. This is a
+  necessary local digest comparison, not independent attestation of the pin:
+  the service's registry DACL and image/ancestor mapping require separate OS
+  review. Missing/invalid pin, unreadable image, changed bytes or alias fail
+  closed. No setter, installer, source-controlled pin or signing key is provided.
+- This is a token/image-integrity source hardening step only, not real Windows
   principal provisioning, ACL enforcement, signer isolation or runtime proof.
 - Even after identity passes, startup is refused with
   WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED
