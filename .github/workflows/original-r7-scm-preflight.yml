@@ -82,37 +82,11 @@ jobs:
           $powershell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
           if (!(Test-Path -LiteralPath $git -PathType Leaf) -or !(Test-Path -LiteralPath $powershell -PathType Leaf)) { throw 'R7_PINNED_NATIVE_EXECUTABLE_NOT_FOUND' }
           $head = (& $git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}
-        shell: pwsh
-        run: |
-          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Record custody authority boundary
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Output 'HOSTED_WINDOWS_CI_SHAPE_ONLY=true'
-          Write-Output 'ORIGINAL_R7_WRITER_DENIED=false'
-          Write-Output 'BATTLE_BRIDGE_OS_WITNESS_SIGNER_COMMISSIONED=false'
-          Write-Output 'R7_LEASE_RELEASED=false'
-) { throw 'R7_HEAD_UNVERIFIED' }
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw 'R7_HEAD_UNVERIFIED' }
           $blobSpec = $head + ':' + $relative
           $expectedBlob = (& $git rev-parse $blobSpec).Trim()
           $actualBlob = (& $git hash-object -- $scriptPath).Trim()
-          if ($LASTEXITCODE -ne 0 -or $expectedBlob -ne $actualBlob -or $expectedBlob -notmatch '^[a-f0-9]{40}
-        shell: pwsh
-        run: |
-          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Record custody authority boundary
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Output 'HOSTED_WINDOWS_CI_SHAPE_ONLY=true'
-          Write-Output 'ORIGINAL_R7_WRITER_DENIED=false'
-          Write-Output 'BATTLE_BRIDGE_OS_WITNESS_SIGNER_COMMISSIONED=false'
-          Write-Output 'R7_LEASE_RELEASED=false'
-) { throw 'R7_IMMUTABLE_SCRIPT_BLOB_MISMATCH' }
+          if ($LASTEXITCODE -ne 0 -or $expectedBlob -ne $actualBlob -or $expectedBlob -notmatch '^[a-f0-9]{40}$') { throw 'R7_IMMUTABLE_SCRIPT_BLOB_MISMATCH' }
           $rootB64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([string]$PWD))
           $prelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("' + $rootB64 + '"))) "scripts\windows"' + [Environment]::NewLine
           $scriptBody = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($scriptPath))
