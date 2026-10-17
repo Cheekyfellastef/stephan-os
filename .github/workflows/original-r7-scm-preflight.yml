@@ -112,7 +112,7 @@ jobs:
           EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           # Distribution staging only. NOT installer, signer or custody proof.
-          $stage = Join-Path $PWD '.r7-witness-ci-staging'
+          $stage = Join-Path $PWD 'r7-witness-ci-staging'
           New-Item -Path $stage -ItemType Directory -Force | Out-Null
           dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release --output $stage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -148,7 +148,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r7-witness-uncommissioned-source-only
-          path: .r7-witness-ci-staging/
+          path: r7-witness-ci-staging/
           if-no-files-found: error
           retention-days: 7
       - name: Record custody authority boundary
