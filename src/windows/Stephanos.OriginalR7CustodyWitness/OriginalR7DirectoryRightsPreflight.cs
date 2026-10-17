@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Stephanos.OriginalR7CustodyWitness;
@@ -68,45 +69,70 @@ internal static class OriginalR7DirectoryRightsPreflight
             if (identity.User is null || !identity.User.Equals(expected))
                 return Held("R7_DIRECTORY_TOKEN_IDENTITY_MISMATCH");
 
-            // Refuse any ancestor reparse point, not just the terminal name.
-            DirectoryInfo? cursor = new(directoryPath);
-            while (cursor is not null)
+            // Pin the target and EVERY ancestor with no FILE_SHARE_DELETE.
+            // A plain attribute walk permits a rename/junction substitution
+            // between two original-principal CreateFileW access probes.
+            var pinned = new List<SafeFileHandle>();
+            try
             {
-                FileAttributes attributes = cursor.Attributes;
-                if ((attributes & FileAttributes.Directory) == 0
-                    || (attributes & FileAttributes.ReparsePoint) != 0)
-                    return Held("R7_DIRECTORY_REPARSE_OR_TYPE_UNSAFE");
-                cursor = cursor.Parent;
+                DirectoryInfo? cursor = new(directoryPath);
+                while (cursor is not null)
+                {
+                    if (pinned.Count >= 32) return Held("R7_DIRECTORY_ANCESTOR_DEPTH_UNSAFE");
+                    SafeFileHandle handle = Open(cursor.FullName, ReadAttributes);
+                    pinned.Add(handle);
+                    if (handle.IsInvalid || !Identity(handle, out _)
+                        || !FinalNameMatches(cursor.FullName, handle))
+                        return Held("R7_DIRECTORY_ANCESTOR_REPARSE_OR_ALIAS_UNSAFE");
+                    cursor = cursor.Parent;
+                }
+                if (pinned.Count == 0 || !Identity(pinned[0], out var first))
+                    return Held("R7_DIRECTORY_NATIVE_IDENTITY_UNAVAILABLE");
+
+                // All five are OPEN_EXISTING requests. Holding native ancestor
+                // handles without delete sharing rules out junction replacement
+                // of an ancestor for the duration of these access observations.
+                int[] opens = WindowsIdentity.RunImpersonated(suppliedToken, () => new[] {
+                    Request(directoryPath, FileAddFile),
+                    Request(directoryPath, FileAddSubdirectory),
+                    Request(directoryPath, FileDeleteChild),
+                    Request(directoryPath, WriteDac),
+                    Request(directoryPath, WriteOwner),
+                });
+                using SafeFileHandle after = Open(directoryPath, ReadAttributes);
+                bool stable = !after.IsInvalid && Identity(after, out var last)
+                    && first == last && FinalNameMatches(directoryPath, after);
+                if (!stable) return Held("R7_DIRECTORY_IDENTITY_CHANGED");
+                if (opens.Any(x => x != 0 && x != AccessDenied))
+                    return Held("R7_DIRECTORY_ACCESS_RESULT_UNKNOWN");
+
+                bool allDenied = opens.All(x => x == AccessDenied);
+                return new(
+                    allDenied ? "R7_SINGLE_DIRECTORY_RIGHTS_DENIED_NOT_CUSTODY"
+                        : "R7_DIRECTORY_MUTATION_RIGHTS_STILL_AVAILABLE",
+                    true, true, opens[0] == AccessDenied, opens[1] == AccessDenied,
+                    opens[2] == AccessDenied, opens[3] == AccessDenied, opens[4] == AccessDenied);
             }
-
-            using SafeFileHandle before = Open(directoryPath, ReadAttributes);
-            if (before.IsInvalid || !Identity(before, out var first))
-                return Held("R7_DIRECTORY_NATIVE_IDENTITY_UNAVAILABLE");
-
-            // All five are read-only access-rights requests, OPEN_EXISTING.
-            // Even success does not mutate disk contents or security policy.
-            int[] opens = WindowsIdentity.RunImpersonated(suppliedToken, () => new[] {
-                Request(directoryPath, FileAddFile),
-                Request(directoryPath, FileAddSubdirectory),
-                Request(directoryPath, FileDeleteChild),
-                Request(directoryPath, WriteDac),
-                Request(directoryPath, WriteOwner),
-            });
-            using SafeFileHandle after = Open(directoryPath, ReadAttributes);
-            bool stable = !after.IsInvalid && Identity(after, out var last) && first == last;
-            if (!stable) return Held("R7_DIRECTORY_IDENTITY_CHANGED");
-            if (opens.Any(x => x != 0 && x != AccessDenied))
-                return Held("R7_DIRECTORY_ACCESS_RESULT_UNKNOWN");
-
-            bool allDenied = opens.All(x => x == AccessDenied);
-            return new(
-                allDenied ? "R7_SINGLE_DIRECTORY_RIGHTS_DENIED_NOT_CUSTODY"
-                    : "R7_DIRECTORY_MUTATION_RIGHTS_STILL_AVAILABLE",
-                true, true, opens[0] == AccessDenied, opens[1] == AccessDenied,
-                opens[2] == AccessDenied, opens[3] == AccessDenied, opens[4] == AccessDenied);
+            finally
+            {
+                foreach (var handle in pinned) handle.Dispose();
+            }
         }
         catch { return Held("R7_DIRECTORY_NATIVE_PROBE_UNAVAILABLE"); }
         finally { if (retained) suppliedToken.DangerousRelease(); }
+    }
+
+    private static bool FinalNameMatches(string supplied, SafeFileHandle handle)
+    {
+        // FILE_NAME_NORMALIZED | VOLUME_NAME_DOS. Reject junctions, aliases
+        // and SUBST paths even if repeated opens see matching object IDs.
+        StringBuilder normalized = new(512);
+        uint length = GetFinalPathNameByHandleW(handle, normalized,
+            (uint)normalized.Capacity, 0);
+        if (length == 0 || length >= normalized.Capacity) return false;
+        string resolved = normalized.ToString();
+        return resolved.StartsWith(@"\\?\", StringComparison.Ordinal)
+            && string.Equals(supplied, resolved[4..], StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool Canonical(string? path)
@@ -163,4 +189,7 @@ internal static class OriginalR7DirectoryRightsPreflight
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out ByHandleInfo info);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,
+        StringBuilder path, uint length, uint flags);
 }

@@ -108,3 +108,14 @@ old handle revocation, alternate tokens, re-entry, protected audit or
 signatures. The SCM service does not invoke this helper and the remote
 mailbox has no way to call it. No installer, signing or lease authority
 is added. Native tests touch only a disposable Windows CI directory.
+
+## Ancestor-junction race fix
+
+A qualified-reviewer P2 identified that checking an ancestor's attributes
+without retaining its handle allows an attacker to substitute a junction
+between write-rights opens. The directory preflight now holds native handles
+to the target and **every ancestor without DELETE sharing** throughout all
+five original-token requests, checking each normalized final OS path and
+object type, then verifying the same target object again. Any failure is a
+bounded HOLD, never positive custody proof. This is still source-only and
+has no protected Windows signing, installation or lease authority.

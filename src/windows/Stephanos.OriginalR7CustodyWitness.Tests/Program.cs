@@ -243,6 +243,10 @@ using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
             @"\\untrusted\share", identity.AccessToken, sid);
         Check(!network.BoundedDirectoryMutationDenied, "DIRECTORY_NETWORK_REFUSED");
         DirectoryAlwaysHeld(network, "DIRECTORY_NETWORK");
+        var alias = OriginalR7DirectoryRightsPreflight.Observe(
+            tempDirectory + "\\.", identity.AccessToken, sid);
+        Check(!alias.BoundedDirectoryMutationDenied, "DIRECTORY_NONCANONICAL_ALIAS_REFUSED");
+        DirectoryAlwaysHeld(alias, "DIRECTORY_ALIAS");
         var missing = OriginalR7DirectoryRightsPreflight.Observe(
             Path.Combine(tempDirectory, "missing"), identity.AccessToken, sid);
         Check(!missing.BoundedDirectoryMutationDenied, "DIRECTORY_MISSING_REFUSED");
