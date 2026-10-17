@@ -82,6 +82,49 @@ test('Windows bridge refuses unsupported platform, fake path, missing identity, 
   assert.equal(poisoned.reason, 'WSL_PATH_TRANSLATION_UNAVAILABLE');
 });
 
+test('Windows WSL bridge accepts only a complete untrusted calibration candidate', () => {
+  let calls = 0;
+  const summary = {
+    status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
+    repository: env.STEPHANOS_REVIEW_REPOSITORY,
+    sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
+    completedCases: 10, passedCases: 10,
+    manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
+    independentHostAttestation: false, signatureVerified: false,
+    specialistAuthority: false, independentReviewSatisfied: false,
+    leaseReleaseAuthority: false, protectedMergeAuthority: false,
+  };
+  const run = receipt => runWindowsSovereignReviewerV1(env, {
+    ...context, mode: 'calibration',
+    spawn: (_, args) => {
+      calls++;
+      if (calls % 3 !== 0) return { status: 0, stdout: '/mnt/c/safe\n' };
+      assert.equal(args.includes('/usr/bin/node'), true);
+      return { status: 0, stdout: 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(receipt) + '\n' };
+    },
+  });
+  const candidate = run(summary);
+  assert.equal(candidate.ok, true);
+  assert.equal(candidate.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
+  assert.equal(candidate.approvalAuthority, false);
+  assert.equal(candidate.mergeAuthority, false);
+  for (const bad of [
+    { ...summary, passedCases: 9 },
+    { ...summary, independentReviewSatisfied: true },
+    { ...summary, leaseReleaseAuthority: true },
+    { ...summary, sourceHead: 'b'.repeat(40) },
+    { ...summary, observationsSha256: 'bad' },
+  ]) {
+    const result = run(bad);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'CALIBRATION_EVIDENCE_UNQUALIFIED');
+  }
+  assert.equal(calls, 18);
+  const denied = runWindowsSovereignReviewerV1(env, { ...context, mode: 'arbitrary', spawn: () => { throw Error('must not run'); } });
+  assert.equal(denied.reason, 'REVIEW_MODE_UNSUPPORTED');
+});
+
 test('Windows bridge refuses forged success, mismatched PR/head, no Linux proof', () => {
   const check = (receipt, expectedReason) => {
     let calls = 0;

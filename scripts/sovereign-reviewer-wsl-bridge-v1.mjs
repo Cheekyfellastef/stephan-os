@@ -72,10 +72,14 @@ export function planWindowsSovereignReviewerV1(env, {
 
 export function runWindowsSovereignReviewerV1(env = process.env, {
   platform = process.platform, sourceRoot = SOURCE_ROOT, exists = existsSync,
-  spawn = spawnSync,
+  spawn = spawnSync, mode = 'review',
 } = {}) {
   const plan = planWindowsSovereignReviewerV1(env, { platform, sourceRoot, exists });
   if (!plan.ok) return plan;
+  if (!['review', 'calibration'].includes(mode)) return error('REVIEW_MODE_UNSUPPORTED');
+  const executable = mode === 'review' ? plan.reviewer
+    : path.win32.join(plan.sourceRoot, 'scripts', 'sovereign-reviewer-ollama-calibration-v1.mjs');
+  if (!exists(executable)) return error('CALIBRATION_SOURCE_UNAVAILABLE');
   // wslpath is a fixed executable, and paths are passed as argv, never a shell.
   // No caller-controlled distro, shell, executable or arbitrary command.
   const minimalEnv = {
@@ -90,7 +94,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     env: minimalEnv,
   });
   const linuxPaths = [];
-  for (const windowsPath of [plan.reviewer, plan.workspace]) {
+  for (const windowsPath of [executable, plan.workspace]) {
     const conversion = run(['/usr/bin/wslpath', '-u', windowsPath]);
     const output = text(conversion?.stdout);
     if (conversion?.error || conversion?.status !== 0 || !/^\/[^\r\n\0]+$/.test(output)) {
@@ -104,12 +108,36 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     '/usr/bin/node', linuxPaths[0]];
   const executed = run(args);
   if (executed?.error || executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
+  const prefix = mode === 'calibration'
+    ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' : 'SOVEREIGN_REVIEWER_RESULT=';
   const marker = String(executed.stdout || '').split('\n')
-    .find(line => line.startsWith('SOVEREIGN_REVIEWER_RESULT='));
+    .find(line => line.startsWith(prefix));
   if (!marker) return error('REVIEWER_RECEIPT_MISSING');
   let receipt;
-  try { receipt = JSON.parse(marker.slice('SOVEREIGN_REVIEWER_RESULT='.length)); }
+  try { receipt = JSON.parse(marker.slice(prefix.length)); }
   catch { return error('REVIEWER_RECEIPT_INVALID'); }
+  if (mode === 'calibration') {
+    if (receipt.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
+      || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
+      || receipt.sourceHead !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
+      || receipt.baseSha !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_BASE.toLowerCase()
+      || receipt.completedCases !== 10 || receipt.passedCases !== 10
+      || !/^[a-f0-9]{64}$/.test(receipt.manifestSha256 ?? '')
+      || !/^[a-f0-9]{64}$/.test(receipt.observationsSha256 ?? '')
+      || receipt.independentHostAttestation !== false
+      || receipt.signatureVerified !== false || receipt.specialistAuthority !== false
+      || receipt.independentReviewSatisfied !== false
+      || receipt.leaseReleaseAuthority !== false || receipt.protectedMergeAuthority !== false) {
+      return error('CALIBRATION_EVIDENCE_UNQUALIFIED');
+    }
+    return Object.freeze({
+      ok: true, status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
+      sourceHead: receipt.sourceHead, completedCases: 10, passedCases: 10,
+      observationsSha256: receipt.observationsSha256,
+      qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+      approvalAuthority: false, mergeAuthority: false,
+    });
+  }
   const expectedProof = 'proofs/sovereign-review-pr-'
     + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
     + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12) + '.json';
@@ -130,11 +158,13 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || process.argv[2] !== '--once') {
-    process.stderr.write('SOVEREIGN_REVIEW_WSL_HELD=FIXED_ONCE_ONLY\n');
+  if (process.argv.length !== 3 || !['--once', '--calibrate'].includes(process.argv[2])) {
+    process.stderr.write('SOVEREIGN_REVIEW_WSL_HELD=FIXED_MODE_ONLY\n');
     process.exitCode = 2;
   } else {
-    const result = runWindowsSovereignReviewerV1();
+    const result = runWindowsSovereignReviewerV1(process.env, {
+      mode: process.argv[2] === '--calibrate' ? 'calibration' : 'review',
+    });
     process.stdout.write('SOVEREIGN_REVIEW_WSL_RESULT=' + JSON.stringify(result) + '\n');
     if (!result.ok) process.exitCode = 2;
   }
