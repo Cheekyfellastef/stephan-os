@@ -6,6 +6,7 @@ import {
   SOVEREIGN_METER_INDEPENDENCE_MISSION_ID,
   SOVEREIGN_METER_INDEPENDENCE_ISSUE,
   SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1,
+  SOVEREIGN_METER_INDEPENDENCE_EXISTING_OWNERS_V1,
   buildSovereignMeterIndependenceSeedV1,
 } from './sovereignMeterIndependenceSeedV1.mjs';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../project/seedGardenProjectionV1.mjs';
@@ -120,8 +121,18 @@ const parseMeterBlackoutDimensions = (markdown) => {
     const cells = line.slice(1, -1).split('|').map((value) => value.trim());
     assert.equal(cells.length, 3, 'dimension, original owner candidate and verdict are required');
     assert.match(cells[0], /^`[a-z0-9-]+`$/, 'dimension must be a single exact backticked identifier');
-    assert.ok(cells[1].includes('#') || cells[1].includes('UNRESOLVED'),
-      'original owner or unresolved custody must be explicit');
+    // A '#' in prose is not owner custody. The acceptance packet must
+    // reference only the seed's canonical existing implementation owners.
+    const ownerRefs = cells[1].match(/#[A-Za-z0-9_-]+/g) ?? [];
+    const unresolved = cells[1].startsWith('UNRESOLVED:');
+    assert.ok(unresolved !== (ownerRefs.length > 0),
+      'exactly one of canonical owner refs or unresolved custody is required');
+    assert.ok(!cells[1].includes('UNRESOLVED') || unresolved,
+      'unresolved custody must be explicit, not buried in an owner claim');
+    for (const ownerRef of ownerRefs) {
+      assert.ok(SOVEREIGN_METER_INDEPENDENCE_EXISTING_OWNERS_V1.includes(ownerRef),
+        'owner reference must belong to the original seed owner roster');
+    }
     assert.equal(cells[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
     return cells[0].slice(1, -1);
   });
@@ -147,6 +158,22 @@ test('meter-blackout inventory rejects malformed or forged evidence rows', () =>
     markdown.replace(' | UNVERIFIED |', ' | PASS |')));
   assert.throws(() => parseMeterBlackoutDimensions(
     markdown.replace('| `codex-work-continuity` |', '| stray-row | #1898 | UNVERIFIED |\n| `codex-work-continuity` |')));
+});
+
+test('meter-blackout inventory rejects forged or ambiguous owner custody', () => {
+  const markdown = readMeterBlackoutInventory();
+  const original = '#1898: same bounded task';
+  assert.ok(markdown.includes(original), 'owner spoof regression needs original row');
+  for (const invalid of [
+    '#9999: same bounded task',
+    '#1898bogus: same bounded task',
+    '#not-an-owner: same bounded task',
+    'UNRESOLVED: #1898 same bounded task',
+    'owner not identified: same bounded task',
+  ]) {
+    assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, invalid)),
+      'forged or ambiguous owner custody must fail closed: ' + invalid);
+  }
 });
 
 test('stale heartbeat cannot manufacture a live canonical seed goal', () => {
