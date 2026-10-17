@@ -23,8 +23,11 @@ jobs:
         (github.event_name == 'pull_request_target' && !github.event.pull_request.draft) ||
         (github.event_name == 'issue_comment' &&
          github.event.issue.pull_request &&
-         startsWith(github.event.comment.body, '<!-- stephanos:provider-neutral-assurance:v1 head=') &&
-         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+         ((startsWith(github.event.comment.body, '<!-- stephanos:provider-neutral-assurance:v1 head=') &&
+           contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+          (github.event.comment.user.login == 'Cheekyfellastef' &&
+           github.event.comment.author_association == 'OWNER' &&
+           startsWith(github.event.comment.body, '```stephanos-exact-head-qualified-review-v1'))))
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -80,9 +83,32 @@ jobs:
             marker_suffix=' -->'
             first_line="${COMMENT_BODY%%$'\n'*}"
             first_line="${first_line%$'\r'}"
-            [[ "${first_line}" == "${marker_prefix}"*"${marker_suffix}" ]]
-            expected_head="${first_line#${marker_prefix}}"
-            expected_head="${expected_head%${marker_suffix}}"
+            if [[ "${first_line}" == "${marker_prefix}"*"${marker_suffix}" ]]; then
+              expected_head="${first_line#${marker_prefix}}"
+              expected_head="${expected_head%${marker_suffix}}"
+            elif [[ "${first_line}" == '```stephanos-exact-head-qualified-review-v1' ]]; then
+              # Owner-only job admission is not security approval. The trusted
+              # adapter later verifies immutable comment provenance, expiry,
+              # run/job/artifact identity and independent security proof.
+              # Reject malformed input before spending further GitHub quota.
+              expected_head="$(node --input-type=module <<'NODE'
+              const text = String(process.env.COMMENT_BODY || '').replace(/\\r\\n/g, '\\n');
+              const m = text.match(/^```stephanos-exact-head-qualified-review-v1\\n([\\s\\S]{1,5000}?)\\n```(?:\\n|$)/);
+              if (!m) process.exit(1);
+              let p;
+              try { p = JSON.parse(m[1]); } catch { process.exit(1); }
+              if (p?.schemaVersion !== 'stephanos.exact-head-qualified-escalation.v1'
+                || p?.operation !== 'AUTHORIZE_EXACT_HEAD_REVIEW_ESCALATION'
+                || p?.repository !== process.env.REPOSITORY
+                || p?.prNumber !== Number(process.env.ISSUE_PR_NUMBER)
+                || p?.scope !== 'exact-head-review-only'
+                || !/^[a-f0-9]{40}$/.test(p?.expectedHead || '')) process.exit(1);
+              process.stdout.write(p.expectedHead);
+              NODE
+              )"
+            else
+              exit 1
+            fi
           fi
 
           [[ "${expected_head}" =~ ^[0-9a-fA-F]{40}$ ]]
