@@ -81,6 +81,16 @@ test('untrustworthy census freshness, completeness and schema fail closed', () =
     assert.equal(check(s).processTreeAbsentCandidate, false, JSON.stringify(s));
   }
 });
+test('impossible future process creation never certifies an absent router tree', () => {
+  // The unrelated PID cannot exist in a snapshot observed before its launch.
+  const impossible = check({ ...snapshot, processes: [
+    one(120, 4, '2026-10-16T18:00:00.000Z'),
+  ] });
+  assert.ok(impossible.reasonCodes.includes('PROCESS_CREATION_AFTER_OBSERVATION'));
+  assert.equal(impossible.processTreeAbsentCandidate, false);
+  assert.equal(impossible.mayLiftInferenceHold, false);
+});
+
 test('registration missing exact descendant list or immutable launch identity fails closed', () => {
   for (const r of [
     { ...registration, registeredDescendants: null },

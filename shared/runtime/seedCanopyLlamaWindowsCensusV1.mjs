@@ -48,6 +48,13 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
       || !utc(p.startedAtUtc)))
     reasons.push('PROCESS_CENSUS_INVALID');
 
+  // An unrelated process cannot have been enumerated before it existed.
+  // Reject impossible census chronology even when the router tree is absent.
+  if (Array.isArray(processes) && Number.isFinite(observed)
+    && processes.some(p => p && utc(p.startedAtUtc)
+      && Date.parse(p.startedAtUtc) > observed))
+    reasons.push('PROCESS_CREATION_AFTER_OBSERVATION');
+
   if (reasons.includes('LAUNCH_REGISTRATION_INCOMPLETE')
     || reasons.includes('PROCESS_CENSUS_INVALID')) {
     return Object.freeze({
