@@ -76,7 +76,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
 } = {}) {
   const plan = planWindowsSovereignReviewerV1(env, { platform, sourceRoot, exists });
   if (!plan.ok) return plan;
-  if (!['review', 'calibration'].includes(mode)) return error('REVIEW_MODE_UNSUPPORTED');
+  if (!['review', 'calibration', 'preflight'].includes(mode)) return error('REVIEW_MODE_UNSUPPORTED');
   const executable = mode === 'review' ? plan.reviewer
     : path.win32.join(plan.sourceRoot, 'scripts', 'sovereign-reviewer-ollama-calibration-v1.mjs');
   if (!exists(executable)) return error('CALIBRATION_SOURCE_UNAVAILABLE');
@@ -106,17 +106,32 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const args = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp',
     ...Object.entries(plan.reviewEnv).map(([key, value]) => key + '=' + value),
     'STEPHANOS_SHARED_AGENT_WORKSPACE=' + linuxPaths[1],
-    '/usr/bin/node', linuxPaths[0]];
+    '/usr/bin/node', linuxPaths[0], ...(mode === 'preflight' ? ['--preflight'] : [])];
   const executed = run(args);
   if (executed?.error || executed?.status !== 0) return error('WSL_REVIEWER_EXECUTION_HELD');
-  const prefix = mode === 'calibration'
-    ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT=' : 'SOVEREIGN_REVIEWER_RESULT=';
+  const prefix = mode === 'calibration' ? 'SOVEREIGN_REVIEW_CALIBRATION_RESULT='
+    : mode === 'preflight' ? 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT='
+    : 'SOVEREIGN_REVIEWER_RESULT=';
   const marker = String(executed.stdout || '').split('\n')
     .find(line => line.startsWith(prefix));
   if (!marker) return error('REVIEWER_RECEIPT_MISSING');
   let receipt;
   try { receipt = JSON.parse(marker.slice(prefix.length)); }
   catch { return error('REVIEWER_RECEIPT_INVALID'); }
+  if (mode === 'preflight') {
+    if (receipt.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
+      || receipt.selectedModelPresent !== true
+      || receipt.independentHostAttestation !== false
+      || receipt.signatureVerified !== false
+      || receipt.specialistAuthority !== false
+      || receipt.protectedMergeAuthority !== false
+      || receipt.leaseReleaseAuthority !== false) {
+      return error('LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+    }
+    return Object.freeze({ ok: true, status: 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED',
+      qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+      approvalAuthority: false, mergeAuthority: false });
+  }
   if (mode === 'calibration') {
     if (receipt.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
       || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
@@ -159,12 +174,13 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || !['--once', '--calibrate'].includes(process.argv[2])) {
+  if (process.argv.length !== 3 || !['--once', '--calibrate', '--preflight'].includes(process.argv[2])) {
     process.stderr.write('SOVEREIGN_REVIEW_WSL_HELD=FIXED_MODE_ONLY\n');
     process.exitCode = 2;
   } else {
     const result = runWindowsSovereignReviewerV1(process.env, {
-      mode: process.argv[2] === '--calibrate' ? 'calibration' : 'review',
+      mode: process.argv[2] === '--calibrate' ? 'calibration'
+        : process.argv[2] === '--preflight' ? 'preflight' : 'review',
     });
     process.stdout.write('SOVEREIGN_REVIEW_WSL_RESULT=' + JSON.stringify(result) + '\n');
     if (!result.ok) process.exitCode = 2;

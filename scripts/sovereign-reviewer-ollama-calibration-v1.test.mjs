@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   runSovereignOllamaCalibrationV1 as run,
   projectSovereignOllamaCalibrationV1 as project,
+  probeLocalSovereignOllamaV1 as probe,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
@@ -85,4 +86,39 @@ test('candidate clean status never becomes independently qualified or approved',
   });
   assert.equal(s.status, 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED');
   noAuthority(s);
+});
+
+test('read-only preflight observes only local Ollama model availability', async () => {
+  const calls = [];
+  const ready = await probe(env, { fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true, text: async () => JSON.stringify({models:[
+      { name: 'qwen:14b', model: 'qwen:14b' },
+      { name: 'other:latest' },
+    ]}) };
+  }});
+  assert.equal(ready.status, 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED');
+  assert.equal(ready.selectedModelPresent, true);
+  assert.deepEqual(Object.keys(ready).sort(), [
+    'status','reason','selectedModelPresent','independentHostAttestation',
+    'signatureVerified','specialistAuthority','independentReviewSatisfied',
+    'protectedMergeAuthority','sourceMutationAuthority','leaseReleaseAuthority',
+    'windowsCommissioningAuthority','physicalPickupProven',
+  ].sort());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://127.0.0.1:11434/api/tags');
+  assert.equal(calls[0].options.method, 'GET');
+  noAuthority(ready);
+});
+test('read-only preflight holds missing model, offline service, oversized inventory', async () => {
+  for (const fetchImpl of [
+    async () => ({ok:true,text:async()=>JSON.stringify({models:[]})}),
+    async () => ({ok:false,text:async()=>'{}'}),
+    async () => ({ok:true,text:async()=>'x'.repeat(32769)}),
+    async () => { throw Error('offline') },
+  ]) {
+    const r = await probe(env, {fetchImpl});
+    assert.equal(r.status,'LOCAL_OLLAMA_PREFLIGHT_HELD');
+    noAuthority(r);
+  }
 });

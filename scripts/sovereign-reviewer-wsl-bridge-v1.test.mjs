@@ -82,6 +82,44 @@ test('Windows bridge refuses unsupported platform, fake path, missing identity, 
   assert.equal(poisoned.reason, 'WSL_PATH_TRANSLATION_UNAVAILABLE');
 });
 
+test('Windows WSL preflight uses only fixed read-only Ollama probe and rejects forged authority', () => {
+  const make = receipt => {
+    let called = 0;
+    const result = runWindowsSovereignReviewerV1(env, {
+      ...context, mode: 'preflight', spawn: (_command, args, opts) => {
+        called++;
+        assert.equal(opts.shell, false);
+        if (called < 3) return { status: 0, stdout: '/mnt/c/safe\n' };
+        assert.equal(args.at(-1), '--preflight');
+        return { status: 0, stdout: 'SOVEREIGN_REVIEW_PREFLIGHT_RESULT='
+          + JSON.stringify(receipt) + '\n' };
+      },
+    });
+    assert.equal(called, 3);
+    return result;
+  };
+  const available = {
+    status: 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED',
+    selectedModelPresent: true, independentHostAttestation: false,
+    signatureVerified: false, specialistAuthority: false,
+    protectedMergeAuthority: false, leaseReleaseAuthority: false,
+  };
+  const ready = make(available);
+  assert.equal(ready.ok, true);
+  assert.equal(ready.approvalAuthority, false);
+  assert.equal(ready.mergeAuthority, false);
+  for (const fake of [
+    { ...available, specialistAuthority: true },
+    { ...available, leaseReleaseAuthority: true },
+    { ...available, selectedModelPresent: false },
+    { ...available, status: 'LOCAL_OLLAMA_PREFLIGHT_HELD' },
+  ]) {
+    const bad = make(fake);
+    assert.equal(bad.ok, false);
+    assert.equal(bad.reason, 'LOCAL_OLLAMA_PREFLIGHT_UNQUALIFIED');
+  }
+});
+
 test('Windows WSL bridge accepts only a complete untrusted calibration candidate', () => {
   let calls = 0;
   const summary = {

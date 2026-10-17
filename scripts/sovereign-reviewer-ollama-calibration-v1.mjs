@@ -62,6 +62,48 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
     },
   });
 }
+// Read-only model availability preflight. Ollama's /api/tags endpoint does
+// NOT load a model or modify the host. No user path, URL, tokens, inventory,
+// model metadata or credential fields are copied to public receipts.
+export async function probeLocalSovereignOllamaV1(env = process.env, {
+  fetchImpl = fetch,
+} = {}) {
+  const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
+  if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
+    return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+      reason: 'LOCAL_MODEL_NOT_CONFIGURED', ...NO_AUTHORITY });
+  }
+  try {
+    const response = await fetchImpl('http://127.0.0.1:11434/api/tags', {
+      method: 'GET', signal: AbortSignal.timeout(6000),
+    });
+    if (!response?.ok || typeof response.text !== 'function') {
+      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+        reason: 'LOCAL_OLLAMA_NOT_REACHABLE', ...NO_AUTHORITY });
+    }
+    const raw = await response.text();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 32 * 1024) {
+      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+        reason: 'LOCAL_OLLAMA_MODEL_LIST_UNBOUNDED', ...NO_AUTHORITY });
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.models) || parsed.models.length > 256) {
+      return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+        reason: 'LOCAL_OLLAMA_MODEL_LIST_INVALID', ...NO_AUTHORITY });
+    }
+    const available = parsed.models.some(x => x && typeof x === 'object'
+      && (x.name === model || x.model === model));
+    return Object.freeze({
+      status: available ? 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED'
+        : 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+      reason: available ? '' : 'SELECTED_LOCAL_MODEL_UNAVAILABLE',
+      selectedModelPresent: available, ...NO_AUTHORITY,
+    });
+  } catch {
+    return Object.freeze({ status: 'LOCAL_OLLAMA_PREFLIGHT_HELD',
+      reason: 'LOCAL_OLLAMA_READ_ONLY_PROBE_FAILED', ...NO_AUTHORITY });
+  }
+}
 export function projectSovereignOllamaCalibrationV1(result = {}) {
   const ok = result.status === 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED';
   const sha40 = /^[a-f0-9]{40}$/;
@@ -82,9 +124,22 @@ export function projectSovereignOllamaCalibrationV1(result = {}) {
   });
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || process.argv[2] !== '--once') {
+  if (process.argv.length !== 3 || !['--once', '--preflight'].includes(process.argv[2])) {
     process.stderr.write('SOVEREIGN_CALIBRATION_HELD=FIXED_ONCE_ONLY\n');
     process.exitCode = 2;
+  } else if (process.argv[2] === '--preflight') {
+    probeLocalSovereignOllamaV1()
+      .then(result => {
+        process.stdout.write('SOVEREIGN_REVIEW_PREFLIGHT_RESULT=' + JSON.stringify(result) + '\n');
+        if (result.status !== 'LOCAL_OLLAMA_MODEL_OBSERVED_UNATTESTED') process.exitCode = 2;
+      })
+      .catch(() => {
+        process.stdout.write('SOVEREIGN_REVIEW_PREFLIGHT_RESULT=' + JSON.stringify({
+          status: 'LOCAL_OLLAMA_PREFLIGHT_HELD', reason: 'LOCAL_OLLAMA_READ_ONLY_PROBE_FAILED',
+          ...NO_AUTHORITY,
+        }) + '\n');
+        process.exitCode = 2;
+      });
   } else {
     runSovereignOllamaCalibrationV1()
       .then(result => {
