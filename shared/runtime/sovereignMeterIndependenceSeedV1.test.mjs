@@ -133,6 +133,19 @@ const parseMeterBlackoutDimensions = (markdown) => {
       assert.ok(SOVEREIGN_METER_INDEPENDENCE_EXISTING_OWNERS_V1.includes(ownerRef),
         'owner reference must belong to the original seed owner roster');
     }
+    if (unresolved) {
+      assert.match(cells[1], /^UNRESOLVED:\s*\S/,
+        'unresolved custody must name the missing evidence, not merely a label');
+    } else {
+      const separator = cells[1].indexOf(':');
+      assert.ok(separator > 0 && cells[1].slice(separator + 1).trim(),
+        'owner custody must have a canonical owner prefix and a nonempty witness');
+      const ownerPrefix = cells[1].slice(0, separator);
+      assert.match(ownerPrefix, /^#(?:1898|2519)(?:\s*\/\s*#(?:1898|2519))*$/,
+        'owner identity must be an exact canonical issue prefix, not embedded prose');
+      assert.deepEqual(ownerRefs, ownerPrefix.match(/#\d+/g) ?? [],
+        'owner witness must not introduce an additional hidden owner claim');
+    }
     assert.equal(cells[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
     return cells[0].slice(1, -1);
   });
@@ -170,6 +183,10 @@ test('meter-blackout inventory rejects forged or ambiguous owner custody', () =>
     '#not-an-owner: same bounded task',
     'UNRESOLVED: #1898 same bounded task',
     'owner not identified: same bounded task',
+    'prefix#1898: same bounded task',
+    '#1898 #2519: same bounded task',
+    '#1898: same bounded task #2519',
+    'UNRESOLVED:',
   ]) {
     assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, invalid)),
       'forged or ambiguous owner custody must fail closed: ' + invalid);
