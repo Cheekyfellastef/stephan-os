@@ -160,6 +160,7 @@ const TOOLS = Object.freeze([
             'battle-bridge-observe',
             'meter-status',
             'controller-lane-status',
+            'rescue-island-readonly-boundary',
             'visibility-snapshot',
             'cpu-pressure-snapshot',
             'publish-controller-activity',
