@@ -104,24 +104,49 @@ test('missing or merely asserted proof never advances; full typed proof stops re
   assert.equal(pressure(payload).length, 0);
 });
 
-test('meter-blackout acceptance inventory remains aligned to canonical 12 dimensions', () => {
-  // Source-only acceptance check, never a live blackout or worker pickup.
-  const markdown = readFileSync(new URL('../../docs/architecture/sovereign-meter-blackout-acceptance-v1.md', import.meta.url), 'utf8');
+const readMeterBlackoutInventory = () => readFileSync(
+  new URL('../../docs/architecture/sovereign-meter-blackout-acceptance-v1.md', import.meta.url), 'utf8');
+
+const parseMeterBlackoutDimensions = (markdown) => {
   const section = markdown.split('## Twelve canonical dimensions')[1]?.split('## Verdict and original-owner routing')[0];
   assert.ok(section, 'missing bounded meter-specific inventory');
-  const rows = section.split('\n').filter((line) => line.startsWith('| `'));
-  const cells = rows.map((line) => line.split('|').map((value) => value.trim()).filter(Boolean));
-  const dimensions = cells.map((row) => row[0].replaceAll('`', ''));
-  assert.deepEqual(dimensions, [...SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1],
+  const rows = section.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'));
+  assert.equal(rows.length, SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1.length + 2,
+    'the bounded inventory must have one header, one separator and exactly twelve data rows');
+  assert.equal(rows[0], '| Dimension | Existing owner candidate / first evidence required | Initial verdict |');
+  assert.equal(rows[1], '| --- | --- | --- |');
+  return rows.slice(2).map((line) => {
+    assert.ok(line.startsWith('|') && line.endsWith('|'), 'each row must be a complete Markdown table row');
+    const cells = line.slice(1, -1).split('|').map((value) => value.trim());
+    assert.equal(cells.length, 3, 'dimension, original owner candidate and verdict are required');
+    assert.match(cells[0], /^`[a-z0-9-]+`$/, 'dimension must be a single exact backticked identifier');
+    assert.ok(cells[1].includes('#') || cells[1].includes('UNRESOLVED'),
+      'original owner or unresolved custody must be explicit');
+    assert.equal(cells[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
+    return cells[0].slice(1, -1);
+  });
+};
+
+test('meter-blackout acceptance inventory remains aligned to canonical 12 dimensions', () => {
+  // Source-only acceptance check, never a live blackout or worker pickup.
+  const markdown = readMeterBlackoutInventory();
+  assert.deepEqual(parseMeterBlackoutDimensions(markdown), [...SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1],
     'each canonical meter dimension must appear once and in source order');
-  for (const row of cells) {
-    assert.equal(row.length, 3, 'dimension, original owner candidate and verdict are required');
-    assert.ok(row[1].includes('#') || row[1].includes('UNRESOLVED'));
-    assert.equal(row[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
-  }
   assert.match(markdown, /same original task ID and worker identity/);
   assert.match(markdown, /Gaming or Quest has absolute priority/);
   assert.match(markdown, /never from publication of this checklist/);
+});
+
+test('meter-blackout inventory rejects malformed or forged evidence rows', () => {
+  const markdown = readMeterBlackoutInventory();
+  assert.throws(() => parseMeterBlackoutDimensions(
+    markdown.replace('| `codex-work-continuity` |', '| codex-work-continuity |')));
+  assert.throws(() => parseMeterBlackoutDimensions(
+    markdown.replace('| `codex-work-continuity` |', '| `codex-work-continuity` | #1898 |')));
+  assert.throws(() => parseMeterBlackoutDimensions(
+    markdown.replace(' | UNVERIFIED |', ' | PASS |')));
+  assert.throws(() => parseMeterBlackoutDimensions(
+    markdown.replace('| `codex-work-continuity` |', '| stray-row | #1898 | UNVERIFIED |\n| `codex-work-continuity` |')));
 });
 
 test('stale heartbeat cannot manufacture a live canonical seed goal', () => {
