@@ -1526,6 +1526,49 @@ function safeOriginalR7WitnessReadinessProjection(result = {}) {
   });
 }
 
+// The public census may HOLD its safe numeric summary for a schema reason.
+// Surface only a fixed reason, never raw PIDs, identities, command lines,
+// checkout paths, invalid blocker strings or apparent lease-release authority.
+function safeOriginalSourceCustodyProjectionDiagnostic(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const projected = safeOriginalSourceCustodyReceiptProjection(operationResult);
+  let status = 'CENSUS_SUMMARY_UNQUALIFIED';
+  if (projected) status = 'SAFE_CENSUS_SUMMARY_VISIBLE';
+  else {
+    const observation = operationResult.inspection;
+    if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+      status = 'CENSUS_DETAIL_MISSING';
+    } else if (!Array.isArray(observation.blockers)
+      || observation.blockers.some(x => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(x))) {
+      status = 'CENSUS_BLOCKERS_UNQUALIFIED';
+    } else if (!([null].includes(observation.candidateProcessCount)
+      || Number.isSafeInteger(observation.candidateProcessCount))
+      || !([null].includes(observation.stephanosScheduledTaskCount)
+      || Number.isSafeInteger(observation.stephanosScheduledTaskCount))) {
+      status = 'CENSUS_COUNTS_UNQUALIFIED';
+    } else {
+      const observedAt = observation.inspectedAtUtc;
+      const ms = Date.parse(observedAt);
+      if (typeof observedAt !== 'string'
+        || !Number.isFinite(ms)
+        || new Date(ms).toISOString() !== observedAt) {
+        status = 'CENSUS_TIMESTAMP_UNQUALIFIED';
+      }
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-source-custody-public-diagnostic.v1',
+    status,
+    safeCountSummaryAvailable: Boolean(projected),
+    readOnly: true,
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1569,6 +1612,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
+    originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
     witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
@@ -2449,6 +2493,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
         rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
+        originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
         witnessReadiness: inner?.witnessReadiness ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
