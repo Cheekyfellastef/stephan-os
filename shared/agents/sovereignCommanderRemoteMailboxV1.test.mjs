@@ -3587,7 +3587,7 @@ test('Island invalid-proof diagnostics reveal only constant categories and canno
     [{ envelope: { command: { plan: { processId } }, structuredContent: { status: null, stdout: 'private' } } }, 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE'],
     [{ envelope: { command: { plan: { processId } }, structuredContent: { status: 0 } } }, 'ISLAND_NATIVE_STDOUT_UNAVAILABLE'],
     [{ envelope: envelope('PRIVATE_SOURCE_ROOT') }, 'ISLAND_NATIVE_MARKER_NOT_OBSERVED'],
-    [{ envelope: envelope('PRIVATE_SOURCE_ROOT\\nOTHER_DATA') }, 'ISLAND_NATIVE_STDOUT_LINES_INVALID'],
+    [{ envelope: envelope('PRIVATE_SOURCE_ROOT' + String.fromCharCode(10) + 'OTHER_DATA') }, 'ISLAND_NATIVE_STDOUT_LINES_INVALID'],
     [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=PRIVATE_JSON') }, 'ISLAND_NATIVE_MARKER_REJECTED'],
     [{ envelope: envelope('X'.repeat(4097)) }, 'ISLAND_NATIVE_STDOUT_TOO_LARGE'],
     [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}', 1), negative: { ok: false } }, 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID'],
