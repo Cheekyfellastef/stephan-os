@@ -59,3 +59,18 @@ than assuming gaming is off. This adds no gaming toggle, background polling,
 Ollama model load during preflight, OS mutation or merge authority. Runtime
 governor protection remains independently responsible for immediate process
 eviction on real headset/game detection.
+
+## Non-overwriting candidate audit receipt
+
+A synthetically valid local ten-case exam is not sufficient to qualify a
+reviewer. When the real model produces a fully checked pass on a stable clean
+checkout with gaming resources free, its CLI now must publish a bounded
+**untrusted candidate observation** to the existing Shared Workspace
+`proofs/sovereign-calibration-pr-<PR>-<HEAD12>-<OBSERVATIONS12>.json`
+under native `O_NOFOLLOW|O_EXCL` handles with an output SHA-256 fingerprint.
+A collision, missing proof directory or file error is a HOLD, not an invisible
+pass. The Windows launcher verifies the exact PR/head-bound proof name and
+fingerprint shape before surfacing candidate readiness. The receipt is *not*
+an independent auditor signature or immutable host-backed evidence, and cannot
+satisfy a protected exact-head specialist check without external attestation.
+No source file, signing key, service, original lease, or game process is edited.

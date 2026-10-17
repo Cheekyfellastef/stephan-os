@@ -1,4 +1,9 @@
 import test from 'node:test';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
 import assert from 'node:assert/strict';
 import {
   runSovereignOllamaCalibrationV1 as run,
@@ -6,6 +11,7 @@ import {
   probeLocalSovereignOllamaV1 as probe,
   inspectLocalCalibrationGitIdentityV1 as inspectGit,
   inspectLocalSovereignGamingPermissionV1 as gaming,
+  persistSovereignCalibrationCandidateV1 as persist,
 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const env = Object.freeze({
@@ -271,4 +277,45 @@ test('calibration refuses dirty, stale, wrong-branch and unrelated WSL checkout 
   }
   assert.equal(inspectGit(env, gitProof()).ok, true);
   assert.equal(inspectGit({ ...env, STEPHANOS_REVIEW_EXACT_HEAD: 'unknown' }, gitProof()).ok, false);
+});
+
+test('local candidate proof is source-bound, SHA-verified and no-overwrite, never security approval', () => {
+  const workspace = mkdtempSync(join(tmpdir(), 'sovereign-audit-fixture-'));
+  try {
+    mkdirSync(join(workspace, 'proofs'));
+    const result = {
+      status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
+      repository: env.STEPHANOS_REVIEW_REPOSITORY,
+      sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+      baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
+      completedCases: 10, passedCases: 10,
+      manifestSha256: SOVEREIGN_CALIBRATION_MANIFEST_SHA256,
+      observationsSha256: 'd'.repeat(64),
+      independentHostAttestation: false, signatureVerified: false,
+      specialistAuthority: false, independentReviewSatisfied: false,
+      protectedMergeAuthority: false, sourceMutationAuthority: false,
+      leaseReleaseAuthority: false, windowsCommissioningAuthority: false,
+      physicalPickupProven: false,
+    };
+    const audited = persist(result, {
+      ...env, STEPHANOS_REVIEW_PR: '3090',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: workspace,
+    });
+    assert.equal(audited.proofRef, 'proofs/sovereign-calibration-pr-3090-aaaaaaaaaaaa-dddddddddddd.json');
+    const file = readFileSync(join(workspace, audited.proofRef));
+    assert.equal(createHash('sha256').update(file).digest('hex'), audited.proofSha256);
+    const decoded = JSON.parse(file);
+    assert.equal(decoded.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
+    assert.equal(decoded.auditAuthority, false);
+    assert.equal(decoded.protectedReviewSatisfied, false);
+    noAuthority(decoded);
+    assert.throws(() => persist(result, {
+      ...env, STEPHANOS_REVIEW_PR: '3090', STEPHANOS_SHARED_AGENT_WORKSPACE: workspace,
+    }), { code: 'EEXIST' });
+    assert.throws(() => persist({ ...result, leaseReleaseAuthority: true }, {
+      ...env, STEPHANOS_REVIEW_PR: '3091', STEPHANOS_SHARED_AGENT_WORKSPACE: workspace,
+    }), /PUBLICATION_NOT_ADMITTED/);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
 });

@@ -3,7 +3,8 @@
 // No GitHub, arbitrary command, Windows witness, approval or merge capability.
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { openSync, readFileSync, closeSync, constants, fstatSync } from 'node:fs';
+import { openSync, readFileSync, closeSync, constants, fstatSync, writeFileSync, fsyncSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, isAbsolute, normalize } from 'node:path';
 import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
@@ -215,6 +216,60 @@ export async function probeLocalSovereignOllamaV1(env = process.env, {
       reason: 'LOCAL_OLLAMA_READ_ONLY_PROBE_FAILED', ...NO_AUTHORITY });
   }
 }
+// A model result is only an untrusted candidate. Preserve a bounded, exact
+// source-bound observation for an independent auditor in the existing Shared
+// Workspace/proofs directory, using native O_EXCL: never overwrite an older
+// exam receipt or modify the source checkout. This does NOT sign the record.
+export function persistSovereignCalibrationCandidateV1(result, env = process.env) {
+  const candidate = projectSovereignOllamaCalibrationV1(result);
+  const workspace = String(env.STEPHANOS_SHARED_AGENT_WORKSPACE ?? '');
+  const pr = Number(env.STEPHANOS_REVIEW_PR);
+  if (candidate.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
+    || !Number.isSafeInteger(pr) || pr < 1 || pr > 999_999_999
+    || !workspace.startsWith('/') || !isAbsolute(workspace)
+    || normalize(workspace) !== workspace || /[\0\r\n]/.test(workspace)) {
+    throw new Error('CALIBRATION_CANDIDATE_PUBLICATION_NOT_ADMITTED');
+  }
+  const name = 'sovereign-calibration-pr-' + pr + '-'
+    + candidate.sourceHead.slice(0, 12) + '-'
+    + candidate.observationsSha256.slice(0, 12) + '.json';
+  const proofRef = 'proofs/' + name;
+  const record = {
+    schemaVersion: 'stephanos.sovereign-reviewer-calibration-candidate.v1',
+    ...candidate,
+    prNumber: pr,
+    observedAtUtc: new Date().toISOString(),
+    qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+    auditAuthority: false,
+    protectedReviewSatisfied: false,
+  };
+  const json = JSON.stringify(record) + '\n';
+  if (Buffer.byteLength(json, 'utf8') > 4096) {
+    throw new Error('CALIBRATION_CANDIDATE_PUBLICATION_UNBOUNDED');
+  }
+  const digest = createHash('sha256').update(json).digest('hex');
+  let rootFd; let proofsFd; let outputFd;
+  try {
+    rootFd = openSync(workspace,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    proofsFd = openSync('/proc/self/fd/' + rootFd + '/proofs',
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    outputFd = openSync('/proc/self/fd/' + proofsFd + '/' + name,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    writeFileSync(outputFd, json, 'utf8');
+    fsyncSync(outputFd);
+  } finally {
+    if (outputFd !== undefined) closeSync(outputFd);
+    if (proofsFd !== undefined) closeSync(proofsFd);
+    if (rootFd !== undefined) closeSync(rootFd);
+  }
+  return Object.freeze({
+    ...candidate,
+    proofRef,
+    proofSha256: digest,
+    qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+  });
+}
 export function projectSovereignOllamaCalibrationV1(result = {}) {
   const sha40 = /^[a-f0-9]{40}$/;
   const sha64 = /^[a-f0-9]{64}$/;
@@ -273,7 +328,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   } else {
     runSovereignOllamaCalibrationV1()
       .then(result => {
-        const summary = projectSovereignOllamaCalibrationV1(result);
+        const candidate = projectSovereignOllamaCalibrationV1(result);
+        let summary = candidate;
+        if (candidate.status === 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
+          try { summary = persistSovereignCalibrationCandidateV1(result); }
+          catch { summary = projectSovereignOllamaCalibrationV1(held('CALIBRATION_CANDIDATE_PUBLICATION_FAILED')); }
+        }
         process.stdout.write('SOVEREIGN_REVIEW_CALIBRATION_RESULT=' + JSON.stringify(summary) + '\n');
         if (summary.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED') process.exitCode = 2;
       })

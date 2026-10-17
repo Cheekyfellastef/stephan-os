@@ -129,6 +129,8 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
     baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
     completedCases: 10, passedCases: 10,
     manifestSha256: 'c'.repeat(64), observationsSha256: 'd'.repeat(64),
+    proofRef: 'proofs/sovereign-calibration-pr-3059-aaaaaaaaaaaa-dddddddddddd.json',
+    proofSha256: 'e'.repeat(64), qualification: 'PENDING_INDEPENDENT_ATTESTATION',
     independentHostAttestation: false, signatureVerified: false,
     specialistAuthority: false, independentReviewSatisfied: false,
     leaseReleaseAuthority: false, protectedMergeAuthority: false,
@@ -148,18 +150,21 @@ test('Windows WSL bridge accepts only a complete untrusted calibration candidate
   assert.equal(candidate.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
   assert.equal(candidate.approvalAuthority, false);
   assert.equal(candidate.mergeAuthority, false);
+  assert.equal(candidate.proofRef, summary.proofRef);
   for (const bad of [
     { ...summary, passedCases: 9 },
     { ...summary, independentReviewSatisfied: true },
     { ...summary, leaseReleaseAuthority: true },
     { ...summary, sourceHead: 'b'.repeat(40) },
     { ...summary, observationsSha256: 'bad' },
+    { ...summary, proofRef: 'proofs/sovereign-calibration-pr-666-aaaaaaaaaaaa-dddddddddddd.json' },
+    { ...summary, proofSha256: 'bad' },
   ]) {
     const result = run(bad);
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'CALIBRATION_EVIDENCE_UNQUALIFIED');
   }
-  assert.equal(calls, 18);
+  assert.equal(calls, 24);
   // Ten real local calls can take longer than one standard review, but each
   // attempt has a bounded wall-clock, not a new arbitrary remote command.
   // Checks apply to the synthetic Windows spawn adapter, not physical WSL.

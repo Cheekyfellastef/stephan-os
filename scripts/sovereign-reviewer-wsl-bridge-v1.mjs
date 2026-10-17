@@ -134,6 +134,10 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       approvalAuthority: false, mergeAuthority: false });
   }
   if (mode === 'calibration') {
+    const expectedRef = 'proofs/sovereign-calibration-pr-'
+      + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
+      + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12)
+      + '-' + String(receipt.observationsSha256 || '').slice(0, 12) + '.json';
     if (receipt.status !== 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED'
       || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
       || receipt.sourceHead !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
@@ -141,6 +145,9 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       || receipt.completedCases !== 10 || receipt.passedCases !== 10
       || !/^[a-f0-9]{64}$/.test(receipt.manifestSha256 ?? '')
       || !/^[a-f0-9]{64}$/.test(receipt.observationsSha256 ?? '')
+      || receipt.proofRef !== expectedRef
+      || !/^[a-f0-9]{64}$/.test(receipt.proofSha256 ?? '')
+      || receipt.qualification !== 'PENDING_INDEPENDENT_ATTESTATION'
       || receipt.independentHostAttestation !== false
       || receipt.signatureVerified !== false || receipt.specialistAuthority !== false
       || receipt.independentReviewSatisfied !== false
@@ -151,6 +158,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       ok: true, status: 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED',
       sourceHead: receipt.sourceHead, completedCases: 10, passedCases: 10,
       observationsSha256: receipt.observationsSha256,
+      proofRef: receipt.proofRef, proofSha256: receipt.proofSha256,
       qualification: 'PENDING_INDEPENDENT_ATTESTATION',
       approvalAuthority: false, mergeAuthority: false,
     });
