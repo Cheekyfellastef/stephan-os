@@ -92,3 +92,19 @@ re-entry, historical outcome, audit and two independently protected signers
 remain unproven. The service does NOT invoke this survey from SCM OnStart and
 the public mailbox CANNOT supply the original token or scope. A CI runner's
 identity remains untrusted; source tests verify fail-closed gates only.
+
+## Bounded original-token directory rights probe (source only)
+
+`OriginalR7DirectoryRightsPreflight.Observe` makes actual Windows
+OPEN_EXISTING rights requests under an independently supplied retained OS
+token: FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD, WRITE_DAC
+and WRITE_OWNER. It never creates, deletes, renames, writes or changes an
+ACL. Unavailable/wrong tokens, noncanonical paths, reparse ancestors,
+unstable directory identity and unknown Win32 errors fail closed.
+
+Even all five denied rights establish only a single-directory/token
+snapshot, not historic original identity, complete source containment,
+old handle revocation, alternate tokens, re-entry, protected audit or
+signatures. The SCM service does not invoke this helper and the remote
+mailbox has no way to call it. No installer, signing or lease authority
+is added. Native tests touch only a disposable Windows CI directory.

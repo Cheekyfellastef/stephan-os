@@ -15,6 +15,8 @@
              Link="OriginalR7WriterAccessPreflight.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterScopePreflight.cs"
              Link="OriginalR7WriterScopePreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7DirectoryRightsPreflight.cs"
+             Link="OriginalR7DirectoryRightsPreflight.cs" />
     <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
   </ItemGroup>
 </Project>

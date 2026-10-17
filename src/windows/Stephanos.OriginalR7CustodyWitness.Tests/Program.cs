@@ -206,6 +206,51 @@ using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
     Check(!noToken.BoundedSampleAllDenied, "SCOPE_MISSING_TOKEN_DENIED");
     ScopeAlwaysHeld(noToken, "SCOPE_MISSING_TOKEN");
 }
+// Native directory access checks use ONLY a disposable hosted-runner directory.
+// Neither this runner's SID nor a denied open is a historical #2962 writer.
+void DirectoryAlwaysHeld(OriginalR7DirectoryRightsObservation r, string name)
+{
+    Check(!r.OriginalPrincipalProvenanceAuthenticated, name + "_NO_PROVENANCE");
+    Check(!r.OriginalExistingHandlesExcluded, name + "_NO_OLD_HANDLES");
+    Check(!r.OtherWriterTokensExcluded, name + "_NO_OTHER_TOKENS");
+    Check(!r.RelaunchRoutesExcluded, name + "_NO_RELAUNCH_PROOF");
+    Check(!r.WholeSourceWriterExclusionProven, name + "_NO_FULL_SOURCE_PROOF");
+    Check(!r.ProtectedAuditVerified, name + "_NO_AUDIT");
+    Check(!r.SigningAuthorityGranted, name + "_NO_SIGNER");
+    Check(!r.LeaseReleaseAuthorized, name + "_NO_RELEASE");
+}
+using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+{
+    string sid = identity.User?.Value
+        ?? throw new InvalidOperationException("R7_DIRECTORY_TEST_SID_MISSING");
+    string tempDirectory = Path.Combine(Path.GetTempPath(), "r7-native-dir-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(tempDirectory);
+    try
+    {
+        var current = OriginalR7DirectoryRightsPreflight.Observe(tempDirectory, identity.AccessToken, sid);
+        DirectoryAlwaysHeld(current, "DIRECTORY_RUNNER_CURRENT");
+        // A hosted runner token may be privileged/restricted. Do not
+        // interpret either native result as historic original writer proof.
+        var wrongSid = OriginalR7DirectoryRightsPreflight.Observe(
+            tempDirectory, identity.AccessToken, "S-1-5-21-1000-2000-3000-4000");
+        Check(!wrongSid.BoundedDirectoryMutationDenied, "DIRECTORY_SPOOFED_SID_DENIED");
+        DirectoryAlwaysHeld(wrongSid, "DIRECTORY_SPOOFED");
+        var missingToken = OriginalR7DirectoryRightsPreflight.Observe(
+            tempDirectory, new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(IntPtr.Zero), sid);
+        Check(!missingToken.BoundedDirectoryMutationDenied, "DIRECTORY_MISSING_TOKEN");
+        DirectoryAlwaysHeld(missingToken, "DIRECTORY_MISSING_TOKEN");
+        var network = OriginalR7DirectoryRightsPreflight.Observe(
+            @"\\untrusted\share", identity.AccessToken, sid);
+        Check(!network.BoundedDirectoryMutationDenied, "DIRECTORY_NETWORK_REFUSED");
+        DirectoryAlwaysHeld(network, "DIRECTORY_NETWORK");
+        var missing = OriginalR7DirectoryRightsPreflight.Observe(
+            Path.Combine(tempDirectory, "missing"), identity.AccessToken, sid);
+        Check(!missing.BoundedDirectoryMutationDenied, "DIRECTORY_MISSING_REFUSED");
+        DirectoryAlwaysHeld(missing, "DIRECTORY_NOT_FOUND");
+    }
+    finally { try { Directory.Delete(tempDirectory, recursive: true); } catch { } }
+}
+
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");
