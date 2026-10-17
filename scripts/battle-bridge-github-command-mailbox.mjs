@@ -2447,6 +2447,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
         rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
+        witnessReadiness: inner?.witnessReadiness ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
