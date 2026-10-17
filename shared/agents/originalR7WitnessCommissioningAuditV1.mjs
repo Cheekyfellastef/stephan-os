@@ -9,6 +9,7 @@ const SERVICE = 'StephanosOriginalR7CustodyWitness';
 const UNKNOWN = new Set([
   'SERVICE_ENUMERATION_UNAVAILABLE',
   'PROCESS_ENUMERATION_UNAVAILABLE',
+  'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE',
   'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE',
   'CHECKOUT_INSPECTION_UNAVAILABLE',
 ]);
@@ -59,7 +60,7 @@ export function projectOriginalR7WitnessCommissioningAuditV1(input, { nowUtc = n
     || !count(input.originalProcessCandidateCount)
     || !count(input.relatedTaskCount)
     || !Array.isArray(input.unknownObservations)
-    || input.unknownObservations.length > 4
+    || input.unknownObservations.length > 5
     || input.unknownObservations.some(x => typeof x !== 'string' || !UNKNOWN.has(x))
     || input.privilegedServiceSidVerified !== false
     || input.sourceAclDenialEnforced !== false

@@ -70,6 +70,18 @@ test('process candidates, absent task inventory and unsupported telemetry stay v
   ]) assert.ok(result.blockers.includes(blocker), blocker);
 });
 
+test('unreadable process command lines stay an explicit diagnostic blocker, never lease authority', () => {
+  const result = inspect({
+    ...observation(),
+    servicePresent: true, serviceStatus: 'RUNNING',
+    unknownObservations: ['PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE'],
+  });
+  assert.equal(result.observable, true);
+  assert.ok(result.blockers.includes('PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE'));
+  assert.equal(result.authenticatedWitness, false);
+  assert.equal(result.leaseReleaseAuthority, false);
+});
+
 test('forged eligibility, authority, wrong identity, unknown evidence or old snapshot fails closed', () => {
   const attempts = [
     { repository: 'different/repo' }, { originalLeaseId: 'another-lease' },

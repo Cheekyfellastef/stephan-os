@@ -35,8 +35,13 @@ try {
 
 try {
     # Diagnostic candidate count, not authenticated original token provenance.
-    $candidates = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-        Where-Object { ([string]$_.CommandLine).Contains($leaseId) })
+    $allProcesses = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    # Some Win32_Process CommandLine fields are null or inaccessible. A zero
+    # match count must not imply complete visibility into writer processes.
+    if (@($allProcesses | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.CommandLine) }).Count -gt 0) {
+        $unknown += 'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE'
+    }
+    $candidates = @($allProcesses | Where-Object { ([string]$_.CommandLine).Contains($leaseId) })
     $processCount = $candidates.Count
 } catch { $unknown += 'PROCESS_ENUMERATION_UNAVAILABLE' }
 
