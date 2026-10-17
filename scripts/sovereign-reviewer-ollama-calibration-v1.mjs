@@ -146,6 +146,8 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model, prompt, stream: false, format: 'json',
+          // Release GPU residency after each bounded candidate challenge.
+          keep_alive: 0,
           options: { temperature: 0, num_ctx: 8192 },
         }),
         signal: AbortSignal.timeout(45_000), // 10 cases, bounded within 570s WSL wall clock
@@ -158,9 +160,13 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNBOUNDED');
       }
       const result = JSON.parse(bytes);
-      if (typeof result?.response !== 'string'
+      // An incomplete/truncated response or different actual model cannot
+      // substantiate the claimed ten-case security qualification exam.
+      if (result?.model !== model || result?.done !== true
+        || result?.done_reason !== 'stop'
+        || typeof result.response !== 'string'
         || Buffer.byteLength(result.response, 'utf8') > 12_288) {
-        throw new Error('LOCAL_OLLAMA_RESPONSE_INVALID');
+        throw new Error('LOCAL_OLLAMA_COMPLETED_MODEL_IDENTITY_UNPROVEN');
       }
       return result.response;
     },

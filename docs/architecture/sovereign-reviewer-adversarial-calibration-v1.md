@@ -87,3 +87,13 @@ The normal reviewer branch does not edit Windows governor authority surfaces.
 Until a qualified native Windows specialist admits PR #3155 and its real
 watcher behavior is witnessed, expired governor state keeps local-model
 calibration held. No original dirty checkout files are changed.
+
+## Verify completed model identity and release local GPU after each question
+
+Each bounded `/api/generate` reply must identify the expected local Ollama
+model, report `done: true` and `done_reason: stop`, and contain a bounded
+response payload. Wrong, truncated, incomplete and unexpectedly substituted
+model replies fail the ten-case qualification. Requests set `keep_alive: 0`
+to release GPU residence after individual cases. This does not authenticate
+Ollama's binary or prove an independent host/model signature; it preserves
+candidate-only evidence and explicit gaming-governor safeguards.

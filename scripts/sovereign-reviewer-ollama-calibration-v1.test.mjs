@@ -64,13 +64,16 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
     const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
     // All-clean model is unsafe and must FAIL calibration (eight seeded defects).
     const output = JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] });
-    return { ok: true, text: async () => JSON.stringify({ response: output }) };
+    return { ok: true, text: async () => JSON.stringify({
+      model: 'qwen:14b', done: true, done_reason: 'stop', response: output,
+    }) };
   }});
   assert.equal(calls.length, 10);
   assert.equal(calls.every(x => x.url === 'http://127.0.0.1:11434/api/generate'), true);
   assert.equal(calls.every(x => x.options.method === 'POST'
     && x.request.model === 'qwen:14b' && x.request.stream === false
-    && x.request.format === 'json' && x.request.options.temperature === 0), true);
+    && x.request.format === 'json' && x.request.options.temperature === 0
+    && x.request.keep_alive === 0), true);
   assert.equal(result.status, 'CALIBRATION_HELD');
   assert.equal(result.completedCases, 10);
   assert.equal(result.passedCases, 2);
@@ -85,6 +88,18 @@ test('unavailable or oversized Ollama responses hold, never pass the exam', asyn
     async () => ({ ok: false, text: async () => '{}' }),
     async () => ({ ok: true, text: async () => 'x'.repeat(65537) }),
     async () => ({ ok: true, text: async () => '{"response": 3}' }),
+    async () => ({ ok: true, text: async () => JSON.stringify({
+      model:'wrong:latest', done:true, done_reason:'stop', response:'{}',
+    }) }),
+    async () => ({ ok: true, text: async () => JSON.stringify({
+      model:'qwen:14b', done:false, done_reason:'stop', response:'{}',
+    }) }),
+    async () => ({ ok: true, text: async () => JSON.stringify({
+      model:'qwen:14b', done:true, done_reason:'length', response:'{}',
+    }) }),
+    async () => ({ ok: true, text: async () => JSON.stringify({
+      model:'qwen:14b', done:true, done_reason:'stop', response:'x'.repeat(12289),
+    }) }),
   ]) {
     const r = await run(env, { ...gitProof(), fetchImpl });
     assert.equal(r.status, 'CALIBRATION_HELD');
@@ -151,6 +166,7 @@ test('calibration checks Git source again after the full ten-model-case exam', a
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256,
           verdict: 'clean', findings: [] }),
       }) };
@@ -216,9 +232,12 @@ test('local-model exam immediately holds when gaming activates between cases', a
       const prompt = JSON.parse(options.body).prompt;
       const id = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const digest = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
-      return {ok: true, text: async () => JSON.stringify({response: JSON.stringify({
-        challengeId: id, diffSha256: digest, verdict:'clean', findings: [],
-      })})};
+      return {ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop',
+        response: JSON.stringify({
+          challengeId: id, diffSha256: digest, verdict:'clean', findings: [],
+        }),
+      })};
     },
   });
   assert.equal(modelCalls, 2);
