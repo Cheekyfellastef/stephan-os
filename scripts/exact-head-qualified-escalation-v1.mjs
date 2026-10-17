@@ -68,14 +68,23 @@ export function assertQualifiableExactHeadReceiptV1(input, receipt) {
   return Object.freeze({ patchSha256: digest(input.patch) });
 }
 
+// Exact-head review cannot outlive a concurrent PR head/base update. This
+// validation is used once before external evidence and again at conclusion.
+// It does NOT confer merge authority or waive separate branch protections.
+export function assertCurrentExactHeadPrIdentityV1(pr, input) {
+  requireProof(pr?.state === 'open' && pr?.draft === false
+    && pr?.head?.sha === input.headSha && pr?.base?.sha === input.baseSha
+    && pr?.base?.ref === 'main' && pr?.head?.repo?.full_name === REPO,
+    'PR_CHANGED');
+  return true;
+}
+
 export async function qualifyExactHeadReviewV1(input, receipt, { api, download, unzip, nowMs } = {}) {
   const context = assertQualifiableExactHeadReceiptV1(input, receipt);
   requireProof(typeof api === 'function' && typeof download === 'function'
     && typeof unzip === 'function', 'TRUSTED_TRANSPORT_UNAVAILABLE');
   const pr = await api('/pulls/' + input.prNumber);
-  requireProof(pr?.state === 'open' && pr?.draft === false
-    && pr?.head?.sha === input.headSha && pr?.base?.sha === input.baseSha
-    && pr?.base?.ref === 'main' && pr?.head?.repo?.full_name === REPO, 'PR_CHANGED');
+  assertCurrentExactHeadPrIdentityV1(pr, input);
   const issue = await api('/issues/' + input.prNumber);
   const pages = Math.ceil(Number(issue?.comments) / 100);
   requireProof(pages > 0 && Number.isSafeInteger(pages), 'OWNER_COMMENT_ABSENT');
@@ -137,6 +146,11 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
     && artifact.receipt.reviewScope.includes('operator-protected-bootstrap-required')
     && validateProtectedOpenClawBootstrapFindings(fs);
   requireProof(clean || bootstrap, 'INDEPENDENT_NOT_QUALIFIED');
+  // The external run/artifact may have taken seconds to fetch and inspect.
+  // Reject a replaced PR head or changed protected base, even if the first
+  // GitHub read and the independent evidence matched the old snapshot.
+  const prAfter = await api('/pulls/' + input.prNumber);
+  assertCurrentExactHeadPrIdentityV1(prAfter, input);
   return Object.freeze({
     ok: true, finalVerdict: 'EXACT_HEAD_QUALIFIED_ESCALATION_PASS',
     prNumber: input.prNumber, sourceHead: input.headSha,
