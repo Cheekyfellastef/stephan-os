@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, rm, symlink, link, rename } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink, link, rename, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -17,8 +17,11 @@ const WITNESS_SID = 'S-1-5-21-100-200-300-406';
 const OPERATOR_SID = 'S-1-5-21-100-200-300-407';
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), 'stephanos-legacy-quarantine-'));
-  const worktreePath = join(dir, 'source-worktree');
-  await mkdir(worktreePath);
+  const checkoutDirectory = join(dir, 'source-worktree');
+  await mkdir(checkoutDirectory);
+  // Windows temp roots may be reached through a case/alias variant.
+  // The production verifier requires an exact canonical named worktree.
+  const worktreePath = await realpath(checkoutDirectory);
   const witness = generateKeyPairSync('ed25519');
   const operator = generateKeyPairSync('ed25519');
   const witnessPem = witness.publicKey.export({ format: 'pem', type: 'spki' });
