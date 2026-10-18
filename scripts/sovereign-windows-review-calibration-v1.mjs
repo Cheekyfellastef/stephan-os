@@ -15,6 +15,7 @@ const FILES = Object.freeze([
   'shared/agents/sovereignWindowsCalibrationV1.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
   'scripts/sovereign-high-risk-advisory-v1.mjs',
 ]);
 const MODEL = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
