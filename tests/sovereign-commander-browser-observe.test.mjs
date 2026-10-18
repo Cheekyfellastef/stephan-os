@@ -56,7 +56,7 @@ test('attached local tab captures screenshot and bounded evidence without naviga
   try {
     const result = await observeSovereignBrowser({
       connect: async () => ({ contexts: () => [{ pages: () => [page, { url: () => 'https://bank.example/account' }] }] }),
-      env: {}, proofRoot, now: () => new Date('2026-10-18T19:00:00.000Z'),
+      env: { STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP: '1' }, proofRoot, now: () => new Date('2026-10-18T19:00:00.000Z'),
     });
     assert.equal(result.ok, true);
     assert.equal(result.observedTabCount, 1);
@@ -79,8 +79,19 @@ test('attached local tab captures screenshot and bounded evidence without naviga
 });
 
 test('unconnected CDP session fails closed, not green', async () => {
-  const result = await observeSovereignBrowser({ connect: async () => { throw new Error('ECONNREFUSED'); } });
+  const result = await observeSovereignBrowser({ env: { STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP: '1' }, connect: async () => { throw new Error('ECONNREFUSED'); } });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'BROWSER_SESSION_NOT_CONNECTED');
   assert.equal(publicBrowserObservationProjection(result).finalVerdict, 'BROWSER_OBSERVATION_BLOCKED');
+});
+
+test('CDP browser is not attached or screenshotted without explicit local opt-in', async () => {
+  let connected = false;
+  const result = await observeSovereignBrowser({
+    env: {}, connect: async () => { connected = true; throw new Error('Should never attach'); },
+  });
+  assert.equal(connected, false);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BROWSER_NATIVE_WITNESS_NOT_READY');
+  assert.equal(result.finalVerdict, 'BROWSER_OBSERVATION_BLOCKED');
 });
