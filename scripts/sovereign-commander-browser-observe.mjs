@@ -99,7 +99,7 @@ export async function readNativeBrowserObservation({
   let names;
   try { names = await readdir(nativeReceiptRoot); }
   catch { return null; }
-  for (const name of names.filter((item) => /^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\\.json$/.test(item)).sort().reverse().slice(0, 24)) {
+  for (const name of names.filter((item) => /^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.json$/.test(item)).sort().reverse().slice(0, 24)) {
     try {
       const full = resolve(nativeReceiptRoot, name);
       const metadata = await lstat(full);
@@ -117,7 +117,7 @@ export async function readNativeBrowserObservation({
         || !Array.isArray(receipt.screenshots) || receipt.screenshots.length !== 1
         || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')) continue;
       const item = receipt.screenshots[0];
-      if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\\.jpg$/.test(item?.imageName || '')
+      if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.jpg$/.test(item?.imageName || '')
         || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')) continue;
       const imageFile = resolve(nativeReceiptRoot, item.imageName);
       const imageStat = await lstat(imageFile);
