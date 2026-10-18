@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyLogicalGoalBuildTruthV1 } from './logicalGoalPickupProofV1.mjs';
+import {
+  verifyLogicalGoalBuildTruthV1,
+  loadControllerActivityProofRecordsV1,
+  loadPinnedWorkerPickupVerifierV1,
+} from './logicalGoalPickupProofV1.mjs';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const nowMs = Date.parse('2026-10-18T17:00:00.000Z');
 const head = 'a'.repeat(40);
@@ -43,4 +50,35 @@ test('a guessed digest or self-described Core identity supplies no independent t
     assert.equal(result.ok, false);
     assert.deepEqual(result.verifiedGoalIds, []);
   }
+});
+
+test('the reader finds the derived controller proof, not a fabricated original receipt filename', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'logical-proof-'));
+  await mkdir(join(root, 'proof'));
+  const proofId = 'controller-abcdef123456-run-run123';
+  const record = {
+    kind: 'stephanos.shared_workspace.proof',
+    proofId,
+    status: 'PASS',
+    refs: ['receipts/work-3050-material.json'],
+    controllerActivityProof: {
+      schemaVersion: 'stephanos.controller-activity-proof.v1',
+      controllerId: 'controller-zero', runId: 'run123', materialActionsSucceeded: 1,
+    },
+  };
+  await writeFile(join(root, 'proof', proofId + '.json'), JSON.stringify(record));
+  const result = await loadControllerActivityProofRecordsV1({ workspaceRoot: root });
+  assert.equal(result.ok, true);
+  assert.equal(result.records.length, 1);
+  assert.deepEqual(result.records[0].refs, ['receipts/work-3050-material.json']);
+  assert.equal(result.records[0].proofId, proofId);
+});
+test('uncommissioned separate physical-worker public key fails closed', async () => {
+  const result = await loadPinnedWorkerPickupVerifierV1({
+    localStateRoot: '/nonexistent',
+    env: { STEPHANOS_PHYSICAL_WORKER_TRUSTED_PUBLIC_KEY_SHA256: '',
+      STEPHANOS_GOAL_BUILD_GATES_TRUSTED_PUBLIC_KEY_SHA256: '' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'WORKER_PICKUP_DISTINCT_PIN_NOT_COMMISSIONED');
 });
