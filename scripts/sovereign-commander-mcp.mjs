@@ -171,6 +171,7 @@ const TOOLS = Object.freeze([
             'repair-stephanos',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
+            'prove-skill-forge-runtime',
             'reconcile-remote-commander-parity',
             'sync-vr-reference-sources',
             'preservation-converge-pr-branch',
