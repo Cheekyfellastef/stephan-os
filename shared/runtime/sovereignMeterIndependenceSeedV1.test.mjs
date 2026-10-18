@@ -145,6 +145,8 @@ const parseMeterBlackoutDimensions = (markdown) => {
         'owner identity must be an exact canonical issue prefix, not embedded prose');
       assert.deepEqual(ownerRefs, ownerPrefix.match(/#\d+/g) ?? [],
         'owner witness must not introduce an additional hidden owner claim');
+      assert.equal(new Set(ownerRefs).size, ownerRefs.length,
+        'owner custody must not repeat an existing implementation owner');
     }
     assert.equal(cells[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
     return cells[0].slice(1, -1);
@@ -185,6 +187,8 @@ test('meter-blackout inventory rejects forged or ambiguous owner custody', () =>
     'owner not identified: same bounded task',
     'prefix#1898: same bounded task',
     '#1898 #2519: same bounded task',
+    '#1898 / #1898: same bounded task',
+    '#1898 / #2519 / #1898: same bounded task',
     '#1898: same bounded task #2519',
     'UNRESOLVED:',
   ]) {
