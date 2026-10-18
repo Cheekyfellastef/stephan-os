@@ -3,7 +3,8 @@
 const NATIVE_HOST = 'com.stephanos.sovereign_browser_witness';
 const RESPONSE_SCHEMA = 'stephanos.browser-native-message.v1';
 const MAX_TABS = 8;
-const VALID_ACTIONS = new Set(['witness-config','witness-capture','witness-scan']);
+const VALID_ACTIONS = new Set(['witness-config','witness-capture','witness-scan','witness-auto-on','witness-auto-off']);
+const AUTO_ALARM = 'stephanos-permitted-site-diagnostics';
 function admittedOrigin(url, origins) {
   try { const u = new URL(url); return ['http:','https:'].includes(u.protocol) && origins.includes(u.origin); }
   catch { return false; }
@@ -28,13 +29,17 @@ async function allowedOrigins() {
 function extractDomMetrics() {
   const imgs = Array.from(document.querySelectorAll('img')).slice(0, 500);
   const anchors = Array.from(document.querySelectorAll('a')).slice(0, 1000);
-  let genericSpotifyLinks=0, emptyLinks=0;
+  let genericSpotifyLinks=0, spotifyTrackLinks=0, spotifySearchLinks=0, emptyLinks=0;
   for (const el of anchors) {
     const href = el.getAttribute('href');
     if (!href) { emptyLinks++; continue; }
     try {
       const link = new URL(href, location.href);
-      if (link.hostname === 'open.spotify.com' && (link.pathname === '/' || link.pathname === '/intl-en')) genericSpotifyLinks++;
+      if (link.hostname === 'open.spotify.com') {
+        if (link.pathname === '/' || link.pathname === '/intl-en') genericSpotifyLinks++;
+        if (/^\/(?:intl-[a-z]{2}\/)?track\/[A-Za-z0-9]+$/.test(link.pathname)) spotifyTrackLinks++;
+        if (link.pathname.startsWith('/search')) spotifySearchLinks++;
+      }
     } catch {}
   }
   return {
@@ -43,7 +48,7 @@ function extractDomMetrics() {
     brokenImages:imgs.filter(x=>x.complete && x.naturalWidth===0).length,
     unloadedImages:imgs.filter(x=>!x.complete).length,
     linkCount:anchors.length,
-    genericSpotifyLinks,emptyLinks,
+    genericSpotifyLinks,spotifyTrackLinks,spotifySearchLinks,emptyLinks,
     buttonCount:document.querySelectorAll('button').length,
     disabledButtonCount:document.querySelectorAll('button:disabled').length,
     headingCount:document.querySelectorAll('h1,h2,h3').length
@@ -81,10 +86,28 @@ async function captureWorkspaces(capture) {
   const response = await nativeCall({ schemaVersion:RESPONSE_SCHEMA, action:'record', mode:capture?'capture':'scan', snapshots });
   return response.ok ? { ok:true, message:response.message || 'Local evidence saved', observedTabCount:response.observedTabCount } : response;
 }
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name !== AUTO_ALARM) return;
+  const state = await chrome.storage.local.get(['autoScanEnabled']);
+  if (state.autoScanEnabled === true) await captureWorkspaces(false).catch(()=>{});
+});
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !VALID_ACTIONS.has(message?.type)) return false;
   const action = message.type;
-  (async () => action === 'witness-config' ? allowedOrigins() : captureWorkspaces(action==='witness-capture'))()
+  (async () => {
+    if (action === 'witness-config') return allowedOrigins();
+    if (action === 'witness-auto-on') {
+      await chrome.storage.local.set({autoScanEnabled:true});
+      await chrome.alarms.create(AUTO_ALARM,{periodInMinutes:15});
+      return {ok:true,message:'Periodic diagnostics enabled; screenshots still require a click'};
+    }
+    if (action === 'witness-auto-off') {
+      await chrome.storage.local.set({autoScanEnabled:false});
+      await chrome.alarms.clear(AUTO_ALARM);
+      return {ok:true,message:'Periodic diagnostics paused'};
+    }
+    return captureWorkspaces(action==='witness-capture');
+  })()
     .then(sendResponse).catch(()=>sendResponse({ok:false,blocker:'BROWSER_WITNESS_CAPTURE_FAILED'}));
   return true;
 });
