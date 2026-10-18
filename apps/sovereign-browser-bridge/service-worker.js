@@ -57,7 +57,8 @@ function extractDomMetrics() {
     genericSpotifyLinks,spotifyTrackLinks,spotifySearchLinks,emptyLinks,
     buttonCount:document.querySelectorAll('button').length,
     disabledButtonCount:document.querySelectorAll('button:disabled').length,
-    headingCount:document.querySelectorAll('h1,h2,h3').length
+    headingCount:document.querySelectorAll('h1,h2,h3').length,
+    iframeCount:document.querySelectorAll('iframe').length
   };
 }
 async function captureWorkspaces(capture) {
@@ -75,10 +76,36 @@ async function captureWorkspaces(capture) {
     if (!await chrome.permissions.contains({ origins:[permissionPattern(origin)] })) continue;
     let metrics;
     try {
-      const injected = await chrome.scripting.executeScript({ target:{ tabId:tab.id }, func:extractDomMetrics });
-      metrics = injected[0]?.result;
+      let injected;
+      try {
+        // Same-origin/authorised child workspace frames add meaningful
+        // coverage. Browser-granted host access still controls injection.
+        injected = await chrome.scripting.executeScript({
+          target:{ tabId:tab.id, allFrames:true }, func:extractDomMetrics,
+        });
+      } catch {
+        // A restricted third-party iframe must not suppress safe top-level
+        // diagnostics. We never claim complete frame coverage.
+        injected = await chrome.scripting.executeScript({ target:{ tabId:tab.id }, func:extractDomMetrics });
+      }
+      const frames = injected.slice(0, 20).map(item => item?.result).filter(value => value && typeof value === 'object');
+      if (!frames.length) continue;
+      const totals = [
+        'imageCount', 'brokenImages', 'unloadedImages', 'linkCount',
+        'genericSpotifyLinks', 'spotifyTrackLinks', 'spotifySearchLinks',
+        'emptyLinks', 'buttonCount', 'disabledButtonCount', 'headingCount', 'iframeCount',
+      ];
+      metrics = {
+        readyState:frames.every(frame=>frame.readyState==='complete') ? 'complete' : 'unknown',
+        instrumentedFrameCount:frames.length,
+        frameCoverageFullyVerified:false,
+      };
+      for (const key of totals) {
+        metrics[key] = frames.reduce((sum,frame) => sum + (
+          Number.isSafeInteger(frame[key]) && frame[key] >= 0 && frame[key] <= 10000 ? frame[key] : 0
+        ),0);
+      }
     } catch { continue; }
-    if (!metrics || typeof metrics !== 'object') continue;
     const record = { origin, metrics, active:tab.id === active?.id, screenshot:'' };
     if (capture && record.active) {
       try {
