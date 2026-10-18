@@ -4,6 +4,7 @@ import {
   verifyLogicalGoalBuildTruthV1,
   loadControllerActivityProofRecordsV1,
   loadPinnedWorkerPickupVerifierV1,
+  distinctPhysicalWorkerSigningIdentityV1,
 } from './logicalGoalPickupProofV1.mjs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -81,4 +82,18 @@ test('uncommissioned separate physical-worker public key fails closed', async ()
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'WORKER_PICKUP_DISTINCT_PIN_NOT_COMMISSIONED');
+});
+
+test('same Ed25519 public key with different PEM line endings is not a distinct worker', () => {
+  const key = [
+    '-----BEGIN PUBLIC KEY-----',
+    'MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=',
+    '-----END PUBLIC KEY-----',
+    '',
+  ].join('\n');
+  const differentlyEncoded = key.replace(/\n/g, '\r\n') + '\r\n';
+  assert.notEqual(key, differentlyEncoded);
+  assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, differentlyEncoded), false);
+  assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, key), false);
+  assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, 'not-an-ed25519-key'), false);
 });
