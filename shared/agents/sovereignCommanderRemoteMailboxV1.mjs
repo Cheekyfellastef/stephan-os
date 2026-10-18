@@ -2141,12 +2141,41 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
  */
 export function diagnoseRescueIslandNativeReceiptInvalidV1({
   envelope, expectedAction, projection, positive, negative,
+  rawMaintenance, mcpError = false,
 } = {}) {
   if (expectedAction !== 'rescue-island-readonly-boundary')
     return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
-      || Object.keys(envelope).length === 0)
-    return 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+      || Object.keys(envelope).length === 0) {
+    // Classify only fixed native Commander runner denials. Raw process,
+    // path, task identity and untrusted exception data remain private.
+    let observation = rawMaintenance;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (!observation || typeof observation !== 'object'
+        || Array.isArray(observation)) break;
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+        const known = observation.command?.blockers;
+        if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
+          if (known.includes('trusted-repository-root-required'))
+            return 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE';
+          if (known.includes('sovereign-commander-process-not-registered'))
+            return 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED';
+        }
+        return 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN';
+      }
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+        && observation.command?.plan?.processId === expectedAction
+        && !Number.isInteger(observation.structuredContent?.status)) {
+        return 'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS';
+      }
+      observation = observation.structuredContent;
+    }
+    return mcpError === true
+      ? 'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'
+      : 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  }
   if (envelope?.command?.plan?.processId !== expectedAction)
     return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
   const status = envelope?.structuredContent?.status;
@@ -3156,6 +3185,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           envelope: candidate,
           expectedAction: shape.command.remoteAction,
           projection, positive: readback, negative: held,
+          rawMaintenance,
+          mcpError: actionCall.body?.result?.isError === true,
         }),
         publicReceiptSafe: true,
         secretMaterialReturned: false,
