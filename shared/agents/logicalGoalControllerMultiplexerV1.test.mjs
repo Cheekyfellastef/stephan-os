@@ -291,6 +291,8 @@ test('selected goal stays blocked for unproven pickup, mismatched owner, wrong g
   const cases = [
     [buildTruth([proofGoal(controller, { state: 'QUEUED', proofRefs: [] })]), 'LOGICAL_GOAL_SELECTED_WITHOUT_PICKUP'],
     [buildTruth([proofGoal(controller, { state: 'BUILDING', proofRefs: [] })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
+    [buildTruth([proofGoal(controller, { proofRefs: ['receipts/worker-pickup-accepted.json'] })]), 'LOGICAL_GOAL_PICKUP_NOT_AUTHENTICATED'],
+    [buildTruth([proofGoal(controller, { proofRefs: ['receipts/../forged.json'] })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
     [buildTruth([proofGoal(controller, { lastMaterialProgressAtUtc: '2026-10-01T15:00:00.000Z' })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
     [buildTruth([proofGoal(controller, { lastMaterialProgressAtUtc: '2026-10-18T16:00:00.000Z' })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
     [buildTruth([proofGoal(controller, { controllerId: 'someone-else' })]), 'LOGICAL_GOAL_PICKUP_OWNER_MISMATCH'],
