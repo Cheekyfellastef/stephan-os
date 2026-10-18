@@ -1,4 +1,7 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 // Use the EXISTING independently commissioned Core Ed25519 key; this
 // observation is diagnostic only and never grants source/lease/merge powers.
@@ -123,6 +126,71 @@ function signedBody({ buildTruth, sourceHead, proofRecords, nowMs, trust }) {
     claims,
   });
 }
+
+/*
+ * Read the canonical controller-activity proof records, not the originating
+ * arbitrary receipts/* path. The latter appears only inside the controller
+ * proof's refs list and may belong to a different producer. This scanner is
+ * bounded and read-only; missing/redirected proof material denies attestation.
+ */
+export async function loadControllerActivityProofRecordsV1({ workspaceRoot } = {}) {
+  const blocked = blocker => Object.freeze({ ok: false, blocker, records: Object.freeze([]) });
+  if (typeof workspaceRoot !== 'string' || !workspaceRoot.trim()) return blocked('CONTROLLER_PROOF_ROOT_UNAVAILABLE');
+  const root = resolve(workspaceRoot, 'proof');
+  try {
+    const dir = await lstat(root);
+    if (!dir.isDirectory() || dir.isSymbolicLink()) return blocked('CONTROLLER_PROOF_ROOT_UNSAFE');
+    const names = await readdir(root);
+    if (names.length > 1024) return blocked('CONTROLLER_PROOF_DIRECTORY_OVER_CAP');
+    const relevant = names.filter(name => /^controller-[a-z0-9._-]{1,110}\.json$/i.test(name));
+    if (relevant.length > 512) return blocked('CONTROLLER_PROOF_RECORD_CAP_EXCEEDED');
+    const records = [];
+    for (const name of relevant) {
+      const handle = await open(resolve(root, name), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+      try {
+        const info = await handle.stat();
+        if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > 262144) {
+          return blocked('CONTROLLER_PROOF_RECORD_UNSAFE');
+        }
+        const record = JSON.parse(await handle.readFile('utf8'));
+        if (record?.kind !== 'stephanos.shared_workspace.proof'
+          || record?.proofId !== name.slice(0, -5)
+          || record?.controllerActivityProof?.schemaVersion !== 'stephanos.controller-activity-proof.v1') {
+          return blocked('CONTROLLER_PROOF_RECORD_INVALID');
+        }
+        records.push(record);
+      } finally { await handle.close(); }
+    }
+    return Object.freeze({ ok: true, blocker: '', records: Object.freeze(records) });
+  } catch { return blocked('CONTROLLER_PROOF_RECORD_READ_FAILED'); }
+}
+
+export async function loadPinnedWorkerPickupVerifierV1({ localStateRoot, env = process.env } = {}) {
+  const blocked = blocker => Object.freeze({ ok: false, blocker });
+  const workerPublicKeySha256 = text(env.STEPHANOS_PHYSICAL_WORKER_TRUSTED_PUBLIC_KEY_SHA256).toLowerCase();
+  const corePublicKeySha256 = text(env.STEPHANOS_GOAL_BUILD_GATES_TRUSTED_PUBLIC_KEY_SHA256).toLowerCase();
+  if (!SHA64.test(workerPublicKeySha256) || !SHA64.test(corePublicKeySha256)
+    || workerPublicKeySha256 === corePublicKeySha256) {
+    return blocked('WORKER_PICKUP_DISTINCT_PIN_NOT_COMMISSIONED');
+  }
+  if (!text(localStateRoot)) return blocked('WORKER_PICKUP_LOCAL_TRUST_ROOT_UNAVAILABLE');
+  try {
+    const keyPath = resolve(localStateRoot, 'keys', 'stephanos-physical-worker-public.pem');
+    const handle = await open(keyPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > 8192) return blocked('WORKER_PICKUP_PUBLIC_KEY_UNSAFE');
+      const workerPublicKeyPem = await handle.readFile('utf8');
+      if (createHash('sha256').update(workerPublicKeyPem).digest('hex') !== workerPublicKeySha256
+        || createPublicKey(workerPublicKeyPem).asymmetricKeyType !== 'ed25519') {
+        return blocked('WORKER_PICKUP_PUBLIC_KEY_PIN_MISMATCH');
+      }
+      return Object.freeze({ ok: true, blocker: '', workerPublicKeyPem,
+        workerPublicKeySha256, corePublicKeySha256 });
+    } finally { await handle.close(); }
+  } catch { return blocked('WORKER_PICKUP_PUBLIC_KEY_UNAVAILABLE'); }
+}
+
 export function signLogicalGoalBuildTruthV1({
   buildTruth, sourceHead, proofRecords = [], signingPrivateKeyPem = '',
   trustedWorkerPublicKeyPem = '', trustedWorkerPublicKeySha256 = '',
