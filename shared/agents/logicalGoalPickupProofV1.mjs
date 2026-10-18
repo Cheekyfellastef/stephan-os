@@ -154,9 +154,12 @@ export async function loadControllerActivityProofRecordsV1({ workspaceRoot } = {
     const dir = await lstat(root);
     if (!dir.isDirectory() || dir.isSymbolicLink()) return blocked('CONTROLLER_PROOF_ROOT_UNSAFE');
     const names = await readdir(root);
-    if (names.length > 1024) return blocked('CONTROLLER_PROOF_DIRECTORY_OVER_CAP');
+    // Durable proofs are append-only. Do NOT fail just because historical or
+    // unrelated files have accumulated; bound CURRENT relevant reads instead.
+    // mtime is a retrieval hint only, never proof of authenticity or freshness.
     const relevant = names.filter(name => /^controller-[a-z0-9._-]{1,110}\.json$/i.test(name));
-    if (relevant.length > 512) return blocked('CONTROLLER_PROOF_RECORD_CAP_EXCEEDED');
+    const nowMs = Date.now();
+    const recentAfterMs = nowMs - MAX_AGE_MS - MAX_SKEW_MS;
     const records = [];
     for (const name of relevant) {
       const handle = await open(resolve(root, name), fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
@@ -165,6 +168,8 @@ export async function loadControllerActivityProofRecordsV1({ workspaceRoot } = {
         if (!info.isFile() || info.nlink !== 1 || info.size <= 0 || info.size > 262144) {
           return blocked('CONTROLLER_PROOF_RECORD_UNSAFE');
         }
+        if (info.mtimeMs < recentAfterMs || info.mtimeMs > nowMs + MAX_SKEW_MS) continue;
+        if (records.length >= 512) return blocked('CONTROLLER_PROOF_CURRENT_RECORD_CAP_EXCEEDED');
         const record = JSON.parse(await handle.readFile('utf8'));
         if (record?.kind !== 'stephanos.shared_workspace.proof'
           || record?.proofId !== name.slice(0, -5)
