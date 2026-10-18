@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-18-island-action-contract-v6',
+    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
     [switch]$SkipCoreDaemonLifecycle,
     [switch]$SkipDesktopCommanderCrossHeal
 )
