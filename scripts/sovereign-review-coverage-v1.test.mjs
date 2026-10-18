@@ -21,7 +21,7 @@ test('existing fixed local Git source snapshot produces read-only, no-authority 
   assert.doesNotMatch(JSON.stringify(r),/DO NOT PRINT ME|secret source text/);
 });
 test('missing exact local Git snapshot never becomes review or dispatch',()=>{
-  const r=run({}, {snapshot:()=>{throw Error('private checkout path')}}); 
+  const r=run({}, {snapshot:()=>{throw Error('private checkout path')}});
   assert.equal(r.status,'REVIEW_COVERAGE_HELD');
   assert.equal(r.reason,'EXACT_LOCAL_REVIEW_SOURCE_UNVERIFIED');
   assert.equal(r.meteredReviewReplacementQualified,false);
