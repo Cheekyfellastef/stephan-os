@@ -4,7 +4,7 @@
 
 Extend the EXISTING Sovereign Reviewer with a native Windows read-only competence exercise. This is a bounded source change, not a second reviewer, review authority, scheduler, service, lease, source writer, or ChatGPT/Codex identity substitute.
 
-The sovereignWindowsCalibrationV1 module presents eight randomized opaque Windows code-diff challenges to the same local model class: six unsafe changes and two safe controls. Expected issue categories are withheld from prompts and callback metadata. A generic P1, unrelated finding, P2-only response, malformed JSON, wrong challenge/hash/path, all-clean answer, missing challenge or colliding provider fails. Model judgments remain candidate-only.
+The sovereignWindowsCalibrationV1 module presents thirteen randomized opaque Windows/R7 code-diff challenges to the same local model class: ten unsafe changes and three safe controls. The finite candidate issue-code vocabulary is disclosed (so a real local model can respond) but challenge names, the correct mapping and safe/unsafe labels are withheld from prompts and callback metadata. A generic P1, unrelated finding, P2-only response, malformed JSON, wrong challenge/hash/path, all-clean answer, missing challenge or colliding provider fails. Model judgments remain candidate-only.
 
 Windows-specific negative cases check:
 - Treating Windows SCM RUNNING as physical source custody;
@@ -12,9 +12,15 @@ Windows-specific negative cases check:
 - Ignoring Scheduled Task or other original-writer reentry;
 - Using process-name absence instead of excluding existing writable handles;
 - Reading a signing key from a shared workspace;
-- Releasing the exact original R7 source lease without approved digest CAS.
+- Releasing the exact original R7 source lease without approved digest CAS;
+- Omitting original-writer WMI/COM relaunch checks;
+- Fabricating historical R7 execution success when the receipt is absent;
+- Accepting the witness without an independent operator signature;
+- Substituting the current witness service SID for the original writer SID in negative write tests.
 
-The native scripts/sovereign-windows-review-calibration-v1.mjs --once runner reuses the existing high-risk exact Git snapshot boundary. It additionally compares critical reviewer/exam executable on-disk blobs with HEAD, rejects hidden index flags, checks the local resource governor before and during each model response, aborts inference when gaming begins, pins the local Ollama digest before and during the exercise, forbids network redirects, uses bounded JSON-only local generation, and rechecks source/VR/model state afterward. No arbitrary URL, command, proof signing, protected GitHub review, witness installer, or source mutation is introduced.
+**R7-FIRST:** This is the initial sovereign specialist competency target. The source examination has no physical Windows enforcement authority. Source calibration and the five independent privileged host tests are distinct, mandatory steps.
+
+The native scripts/sovereign-windows-review-calibration-v1.mjs --once runner reuses the existing high-risk exact Git snapshot boundary. It additionally compares critical reviewer/exam executable on-disk blobs with HEAD, including the imported domain-policy and Git-execution-boundary modules, rejects hidden index flags, checks the local resource governor before and during each model response, aborts inference when gaming begins, pins the local Ollama digest before and during the exercise, forbids network redirects, uses bounded JSON-only local generation, and rechecks source/VR/model state afterward. No arbitrary URL, command, proof signing, protected GitHub review, witness installer, or source mutation is introduced.
 
 ## Admission and rollout
 
@@ -26,4 +32,4 @@ The native scripts/sovereign-windows-review-calibration-v1.mjs --once runner reu
 
 ## Authority boundary
 
-Even 8/8 from a real local model yields WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED only, never qualified Windows specialist, independent security sign-off, service installation, source mutation, protected merge, signed custody, lease release, or physical goal pickup. Existing Codex-pinned specialist policy remains unchanged until separately approved provider-neutral reviewer admission with trusted root and actual Windows host evidence. Preserve original writer identities and leases; no shortcut from review to CAS.
+Even 13/13 from a real local model yields WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED only, never qualified Windows specialist, independent security sign-off, service installation, source mutation, protected merge, signed custody, lease release, or physical goal pickup. Existing Codex-pinned specialist policy remains unchanged until separately approved provider-neutral reviewer admission with trusted root and actual Windows host evidence. Preserve original writer identities and leases; no shortcut from review to CAS.
