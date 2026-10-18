@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const VERSION = '2026-10-13-private-mcp-batch-metadata-v5';
+const VERSION = '2026-10-18-rescue-island-registry-v6';
 const RUNTIME_CALLERS = [
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
@@ -28,7 +28,7 @@ test('existing specialist-pinned Windows starter accepts the required generation
     source('scripts/sovereign-commander-ignition-autoheal.mjs'),
     source('scripts/windows/run-sovereign-commander-hidden.ps1'),
   ]);
-  assert.ok(http.includes("SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-13-private-mcp-batch-metadata-v5'"));
+  assert.ok(http.includes("SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-18-rescue-island-registry-v6'"));
   assert.ok(mcp.includes("name: 'read_multiple_files'"));
   assert.ok(mcp.includes("name: 'get_file_info'"));
   assert.ok(autoheal.includes("'-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION"));
@@ -44,7 +44,7 @@ test('scheduled S4U launcher and post-sync refresh explicitly require same gener
     source('scripts/battle-bridge-post-sync-refresh.mjs'),
   ]);
   assert.ok(launcher.includes('Case "sovereign-commander-watchdog"'));
-  assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-13-private-mcp-batch-metadata-v5"'));
+  assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-18-rescue-island-registry-v6"'));
   const refresh = postSync.slice(postSync.indexOf('refreshSovereignCommander({ afterHead, paths })'), postSync.indexOf('restartGitHubMailbox({ afterHead, paths })'));
-  assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5'"));
+  assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-18-rescue-island-registry-v6'"));
 });
