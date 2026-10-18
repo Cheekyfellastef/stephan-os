@@ -110,9 +110,8 @@ test('loopback-only requests refuse redirect traversal for model prompts and met
   assert.equal(preflight.status, 'LOCAL_OLLAMA_PREFLIGHT_HELD');
   assert.equal(inspected, 2, 'one refused generate and one refused metadata call');
   noAuthority(project(calibration)); // only the public bounded projection has nine fixed fields
-  // The internal read-only preflight reports {ok, reason}, not the public
-  // nine-field candidate projection; absence of authority is still held.
-  assert.equal(preflight.ok, false);
+  // Internal read-only preflight may return status rather than ok; no
+  // authority can be granted by any of its held result shapes.
   assert.notEqual(preflight.specialistAuthority, true);
   assert.notEqual(preflight.leaseReleaseAuthority, true);
 });
