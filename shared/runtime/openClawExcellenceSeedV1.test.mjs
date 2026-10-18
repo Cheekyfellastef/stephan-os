@@ -278,6 +278,20 @@ test('one replayed proof ref cannot satisfy both OpenClaw agent inventories', ()
   'seed-3094:rung:inventory_both_agents');
 });
 
+test('self-attested endurance and continuous uplift never become trusted rung or proof telemetry', () => {
+  for (const rung of ['PROVE_SOVEREIGN_ENDURANCE', 'CONTINUOUS_UPLIFT_AND_RETEST']) {
+    const payload = feed({ statusRecords: [heartbeat()] });
+    payload.records.eventRecords = [
+      event(rung, 'openclaw-local'),
+      event(rung, 'openclaw-standalone'),
+    ];
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, 0, rung + ' must require trusted independent admission');
+    assert.equal(seed.proofCount, 0, rung + ' must not inflate displayed proof');
+    assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+  }
+});
+
 test('stale feed or stale source freshness cannot plant a fresh seed or show current/dispatch work', () => {
   for (const payload of [
     { ...feed({ statusRecords: [heartbeat(), event('INVENTORY_BOTH_AGENTS')] }), state: 'stale' },

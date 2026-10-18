@@ -1782,6 +1782,15 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     'PROVE_END_TO_END_TASK_PARITY',
     'PROVE_SOVEREIGN_ENDURANCE',
   ]);
+  // Authority-bearing outcome claims require independently authenticated,
+  // task/agent-bound receipts. Shared Workspace PASS flags and arbitrary refs
+  // are observational, not trusted qualification, endurance or uplift proof.
+  const trustedAdmissionRequiredRungs = new Set([
+    'QUALIFY_AGENT_SPECIFIC_SKILLS',
+    'PROVE_END_TO_END_TASK_PARITY',
+    'PROVE_SOVEREIGN_ENDURANCE',
+    'CONTINUOUS_UPLIFT_AND_RETEST',
+  ]);
   // Rejected qualification/parity self-attestations are neither rung proof
   // nor countable proof telemetry. Only accepted observational rung evidence
   // enters this display total; authority-bearing claims await trusted review.
@@ -1789,8 +1798,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
       || evidence.rung !== rung || !contract.growthRungs.includes(rung)
-      || rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
-      || rung === 'PROVE_END_TO_END_TASK_PARITY') return false;
+      || trustedAdmissionRequiredRungs.has(rung)) return false;
     return !agentId || (evidence.agentId === agentId && actorId(record) === agentId);
   };
   const admittedProofRecords = proved.filter((record) => {
@@ -1816,13 +1824,11 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const hasRungProof = (rung, agentId) => uniqueProofRecords.some((record) =>
     isAdmittedRungRecord(record, rung, agentId));
   const rungProof = contract.growthRungs.map((rung) => {
-    if (rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
-      || rung === 'PROVE_END_TO_END_TASK_PARITY') {
-      // Fail closed: Shared Workspace events/refs and success booleans are not
-      // authenticated ten-question exams, independent reviewer decisions or
-      // operator approvals. This presentation projection cannot authenticate
-      // the immutable task/head and authority-bound external receipts; a
-      // separate trusted admission contract must first be implemented.
+    if (trustedAdmissionRequiredRungs.has(rung)) {
+      // Fail closed: Shared Workspace self-attestations cannot certify exams,
+      // benchmark parity, sovereign endurance or continuous uplift. This
+      // projection cannot authenticate task/head-bound independent receipts;
+      // a separate trusted admission contract must verify them first.
       return false;
     }
     return agentScopedRungs.has(rung)
