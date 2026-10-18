@@ -226,21 +226,26 @@ test('meter-blackout inventory rejects silent valid-owner reassignment', () => {
 
 const assertMeterBlackoutOwnerIntroductions = (markdown) => {
   // The document heading names the owning seed by number; its first body
-  // reference and both implementation-owner introductions must be title-bound.
+  // reference, implementation owners and cross-domain custody introductions must be title-bound.
   const body = markdown.slice(markdown.indexOf('\n') + 1);
   const owners = [
-    ['2968', 'Seed: Stephanos Sovereign Meter Independence across all metered services'],
-    ['1898', 'Programme: Zero-Codex Continuity and Provider Parity V1'],
-    ['2519', 'Build Sovereign Commander as the unmetered Battle Bridge control surface'],
+    ['2968', 'Seed: Stephanos Sovereign Meter Independence across all metered services', true],
+    ['1898', 'Programme: Zero-Codex Continuity and Provider Parity V1', true],
+    ['2519', 'Build Sovereign Commander as the unmetered Battle Bridge control surface', true],
+    ['3026', 'Seed: Stephanos Full Sovereignty for Every Function, Zero External Critical Dependencies', true],
+    ['1903', 'Goal: Stephanos Governed Self-Improvement and Operator Gap-to-Change Loop V1', false],
+    ['2962', 'Goal: Repair Native Capacity Publisher generated-dist source gate mismatch', false],
   ];
-  for (const [issue, title] of owners) {
+  for (const [issue, title, beforeEvidenceContract] of owners) {
     const canonical = '[#' + issue + ' — ' + title + '](https://github.com/Cheekyfellastef/stephan-os/issues/' + issue + ')';
     const introduction = body.indexOf(canonical);
     assert.ok(introduction >= 0, 'missing title-bound original owner #' + issue);
     assert.equal(body.indexOf('#' + issue), introduction + 1,
       'first body mention of original owner #' + issue + ' must include its exact linked title');
-    assert.ok(introduction < body.indexOf('## Meter-blackout evidence contract'),
-      'the first owner reference must be verifiable before the evidence contract');
+    if (beforeEvidenceContract) {
+      assert.ok(introduction < body.indexOf('## Meter-blackout evidence contract'),
+        'the first owner reference must be verifiable before the evidence contract');
+    }
   }
 };
 
@@ -250,7 +255,7 @@ test('meter blackout acceptance keeps first-use owner titles bound to canonical 
 
 test('meter blackout acceptance rejects a bare owner reference before its linked introduction', () => {
   const markdown = readMeterBlackoutInventory();
-  for (const issue of ['2968', '1898', '2519']) {
+  for (const issue of ['2968', '1898', '2519', '3026', '1903', '2962']) {
     const forged = markdown.replace('\n\nCanonical owner:',
       '\n\nOriginal owner #' + issue + ' is assigned here without a title.\n\nCanonical owner:');
     assert.notEqual(forged, markdown, 'the adversarial mutation must change the acceptance packet');
