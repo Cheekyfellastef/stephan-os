@@ -23,6 +23,7 @@ on:
       - 'tests/sovereign-commander-browser-observe.test.mjs'
       - 'tests/sovereign-commander-browser-mailbox-projection.test.mjs'
       - 'tests/sovereign-browser-native-receipt.test.mjs'
+      - 'tests/sovereign-browser-extension-permissions.test.mjs'
       - 'tests/sovereign-browser-host-windows.test.mjs'
       - 'apps/sovereign-browser-bridge/**'
       - 'scripts/windows/SovereignBrowserWitnessHost.cs'
@@ -116,6 +117,7 @@ jobs:
           node --test tests/sovereign-commander-browser-observe.test.mjs
           node --test tests/sovereign-commander-browser-mailbox-projection.test.mjs
           node --test tests/sovereign-browser-native-receipt.test.mjs
+          node --test tests/sovereign-browser-extension-permissions.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
           node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
