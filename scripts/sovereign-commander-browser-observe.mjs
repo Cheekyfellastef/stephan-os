@@ -153,7 +153,7 @@ export async function observeSovereignBrowser({
       }));
       const screenshot = await page.screenshot({ type: 'png', timeout: 7_000 });
       const screenshotHash = sha256(screenshot);
-      const screenshotName = \`\${observedAtUtc.replace(/[:.]/g, '-')}-\${id}.png\`;
+      const screenshotName = `${observedAtUtc.replace(/[:.]/g, '-')}-${id}.png`;
       await writeFile(resolve(proofRoot, screenshotName), screenshot);
       observations.push(Object.freeze({
         tabId: id,
@@ -189,8 +189,8 @@ export async function observeSovereignBrowser({
     observations,
   };
   const evidenceHash = sha256(JSON.stringify(receipt));
-  const receiptName = \`\${observedAtUtc.replace(/[:.]/g, '-')}-\${evidenceHash.slice(0, 16)}.json\`;
-  await writeFile(resolve(proofRoot, receiptName), \`\${JSON.stringify({ ...receipt, evidenceHash }, null, 2)}\n\`, 'utf8');
+  const receiptName = `${observedAtUtc.replace(/[:.]/g, '-')}-${evidenceHash.slice(0, 16)}.json`;
+  await writeFile(resolve(proofRoot, receiptName), `${JSON.stringify({ ...receipt, evidenceHash }, null, 2)}\n`, 'utf8');
   return Object.freeze({
     ...receipt,
     evidenceHash,
@@ -224,6 +224,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const parsed = parseBrowserObservationArguments(process.argv.slice(2));
   const result = parsed.ok ? await observeSovereignBrowser() : { ...parsed, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' };
   const projection = publicBrowserObservationProjection(result);
-  process.stdout.write(\`\${BROWSER_OBSERVATION_MARKER}\${JSON.stringify(projection)}\n\`);
+  process.stdout.write(`${BROWSER_OBSERVATION_MARKER}${JSON.stringify(projection)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }
