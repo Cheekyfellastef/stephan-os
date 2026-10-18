@@ -21,7 +21,7 @@ async function fixture(root, { stale=false, alteredImage=false, scanOnly=false }
     observedAtUtc:stale?'2026-10-18T18:00:00.000Z':time.toISOString(),
     mechanism:'operator-permissioned-chromium-native-messaging',
     readOnly:true,observationOnly:true,servedHeadVerified:false,functionalAcceptanceVerified:false,
-    scanOnly,connectedTabCount:2,admittedTabCount:2,observedTabCount:1,screenshotCount:1,
+    scanOnly,connectedTabCount:2,admittedTabCount:2,observedTabCount:1,diagnosticTabCount:1,screenshotCount:1,
     evidenceHash:sha('receipt'),screenshots:[{ imageName,sha256:hash }]
   }));
 }
