@@ -6,7 +6,7 @@ import {
   loadPinnedWorkerPickupVerifierV1,
   distinctPhysicalWorkerSigningIdentityV1,
 } from './logicalGoalPickupProofV1.mjs';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -96,4 +96,34 @@ test('same Ed25519 public key with different PEM line endings is not a distinct 
   assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, differentlyEncoded), false);
   assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, key), false);
   assert.equal(distinctPhysicalWorkerSigningIdentityV1(key, 'not-an-ed25519-key'), false);
+});
+
+test('unrelated and historical proof-file growth cannot veto current controller pickups', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'controller-history-'));
+  const dir = join(root, 'proof');
+  await mkdir(dir);
+  // Over the previous hard global 1024-file limit, including over 512
+  // historical controller records. Only current controller proofs count.
+  for (let offset = 0; offset < 1300; offset += 50) {
+    await Promise.all(Array.from({ length: Math.min(50, 1300 - offset) }, async (_, index) => {
+      const n = offset + index;
+      const name = n < 600 ? `controller-old-run-${n}.json` : `unrelated-${n}.json`;
+      const filename = join(dir, name);
+      await writeFile(filename, '{}');
+      if (n < 600) {
+        const yesterday = new Date(Date.now() - 86400000);
+        await utimes(filename, yesterday, yesterday);
+      }
+    }));
+  }
+  const currentId = 'controller-current-run-test';
+  await writeFile(join(dir, currentId + '.json'), JSON.stringify({
+    kind: 'stephanos.shared_workspace.proof',
+    proofId: currentId,
+    controllerActivityProof: { schemaVersion: 'stephanos.controller-activity-proof.v1' },
+  }));
+  const result = await loadControllerActivityProofRecordsV1({ workspaceRoot: root });
+  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.records.length, 1);
+  assert.equal(result.records[0].proofId, currentId);
 });
