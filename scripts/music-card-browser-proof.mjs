@@ -151,6 +151,7 @@ export function evaluateMusicCardEvidence(evidence = {}, { expectedHead = '', pr
   require(evidence.schemaVersion === MUSIC_CARD_PROOF_SCHEMA, 'MUSIC_CARD_EVIDENCE_SCHEMA_INVALID');
   require(evidence.collector === 'playwright-existing-music-cards-v1' && evidence.fixtureInjected === false,
     'MUSIC_REAL_CARD_OBSERVATION_REQUIRED');
+  require(evidence.realCardContextAdmitted === true, 'MUSIC_REAL_CARD_CONTEXT_NOT_ADMITTED');
   require(SHA.test(expectedHead) && evidence.sourceHead === expectedHead && evidence.proofTarget === proofTarget,
     'MUSIC_CARD_HEAD_OR_TARGET_MISMATCH');
   require(['PULL_REQUEST_HEAD', 'MERGED_MAIN'].includes(proofTarget), 'MUSIC_CARD_TARGET_INVALID');
@@ -177,9 +178,10 @@ export function evaluateMusicCardEvidence(evidence = {}, { expectedHead = '', pr
 export async function collectMusicCardEvidence(page, runtimeUrl, {
   capturedResponses = [], consoleErrors = [], pageErrors = [], expectedHead = '',
   proofTarget = 'PULL_REQUEST_HEAD', repoRoot = process.cwd(), bindSourceResponses,
+  realCardContextAdmitted = false,
 } = {}) {
   const evidence = { schemaVersion: MUSIC_CARD_PROOF_SCHEMA, collector: 'playwright-existing-music-cards-v1',
-    fixtureInjected: false, sourceHead: expectedHead, proofTarget, iframeIdentityPreserved: false };
+    fixtureInjected: false, realCardContextAdmitted, sourceHead: expectedHead, proofTarget, iframeIdentityPreserved: false };
   let refs;
   try {
     const runtime = new URL(runtimeUrl);
@@ -188,6 +190,9 @@ export async function collectMusicCardEvidence(page, runtimeUrl, {
       throw new Error('MUSIC_CARD_FIXED_LOCAL_ROUTE_REQUIRED');
     }
     const scenarioUrl = new URL('/apps/music-tile/index.html', runtime.origin).href;
+    // This is an internal caller contract, never a public mailbox flag. The
+    // generic runner's fresh context cannot establish operator-profile truth.
+    if (realCardContextAdmitted !== true) throw new Error('MUSIC_REAL_CARD_CONTEXT_NOT_ADMITTED');
     await page.route('**/apps/music-tile/**', (route) => route.continue({
       headers: { ...route.request().headers(), 'cache-control': 'no-store', pragma: 'no-cache' },
     }));

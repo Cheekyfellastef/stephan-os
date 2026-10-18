@@ -20,7 +20,7 @@ function evidence() {
   const binding = { exact: true, sourceHead: head, fingerprint: 'b'.repeat(64), fileCount: 3,
     responseBinding: 'playwright-scenario-source-responses-git-blob-v2' };
   return { schemaVersion: MUSIC_CARD_PROOF_SCHEMA, collector: 'playwright-existing-music-cards-v1',
-    fixtureInjected: false, sourceHead: head, proofTarget: 'MERGED_MAIN', sourceBefore: binding,
+    fixtureInjected: false, realCardContextAdmitted: true, sourceHead: head, proofTarget: 'MERGED_MAIN', sourceBefore: binding,
     sourceAfter: { ...binding }, before, after: { ...before }, iframeIdentityPreserved: true,
     consoleErrorCount: 0, pageErrorCount: 0, blocker: '' };
 }
@@ -85,7 +85,7 @@ test('sanitized snapshot evidence contains only counts and a digest', () => {
 
 test('rejects stale heads, fixture proof, source drift, reload drift, replaced frames and browser errors', () => {
   const cases = [
-    { sourceHead: 'c'.repeat(40) }, { fixtureInjected: true }, { proofTarget: 'PULL_REQUEST_HEAD' },
+    { sourceHead: 'c'.repeat(40) }, { fixtureInjected: true }, { realCardContextAdmitted: false }, { proofTarget: 'PULL_REQUEST_HEAD' },
     { sourceBefore: null }, { sourceAfter: { ...evidence().sourceAfter, exact: false } },
     { sourceAfter: { ...evidence().sourceAfter, fingerprint: 'c'.repeat(64) } },
     { after: { ...evidence().after, fingerprint: 'c'.repeat(64) } },
@@ -113,5 +113,16 @@ test('collector refuses arbitrary URL or missing binding without touching the br
     const result = await collectMusicCardEvidence(page, runtime, { expectedHead: head, bindSourceResponses() {} });
     assert.equal(result.blocker, 'MUSIC_CARD_FIXED_LOCAL_ROUTE_REQUIRED');
   }
+  assert.equal(touched, false);
+});
+
+test('fresh or unqualified contexts cannot become real-profile proof even when populated', async () => {
+  let touched = false;
+  const page = { route() { touched = true; } };
+  const result = await collectMusicCardEvidence(page, 'http://127.0.0.1:4173/apps/stephanos/dist/index.html', {
+    expectedHead: head, bindSourceResponses() {},
+  });
+  assert.equal(result.blocker, 'MUSIC_REAL_CARD_CONTEXT_NOT_ADMITTED');
+  assert.equal(evaluate(result).accepted, false);
   assert.equal(touched, false);
 });

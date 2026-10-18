@@ -22,7 +22,7 @@ Exact destination proof means agreement with canonical stored IDs. It does not i
 
 ## Real browser-state boundary — still requires commissioning
 
-The current generic native runner creates an isolated browser context. The Music tile stores its cards in browser-local storage. Therefore the default native invocation may correctly stop with `MUSIC_REAL_CARDS_UNAVAILABLE_OR_OUT_OF_BOUNDS` rather than observe the operator's normal profile.
+The current generic native runner creates an isolated browser context. The Music tile stores its cards in browser-local storage. The collector therefore requires an internal `realCardContextAdmitted` contract, defaulting to false, and the evaluator independently checks it. This is not an accepted public mailbox field. Until the existing-session witness is commissioned, the generic native invocation stops with `MUSIC_REAL_CARD_CONTEXT_NOT_ADMITTED` even if a fresh context happens to contain default/sample cards. An admitted but empty context stops with `MUSIC_REAL_CARDS_UNAVAILABLE_OR_OUT_OF_BOUNDS`.
 
 The collector is reusable on an existing admitted local page/context. It does not seed songs, overwrite storage, intercept provider responses, discover arbitrary browser profiles, copy cookies or open a debugging listener. Existing user-authorized browser-session access or a separately reviewed, origin-scoped state witness must supply the real-card context before claiming operator-profile proof. Do not silently substitute fixtures or claim this source PR closes that transport gap.
 
