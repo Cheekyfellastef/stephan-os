@@ -298,11 +298,23 @@ export function evaluateLogicalGoalControllerContinuityV2(controller, buildTruth
       'Repair the stale host/selection reconciliation; never borrow proof from another controller or goal.');
   }
   const state = text(goal.state).toUpperCase();
+  // Being tracked is not scheduler admission. Even a physical lane left behind
+  // by a previous selection cannot make the unselected controller green.
+  if (controller.selectedForAdmission !== true && state === 'BUILDING') {
+    return hold('LOGICAL_GOAL_UNSELECTED_MATERIAL_WORK_PRESENT',
+      `Logical controller ${id} is not selected but retains a BUILDING worker lane; admission must be reconciled.`,
+      'Reconcile the existing canonical scheduler and worker lane without granting new source authority.');
+  }
   const refs = Array.isArray(goal.proofRefs)
     ? goal.proofRefs.filter((ref) => typeof ref === 'string' && /^proof\/[a-z0-9][a-z0-9._/-]{0,180}$/i.test(ref)).slice(0, 8)
     : [];
   if (state === 'BUILDING') {
-    if (!refs.length || !Number.isFinite(Date.parse(text(goal.lastMaterialProgressAtUtc)))) {
+    const progressAtMs = Date.parse(text(goal.lastMaterialProgressAtUtc));
+    if (controller.selectedForAdmission !== true
+      || !refs.length
+      || !Number.isFinite(progressAtMs)
+      || progressAtMs > nowMs + LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_FUTURE_SKEW_MS
+      || nowMs - progressAtMs > LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS) {
       return hold('LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED',
         `Logical controller ${id} claims BUILDING without a current bound physical pickup receipt.`,
         'Repair the physical worker receipt binding, not the scheduler or controller count.');
