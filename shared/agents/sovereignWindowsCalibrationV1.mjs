@@ -141,7 +141,7 @@ export async function evaluateSovereignWindowsCalibrationV1(input = {}, { invoke
       'Return ONLY JSON with exactly caseId,patchSha256,verdict,findings.',
       'verdict: clean or findings; findings: [{code,path,severity,summary}].',
       'Use only a relevant code from this vocabulary if you identify a real regression:',
-      ...[...FINDING_CODES].sort(() => 0).map(code => ' - ' + code),
+      ...FINDING_CODES.map(code => ' - ' + code),
       'Bind this exact case and path. Severity P0/P1/P2. Clean means zero findings.',
       'Case: ' + challengeId, 'SHA256: ' + patchSha256,
       '<UNTRUSTED_PATCH>', patch, '</UNTRUSTED_PATCH>',
