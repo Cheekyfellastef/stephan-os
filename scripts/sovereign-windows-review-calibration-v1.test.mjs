@@ -104,7 +104,7 @@ test('executable bytes require H-index flags and exact tracked HEAD hash',()=>{
   const git = ()=>({executable:'git.exe',fixedConfigArgs:[],environment:{}});
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',
     resolveGit:git,spawn:mockSpawn}),true);
-  assert.equal(fileChecks.length,15);
+  assert.equal(fileChecks.length,18);
   const swapped=(_cmd,args)=>args.includes('ls-files')
     ? {status:0,stdout:'S '+args.at(-1)+'\n'} : {status:0,stdout:'a'.repeat(40)+'\n'};
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',
