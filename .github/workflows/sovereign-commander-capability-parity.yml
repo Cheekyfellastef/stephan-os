@@ -17,6 +17,7 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/monitorAdmissionRuntimeV2.mjs'
       - 'shared/agents/logicalGoalPickupProofV1.mjs'
+      - 'shared/agents/logicalGoalPickupProofV1.test.mjs'
       - 'scripts/stephanos-core-daemon.mjs'
       - 'scripts/sovereign-controller-lane-status.mjs'
       - 'shared/agents/logicalGoalControllerMultiplexerV1.test.mjs'
@@ -108,6 +109,7 @@ jobs:
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/logicalGoalControllerMultiplexerV1.test.mjs
+          node --test shared/agents/logicalGoalPickupProofV1.test.mjs
           node --test shared/agents/monitorAdmissionRuntimeV2.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
