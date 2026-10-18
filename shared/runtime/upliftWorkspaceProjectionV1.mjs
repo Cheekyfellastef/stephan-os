@@ -1799,7 +1799,21 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       ? agents.some((agentId) => isAdmittedRungRecord(record, rung, agentId))
       : isAdmittedRungRecord(record, rung);
   });
-  const hasRungProof = (rung, agentId) => admittedProofRecords.some((record) =>
+  // One immutable proof reference cannot establish two different agent/rung
+  // identities. Reject the later conflicting record rather than letting a
+  // replayed receipt promote both agents. Replays of the same identity remain
+  // observationally idempotent and cannot inflate proof telemetry.
+  const proofIdentityByRef = new Map();
+  const uniqueProofRecords = admittedProofRecords.filter((record) => {
+    const evidence = record.openClawExcellenceEvidence;
+    const identity = [evidence.rung, evidence.agentId || actorId(record) || 'seed'].join(':');
+    const refs = proofRefs(record);
+    if (refs.some((ref) => proofIdentityByRef.has(ref)
+      && proofIdentityByRef.get(ref) !== identity)) return false;
+    refs.forEach((ref) => proofIdentityByRef.set(ref, identity));
+    return true;
+  });
+  const hasRungProof = (rung, agentId) => uniqueProofRecords.some((record) =>
     isAdmittedRungRecord(record, rung, agentId));
   const rungProof = contract.growthRungs.map((rung) => {
     if (rung === 'QUALIFY_AGENT_SPECIFIC_SKILLS'
@@ -1850,10 +1864,10 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     currentRung,
     nextGrowthRung: planted && firstMissing >= 0 ? contract.growthRungs[firstMissing] : '',
     pressureState: !planted ? 'UNKNOWN' : currentGaps.length || firstMissing >= 0 ? 'ACTIVE' : 'CURRENT',
-    proofCount: planted ? admittedProofRecords.flatMap(proofRefs).length : null,
+    proofCount: planted ? new Set(uniqueProofRecords.flatMap(proofRefs)).size : null,
     rungProofCount: planted ? rungProof.filter(Boolean).length : null,
     currentGaps: Object.freeze(currentGaps),
-    latestEvidenceAt: planted ? safeTime(latestByTime([heartbeat, ...admittedProofRecords]) || heartbeat) : '',
+    latestEvidenceAt: planted ? safeTime(latestByTime([heartbeat, ...uniqueProofRecords]) || heartbeat) : '',
     nextBestAction: !planted
       ? 'Publish the #3094 exact-source-bound seed heartbeat; prove Local and Standalone runtime separately.'
       : currentGaps.length
