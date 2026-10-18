@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   OPENCLAW_EXCELLENCE_ISSUE,
@@ -399,4 +400,30 @@ test('OpenClaw gap pressure rejects records cross-bound to another mission or is
   assert.equal(admitted.currentGaps.length, 1);
   assert.equal(admitted.currentGaps[0].capabilityId, 'openclaw-agent-inventory');
   assert.match(admitted.nextBestAction, /missing capability: agent skill inventory/);
+});
+
+test('skill provenance packet cannot silently drop recipient separation or install proof gates', () => {
+  // A documentation contract is not a skill installation or runtime witness.
+  const packet = readFileSync(new URL('../../docs/architecture/openclaw-agent-skill-provenance-v1.md', import.meta.url), 'utf8');
+  for (const principal of ['stephanos-scout-coder', 'openclaw-standalone']) {
+    assert.ok(packet.includes('`' + principal + '`'), 'both original principals must remain explicit');
+  }
+  assert.match(packet, /approval for one recipient never authorizes the other/i);
+  assert.match(packet, /Ten-question trust exam/);
+  assert.match(packet, /independent exact-head qualified specialist review/);
+  assert.match(packet, /Live post-install observation from the intended principal and machine/);
+  assert.match(packet, /This does not establish Codex parity/);
+  assert.match(packet, /never infer a physical pickup from GitHub CI/);
+  const matrix = packet.split('## Negative acceptance matrix (mandatory fail-closed)')[1];
+  assert.ok(matrix, 'mandatory negative acceptance matrix missing');
+  for (const required of [
+    'Upstream skill URL without pinned revision',
+    'Skill manifest addressed to Local but proposed for Standalone',
+    'Self-authored reviewer PASS or CI-only approval',
+    'Correct source SHA but missing installed runtime principal',
+    'Gaming active or GPU/CPU/model process-tree eviction unproven',
+    'Unknown Windows writer/descendant/relaunch custody',
+  ]) {
+    assert.ok(matrix.includes(required), 'missing negative provenance case: ' + required);
+  }
 });
