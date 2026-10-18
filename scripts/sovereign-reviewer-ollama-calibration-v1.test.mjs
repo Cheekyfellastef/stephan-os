@@ -83,6 +83,7 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
   assert.equal(calls.length, 10);
   assert.equal(calls.every(x => x.url === 'http://127.0.0.1:11434/api/generate'), true);
   assert.equal(calls.every(x => x.options.method === 'POST'
+    && x.options.redirect === 'error'
     && x.request.model === 'qwen:14b' && x.request.stream === false
     && x.request.format === 'json' && x.request.options.temperature === 0
     && x.request.keep_alive === 0), true);
@@ -93,6 +94,23 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
   const publicResult = project(result);
   assert.equal(publicResult.status, 'CALIBRATION_HELD');
   noAuthority(publicResult);
+});
+test('loopback-only requests refuse redirect traversal for model prompts and metadata', async () => {
+  let inspected = 0;
+  const redirected = async (url, options) => {
+    inspected++;
+    assert.match(url, /^http:\/\/127\.0\.0\.1:11434\/api\/(generate|tags)$/);
+    assert.equal(options.redirect, 'error', 'sensitive prompts must not be redirected');
+    throw new TypeError('fetch failed: redirect mode is error');
+  };
+  const calibration = await run(env, { ...gitProof(), fetchImpl: redirected });
+  assert.equal(calibration.status, 'CALIBRATION_HELD');
+  assert.equal(calibration.completedCases, 10);
+  const preflight = await probe(env, { ...gitProof(), fetchImpl: redirected });
+  assert.equal(preflight.status, 'LOCAL_OLLAMA_PREFLIGHT_HELD');
+  assert.equal(inspected, 11);
+  noAuthority(calibration);
+  noAuthority(preflight);
 });
 test('unavailable or oversized Ollama responses hold, never pass the exam', async () => {
   for (const fetchImpl of [
@@ -332,6 +350,7 @@ test('read-only preflight observes only local Ollama model availability', async 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'http://127.0.0.1:11434/api/tags');
   assert.equal(calls[0].options.method, 'GET');
+  assert.equal(calls[0].options.redirect, 'error', 'no redirect even on metadata reads');
   noAuthority(ready);
 });
 test('read-only preflight holds missing model, offline service, oversized inventory', async () => {

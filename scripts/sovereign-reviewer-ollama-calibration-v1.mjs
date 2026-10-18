@@ -145,7 +145,7 @@ export async function observeLocalSovereignOllamaDigestV1(model, {fetchImpl=fetc
     return Object.freeze({ok:false,reason:'LOCAL_MODEL_NOT_CONFIGURED'});
   try {
     const response=await fetchImpl('http://127.0.0.1:11434/api/tags',
-      {method:'GET',signal:AbortSignal.timeout(6000)});
+      {method:'GET',redirect:'error',signal:AbortSignal.timeout(6000)});
     if (!response?.ok || typeof response.text !== 'function')
       return Object.freeze({ok:false,reason:'LOCAL_OLLAMA_NOT_REACHABLE'});
     const raw=await response.text();
@@ -196,6 +196,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
       if (!currentGaming?.ok) throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
       // No prompt, source, model output or token enters a GitHub receipt.
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
+        // Never follow a redirect to a nonlocal endpoint with private diff text.
+        // Node fetch follows 3xx by default, including cross-origin redirects.
+        redirect: 'error',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

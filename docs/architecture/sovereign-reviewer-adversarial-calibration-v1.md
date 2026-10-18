@@ -155,3 +155,14 @@ non-authority fields are explicit false. Unknown reasons, duplicate markers,
 claimed privileged approval, wrong exit codes, raw PIDs/paths and extra
 output remain HOLD with generic messages. No GitHub write, physical Windows
 service mutation, reviewer signing or R7 lease authority is added.
+
+## Loopback model prompt redirect protection
+
+The fixed local Ollama `/api/generate` and read-only `/api/tags` calls
+explicitly use Node fetch `redirect: 'error'`. Without this option, a
+responding process on `127.0.0.1:11434` could return HTTP 3xx and the
+fetch client could forward private adversarial source snippets to a different
+host. Redirects now fail closed and no other URL, model endpoint, external
+provider, shell command or privileged approval route is added. Hosted contract
+tests assert exact loopback addresses, no redirect policy, and HOLD on a
+redirect response; this is not a live Battle Bridge network attestation.
