@@ -5,7 +5,7 @@ import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS, validateSovereignCommanderRemoteCom
 import { readFile } from 'node:fs/promises';
 const head='a'.repeat(40);
 const baseline=Object.freeze({
-  exactHeadProofOk:true,forgeHttpStatus:200,commandHttpStatus:200,
+  exactHeadProofOk:true,sourceHead:head,servedBuildHead:head,servedAssetFingerprint:'b'.repeat(64),forgeHttpStatus:200,commandHttpStatus:200,
   forgeUrl:'http://127.0.0.1:4173/apps/stephanos/dist/index.html?surface=skill-forge',
   commandUrl:'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
   forgeTitleVisible:true,forgeConstructionLineVisible:true,forgeLearningViewVisible:true,
@@ -17,7 +17,8 @@ test('fixed Skill Forge proof only passes actual two-surface render and current 
  assert.equal(SKILL_FORGE_RUNTIME_PROOF_PROFILE,'skill-forge-and-command-observatory');
  assert.equal(evaluateSkillForgeBrowserObservation(baseline).accepted,true);
  for(const [field,bad] of [
-  ['exactHeadProofOk',false],['forgeHttpStatus',404],['forgeUrl','http://example.org'],
+  ['exactHeadProofOk',false],['servedBuildHead','c'.repeat(40)],['servedAssetFingerprint',''],
+  ['forgeHttpStatus',404],['forgeUrl','http://example.org'],
   ['forgeTitleVisible',false],['forgeConstructionLineVisible',false],['forgeLearningViewVisible',false],
   ['forgeTransferGateVisible',false],['commandObservatoryVisible',false],
   ['commandNavigationVisible',false],['forgeFeedTruth','STALE'],['backendState','stale'],
