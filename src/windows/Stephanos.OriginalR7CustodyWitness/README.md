@@ -9,6 +9,14 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
 - Fixed service identity: StephanosOriginalR7CustodyWitness
 - Fixed historical lease: critical-2962-elastic-goal-r7-lease
 - Windows-only, Session-0, non-interactive SCM invocation, no arguments
+- Read-only SCM image integrity preflight now requires `PinnedImageSha256`
+  (strict lowercase SHA-256 hex in the fixed HKLM service registration) to
+  match a freshly hashed on-disk running executable and rejects reparse points
+  anywhere in its local path ancestry. Missing/mismatched pins HOLD.
+  **This is not a protected trust root**: Windows SCM registry-value ACL
+  ownership, image mapped-at-launch identity, original source-writer exclusion,
+  old open handles, and independent pinned image provenance still require
+  separately qualified OS evidence. No instruction here provisions that key.
 - The actual process token must belong to the exact pinned virtual service
   account, or restricted LocalService (S-1-5-19) with the pinned *enabled*
   NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
@@ -50,3 +58,17 @@ network handlers, read-write access to the source checkout or generic shell.
 
 This package intentionally has NO installer or release command. Testing source
 or opening a PR is NOT a machine custody receipt, deployment or build proof.
+
+## Binary pin qualification boundary
+
+The new image digest preflight is an intentionally **read-only negative gate**.
+It does not install or edit a service or set a registry key. CI may use
+synthetic matching digests to prove code paths, but cannot commission real
+Battle Bridge identity, registry ACL ownership, signer isolation or source
+custody. A commissioning owner must independently verify and protect the
+SCM `PinnedImageSha256` registration and running image through a separately
+reviewed Windows-admin procedure, with rollback and sealed audit, **before**
+this preflight may count as trusted identity. Even after success, the native
+host retains `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` until
+full original-writer containment, protected logging and two signer roots
+are qualified. The original R7 lease remains held.
