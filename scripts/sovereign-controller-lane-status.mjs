@@ -429,7 +429,7 @@ export function buildStephanosBuildTruth(status = {}) {
   });
 }
 
-export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}) {
+export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}, { pickupAttestation = null } = {}) {
   const timestampUtc = timestamp(buildTruth?.observedAtUtc) || new Date().toISOString();
   const summary = `Stephanos foreman ${text(buildTruth?.state, 40).toUpperCase() || 'UNKNOWN'}: ${integer(buildTruth?.buildingGoalCount)} building, ${integer(buildTruth?.activeGoalCount)} active/queued/held, lanes ${integer(buildTruth?.activeMaterialLaneCount, 15)}/${integer(buildTruth?.targetMaterialLaneCount, 15) || 15}.`;
   return Object.freeze({
@@ -443,6 +443,10 @@ export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}) {
       proofRefs: [...new Set((Array.isArray(buildTruth?.goals) ? buildTruth.goals : []).flatMap((goal) => Array.isArray(goal?.proofRefs) ? goal.proofRefs : []))].slice(0, 24),
     }),
     stephanosBuildTruth: buildTruth,
+    // Optional existing Core signing identity; unsigned observations remain
+    // usable diagnostics but cannot authorize any logical BUILDING pulse.
+    ...(pickupAttestation?.schemaVersion === 'stephanos.logical-goal-pickup-attestation.v1'
+      ? { logicalGoalPickupAttestation: pickupAttestation } : {}),
     readOnly: true,
     sourceMutationAllowed: false,
     runtimeMutationAllowed: false,
@@ -451,13 +455,14 @@ export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}) {
 }
 
 export async function publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
+  pickupAttestation = null,
   repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
   env = process.env,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
   const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
   if (!config.ok || !config.root) return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
-  const record = buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth);
+  const record = buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth, { pickupAttestation });
   try {
     const write = await writeAtomicJsonFn(
       config.root,
