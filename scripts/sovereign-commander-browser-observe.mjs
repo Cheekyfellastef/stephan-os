@@ -2,7 +2,7 @@
 // Observe an explicitly debug-enabled, locally attached Chromium session.
 // No debugging listener is started here and no browser profile is modified.
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +16,8 @@ const DEFAULT_ORIGINS = Object.freeze([
 const MAX_TABS = 8;
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_PROOF_ROOT = resolve(REPO_ROOT, '.stephanos', 'local-state-checkpoints', 'sovereign-browser-observation');
+const DEFAULT_NATIVE_RECEIPTS = resolve(REPO_ROOT, '.stephanos', 'local-state-checkpoints', 'sovereign-browser-native-host', 'receipts');
+const NATIVE_MAX_AGE_MS = 10 * 60 * 1000;
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const clean = (value) => String(value ?? '').trim();
 const safeCount = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0;
@@ -90,6 +92,58 @@ export function summarizeDomObservation(dom = {}) {
   });
 }
 
+export async function readNativeBrowserObservation({
+  nativeReceiptRoot = DEFAULT_NATIVE_RECEIPTS,
+  now = () => new Date(),
+} = {}) {
+  let names;
+  try { names = await readdir(nativeReceiptRoot); }
+  catch { return null; }
+  for (const name of names.filter((item) => /^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\\.json$/.test(item)).sort().reverse().slice(0, 24)) {
+    try {
+      const full = resolve(nativeReceiptRoot, name);
+      const metadata = await lstat(full);
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 70_000) continue;
+      const receipt = JSON.parse(await readFile(full, 'utf8'));
+      if (receipt.schemaVersion !== BROWSER_OBSERVATION_SCHEMA
+        || receipt.mechanism !== 'operator-permissioned-chromium-native-messaging'
+        || receipt.readOnly !== true || receipt.observationOnly !== true
+        || receipt.servedHeadVerified !== false || receipt.functionalAcceptanceVerified !== false
+        || receipt.scanOnly !== false) continue;
+      const age = now().getTime() - Date.parse(receipt.observedAtUtc);
+      if (!Number.isFinite(age) || age < -60_000 || age > NATIVE_MAX_AGE_MS) continue;
+      if (!Number.isSafeInteger(receipt.observedTabCount) || receipt.observedTabCount !== 1
+        || receipt.screenshotCount !== 1
+        || !Array.isArray(receipt.screenshots) || receipt.screenshots.length !== 1
+        || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')) continue;
+      const item = receipt.screenshots[0];
+      if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\\.jpg$/.test(item?.imageName || '')
+        || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')) continue;
+      const imageFile = resolve(nativeReceiptRoot, item.imageName);
+      const imageStat = await lstat(imageFile);
+      if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size > 2_800_000) continue;
+      if (sha256(await readFile(imageFile)) !== item.sha256) continue;
+      return Object.freeze({
+        schemaVersion: BROWSER_OBSERVATION_SCHEMA,
+        ok: true,
+        observedAtUtc: receipt.observedAtUtc,
+        connectedTabCount: safeCount(receipt.connectedTabCount),
+        admittedTabCount: safeCount(receipt.admittedTabCount),
+        observedTabCount: 1,
+        screenshotCount: 1,
+        evidenceHash: receipt.evidenceHash,
+        observationOnly: true,
+        servedHeadVerified: false,
+        functionalAcceptanceVerified: false,
+        readOnly: true,
+        mechanism: 'operator-permissioned-chromium-native-messaging',
+        finalVerdict: 'BROWSER_OBSERVATION_CAPTURED',
+      });
+    } catch { /* Ignore malformed/untrusted receipts; never produce green. */ }
+  }
+  return null;
+}
+
 async function connectLocalBrowser() {
   let chromium;
   try {
@@ -109,9 +163,12 @@ export async function observeSovereignBrowser({
   env = process.env,
   now = () => new Date(),
   proofRoot = DEFAULT_PROOF_ROOT,
+  nativeReceiptRoot = DEFAULT_NATIVE_RECEIPTS,
   maxTabs = MAX_TABS,
 } = {}) {
   const observedAtUtc = now().toISOString();
+  const native = await readNativeBrowserObservation({ nativeReceiptRoot, now });
+  if (native) return native;
   let allowedOrigins;
   try { allowedOrigins = admittedBrowserOrigins(env); }
   catch { return Object.freeze({ ok: false, observedAtUtc, blocker: 'BROWSER_ORIGIN_ALLOWLIST_INVALID', finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' }); }
