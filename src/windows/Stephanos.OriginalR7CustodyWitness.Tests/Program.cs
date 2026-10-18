@@ -114,6 +114,9 @@ finally
 
 OriginalR7ImagePinObservation liveImage = OriginalR7ImagePinPreflight.Inspect();
 ImageAlwaysHeld(liveImage, "IMAGE_LIVE");
+Check(liveImage.Classification == "R7_IMAGE_MANAGED_PAYLOAD_NOT_BUNDLED",
+    "UNBUNDLED_LIBRARY_CANNOT_VALIDATE_APPHOST_ONLY");
+Check(!liveImage.ImageDigestMatchesConfiguredPin, "UNBUNDLED_LIBRARY_PIN_NOT_EVALUATED");
 
 void WriterAlwaysHeld(OriginalR7WriterAccessObservation result, string id)
 {

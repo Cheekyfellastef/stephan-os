@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
@@ -92,6 +93,13 @@ internal static class OriginalR7ImagePinPreflight
             return Held("R7_IMAGE_WINDOWS_REQUIRED");
         try
         {
+            // A framework-dependent apphost alone does not pin adjacent DLLs.
+            // Only a single-file bundle can enter this diagnostic image check.
+            // Protected shared-runtime/configuration custody is still unproven.
+            if (!string.IsNullOrEmpty(typeof(OriginalR7ImagePinPreflight).Assembly.Location)
+                || Assembly.GetEntryAssembly() != typeof(OriginalR7ImagePinPreflight).Assembly)
+                return Held("R7_IMAGE_MANAGED_PAYLOAD_NOT_BUNDLED");
+
             using RegistryKey? registry = Registry.LocalMachine.OpenSubKey(
                 ParametersKey, writable: false);
             if (registry is null || registry.GetValueKind(DigestName) != RegistryValueKind.String)

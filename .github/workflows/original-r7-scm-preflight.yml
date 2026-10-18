@@ -9,6 +9,9 @@ on:
       - 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/**'
       - 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
       - 'shared/agents/originalR7WitnessReadinessRemote.test.mjs'
+      - 'shared/agents/originalR7WitnessCommissioningAuditV1.mjs'
+      - 'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs'
+      - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - '.github/workflows/original-r7-scm-preflight.yml'
@@ -104,7 +107,7 @@ jobs:
       - name: Test bounded Sovereign receipt against forged authority
         shell: pwsh
         run: |
-          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package source-only Windows witness binary with exact source checksum
         shell: pwsh
@@ -114,11 +117,17 @@ jobs:
           # Distribution staging only. NOT installer, signer or custody proof.
           $stage = Join-Path $PWD 'r7-witness-ci-staging'
           New-Item -Path $stage -ItemType Directory -Force | Out-Null
-          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release --output $stage
+          # Bundle all managed service/probe code into the pinned apphost.
+          # The shared .NET runtime and protected host custody remain separate gates.
+          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release --runtime win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false --output $stage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $name = 'Stephanos.OriginalR7CustodyWitness.exe'
           $binary = Join-Path $stage $name
           if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'R7_PUBLISH_BINARY_MISSING' }
+          if (@(Get-ChildItem -LiteralPath $stage -File -Filter '*.dll').Count -ne 0) { throw 'R7_UNBUNDLED_EXECUTABLE_PAYLOAD' }
+          # Execute the delivered package, not only the earlier build output.
+          & $binary --unapproved-ci-invocation
+          if ($LASTEXITCODE -ne 2) { throw 'R7_PUBLISHED_PACKAGE_CLI_DENIAL_FAILED' }
           $head = (& git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw 'R7_PACKAGE_SOURCE_HEAD_INVALID' }
           if ($head -ne $env:EXPECTED_PR_HEAD) { throw 'R7_PACKAGE_HEAD_MISMATCH' }
@@ -130,6 +139,7 @@ jobs:
             'sourceHead=' + $head,
             'imageFile=' + $name,
             'imageSha256=' + $digest,
+            'managedPayloadLayout=SINGLE_FILE_WIN_X64_FRAMEWORK_DEPENDENT',
             'binaryStatus=UNSIGNED_UNCOMMISSIONED',
             'protectedServiceSidQualified=false',
             'originalWriterProvenanceAuthenticated=false',

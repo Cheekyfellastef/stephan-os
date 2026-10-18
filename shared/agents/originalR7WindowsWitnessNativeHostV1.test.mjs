@@ -7,6 +7,24 @@ const program = await readFile(new URL('Program.cs', root), 'utf8');
 const project = await readFile(new URL('Stephanos.OriginalR7CustodyWitness.csproj', root), 'utf8');
 const guide = await readFile(new URL('README.md', root), 'utf8');
 const nativeCi = await readFile(new URL('../../.github/workflows/original-r7-native-windows-proof.yml', import.meta.url), 'utf8');
+const scmCi = await readFile(new URL('../../.github/workflows/original-r7-scm-preflight.yml', import.meta.url), 'utf8');
+const imagePin = await readFile(new URL('OriginalR7ImagePinPreflight.cs', root), 'utf8');
+
+test('SCM proof follows audit-parser edits and tests the delivered complete managed payload', () => {
+  const paths = scmCi.slice(scmCi.indexOf('    paths:'), scmCi.indexOf('\npermissions:'));
+  for (const path of ['shared/agents/originalR7WitnessCommissioningAuditV1.mjs',
+    'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs',
+    'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs']) {
+    assert.ok(paths.includes("'" + path + "'"), path + ' must trigger hosted Windows proof');
+  }
+  assert.match(scmCi, /--runtime win-x64 --self-contained false -p:PublishSingleFile=true/);
+  assert.match(scmCi, /Get-ChildItem -LiteralPath \$stage -File -Filter '\*\.dll'/);
+  assert.match(scmCi, /R7_UNBUNDLED_EXECUTABLE_PAYLOAD/);
+  assert.match(scmCi, /& \$binary --unapproved-ci-invocation/);
+  assert.match(scmCi, /\$LASTEXITCODE -ne 2/);
+  assert.match(imagePin, /R7_IMAGE_MANAGED_PAYLOAD_NOT_BUNDLED/);
+  assert.match(scmCi, /physicalBattleBridgeCommissioned=false/);
+});
 
 test('native Windows witness host requires real SCM and its exact service identity', () => {
   assert.match(project, /<TargetFramework>net8\.0-windows<\/TargetFramework>/);
