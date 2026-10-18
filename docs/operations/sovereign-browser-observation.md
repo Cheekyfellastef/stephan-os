@@ -1,7 +1,7 @@
 # Sovereign Commander browser witness: current Chromium tabs
 
 ## What exists in this source PR
-**Primary path:** MV3 extension in `apps/sovereign-browser-bridge/` for a user's *existing* Chrome, Edge or Brave browser profile, using the browser's site permissions and a Windows per-user native messaging host. No debugging port and no dedicated browser profile are needed for the extension path. This is source code until reviewed, merged, installed and physically proven on Battle Bridge.
+**Primary path:** MV3 extension in `apps/sovereign-browser-bridge/` for a user's *existing* Chrome, Edge or Brave browser profile, using the browser's site permissions and a Windows per-user native messaging host. No debugging port and no dedicated browser profile are needed for the extension path. Chromium site permission patterns omit ports (for example, `http://localhost/*`), so the extension **and** native host re-check the configured exact origin, including port, before admitting a tab. This distinction is tested with a different localhost port. This is source code until reviewed, merged, installed and physically proven on Battle Bridge.
 
 **Fallback path:** an explicitly opted-in, disposable Chromium CDP session at `127.0.0.1:9222`, via `scripts/sovereign-commander-browser-observe.mjs`. Never enable CDP on your everyday signed-in profile or publish the debug port.
 
@@ -20,7 +20,7 @@ Sovereign Commander exposes the bounded fixed local MCP / approved remote action
 
 The local host is `com.stephanos.sovereign_browser_witness`. Installation compiles a source-controlled C# console native-message host in local ignored state, registers the manifest only under the chosen browser's **HKCU** NativeMessagingHosts key, and restricts `allowed_origins` to that installed extension ID. There is no system service, blanket browser-profile debugger, GitHub relay of screenshots, automatic merge authority or unapproved browser interaction.
 
-**Revoke:** Use **Revoke this workspace** in the extension, then `powershell -NoProfile -File scripts/windows/uninstall-sovereign-browser-witness.ps1 -Browser Edge` to remove the native-host registration. Existing local evidence is deliberately preserved for audit; remove it separately via approved retention procedures.
+**Revoke:** Chromium's site permission is scoped to a scheme and hostname, not an individual port. Revoking it for localhost therefore revokes access for all localhost ports in that scheme. Use **Revoke this workspace** in the extension, then `powershell -NoProfile -File scripts/windows/uninstall-sovereign-browser-witness.ps1 -Browser Edge` to remove the native-host registration. Existing local evidence is deliberately preserved for audit; remove it separately via approved retention procedures.
 
 ## Observation truth
 The extension inspects up to eight authorised workspace tabs and records link counts, Spotify exact-track links versus search/homepage links, missing artwork/image load state, button and heading counts. It reads the rendered DOM using a fixed local script and **does not read page text, session storage, passwords, cookies, request bodies or browser history**. An operator-triggered active-tab screenshot remains local on Battle Bridge, so the operator should avoid capturing sensitive overlays. Scans of background tabs do *not* count as screenshot proof.
