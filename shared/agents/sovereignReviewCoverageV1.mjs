@@ -1,0 +1,127 @@
+// One-source, cross-domain intake for the EXISTING Sovereign Reviewer.
+// Classification is a read-only review preparation aid, NEVER proof that
+// any local model has become an authenticated or qualified specialist.
+export const SOVEREIGN_REVIEW_COVERAGE_SCHEMA = 'stephanos.sovereign-review-coverage.v1';
+export const SOVEREIGN_REVIEW_DOMAINS = Object.freeze([
+  'standard-source', 'windows-os-and-services', 'openclaw-and-agents',
+  'original-source-lease', 'secrets-and-identity',
+  'github-policy-and-protected-merge', 'reviewer-trust-and-approval',
+  'browser-and-runtime-proof', 'daemon-and-deployment',
+]);
+
+const SHA = /^[a-f0-9]{40}$/;
+const REPO = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
+const BRANCH = /^[a-z0-9][a-z0-9._/-]{0,180}$/i;
+const PATH = /^(?:[a-z0-9]|\.[a-z0-9])[a-z0-9._/-]{0,240}$/i;
+const DOMAIN_PATTERNS = Object.freeze([
+  ['windows-os-and-services', /^(?:scripts\/windows\/|src\/windows\/)|windows(?:authority|custody|witness|service|token|acl|dacl|scm)/i],
+  ['openclaw-and-agents', /(?:openclaw|agent(?:-trust|-policy|-execution|-isolation)|\bskills\/)/i],
+  ['original-source-lease', /(?:lease|source.?custody|source.?writer|orphan.?quarantine|goal.?builder|source.?builder|escrow|mission.?worker|goal.?conveyor)/i],
+  ['secrets-and-identity', /(?:secret|credential|auth(?:entication|orization|ority)?|signer|private.?key|permission|token|trust.?root)/i],
+  ['github-policy-and-protected-merge', /(?:^\.github\/|protected.?merge|github.?auth|github.?observation|branch.?protection|operator.?merge|independent.?merge)/i],
+  ['reviewer-trust-and-approval', /(?:sovereign.?review|qualified.?specialist|provider.?neutral.?review|independent.?review|reviewer.?trust|review.?admission|operator.?approval)/i],
+  ['browser-and-runtime-proof', /(?:browser.?proof|playwright|ui.?proof|runtime.?proof|screenshot|served.?asset)/i],
+  ['daemon-and-deployment', /(?:daemon|watchdog|recovery.?mesh|ignition|deploy|publisher|scheduled.?task|runtime.?restart|sovereign.?commander)/i],
+]);
+const PHYSICAL = new Set(['windows-os-and-services', 'original-source-lease',
+  'browser-and-runtime-proof', 'daemon-and-deployment']);
+const SECURITY = new Set(['windows-os-and-services', 'openclaw-and-agents',
+  'original-source-lease', 'secrets-and-identity',
+  'github-policy-and-protected-merge', 'reviewer-trust-and-approval',
+  'daemon-and-deployment']);
+const noAuthority = Object.freeze({
+  qualifiedIndependentReview: false,
+  qualifiedWindowsSpecialist: false,
+  specialistAuthority: false,
+  reviewAcceptanceAuthority: false,
+  reviewerEnrollmentAuthority: false,
+  protectedMergeAuthority: false,
+  operatorApprovalAuthority: false,
+  sourceMutationAuthority: false,
+  privilegedWindowsAuthority: false,
+  originalLeaseReleaseAuthority: false,
+  runtimeDeploymentAuthority: false,
+  physicalPickupProven: false,
+});
+const fail = reason => Object.freeze({
+  schemaVersion:SOVEREIGN_REVIEW_COVERAGE_SCHEMA,
+  status:'REVIEW_COVERAGE_HELD', reason,
+  domains:Object.freeze([]), reviewPackets:Object.freeze([]),
+  blockers:Object.freeze([reason]), meteredReviewReplacementQualified:false,
+  ...noAuthority,
+});
+const unique = values => Object.freeze([...new Set(values)]);
+const hasDenseArray = value => Array.isArray(value)
+  && Array.from({length:value.length},(_,i)=>Object.hasOwn(value,i)).every(Boolean);
+
+export function assessSovereignReviewCoverageV1(input = {}) {
+  const {repository,prNumber,branch,sourceHead,baseSha,changedFiles} = input;
+  if (!REPO.test(repository ?? '') || !Number.isSafeInteger(prNumber) || prNumber < 1
+    || !BRANCH.test(branch ?? '') || branch.includes('..')
+    || !SHA.test(sourceHead ?? '') || !SHA.test(baseSha ?? '') || sourceHead===baseSha) {
+    return fail('EXACT_PR_BASE_AND_HEAD_REQUIRED');
+  }
+  if (!hasDenseArray(changedFiles) || changedFiles.length < 1 || changedFiles.length > 160
+    || changedFiles.some(path => typeof path !== 'string' || !PATH.test(path)
+      || path.includes('..') || path.startsWith('/'))
+    || new Set(changedFiles).size !== changedFiles.length) return fail('COMPLETE_CHANGED_PATHS_REQUIRED');
+  const domains = new Map();
+  for (const path of changedFiles) {
+    let matched = false;
+    for (const [domain, regex] of DOMAIN_PATTERNS) {
+      if (regex.test(path)) {
+        matched=true;
+        domains.set(domain,(domains.get(domain) || 0)+1);
+      }
+    }
+    if (!matched) domains.set('standard-source',(domains.get('standard-source')||0)+1);
+  }
+  const highRisk = [...domains.keys()].some(domain => SECURITY.has(domain));
+  const ordered = SOVEREIGN_REVIEW_DOMAINS.filter(domain=>domains.has(domain));
+  // Select an EXISTING local read-only candidate engine for each review class.
+  // Distinguish candidate source availability from live execution/approval.
+  const packets = ordered.map(domain => {
+    const riskTier = SECURITY.has(domain) ? 'high' : 'standard';
+    const physical = PHYSICAL.has(domain);
+    const needs = unique([
+      'EXACT_HEAD_BASE_TREE_AND_COMPLETE_DIFF',
+      'SEPARATE_IMPLEMENTER_AND_REVIEWER_PRINCIPALS',
+      'INDEPENDENTLY_AUTHENTICATED_REVIEWER_OR_QUORUM',
+      ...(riskTier === 'high' ? ['QUALIFIED_SPECIALIST_SECURITY_REVIEW'] : []),
+      ...(physical ? ['PHYSICAL_BATTLE_BRIDGE_OR_BROWSER_RECEIPT'] : []),
+      ...(domain === 'windows-os-and-services'
+        ? ['NATIVE_WINDOWS_TOKEN_ACL_REENTRY_AND_HANDLE_EVIDENCE'] : []),
+      ...(domain === 'original-source-lease'
+        ? ['HISTORIC_R7_CUSTODY_SIGNED_WITNESS_AND_SEPARATE_OPERATOR_CAS'] : []),
+      ...(domain === 'reviewer-trust-and-approval'
+        ? ['OUT_OF_BAND_TRUST_ROOT_AND_PROTECTED_SELF_CHANGE_REVIEW'] : []),
+    ]);
+    return Object.freeze({
+      domain, changedPathCount:domains.get(domain), riskTier,
+      localCandidateRunner:riskTier === 'high'
+        ? 'scripts/sovereign-high-risk-advisory-v1.mjs'
+        : 'scripts/sovereign-reviewer-v1.mjs',
+      supplementalWindowsExam:domain === 'windows-os-and-services'
+        ? 'scripts/sovereign-windows-review-calibration-v1.mjs' : '',
+      requiredEvidence:needs, candidateOnly:true,
+      independentQualificationVerified:false, physicalRuntimeProven:false,
+      acceptedProtectedReview:false,
+    });
+  });
+  return Object.freeze({
+    schemaVersion:SOVEREIGN_REVIEW_COVERAGE_SCHEMA,
+    status:highRisk?'HIGH_RISK_LOCAL_CANDIDATE_SCOPE_ONLY':'STANDARD_LOCAL_CANDIDATE_SCOPE_ONLY',
+    repository,prNumber,branch,sourceHead,baseSha,
+    reviewedPathCount:changedFiles.length, domains:unique(ordered),
+    reviewPackets:Object.freeze(packets),
+    blockers:unique([
+      'ACTUAL_LOCAL_MODEL_REVIEW_NOT_ATTESTED',
+      'TRUSTED_REVIEWER_ADMISSION_NOT_PROVEN',
+      ...(highRisk?['QUALIFIED_HIGH_RISK_SPECIALIST_NOT_PROVEN']:[]),
+      ...(ordered.some(d=>PHYSICAL.has(d))?['LIVE_PHYSICAL_PROOF_NOT_PROVEN']:[]),
+    ]),
+    // An inventory is never an authority-bearing attestation or replacement.
+    meteredReviewReplacementQualified:false,
+    ...noAuthority,
+  });
+}
