@@ -20,6 +20,8 @@ document.querySelector('#grant').addEventListener('click', async () => {
 });
 document.querySelector('#inspect').addEventListener('click', () => run('witness-capture'));
 document.querySelector('#scan').addEventListener('click', () => run('witness-scan'));
+document.querySelector('#auto-on').addEventListener('click', () => run('witness-auto-on'));
+document.querySelector('#auto-off').addEventListener('click', () => run('witness-auto-off'));
 document.querySelector('#revoke').addEventListener('click', async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
