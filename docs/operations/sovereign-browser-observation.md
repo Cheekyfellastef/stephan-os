@@ -1,29 +1,42 @@
-# Sovereign Commander: operator browser observation (source candidate)
+# Sovereign Commander browser witness: current Chromium tabs
 
-## Purpose
-A meter-free, passive proof intake for **already-open, operator-authorised Stephanos workspace tabs** on Battle Bridge. It complements (does not replace) the exact-head, semantic scenario proof machinery in `scripts/browser-proof-runner.mjs`. No lease release, build, review, merge, deployment, browser click, or external-site authority follows from a screenshot.
+## What exists in this source PR
+**Primary path:** MV3 extension in `apps/sovereign-browser-bridge/` for a user's *existing* Chrome, Edge or Brave browser profile, using the browser's site permissions and a Windows per-user native messaging host. No debugging port and no dedicated browser profile are needed for the extension path. This is source code until reviewed, merged, installed and physically proven on Battle Bridge.
 
-## Capability
-The fixed action `observe-open-stephanos-tabs` is registered in Sovereign Commander's local MCP maintenance registry and guarded remote-action allowlist. It runs `scripts/sovereign-commander-browser-observe.mjs` without operator-supplied arguments. It:
-- Attaches **only** to an explicitly debug-enabled local Chromium-family browser at `127.0.0.1:9222`. It never starts a debugging listener, rewrites a profile, navigates, clicks, reloads, executes supplied JavaScript, or reads cookies/storage/request bodies.
-- Discovers up to eight authorised open pages. Default allowed origins: `localhost` and `127.0.0.1` ports `4173` and `5173`. A local machine administrator may configure a bounded extra **exact-origin** allowlist in `STEPHANOS_BROWSER_OBSERVE_ALLOWED_ORIGINS` (comma-separated). Caller-controlled URLs and origins are not admitted through MCP or remote mailbox.
-- Measures rendered image failures, pending images, anchor counts, generic Spotify homepage links, buttons and headings, plus new console/page/request failures **during capture only**. Existing historic browser errors and real interaction functionality remain **unknown**, not passed.
-- Saves private PNG screenshots and a hashed JSON receipt to `.stephanos/local-state-checkpoints/sovereign-browser-observation/`. Browser URLs (including query/fragment), page text, credentials, raw requests, and screenshots are **not sent to the public remote mailbox**. Remote feedback is typed counts, hash, timestamp, and a truthful observation-only verdict.
-- Returns `BROWSER_OBSERVATION_BLOCKED` if CDP is not enabled, the dependency is unavailable, or no admissible workspace tab exists. Partial captures are not acceptance proof.
+**Fallback path:** an explicitly opted-in, disposable Chromium CDP session at `127.0.0.1:9222`, via `scripts/sovereign-commander-browser-observe.mjs`. Never enable CDP on your everyday signed-in profile or publish the debug port.
 
-## Operator setup / security
-This is **not yet a way to observe every tab in the user's normal Chrome, Edge, Brave, Firefox or iPad browser**. Those normal browsing profiles do not expose CDP by default. Modern Chromium browsers generally require a **separate non-default debugging profile**, which will not automatically share the operator's existing tabs or sessions. Enabling remote debugging on a regular signed-in profile increases credential exposure risk and is **not recommended**.
+Sovereign Commander exposes the bounded fixed local MCP / approved remote action `observe-open-stephanos-tabs`. It first reads a **recent local native witness receipt** from `.stephanos/local-state-checkpoints/sovereign-browser-native-host/receipts`, verifies the screenshot file against SHA-256, refuses stale receipts, and only falls back to the separately opted-in CDP observer when no valid receipt exists. The public mailbox sees counts, a hash, timestamp and an observation-only verdict, never the screenshot, cookies, browser profile or raw page data.
 
-The first safe physical test should be with a distinct, disposable, operator-approved browser profile, a localhost-only debugger port, and a Stephanos workspace opened in that same profile. Do not expose port 9222 to LAN/Tailscale/public networks. Do not copy personal cookies or passwords into the proof profile. Use the installed Playwright dependency with its system-browser channel where supported.
+## Install after protected merge on Battle Bridge
+1. Sync the exact merged source and reload Sovereign Commander only after the protected merge. The installation is *not automatic* and must happen under the signed-in Windows operator.
+2. In Edge: open `edge://extensions` (or `chrome://extensions`, `brave://extensions`). Enable Developer Mode and **Load unpacked**, selecting `apps/sovereign-browser-bridge` from the verified checkout. Copy the actual 32-character extension ID shown in that browser.
+3. Run the reviewed per-user registration script from the checkout, for example:
+   ```powershell
+   powershell -NoProfile -File scripts/windows/install-sovereign-browser-witness.ps1 -Browser Edge -ExtensionId <extension-id-from-browser>
+   ```
+   For an operator-approved Stephanos Tailscale HTTPS origin, supply `-AllowedOrigins` with a complete exact-origin array, retaining the local origins. No origin can be added over the remote Commander mailbox.
+4. Click the extension in the same real browser profile. Open the desired Stephanos workspace, press **Allow this workspace** (Chrome/Edge/Brave prompts for site access), and then **Capture current workspace proof**. Background tabs with previously granted matching permissions are scanned for bounded DOM diagnostics, but only the *visible selected tab* receives a screenshot.
+5. In Sovereign Commander, run fixed `maintenance_action: observe-open-stephanos-tabs`; on mobile/cloud use the existing guarded `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION` with `remoteAction=observe-open-stephanos-tabs` and exact expected head. The action reads only the recent receipt and returns an observation-only result.
 
-For true inspection of **existing browser tabs across different browsers and devices**, a separate approved extension/native-messaging bridge (plus user-granted site permissions) is still required. Firefox and mobile Safari/Brave do not become available merely because this Chromium CDP action exists.
+The local host is `com.stephanos.sovereign_browser_witness`. Installation compiles a source-controlled C# console native-message host in local ignored state, registers the manifest only under the chosen browser's **HKCU** NativeMessagingHosts key, and restricts `allowed_origins` to that installed extension ID. There is no system service, blanket browser-profile debugger, GitHub relay of screenshots, automatic merge authority or unapproved browser interaction.
 
-## Qualification gates
-1. Source tests: `node --test tests/sovereign-commander-browser-observe.test.mjs` plus existing Commander/MCP/mailbox suites.
-2. Protected PR review: security and Windows browser specialists, exact head and required checks.
-3. Operator-approved merge, Battle Bridge sync and local MCP capability reload.
-4. Live Battle Bridge proof from a disposable browser session: authorised tab visible, screenshot + hash + private receipt, bounded remote result, refusal on unrelated tabs, browser unaffected.
-5. Only then call **browser observation** installed/working. Full proof requires matching served HEAD and a task-specific interaction or semantic acceptance test. Do not equate `BROWSER_OBSERVATION_CAPTURED` with a repaired Music tile.
+**Revoke:** Use **Revoke this workspace** in the extension, then `powershell -NoProfile -File scripts/windows/uninstall-sovereign-browser-witness.ps1 -Browser Edge` to remove the native-host registration. Existing local evidence is deliberately preserved for audit; remove it separately via approved retention procedures.
 
-## Next uplift (separate guarded scope)
-Build a signed Chrome/Edge/Brave extension with tab-by-tab permission and a local-only native messaging bridge, so an operator can grant Sovereign Commander view access to their **actual** workspace browser profile without turning on a general debugging port. Add Firefox and mobile through browser-specific approved channels; preserve per-origin permission revocation, screenshot redaction, device identity, proof provenance and no autonomous action by default.
+## Observation truth
+The extension inspects up to eight authorised workspace tabs and records link counts, generic Spotify homepage links, missing artwork/image load state, button and heading counts. It reads the rendered DOM using a fixed local script and **does not read page text, session storage, passwords, cookies, request bodies or browser history**. An operator-triggered active-tab screenshot remains local on Battle Bridge, so the operator should avoid capturing sensitive overlays. Scans of background tabs do *not* count as screenshot proof.
+
+The native host validates exact configured origins independently, refuses screenshots for unauthorised/background tabs, emits length-prefixed binary native messages and saves local receipts. Sovereign Commander's remote receipt remains `observationOnly: true`, `servedHeadVerified: false` and `functionalAcceptanceVerified: false`. A picture or a generic Spotify link count does not independently prove the correct track opened or that the Music tile was repaired. Use exact-head scenario proof and actual click/navigation tests under separately approved browser-control authority for functional acceptance.
+
+## Known boundaries and qualification
+- **Browsers:** Chrome, Edge and Brave on the Windows Battle Bridge via their separate extension ID and HKCU registration. Firefox needs a browser-specific add-on/native bridge; iPad Safari and iPad Brave cannot load this Windows MV3 extension. Other devices require their own explicitly approved witness and provenance.
+- **Runtime:** This code is neither installed nor live-proven merely because GitHub CI passed. Required gates are Windows host compile/native protocol tests, independent Windows+security review, protected operator-approved merge, Battle Bridge sync, unpacked-extension install, permission prompt, live evidence capture and exact source-head attestation.
+- **Coverage:** Passive diagnostics and visible screenshots, not automatic all-tab screenshots or hidden browsing; no unrestricted browsing, navigation, command execution, browser mutation or access outside approved Stephanos origins.
+- **Security:** `optional_host_permissions` allows requests for HTTPS sites but grants none without the explicit browser permission prompt. Both extension and native host enforce the locally configured exact origins. Never send browser screenshots to the public remote mailbox or turn this source candidate into a privileged unreviewed merge.
+
+## Verification commands
+```text
+node --test tests/sovereign-commander-browser-observe.test.mjs
+node --test tests/sovereign-commander-browser-mailbox-projection.test.mjs
+node --test tests/sovereign-browser-native-receipt.test.mjs
+```
+The Sovereign Commander Capability Parity workflow additionally compiles the native host on a Windows GitHub runner and runs `tests/sovereign-browser-host-windows.test.mjs`. Neither GitHub simulation nor source tests replace the physical Battle Bridge proof gate.
