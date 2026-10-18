@@ -9,6 +9,12 @@ function admittedOrigin(url, origins) {
   try { const u = new URL(url); return ['http:','https:'].includes(u.protocol) && origins.includes(u.origin); }
   catch { return false; }
 }
+function permissionPattern(origin) {
+  // Chrome host-permission match patterns never encode URL ports.
+  // Every inspected tab must still match an exact configured origin.
+  const url = new URL(origin);
+  return `${url.protocol}//${url.hostname}/*`;
+}
 function nativeCall(payload) {
   return new Promise((resolve) => {
     try {
@@ -66,7 +72,7 @@ async function captureWorkspaces(capture) {
   const snapshots = [];
   for (const tab of admitted) {
     const origin = new URL(tab.url).origin;
-    if (!await chrome.permissions.contains({ origins:[origin + '/*'] })) continue;
+    if (!await chrome.permissions.contains({ origins:[permissionPattern(origin)] })) continue;
     let metrics;
     try {
       const injected = await chrome.scripting.executeScript({ target:{ tabId:tab.id }, func:extractDomMetrics });
@@ -75,8 +81,20 @@ async function captureWorkspaces(capture) {
     if (!metrics || typeof metrics !== 'object') continue;
     const record = { origin, metrics, active:tab.id === active?.id, screenshot:'' };
     if (capture && record.active) {
-      try { record.screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, { format:'jpeg', quality:62 }); }
-      catch { return { ok:false, blocker:'BROWSER_SCREENSHOT_FAILED' }; }
+      try {
+        const [before] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+        if (before?.id !== tab.id || before?.url !== tab.url) {
+          return { ok:false, blocker:'BROWSER_ACTIVE_TAB_CHANGED' };
+        }
+        const image = await chrome.tabs.captureVisibleTab(tab.windowId, { format:'jpeg', quality:62 });
+        const [after] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+        // A foreground switch or navigation during capture must discard the
+        // bytes before native messaging, even if the screenshot succeeded.
+        if (after?.id !== tab.id || after?.url !== tab.url || !admittedOrigin(after?.url, profile.allowedOrigins)) {
+          return { ok:false, blocker:'BROWSER_ACTIVE_TAB_CHANGED' };
+        }
+        record.screenshot = image;
+      } catch { return { ok:false, blocker:'BROWSER_SCREENSHOT_FAILED' }; }
     }
     snapshots.push(record);
   }
