@@ -133,3 +133,76 @@ test('preserves absent enablement and execution observations as unknown', async 
   assert.equal(result.statusRecord.controllerActivity.observedEnabled, null);
   assert.equal(result.statusRecord.controllerActivity.executionState, 'UNKNOWN');
 });
+
+test('canonical publisher carries detached worker signature from original terminal receipt but never invents one', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-signed-3050';
+  const proofRef = 'receipts/worker-goal3050-pickup';
+  const proofId = `controller-${controller.controllerId.slice(0, 12)}-run-${runId}`;
+  const timestampUtc = '2026-10-18T17:45:00.000Z';
+  const workerPickupAttestation = {
+    schemaVersion: 'stephanos.physical-worker-goal-pickup.v1',
+    publisherId: 'stephanos-physical-worker',
+    sourceHead: 'a'.repeat(40),
+    goalIssue: '#3050',
+    logicalLaneId: 'logical-goal-3050',
+    controllerId: controller.controllerId,
+    runId, proofId, proofRef, observedAtUtc: timestampUtc,
+    workerId: 'physical-worker-01',
+    // Syntactically present but NOT cryptographically valid. The publisher
+    // only preserves the bytes; Core's pinned-key verifier must reject it.
+    signatureBase64: 'A'.repeat(86) + '==',
+  };
+  const original = {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'worker-goal3050-pickup', participantId: 'physical-worker-01',
+      timestampUtc, correlationId: runId, relatedIssue: '#3050',
+      proofRefs: [proofRef], receivedRecordId: 'physical-pickup-3050',
+      disposition: 'verified', summary: 'Worker claims physical pickup',
+    }),
+    workerPickupAttestation,
+  };
+  assert.equal((await writeAtomicJson(root, ['receipts', 'worker-goal3050-pickup.json'],
+    original, { repoRoot: process.cwd() })).ok, true);
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING', materialActionsSucceeded: 1,
+    proofRefs: [proofRef], materialLanes: [{
+      laneId: 'lane-3050', goalId: '#3050', workerId: 'physical-worker-01',
+      lastMaterialActionAtUtc: timestampUtc, proofRef,
+    }],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, true, result.blocker);
+  assert.deepEqual(result.proofRecord.workerPickupAttestation, workerPickupAttestation);
+  assert.equal(Object.isFrozen(result.proofRecord.workerPickupAttestation), true);
+});
+
+test('canonical publisher rejects a detached worker signature bound to the wrong run', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-signed-3050-b';
+  const proofRef = 'receipts/worker-goal3050-wrong-run';
+  const original = {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'worker-goal3050-wrong-run', participantId: 'physical-worker-01',
+      timestampUtc: '2026-10-18T17:45:00.000Z', correlationId: runId,
+      relatedIssue: '#3050', proofRefs: [proofRef], receivedRecordId: 'physical-pickup-3050',
+      disposition: 'verified',
+    }),
+    workerPickupAttestation: {
+      schemaVersion: 'stephanos.physical-worker-goal-pickup.v1',
+      publisherId: 'stephanos-physical-worker', runId: 'different-run',
+      controllerId: controller.controllerId, proofRef,
+      sourceHead: 'a'.repeat(40), signatureBase64: 'A'.repeat(86) + '==',
+    },
+  };
+  assert.equal((await writeAtomicJson(root, ['receipts', 'worker-goal3050-wrong-run.json'],
+    original, { repoRoot: process.cwd() })).ok, true);
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId,
+    materialActionsSucceeded: 1, proofRefs: [proofRef],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROLLER_ACTIVITY_WORKER_ATTESTATION_BINDING_INVALID');
+});
