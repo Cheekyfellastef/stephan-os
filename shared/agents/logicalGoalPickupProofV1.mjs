@@ -13,7 +13,7 @@ const digest = value => createHash('sha256').update(JSON.stringify(value)).diges
 const text = v => String(v ?? '').trim();
 const millis = v => Date.parse(text(v));
 
-function proofRefId(ref) { return REF.exec(text(ref))?.[1] || ''; }
+function proofRefId(ref) { return (REF.exec(text(ref))?.[1] || '').replace(/\.json$/i, ''); }
 function refsOf(record) {
   const id = text(record?.proofId);
   return new Set([
