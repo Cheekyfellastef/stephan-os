@@ -1,4 +1,9 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, open, lstat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { verifyLogicalGoalBuildTruthV1 } from './logicalGoalPickupProofV1.mjs';
 import {
   admitLogicalMonitor,
   MONITOR_ADMISSION_REGISTRY_VERSION,
@@ -319,10 +324,24 @@ export function evaluateLogicalGoalControllerContinuityV2(controller, buildTruth
         `Logical controller ${id} claims BUILDING without a current bound physical pickup receipt.`,
         'Repair the physical worker receipt binding, not the scheduler or controller count.');
     }
+    const authentication = verifyLogicalGoalBuildTruthV1({
+      buildTruth,
+      attestation: options.pickupAttestation,
+      proofRecords: Array.isArray(options.proofRecords) ? options.proofRecords : [],
+      expectedSourceHead: options.expectedSourceHead,
+      trustedPublicKeyPem: options.trustedPublicKeyPem,
+      trustedPublicKeySha256: options.trustedPublicKeySha256,
+      nowMs,
+    });
+    if (!authentication.ok || !authentication.verifiedGoalIds.includes(goal.issue)) {
+      return hold('LOGICAL_GOAL_PICKUP_NOT_AUTHENTICATED',
+        `Logical controller ${id} has a BUILDING claim but no independently pinned, signed Core proof linked to its physical controller records.`,
+        'Commission or repair the existing protected Core signer and verified worker-pickup records. Never turn unsigned Shared Workspace claims green.');
+    }
     return Object.freeze({
       state: 'PASS', blocker: '', notify: true,
-      summary: `Logical controller ${id}: same-goal physical BUILDING proven for ${text(controller.goalTitle)}.`,
-      nextAction: 'Continue in the existing canonical mission worker; require subsequent test, merge and deployed runtime receipts.',
+      summary: `Logical controller ${id}: same-goal, current Core-attested physical BUILDING witnessed for ${text(controller.goalTitle)}.`,
+      nextAction: 'Continue in the existing canonical mission worker; require separate test, merge and deployed runtime receipts.',
       proofRefs: refs,
     });
   }
@@ -372,10 +391,69 @@ export async function loadLogicalGoalBuildTruthForMonitorRuntimeV2(input = {}) {
       || nowMs - observed > LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS) {
       return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_BUILD_TRUTH_STALE', buildTruth: null });
     }
-    return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_BUILD_TRUTH_READY', buildTruth: truth });
+    const proofRecords = [];
+    try {
+      const refs = [...new Set(truth.goals.filter(goal => goal.state === 'BUILDING')
+        .flatMap(goal => Array.isArray(goal.proofRefs) ? goal.proofRefs : []))];
+      if (refs.length > 120) throw new Error('too-many-proofs');
+      for (const ref of refs) {
+        const match = /^proof\/([a-z0-9][a-z0-9._-]{0,100})(?:\.json)?$/i.exec(text(ref));
+        if (!match) throw new Error('invalid-ref');
+        const path = resolveSharedWorkspacePath({
+          root: layout.root, repoRoot: input.repoRoot,
+          segments: ['proof', match[1] + '.json'],
+        });
+        if (!path.ok) throw new Error('unsafe-proof-path');
+        const handle = await open(path.path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+        try {
+          const meta = await handle.stat();
+          if (!meta.isFile() || meta.nlink !== 1 || meta.size < 1 || meta.size > 262144) throw new Error('unsafe-proof');
+          const candidate = JSON.parse(await handle.readFile('utf8'));
+          if (candidate?.proofId !== match[1] || validateSharedWorkspaceRecord(candidate, {nowMs, staleAfterMs: LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS}).valid !== true) throw new Error('invalid-proof');
+          proofRecords.push(candidate);
+        } finally { await handle.close(); }
+      }
+    } catch {
+      return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_PICKUP_PROOF_RECORD_UNVERIFIED', buildTruth: null });
+    }
+    return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_BUILD_TRUTH_READY', buildTruth: truth,
+      pickupAttestation: record.logicalGoalPickupAttestation || null,
+      proofRecords: Object.freeze(proofRecords) });
   } catch {
     return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_BUILD_TRUTH_UNAVAILABLE', buildTruth: null });
   }
+}
+
+// Trust anchors are only read from the pre-commissioned local machine
+// environment, outside this checkout and the mutable Shared Workspace.
+// Missing pin or Git source-head drift makes BUILDING authentication fail.
+export async function loadLogicalGoalProofTrustV2(input = {}) {
+  const env = input.env || process.env;
+  const sha = text(env.STEPHANOS_GOAL_BUILD_GATES_TRUSTED_PUBLIC_KEY_SHA256).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(sha)) return Object.freeze({ blocker: 'LOGICAL_GOAL_PUBLIC_KEY_PIN_NOT_COMMISSIONED' });
+  let trustedPublicKeyPem = '';
+  try {
+    const keyPath = resolve(text(env.LOCALAPPDATA) || resolve(text(env.USERPROFILE) || homedir(), 'AppData', 'Local'),
+      'Stephanos', 'keys', 'stephanos-goal-build-gates-public.pem');
+    const handle = await open(keyPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+    try {
+      const meta = await handle.stat();
+      if (!meta.isFile() || meta.nlink !== 1 || meta.size > 8192 || meta.size < 1) throw new Error('key-invalid');
+      trustedPublicKeyPem = await handle.readFile('utf8');
+    } finally { await handle.close(); }
+  } catch { return Object.freeze({ blocker: 'LOGICAL_GOAL_PUBLIC_KEY_NOT_AVAILABLE' }); }
+  const git = args => {
+    const cmd = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
+    const result = spawnSync(cmd, args, { cwd: input.repoRoot || process.cwd(),
+      encoding: 'utf8', windowsHide: true, shell: false, timeout: 12000, maxBuffer: 4096 });
+    return result.status === 0 && !result.error ? text(result.stdout).toLowerCase() : '';
+  };
+  const expectedSourceHead = git(['rev-parse','HEAD']);
+  if (!/^[a-f0-9]{40}$/.test(expectedSourceHead) || git(['branch','--show-current']) !== 'main'
+    || git(['rev-parse','refs/remotes/origin/main']) !== expectedSourceHead) {
+    return Object.freeze({ blocker: 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED' });
+  }
+  return Object.freeze({ trustedPublicKeyPem, trustedPublicKeySha256: sha, expectedSourceHead, blocker: '' });
 }
 
 export function isLogicalControllerPulseProposalV2(proposal = {}) {
@@ -474,7 +552,12 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
       }
       return evaluateLogicalGoalControllerContinuityV2(
         fabricControllers.get(controllerId), options.logicalGoalBuildTruth,
-        { nowMs: Date.parse(text(context.timestampUtc)) || options.nowMs },
+        { nowMs: Date.parse(text(context.timestampUtc)) || options.nowMs,
+          pickupAttestation: options.pickupAttestation,
+          proofRecords: options.proofRecords,
+          expectedSourceHead: options.expectedSourceHead,
+          trustedPublicKeyPem: options.trustedPublicKeyPem,
+          trustedPublicKeySha256: options.trustedPublicKeySha256 },
       );
     };
   }
@@ -504,9 +587,15 @@ export async function runMonitorAdmissionRuntimeV2(input = {}) {
   if (!loaded.ok) return Object.freeze({ ...loaded, schemaVersion: MONITOR_ADMISSION_RUNTIME_V2_SCHEMA, finalVerdict: 'MONITOR_ADMISSION_RUNTIME_BLOCKED' });
   const logicalGoalControllerFabric = await loadLogicalGoalControllerFabricForMonitorRuntimeV2(input);
   const goalBuildTruth = await loadLogicalGoalBuildTruthForMonitorRuntimeV2(input);
+  const trust = await loadLogicalGoalProofTrustV2(input);
   const projection = buildMonitorRuntimeProjectionV2(loaded.registry, {
     logicalGoalControllerFabric: logicalGoalControllerFabric.fabric,
     logicalGoalBuildTruth: goalBuildTruth.buildTruth,
+    pickupAttestation: goalBuildTruth.pickupAttestation,
+    proofRecords: goalBuildTruth.proofRecords,
+    trustedPublicKeyPem: trust.trustedPublicKeyPem,
+    trustedPublicKeySha256: trust.trustedPublicKeySha256,
+    expectedSourceHead: trust.expectedSourceHead,
     nowMs: input.nowMs,
   });
   const tick = await runMonitorMultiplexerTick({
@@ -528,6 +617,7 @@ export async function runMonitorAdmissionRuntimeV2(input = {}) {
     logicalGoalControllerCount: projection.logicalGoalControllerCount,
     logicalGoalControllerFabricReason: logicalGoalControllerFabric.reason,
     logicalGoalBuildTruthReason: goalBuildTruth.reason,
+    logicalGoalProofTrustBlocker: trust.blocker,
     logicalControllerCollisions: projection.logicalControllerCollisions,
     logicalControllerOverflowCount: projection.logicalControllerOverflowCount,
     logicalControllerOverflow: projection.logicalControllerOverflow,
