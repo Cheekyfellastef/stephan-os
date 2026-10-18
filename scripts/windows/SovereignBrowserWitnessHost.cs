@@ -104,7 +104,10 @@ public static class StephanosBrowserWitnessHost {
         spotifySearchLinks=Number(metrics,"spotifySearchLinks"),
         buttonCount=Number(metrics,"buttonCount"),
         disabledButtonCount=Number(metrics,"disabledButtonCount"),
-        headingCount=Number(metrics,"headingCount")
+        headingCount=Number(metrics,"headingCount"),
+        iframeCount=Number(metrics,"iframeCount"),
+        instrumentedFrameCount=Number(metrics,"instrumentedFrameCount"),
+        frameCoverageFullyVerified=false
       };
       var imageHash="";
       if(screenshot.Length>0) {
