@@ -130,3 +130,53 @@ export function assessSovereignReviewCoverageV1(input = {}) {
     ...noAuthority,
   });
 }
+
+
+// These source-review hints help the existing local high-risk model inspect
+// every class. They are NOT host observations, reviewer admission or policy.
+const REVIEW_FOCUS = Object.freeze({
+  'standard-source':Object.freeze(['Check changed code semantics, tests, callers and error paths.']),
+  'windows-os-and-services':Object.freeze([
+    'Inspect SCM service/token SID verification and restricted account boundaries.',
+    'Inspect effective Windows write denial, inherited ACEs, handles and task re-entry.',
+    'Check privileged witness and signer isolation; never infer custody from RUNNING status.',
+  ]),
+  'openclaw-and-agents':Object.freeze([
+    'Check tool scope, agent role separation, plugin permissions and untrusted command surfaces.',
+    'Reject confused-deputy execution, arbitrary shell and cross-workspace privilege expansion.',
+  ]),
+  'original-source-lease':Object.freeze([
+    'Check exclusive source lease ownership, compare-and-swap digests and re-entry fencing.',
+    'Do not equate dispatch with physical SELECT CLAIM PICKUP or historical custody.',
+  ]),
+  'secrets-and-identity':Object.freeze([
+    'Check secret logging, signer key storage, identity bootstrap and token permissions.',
+    'Treat caller-provided identities, signatures and key pins as untrusted until independently verified.',
+  ]),
+  'github-policy-and-protected-merge':Object.freeze([
+    'Check protected merge rules, GitHub actor provenance and exact HEAD BASE and tree binding.',
+    'Reject workflow bypasses, unsafe pull-request input and stale approval replay.',
+  ]),
+  'reviewer-trust-and-approval':Object.freeze([
+    'Check reviewer independence and protected self-review or self-enrollment bypasses.',
+    'Never treat a local model verdict or signed claim as externally trusted specialist admission.',
+  ]),
+  'browser-and-runtime-proof':Object.freeze([
+    'Check served-head identity, browser screenshot and DOM provenance and negative cases.',
+    'Do not infer live UI success from source tests or an unverified local screenshot.',
+  ]),
+  'daemon-and-deployment':Object.freeze([
+    'Check process and service ownership, exact running version and restart fencing.',
+    'Check stale binary/config generations and termination limited to verified-owned processes.',
+  ]),
+  'other-execution-or-policy':Object.freeze([
+    'Escalate unknown executable, worker, review and authority-bearing paths conservatively.',
+    'Check caller-to-executor command/permission boundaries and unintended side effects.',
+  ]),
+});
+export function sovereignReviewSourceFocusV1(domains = []) {
+  if (!Array.isArray(domains) || domains.some(x => !Object.hasOwn(REVIEW_FOCUS, x))) {
+    return Object.freeze([]);
+  }
+  return unique(domains.flatMap(domain => REVIEW_FOCUS[domain])).slice(0, 24);
+}
