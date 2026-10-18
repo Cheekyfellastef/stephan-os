@@ -18,6 +18,19 @@ const digest = value => createHash('sha256').update(JSON.stringify(value)).diges
 const text = v => String(v ?? '').trim();
 const millis = v => Date.parse(text(v));
 
+// Public-key identities are cryptographic keys, not PEM byte strings. Different
+// whitespace/newline encodings of the same Ed25519 SPKI MUST NOT count as two
+// independent workers. Missing/invalid keys fail closed.
+export function distinctPhysicalWorkerSigningIdentityV1(corePublicKeyPem, workerPublicKeyPem) {
+  try {
+    const core = createPublicKey(corePublicKeyPem);
+    const worker = createPublicKey(workerPublicKeyPem);
+    if (core.asymmetricKeyType !== 'ed25519' || worker.asymmetricKeyType !== 'ed25519') return false;
+    return !core.export({ format: 'der', type: 'spki' })
+      .equals(worker.export({ format: 'der', type: 'spki' }));
+  } catch { return false; }
+}
+
 function safeProofRef(ref) { return REF.test(text(ref)) && !text(ref).includes('..'); }
 function verifyWorkerReceipt(record, ref, goal, sourceHead, trust = {}) {
   const evidence = record?.workerPickupAttestation;
@@ -33,7 +46,7 @@ function verifyWorkerReceipt(record, ref, goal, sourceHead, trust = {}) {
     || evidence.observedAtUtc !== goal.lastMaterialProgressAtUtc
     || !text(evidence.workerId)
     || !SHA64.test(text(trust.workerPublicKeySha256))
-    || text(trust.workerPublicKeySha256) === text(trust.corePublicKeySha256)
+    || !distinctPhysicalWorkerSigningIdentityV1(trust.corePublicKeyPem, trust.workerPublicKeyPem)
     || createHash('sha256').update(String(trust.workerPublicKeyPem || '')).digest('hex') !== trust.workerPublicKeySha256) {
     return false;
   }
@@ -185,8 +198,26 @@ export async function loadPinnedWorkerPickupVerifierV1({ localStateRoot, env = p
         || createPublicKey(workerPublicKeyPem).asymmetricKeyType !== 'ed25519') {
         return blocked('WORKER_PICKUP_PUBLIC_KEY_PIN_MISMATCH');
       }
+      // Read the separately pinned Core public key from the same precommissioned
+      // machine trust directory. The two raw pins being different is NOT enough.
+      const coreHandle = await open(resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-public.pem'),
+        fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+      let corePublicKeyPem;
+      try {
+        const coreInfo = await coreHandle.stat();
+        if (!coreInfo.isFile() || coreInfo.nlink !== 1 || coreInfo.size <= 0 || coreInfo.size > 8192) {
+          return blocked('WORKER_PICKUP_CORE_PUBLIC_KEY_UNSAFE');
+        }
+        corePublicKeyPem = await coreHandle.readFile('utf8');
+      } finally { await coreHandle.close(); }
+      if (createHash('sha256').update(corePublicKeyPem).digest('hex') !== corePublicKeySha256) {
+        return blocked('WORKER_PICKUP_CORE_PUBLIC_KEY_PIN_MISMATCH');
+      }
+      if (!distinctPhysicalWorkerSigningIdentityV1(corePublicKeyPem, workerPublicKeyPem)) {
+        return blocked('WORKER_PICKUP_SIGNING_IDENTITY_NOT_DISTINCT');
+      }
       return Object.freeze({ ok: true, blocker: '', workerPublicKeyPem,
-        workerPublicKeySha256, corePublicKeySha256 });
+        workerPublicKeySha256, corePublicKeySha256, corePublicKeyPem });
     } finally { await handle.close(); }
   } catch { return blocked('WORKER_PICKUP_PUBLIC_KEY_UNAVAILABLE'); }
 }
@@ -194,10 +225,10 @@ export async function loadPinnedWorkerPickupVerifierV1({ localStateRoot, env = p
 export function signLogicalGoalBuildTruthV1({
   buildTruth, sourceHead, proofRecords = [], signingPrivateKeyPem = '',
   trustedWorkerPublicKeyPem = '', trustedWorkerPublicKeySha256 = '',
-  corePublicKeySha256 = '', nowMs = Date.now(),
+  corePublicKeySha256 = '', corePublicKeyPem = '', nowMs = Date.now(),
 } = {}) {
   const trust = { workerPublicKeyPem: trustedWorkerPublicKeyPem,
-    workerPublicKeySha256: trustedWorkerPublicKeySha256, corePublicKeySha256 };
+    workerPublicKeySha256: trustedWorkerPublicKeySha256, corePublicKeySha256, corePublicKeyPem };
   const body = signedBody({ buildTruth, sourceHead, proofRecords, nowMs, trust });
   if (!body) return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_SIGNING_SOURCE_OR_PROOF_UNVERIFIED' });
   try {
@@ -220,7 +251,8 @@ export function verifyLogicalGoalBuildTruthV1({
   }
   const trust = { workerPublicKeyPem: trustedWorkerPublicKeyPem,
     workerPublicKeySha256: trustedWorkerPublicKeySha256,
-    corePublicKeySha256: trustedPublicKeySha256 };
+    corePublicKeySha256: trustedPublicKeySha256,
+    corePublicKeyPem: trustedPublicKeyPem };
   const body = signedBody({ buildTruth, sourceHead: expectedSourceHead, proofRecords, nowMs, trust });
   if (!body || !attestation || attestation.sourceHead !== expectedSourceHead
     || !Array.isArray(attestation.claims)
