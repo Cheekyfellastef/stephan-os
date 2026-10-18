@@ -261,6 +261,23 @@ test('only source-admitted observational records count as OpenClaw proof', () =>
   assert.equal(seed.proofCount, 2);
 });
 
+test('one replayed proof ref cannot satisfy both OpenClaw agent inventories', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event('INVENTORY_BOTH_AGENTS', 'openclaw-local');
+  const standalone = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone'),
+    proofRefs: [...local.proofRefs],
+  };
+  payload.records.eventRecords = [local, standalone];
+  const seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 0, 'two agents require independently identifiable receipts');
+  assert.equal(seed.proofCount, 1, 'replayed proof refs cannot inflate proof telemetry');
+  assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+  assert.equal(pressure(payload).filter((item) =>
+    item.seedId === OPENCLAW_EXCELLENCE_MISSION_ID)[0].pressureKey,
+  'seed-3094:rung:inventory_both_agents');
+});
+
 test('stale feed or stale source freshness cannot plant a fresh seed or show current/dispatch work', () => {
   for (const payload of [
     { ...feed({ statusRecords: [heartbeat(), event('INVENTORY_BOTH_AGENTS')] }), state: 'stale' },
