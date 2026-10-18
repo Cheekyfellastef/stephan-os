@@ -110,7 +110,11 @@ test('loopback-only requests refuse redirect traversal for model prompts and met
   assert.equal(preflight.status, 'LOCAL_OLLAMA_PREFLIGHT_HELD');
   assert.equal(inspected, 2, 'one refused generate and one refused metadata call');
   noAuthority(calibration);
-  noAuthority(preflight);
+  // The internal read-only preflight reports {ok, reason}, not the public
+  // nine-field candidate projection; absence of authority is still held.
+  assert.equal(preflight.ok, false);
+  assert.notEqual(preflight.specialistAuthority, true);
+  assert.notEqual(preflight.leaseReleaseAuthority, true);
 });
 test('unavailable or oversized Ollama responses hold, never pass the exam', async () => {
   for (const fetchImpl of [
