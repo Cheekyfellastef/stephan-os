@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using Microsoft.Win32.SafeHandles;
 
@@ -106,7 +107,8 @@ public static class R7ProcessBoundWriteDenial
             && GetProcessTimes(process, out long created, out _, out _, out _)
             && created == expected;
 
-    private readonly record struct TokenStamp(ulong TokenId, ulong AuthenticationId, ulong ModifiedId);
+    private readonly record struct TokenStamp(ulong TokenId, ulong AuthenticationId,
+        ulong ModifiedId, uint GroupCount, uint PrivilegeCount, string PrivilegeDigest);
 
     private static TokenStamp ReadStamp(SafeAccessTokenHandle token)
     {
@@ -115,7 +117,28 @@ public static class R7ProcessBoundWriteDenial
             out TokenStatistics info, size, out int actual)
             || actual != size || info.TokenType != 1 /* TokenPrimary */)
             throw new InvalidOperationException();
-        return new(info.TokenId, info.AuthenticationId, info.ModifiedId);
+        // On some Windows versions privilege removal changes the privilege
+        // inventory without advancing ModifiedId. Bind the actual bounded,
+        // pointer-free TOKEN_PRIVILEGES bytes as well as native statistics.
+        byte[] privileges = ReadPrivileges(token);
+        if (BitConverter.ToUInt32(privileges) != info.PrivilegeCount)
+            throw new InvalidOperationException();
+        return new(info.TokenId, info.AuthenticationId, info.ModifiedId,
+            info.GroupCount, info.PrivilegeCount, Convert.ToHexString(SHA256.HashData(privileges)));
+    }
+
+    private static byte[] ReadPrivileges(SafeAccessTokenHandle token)
+    {
+        if (GetTokenInformationBytes(token, 3 /* TokenPrivileges */, null, 0, out int size)
+            || Marshal.GetLastWin32Error() != 122 || size < 4 || size > 65536)
+            throw new InvalidOperationException();
+        byte[] bytes = new byte[size];
+        if (!GetTokenInformationBytes(token, 3, bytes, size, out int actual) || actual != size)
+            throw new InvalidOperationException();
+        uint count = BitConverter.ToUInt32(bytes);
+        if (count > 256 || size != 4 + count * 12)
+            throw new InvalidOperationException();
+        return bytes;
     }
 
     // Native TOKEN_STATISTICS layout, including the 8-byte LARGE_INTEGER.
@@ -150,4 +173,9 @@ public static class R7ProcessBoundWriteDenial
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetTokenInformation(SafeAccessTokenHandle token,
         int kind, out TokenStatistics statistics, int size, out int actual);
+
+    [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformationBytes(SafeAccessTokenHandle token,
+        int kind, [Out] byte[]? bytes, int size, out int actual);
 }

@@ -15,7 +15,9 @@ test('process-bound adapter retains process object and rechecks primary token be
   assert.match(source, /R7EffectiveWriteDenial\.Observe\(/);
   assert.match(source, /before != ReadStamp\(token\) \|\| before != ReadStamp\(current\)/);
   assert.match(source, /R7_PROCESS_EXITED_OR_CHANGED_DURING_PROBE/);
-  assert.match(source, /TokenStamp\(ulong TokenId, ulong AuthenticationId, ulong ModifiedId\)/);
+  assert.match(source, /ulong ModifiedId, uint GroupCount, uint PrivilegeCount, string PrivilegeDigest/);
+  assert.match(source, /SHA256\.HashData\(privileges\)/);
+  assert.match(source, /size != 4 \+ count \* 12/);
   assert.match(source, /QueryAndDuplicateToken = 0x000a/);
   assert.doesNotMatch(source, /0x000e/);
   assert.match(tests, /ProcessBoundWriteDenialTests\.Run\(\)/);

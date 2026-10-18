@@ -13,7 +13,10 @@ user SID, then calls the existing OPEN_EXISTING write-access probe.
 
 Before returning, it reopens the primary token through the same retained
 process handle and compares native TokenId, AuthenticationId and ModifiedId
-with the original snapshot and the retained token. It also rechecks creation
+plus group/privilege counts and a bounded TOKEN_PRIVILEGES digest with the
+original snapshot and retained token. ModifiedId alone is insufficient:
+native testing observed privilege removal without a changed ModifiedId.
+It also rechecks creation
 time and process liveness. Missing access, invalid identity, process exit,
 token replacement or modification fails closed and discards the access result.
 It never reopens a process by PID during recheck, accepts a supplied token,
@@ -73,10 +76,14 @@ DACL denies TOKEN_IMPERSONATE and admits QUERY/DUPLICATE. The excessive 0x000e
 open fails, while the real adapter still binds the child token with 0x000a.
 The original child DACL is restored through its retained handle on every exit.
 This fixture changes no production token or parent token.
+An additional unattached duplicate-token fixture removes only its own traversal
+privilege and verifies TokenId/AuthenticationId stay constant while the actual
+privilege snapshot changes and invalidates the stamp, even when ModifiedId
+does not change. No process ever receives that test token.
 
 Focused checks:
 
-- .NET 8 Windows native test project: 39 new checks and the existing 77
+- .NET 8 Windows native test project: 44 new checks and the existing 77
   effective-write checks passed outside the restricted test sandbox.
 - Node source/authority boundary suites: 7/7 passed.
 - Signed quarantine verifier: 7/9 passed locally. Two existing symlink fixtures

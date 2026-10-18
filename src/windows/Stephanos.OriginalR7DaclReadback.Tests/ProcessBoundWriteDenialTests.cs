@@ -80,12 +80,39 @@ internal static class ProcessBoundWriteDenialTests
             object before = stamp.Invoke(null, new object[] { primaryToken })!;
             Check(before.Equals(stamp.Invoke(null, new object[] { primaryToken })),
                 "UNCHANGED_NATIVE_TOKEN_STAMP_MUST_MATCH");
-            Check(DuplicateTokenEx(primaryToken, 0x0008, IntPtr.Zero,
+            Check(DuplicateTokenEx(primaryToken, 0x0028 /* QUERY | ADJUST_PRIVILEGES */, IntPtr.Zero,
                 2 /* SecurityImpersonation */, 1 /* TokenPrimary */, out var duplicate),
                 "PROCESS_TEST_DUPLICATE_UNAVAILABLE");
             using (duplicate)
+            {
                 Check(!before.Equals(stamp.Invoke(null, new object[] { duplicate })),
                     "SAME_SID_DIFFERENT_PRIMARY_TOKEN_MUST_NOT_MATCH");
+                object duplicateBefore = stamp.Invoke(null, new object[] { duplicate })!;
+                MethodInfo privilegeBytes = typeof(R7EffectiveWriteDenial).GetMethod("TokenBytes",
+                    BindingFlags.Static | BindingFlags.NonPublic)!;
+                byte[] privilegesBefore = (byte[])privilegeBytes.Invoke(null, new object[] { duplicate, 3 })!;
+                // Mutate only an unattached disposable duplicate. The parent,
+                // child and enrolled production process tokens are untouched.
+                Check(LookupPrivilegeValueW(null, "SeChangeNotifyPrivilege", out var traversal),
+                    "DISPOSABLE_TOKEN_PRIVILEGE_LOOKUP_FAILED");
+                TokenPrivileges removal = new() { Count = 1, Privilege = traversal,
+                    Attributes = 4 /* SE_PRIVILEGE_REMOVED */ };
+                bool adjusted = AdjustTokenPrivileges(duplicate, false, ref removal,
+                    0, IntPtr.Zero, IntPtr.Zero);
+                int adjustError = Marshal.GetLastWin32Error();
+                Check(adjusted && adjustError == 0, "DISPOSABLE_TOKEN_PRIVILEGE_REMOVAL_FAILED");
+                object duplicateAfter = stamp.Invoke(null, new object[] { duplicate })!;
+                byte[] privilegesAfter = (byte[])privilegeBytes.Invoke(null, new object[] { duplicate, 3 })!;
+                Check(!privilegesBefore.SequenceEqual(privilegesAfter),
+                    "DISPOSABLE_TOKEN_PRIVILEGE_INVENTORY_MUST_CHANGE");
+                object? Field(object value, string name) => value.GetType().GetProperty(name)!.GetValue(value);
+                Check(Equals(Field(duplicateBefore, "TokenId"), Field(duplicateAfter, "TokenId"))
+                    && Equals(Field(duplicateBefore, "AuthenticationId"), Field(duplicateAfter, "AuthenticationId")),
+                    "IN_PLACE_CHANGE_MUST_RETAIN_TOKEN_AND_AUTHENTICATION_ID");
+                Check(!Equals(Field(duplicateBefore, "PrivilegeDigest"), Field(duplicateAfter, "PrivilegeDigest"))
+                    && !duplicateBefore.Equals(duplicateAfter),
+                    "IN_PLACE_TOKEN_CHANGE_MUST_INVALIDATE_NATIVE_STAMP");
+            }
 
             Check(File.ReadAllText(file) == sentinel, "PROCESS_PROBE_MUST_NOT_MUTATE_DATA");
             string json = JsonSerializer.Serialize(bound);
@@ -178,6 +205,22 @@ internal static class ProcessBoundWriteDenialTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetProcessTimes(SafeProcessHandle process,
         out long created, out long exited, out long kernel, out long user);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { public uint Low; public int High; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenPrivileges { public uint Count; public Luid Privilege; public uint Attributes; }
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token,
+        [MarshalAs(UnmanagedType.Bool)] bool disableAll, ref TokenPrivileges state,
+        uint bufferSize, IntPtr previousState, IntPtr returnLength);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
