@@ -258,7 +258,7 @@ function buildTruth(goals, overrides = {}) {
   };
 }
 
-test('selected logical goal passes only with fresh, same-goal worker receipt and matching physical host', async () => {
+test('selected logical goal cannot pass on status fields alone without authenticated pickup', async () => {
   const fabric = projectLogicalGoalControllerFabric({
     scheduler: scheduler([goal(3050)]),
     physicalControllers: FLEET,
@@ -266,16 +266,17 @@ test('selected logical goal passes only with fresh, same-goal worker receipt and
   });
   const controller = fabric.controllers[0];
   assert.equal(controller.selectedForAdmission, true);
-  assert.equal(evaluateLogicalGoalControllerContinuityV2(controller, buildTruth([proofGoal(controller)]), { nowMs: NOW_MS }).state, 'PASS');
+  assert.equal(evaluateLogicalGoalControllerContinuityV2(controller, buildTruth([proofGoal(controller)]), { nowMs: NOW_MS }).state, 'BLOCKED');
   const projection = buildMonitorRuntimeProjectionV2({ monitors: {} }, {
     logicalGoalControllerFabric: fabric,
     logicalGoalBuildTruth: buildTruth([proofGoal(controller)]),
     nowMs: NOW_MS,
   });
   const pulse = await projection.handlers['scheduled-summary']({ monitorId: 'logical-goal-3050', timestampUtc: OBSERVED_AT });
-  assert.equal(pulse.state, 'PASS');
-  assert.match(pulse.summary, /physical BUILDING proven/);
-  assert.deepEqual(pulse.proofRefs, ['proof/worker-pickup-accepted']);
+  assert.equal(pulse.state, 'BLOCKED');
+  assert.equal(pulse.blocker, 'LOGICAL_GOAL_PICKUP_NOT_AUTHENTICATED');
+  assert.equal(pulse.notify, false);
+  assert.notDeepEqual(pulse.proofRefs, ['proof/worker-pickup-accepted']);
   assert.equal(projection.externalTaskSlotsRequired, 1);
   assert.equal(projection.sourceMutationAllowed, false);
 });
