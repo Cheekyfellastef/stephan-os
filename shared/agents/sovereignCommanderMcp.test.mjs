@@ -298,7 +298,8 @@ test('fixed Skill Forge browser receipt fails closed on stale head, asset, route
   const head = 'a'.repeat(40);
   const ready = {
     exactHeadProofOk: true, sourceHead: head, servedBuildHead: head,
-    servedAssetFingerprint: 'b'.repeat(64),
+    servedAssetFingerprint: 'b'.repeat(64), expectedAssetFingerprint: 'b'.repeat(64),
+    currentSourceFingerprint: 'c'.repeat(64), servedSourceFingerprint: 'c'.repeat(64),
     forgeHttpStatus: 200, commandHttpStatus: 200,
     forgeUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html?surface=skill-forge',
     commandUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
@@ -313,6 +314,8 @@ test('fixed Skill Forge browser receipt fails closed on stale head, asset, route
     ['exactHeadProofOk', false],
     ['servedBuildHead', 'c'.repeat(40)],
     ['servedAssetFingerprint', ''],
+    ['expectedAssetFingerprint', 'd'.repeat(64)],
+    ['servedSourceFingerprint', 'e'.repeat(64)],
     ['forgeHttpStatus', 404],
     ['forgeUrl', 'http://example.org'],
     ['forgeConstructionLineVisible', false],
