@@ -23,7 +23,10 @@ public sealed record R7ProcessBoundWriteObservation(
 public static class R7ProcessBoundWriteDenial
 {
     private const uint QueryLimitedInformationAndSynchronize = 0x00101000;
-    private const uint QueryDuplicateAndImpersonateToken = 0x000e;
+    // A primary token needs TOKEN_QUERY | TOKEN_DUPLICATE for
+    // ImpersonateLoggedOnUser. TOKEN_IMPERSONATE is an unnecessary extra
+    // right here and a least-privilege token DACL may intentionally deny it.
+    private const uint QueryAndDuplicateToken = 0x000a;
     private const uint WaitTimeout = 0x102;
 
     private static R7ProcessBoundWriteObservation Held(string reason)
@@ -51,7 +54,7 @@ public static class R7ProcessBoundWriteDenial
             if (process.IsInvalid) return Held("R7_PROCESS_HANDLE_UNAVAILABLE");
             if (!MatchesLiveProcess(process, expectedCreationFileTimeUtc))
                 return Held("R7_PROCESS_CREATION_OR_LIVENESS_UNPROVEN");
-            if (!OpenProcessToken(process, QueryDuplicateAndImpersonateToken,
+            if (!OpenProcessToken(process, QueryAndDuplicateToken,
                 out SafeAccessTokenHandle token))
             {
                 token?.Dispose();

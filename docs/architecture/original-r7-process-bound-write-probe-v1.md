@@ -18,6 +18,9 @@ time and process liveness. Missing access, invalid identity, process exit,
 token replacement or modification fails closed and discards the access result.
 It never reopens a process by PID during recheck, accepts a supplied token,
 or creates/filters/enables privileges on a production token.
+Primary-token access requests only TOKEN_QUERY | TOKEN_DUPLICATE (0x000a).
+The extra TOKEN_IMPERSONATE right is deliberately omitted: a correctly
+restricted token DACL may deny it, and a primary token does not require it.
 
 The native semantics follow Microsoft's [OpenProcessToken documentation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken),
 [TOKEN_STATISTICS layout and ModifiedId contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_statistics),
@@ -65,10 +68,15 @@ test fixture only; production never duplicates or filters a token explicitly.
 The existing probe's result is compared directly, scratch data is preserved,
 and private inputs/authority are checked. The child exits normally on stdin
 closure, without shell, termination, elevation or production access.
+The child token is verified distinct from the parent before a temporary test
+DACL denies TOKEN_IMPERSONATE and admits QUERY/DUPLICATE. The excessive 0x000e
+open fails, while the real adapter still binds the child token with 0x000a.
+The original child DACL is restored through its retained handle on every exit.
+This fixture changes no production token or parent token.
 
 Focused checks:
 
-- .NET 8 Windows native test project: 30 new checks and the existing 77
+- .NET 8 Windows native test project: 39 new checks and the existing 77
   effective-write checks passed outside the restricted test sandbox.
 - Node source/authority boundary suites: 7/7 passed.
 - Signed quarantine verifier: 7/9 passed locally. Two existing symlink fixtures

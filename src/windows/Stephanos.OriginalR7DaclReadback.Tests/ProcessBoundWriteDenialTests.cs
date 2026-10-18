@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
@@ -38,7 +39,7 @@ internal static class ProcessBoundWriteDenialTests
             using Process self = Process.GetCurrentProcess();
             Check(GetProcessTimes(self.SafeHandle, out long created, out _, out _, out _),
                 "PROCESS_TEST_CREATION_TIME_UNAVAILABLE");
-            Check(OpenProcessToken(self.SafeHandle, 0x000e, out var primary),
+            Check(OpenProcessToken(self.SafeHandle, 0x000a, out var primary),
                 "PROCESS_TEST_PRIMARY_TOKEN_UNAVAILABLE");
             using SafeAccessTokenHandle primaryToken = primary;
             using WindowsIdentity identity = new(primaryToken.DangerousGetHandle());
@@ -90,7 +91,7 @@ internal static class ProcessBoundWriteDenialTests
             string json = JsonSerializer.Serialize(bound);
             Check(!json.Contains(sid, StringComparison.Ordinal) && !json.Contains(file, StringComparison.Ordinal),
                 "PROCESS_OBSERVATION_MUST_REDACT_PRIVATE_INPUTS");
-            ExitedProcessHandleIsRejected();
+            RestrictedPrimaryTokenAndExitedProcessAreHandled(file, sid, primaryToken);
             Console.WriteLine("R7_PROCESS_BOUND_NATIVE_CHECKS_PASSED=" + checks);
             Console.WriteLine("R7_PROCESS_ORIGINAL_WRITER_ENROLLED=false");
         }
@@ -101,7 +102,8 @@ internal static class ProcessBoundWriteDenialTests
         }
     }
 
-    private static void ExitedProcessHandleIsRejected()
+    private static void RestrictedPrimaryTokenAndExitedProcessAreHandled(
+        string target, string sid, SafeAccessTokenHandle parentToken)
     {
         // Fixed test-assembly fixture, no shell or caller-selected executable.
         // stdin closure lets it exit normally; there is no kill/terminate path.
@@ -120,6 +122,50 @@ internal static class ProcessBoundWriteDenialTests
                 BindingFlags.Static | BindingFlags.NonPublic)!;
             Check((bool)matches.Invoke(null, new object[] { retained, birth })!,
                 "LIVE_RETAINED_PROCESS_MUST_MATCH");
+
+            // Restrict only the disposable child's primary-token object DACL.
+            // The real original writer and the test parent's token are untouched.
+            // Explicitly deny TOKEN_IMPERSONATE while allowing QUERY/DUPLICATE
+            // and descriptor restoration rights. A 0x000e open must fail;
+            // the production 0x000a open must still bind the actual token.
+            Check(OpenProcessToken(retained, 0x0006000a, out var configurable),
+                "CHILD_TOKEN_DACL_HANDLE_UNAVAILABLE");
+            using (configurable)
+            {
+                MethodInfo stamp = typeof(R7ProcessBoundWriteDenial).GetMethod("ReadStamp",
+                    BindingFlags.Static | BindingFlags.NonPublic)!;
+                Check(!stamp.Invoke(null, new object[] { configurable })!.Equals(
+                    stamp.Invoke(null, new object[] { parentToken })),
+                    "CHILD_TOKEN_MUST_BE_DISTINCT_BEFORE_TEST_DACL_CHANGE");
+                Check(GetKernelObjectSecurity(configurable, 4, null, 0, out uint required)
+                    == false && Marshal.GetLastWin32Error() == 122 && required > 0 && required <= 65536,
+                    "CHILD_TOKEN_ORIGINAL_DACL_SIZE_UNAVAILABLE");
+                byte[] original = new byte[required];
+                Check(GetKernelObjectSecurity(configurable, 4, original, required, out _),
+                    "CHILD_TOKEN_ORIGINAL_DACL_UNAVAILABLE");
+                RawSecurityDescriptor descriptor = new($"D:(D;;0x4;;;{sid})(A;;0x6000a;;;{sid})");
+                byte[] restricted = new byte[descriptor.BinaryLength];
+                descriptor.GetBinaryForm(restricted, 0);
+                try
+                {
+                    Check(SetKernelObjectSecurity(configurable, 4, restricted),
+                        "CHILD_TOKEN_RESTRICTED_DACL_NOT_SET");
+                    bool excessive = OpenProcessToken(retained, 0x000e, out var denied);
+                    int openError = Marshal.GetLastWin32Error();
+                    denied?.Dispose();
+                    Check(!excessive && openError == 5,
+                        "CHILD_TOKEN_MUST_DENY_UNNECESSARY_IMPERSONATE_RIGHT");
+                    var minimal = R7ProcessBoundWriteDenial.ObserveWriteAccess(child.Id, birth, sid, target);
+                    NoAuthority(minimal);
+                    Check(minimal.ProcessBindingObserved && minimal.WriteAccess is not null,
+                        "MINIMAL_PRIMARY_TOKEN_RIGHTS_MUST_SUPPORT_PROCESS_BINDING");
+                }
+                finally
+                {
+                    Check(SetKernelObjectSecurity(configurable, 4, original),
+                        "CHILD_TOKEN_DACL_RESTORE_FAILED");
+                }
+            }
             child.StandardInput.Close();
             Check(child.WaitForExit(10000), "PROCESS_FIXTURE_EXIT_TIMEOUT");
             Check(!(bool)matches.Invoke(null, new object[] { retained, birth })!,
@@ -132,6 +178,16 @@ internal static class ProcessBoundWriteDenialTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetProcessTimes(SafeProcessHandle process,
         out long created, out long exited, out long kernel, out long user);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetKernelObjectSecurity(SafeAccessTokenHandle token,
+        uint information, byte[]? descriptor, uint length, out uint required);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKernelObjectSecurity(SafeAccessTokenHandle token,
+        uint information, byte[] descriptor);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
