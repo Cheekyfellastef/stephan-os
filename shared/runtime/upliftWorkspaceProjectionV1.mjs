@@ -1807,11 +1807,10 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       ? agents.some((agentId) => isAdmittedRungRecord(record, rung, agentId))
       : isAdmittedRungRecord(record, rung);
   });
-  // One immutable proof reference cannot establish two different agent/rung
-  // identities. Reject the later conflicting record rather than letting a
-  // replayed receipt promote both agents. Replays of the same identity remain
-  // observationally idempotent and cannot inflate proof telemetry.
-  const proofIdentityByRef = new Map();
+  // An immutable proof reference witnesses at most one observation, not
+  // merely one agent/rung identity. Even a same-agent replay with a new event
+  // ID must not refresh evidence age or add proof telemetry.
+  const admittedProofRefs = new Set();
   // An event identifier denotes one observation, even if a replay supplies
   // different proof refs or agent claims. This is observational deduplication,
   // not independent authentication or a trusted approval receipt.
@@ -1819,12 +1818,9 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const uniqueProofRecords = admittedProofRecords.filter((record) => {
     const eventId = text(record.eventId, '');
     if (eventId && admittedEventIds.has(eventId)) return false;
-    const evidence = record.openClawExcellenceEvidence;
-    const identity = [evidence.rung, evidence.agentId || actorId(record) || 'seed'].join(':');
     const refs = proofRefs(record);
-    if (refs.some((ref) => proofIdentityByRef.has(ref)
-      && proofIdentityByRef.get(ref) !== identity)) return false;
-    refs.forEach((ref) => proofIdentityByRef.set(ref, identity));
+    if (refs.some((ref) => admittedProofRefs.has(ref))) return false;
+    refs.forEach((ref) => admittedProofRefs.add(ref));
     if (eventId) admittedEventIds.add(eventId);
     return true;
   });
