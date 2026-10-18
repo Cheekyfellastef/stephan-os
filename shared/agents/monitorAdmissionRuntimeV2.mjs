@@ -448,6 +448,18 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
         });
       }
       const controllerId = text(record.proposal.boundedSubject.scope).slice(LOGICAL_CONTROLLER_SCOPE_PREFIX.length);
+      // Durable operator-admitted controller pulses are scheduled summaries,
+      // not synthetic scheduler-goal controllers. Preserve their existing
+      // wake/notification contract; explicitly disclaim any build proof.
+      if (record.syntheticLogicalGoalController !== true) {
+        return Object.freeze({
+          state: 'PASS',
+          summary: `Controller ${controllerId} continuity pulse due at ${context.timestampUtc}: ${text(record.proposal.boundedSubject.topic)}. Pulse only; no physical build claimed.`,
+          nextAction: 'Use the existing canonical controller hub and mission worker for independently verified material execution.',
+          proofRefs: record.proposal.proofRefs,
+          notify: true,
+        });
+      }
       return evaluateLogicalGoalControllerContinuityV2(
         fabricControllers.get(controllerId), options.logicalGoalBuildTruth,
         { nowMs: Date.parse(text(context.timestampUtc)) || options.nowMs },
