@@ -18,6 +18,9 @@ on:
       - 'shared/agents/monitorAdmissionRuntimeV2.mjs'
       - 'shared/agents/logicalGoalPickupProofV1.mjs'
       - 'shared/agents/logicalGoalPickupProofV1.test.mjs'
+      - 'shared/agents/controllerFleetTelemetryV1.mjs'
+      - 'shared/agents/controllerActivityPublisherV1.mjs'
+      - 'shared/agents/controllerActivityPublisherV1.test.mjs'
       - 'scripts/stephanos-core-daemon.mjs'
       - 'scripts/sovereign-controller-lane-status.mjs'
       - 'shared/agents/logicalGoalControllerMultiplexerV1.test.mjs'
@@ -84,6 +87,8 @@ jobs:
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
           node --check shared/agents/monitorAdmissionRuntimeV2.mjs
           node --check shared/agents/logicalGoalPickupProofV1.mjs
+          node --check shared/agents/controllerActivityPublisherV1.mjs
+          node --check shared/agents/controllerFleetTelemetryV1.mjs
           node --check scripts/stephanos-core-daemon.mjs
           node --check scripts/sovereign-controller-lane-status.mjs
       - name: Parse Windows PowerShell CPU and watchdog scripts
@@ -110,6 +115,7 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/logicalGoalControllerMultiplexerV1.test.mjs
           node --test shared/agents/logicalGoalPickupProofV1.test.mjs
+          node --test shared/agents/controllerActivityPublisherV1.test.mjs
           node --test shared/agents/monitorAdmissionRuntimeV2.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
