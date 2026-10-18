@@ -44,6 +44,7 @@ function setupWorker({ switchDuringScreenshot = false } = {}) {
   const calls = { permissions: [], native: [], screenshots: 0 };
   const configuredTab = { id: 7, windowId: 2, url: configuredOrigin + '/apps/music-tile/index.html' };
   const otherTab = { id: 8, windowId: 2, url: 'https://private.example/account' };
+  const sameHostOtherPort = { id: 9, windowId: 3, url: 'http://localhost:8787/admin' };
   let activeQueries = 0;
   const chrome = {
     runtime: {
@@ -64,7 +65,7 @@ function setupWorker({ switchDuringScreenshot = false } = {}) {
           return [switchDuringScreenshot && activeQueries > 1 ? otherTab : configuredTab];
         }
         if (args.currentWindow) return [configuredTab];
-        return [configuredTab, otherTab];
+        return [configuredTab, otherTab, sameHostOtherPort];
       },
       captureVisibleTab: async () => { calls.screenshots++; return 'data:image/jpeg;base64,/9j/2Q=='; },
     },
@@ -86,7 +87,7 @@ function setupWorker({ switchDuringScreenshot = false } = {}) {
   return { calls, message, listeners };
 }
 
-test('worker uses port-free host permission but enforces exact-origin admission before inspection', async () => {
+test('worker rejects other sites and same-host other-port tabs despite broader port-free host permission', async () => {
   const { calls, message } = setupWorker();
   const result = await message('witness-scan');
   assert.equal(result.ok, true);
