@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve, win32 } from 'node:path';
+import { appendFile, lstat, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import {
@@ -19,6 +19,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
+  CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
@@ -82,6 +83,24 @@ function pathWithin(root, candidate) {
     : relative(normalizedRoot, normalizedCandidate);
   const relativeIsAbsolute = windows ? win32.isAbsolute(relativePath) : isAbsolute(relativePath);
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
+}
+
+// A private MCP directory create is deliberately non-recursive. A junction or
+// symlink in its existing parent chain would redirect the operator's explicit
+// path to a different location, so fail closed rather than follow it.
+async function assertPlainDirectoryAncestors(targetPath) {
+  let current = dirname(targetPath);
+  while (true) {
+    const info = await lstat(current);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      const error = new Error('sovereign-commander-create-parent-redirected');
+      error.code = 'SOVEREIGN_CREATE_PARENT_NOT_PLAIN_DIRECTORY';
+      throw error;
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
 }
 
 function fixedRegistry(repoRoot) {
@@ -447,6 +466,17 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       depth: safeInteger(payload.depth, 2, 1, 5),
       maxEntries: safeInteger(payload.maxEntries, 500, 1, 2000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY) {
+    const supplied = targetPaths.length === 1 ? targetPaths[0] : '';
+    const path = normalizedAbsolutePath(supplied);
+    // No UNC/network paths, traversal fragments, roots or recursive creation.
+    if (!path || supplied.length > 1024 || /^\\\\/.test(supplied)
+      || supplied.split(/[\\/]/).some((segment) => segment === '..' || segment === '.')
+      || dirname(path) === path) {
+      blockers.push('sovereign-commander-create-requires-safe-local-absolute-target');
+    } else {
+      plan = frozen({ kind: 'create-directory', path, recursive: false });
+    }
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT) {
     const root = normalizedAbsolutePath(options.repoRoot);
     const query = typeof payload.query === 'string' ? payload.query.trim() : '';
@@ -724,6 +754,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
+        canCreateDirectory: true,
         canSearchProject: true,
         canRunFocusedNodeTests: false,
         sourceControlledMaintenanceOnly: true,
@@ -833,6 +864,18 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         truncated: entries.length >= command.plan.maxEntries,
       });
       contentText = entries.map((entry) => `${entry.type}\t${entry.path}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'create-directory') {
+      await assertPlainDirectoryAncestors(command.plan.path);
+      // mkdir without recursive is create-only and fails on an existing target.
+      await mkdir(command.plan.path, { recursive: false });
+      const created = await lstat(command.plan.path);
+      if (!created.isDirectory() || created.isSymbolicLink()) {
+        const error = new Error('sovereign-commander-created-directory-invalid');
+        error.code = 'SOVEREIGN_CREATED_DIRECTORY_INVALID';
+        throw error;
+      }
+      structuredContent = frozen({ path: command.plan.path, created: true, recursive: false });
+      contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'search-project') {
       const results = await searchProjectTree(
         command.plan.root,
