@@ -3,7 +3,7 @@
 // No Windows service operation, lease mutation, deployment or GitHub approval.
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { captureHighRiskAdvisorySnapshotV1 } from './sovereign-high-risk-advisory-v1.mjs';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
@@ -64,7 +64,7 @@ export function inspectWindowsCalibrationGamingGuardV1(env = process.env, {
 } = {}) {
   const root = String(env.STEPHANOS_SHARED_AGENT_WORKSPACE ?? '');
   if (!/^[a-z]:\\/i.test(root) || /[\0\r\n]/.test(root)
-    || resolve(root).toLowerCase() !== root.replace(/[\\]+$/, '').toLowerCase()
+    || win32.resolve(root).toLowerCase() !== root.replace(/[\\]+$/, '').toLowerCase()
     || !Number.isSafeInteger(nowMs)) return false;
   try {
     const file = join(root, 'vr', 'vr-resource-governor-current.json');
