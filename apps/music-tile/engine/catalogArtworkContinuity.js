@@ -1,5 +1,6 @@
 import './nativeCatalogLinkContinuity.js';
 import { hydrateAutomaticMediaOverlay } from './automaticMediaOverlay.js';
+import { AI_CANDIDATE_STATUSES, getCandidateVerificationStatus, isVerifiedCandidateTrack } from './candidateVerification.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const OEMBED_OVERLAY_KEY = 'stephanos.musicTile.spotifyOembedArtwork.v1';
@@ -51,6 +52,15 @@ function artworkMatchesCurrentSpotifyTrack(track = {}) {
     && String(track.catalogLinkSource || '') === 'native-catalog-search'
     && String(track.artworkSource || '') === 'spotify-catalogue'
   );
+}
+
+export function canUseVerifiedSpotifyArtwork(track = {}) {
+  const status = getCandidateVerificationStatus(track);
+  if (status === AI_CANDIDATE_STATUSES.notFound
+    || status === AI_CANDIDATE_STATUSES.likelyHallucinated) return false;
+  return isVerifiedCandidateTrack(track)
+    || (track.sourceKind === 'native-catalog'
+      && track.catalogVerificationStatus === 'metadata_verified');
 }
 
 function readListeningDeck(storage = globalThis.localStorage) {
@@ -193,10 +203,12 @@ export function hydrateCatalogArtworkContinuity({
   for (const track of deck) {
     if (!track?.id) continue;
     const card = findCardForTrack(root, track.id);
-    const catalogArtwork = artworkMatchesCurrentSpotifyTrack(track)
+    const catalogArtwork = canUseVerifiedSpotifyArtwork(track) && artworkMatchesCurrentSpotifyTrack(track)
       ? trustedArtworkUrl(track?.artworkUrl)
       : '';
-    const artworkUrl = catalogArtwork || trustedOembedArtwork(track, storage);
+    const artworkUrl = canUseVerifiedSpotifyArtwork(track)
+      ? (catalogArtwork || trustedOembedArtwork(track, storage))
+      : '';
     if (!artworkUrl) {
       if (removeStaleArtworkPanel(card)) staleRemoved += 1;
       continue;
@@ -230,7 +242,7 @@ function queueHydration() {
 // Spotify track URL, even when Spotify Web API credentials are absent.
 function needsOembedLookup(track, storage, root) {
   const spotifyId = spotifyTrackId(track?.spotifyUrl || track?.spotifyUri || '');
-  if (!track?.id || !spotifyId || !findCardForTrack(root, track.id)) return false;
+  if (!track?.id || !spotifyId || !canUseVerifiedSpotifyArtwork(track) || !findCardForTrack(root, track.id)) return false;
   if (artworkMatchesCurrentSpotifyTrack(track) && trustedArtworkUrl(track.artworkUrl)) return false;
   if (trustedOembedArtwork(track, storage)) return false;
   return (oembedAttempts.get(`${track.id}::${spotifyId}`) || 0) < OEMBED_MAX_ATTEMPTS;
@@ -267,7 +279,8 @@ export async function runSpotifyOembedArtworkPass({
         const url = trustedArtworkUrl(data?.artworkUrl);
         if (!data?.ok || data.trackId !== spotifyId || !url) continue;
         const current = readListeningDeck(storage).find((candidate) => String(candidate.id) === String(track.id));
-        if (!current || spotifyTrackId(current.spotifyUrl || current.spotifyUri || '') !== spotifyId) continue;
+        if (!current || !canUseVerifiedSpotifyArtwork(current)
+          || spotifyTrackId(current.spotifyUrl || current.spotifyUri || '') !== spotifyId) continue;
         if (persistOembedArtwork(storage, current, url)) {
           hydratedCount += 1;
           hydrateCatalogArtworkContinuity({ storage, root });
