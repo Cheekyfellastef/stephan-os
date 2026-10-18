@@ -179,3 +179,14 @@ Absent, stringified, old-schema, contradictory cooling or unknown fields
 remain HOLD with no model inference. This affects the existing #3090 source
 candidate only and does not mutate Battle Bridge's gaming processes or
 governor policy.
+
+## Per-question model digest continuity
+
+The ten-case meter-free Ollama exam now probes the selected model's fixed
+64-hex digest **before every individual inference**, as well as before and
+after the whole run. A changed, missing or ambiguous tag is a held exam and
+must not count the affected question. This catches a model tag changed during
+the exam even if it is restored by the final observation. The checks are
+bounded, read-only `/api/tags` calls to loopback and do not load the model.
+This is still untrusted host-local evidence, not independent supply-chain
+attestation, self-approval, Windows privilege or lease-release authority.

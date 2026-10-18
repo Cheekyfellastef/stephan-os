@@ -201,6 +201,13 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
       // Every candidate inference rechecks the real live gaming governor.
       const currentGaming = gamingGuard(env, { platform });
       if (!currentGaming?.ok) throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
+      // A tag can be re-pointed in the middle of ten questions and later
+      // restored. Pin the same observed digest immediately before EVERY
+      // inference, not only the beginning and end of the complete exam.
+      const currentPin = await modelPin(model, { fetchImpl });
+      if (!currentPin?.ok || currentPin.digest !== beforePin.digest) {
+        throw new Error('CALIBRATION_MODEL_DIGEST_CHANGED_DURING_EXAM');
+      }
       // No prompt, source, model output or token enters a GitHub receipt.
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
         // Never follow a redirect to a nonlocal endpoint with private diff text.

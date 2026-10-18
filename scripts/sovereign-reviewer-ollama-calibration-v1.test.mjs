@@ -321,7 +321,7 @@ test('model weight pin refuses alias collision, missing digest and wrong model',
 test('calibration holds if model weights change during ten cases',async()=>{
   let pins=0,requests=0;
   const r=await run(env,{...gitProof(),
-    modelPin:async()=>({ok:true,digest:(++pins===1?'a':'b').repeat(64)}),
+    modelPin:async()=>({ok:true,digest:(++pins===12?'b':'a').repeat(64)}),
     fetchImpl:async(_url,options)=>{
       requests++;
       const prompt=JSON.parse(options.body).prompt;
@@ -332,11 +332,36 @@ test('calibration holds if model weights change during ten cases',async()=>{
           challengeId,diffSha256,verdict:'clean',findings:[],
         })})};
     }});
-  assert.equal(requests,10);assert.equal(pins,2);
+  assert.equal(requests,10);assert.equal(pins,12);
   assert.equal(r.status,'CALIBRATION_HELD');
   assert.equal(r.reason,'CALIBRATION_MODEL_DIGEST_CHANGED_OR_UNOBSERVED');
   noAuthority(project(r));
 });
+test('calibration rejects a model tag changed mid-exam even when restored at completion', async () => {
+  let pins = 0, generated = 0;
+  const result = await run(env, {
+    ...gitProof(),
+    modelPin: async () => ({ ok: true,
+      digest: (++pins === 4 ? 'b' : 'a').repeat(64) }),
+    fetchImpl: async (_url, options) => {
+      generated++;
+      const prompt = JSON.parse(options.body).prompt;
+      const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop',
+        response: JSON.stringify({ challengeId, diffSha256,
+          verdict: 'clean', findings: [] }),
+      }) };
+    },
+  });
+  assert.equal(generated, 2, 'third inference blocked before generation');
+  assert.equal(pins, 5, 'one initial, three per-question and one final observation');
+  assert.equal(result.status, 'CALIBRATION_HELD');
+  assert.notEqual(result.status, 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED');
+  noAuthority(project(result));
+});
+
 test('read-only preflight observes only local Ollama model availability', async () => {
   const calls = [];
   const ready = await probe(env, { ...gitProof(), fetchImpl: async (url, options) => {
