@@ -578,4 +578,3 @@ export async function dispatchExactHeadWindowsBrowserProof(command, {
     sourceMutationAuthority: false,
   };
 }
-

@@ -1187,4 +1187,3 @@ export function buildBattleBridgeGitHubCommandReceipt({
     credentialsMayBeReadOrExported: false,
   });
 }
-

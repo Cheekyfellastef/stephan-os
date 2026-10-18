@@ -2224,4 +2224,3 @@ async function main() {
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';
 const modulePath = fileURLToPath(import.meta.url);
 if (invokedPath === modulePath) main();
-
