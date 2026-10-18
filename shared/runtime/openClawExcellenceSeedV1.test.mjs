@@ -278,6 +278,28 @@ test('one replayed proof ref cannot satisfy both OpenClaw agent inventories', ()
   'seed-3094:rung:inventory_both_agents');
 });
 
+test('replayed event identity cannot count as two independent OpenClaw inventory observations', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event('INVENTORY_BOTH_AGENTS', 'openclaw-local');
+  const standalone = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone'),
+    eventId: local.eventId,
+    proofRefs: ['proof/standalone-different-ref-same-event'],
+  };
+  payload.records.eventRecords = [local, standalone];
+  let seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 0, 'one event cannot witness both agent inventories');
+  assert.equal(seed.proofCount, 1, 'distinct proof refs do not rehabilitate a replayed event ID');
+  assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+
+  payload.records.eventRecords = [
+    local,
+    { ...local, proofRefs: ['proof/local-different-ref-same-event'] },
+  ];
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.proofCount, 1, 'same-agent event replay must not inflate proof telemetry');
+});
+
 test('self-attested endurance and continuous uplift never become trusted rung or proof telemetry', () => {
   for (const rung of ['PROVE_SOVEREIGN_ENDURANCE', 'CONTINUOUS_UPLIFT_AND_RETEST']) {
     const payload = feed({ statusRecords: [heartbeat()] });

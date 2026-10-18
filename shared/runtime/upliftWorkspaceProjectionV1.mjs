@@ -1812,13 +1812,20 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   // replayed receipt promote both agents. Replays of the same identity remain
   // observationally idempotent and cannot inflate proof telemetry.
   const proofIdentityByRef = new Map();
+  // An event identifier denotes one observation, even if a replay supplies
+  // different proof refs or agent claims. This is observational deduplication,
+  // not independent authentication or a trusted approval receipt.
+  const admittedEventIds = new Set();
   const uniqueProofRecords = admittedProofRecords.filter((record) => {
+    const eventId = text(record.eventId, '');
+    if (eventId && admittedEventIds.has(eventId)) return false;
     const evidence = record.openClawExcellenceEvidence;
     const identity = [evidence.rung, evidence.agentId || actorId(record) || 'seed'].join(':');
     const refs = proofRefs(record);
     if (refs.some((ref) => proofIdentityByRef.has(ref)
       && proofIdentityByRef.get(ref) !== identity)) return false;
     refs.forEach((ref) => proofIdentityByRef.set(ref, identity));
+    if (eventId) admittedEventIds.add(eventId);
     return true;
   });
   const hasRungProof = (rung, agentId) => uniqueProofRecords.some((record) =>
