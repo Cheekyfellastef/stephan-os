@@ -6,7 +6,7 @@ export const SOVEREIGN_REVIEW_DOMAINS = Object.freeze([
   'standard-source', 'windows-os-and-services', 'openclaw-and-agents',
   'original-source-lease', 'secrets-and-identity',
   'github-policy-and-protected-merge', 'reviewer-trust-and-approval',
-  'browser-and-runtime-proof', 'daemon-and-deployment',
+  'browser-and-runtime-proof', 'daemon-and-deployment', 'other-execution-or-policy',
 ]);
 
 const SHA = /^[a-f0-9]{40}$/;
@@ -23,12 +23,13 @@ const DOMAIN_PATTERNS = Object.freeze([
   ['browser-and-runtime-proof', /(?:browser.?proof|playwright|ui.?proof|runtime.?proof|screenshot|served.?asset)/i],
   ['daemon-and-deployment', /(?:daemon|watchdog|recovery.?mesh|ignition|deploy|publisher|scheduled.?task|runtime.?restart|sovereign.?commander)/i],
 ]);
+const UNKNOWN_HIGH_RISK_PATH = /^(?:scripts\/|shared\/agents\/|shared\/runtime\/|stephanos-server\/services\/|plugins\/)/i;
 const PHYSICAL = new Set(['windows-os-and-services', 'original-source-lease',
   'browser-and-runtime-proof', 'daemon-and-deployment']);
 const SECURITY = new Set(['windows-os-and-services', 'openclaw-and-agents',
   'original-source-lease', 'secrets-and-identity',
   'github-policy-and-protected-merge', 'reviewer-trust-and-approval',
-  'daemon-and-deployment']);
+  'daemon-and-deployment', 'other-execution-or-policy']);
 const noAuthority = Object.freeze({
   qualifiedIndependentReview: false,
   qualifiedWindowsSpecialist: false,
@@ -74,7 +75,11 @@ export function assessSovereignReviewCoverageV1(input = {}) {
         domains.set(domain,(domains.get(domain) || 0)+1);
       }
     }
-    if (!matched) domains.set('standard-source',(domains.get('standard-source')||0)+1);
+    if (!matched) {
+      const category=UNKNOWN_HIGH_RISK_PATH.test(path)
+        ? 'other-execution-or-policy' : 'standard-source';
+      domains.set(category,(domains.get(category)||0)+1);
+    }
   }
   const highRisk = [...domains.keys()].some(domain => SECURITY.has(domain));
   const ordered = SOVEREIGN_REVIEW_DOMAINS.filter(domain=>domains.has(domain));
