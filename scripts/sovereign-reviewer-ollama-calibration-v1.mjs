@@ -174,6 +174,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   fetchImpl = fetch, gitSpawn = spawnSync, platform = process.platform,
   sourceRoot = SOURCE_ROOT, gamingGuard = inspectLocalSovereignGamingPermissionV1,
   modelPin = observeLocalSovereignOllamaDigestV1,
+  startPolling = setInterval, stopPolling = clearInterval,
 } = {}) {
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL_RE.test(model) || typeof fetchImpl !== 'function') {
@@ -209,6 +210,24 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         throw new Error('CALIBRATION_MODEL_DIGEST_CHANGED_DURING_EXAM');
       }
       // No prompt, source, model output or token enters a GitHub receipt.
+      // Keep the real VR/flat governor in control *during* each inference,
+      // not just before the request: an active generation may last 45s.
+      // The independent governor's own model eviction remains authoritative.
+      const gamingAbort = new AbortController();
+      let gamingDenied = false;
+      const monitor = startPolling(() => {
+        try {
+          const live = gamingGuard(env, { platform });
+          if (!live?.ok) {
+            gamingDenied = true;
+            gamingAbort.abort(new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED'));
+          }
+        } catch {
+          gamingDenied = true;
+          gamingAbort.abort(new Error('CALIBRATION_GAMING_RESOURCE_UNPROVEN'));
+        }
+      }, 500);
+      try {
       const response = await fetchImpl('http://127.0.0.1:11434/api/generate', {
         // Never follow a redirect to a nonlocal endpoint with private diff text.
         // Node fetch follows 3xx by default, including cross-origin redirects.
@@ -221,12 +240,16 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
           keep_alive: 0,
           options: { temperature: 0, num_ctx: 8192 },
         }),
-        signal: AbortSignal.timeout(45_000), // 10 cases, bounded within 570s WSL wall clock
+        signal: AbortSignal.any([AbortSignal.timeout(45_000), gamingAbort.signal]),
+        // Ten cases, bounded within 570s WSL wall clock.
       });
       if (!response?.ok || typeof response.text !== 'function') {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNAVAILABLE');
       }
       const bytes = await response.text();
+      if (gamingDenied || gamingAbort.signal.aborted) {
+        throw new Error('CALIBRATION_GAMING_RESOURCE_PROTECTED');
+      }
       if (typeof bytes !== 'string' || Buffer.byteLength(bytes, 'utf8') > 64 * 1024) {
         throw new Error('LOCAL_OLLAMA_RESPONSE_UNBOUNDED');
       }
@@ -240,6 +263,11 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         throw new Error('LOCAL_OLLAMA_COMPLETED_MODEL_IDENTITY_UNPROVEN');
       }
       return result.response;
+      } finally {
+        // Also clear the monitor on timeout, offline Ollama, malformed JSON,
+        // and an in-flight game-preemption abort. Never leave a polling task.
+        stopPolling(monitor);
+      }
     },
   });
   // A ten-case exam can span minutes. Never publish a valid candidate if a

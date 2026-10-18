@@ -260,6 +260,76 @@ test('gaming-governor refuses absent, stale and active gaming signals before mod
   assert.equal(gaming({ ...linuxEnv, STEPHANOS_SHARED_AGENT_WORKSPACE: '../escape' }, validFile()).ok, false);
   assert.equal(gaming(linuxEnv, { ...validFile(), openFile() { throw Error('missing'); } }).ok, false);
 });
+test('in-flight Ollama request aborts promptly when VR gaming activates', async () => {
+  let active = false;
+  let tick;
+  let monitorStarts = 0;
+  let monitorStops = 0;
+  let calls = 0;
+  let requestWasAborted = false;
+  const result = await run(env, {
+    ...gitProof(),
+    gamingGuard: () => ({ ok: !active, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' }),
+    startPolling: (callback, delay) => {
+      assert.equal(delay, 500);
+      assert.equal(typeof callback, 'function');
+      monitorStarts++;
+      tick = callback;
+      return 15;
+    },
+    stopPolling: handle => {
+      assert.equal(handle, 15);
+      monitorStops++;
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url, 'http://127.0.0.1:11434/api/generate');
+      calls++;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          requestWasAborted = true;
+          reject(new Error('synthetic in-flight model cancellation'));
+        }, { once: true });
+        active = true;
+        tick();
+      });
+    },
+  });
+  assert.equal(result.status, 'CALIBRATION_HELD');
+  assert.equal(calls, 1);
+  assert.equal(requestWasAborted, true);
+  assert.equal(monitorStarts, 1);
+  assert.equal(monitorStops, 1);
+  noAuthority(project(result));
+});
+test('Ollama polling monitor is cleared on completed or failed generation', async () => {
+  let started = 0;
+  let stopped = 0;
+  const result = await run(env, {
+    ...gitProof(),
+    startPolling: (callback, delay) => {
+      assert.equal(delay, 500);
+      assert.equal(typeof callback, 'function');
+      return ++started;
+    },
+    stopPolling: token => {
+      assert.equal(typeof token, 'number');
+      stopped++;
+    },
+    fetchImpl: async (_url, options) => {
+      const prompt = JSON.parse(options.body).prompt;
+      const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
+      const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop',
+        response: JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] }),
+      }) };
+    },
+  });
+  assert.equal(started, 10);
+  assert.equal(stopped, 10);
+  assert.equal(result.completedCases, 10);
+  noAuthority(result);
+});
 test('local-model exam immediately holds when gaming activates between cases', async () => {
   let games = 0;
   let modelCalls = 0;

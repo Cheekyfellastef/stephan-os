@@ -190,3 +190,16 @@ the exam even if it is restored by the final observation. The checks are
 bounded, read-only `/api/tags` calls to loopback and do not load the model.
 This is still untrusted host-local evidence, not independent supply-chain
 attestation, self-approval, Windows privilege or lease-release authority.
+
+## Preempt Ollama while gaming begins during generation
+
+Previously the calibration checked the VR/flat governor only **between**
+`/api/generate` requests, allowing an in-flight local model to consume CPU
+and GPU for up to 45 seconds after a game started. The fixed runner now polls
+the existing governor every 500 ms *during* each inference, combines its
+preemption signal with the original 45-second request timeout, aborts the
+request on gaming activity/stale/missing evidence and clears the monitor in
+`finally` on every path. Synthetic tests prove in-flight preemption and
+monitor cleanup for completed requests; this is still source contract proof,
+not a physical Battle Bridge gaming acceptance receipt or a substitute for
+the governor's own model-eviction daemon. Candidate/lease authority stays false.
