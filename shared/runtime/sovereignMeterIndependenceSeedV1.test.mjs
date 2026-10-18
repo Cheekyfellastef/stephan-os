@@ -224,6 +224,23 @@ test('meter-blackout inventory rejects silent valid-owner reassignment', () => {
   }
 });
 
+test('meter blackout acceptance keeps first-use owner titles bound to canonical issues', () => {
+  const markdown = readMeterBlackoutInventory();
+  const owners = [
+    ['2968', 'Seed: Stephanos Sovereign Meter Independence across all metered services'],
+    ['1898', 'Programme: Zero-Codex Continuity and Provider Parity V1'],
+    ['2519', 'Build Sovereign Commander as the unmetered Battle Bridge control surface'],
+  ];
+  for (const [issue, title] of owners) {
+    const canonical = '[#' + issue + ' — ' + title + '](https://github.com/Cheekyfellastef/stephan-os/issues/' + issue + ')';
+    assert.ok(markdown.includes(canonical), 'missing title-bound original owner #' + issue);
+    assert.ok(markdown.indexOf(canonical) < markdown.indexOf('## Meter-blackout evidence contract'),
+      'the first owner reference must be verifiable before the evidence contract');
+    assert.ok(!markdown.replace(canonical, '[#' + issue + '](https://github.com/Cheekyfellastef/stephan-os/issues/' + issue + ')').includes(canonical),
+      'the bare-identifier mutation must lose the title-bound owner reference');
+  }
+});
+
 test('stale heartbeat cannot manufacture a live canonical seed goal', () => {
   const payload = feed({ statusRecords: [buildHighLevelFlywheelSeedHeartbeatV1(registrySeed, {
     timestampUtc: '2026-10-09T10:00:00.000Z',
