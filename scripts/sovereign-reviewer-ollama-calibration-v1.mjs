@@ -113,10 +113,17 @@ export function inspectLocalSovereignGamingPermissionV1(env = process.env, {
     }
     const state = JSON.parse(raw);
     const when = Date.parse(state?.updatedAtUtc);
+    // Missing or stringified gaming indicators must never be interpreted as
+    // a safe idle state. The Windows writer always emits these as booleans.
+    const mandatoryGamingFlags = [
+      'active', 'flatGameActive', 'airLinkActive',
+      'realAirLinkActive', 'virtualAirLinkTestActive', 'prepareLeaseActive',
+      'localModelAllowed', 'heavyModelAllowed',
+    ];
     if (state?.schemaVersion !== 'stephanos.vr-resource-governor.v1'
-      || typeof state.active !== 'boolean'
-      || typeof state.localModelAllowed !== 'boolean'
-      || typeof state.heavyModelAllowed !== 'boolean'
+      || state.governorVersion !== 3
+      || mandatoryGamingFlags.some(key => typeof state[key] !== 'boolean')
+      || !['balanced', 'cool', 'off'].includes(state.ollamaLoadMode)
       || !Number.isFinite(when) || nowMs - when > 30_000
       || when - nowMs > 5_000) {
       return Object.freeze({ ok: false, reason: 'CALIBRATION_GOVERNOR_STALE_OR_INVALID' });
@@ -125,7 +132,7 @@ export function inspectLocalSovereignGamingPermissionV1(env = process.env, {
       || state.virtualAirLinkTestActive === true
       || state.realAirLinkActive === true || state.prepareLeaseActive === true
       || state.localModelAllowed !== true || state.heavyModelAllowed !== true
-      || state.ollamaLoadMode === 'off') {
+      || state.ollamaLoadMode !== 'balanced') {
       return Object.freeze({ ok: false, reason: 'CALIBRATION_GAMING_RESOURCE_PROTECTED' });
     }
     return Object.freeze({ ok: true, reason: '' });

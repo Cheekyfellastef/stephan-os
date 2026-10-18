@@ -215,9 +215,10 @@ test('calibration checks Git source again after the full ten-model-case exam', a
 
 test('gaming-governor refuses absent, stale and active gaming signals before model use', async () => {
   const state = {
-    schemaVersion: 'stephanos.vr-resource-governor.v1',
+    schemaVersion: 'stephanos.vr-resource-governor.v1', governorVersion: 3,
     updatedAtUtc: new Date('2026-10-17T20:00:00.000Z').toISOString(),
     active: false, flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false,
     localModelAllowed: true, heavyModelAllowed: true,
     ollamaLoadMode: 'balanced', prepareLeaseActive: false,
   };
@@ -245,6 +246,11 @@ test('gaming-governor refuses absent, stale and active gaming signals before mod
     { active: true }, { flatGameActive: true }, { airLinkActive: true },
     { virtualAirLinkTestActive: true }, { localModelAllowed: false },
     { heavyModelAllowed: false }, { prepareLeaseActive: true },
+    { realAirLinkActive: true }, { realAirLinkActive: undefined },
+    { virtualAirLinkTestActive: undefined }, { flatGameActive: 'false' },
+    { prepareLeaseActive: 'false' }, { airLinkActive: 0 },
+    { governorVersion: 2 }, { governorVersion: undefined },
+    { ollamaLoadMode: 'cool' }, { ollamaLoadMode: 'unknown' },
     { updatedAtUtc: '2026-10-17T19:00:00.000Z' },
     { updatedAtUtc: 'not-a-date' },
   ]) {

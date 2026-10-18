@@ -166,3 +166,16 @@ host. Redirects now fail closed and no other URL, model endpoint, external
 provider, shell command or privileged approval route is added. Hosted contract
 tests assert exact loopback addresses, no redirect policy, and HOLD on a
 redirect response; this is not a live Battle Bridge network attestation.
+
+## Complete native governor state required for model admission
+
+A stale, partial or schema-drifted VR/flat governor record must **not** make
+a local reviewer model eligible for GPU use. Its read-only WSL consumer now
+requires native governorVersion 3 and explicit boolean values for all eight
+gaming/model permission indicators, plus a recognized load mode. A full
+ten-case heavy review can start only in `balanced` mode when all relevant
+game/headset/prepare flags are false and both model permissions are true.
+Absent, stringified, old-schema, contradictory cooling or unknown fields
+remain HOLD with no model inference. This affects the existing #3090 source
+candidate only and does not mutate Battle Bridge's gaming processes or
+governor policy.
