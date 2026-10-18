@@ -138,7 +138,7 @@ public static class StephanosBrowserWitnessHost {
       sample.readOnly,sample.observationOnly,sample.servedHeadVerified,sample.functionalAcceptanceVerified,
       sample.connectedTabCount,sample.admittedTabCount,sample.observedTabCount,sample.diagnosticTabCount,
       sample.screenshotCount,sample.scanOnly,sample.observations,sample.screenshots,evidenceHash });
-    File.WriteAllText(Path.Combine(ProofRoot,receiptName),receipt,Encoding.UTF8);
+    File.WriteAllText(Path.Combine(ProofRoot,receiptName),receipt,new UTF8Encoding(false));
     return new { schemaVersion=Schema,ok=true,message=mode=="scan"?"Diagnostic scan saved locally":"Screenshot and diagnostics saved locally",observedTabCount=observed.Count,screenshotCount=captured,evidenceHash };
   }
   public static int Main(string[] args) {
