@@ -83,7 +83,9 @@
     "starfield-vr:install-shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-starfield-vr-desktop-shortcut.ps1",
     "starfield-vr:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/launch-starfield-vr.ps1 -ReadinessOnly",
     "starfield-vr:test": "node --test shared/agents/starfieldVrLaunchPolicy.test.mjs scripts/starfield-vr-launcher-source.test.mjs scripts/starfield-vr-flight-recorder.test.mjs",
-    "starfield-vr:reference-lab:test": "node --test shared/vr/starfieldVrReferenceCatalogue.test.mjs tests/starfield-vr-reference-lab.test.mjs"
+    "starfield-vr:reference-lab:test": "node --test shared/vr/starfieldVrReferenceCatalogue.test.mjs tests/starfield-vr-reference-lab.test.mjs",
+    "stephanos:sovereign-review:coverage": "node scripts/sovereign-review-coverage-v1.mjs --once",
+    "stephanos:sovereign-review:windows-calibration": "node scripts/sovereign-windows-review-calibration-v1.mjs --once"
   },
   "devDependencies": {
     "@playwright/test": "^1.54.0",
