@@ -500,14 +500,14 @@ export function safeBrowserObservationProjection(value = {}, processId = '') {
   if (observed?.schemaVersion !== 'stephanos.sovereign-browser-observation.v1'
     || observed.readOnly !== true || observed.observationOnly !== true
     || observed.servedHeadVerified !== false || observed.functionalAcceptanceVerified !== false
-    || !['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(observed.finalVerdict)) return null;
+    || !['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(observed.finalVerdict)) return null;
   const count = (number) => Number.isSafeInteger(number) && number >= 0 && number <= 10_000 ? number : null;
   const blocker = text(observed.blocker);
   const observedAtUtc = text(observed.observedAtUtc);
   const evidenceHash = text(observed.evidenceHash).toLowerCase();
   return Object.freeze({
     schemaVersion: 'stephanos.sovereign-browser-observation.v1',
-    ok: observed.ok === true && observed.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED',
+    ok: observed.ok === true && ['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC'].includes(observed.finalVerdict),
     finalVerdict: observed.finalVerdict,
     blocker: /^[A-Z0-9_]{0,96}$/.test(blocker) ? blocker : '',
     observedAtUtc: observedAtUtc.length <= 40 && Number.isFinite(Date.parse(observedAtUtc)) ? observedAtUtc : '',
@@ -515,6 +515,7 @@ export function safeBrowserObservationProjection(value = {}, processId = '') {
     admittedTabCount: count(observed.admittedTabCount),
     observedTabCount: count(observed.observedTabCount),
     screenshotCount: count(observed.screenshotCount),
+    diagnosticTabCount: count(observed.diagnosticTabCount),
     evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
     observationOnly: true,
     servedHeadVerified: false,
@@ -588,16 +589,22 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
 }
 
 export function browserObservationCompleteForAction(proof = null) {
-  return proof?.ok === true
-    && proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
+  const common = proof?.ok === true
     && proof?.readOnly === true
     && proof?.observationOnly === true
     && proof?.servedHeadVerified === false
     && proof?.functionalAcceptanceVerified === false
-    && PROOF_HASH_PATTERN.test(proof?.evidenceHash || '')
+    && PROOF_HASH_PATTERN.test(proof?.evidenceHash || '');
+  const visual = proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
     && Number.isSafeInteger(proof?.observedTabCount)
     && proof.observedTabCount > 0
     && proof?.screenshotCount === proof.observedTabCount;
+  const diagnostic = proof?.finalVerdict === 'BROWSER_OBSERVATION_DIAGNOSTIC'
+    && proof?.observedTabCount === 0
+    && proof?.screenshotCount === 0
+    && Number.isSafeInteger(proof?.diagnosticTabCount)
+    && proof.diagnosticTabCount > 0;
+  return common && (visual || diagnostic);
 }
 
 function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead = '') {
