@@ -324,7 +324,7 @@ async function publishControllerLaneTruth() {
         for (const ref of refs) {
           const match = /^proof\/([a-z0-9][a-z0-9._-]{0,100})(?:\.json)?$/i.exec(String(ref || ''));
           if (!match) throw new Error('UNTRUSTED_PROOF_REFERENCE');
-          const file = resolve(proofDir, match[1] + '.json');
+          const file = resolve(proofDir, match[1].replace(/\.json$/i, '') + '.json');
           const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
           try {
             const meta = await handle.stat();
