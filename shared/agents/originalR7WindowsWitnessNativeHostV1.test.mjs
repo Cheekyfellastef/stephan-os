@@ -71,6 +71,7 @@ test('SCM preflight checks the exact on-disk witness image pin before any custod
   assert.match(scm, /LocalImageHasNoReparseAncestors/);
   assert.match(scm, /FileAttributes\.ReparsePoint/);
   assert.match(scm, /R7_SCM_PINNED_IMAGE_DIGEST_UNPROVEN/);
+  assert.match(scm, /R7_SCM_BUNDLED_PAYLOAD_UNPROVEN/);
   assert.match(scm, /R7_SCM_SHAPE_OBSERVED_NOT_PHYSICAL_CUSTODY/);
   assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
   assert.doesNotMatch(scm, /\b(?:Registry\.SetValue|CreateSubKey|SetAccessControl|File\.WriteAllBytes|File\.WriteAllText|Process\.Start)\s*\(/);

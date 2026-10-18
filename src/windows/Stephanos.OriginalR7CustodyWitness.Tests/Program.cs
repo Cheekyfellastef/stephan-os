@@ -38,6 +38,14 @@ void AlwaysHeld(OriginalR7ScmObservation report, string id)
     Check(!report.LeaseReleaseAuthorized, id + "_LEASE");
 }
 
+// Run this same linked production adapter as an ordinary apphost AND as a
+// self-contained single-file process. This exercises real assembly loading,
+// rather than supplying a caller assertion about bundle identity.
+bool expectBundled = args.Length == 1 && args[0] == "--expect-bundled-payload";
+Check(args.Length == 0 || expectBundled, "TEST_INVOCATION");
+Check(OriginalR7ScmPreflight.BundledPayloadObserved() == expectBundled,
+    "REAL_PAYLOAD_BUNDLE_IDENTITY");
+
 // A synthetic *registration shape*, not proof of Windows custody.
 OriginalR7ScmObservation shape = Eval();
 Check(shape.ScmConfigurationObserved, "MATCHING_SCM_SHAPE");
@@ -79,6 +87,12 @@ Check(!Eval(pin: new string('0', 64)).ScmConfigurationObserved, "MISMATCHED_PIN_
 OriginalR7ScmObservation live = OriginalR7ScmPreflight.Inspect();
 AlwaysHeld(live, "LIVE");
 Check(!live.LeaseReleaseAuthorized, "LIVE_CANNOT_RELEASE");
+if (!expectBundled)
+{
+    Check(!live.ScmConfigurationObserved, "UNBUNDLED_CANNOT_REPORT_SHAPE");
+    Check(live.Classification == "R7_SCM_BUNDLED_PAYLOAD_UNPROVEN",
+        "UNBUNDLED_REFUSED_BEFORE_REGISTRY");
+}
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");

@@ -38,6 +38,27 @@ jobs:
         run: |
           dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove bundled payload identity and sidecar independence without commissioning
+        shell: pwsh
+        run: |
+          $profile = Join-Path $PWD 'src/windows/Stephanos.OriginalR7CustodyWitness/Properties/PublishProfiles/WitnessSingleFile.pubxml'
+          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness.Tests --configuration Release -p:PublishProfileFullPath=$profile --output "$env:RUNNER_TEMP/r7-bundle-tests"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testExe = Join-Path $env:RUNNER_TEMP 'r7-bundle-tests/Stephanos.OriginalR7CustodyWitness.Tests.exe'
+          & $testExe --expect-bundled-payload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # An adjacent replacement DLL must have no effect on bundled code.
+          [IO.File]::WriteAllText((Join-Path $env:RUNNER_TEMP 'r7-bundle-tests/Stephanos.OriginalR7CustodyWitness.Tests.dll'), 'invalid replacement payload')
+          & $testExe --expect-bundled-payload
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness --configuration Release -p:PublishProfile=WitnessSingleFile --output "$env:RUNNER_TEMP/r7-witness-bundle"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bundle = Join-Path $env:RUNNER_TEMP 'r7-witness-bundle'
+          $sidecars = Get-ChildItem -LiteralPath $bundle -File | Where-Object { $_.Extension -in '.dll', '.json' }
+          if ($sidecars) { throw 'R7_WITNESS_EXECUTABLE_SIDECARS_PRESENT' }
+          $witnessExe = Join-Path $bundle 'Stephanos.OriginalR7CustodyWitness.exe'
+          $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -WindowStyle Hidden -Wait -PassThru
+          if ($child.ExitCode -ne 2) { throw 'R7_BUNDLED_WITNESS_CLI_DENIAL_UNPROVEN' }
       - name: Record custody authority boundary
         if: always()
         shell: pwsh

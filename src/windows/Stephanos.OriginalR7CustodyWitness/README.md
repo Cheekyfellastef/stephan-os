@@ -13,6 +13,11 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
   (strict lowercase SHA-256 hex in the fixed HKLM service registration) to
   match a freshly hashed on-disk running executable and rejects reparse points
   anywhere in its local path ancestry. Missing/mismatched pins HOLD.
+  The preflight first rejects an ordinary apphost/adjacent-DLL build: the
+  witness must be the entry assembly and both it and managed core must have
+  empty `Assembly.Location`, as in a self-contained single-file bundle.
+  The `WitnessSingleFile` publish profile bundles managed payload and native
+  runtime libraries; native libraries are extracted by .NET at execution.
   **This is not a protected trust root**: Windows SCM registry-value ACL
   ownership, image mapped-at-launch identity, original source-writer exclusion,
   old open handles, and independent pinned image provenance still require
@@ -62,6 +67,18 @@ or opening a PR is NOT a machine custody receipt, deployment or build proof.
 ## Binary pin qualification boundary
 
 The new image digest preflight is an intentionally **read-only negative gate**.
+An ordinary `dotnet build` output cannot pass it, even with a matching apphost
+digest: changing the adjacent managed witness DLL would leave that digest
+unchanged. Build the candidate bundle with `dotnet publish
+src/windows/Stephanos.OriginalR7CustodyWitness -p:PublishProfile=WitnessSingleFile`.
+The profile targets Windows x64; this is a build operation, not an installer.
+Hosted tests execute the linked native adapter in both ordinary and bundled
+processes, then place an invalid adjacent DLL beside the bundle and repeat.
+The genuine service bundle is also built and rejects CLI invocation.
+The bundle guard is a necessary packaging check, not proof that all loaded
+code came from a protected file. The runtime's extracted native libraries,
+DLL search, process environment/startup hooks, mapped-at-launch identity and
+installation directory still require independently reviewed OS protection.
 It does not install or edit a service or set a registry key. CI may use
 synthetic matching digests to prove code paths, but cannot commission real
 Battle Bridge identity, registry ACL ownership, signer isolation or source

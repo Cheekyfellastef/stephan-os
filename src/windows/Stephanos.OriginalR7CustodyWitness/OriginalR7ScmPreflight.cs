@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Security.Cryptography;
 using Microsoft.Win32;
 
@@ -97,6 +98,28 @@ internal static class OriginalR7ScmPreflight
         return true;
     }
 
+    // A framework-dependent apphost hash does not cover its adjacent witness
+    // DLL. Require the executing witness AND managed core to be loaded from
+    // a self-contained bundle before considering the executable digest.
+    // Empty Location is the .NET single-file contract, not proof of protected
+    // mapped-code provenance or native extraction-directory protection.
+    internal static bool BundledPayloadObserved()
+    {
+        try
+        {
+            Assembly witness = typeof(OriginalR7ScmPreflight).Assembly;
+#pragma warning disable IL3000 // Deliberately reject separately loaded assemblies.
+            return ReferenceEquals(Assembly.GetEntryAssembly(), witness)
+                && witness.Location == String.Empty
+                && typeof(object).Assembly.Location == String.Empty;
+#pragma warning restore IL3000
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     // Physical read of the currently executing image path. Any directory
     // junction, symlink or other reparse point in the chain is an unsafe
     // image alias. This still cannot attest to the image mapped at service
@@ -125,6 +148,8 @@ internal static class OriginalR7ScmPreflight
     {
         if (!OperatingSystem.IsWindows())
             return Held("R7_SCM_WINDOWS_REQUIRED");
+        if (!BundledPayloadObserved())
+            return Held("R7_SCM_BUNDLED_PAYLOAD_UNPROVEN");
         try
         {
             using RegistryKey? key = Registry.LocalMachine.OpenSubKey(ServiceKey, writable: false);
