@@ -117,11 +117,14 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
   const ledger = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
   assert.ok(coverage, 'missing acceptance coverage table');
   assert.ok(ledger, 'missing original-owner discovery table');
-  const rows = (section) => {
+  const coverageHeader = '| Canonical dimension | External-edge audit question | Acceptance witness |';
+  const ledgerHeader = '| Canonical dimension | Existing owner candidate, or discovery gap | First original-domain evidence to request |';
+  const rows = (section, expectedHeader) => {
     const tableLines = section.split('\n').map((line) => line.trim())
       .filter((line) => line.startsWith('|'));
     assert.equal(tableLines.length, FULL_SOVEREIGNTY_DIMENSIONS_V1.length + 2,
       'table must have one header, one separator and exactly 16 canonical rows');
+    assert.equal(tableLines[0], expectedHeader, 'canonical column semantics must not drift');
     assert.match(tableLines[1], /^\|\s*---\s*\|\s*---\s*\|\s*---\s*\|$/,
       'three-column Markdown separator required');
     return tableLines.slice(2).map((line) => {
@@ -133,15 +136,19 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
     });
   };
   const expected = [...FULL_SOVEREIGNTY_DIMENSIONS_V1];
-  const coverageRows = rows(coverage);
-  const ownerRows = rows(ledger);
+  const coverageRows = rows(coverage, coverageHeader);
+  const ownerRows = rows(ledger, ledgerHeader);
+  assert.throws(() => rows(coverage.replace(coverageHeader,
+    '| Canonical dimension | Claimed PASS | Acceptance witness |'), coverageHeader),
+    /canonical column semantics must not drift/,
+    'a forged acceptance column must fail closed');
   assert.deepEqual(coverageRows.map((row) => row.dimension), expected, 'coverage table drift or duplicate');
   assert.deepEqual(ownerRows.map((row) => row.dimension), expected, 'owner ledger drift or duplicate');
   assert.throws(() => rows(coverage.replace('| `local-ai-inference-and-router` |',
-    '| stray-row | audit | UNVERIFIED |\n| `local-ai-inference-and-router` |')),
+    '| stray-row | audit | UNVERIFIED |\n| `local-ai-inference-and-router` |'), coverageHeader),
     /exactly 16 canonical rows/, 'unexpected table rows must fail closed');
   assert.throws(() => rows(coverage.replace('| `local-ai-inference-and-router` |',
-    '| `local-ai-inference-and-router` | extra-cell |')),
+    '| `local-ai-inference-and-router` | extra-cell |'), coverageHeader),
     /one dimension and two evidence\/owner cells/, 'extra columns must fail closed');
   for (const row of [...coverageRows, ...ownerRows]) {
     assert.equal(row.cells.length, 2, 'each dimension needs two nonempty evidence/owner cells');
@@ -165,7 +172,7 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
   for (const forged of ['#9999', '#1898 / #9999', '#1898 / #1898',
     'UNRESOLVED #1898', '#1898: asserted custody']) {
     const altered = ledger.replace('| #1898 |', '| ' + forged + ' |');
-    const alteredRows = rows(altered);
+    const alteredRows = rows(altered, ledgerHeader);
     assert.ok(alteredRows.some((row) => !validCandidate(row.cells[0])),
       'forged or ambiguous owner custody must fail closed: ' + forged);
   }
