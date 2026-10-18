@@ -10,6 +10,7 @@ const runner = await readFile(new URL('../../scripts/windows/run-sovereign-comma
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+const commanderHttp = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
 
 test('boot recovery installers parse with the Windows PowerShell used by the bootstrap', { skip: process.platform !== 'win32' }, () => {
   const paths = [
@@ -145,7 +146,11 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'/);
+  const required = runner.match(/\[string\]\$RequireCapabilityVersion\s*=\s*'([^']+)'/);
+  const served = commanderHttp.match(/SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION\s*=\s*'([^']+)'/);
+  assert.ok(required, 'runner default must be explicit');
+  assert.ok(served, 'HTTP capability contract must be explicit');
+  assert.equal(required[1], served[1], 'default startup must require the served generation');
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
