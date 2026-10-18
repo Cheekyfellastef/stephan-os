@@ -17,6 +17,7 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/monitorAdmissionRuntimeV2.mjs'
       - 'shared/agents/logicalGoalControllerMultiplexerV1.test.mjs'
+      - 'shared/agents/monitorAdmissionRuntimeV2.test.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
@@ -101,6 +102,7 @@ jobs:
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/logicalGoalControllerMultiplexerV1.test.mjs
+          node --test shared/agents/monitorAdmissionRuntimeV2.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
