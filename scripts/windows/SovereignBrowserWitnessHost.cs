@@ -100,6 +100,8 @@ public static class StephanosBrowserWitnessHost {
         linkCount=Number(metrics,"linkCount"),
         emptyLinks=Number(metrics,"emptyLinks"),
         genericSpotifyLinks=Number(metrics,"genericSpotifyLinks"),
+        spotifyTrackLinks=Number(metrics,"spotifyTrackLinks"),
+        spotifySearchLinks=Number(metrics,"spotifySearchLinks"),
         buttonCount=Number(metrics,"buttonCount"),
         disabledButtonCount=Number(metrics,"disabledButtonCount"),
         headingCount=Number(metrics,"headingCount")
