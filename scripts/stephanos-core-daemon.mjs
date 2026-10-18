@@ -336,6 +336,7 @@ async function publishControllerLaneTruth() {
           trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
           trustedWorkerPublicKeySha256: workerTrust.workerPublicKeySha256,
           corePublicKeySha256: workerTrust.corePublicKeySha256,
+          corePublicKeyPem: workerTrust.corePublicKeyPem,
         });
         if (signed.ok) pickupAttestation = signed.attestation;
       } catch {
