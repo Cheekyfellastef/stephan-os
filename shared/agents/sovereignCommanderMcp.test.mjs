@@ -187,26 +187,6 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('prove-skill-forge-runtime'));
-  await handler('tools/call', {
-    name: 'maintenance_action',
-    arguments: {
-      actionId: 'prove-skill-forge-runtime',
-      url: 'https://untrusted.example',
-      command: 'UNTRUSTED_ARBITRARY_COMMAND',
-      path: 'C:\\untrusted',
-      releaseLease: true,
-    },
-  }, { id: 7, isRequest: true, isNotification: false });
-  const skillForge = observed.at(-1);
-  assert.deepEqual(skillForge.payload, { actionId: 'prove-skill-forge-runtime' });
-  assert.deepEqual(skillForge.targetPaths, []);
-  assert.doesNotMatch(JSON.stringify(skillForge), /untrusted|releaseLease|UNTRUSTED/);
-  const skillForgePhysical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
-  assert.equal(skillForgePhysical.dispatchAllowed, true);
-  assert.equal(skillForgePhysical.plan.kind, 'fixed-process');
-  assert.equal(skillForgePhysical.plan.processId, 'prove-skill-forge-runtime');
-  assert.equal(skillForgePhysical.mergeAuthority, false);
-  assert.equal(skillForgePhysical.leaseSeizureAllowed, false);
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('rescue-island-readonly-boundary'));
   const island = await handler('tools/call', {
     name: 'maintenance_action',
@@ -229,6 +209,26 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.equal(physical.plan.args.length, 1);
   assert.equal(physical.mergeAuthority, false);
   assert.equal(physical.leaseSeizureAllowed, false);
+  await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: {
+      actionId: 'prove-skill-forge-runtime',
+      url: 'https://untrusted.example',
+      command: 'UNTRUSTED_ARBITRARY_COMMAND',
+      path: 'C:\\untrusted',
+      releaseLease: true,
+    },
+  }, { id: 7, isRequest: true, isNotification: false });
+  const skillForge = observed.at(-1);
+  assert.deepEqual(skillForge.payload, { actionId: 'prove-skill-forge-runtime' });
+  assert.deepEqual(skillForge.targetPaths, []);
+  assert.doesNotMatch(JSON.stringify(skillForge), /untrusted|releaseLease|UNTRUSTED/);
+  const skillForgePhysical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
+  assert.equal(skillForgePhysical.dispatchAllowed, true);
+  assert.equal(skillForgePhysical.plan.kind, 'fixed-process');
+  assert.equal(skillForgePhysical.plan.processId, 'prove-skill-forge-runtime');
+  assert.equal(skillForgePhysical.mergeAuthority, false);
+  assert.equal(skillForgePhysical.leaseSeizureAllowed, false);
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {
