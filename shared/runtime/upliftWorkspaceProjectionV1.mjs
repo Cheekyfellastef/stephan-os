@@ -1815,7 +1815,11 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   // different proof refs or agent claims. This is observational deduplication,
   // not independent authentication or a trusted approval receipt.
   const admittedEventIds = new Set();
-  const uniqueProofRecords = admittedProofRecords.filter((record) => {
+  // Admit the earliest observed receipt first, not whichever replay happened
+  // to arrive first in an unordered feed. Later copies cannot refresh proof age.
+  const uniqueProofRecords = [...admittedProofRecords]
+    .sort((a, b) => recordTimeMs(a) - recordTimeMs(b))
+    .filter((record) => {
     const eventId = text(record.eventId, '');
     if (eventId && admittedEventIds.has(eventId)) return false;
     const refs = proofRefs(record);

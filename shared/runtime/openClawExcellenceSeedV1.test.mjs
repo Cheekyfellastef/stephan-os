@@ -318,6 +318,25 @@ test('replayed proof refs cannot refresh OpenClaw evidence freshness or mint ext
   assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
 });
 
+test('reverse-ordered proof replay cannot replace the earliest observed OpenClaw receipt', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const first = event('INVENTORY_BOTH_AGENTS', 'openclaw-local');
+  const replay = {
+    ...first,
+    eventId: 'replayed-new-event-arrived-first',
+    timestampUtc: '2026-10-13T14:39:30.000Z',
+    proofRefs: [...first.proofRefs, 'proof/replay-added-reference'],
+  };
+  // Shared Workspace feeds may return newest records first; arrival order
+  // must not let a later replay steal the original immutable receipt.
+  payload.records.eventRecords = [replay, first];
+  const seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.proofCount, 1);
+  assert.equal(seed.rungProofCount, 0);
+  assert.equal(seed.latestEvidenceAt, first.timestampUtc);
+  assert.equal(seed.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+});
+
 test('self-attested endurance and continuous uplift never become trusted rung or proof telemetry', () => {
   for (const rung of ['PROVE_SOVEREIGN_ENDURANCE', 'CONTINUOUS_UPLIFT_AND_RETEST']) {
     const payload = feed({ statusRecords: [heartbeat()] });
