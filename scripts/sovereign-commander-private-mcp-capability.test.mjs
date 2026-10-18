@@ -8,6 +8,7 @@ const RUNTIME_CALLERS = [
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
+  'scripts/windows/run-sovereign-commander-hidden.ps1',
   'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
 ];
@@ -33,6 +34,11 @@ test('existing specialist-pinned Windows starter accepts the required generation
   assert.ok(mcp.includes("name: 'get_file_info'"));
   assert.ok(autoheal.includes("'-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION"));
   assert.ok(runner.includes('[string]$RequireCapabilityVersion'));
+  const runnerDefault = runner.match(/\[string\]\$RequireCapabilityVersion\s*=\s*'([^']+)'/);
+  const httpVersion = http.match(/SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION\s*=\s*'([^']+)'/);
+  assert.ok(runnerDefault, 'guarded runner must declare an explicit default');
+  assert.ok(httpVersion, 'HTTP service must declare its capability contract');
+  assert.equal(runnerDefault[1], httpVersion[1], 'direct and explicit startup must converge on the HTTP contract');
   assert.ok(runner.includes('$staleCapability = [bool]'));
   assert.ok(runner.includes('$staleCapabilityRecycleRequested'));
 });
