@@ -147,8 +147,27 @@ test('rung-1 sovereignty acceptance tables stay bound to the 16 canonical dimens
     assert.equal(row.cells.length, 2, 'each dimension needs two nonempty evidence/owner cells');
     assert.ok(row.cells.every(Boolean));
   }
+  // Candidate routing is not authority, but it must not silently introduce a
+  // forged, duplicate, or ambiguous original-owner issue reference.
+  const allowedOwnerRefs = new Set(buildFullSovereigntySeedV1().existingOwnerIssueRefs);
+  const validCandidate = (candidate) => {
+    if (candidate === 'UNRESOLVED') return true;
+    if (!/^#\d+(?:\s*\/\s*#\d+)*$/.test(candidate)) return false;
+    const refs = candidate.match(/#\d+/g) ?? [];
+    return refs.length === new Set(refs).size &&
+      refs.every((ref) => allowedOwnerRefs.has(ref));
+  };
   for (const row of ownerRows) {
-    assert.ok(row.cells[0].includes('UNRESOLVED') || row.cells[0].includes('#'), 'owner must be an existing issue or explicitly unresolved');
+    assert.ok(validCandidate(row.cells[0]),
+      'owner candidate must be a canonical existing issue or exactly UNRESOLVED');
+  }
+  assert.ok(ledger.includes('| #1898 |'), 'negative owner-custody fixture requires a canonical row');
+  for (const forged of ['#9999', '#1898 / #9999', '#1898 / #1898',
+    'UNRESOLVED #1898', '#1898: asserted custody']) {
+    const altered = ledger.replace('| #1898 |', '| ' + forged + ' |');
+    const alteredRows = rows(altered);
+    assert.ok(alteredRows.some((row) => !validCandidate(row.cells[0])),
+      'forged or ambiguous owner custody must fail closed: ' + forged);
   }
   assert.ok(markdown.includes('Every row remains `UNVERIFIED`'));
   assert.match(markdown, /not evidence that external dependence has been removed/);
