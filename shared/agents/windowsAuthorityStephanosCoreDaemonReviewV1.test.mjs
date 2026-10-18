@@ -169,3 +169,22 @@ test('trusted switchboard byte-pins and invokes the Core Daemon specialist', asy
   assert.ok(wrapper.indexOf('analyzeWindowsAuthorityStephanosCoreDaemonReviewV1')
     < wrapper.lastIndexOf('return base.analyzeWindowsAuthoritySpecialistReview(input)'));
 });
+
+test('only the two exact pinned v4 and v6 runner blobs qualify, never an arbitrary default or extra authority', () => {
+  const v4 = '2026-10-05-continuous-repair-reporting-v4';
+  const v6 = '2026-10-18-island-action-contract-v6';
+  assert.ok(runner.includes(v4));
+  const stagedV6 = runner.replace(v4, v6);
+  assert.notEqual(stagedV6, runner);
+  const accepted = review(stagedV6, status);
+  assert.equal(accepted.clean, true, accepted.findings.map(x => x.code).join(','));
+  for (const candidate of [
+    stagedV6.replace(v6, '2026-10-19-unreviewed-v7'),
+    stagedV6 + '\nStart-Process -FilePath $env:USER_COMMAND',
+    stagedV6.replace('duplicateLeaseAllowed = $false', 'duplicateLeaseAllowed = $true'),
+  ]) {
+    const rejected = review(candidate, status);
+    assert.equal(rejected.clean, false);
+    assert.ok(rejected.findings.some(x => x.code === 'windows-authority-core-source-blob-unreviewed'));
+  }
+});

@@ -9,8 +9,8 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
 // The textual checks below add defense in depth, but may not approve a
 // modified script merely because familiar safe snippets still occur.
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
-  'scripts/windows/run-sovereign-commander-hidden.ps1': 'b794651bacf0e09c48a677586c0e0db6d24c6b9e',
-  'scripts/windows/status-stephanos-core-daemon.ps1': '74d5db0a25a6183653b5332304e39d2d1ca204b0',
+  'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['b794651bacf0e09c48a677586c0e0db6d24c6b9e', '8baab27e2f8e30350609bdfc71e039d78e1713c5']),
+  'scripts/windows/status-stephanos-core-daemon.ps1': Object.freeze(['74d5db0a25a6183653b5332304e39d2d1ca204b0']),
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -297,7 +297,7 @@ export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
     }
-    if (candidates[0].blobSha !== REVIEWED_CORE_SOURCE_BLOBS[path]) {
+    if (!REVIEWED_CORE_SOURCE_BLOBS[path]?.includes(candidates[0].blobSha)) {
       findings.push(finding('windows-authority-core-source-blob-unreviewed', path));
     }
     if (path.endsWith('status-stephanos-core-daemon.ps1')) reviewStatus(candidates[0].content, path, findings);
