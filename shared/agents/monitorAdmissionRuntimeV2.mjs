@@ -315,7 +315,9 @@ export function evaluateLogicalGoalControllerContinuityV2(controller, buildTruth
       'Reconcile the existing canonical scheduler and worker lane without granting new source authority.');
   }
   const refs = Array.isArray(goal.proofRefs)
-    ? goal.proofRefs.filter((ref) => typeof ref === 'string' && /^proof\/[a-z0-9][a-z0-9._/-]{0,180}$/i.test(ref)).slice(0, 8)
+    ? goal.proofRefs.filter((ref) => typeof ref === 'string'
+      && /^(?:proof|receipts)\/[a-z0-9][a-z0-9._/-]{0,180}$/i.test(ref)
+      && !ref.includes('..')).slice(0, 8)
     : [];
   if (state === 'BUILDING') {
     const progressAtMs = Date.parse(text(goal.lastMaterialProgressAtUtc));
