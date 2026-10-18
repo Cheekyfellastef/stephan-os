@@ -3,7 +3,11 @@ import { constants as fsConstants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { verifyLogicalGoalBuildTruthV1 } from './logicalGoalPickupProofV1.mjs';
+import {
+  verifyLogicalGoalBuildTruthV1,
+  loadControllerActivityProofRecordsV1,
+  loadPinnedWorkerPickupVerifierV1,
+} from './logicalGoalPickupProofV1.mjs';
 import {
   admitLogicalMonitor,
   MONITOR_ADMISSION_REGISTRY_VERSION,
@@ -331,6 +335,8 @@ export function evaluateLogicalGoalControllerContinuityV2(controller, buildTruth
       expectedSourceHead: options.expectedSourceHead,
       trustedPublicKeyPem: options.trustedPublicKeyPem,
       trustedPublicKeySha256: options.trustedPublicKeySha256,
+      trustedWorkerPublicKeyPem: options.trustedWorkerPublicKeyPem,
+      trustedWorkerPublicKeySha256: options.trustedWorkerPublicKeySha256,
       nowMs,
     });
     if (!authentication.ok || !authentication.verifiedGoalIds.includes(goal.issue)) {
@@ -391,31 +397,11 @@ export async function loadLogicalGoalBuildTruthForMonitorRuntimeV2(input = {}) {
       || nowMs - observed > LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS) {
       return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_BUILD_TRUTH_STALE', buildTruth: null });
     }
-    const proofRecords = [];
-    try {
-      const refs = [...new Set(truth.goals.filter(goal => goal.state === 'BUILDING')
-        .flatMap(goal => Array.isArray(goal.proofRefs) ? goal.proofRefs : []))];
-      if (refs.length > 120) throw new Error('too-many-proofs');
-      for (const ref of refs) {
-        const match = /^proof\/([a-z0-9][a-z0-9._-]{0,100})(?:\.json)?$/i.exec(text(ref));
-        if (!match) throw new Error('invalid-ref');
-        const path = resolveSharedWorkspacePath({
-          root: layout.root, repoRoot: input.repoRoot,
-          segments: ['proof', match[1].replace(/\.json$/i, '') + '.json'],
-        });
-        if (!path.ok) throw new Error('unsafe-proof-path');
-        const handle = await open(path.path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
-        try {
-          const meta = await handle.stat();
-          if (!meta.isFile() || meta.nlink !== 1 || meta.size < 1 || meta.size > 262144) throw new Error('unsafe-proof');
-          const candidate = JSON.parse(await handle.readFile('utf8'));
-          if (candidate?.proofId !== match[1].replace(/\.json$/i, '') || validateSharedWorkspaceRecord(candidate, {nowMs, staleAfterMs: LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS}).valid !== true) throw new Error('invalid-proof');
-          proofRecords.push(candidate);
-        } finally { await handle.close(); }
-      }
-    } catch {
-      return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_PICKUP_PROOF_RECORD_UNVERIFIED', buildTruth: null });
-    }
+    const loaded = await loadControllerActivityProofRecordsV1({ workspaceRoot: layout.root });
+    if (!loaded.ok) return Object.freeze({ ok: false,
+      reason: loaded.blocker || 'LOGICAL_GOAL_DERIVED_CONTROLLER_PROOF_UNAVAILABLE',
+      buildTruth: null });
+    const proofRecords = loaded.records;
     return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_BUILD_TRUTH_READY', buildTruth: truth,
       pickupAttestation: record.logicalGoalPickupAttestation || null,
       proofRecords: Object.freeze(proofRecords) });
@@ -453,7 +439,15 @@ export async function loadLogicalGoalProofTrustV2(input = {}) {
     || git(['rev-parse','refs/remotes/origin/main']) !== expectedSourceHead) {
     return Object.freeze({ blocker: 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED' });
   }
-  return Object.freeze({ trustedPublicKeyPem, trustedPublicKeySha256: sha, expectedSourceHead, blocker: '' });
+  const localStateRoot = resolve(text(env.LOCALAPPDATA) || resolve(text(env.USERPROFILE) || homedir(), 'AppData', 'Local'), 'Stephanos');
+  const workerTrust = await loadPinnedWorkerPickupVerifierV1({ localStateRoot, env });
+  if (!workerTrust.ok) return Object.freeze({ blocker: workerTrust.blocker });
+  return Object.freeze({
+    trustedPublicKeyPem, trustedPublicKeySha256: sha, expectedSourceHead,
+    trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
+    trustedWorkerPublicKeySha256: workerTrust.workerPublicKeySha256,
+    blocker: '',
+  });
 }
 
 export function isLogicalControllerPulseProposalV2(proposal = {}) {
@@ -557,7 +551,9 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
           proofRecords: options.proofRecords,
           expectedSourceHead: options.expectedSourceHead,
           trustedPublicKeyPem: options.trustedPublicKeyPem,
-          trustedPublicKeySha256: options.trustedPublicKeySha256 },
+          trustedPublicKeySha256: options.trustedPublicKeySha256,
+          trustedWorkerPublicKeyPem: options.trustedWorkerPublicKeyPem,
+          trustedWorkerPublicKeySha256: options.trustedWorkerPublicKeySha256 },
       );
     };
   }
@@ -595,6 +591,8 @@ export async function runMonitorAdmissionRuntimeV2(input = {}) {
     proofRecords: goalBuildTruth.proofRecords,
     trustedPublicKeyPem: trust.trustedPublicKeyPem,
     trustedPublicKeySha256: trust.trustedPublicKeySha256,
+    trustedWorkerPublicKeyPem: trust.trustedWorkerPublicKeyPem,
+    trustedWorkerPublicKeySha256: trust.trustedWorkerPublicKeySha256,
     expectedSourceHead: trust.expectedSourceHead,
     nowMs: input.nowMs,
   });
