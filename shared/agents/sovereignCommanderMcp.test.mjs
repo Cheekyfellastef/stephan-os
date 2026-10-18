@@ -185,6 +185,27 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('prove-skill-forge-runtime'));
+  await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: {
+      actionId: 'prove-skill-forge-runtime',
+      url: 'https://untrusted.example',
+      command: 'UNTRUSTED_ARBITRARY_COMMAND',
+      path: 'C:\\untrusted',
+      releaseLease: true,
+    },
+  }, { id: 7, isRequest: true, isNotification: false });
+  const skillForge = observed.at(-1);
+  assert.deepEqual(skillForge.payload, { actionId: 'prove-skill-forge-runtime' });
+  assert.deepEqual(skillForge.targetPaths, []);
+  assert.doesNotMatch(JSON.stringify(skillForge), /untrusted|releaseLease|UNTRUSTED/);
+  const physical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
+  assert.equal(physical.dispatchAllowed, true);
+  assert.equal(physical.plan.kind, 'fixed-process');
+  assert.equal(physical.plan.processId, 'prove-skill-forge-runtime');
+  assert.equal(physical.mergeAuthority, false);
+  assert.equal(physical.leaseSeizureAllowed, false);
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('rescue-island-readonly-boundary'));
   const island = await handler('tools/call', {
     name: 'maintenance_action',
