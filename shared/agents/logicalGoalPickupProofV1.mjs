@@ -6,14 +6,49 @@ export const LOGICAL_GOAL_PICKUP_ATTESTATION_SCHEMA = 'stephanos.logical-goal-pi
 export const LOGICAL_GOAL_PICKUP_ATTESTATION_DOMAIN = 'stephanos.logical-goal-pickup-attestation.v1\\0';
 const SHA40 = /^[a-f0-9]{40}$/;
 const SHA64 = /^[a-f0-9]{64}$/;
-const REF = /^proof\/([a-z0-9][a-z0-9._-]{0,100})(?:\.json)?$/i;
+const REF = /^(?:proof|receipts)\/[a-z0-9][a-z0-9._/-]{0,180}$/i;
+const WORKER_RECEIPT_SCHEMA = 'stephanos.physical-worker-goal-pickup.v1';
+const WORKER_RECEIPT_DOMAIN = 'stephanos.physical-worker-goal-pickup.v1\\0';
 const MAX_SKEW_MS = 60_000;
 const MAX_AGE_MS = 15 * 60_000;
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = v => String(v ?? '').trim();
 const millis = v => Date.parse(text(v));
 
-function proofRefId(ref) { return (REF.exec(text(ref))?.[1] || '').replace(/\.json$/i, ''); }
+function safeProofRef(ref) { return REF.test(text(ref)) && !text(ref).includes('..'); }
+function verifyWorkerReceipt(record, ref, goal, sourceHead, trust = {}) {
+  const evidence = record?.workerPickupAttestation;
+  if (!evidence || evidence.schemaVersion !== WORKER_RECEIPT_SCHEMA
+    || evidence.publisherId !== 'stephanos-physical-worker'
+    || evidence.sourceHead !== sourceHead
+    || evidence.goalIssue !== goal.issue
+    || evidence.logicalLaneId !== goal.logicalLaneId
+    || evidence.controllerId !== goal.controllerId
+    || evidence.runId !== record?.controllerActivityProof?.runId
+    || evidence.proofId !== record?.proofId
+    || evidence.proofRef !== ref
+    || evidence.observedAtUtc !== goal.lastMaterialProgressAtUtc
+    || !text(evidence.workerId)
+    || !SHA64.test(text(trust.workerPublicKeySha256))
+    || text(trust.workerPublicKeySha256) === text(trust.corePublicKeySha256)
+    || createHash('sha256').update(String(trust.workerPublicKeyPem || '')).digest('hex') !== trust.workerPublicKeySha256) {
+    return false;
+  }
+  try {
+    const key = createPublicKey(trust.workerPublicKeyPem);
+    if (key.asymmetricKeyType !== 'ed25519') return false;
+    const body = {
+      schemaVersion: evidence.schemaVersion, publisherId: evidence.publisherId,
+      sourceHead: evidence.sourceHead, goalIssue: evidence.goalIssue,
+      logicalLaneId: evidence.logicalLaneId, controllerId: evidence.controllerId,
+      runId: evidence.runId, proofId: evidence.proofId, proofRef: evidence.proofRef,
+      observedAtUtc: evidence.observedAtUtc, workerId: evidence.workerId,
+    };
+    const sig = Buffer.from(String(evidence.signatureBase64 || ''), 'base64');
+    return sig.length === 64 && sig.toString('base64') === evidence.signatureBase64
+      && verify(null, Buffer.from(WORKER_RECEIPT_DOMAIN + JSON.stringify(body)), key, sig);
+  } catch { return false; }
+}
 function refsOf(record) {
   const id = text(record?.proofId);
   return new Set([
@@ -22,7 +57,7 @@ function refsOf(record) {
     id ? `proof/${id}` : '', id ? `proof/${id}.json` : '',
   ]);
 }
-function qualifiedProof(record, ref, goal, timeMs, currentMs) {
+function qualifiedProof(record, ref, goal, timeMs, currentMs, sourceHead, trust) {
   if (!record || record.kind !== 'stephanos.shared_workspace.proof'
     || text(record.status).toUpperCase() !== 'PASS'
     || record.controllerActivityProof?.schemaVersion !== 'stephanos.controller-activity-proof.v1'
@@ -31,13 +66,14 @@ function qualifiedProof(record, ref, goal, timeMs, currentMs) {
     || Number(record.controllerActivityProof.materialActionsSucceeded) < 1
     || text(record.correlationId) !== text(record.controllerActivityProof.runId)
     || !refsOf(record).has(ref)
-    || !proofRefId(ref)) return false;
+    || !safeProofRef(ref)
+    || !verifyWorkerReceipt(record, ref, goal, sourceHead, trust)) return false;
   const at = millis(record.timestampUtc);
   return Number.isFinite(at) && at <= currentMs + MAX_SKEW_MS
     && currentMs - at <= MAX_AGE_MS
     && Math.abs(at - timeMs) <= MAX_AGE_MS;
 }
-function canonicalClaims(buildTruth, proofRecords, nowMs) {
+function canonicalClaims(buildTruth, proofRecords, nowMs, sourceHead, trust) {
   if (!Array.isArray(buildTruth?.goals)) return null;
   const claims = [];
   for (const goal of buildTruth.goals) {
@@ -52,12 +88,11 @@ function canonicalClaims(buildTruth, proofRecords, nowMs) {
       || !text(goal.controllerId) || goal.selectedForAdmission !== true) return null;
     const perRef = [];
     for (const ref of refs) {
-      const id = proofRefId(ref);
-      if (!id) return null;
+      if (!safeProofRef(ref)) return null;
       const matches = proofRecords.filter(record =>
-        record?.proofId === id && qualifiedProof(record, ref, goal, at, nowMs));
+        qualifiedProof(record, ref, goal, at, nowMs, sourceHead, trust));
       if (matches.length !== 1) return null;
-      perRef.push(Object.freeze({ proofRef: ref, proofId: id, recordSha256: digest(matches[0]) }));
+      perRef.push(Object.freeze({ proofRef: ref, proofId: matches[0].proofId, recordSha256: digest(matches[0]) }));
     }
     claims.push(Object.freeze({
       issue: goal.issue,
@@ -70,13 +105,13 @@ function canonicalClaims(buildTruth, proofRecords, nowMs) {
   }
   return claims;
 }
-function signedBody({ buildTruth, sourceHead, proofRecords, nowMs }) {
+function signedBody({ buildTruth, sourceHead, proofRecords, nowMs, trust }) {
   if (!SHA40.test(text(sourceHead)) || buildTruth?.schemaVersion !== 'stephanos.sovereign-build-truth.v1'
     || !Number.isFinite(millis(buildTruth.observedAtUtc))
     || millis(buildTruth.observedAtUtc) > nowMs + MAX_SKEW_MS
     || nowMs - millis(buildTruth.observedAtUtc) > MAX_AGE_MS
     || !Array.isArray(proofRecords)) return null;
-  const claims = canonicalClaims(buildTruth, proofRecords, nowMs);
+  const claims = canonicalClaims(buildTruth, proofRecords, nowMs, sourceHead, trust);
   if (!claims) return null;
   return Object.freeze({
     schemaVersion: LOGICAL_GOAL_PICKUP_ATTESTATION_SCHEMA,
@@ -88,8 +123,14 @@ function signedBody({ buildTruth, sourceHead, proofRecords, nowMs }) {
     claims,
   });
 }
-export function signLogicalGoalBuildTruthV1({ buildTruth, sourceHead, proofRecords = [], signingPrivateKeyPem = '', nowMs = Date.now() } = {}) {
-  const body = signedBody({ buildTruth, sourceHead, proofRecords, nowMs });
+export function signLogicalGoalBuildTruthV1({
+  buildTruth, sourceHead, proofRecords = [], signingPrivateKeyPem = '',
+  trustedWorkerPublicKeyPem = '', trustedWorkerPublicKeySha256 = '',
+  corePublicKeySha256 = '', nowMs = Date.now(),
+} = {}) {
+  const trust = { workerPublicKeyPem: trustedWorkerPublicKeyPem,
+    workerPublicKeySha256: trustedWorkerPublicKeySha256, corePublicKeySha256 };
+  const body = signedBody({ buildTruth, sourceHead, proofRecords, nowMs, trust });
   if (!body) return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_SIGNING_SOURCE_OR_PROOF_UNVERIFIED' });
   try {
     const key = createPrivateKey(signingPrivateKeyPem);
@@ -101,14 +142,18 @@ export function signLogicalGoalBuildTruthV1({ buildTruth, sourceHead, proofRecor
 }
 export function verifyLogicalGoalBuildTruthV1({
   buildTruth, attestation, proofRecords = [], expectedSourceHead = '',
-  trustedPublicKeyPem = '', trustedPublicKeySha256 = '', nowMs = Date.now(),
+  trustedPublicKeyPem = '', trustedPublicKeySha256 = '',
+  trustedWorkerPublicKeyPem = '', trustedWorkerPublicKeySha256 = '', nowMs = Date.now(),
 } = {}) {
   const blocked = reason => Object.freeze({ ok: false, blocker: reason, verifiedGoalIds: Object.freeze([]) });
   if (!SHA64.test(text(trustedPublicKeySha256))
     || createHash('sha256').update(String(trustedPublicKeyPem)).digest('hex') !== trustedPublicKeySha256) {
     return blocked('LOGICAL_GOAL_PINNED_VERIFIER_UNAVAILABLE');
   }
-  const body = signedBody({ buildTruth, sourceHead: expectedSourceHead, proofRecords, nowMs });
+  const trust = { workerPublicKeyPem: trustedWorkerPublicKeyPem,
+    workerPublicKeySha256: trustedWorkerPublicKeySha256,
+    corePublicKeySha256: trustedPublicKeySha256 };
+  const body = signedBody({ buildTruth, sourceHead: expectedSourceHead, proofRecords, nowMs, trust });
   if (!body || !attestation || attestation.sourceHead !== expectedSourceHead
     || !Array.isArray(attestation.claims)
     || JSON.stringify(attestation.claims) !== JSON.stringify(body.claims)
