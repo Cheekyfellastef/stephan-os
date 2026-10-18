@@ -200,12 +200,12 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.deepEqual(skillForge.payload, { actionId: 'prove-skill-forge-runtime' });
   assert.deepEqual(skillForge.targetPaths, []);
   assert.doesNotMatch(JSON.stringify(skillForge), /untrusted|releaseLease|UNTRUSTED/);
-  const physical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
-  assert.equal(physical.dispatchAllowed, true);
-  assert.equal(physical.plan.kind, 'fixed-process');
-  assert.equal(physical.plan.processId, 'prove-skill-forge-runtime');
-  assert.equal(physical.mergeAuthority, false);
-  assert.equal(physical.leaseSeizureAllowed, false);
+  const skillForgePhysical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
+  assert.equal(skillForgePhysical.dispatchAllowed, true);
+  assert.equal(skillForgePhysical.plan.kind, 'fixed-process');
+  assert.equal(skillForgePhysical.plan.processId, 'prove-skill-forge-runtime');
+  assert.equal(skillForgePhysical.mergeAuthority, false);
+  assert.equal(skillForgePhysical.leaseSeizureAllowed, false);
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('rescue-island-readonly-boundary'));
   const island = await handler('tools/call', {
     name: 'maintenance_action',
