@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Stephanos Sovereign Browser Witness",
+  "version": "0.1.0",
+  "description": "Operator-authorised, origin-scoped local browser proof for Sovereign Commander.",
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "storage",
+    "alarms"
+  ],
+  "optional_host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Stephanos browser witness",
+    "default_popup": "popup.html"
+  }
+}
