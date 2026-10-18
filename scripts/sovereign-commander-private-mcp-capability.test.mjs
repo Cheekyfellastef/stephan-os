@@ -8,6 +8,7 @@ const RUNTIME_CALLERS = [
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
+  'scripts/windows/run-sovereign-commander-hidden.ps1',
   'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
 ];
@@ -32,7 +33,7 @@ test('existing specialist-pinned Windows starter accepts the required generation
   assert.ok(mcp.includes("name: 'read_multiple_files'"));
   assert.ok(mcp.includes("name: 'get_file_info'"));
   assert.ok(autoheal.includes("'-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION"));
-  assert.ok(runner.includes('[string]$RequireCapabilityVersion'));
+  assert.ok(runner.includes("[string]$RequireCapabilityVersion = '2026-10-18-island-action-contract-v6'"));
   assert.ok(runner.includes('$staleCapability = [bool]'));
   assert.ok(runner.includes('$staleCapabilityRecycleRequested'));
 });
