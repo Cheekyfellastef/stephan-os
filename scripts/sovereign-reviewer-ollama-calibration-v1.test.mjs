@@ -105,10 +105,10 @@ test('loopback-only requests refuse redirect traversal for model prompts and met
   };
   const calibration = await run(env, { ...gitProof(), fetchImpl: redirected });
   assert.equal(calibration.status, 'CALIBRATION_HELD');
-  assert.equal(calibration.completedCases, 10);
+  assert.equal(calibration.completedCases, 0, 'failed first transport must not count as a completed review');
   const preflight = await probe(env, { ...gitProof(), fetchImpl: redirected });
   assert.equal(preflight.status, 'LOCAL_OLLAMA_PREFLIGHT_HELD');
-  assert.equal(inspected, 11);
+  assert.equal(inspected, 2, 'one refused generate and one refused metadata call');
   noAuthority(calibration);
   noAuthority(preflight);
 });
