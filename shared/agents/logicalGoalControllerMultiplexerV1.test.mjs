@@ -290,6 +290,8 @@ test('selected goal stays blocked for unproven pickup, mismatched owner, wrong g
   const cases = [
     [buildTruth([proofGoal(controller, { state: 'QUEUED', proofRefs: [] })]), 'LOGICAL_GOAL_SELECTED_WITHOUT_PICKUP'],
     [buildTruth([proofGoal(controller, { state: 'BUILDING', proofRefs: [] })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
+    [buildTruth([proofGoal(controller, { lastMaterialProgressAtUtc: '2026-10-01T15:00:00.000Z' })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
+    [buildTruth([proofGoal(controller, { lastMaterialProgressAtUtc: '2026-10-18T16:00:00.000Z' })]), 'LOGICAL_GOAL_PICKUP_PROOF_UNVERIFIED'],
     [buildTruth([proofGoal(controller, { controllerId: 'someone-else' })]), 'LOGICAL_GOAL_PICKUP_OWNER_MISMATCH'],
     [buildTruth([proofGoal(controller, { logicalLaneId: 'logical-goal-9999' })]), 'LOGICAL_GOAL_PICKUP_OWNER_MISMATCH'],
     [buildTruth([proofGoal(controller, { issue: '#3051' })]), 'LOGICAL_GOAL_PICKUP_BINDING_MISSING'],
@@ -321,6 +323,11 @@ test('unselected logical goal may only pass truthful tracking, not claim build',
   assert.match(pulse.summary, /TRACKED only, not scheduler-selected; no build or pickup claimed/);
   assert.equal(pulse.notify, false);
   assert.deepEqual(pulse.proofRefs, ['proof/logical-goal-controller-fabric-current.json']);
+  const staleLane = evaluateLogicalGoalControllerContinuityV2(
+    controller, buildTruth([proofGoal(controller)]), { nowMs: NOW_MS },
+  );
+  assert.equal(staleLane.state, 'BLOCKED');
+  assert.equal(staleLane.blocker, 'LOGICAL_GOAL_UNSELECTED_MATERIAL_WORK_PRESENT');
 });
 
 test('a scheduled pulse cannot dispatch work or mask the absence of Build Truth wiring', async () => {
