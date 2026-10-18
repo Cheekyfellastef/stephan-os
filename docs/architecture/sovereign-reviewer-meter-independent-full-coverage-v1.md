@@ -17,6 +17,7 @@ The canonical exact-head source snapshot is classified into a bounded set of rev
 | Reviewer trust and self-changes | Existing high-risk local advisory | Out-of-band trust root, separately authenticated auditor and protected self-change review |
 | Browser / served runtime evidence | Existing standard local reviewer for source; Commander browser proof for runtime | Live exact-head served/browser receipt as applicable, never inferred from source tests |
 | Daemons / deployment / ignition | Existing high-risk local advisory | Independently qualified runtime/Windows specialist and live exact-head deployment/health proof |
+| Other executable or policy paths not otherwise classified | Existing high-risk local advisory | Independent specialist before admission; fail-closed unknown-domain handling |
 
 These are review needs, not automatic classifications of reviewer qualifications. Classification can be over-inclusive; it must never suppress high-risk requirements when a PR crosses domains. The inventory is not an additional scheduler, witness, authority, approval, or deployment tool.
 
@@ -24,7 +25,7 @@ These are review needs, not automatic classifications of reviewer qualifications
 
 - shared/agents/sovereignReviewCoverageV1.mjs: bounded exact-head/source/classification contract. Rejects duplicate/invalid changed-path inventories, malformed source refs, and returns all applicable domain packets with a fixed existing local candidate runner. Every outcome explicitly denies trusted review acceptance and lease/deployment authority.
 - scripts/sovereign-review-coverage-v1.mjs --once: requires the existing read-only exact local source snapshot; emits bounded categories and requirements, not raw code, credentials, raw model output or private paths.
-- Regression tests feed mixed high-risk patches across all nine classes, duplicate/unsafe paths, forged auth flags and unverified Git snapshots. The old provider-neutral and exact-head test suites include these cases.
+- Regression tests feed mixed high-risk patches across all ten classes, duplicate/unsafe paths, forged auth flags and unverified Git snapshots. The old provider-neutral and exact-head test suites include these cases.
 
 ## Dependency chain: what actually removes the meter
 
