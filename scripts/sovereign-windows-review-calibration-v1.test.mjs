@@ -23,6 +23,10 @@ const unsafe = [
   ['GetProcessesByName(','writable-handle-not-excluded'],
   ['"/witness.key"','signer-isolation-broken'],
   ['ReleaseLease(originalLeaseId)','lease-cas-bypass'],
+  ['!DirectLaunchDenied(oldWriterSid)) return Hold()','wmi-com-reentry-not-excluded'],
+  ['AcceptMissingHistoricalReceiptAsSuccess(','historical-receipt-fabricated'],
+  ['!WitnessValid(witnessDigest)) return Hold()','independent-operator-signature-bypassed'],
+  ['NegativeWriteTest(currentServiceSid,','original-writer-principal-not-tested'],
 ];
 const mockFetch = async (url, args) => {
   assert.equal(url, 'http://127.0.0.1:11434/api/generate');
@@ -61,7 +65,7 @@ test('non-Windows cannot take Windows review path',async()=>{
 test('Windows host model score remains candidate evidence with no privileges',async()=>{
   const r=await run(env,dependencies);
   assert.equal(r.status,'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED');
-  assert.equal(r.passedCases,8);
+  assert.equal(r.passedCases,13);
   assert.equal(r.modelDigestSha256,'c'.repeat(64));
   noAuthority(r);
 });
