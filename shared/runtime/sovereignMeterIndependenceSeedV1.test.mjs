@@ -175,7 +175,7 @@ test('meter-blackout inventory rejects malformed or forged evidence rows', () =>
 
 test('meter-blackout inventory rejects forged or ambiguous owner custody', () => {
   const markdown = readMeterBlackoutInventory();
-  const original = '#1898: same bounded task';
+  const original = '#1898: same bounded task built without Codex, with exact worker/source/test receipt';
   assert.ok(markdown.includes(original), 'owner spoof regression needs original row');
   for (const invalid of [
     '#9999: same bounded task',
