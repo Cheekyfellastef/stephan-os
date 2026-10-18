@@ -178,6 +178,14 @@ export async function observeSovereignBrowser({
   const observedAtUtc = now().toISOString();
   const native = await readNativeBrowserObservation({ nativeReceiptRoot, now });
   if (native) return native;
+  // The normal route is the operator-permissioned extension. A legacy
+  // debug-enabled CDP browser is never inspected by default.
+  if (env.STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP !== '1') {
+    return Object.freeze({
+      ok: false, observedAtUtc, blocker: 'BROWSER_NATIVE_WITNESS_NOT_READY',
+      finalVerdict: 'BROWSER_OBSERVATION_BLOCKED',
+    });
+  }
   let allowedOrigins;
   try { allowedOrigins = admittedBrowserOrigins(env); }
   catch { return Object.freeze({ ok: false, observedAtUtc, blocker: 'BROWSER_ORIGIN_ALLOWLIST_INVALID', finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' }); }
