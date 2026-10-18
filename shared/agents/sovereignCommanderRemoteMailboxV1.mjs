@@ -491,7 +491,7 @@ function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
   });
 }
 
-function safeBrowserObservationProjection(value = {}, processId = '') {
+export function safeBrowserObservationProjection(value = {}, processId = '') {
   if (processId !== 'observe-open-stephanos-tabs') return null;
   const stdout = String(value?.structuredContent?.stdout || '');
   const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('SOVEREIGN_BROWSER_OBSERVATION_RESULT='));
@@ -587,7 +587,7 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
   });
 }
 
-function browserObservationCompleteForAction(proof = null) {
+export function browserObservationCompleteForAction(proof = null) {
   return proof?.ok === true
     && proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
     && proof?.readOnly === true
