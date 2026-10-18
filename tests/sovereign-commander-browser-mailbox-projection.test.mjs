@@ -24,6 +24,7 @@ const base = Object.freeze({
   admittedTabCount: 1,
   observedTabCount: 1,
   screenshotCount: 1,
+  diagnosticTabCount: 1,
   evidenceHash: createHash('sha256').update('test receipt').digest('hex'),
   readOnly: true,
   observationOnly: true,
@@ -48,6 +49,20 @@ test('missing marker or invalid scope cannot count as a browser receipt', () => 
   assert.equal(safeBrowserObservationProjection(envelope({ ...base, servedHeadVerified: true }), 'observe-open-stephanos-tabs'), null);
 });
 
+test('diagnostic-only receipts are accepted as diagnostics, never screenshots', () => {
+  const scanned = safeBrowserObservationProjection(envelope({
+    ...base,
+    finalVerdict:'BROWSER_OBSERVATION_DIAGNOSTIC',
+    screenshotCount:0, observedTabCount:0,
+    diagnosticTabCount:3
+  }), 'observe-open-stephanos-tabs');
+  assert.equal(scanned.ok,true);
+  assert.equal(scanned.finalVerdict,'BROWSER_OBSERVATION_DIAGNOSTIC');
+  assert.equal(scanned.screenshotCount,0);
+  assert.equal(scanned.functionalAcceptanceVerified,false);
+  assert.equal(browserObservationCompleteForAction(scanned),true);
+  assert.equal(browserObservationCompleteForAction({...scanned,screenshotCount:1}),false);
+});
 test('partial evidence or forged functionality does not pass acceptance', () => {
   assert.equal(browserObservationCompleteForAction({ ...base, screenshotCount: 0 }), false);
   assert.equal(browserObservationCompleteForAction({ ...base, functionalAcceptanceVerified: true }), false);
