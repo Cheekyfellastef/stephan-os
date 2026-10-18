@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { constants as fsConstants } from 'node:fs';
 import { lstat, mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -51,7 +50,11 @@ import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runt
 import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
-import { signLogicalGoalBuildTruthV1 } from '../shared/agents/logicalGoalPickupProofV1.mjs';
+import {
+  loadControllerActivityProofRecordsV1,
+  loadPinnedWorkerPickupVerifierV1,
+  signLogicalGoalBuildTruthV1,
+} from '../shared/agents/logicalGoalPickupProofV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
@@ -315,29 +318,24 @@ async function publishControllerLaneTruth() {
     let pickupAttestation = null;
     if (currentHead() === sourceHead && Array.isArray(buildTruth.goals)) {
       try {
-        const proofDir = resolve(workspaceRoot, 'proof');
-        const dirMeta = await lstat(proofDir);
-        if (!dirMeta.isDirectory() || dirMeta.isSymbolicLink()) throw new Error('UNTRUSTED_PROOF_DIR');
-        const records = [];
-        const refs = new Set(buildTruth.goals.filter(goal => goal.state === 'BUILDING')
-          .flatMap(goal => Array.isArray(goal.proofRefs) ? goal.proofRefs : []));
-        for (const ref of refs) {
-          const match = /^proof\/([a-z0-9][a-z0-9._-]{0,100})(?:\.json)?$/i.exec(String(ref || ''));
-          if (!match) throw new Error('UNTRUSTED_PROOF_REFERENCE');
-          const file = resolve(proofDir, match[1].replace(/\.json$/i, '') + '.json');
-          const handle = await open(file, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
-          try {
-            const meta = await handle.stat();
-            if (!meta.isFile() || meta.size < 1 || meta.size > 262144 || meta.nlink !== 1) throw new Error('UNTRUSTED_PROOF_FILE');
-            records.push(JSON.parse(await handle.readFile('utf8')));
-          } finally { await handle.close(); }
-        }
+        const observed = await loadControllerActivityProofRecordsV1({ workspaceRoot });
+        if (!observed.ok) throw new Error(observed.blocker);
+        // Core's signature is not the independent physical-worker witness.
+        // The protected worker key must be DIFFERENT from Core's key, and
+        // must be pinned outside the writable checkout and workspace.
+        const workerTrust = await loadPinnedWorkerPickupVerifierV1({
+          localStateRoot, env: process.env,
+        });
+        if (!workerTrust.ok) throw new Error(workerTrust.blocker);
         const keyFile = resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-private.pem');
         const meta = await lstat(keyFile);
         if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) throw new Error('UNCOMMISSIONED_CORE_KEY');
         const signed = signLogicalGoalBuildTruthV1({
-          buildTruth, sourceHead, proofRecords: records,
+          buildTruth, sourceHead, proofRecords: observed.records,
           signingPrivateKeyPem: await readFile(keyFile, 'utf8'),
+          trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
+          trustedWorkerPublicKeySha256: workerTrust.workerPublicKeySha256,
+          corePublicKeySha256: workerTrust.corePublicKeySha256,
         });
         if (signed.ok) pickupAttestation = signed.attestation;
       } catch {
