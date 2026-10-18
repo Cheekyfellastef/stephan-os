@@ -109,35 +109,44 @@ export async function readNativeBrowserObservation({
         || receipt.mechanism !== 'operator-permissioned-chromium-native-messaging'
         || receipt.readOnly !== true || receipt.observationOnly !== true
         || receipt.servedHeadVerified !== false || receipt.functionalAcceptanceVerified !== false
-        || receipt.scanOnly !== false) continue;
+        || typeof receipt.scanOnly !== 'boolean') continue;
       const age = now().getTime() - Date.parse(receipt.observedAtUtc);
       if (!Number.isFinite(age) || age < -60_000 || age > NATIVE_MAX_AGE_MS) continue;
-      if (!Number.isSafeInteger(receipt.observedTabCount) || receipt.observedTabCount !== 1
-        || receipt.screenshotCount !== 1
-        || !Array.isArray(receipt.screenshots) || receipt.screenshots.length !== 1
-        || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')) continue;
-      const item = receipt.screenshots[0];
-      if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.jpg$/.test(item?.imageName || '')
-        || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')) continue;
-      const imageFile = resolve(nativeReceiptRoot, item.imageName);
-      const imageStat = await lstat(imageFile);
-      if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size > 2_800_000) continue;
-      if (sha256(await readFile(imageFile)) !== item.sha256) continue;
+      const diagnosticOnly = receipt.scanOnly === true;
+      if (!Number.isSafeInteger(receipt.diagnosticTabCount) || receipt.diagnosticTabCount < 1
+        || receipt.diagnosticTabCount > 8
+        || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')
+        || !Array.isArray(receipt.screenshots)) continue;
+      if (diagnosticOnly) {
+        if (receipt.observedTabCount !== 0 || receipt.screenshotCount !== 0
+          || receipt.screenshots.length !== 0) continue;
+      } else {
+        if (receipt.observedTabCount !== 1 || receipt.screenshotCount !== 1
+          || receipt.screenshots.length !== 1) continue;
+        const item = receipt.screenshots[0];
+        if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.jpg$/.test(item?.imageName || '')
+          || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')) continue;
+        const imageFile = resolve(nativeReceiptRoot, item.imageName);
+        const imageStat = await lstat(imageFile);
+        if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size > 2_800_000) continue;
+        if (sha256(await readFile(imageFile)) !== item.sha256) continue;
+      }
       return Object.freeze({
         schemaVersion: BROWSER_OBSERVATION_SCHEMA,
         ok: true,
         observedAtUtc: receipt.observedAtUtc,
         connectedTabCount: safeCount(receipt.connectedTabCount),
         admittedTabCount: safeCount(receipt.admittedTabCount),
-        observedTabCount: 1,
-        screenshotCount: 1,
+        observedTabCount: safeCount(receipt.observedTabCount),
+        diagnosticTabCount: safeCount(receipt.diagnosticTabCount),
+        screenshotCount: safeCount(receipt.screenshotCount),
         evidenceHash: receipt.evidenceHash,
         observationOnly: true,
         servedHeadVerified: false,
         functionalAcceptanceVerified: false,
         readOnly: true,
         mechanism: 'operator-permissioned-chromium-native-messaging',
-        finalVerdict: 'BROWSER_OBSERVATION_CAPTURED',
+        finalVerdict: diagnosticOnly ? 'BROWSER_OBSERVATION_DIAGNOSTIC' : 'BROWSER_OBSERVATION_CAPTURED',
       });
     } catch { /* Ignore malformed/untrusted receipts; never produce green. */ }
   }
@@ -262,13 +271,14 @@ export function publicBrowserObservationProjection(result = {}) {
   return Object.freeze({
     schemaVersion: BROWSER_OBSERVATION_SCHEMA,
     ok: result.ok === true,
-    finalVerdict: ['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(result.finalVerdict) ? result.finalVerdict : 'BROWSER_OBSERVATION_BLOCKED',
+    finalVerdict: ['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(result.finalVerdict) ? result.finalVerdict : 'BROWSER_OBSERVATION_BLOCKED',
     blocker: clean(result.blocker).slice(0, 96),
     observedAtUtc: clean(result.observedAtUtc).slice(0, 40),
     connectedTabCount: safeCount(result.connectedTabCount),
     admittedTabCount: safeCount(result.admittedTabCount),
     observedTabCount: safeCount(result.observedTabCount),
     screenshotCount: safeCount(result.screenshotCount),
+    diagnosticTabCount: safeCount(result.diagnosticTabCount),
     evidenceHash: /^[0-9a-f]{64}$/.test(clean(result.evidenceHash)) ? result.evidenceHash : '',
     observationOnly: true,
     servedHeadVerified: false,
