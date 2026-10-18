@@ -541,6 +541,9 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
     servedBuildHead: SHA_PATTERN.test(text(proof.servedBuildHead).toLowerCase()) ? text(proof.servedBuildHead).toLowerCase() : '',
     servedAssetFingerprint: PROOF_HASH_PATTERN.test(text(proof.servedAssetFingerprint).toLowerCase()) ? text(proof.servedAssetFingerprint).toLowerCase() : '',
+    expectedAssetFingerprint: PROOF_HASH_PATTERN.test(text(proof.expectedAssetFingerprint).toLowerCase()) ? text(proof.expectedAssetFingerprint).toLowerCase() : '',
+    currentSourceFingerprint: PROOF_HASH_PATTERN.test(text(proof.currentSourceFingerprint).toLowerCase()) ? text(proof.currentSourceFingerprint).toLowerCase() : '',
+    servedSourceFingerprint: PROOF_HASH_PATTERN.test(text(proof.servedSourceFingerprint).toLowerCase()) ? text(proof.servedSourceFingerprint).toLowerCase() : '',
     pillCount: safeCount(proof.pillCount),
     atlasEvidencePanelReady: proof.evidencePanelReady === true,
     atlasCorpusCount: safeCount(proof.corpusCount),
@@ -606,7 +609,10 @@ function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead
     return proof.profile === 'skill-forge-and-command-observatory'
       && proof.finalVerdict === 'SKILL_FORGE_RUNTIME_PROOF_PASS'
       && proof.servedBuildHead === expectedHead
-      && PROOF_HASH_PATTERN.test(proof.servedAssetFingerprint || '')
+      && PROOF_HASH_PATTERN.test(proof.expectedAssetFingerprint || '')
+      && proof.servedAssetFingerprint === proof.expectedAssetFingerprint
+      && PROOF_HASH_PATTERN.test(proof.currentSourceFingerprint || '')
+      && proof.servedSourceFingerprint === proof.currentSourceFingerprint
       && proof.forgeHttpStatus === 200
       && proof.commandHttpStatus === 200
       && proof.backendHttpStatus === 200
