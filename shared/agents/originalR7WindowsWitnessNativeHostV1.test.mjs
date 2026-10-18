@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const root = new URL('../../src/windows/Stephanos.OriginalR7CustodyWitness/', import.meta.url);
 const program = await readFile(new URL('Program.cs', root), 'utf8');
+const scm = await readFile(new URL('OriginalR7ScmPreflight.cs', root), 'utf8');
 const project = await readFile(new URL('Stephanos.OriginalR7CustodyWitness.csproj', root), 'utf8');
 const guide = await readFile(new URL('README.md', root), 'utf8');
 const nativeCi = await readFile(new URL('../../.github/workflows/original-r7-native-windows-proof.yml', import.meta.url), 'utf8');
@@ -61,4 +62,17 @@ test('Windows CI compiles real native SCM witness and proves CLI denial without 
   assert.match(nativeCi, /BATTLE_BRIDGE_WINDOWS_WITNESS_COMMISSIONED=false/);
   assert.match(nativeCi, /ORIGINAL_R7_LEASE_RELEASED=false/);
   assert.doesNotMatch(nativeCi, /\b(?:New-Service|Start-Service|Set-Service|Set-Acl|icacls|schtasks|Set-ExecutionPolicy)\b/i);
+});
+
+test('SCM preflight checks the exact on-disk witness image pin before any custody claim', () => {
+  assert.match(scm, /PinnedImageSha256/);
+  assert.match(scm, /SHA256\.HashData\(stream\)/);
+  assert.match(scm, /CryptographicOperations\.FixedTimeEquals/);
+  assert.match(scm, /LocalImageHasNoReparseAncestors/);
+  assert.match(scm, /FileAttributes\.ReparsePoint/);
+  assert.match(scm, /R7_SCM_PINNED_IMAGE_DIGEST_UNPROVEN/);
+  assert.match(scm, /R7_SCM_SHAPE_OBSERVED_NOT_PHYSICAL_CUSTODY/);
+  assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
+  assert.doesNotMatch(scm, /\b(?:Registry\.SetValue|CreateSubKey|SetAccessControl|File\.WriteAllBytes|File\.WriteAllText|Process\.Start)\s*\(/);
+  assert.doesNotMatch(scm, /\b(?:SignData|SignHash|ECDsa\.Sign|CngKey\.Create)\s*\(/);
 });
