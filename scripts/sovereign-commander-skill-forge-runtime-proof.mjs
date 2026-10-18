@@ -7,6 +7,11 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import { collectServedDistFingerprint, launchProofBrowser, loadPlaywright } from './browser-proof-runner.mjs';
+import {
+  computeStephanosSourceFingerprint,
+  createStephanosDistManifest,
+  extractEmbeddedHtmlMetadata,
+} from './stephanos-build-utils.mjs';
 
 export const SKILL_FORGE_RUNTIME_PROOF_SCHEMA = 'stephanos.sovereign-skill-forge-runtime-proof.v1';
 export const SKILL_FORGE_RUNTIME_PROOF_MARKER = 'SOVEREIGN_COMMANDER_SKILL_FORGE_RUNTIME_PROOF_RESULT=';
@@ -48,7 +53,10 @@ export function evaluateSkillForgeBrowserObservation(value = {}) {
   const blockers = [];
   if (value.exactHeadProofOk !== true) blockers.push('SKILL_FORGE_EXACT_HEAD_NOT_PROVEN');
   if (!SHA40.test(String(value.servedBuildHead || '')) || value.servedBuildHead !== value.sourceHead) blockers.push('SKILL_FORGE_BUILD_HEAD_MISMATCH');
-  if (!/^[a-f0-9]{64}$/i.test(String(value.servedAssetFingerprint || ''))) blockers.push('SKILL_FORGE_SERVED_ASSET_FINGERPRINT_MISSING');
+  if (!/^[a-f0-9]{64}$/i.test(String(value.expectedAssetFingerprint || ''))
+    || value.servedAssetFingerprint !== value.expectedAssetFingerprint) blockers.push('SKILL_FORGE_SERVED_ASSET_MISMATCH');
+  if (!/^[a-f0-9]{64}$/i.test(String(value.currentSourceFingerprint || ''))
+    || value.servedSourceFingerprint !== value.currentSourceFingerprint) blockers.push('SKILL_FORGE_SOURCE_FINGERPRINT_MISMATCH');
   if (value.forgeHttpStatus !== 200) blockers.push('SKILL_FORGE_ROUTE_HTTP_FAILED');
   if (value.commandHttpStatus !== 200) blockers.push('STEPHANOS_COMMAND_ROUTE_HTTP_FAILED');
   if (value.forgeUrl !== URLS.forge) blockers.push('SKILL_FORGE_CANONICAL_URL_MISMATCH');
@@ -91,20 +99,45 @@ export async function collectSkillForgeRuntimeProof({
   if (!healthHeadMatches(health,sourceHead)) {
     return Object.freeze({...initial,blocker:'SKILL_FORGE_SERVED_HEAD_MISMATCH'});
   }
-  // Pin the actual served Vite build metadata and hash bounded served assets.
-  // A healthy proxy or an old dist bundle must never count as a current UI.
+  // Independently bind the canonical local build to the current source tree,
+  // then compare exact served bytes to that local build, not merely to any SHA.
+  // Neither fetched/served metadata nor a claimant-supplied digest is authority.
+  let localBuild, embeddedBuild, currentSourceFingerprint, expectedAssets;
+  try {
+    currentSourceFingerprint = computeStephanosSourceFingerprint({ rootDir: repoRoot });
+    localBuild = JSON.parse(await readFile(resolve(repoRoot, 'apps/stephanos/dist/stephanos-build.json'), 'utf8'));
+    embeddedBuild = extractEmbeddedHtmlMetadata(
+      await readFile(resolve(repoRoot, 'apps/stephanos/dist/index.html'), 'utf8'),
+    );
+    expectedAssets = createStephanosDistManifest({ rootDir: repoRoot });
+  } catch {
+    return Object.freeze({...initial,blocker:'SKILL_FORGE_CANONICAL_BUILD_UNVERIFIED'});
+  }
+  if (!/^[a-f0-9]{64}$/i.test(currentSourceFingerprint)
+    || sha(localBuild?.gitCommit) !== sourceHead
+    || sha(localBuild?.sourceFingerprint) !== currentSourceFingerprint
+    || sha(embeddedBuild?.gitCommit) !== sourceHead
+    || sha(embeddedBuild?.sourceFingerprint) !== currentSourceFingerprint) {
+    return Object.freeze({...initial,blocker:'SKILL_FORGE_CANONICAL_SOURCE_DRIFT'});
+  }
   let servedBuild, servedAssets;
   try {
     servedBuild = await fixedJson(fetchFn, HOST+'/apps/stephanos/dist/stephanos-build.json');
-    servedAssets = await collectServedDistFingerprint(URLS.command, { fetchFn });
+    servedAssets = await collectServedDistFingerprint(URLS.command, {
+      fetchFn, expectedEntries: expectedAssets.entries,
+    });
   } catch {
     return Object.freeze({...initial,blocker:'SKILL_FORGE_SERVED_ASSET_PROOF_UNAVAILABLE'});
   }
-  if (servedBuild?.httpStatus !== 200 || sha(servedBuild?.json?.gitCommit) !== sourceHead) {
+  if (servedBuild?.httpStatus !== 200
+    || sha(servedBuild?.json?.gitCommit) !== sourceHead
+    || sha(servedBuild?.json?.sourceFingerprint) !== currentSourceFingerprint) {
     return Object.freeze({...initial,blocker:'SKILL_FORGE_BUILD_HEAD_MISMATCH'});
   }
-  if (servedAssets?.ok !== true || !/^[a-f0-9]{64}$/i.test(String(servedAssets.fingerprint || ''))) {
-    return Object.freeze({...initial,blocker:'SKILL_FORGE_SERVED_ASSET_FINGERPRINT_MISSING'});
+  if (servedAssets?.ok !== true
+    || servedAssets.fingerprint !== expectedAssets.fingerprint
+    || servedAssets.fileCount !== expectedAssets.fileCount) {
+    return Object.freeze({...initial,blocker:'SKILL_FORGE_SERVED_ASSET_MISMATCH'});
   }
   const playwright = await loadPlaywrightFn();
   if (!playwright?.chromium) return Object.freeze({...initial,exactHeadProofOk:true,blocker:'SKILL_FORGE_PLAYWRIGHT_UNAVAILABLE'});
@@ -122,9 +155,13 @@ export async function collectSkillForgeRuntimeProof({
       const selector = key==='forge' ? '[data-testid="skill-forge-observatory"]' : '[data-testid="stephanos-command-observatory"]';
       await page.waitForSelector(selector,{state:'visible',timeout:15000});
       if (key==='forge') {
+        // Initial UNAVAILABLE is a React placeholder, not a settled observation.
+        // Only the actual received + reported hydrated UI can pass this profile.
         await page.waitForFunction(() => {
-          const node = document.querySelector('[data-testid="skill-forge-observatory"] .skill-source-pill strong');
-          return node && ['REPORTED','STALE','UNAVAILABLE'].includes(String(node.textContent).trim());
+          const source = document.querySelector('[data-testid="skill-forge-observatory"] .skill-source-pill strong');
+          const refresh = document.querySelector('[data-testid="skill-forge-observatory"] .skill-source-pill span');
+          return String(source?.textContent || '').trim() === 'REPORTED'
+            && String(refresh?.textContent || '').trim() === 'RECEIVED';
         },null,{timeout:15000});
       }
       const observation = await page.evaluate(() => {
@@ -158,6 +195,9 @@ export async function collectSkillForgeRuntimeProof({
       sourceHead,
       servedBuildHead:sha(servedBuild.json.gitCommit),
       servedAssetFingerprint:servedAssets.fingerprint,
+      expectedAssetFingerprint:expectedAssets.fingerprint,
+      currentSourceFingerprint,
+      servedSourceFingerprint:sha(servedBuild.json.sourceFingerprint),
       forgeHttpStatus:views.forge.httpStatus,
       commandHttpStatus:views.command.httpStatus,
       forgeUrl:views.forge.url,
@@ -180,6 +220,9 @@ export async function collectSkillForgeRuntimeProof({
       generatedAtUtc:now().toISOString(),relatedPr:3046,featureMergeHead:'24924f35a0fd7ded7ed6ab8c71af4298df1d884c',
       sourceHead,remoteHead,servedBuildHead:sha(servedBuild.json.gitCommit),
       servedAssetFingerprint:servedAssets.fingerprint,
+      expectedAssetFingerprint:expectedAssets.fingerprint,
+      currentSourceFingerprint,
+      servedSourceFingerprint:sha(servedBuild.json.sourceFingerprint),
       servedAssetCount:servedAssets.fileCount,
       browserMechanism:'shared-browser-proof-runner-playwright-edge',
       screenshotSha256:sha256(views.forge.screenshotSha256+':'+views.command.screenshotSha256),
