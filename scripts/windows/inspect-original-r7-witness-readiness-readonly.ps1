@@ -64,8 +64,16 @@ try {
         $state = ([string]$publisherMatches[0].State).ToUpperInvariant()
         $publisherTaskState = if ($state -in @('READY', 'RUNNING', 'DISABLED', 'QUEUED')) { $state } else { 'UNKNOWN' }
         try {
-            $info = Get-ScheduledTaskInfo -TaskName 'Stephanos Native Capacity Publisher' -ErrorAction Stop
-            if ($null -ne $info -and $null -ne $info.LastTaskResult) {
+            # Bind to the uniquely observed CimInstance, including its TaskPath.
+            # Name-only Task Scheduler queries may select a different folder.
+            $info = Get-ScheduledTaskInfo -InputObject $publisherMatches[0] -ErrorAction Stop
+            if ($null -eq $info -or $null -eq $info.LastRunTime) {
+                $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE'
+            } elseif ([datetime]$info.LastRunTime -eq [datetime]::MinValue) {
+                # Task Scheduler can return LastTaskResult=0 even for a task
+                # that has NEVER executed. Never project that as success.
+                $publisherLastResultClass = 'NEVER_RUN'
+            } elseif ($null -ne $info.LastTaskResult) {
                 $publisherLastResultClass = if ([long]$info.LastTaskResult -eq 0) { 'ZERO' } else { 'NONZERO' }
             } else { $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE' }
         } catch { $unknown += 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE' }

@@ -50,6 +50,20 @@ test('native publisher exact-name task is contextual evidence, not authenticated
   assert.equal(absent.publisherOriginalWriterAuthenticated, false);
 });
 
+test('publisher scheduler never-run is NOT a successful execution or original writer proof', async () => {
+  const never = inspect({ ...observation(), publisherLastResultClass: 'NEVER_RUN' });
+  assert.equal(never.observable, true);
+  assert.equal(never.publisherTaskPresent, true);
+  assert.equal(never.publisherLastResultClass, 'NEVER_RUN');
+  assert.equal(never.authenticatedWitness, false);
+  assert.equal(never.leaseReleaseAuthority, false);
+  const { readFile } = await import('node:fs/promises');
+  const script = await readFile(new URL('../../scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1', import.meta.url), 'utf8');
+  assert.match(script, /Get-ScheduledTaskInfo -InputObject \\$publisherMatches\\[0\\]/);
+  assert.match(script, /\[datetime\]\\$info\\.LastRunTime -eq \[datetime\]::MinValue/);
+  assert.doesNotMatch(script, /Get-ScheduledTaskInfo -TaskName 'Stephanos Native Capacity Publisher'/);
+});
+
 test('uncommissioned Windows witness remains an explicit hold', () => {
   const result = inspect(observation());
   assert.equal(result.observable, true);

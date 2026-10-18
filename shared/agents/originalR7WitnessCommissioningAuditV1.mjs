@@ -68,7 +68,7 @@ export function projectOriginalR7WitnessCommissioningAuditV1(input, { nowUtc = n
     || (input.publisherTaskState !== undefined
       && !['RUNNING','READY','DISABLED','QUEUED','NOT_FOUND','UNKNOWN'].includes(input.publisherTaskState))
     || (input.publisherLastResultClass !== undefined
-      && !['ZERO','NONZERO','UNKNOWN'].includes(input.publisherLastResultClass))
+      && !['ZERO','NONZERO','NEVER_RUN','UNKNOWN'].includes(input.publisherLastResultClass))
     || (input.publisherTaskPresent === true && input.publisherTaskState === 'NOT_FOUND')
     || (input.publisherTaskPresent === false
       && !['UNKNOWN','NOT_FOUND',undefined].includes(input.publisherTaskState))

@@ -1509,7 +1509,7 @@ function safeOriginalR7WitnessReadinessProjection(result = {}) {
     || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
     || typeof value.publisherTaskPresent !== 'boolean'
     || !['RUNNING', 'READY', 'DISABLED', 'QUEUED', 'NOT_FOUND', 'UNKNOWN'].includes(value.publisherTaskState)
-    || !['ZERO', 'NONZERO', 'UNKNOWN'].includes(value.publisherLastResultClass)
+    || !['ZERO', 'NONZERO', 'NEVER_RUN', 'UNKNOWN'].includes(value.publisherLastResultClass)
     || value.publisherOriginalWriterAuthenticated !== false
     || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
     || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))

@@ -115,6 +115,32 @@ test('fixed original-r7 readiness action samples immutable Windows script withou
   assert.equal(stale.blocker, 'SOVEREIGN_R7_READINESS_UNTRUSTED_OR_STALE');
 });
 
+test('mailbox projects NEVER_RUN without claiming an execution success or identity', () => {
+  const raw = {
+    ok: true, remoteAction: 'original-r7-witness-readiness',
+    finalVerdict: 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD',
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    witnessReadiness: {
+      observedAtUtc: '2026-10-17T14:00:00.000Z',
+      servicePresent: false, serviceStatus: 'NOT_INSTALLED',
+      publisherTaskPresent: true, publisherTaskState: 'READY',
+      publisherLastResultClass: 'NEVER_RUN', publisherOriginalWriterAuthenticated: false,
+      blockers: mandatory, historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
+      physicalPickupProven: false, leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
+    },
+  };
+  const projected = JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(raw), 4500))
+    .result.result.witnessReadiness;
+  assert.equal(projected.publisherLastResultClass, 'NEVER_RUN');
+  assert.equal(projected.publisherOriginalWriterAuthenticated, false);
+  assert.equal(projected.leaseReleaseAuthority, false);
+  assert.equal(projected.authenticatedWitness, false);
+});
+
 test('closed-world readiness command rejects caller-selected paths, elevation and release', () => {
   assert.equal(validateSovereignCommanderRemoteCommandShape(shape()).ok, true);
   for (const injected of [{path:'C:\\checkout'}, {command:'powershell.exe'},
