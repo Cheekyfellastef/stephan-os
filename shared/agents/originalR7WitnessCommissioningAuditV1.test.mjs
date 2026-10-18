@@ -59,8 +59,8 @@ test('publisher scheduler never-run is NOT a successful execution or original wr
   assert.equal(never.leaseReleaseAuthority, false);
   const { readFile } = await import('node:fs/promises');
   const script = await readFile(new URL('../../scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1', import.meta.url), 'utf8');
-  assert.match(script, /Get-ScheduledTaskInfo -InputObject \\$publisherMatches\\[0\\]/);
-  assert.match(script, /\[datetime\]\\$info\\.LastRunTime -eq \[datetime\]::MinValue/);
+  assert.match(script, /Get-ScheduledTaskInfo -InputObject \$publisherMatches\[0\]/);
+  assert.match(script, /\[datetime\]\$info\.LastRunTime -eq \[datetime\]::MinValue/);
   assert.doesNotMatch(script, /Get-ScheduledTaskInfo -TaskName 'Stephanos Native Capacity Publisher'/);
 });
 
