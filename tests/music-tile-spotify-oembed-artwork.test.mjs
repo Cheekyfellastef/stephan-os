@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { canUseVerifiedSpotifyArtwork } from '../apps/music-tile/engine/catalogArtworkContinuity.js';
 
 import {
   createSpotifyOembedArtworkResolver,
@@ -60,6 +61,16 @@ test('oEmbed rejects malformed IDs, untrusted artwork, and unverified provider c
   assert.equal(trustedSpotifyOembedArtwork(IMAGE), IMAGE);
 });
 
+test('unverified, not-found and hallucinated candidates cannot hydrate Spotify artwork', () => {
+  const basic = { id: 'one', title: 'Enjoy the Silence', artist: 'Depeche Mode', spotifyUrl: `https://open.spotify.com/track/${TRACK_ID}` };
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, candidateVerificationStatus: 'verified' }), true);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, aiSuggested: true, candidateVerificationStatus: 'unverified' }), false);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, candidateVerificationStatus: 'not-found' }), false);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, candidateVerificationStatus: 'likely-hallucinated' }), false);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, sourceKind: 'native-catalog', catalogVerificationStatus: 'metadata_verified', candidateVerificationStatus: 'search-only' }), true);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, sourceKind: 'native-catalog', catalogVerificationStatus: 'metadata_verified', candidateVerificationStatus: 'likely-hallucinated' }), false);
+});
+
 test('Music source preserves playback-bearing DOM and hides redundant search links for resolved cards', async () => {
   const main = await readFile(new URL('../apps/music-tile/main.js', import.meta.url), 'utf8');
   const continuity = await readFile(new URL('../apps/music-tile/engine/catalogArtworkContinuity.js', import.meta.url), 'utf8');
@@ -71,6 +82,8 @@ test('Music source preserves playback-bearing DOM and hides redundant search lin
   assert.match(continuity, /spotifyOembedArtwork\.v1/);
   assert.match(continuity, /spotifyTrackId\(current\.spotifyUrl \|\| current\.spotifyUri \|\| ''\) !== spotifyId/);
   assert.match(continuity, /hydrateCatalogArtworkContinuity\(\{ storage, root \}\)/);
+  assert.match(continuity, /canUseVerifiedSpotifyArtwork\(current\)/);
+  assert.match(main, /blockedSpotifyIdentity/);
   assert.doesNotMatch(continuity, /\.innerHTML\s*=/);
   assert.match(route, /router\.get\('\/spotify\/oembed-artwork'/);
   assert.match(route, /\^\[A-Za-z0-9\]\{22\}\$/);
