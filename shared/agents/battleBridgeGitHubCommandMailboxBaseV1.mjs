@@ -84,6 +84,7 @@ const OBSERVATION_OPERATIONS = new Set([
 
 export const WINDOWS_BROWSER_PROOF_SCENARIOS = Object.freeze([
   'MUSIC_RATING_PRESERVES_PLAYBACK',
+  'MUSIC_CARDS_ARTWORK_EXACT_LINKS',
 ]);
 export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze([
   'PULL_REQUEST_HEAD',
@@ -1186,3 +1187,4 @@ export function buildBattleBridgeGitHubCommandReceipt({
     credentialsMayBeReadOrExported: false,
   });
 }
+
