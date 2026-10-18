@@ -58,6 +58,7 @@ test('all metered-review domains are represented and none acquires authority',()
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
     'scripts/browser-proof-runner.mjs',
     'scripts/battle-bridge-recovery-mesh.mjs',
+    'scripts/unclassified-runtime-control.mjs',
   ];
   const r=result(paths);
   for (const domain of domains) assert.ok(r.domains.includes(domain),domain);
@@ -97,5 +98,13 @@ test('multi-domain paths do not silently collapse review obligations',()=>{
     'shared/agents/sovereignReviewerV1.mjs']);
   assert.ok(r.reviewPackets.length>=3);
   for(const p of r.reviewPackets) assert.ok(p.requiredEvidence.length>=3);
+  denies(r);
+});
+
+test('unknown executable or policy files escalate instead of silently becoming standard code',()=>{
+  const r=result(['shared/runtime/novelCoordinator.mjs']);
+  assert.equal(r.status,'HIGH_RISK_LOCAL_CANDIDATE_SCOPE_ONLY');
+  assert.ok(r.domains.includes('other-execution-or-policy'));
+  assert.ok(r.reviewPackets[0].requiredEvidence.includes('QUALIFIED_SPECIALIST_SECURITY_REVIEW'));
   denies(r);
 });
