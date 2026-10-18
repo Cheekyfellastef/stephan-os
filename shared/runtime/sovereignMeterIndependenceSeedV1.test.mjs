@@ -116,7 +116,14 @@ const parseMeterBlackoutDimensions = (markdown) => {
     'the bounded inventory must have one header, one separator and exactly twelve data rows');
   assert.equal(rows[0], '| Dimension | Existing owner candidate / first evidence required | Initial verdict |');
   assert.equal(rows[1], '| --- | --- | --- |');
-  return rows.slice(2).map((line) => {
+  // Candidate custody is a reviewed source contract, not a free-form label.
+  // A plausible but different canonical owner must not silently inherit work.
+  const expectedCustody = [
+    '#1898', '#2519', '#2519', '#1898', 'UNRESOLVED', '#1898',
+    '#1898 / #2519', '#1898', 'UNRESOLVED', '#1898', 'UNRESOLVED',
+    '#1898 / #2519',
+  ];
+  return rows.slice(2).map((line, index) => {
     assert.ok(line.startsWith('|') && line.endsWith('|'), 'each row must be a complete Markdown table row');
     const cells = line.slice(1, -1).split('|').map((value) => value.trim());
     assert.equal(cells.length, 3, 'dimension, original owner candidate and verdict are required');
@@ -134,6 +141,8 @@ const parseMeterBlackoutDimensions = (markdown) => {
         'owner reference must belong to the original seed owner roster');
     }
     if (unresolved) {
+      assert.equal(expectedCustody[index], 'UNRESOLVED',
+        'unresolved custody cannot silently replace a named canonical owner');
       assert.match(cells[1], /^UNRESOLVED:\s*\S/,
         'unresolved custody must name the missing evidence, not merely a label');
     } else {
@@ -141,6 +150,8 @@ const parseMeterBlackoutDimensions = (markdown) => {
       assert.ok(separator > 0 && cells[1].slice(separator + 1).trim(),
         'owner custody must have a canonical owner prefix and a nonempty witness');
       const ownerPrefix = cells[1].slice(0, separator);
+      assert.equal(ownerPrefix.replace(/\s*\/\s*/g, ' / '), expectedCustody[index],
+        'original owner custody cannot silently migrate to another valid owner');
       assert.match(ownerPrefix, /^#(?:1898|2519)(?:\s*\/\s*#(?:1898|2519))*$/,
         'owner identity must be an exact canonical issue prefix, not embedded prose');
       assert.deepEqual(ownerRefs, ownerPrefix.match(/#\d+/g) ?? [],
@@ -194,6 +205,22 @@ test('meter-blackout inventory rejects forged or ambiguous owner custody', () =>
   ]) {
     assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, invalid)),
       'forged or ambiguous owner custody must fail closed: ' + invalid);
+  }
+});
+
+test('meter-blackout inventory rejects silent valid-owner reassignment', () => {
+  const markdown = readMeterBlackoutInventory();
+  const swaps = [
+    ['#1898: same bounded task built without Codex', '#2519: same bounded task built without Codex'],
+    ['#2519: same authorized observation through qualified Sovereign Commander',
+      '#1898: same authorized observation through qualified Sovereign Commander'],
+    ['UNRESOLVED: bounded backoff, local continuity',
+      '#1898: bounded backoff, local continuity'],
+  ];
+  for (const [original, forged] of swaps) {
+    assert.ok(markdown.includes(original), 'missing canonical owner witness: ' + original);
+    assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, forged)),
+      'a syntactically valid owner reassignment must require an explicit source-contract review');
   }
 });
 
