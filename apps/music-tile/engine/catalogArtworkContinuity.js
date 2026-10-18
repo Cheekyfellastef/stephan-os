@@ -2,6 +2,12 @@ import './nativeCatalogLinkContinuity.js';
 import { hydrateAutomaticMediaOverlay } from './automaticMediaOverlay.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
+const OEMBED_OVERLAY_KEY = 'stephanos.musicTile.spotifyOembedArtwork.v1';
+const OEMBED_MAX_TRACKS_PER_PASS = 20;
+const OEMBED_MAX_ATTEMPTS = 3;
+const oembedAttempts = new Map();
+let oembedTimer = null;
+let oembedRunning = false;
 const TRUSTED_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
 
 function trustedArtworkUrl(value = '') {
@@ -56,6 +62,43 @@ function readListeningDeck(storage = globalThis.localStorage) {
   }
 }
 
+function readOembedOverlay(storage) {
+  try {
+    const saved = JSON.parse(storage?.getItem?.(OEMBED_OVERLAY_KEY) || '{}');
+    return saved?.entries && typeof saved.entries === 'object' && !Array.isArray(saved.entries)
+      ? saved.entries
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function trustedOembedArtwork(track, storage) {
+  const id = spotifyTrackId(track.spotifyUrl || track.spotifyUri || '');
+  const entry = readOembedOverlay(storage)[String(track.id || '')];
+  return entry?.spotifyTrackId === id && id && entry?.trackId === String(track.id || '')
+    ? trustedArtworkUrl(entry.artworkUrl)
+    : '';
+}
+
+function persistOembedArtwork(storage, track, artworkUrl) {
+  const spotifyId = spotifyTrackId(track.spotifyUrl || track.spotifyUri || '');
+  if (!spotifyId || !trustedArtworkUrl(artworkUrl) || !storage?.setItem) return false;
+  try {
+    const entries = readOembedOverlay(storage);
+    entries[String(track.id)] = {
+      trackId: String(track.id),
+      spotifyTrackId: spotifyId,
+      artworkUrl,
+      source: 'spotify-oembed',
+    };
+    storage.setItem(OEMBED_OVERLAY_KEY, JSON.stringify({ version: 1, entries }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function findCardForTrack(root, trackId) {
   const expected = `spotify-${String(trackId || '')}`;
   const input = Array.from(root.querySelectorAll?.('[data-link-input]') || [])
@@ -105,7 +148,7 @@ function ensureArtworkPanel(card, track, artworkUrl) {
     title.dataset.catalogArtworkTitle = 'true';
     const source = document.createElement('div');
     source.className = 'meta';
-    source.textContent = 'Verified Spotify catalogue artwork';
+    source.textContent = 'Spotify track artwork';
     copy.append(title, source);
     panel.append(image, copy);
 
@@ -150,8 +193,11 @@ export function hydrateCatalogArtworkContinuity({
   for (const track of deck) {
     if (!track?.id) continue;
     const card = findCardForTrack(root, track.id);
-    const artworkUrl = trustedArtworkUrl(track?.artworkUrl);
-    if (!artworkUrl || !artworkMatchesCurrentSpotifyTrack(track)) {
+    const catalogArtwork = artworkMatchesCurrentSpotifyTrack(track)
+      ? trustedArtworkUrl(track?.artworkUrl)
+      : '';
+    const artworkUrl = catalogArtwork || trustedOembedArtwork(track, storage);
+    if (!artworkUrl) {
       if (removeStaleArtworkPanel(card)) staleRemoved += 1;
       continue;
     }
@@ -179,14 +225,101 @@ function queueHydration() {
   });
 }
 
+// This is intentionally a bounded page-lifetime continuity pass, not a daemon.
+// Public Spotify oEmbed fills cover art for cards that already have an exact
+// Spotify track URL, even when Spotify Web API credentials are absent.
+function needsOembedLookup(track, storage, root) {
+  const spotifyId = spotifyTrackId(track?.spotifyUrl || track?.spotifyUri || '');
+  if (!track?.id || !spotifyId || !findCardForTrack(root, track.id)) return false;
+  if (artworkMatchesCurrentSpotifyTrack(track) && trustedArtworkUrl(track.artworkUrl)) return false;
+  if (trustedOembedArtwork(track, storage)) return false;
+  return (oembedAttempts.get(`${track.id}::${spotifyId}`) || 0) < OEMBED_MAX_ATTEMPTS;
+}
+
+export async function runSpotifyOembedArtworkPass({
+  storage = globalThis.localStorage,
+  root = globalThis.document,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (!storage?.getItem || !root?.querySelectorAll || typeof fetchImpl !== 'function') {
+    return { ok: false, attemptedCount: 0, hydratedCount: 0, pendingCount: 0 };
+  }
+  const due = readListeningDeck(storage)
+    .filter((track) => needsOembedLookup(track, storage, root))
+    .slice(0, OEMBED_MAX_TRACKS_PER_PASS);
+  let cursor = 0;
+  let hydratedCount = 0;
+  const worker = async () => {
+    while (cursor < due.length) {
+      const track = due[cursor++];
+      const spotifyId = spotifyTrackId(track.spotifyUrl || track.spotifyUri || '');
+      const key = `${track.id}::${spotifyId}`;
+      oembedAttempts.set(key, (oembedAttempts.get(key) || 0) + 1);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 7000);
+      try {
+        const response = await fetchImpl(
+          `/api/music/spotify/oembed-artwork?trackId=${encodeURIComponent(spotifyId)}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) continue;
+        const data = await response.json();
+        const url = trustedArtworkUrl(data?.artworkUrl);
+        if (!data?.ok || data.trackId !== spotifyId || !url) continue;
+        const current = readListeningDeck(storage).find((candidate) => String(candidate.id) === String(track.id));
+        if (!current || spotifyTrackId(current.spotifyUrl || current.spotifyUri || '') !== spotifyId) continue;
+        if (persistOembedArtwork(storage, current, url)) {
+          hydratedCount += 1;
+          hydrateCatalogArtworkContinuity({ storage, root });
+        }
+      } catch {
+        // Network and provider failures remain fail-closed, then retry at most three times.
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, due.length) }, () => worker()));
+  const pendingCount = readListeningDeck(storage)
+    .filter((track) => needsOembedLookup(track, storage, root)).length;
+  return { ok: true, attemptedCount: due.length, hydratedCount, pendingCount };
+}
+
+function queueOembedLookup(delayMs = 900) {
+  if (oembedRunning || oembedTimer !== null || typeof document === 'undefined') return;
+  oembedTimer = setTimeout(async () => {
+    oembedTimer = null;
+    if (oembedRunning) return;
+    oembedRunning = true;
+    let result = null;
+    try {
+      result = await runSpotifyOembedArtworkPass();
+    } finally {
+      oembedRunning = false;
+    }
+    if (result?.pendingCount > 0) queueOembedLookup(2500);
+  }, delayMs);
+}
+
 export function installCatalogArtworkContinuity() {
   if (typeof document === 'undefined') return null;
   const start = () => {
     queueHydration();
+    queueOembedLookup();
     const deck = document.getElementById('listening-deck');
     if (!deck || typeof MutationObserver !== 'function') return null;
-    const observer = new MutationObserver(queueHydration);
+    const observer = new MutationObserver(() => {
+      queueHydration();
+      queueOembedLookup();
+    });
     observer.observe(deck, { childList: true, subtree: true });
+    globalThis.addEventListener?.('online', () => {
+      oembedAttempts.clear();
+      queueOembedLookup(100);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') queueOembedLookup(100);
+    });
     return observer;
   };
 
