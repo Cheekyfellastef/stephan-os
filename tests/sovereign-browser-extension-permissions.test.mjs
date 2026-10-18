@@ -39,7 +39,7 @@ test('permission request is synchronous with click, uses port-free pattern, and 
   assert.equal(removed[0].origins[0], 'http://localhost/*');
 });
 
-function setupWorker({ switchDuringScreenshot = false } = {}) {
+function setupWorker({ switchDuringScreenshot = false, childFrames = false, rejectAllFrames = false } = {}) {
   const listeners = {};
   const calls = { permissions: [], native: [], screenshots: 0 };
   const configuredTab = { id: 7, windowId: 2, url: configuredOrigin + '/apps/music-tile/index.html' };
@@ -69,10 +69,22 @@ function setupWorker({ switchDuringScreenshot = false } = {}) {
       },
       captureVisibleTab: async () => { calls.screenshots++; return 'data:image/jpeg;base64,/9j/2Q=='; },
     },
-    scripting: { executeScript: async () => [{ result: {
-      readyState: 'complete', images: [], links: [], imageCount: 1,
-      brokenImages: 0, genericSpotifyLinks: 1,
-    } }] },
+    scripting: { executeScript: async ({ target }) => {
+      if (rejectAllFrames && target.allFrames) throw new Error('Restricted third-party iframe');
+      const primary = { frameId:0, result:{
+        readyState:'complete', imageCount:1, brokenImages:0, unloadedImages:0,
+        linkCount:2, genericSpotifyLinks:1, spotifyTrackLinks:0,
+        spotifySearchLinks:1, buttonCount:1, disabledButtonCount:0,
+        headingCount:1, iframeCount:childFrames?1:0,
+      }};
+      const child = { frameId:2, result:{
+        readyState:'complete', imageCount:2, brokenImages:1, unloadedImages:0,
+        linkCount:3, genericSpotifyLinks:0, spotifyTrackLinks:2,
+        spotifySearchLinks:0, buttonCount:2, disabledButtonCount:0,
+        headingCount:1, iframeCount:0,
+      }};
+      return target.allFrames && childFrames ? [primary,child] : [primary];
+    } },
     permissions: {
       contains: async (args) => { calls.permissions.push(args); return true; },
     },
@@ -100,6 +112,27 @@ test('worker rejects other sites and same-host other-port tabs despite broader p
   assert.equal(calls.screenshots, 0);
 });
 
+test('permitted child-frame metrics are aggregated while frame completeness remains unknown', async () => {
+  const {calls,message} = setupWorker({ childFrames:true });
+  const result = await message('witness-scan');
+  assert.equal(result.ok,true);
+  const record = calls.native.find(item=>item.action==='record').snapshots[0];
+  assert.equal(record.metrics.instrumentedFrameCount,2);
+  assert.equal(record.metrics.imageCount,3);
+  assert.equal(record.metrics.brokenImages,1);
+  assert.equal(record.metrics.spotifyTrackLinks,2);
+  assert.equal(record.metrics.frameCoverageFullyVerified,false);
+  assert.equal(record.screenshot,'');
+});
+test('restricted child-frame injection safely falls back to top-frame diagnostics', async () => {
+  const {calls,message} = setupWorker({ childFrames:true, rejectAllFrames:true });
+  const result = await message('witness-scan');
+  assert.equal(result.ok,true);
+  const record = calls.native.find(item=>item.action==='record').snapshots[0];
+  assert.equal(record.metrics.instrumentedFrameCount,1);
+  assert.equal(record.metrics.frameCoverageFullyVerified,false);
+  assert.equal(record.metrics.iframeCount,1);
+});
 test('capture refuses changed active tab and never sends screenshot bytes to host', async () => {
   const { calls, message } = setupWorker({ switchDuringScreenshot: true });
   const result = await message('witness-capture');
