@@ -1472,6 +1472,7 @@ function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
 // observation. A source-only preflight is never permission to install, sign,
 // release the lease, or infer exclusion from an empty process census.
 const ORIGINAL_R7_READINESS_BLOCKERS = new Set([
+  'PUBLISHER_TASK_CONTEXT_UNAVAILABLE',
   'OS_WITNESS_SERVICE_NOT_OBSERVED', 'OS_WITNESS_SERVICE_NOT_RUNNING',
   'ORIGINAL_WRITER_PROCESS_INVENTORY_UNAVAILABLE',
   'ORIGINAL_WRITER_PROCESS_CANDIDATES_PRESENT',

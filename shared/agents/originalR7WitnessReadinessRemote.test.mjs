@@ -173,6 +173,17 @@ test('public readiness summary refuses caller-forged affirmative authority and u
   };
   const project = () => JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(inner))).result.result.witnessReadiness;
   assert.deepEqual(project().blockers, mandatory);
+  inner.witnessReadiness.blockers = [...mandatory, 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE'];
+  for (const limit of [65_536, 4_500]) {
+    const receipt = JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(inner), limit));
+    const detail = receipt.result.result.witnessReadiness;
+    assert.ok(detail, 'unavailable publisher context must remain visible');
+    assert.deepEqual(detail.blockers, inner.witnessReadiness.blockers);
+    assert.equal(detail.authenticatedWitness, false);
+    assert.equal(detail.leaseReleaseAuthority, false);
+    assert.equal(detail.publisherOriginalWriterAuthenticated, false);
+  }
+  inner.witnessReadiness.blockers = mandatory;
   inner.witnessReadiness.authenticatedWitness = true;
   assert.equal(project(), null);
   inner.witnessReadiness.authenticatedWitness = false;
