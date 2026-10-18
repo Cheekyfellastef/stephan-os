@@ -401,7 +401,7 @@ export async function loadLogicalGoalBuildTruthForMonitorRuntimeV2(input = {}) {
         if (!match) throw new Error('invalid-ref');
         const path = resolveSharedWorkspacePath({
           root: layout.root, repoRoot: input.repoRoot,
-          segments: ['proof', match[1] + '.json'],
+          segments: ['proof', match[1].replace(/\.json$/i, '') + '.json'],
         });
         if (!path.ok) throw new Error('unsafe-proof-path');
         const handle = await open(path.path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
@@ -409,7 +409,7 @@ export async function loadLogicalGoalBuildTruthForMonitorRuntimeV2(input = {}) {
           const meta = await handle.stat();
           if (!meta.isFile() || meta.nlink !== 1 || meta.size < 1 || meta.size > 262144) throw new Error('unsafe-proof');
           const candidate = JSON.parse(await handle.readFile('utf8'));
-          if (candidate?.proofId !== match[1] || validateSharedWorkspaceRecord(candidate, {nowMs, staleAfterMs: LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS}).valid !== true) throw new Error('invalid-proof');
+          if (candidate?.proofId !== match[1].replace(/\.json$/i, '') || validateSharedWorkspaceRecord(candidate, {nowMs, staleAfterMs: LOGICAL_GOAL_PICKUP_PROOF_MAX_AGE_MS}).valid !== true) throw new Error('invalid-proof');
           proofRecords.push(candidate);
         } finally { await handle.close(); }
       }
