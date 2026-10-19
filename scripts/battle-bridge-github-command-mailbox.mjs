@@ -1363,6 +1363,110 @@ function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
   return null;
 }
 
+// Read-only Island result has its own authority-denying public receipt contract.
+function safeRescueIslandBoundaryReceiptProjection(value = {}) {
+  if (value?.remoteAction !== 'rescue-island-readonly-boundary'
+      || value?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED'
+      || value?.sourceMutationAllowed !== false
+      || value?.originalSourceLeaseReleaseAllowed !== false
+      || value?.mergeAuthority !== false
+      || value?.publicReceiptSafe !== true
+      || value?.secretMaterialReturned !== false) return null;
+  const scope = value?.rescueIslandBoundary;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+      || scope.schemaVersion !== 'stephanos.rescue-island-boundary-probe.v1'
+      || scope.ok !== true || scope.readOnly !== true
+      || scope.observedPathCount !== 3
+      || scope.physicalScopeReadback !== 'LOCAL_OS_SCOPE_OBSERVED'
+      || scope.finalVerdict !== 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED'
+      || scope.sourceMutationAllowed !== false || scope.workerStartAllowed !== false
+      || scope.independentOwnershipAuthenticated !== false
+      || scope.gamingBudgetAuthenticated !== false
+      || scope.originalSourceLeaseReleaseAllowed !== false
+      || scope.seedForgeQueueAccessAllowed !== false
+      || scope.mergeAllowed !== false || scope.publicReceiptSafe !== true
+      || scope.secretMaterialReturned !== false) return null;
+  // Never serialize native file names, process IDs, raw stdout, secrets or aliases.
+  return Object.freeze({
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Secondary redaction barrier for the single read-only original-r7 census.
+// The public GitHub mailbox must never publish raw process, SID, path or script data.
+const ORIGINAL_CUSTODY_RECEIPT_BLOCKERS = new Set([
+  'ORIGINAL_CHECKOUT_NOT_OBSERVED', 'ORIGINAL_CHECKOUT_ACL_UNOBSERVED',
+  'ORIGINAL_PROCESS_ENUMERATION_UNAVAILABLE', 'ORIGINAL_PROCESS_CANDIDATES_PRESENT',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_PROBE_UNAVAILABLE',
+  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'TASK_INVENTORY_UNAVAILABLE',
+  'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
+  'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+  'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+]);
+function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const value = operationResult?.inspection;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || operationResult.ok !== true
+    || operationResult.finalVerdict !== 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD'
+    || operationResult.originalLeaseReleased !== false
+    || operationResult.privilegedWindowsWitnessCommissioned !== false
+    || operationResult.sourceMutationAllowed !== false
+    || operationResult.arbitraryShellAllowed !== false
+    || operationResult.publicReceiptSafe !== true
+    || operationResult.secretMaterialReturned !== false
+    || value.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease'
+    || value.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD'
+    || value.historicalExecutionOutcome !== 'UNKNOWN'
+    || value.independentWindowsExclusionProven !== false
+    || value.independentOperatorApprovalProven !== false
+    || value.leaseReleaseAuthorized !== false
+    || value.sourceMutationAuthorized !== false
+    || typeof value.checkoutPresent !== 'boolean'
+    || typeof value.aclReadable !== 'boolean') return null;
+  const count = item => item === null || (Number.isSafeInteger(item) && item >= 0 && item <= 1_000_000);
+  if (!count(value.candidateProcessCount) || !count(value.stephanosScheduledTaskCount)) return null;
+  const inspectedAtUtc = value.inspectedAtUtc;
+  const observedMs = Date.parse(inspectedAtUtc);
+  if (typeof inspectedAtUtc !== 'string'
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(inspectedAtUtc)
+    || !Number.isFinite(observedMs)
+    || new Date(observedMs).toISOString() !== inspectedAtUtc) return null;
+  const blockers = value.blockers;
+  if (!Array.isArray(blockers) || blockers.length < 2 || blockers.length > 14
+    || blockers.some(code => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(code))
+    || !blockers.includes('INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED')
+    || !blockers.includes('INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN')) return null;
+  return Object.freeze({
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc,
+    checkoutPresent: value.checkoutPresent,
+    aclReadable: value.aclReadable,
+    candidateProcessCount: value.candidateProcessCount,
+    stephanosScheduledTaskCount: value.stephanosScheduledTaskCount,
+    blockers: Object.freeze([...new Set(blockers)]),
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1405,8 +1509,10 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),
     visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
@@ -2280,6 +2386,9 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
+        rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
+        originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),

@@ -155,6 +155,40 @@ function materialAuthorizationIdentity(command = {}) {
   });
 }
 
+
+/**
+ * Refuse a second source-identical protected merge dispatch, even if an
+ * earlier GitHub environment approval is still pending. This is a read-only
+ * early guard. The protected executor retains its independently checked
+ * replay fence; this result can never confer merge authority.
+ *
+ * The caller MUST retrieve the entire bounded workflow-specific,
+ * exact-base GitHub run inventory, not trust an owner-supplied list.
+ */
+export function inspectProtectedWorkflowDuplicateDispatchRuns(runs, command = {}) {
+  const sourceHead = command.expectedHead;
+  const baseSha = command.expectedBase;
+  if (!Array.isArray(runs) || runs.length > 600
+      || typeof sourceHead !== 'string' || !SHA40.test(sourceHead)
+      || typeof baseSha !== 'string' || !SHA40.test(baseSha))
+    return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+  const title = 'Protected operator merge ' + sourceHead;
+  let collision = false;
+  for (const run of runs) {
+    if (!run || typeof run !== 'object' || Array.isArray(run))
+      return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+    if (run.name !== title && run.display_title !== title) continue;
+    if (!positiveInteger(run.id)
+        || run.name !== title || run.display_title !== title
+        || run.event !== 'workflow_dispatch'
+        || run.head_sha !== baseSha || run.head_branch !== 'main')
+      return fail('PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
+    collision = true;
+  }
+  if (collision) return fail('PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  return Object.freeze({ ok: true, previousSourceAttemptFound: false });
+}
+
 export function extractProtectedWorkflowDispatch(body = '') {
   const text = String(body || '');
   const fence = '```';
