@@ -254,6 +254,15 @@ function updateTrackCard(track, spotify) {
     link.textContent = 'Open in Spotify';
     controls.prepend(link);
   }
+  // Catalogue enrichment happens in place to preserve mounted playback DOM.
+  // Reconcile stale search-only actions against the now persisted exact media link.
+  if (controls) {
+    for (const link of Array.from(controls.querySelectorAll('a'))) {
+      if (/^Find on (Spotify|YouTube)$/i.test(String(link.textContent || '').trim())) {
+        link.remove();
+      }
+    }
+  }
 
   const editor = input.closest('.links-editor');
   let message = editor?.querySelector('[data-catalog-auto-apply-message]');
