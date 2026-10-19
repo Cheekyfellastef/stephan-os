@@ -90,6 +90,10 @@ jobs:
             shared/runtime/stephanosSessionMemory.test.mjs \
             stephanos-server/tests/runtime-status-model.test.js \
             stephanos-server/tests/provider-routing.test.js
+      # Verify the actual isolated-worktree/commit/adversarial Git fixture.
+      # Unit-only green cannot qualify the Seed Forge source proposal boundary.
+      - name: Run Seed Forge physical Git fixture integration
+        run: node --test --test-concurrency=1 tests/seed-canopy-parallel-forge-integration.test.mjs
 
   surface-ignition-tests:
     if: >-

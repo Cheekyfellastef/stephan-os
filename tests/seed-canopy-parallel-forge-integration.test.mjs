@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
