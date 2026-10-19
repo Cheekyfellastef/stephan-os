@@ -163,7 +163,7 @@ export function parseParallelSeedModelResponseV1(output, targetPath) {
 }
 
 export function makeParallelSeedReceiptV1(request, stage, extras = {}) {
-  if (!['SELECTED','CLAIMED','EDITED','TESTED','COMMITTED','TEST_FAILED','BLOCKED'].includes(stage))
+  if (!['SELECTED','CLAIMED','PHYSICAL_PICKUP','EDITED','TESTED','COMMITTED','TEST_FAILED','BLOCKED'].includes(stage))
     throw new Error('INVALID_RECEIPT_STAGE');
   return Object.freeze({
     schemaVersion: PARALLEL_SEED_RECEIPT_SCHEMA,
