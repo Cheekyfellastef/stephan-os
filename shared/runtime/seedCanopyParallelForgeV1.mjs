@@ -74,7 +74,7 @@ export function validateParallelSeedBuildRequestV1(request, seeds = []) {
   // creates a NEW file. It cannot overwrite a canonical source owner.
   if (request?.generationMode === 'CANONICAL_INVENTORY_V1'
     && (request.expectedTargetSha256 !== null
-      || !/^docs\\/architecture\\/[a-zA-Z0-9/_-]+\\.md$/.test(request.targetPath || '')))
+      || !/^docs\/architecture\/[a-zA-Z0-9/_-]+\.md$/.test(request.targetPath || '')))
     errors.push('DETERMINISTIC_INVENTORY_NEW_DOC_ONLY');
 
   if (!Array.isArray(request?.testPaths) || request.testPaths.length < 1
@@ -100,7 +100,7 @@ export function renderParallelSeedCanonicalInventoryV1(request, seed) {
     throw new Error('DETERMINISTIC_SEED_GENERATION_NOT_SELECTED');
   const validation = validateParallelSeedBuildRequestV1(request, [seed]);
   if (!validation.ok) throw new Error('DETERMINISTIC_SEED_REQUEST_REJECTED:' + validation.errors.join(','));
-  const scalar = (value) => text(value).replace(/[\\r\\n\\t<>]/g, ' ').slice(0, 2400);
+  const scalar = (value) => text(value).replace(/[\r\n\t<>]/g, ' ').slice(0, 2400);
   const rung = Array.isArray(seed.growthRungs) && /^[A-Z0-9_]{3,90}$/.test(seed.growthRungs[0])
     ? seed.growthRungs[0] : 'INVENTORY';
   return Object.freeze({
@@ -137,7 +137,7 @@ export function renderParallelSeedCanonicalInventoryV1(request, seed) {
       'No physical observations were supplied by this deterministic renderer.',
       'Treat every proposed acceptance check as pending real evidence.',
       '',
-    ].join('\\n'),
+    ].join('\n'),
   });
 }
 
