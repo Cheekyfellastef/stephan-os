@@ -18,7 +18,7 @@ const SHA256 = /^[a-f0-9]{64}$/i;
 const SHA40 = /^[a-f0-9]{40}$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9._:-]{1,120}$/;
 const MAX_SESSION_BYTES = 256 * 1024;
-const PAGE_MAX = 20;
+const PAGE_MAX = 12;
 
 function safeCount(value, max = 1_000_000_000) {
   if (value === null || value === undefined || value === '') return null;
