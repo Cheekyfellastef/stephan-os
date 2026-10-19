@@ -98,6 +98,15 @@ test('R7 stage candidate cannot start, commission or release the protected witne
   assert.match(source, /'start=' 'demand'/);
   assert.match(source, /& \$sc sidtype \$service restricted/);
   assert.match(source, /SetAccessRuleProtection\(\$true, \$false\)/);
+  assert.match(source, /R7_STAGE_SERVICE_NOT_STOPPED/);
+  assert.match(source, /R7_STAGE_PROTECTED_ACL_NOT_OBSERVED/);
+  assert.match(source, /R7_STAGE_UNEXPECTED_ACL_PRINCIPAL/);
+  assert.match(source, /R7_STAGE_POST_ACL_IMAGE_HASH_MISMATCH/);
+  assert.match(source, /\$props\.ImagePath/);
+  assert.match(source, /SpecialFolder\]::ProgramFiles/);
+  assert.match(source, /SpecialFolder\]::System/);
+  assert.doesNotMatch(source, /\$env:(?:ProgramFiles|SystemRoot)/i);
+
   assert.doesNotMatch(source, /\b(?:Start-Service|Restart-Computer|Invoke-Expression|New-PSSession|Invoke-WebRequest|Remove-Item|Force-Push)\b/i);
   assert.doesNotMatch(source, /'start=' 'auto'/);
 });
