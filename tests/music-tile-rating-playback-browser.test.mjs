@@ -695,3 +695,92 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
     await server.close();
   }
 });
+
+
+test('exact Spotify track oEmbed cover art survives reload and a rating never remounts playback', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(process.env.STEPHANOS_BROWSER_CHANNEL
+      ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+      : { headless: true });
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    let artworkRequests = 0;
+    await page.route('https://open.spotify.com/embed/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+        body: '<!doctype html><title>Exact Spotify player</title>' });
+    });
+    await page.route('https://i.scdn.co/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+    });
+    await page.route('**/api/music/spotify/oembed-artwork?**', async (route) => {
+      artworkRequests += 1;
+      const url = new URL(route.request().url());
+      assert.equal(url.searchParams.get('trackId'), AUTO_SPOTIFY_ID);
+      await route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: true, trackId: AUTO_SPOTIFY_ID,
+          artworkUrl: AUTO_ARTWORK_URL, source: 'spotify-oembed' }) });
+    });
+    await page.addInitScript(({ key, trackId, spotifyUrl }) => {
+      if (localStorage.getItem(key)) return;
+      localStorage.setItem(key, JSON.stringify({
+        candidates: [],
+        listeningDeck: [{ id: trackId, artist: 'Depeche Mode', title: 'Enjoy the Silence',
+          sourceKind: 'journey-candidate', spotifyUrl, candidateVerificationStatus: 'verified' }],
+        ratings: {}, tags: {}, trackFeedback: {}, linkMessages: {},
+      }));
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL });
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForFunction(({ artworkUrl }) => (
+      document.querySelector('.player-deck-card [data-catalog-artwork] img')?.src === artworkUrl
+    ), { artworkUrl: AUTO_ARTWORK_URL }, { timeout: 15000 });
+
+    let proof = await page.evaluate(({ overlayKey, spotifyUrl }) => {
+      const card = document.querySelector('.player-deck-card');
+      globalThis.__musicIframeBefore = card.querySelector('iframe');
+      return {
+        iframe: Boolean(globalThis.__musicIframeBefore),
+        openExactSong: Boolean(card.querySelector(`a[href="${spotifyUrl}"]`)),
+        genericSearch: Array.from(card.querySelectorAll('.media-controls a'))
+          .some((link) => /^Find on (Spotify|YouTube)$/.test(link.textContent || '')),
+        overlay: JSON.parse(localStorage.getItem(overlayKey) || '{}'),
+      };
+    }, { overlayKey: 'stephanos.musicTile.spotifyOembedArtwork.v1', spotifyUrl: AUTO_SPOTIFY_URL });
+    assert.equal(proof.iframe, true);
+    assert.equal(proof.openExactSong, true);
+    assert.equal(proof.genericSearch, false);
+    assert.equal(proof.overlay.entries[AUTO_TRACK_ID].artworkUrl, AUTO_ARTWORK_URL);
+
+    await page.locator('.player-deck-card [data-rate="2"]').click();
+    const stillSameIframe = await page.evaluate(() => {
+      const current = document.querySelector('.player-deck-card iframe');
+      return current === globalThis.__musicIframeBefore && current.isConnected;
+    });
+    assert.equal(stillSameIframe, true, 'rating must not remount player iframe');
+
+    await page.reload();
+    await page.waitForFunction(({ artworkUrl }) => (
+      document.querySelector('.player-deck-card [data-catalog-artwork] img')?.src === artworkUrl
+    ), { artworkUrl: AUTO_ARTWORK_URL }, { timeout: 15000 });
+    const after = await page.evaluate(({ key, trackId }) => {
+      const state = JSON.parse(localStorage.getItem(key) || '{}');
+      const card = document.querySelector('.player-deck-card');
+      return {
+        artwork: card.querySelector('[data-catalog-artwork] img')?.src,
+        rating: state.ratings?.[trackId],
+        exact: Boolean(card.querySelector('a[href*="open.spotify.com/track/"]')),
+        generic: Array.from(card.querySelectorAll('.media-controls a'))
+          .some((link) => /^Find on (Spotify|YouTube)$/.test(link.textContent || '')),
+      };
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID });
+    assert.equal(after.artwork, AUTO_ARTWORK_URL);
+    assert.equal(after.rating, 2);
+    assert.equal(after.exact, true);
+    assert.equal(after.generic, false);
+    assert.equal(artworkRequests, 1, 'persisted artwork should not need another server request after reload');
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
