@@ -178,3 +178,26 @@ test('rejects binary changes, overlong lines, misleading paths and missing exact
     assertNoAuthority(value);
   }
 });
+
+test('local high-risk reviewer applies relevant cross-domain security checks without claiming approval',async()=>{
+  const paths=[
+    'src/windows/Stephanos.OriginalR7CustodyWitness/Program.cs',
+    'plugins/openclaw-local/SKILL.md',
+    'shared/agents/originalSourceLeaseV1.mjs',
+    'shared/agents/qualifiedSpecialistReviewV1.mjs',
+  ];
+  const snapshot=input({changedFiles:paths,diff:paths.map(path=>diffOne(path)).join('')});
+  const focus=[];
+  const result=await evaluate(snapshot,{invokeModel:(prompt,chunk)=>{
+    focus.push(prompt);
+    return clean(prompt,chunk);
+  }});
+  assert.equal(result.status,'HIGH_RISK_LOCAL_CANDIDATE_READY');
+  assert.equal(focus.length,paths.length);
+  assert.match(focus[0],/SCM service\/token SID verification/);
+  assert.match(focus[1],/agent role separation/);
+  assert.match(focus[2],/compare-and-swap digests/);
+  assert.match(focus[3],/reviewer independence/);
+  assert.ok(focus.every(p=>p.includes('do not claim physical proof')));
+  assertNoAuthority(result);assertNoAuthority(result.candidateEvidence);
+});
