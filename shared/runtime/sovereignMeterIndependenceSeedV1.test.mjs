@@ -127,6 +127,22 @@ const parseMeterBlackoutDimensions = (markdown) => {
     '#1898 / #2519', '#1898', 'UNRESOLVED', '#1898', 'UNRESOLVED',
     '#1898 / #2519',
   ];
+  // Lock the first-evidence requirement, not just owner and verdict.
+  // Weakening an original-owner witness needs an explicit source/test review.
+  const expectedFirstEvidence = [
+    "#1898: same bounded task built without Codex, with exact worker/source/test receipt",
+    "#2519: same authorized observation through qualified Sovereign Commander, no paid remote tool",
+    "#2519: operator-controlled ingress plus authenticated offline/degraded receipt",
+    "#1898: qualified alternative model and explicit gaming zero-residency witness",
+    "UNRESOLVED: bounded backoff, local continuity, eventual GitHub reconciliation without quota evasion",
+    "#1898: same-worker SELECT→CLAIM→physical PICKUP and actual source/test output during provider blackout",
+    "#1898 / #2519: allowlisted action, exact original-owner scope and independent terminal proof",
+    "#1898: non-self-review against exact source/base identity with provider offline",
+    "UNRESOLVED: independently signed task/source/worker/served correlation and replay rejection",
+    "#1898: representative task end-to-end with metered services unavailable",
+    "UNRESOLVED: authentic exact-head approval preserved during disconnection and revalidation",
+    "#1898 / #2519: classify unavoidable hosted work versus locally replaceable critical path",
+  ];
   return rows.slice(2).map((line, index) => {
     assert.ok(line.startsWith('|') && line.endsWith('|'), 'each row must be a complete Markdown table row');
     const cells = line.slice(1, -1).split('|').map((value) => value.trim());
@@ -163,6 +179,8 @@ const parseMeterBlackoutDimensions = (markdown) => {
       assert.equal(new Set(ownerRefs).size, ownerRefs.length,
         'owner custody must not repeat an existing implementation owner');
     }
+    assert.equal(cells[1], expectedFirstEvidence[index],
+      'original-owner first-evidence requirement cannot be weakened without review');
     assert.equal(cells[2], 'UNVERIFIED', 'a source checklist cannot certify a live blackout');
     return cells[0].slice(1, -1);
   });
@@ -218,6 +236,24 @@ test('meter-blackout inventory rejects forged or ambiguous owner custody', () =>
   ]) {
     assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, invalid)),
       'forged or ambiguous owner custody must fail closed: ' + invalid);
+  }
+});
+
+test('meter-blackout inventory rejects silently weakened first-evidence requirements', () => {
+  const markdown = readMeterBlackoutInventory();
+  const mutations = [
+    ['#1898: same bounded task built without Codex, with exact worker/source/test receipt',
+      '#1898: source code exists'],
+    ['#2519: same authorized observation through qualified Sovereign Commander, no paid remote tool',
+      '#2519: observation planned'],
+    ['UNRESOLVED: independently signed task/source/worker/served correlation and replay rejection',
+      'UNRESOLVED: evidence to be decided'],
+  ];
+  for (const [original, weakened] of mutations) {
+    assert.ok(markdown.includes(original), 'missing original evidence demand: ' + original);
+    assert.throws(() => parseMeterBlackoutDimensions(markdown.replace(original, weakened)),
+      /first-evidence requirement cannot be weakened/,
+      'unchanged owner and UNVERIFIED verdict cannot conceal a weakened acceptance witness');
   }
 });
 
