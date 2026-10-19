@@ -38,6 +38,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   let server;
   let ownerComment = null;
   let inferenceCount = 0;
+  let advanceMainOnNextInference = false;
+  let modelResponsePath = TARGET;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
       await mkdir(path(folder), { recursive: true });
@@ -120,9 +122,15 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         inferenceCount += 1;
         req.resume();
         req.on('end', () => {
+          if (advanceMainOnNextInference) {
+            advanceMainOnNextInference = false;
+            const moved = command('git', ['commit', '--allow-empty', '-m',
+              'fixture: main advanced during inference'], { cwd: repo });
+            assert.equal(moved.status, 0, moved.stderr);
+          }
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ choices: [{ text: JSON.stringify({
-            path: TARGET, content: '# Parallel Forge\n\nFixture model-generated source candidate.\n',
+            path: modelResponsePath, content: '# Parallel Forge\n\nFixture model-generated source candidate.\n',
           }) }] }));
         });
       });
