@@ -5,7 +5,7 @@
  * Rebuilds its view from original session files, even if the headline/history
  * publisher stopped before generating its last canonical packet.
  */
-import { readdir, readFile } from 'node:fs/promises';
+import { lstat, readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,8 +43,10 @@ async function optionalJson(root, name, available) {
   // Path is constructed exclusively from validated locally enumerated basenames.
   if (!available) return null;
   try {
-    const value = await readFile(resolve(root, name), 'utf8');
-    if (Buffer.byteLength(value, 'utf8') > MAX_SESSION_BYTES) return null;
+    const candidate = resolve(root, name);
+    const info = await lstat(candidate);
+    if (!info.isFile() || info.size > MAX_SESSION_BYTES) return null;
+    const value = await readFile(candidate, 'utf8');
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch { return null; }
@@ -74,7 +76,19 @@ export async function readStarfieldVrTelemetryArchive({
     || !Number.isSafeInteger(limit) || limit < 1 || limit > PAGE_MAX) {
     throw new Error('STARFIELD_VR_ARCHIVE_PAGE_INVALID');
   }
-  const sessionRoot = resolve(workspaceRoot, 'vr', 'starfield-vr-performance-sessions');
+  const vrRoot = resolve(workspaceRoot, 'vr');
+  const sessionRoot = resolve(vrRoot, 'starfield-vr-performance-sessions');
+  // Deny path redirection through a symlinked workspace or VR archive directory.
+  for (const ancestor of [workspaceRoot, vrRoot, sessionRoot]) {
+    try {
+      const info = await lstat(ancestor);
+      if (info.isSymbolicLink() || !info.isDirectory()) {
+        throw new Error('STARFIELD_VR_ARCHIVE_DIRECTORY_UNSAFE');
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
   let entries = [];
   let directoryAvailable = true;
   try { entries = await readdir(sessionRoot, { withFileTypes: true }); }
