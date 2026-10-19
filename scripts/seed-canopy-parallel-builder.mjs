@@ -341,6 +341,37 @@ async function safeTarget(worktree, targetPath) {
   return full;
 }
 
+// Defense in depth before running the one fixed Node test command. The
+// disjoint documentation proposal must be the ONLY changed file. In
+// particular, no mutable test module supplied by another source writer may
+// turn this route into unapproved JavaScript execution. This does not replace
+// a separate OS-secured process sandbox or native Windows stable-handle proof.
+async function assertSeedTestInputsTrusted(worktree, request) {
+  await assertTrustedGitBoundary(worktree);
+  const head = await processExec('git', ['rev-parse', '--verify', 'HEAD'], worktree);
+  if (head !== request.baseSha) throw new Error('SEED_TEST_HEAD_NOT_APPROVED_BASE');
+  const status = await processExec('git',
+    ['status', '--porcelain', '--untracked-files=all'], worktree);
+  const changed = status.split('\n').filter(Boolean)
+    .map((row) => row.slice(3).replace(/\\/g, '/'));
+  if (changed.length !== 1 || changed[0] !== request.targetPath)
+    throw new Error('SEED_TEST_SOURCE_SCOPE_UNTRUSTED');
+  for (const path of request.testPaths) {
+    // Re-use the physical no-redirect guard already used for target paths.
+    await safeTarget(worktree, path);
+    let expected, actual;
+    try {
+      expected = await processExec('git',
+        ['rev-parse', '--verify', request.baseSha + ':' + path], worktree);
+      actual = await processExec('git', ['hash-object', '--no-filters', '--', path], worktree);
+    } catch {
+      throw new Error('SEED_TEST_SOURCE_BLOB_UNVERIFIABLE');
+    }
+    if (!/^[a-f0-9]{40}$/.test(expected) || actual !== expected)
+      throw new Error('SEED_TEST_SOURCE_BLOB_CHANGED');
+  }
+}
+
 async function build(request, manifestSha256) {
   const checked = validateParallelSeedBuildRequestV1(request, HIGH_LEVEL_FLYWHEEL_SEEDS_V1);
   if (!checked.ok) throw new Error('REQUEST_REJECTED: ' + checked.errors.join(','));
@@ -440,7 +471,10 @@ async function build(request, manifestSha256) {
     const proposedSha = createHash('sha256').update(proposal.content).digest('hex');
     await saveReceipt(request, stage, { worktree, proposedSha256: proposedSha });
     for (const path of request.testPaths) {
-      // Test paths are exact allowlisted filenames. No shell, arbitrary script or globbing.
+      // Model generation may take minutes. Never run even an allowlisted test
+      // if the checked-out test source, HEAD, or any other file has changed.
+      // A local path is data until physical and blob custody are re-proven.
+      await assertSeedTestInputsTrusted(worktree, request);
       await processExec(process.execPath, ['--test', path], worktree, 120000, true);
     }
     await assertTrustedGitBoundary(worktree);
