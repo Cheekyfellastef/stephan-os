@@ -57,7 +57,23 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
     const child = spawn(executable, args, {
       cwd, shell: false, windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let stdout = '', stderr = '';
+    // Git's local configuration and status are trust-boundary inputs.
+    // Truncating a successful child response could conceal a hostile trailing
+    // filter/hook setting. Fail closed on overflow instead of clipping bytes.
+    const MAX_CHILD_OUTPUT_BYTES = 64 * 1024;
+    const stdoutChunks = [], stderrChunks = [];
+    let stdoutBytes = 0, stderrBytes = 0, outputOverflow = false;
+    const capture = (chunks, bytes, chunk) => {
+      if (outputOverflow) return bytes;
+      const next = bytes + chunk.length;
+      if (next > MAX_CHILD_OUTPUT_BYTES) {
+        outputOverflow = true;
+        child.kill();
+        return next;
+      }
+      chunks.push(chunk);
+      return next;
+    };
     let abortOnGaming = false;
     let checkingGaming = false;
     const timer = setTimeout(() => child.kill(), timeoutMs);
@@ -76,13 +92,19 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
       clearTimeout(timer);
       if (gameWatch) clearInterval(gameWatch);
     };
-    child.stdout.on('data', (chunk) => { stdout += String(chunk).slice(0, 32768); stdout = stdout.slice(-65536); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk).slice(0, 32768); stderr = stderr.slice(-65536); });
+    child.stdout.on('data', (chunk) => {
+      stdoutBytes = capture(stdoutChunks, stdoutBytes, chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      stderrBytes = capture(stderrChunks, stderrBytes, chunk);
+    });
     child.on('error', (error) => { cleanup(); rej(error); });
     child.on('close', (code) => {
       cleanup();
-      if (abortOnGaming) rej(new Error('GAME_PRIORITY_LOCAL_TEST_ABORTED'));
-      else if (code === 0) res(stdout.trim());
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      if (outputOverflow) rej(new Error('SEED_CHILD_OUTPUT_LIMIT_EXCEEDED'));
+      else if (abortOnGaming) rej(new Error('GAME_PRIORITY_LOCAL_TEST_ABORTED'));
+      else if (code === 0) res(Buffer.concat(stdoutChunks).toString('utf8').trim());
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });

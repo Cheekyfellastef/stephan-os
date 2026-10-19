@@ -843,6 +843,54 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(mutatedReceipt.goalCompleted, false);
     assert.equal(git('rev-parse', 'main'), mutationBase);
 
+    // A malicious local Git config can contain more text than the bounded
+    // child reader captures. The first 64 KiB must never be accepted as the
+    // complete --null --list configuration, which could hide a later command
+    // filter or hook setting. This fixture only writes inert config text.
+    const oversizedId = 'oversized-git-config-pilot';
+    const oversizedRequest = { ...request, taskId: oversizedId,
+      baseSha: git('rev-parse', 'main'),
+      targetPath: 'docs/architecture/oversized-git-config.md',
+      generationMode: 'CANONICAL_INVENTORY_V1',
+      expectedTargetSha256: null,
+      testPaths: ['tests/fixture-safe.test.mjs'] };
+    const oversizedRaw = JSON.stringify(oversizedRequest);
+    const oversizedManifest = join(scratch, 'oversized-git-config-request.json');
+    await writeFile(oversizedManifest, oversizedRaw);
+    await writeFile(join(stateRoot, 'approvals', oversizedId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const oversizedNow = new Date().toISOString();
+    ownerComment.created_at = oversizedNow;
+    ownerComment.updated_at = oversizedNow;
+    ownerComment.body = [
+      fence + 'stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: oversizedRequest,
+        manifestSha256: parallelSeedManifestHashV1(oversizedRaw),
+        nowUtc: oversizedNow,
+        expiryUtc: new Date(Date.parse(oversizedNow) + 3600000).toISOString(),
+      })),
+      fence,
+    ].join('\n');
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    git('config', 'stephanos.safevalue', 'A'.repeat(70000));
+    try {
+      const overflow = await runAsync(process.execPath,
+        [executable, 'build', oversizedManifest, '--execute'], { cwd: repo, env });
+      assert.notEqual(overflow.code, 0);
+      assert.match(overflow.stderr, /SEED_CHILD_OUTPUT_LIMIT_EXCEEDED/);
+      const receipt = JSON.parse(await readFile(join(stateRoot, 'receipts',
+        oversizedId + '.json'), 'utf8'));
+      assert.equal(receipt.stage, 'BLOCKED');
+      assert.equal(receipt.goalCompleted, false);
+      assert.equal(git('rev-parse', 'main'), oversizedRequest.baseSha);
+    } finally {
+      git('config', '--unset', 'stephanos.safevalue');
+    }
+
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
