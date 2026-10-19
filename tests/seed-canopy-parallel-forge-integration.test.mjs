@@ -291,9 +291,13 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(status.code, 0, status.stderr);
     const supervised = JSON.parse(status.stdout);
     assert.equal(supervised.taskCount, 1);
-    assert.equal(supervised.tasks[0].candidateCommitted, true);
+    assert.equal(supervised.tasks[0].localCommitReadbackMatched, true);
+    assert.equal(supervised.tasks[0].candidateCommitted, false);
     assert.equal(supervised.tasks[0].merged, false);
-    assert.equal(supervised.localSourceCandidateProven, true);
+    assert.equal(supervised.localSourceCandidateProven, false);
+    assert.equal(supervised.localCommitReadbackMatchedUntrusted, true);
+    assert.equal(supervised.candidateTrustBlocker,
+      'INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED');
     assert.equal(supervised.liveBuildProven, false);
     // Even if a metadata pointer resolves to the SAME administrative directory,
     // a symlink cannot authenticate the original linked worker checkout.
@@ -319,7 +323,9 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       const restored = await runAsync(process.execPath,
         [supervisor, 'status'], { cwd: repo, env });
       assert.equal(restored.code, 0, restored.stderr);
-      assert.equal(JSON.parse(restored.stdout).localSourceCandidateProven, true);
+      const recovered = JSON.parse(restored.stdout);
+      assert.equal(recovered.localCommitReadbackMatchedUntrusted, true);
+      assert.equal(recovered.localSourceCandidateProven, false);
     }
     const approvalPath = join(stateRoot, 'approvals', TASK_ID + '.json');
     const validPointer = await readFile(approvalPath, 'utf8');

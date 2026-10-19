@@ -107,8 +107,13 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
       targetPath: claim.targetPath,
       stage: receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
       sourceTruth: stale ? 'STALE_OR_UNKNOWN' : 'CURRENT',
-      candidateCommitted: Boolean(receipt?.stage === 'COMMITTED' && safeCommit(receipt?.commitSha)
-        && receipt?.independentGitHeadVerified === true),
+      // Local Git readback is observable and useful for diagnosis, but the
+      // receipt and candidate branch are both mutable by the same account.
+      // Neither can authenticate its own author/physical worker identity.
+      localCommitReadbackMatched: Boolean(receipt?.stage === 'COMMITTED'
+        && safeCommit(receipt?.commitSha) && receipt?.independentGitHeadVerified === true),
+      candidateCommitted: false,
+      candidateTrustBlocker: 'INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED',
       merged: false,
       deployed: false,
       requiresReview: true,
@@ -120,9 +125,13 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
     taskCount: tasks.length,
     tasks: Object.freeze(tasks),
     doesNotDependOnCanonicalConveyor: true,
-    // A clean exact-base local commit proves a scoped SOURCE CANDIDATE, not
-    // an unattended live Seed Canopy build, protected PR, or deployment.
-    localSourceCandidateProven: tasks.some((task) => task.candidateCommitted && task.sourceTruth === 'CURRENT'),
+    // A Git readback and its receipt belong to the SAME local mutation
+    // boundary. Until a distinct, protected host reviewer signs candidate
+    // provenance, no local file can upgrade this signal to independently proven.
+    localCommitReadbackMatchedUntrusted: tasks.some((task) =>
+      task.localCommitReadbackMatched && task.sourceTruth === 'CURRENT'),
+    localSourceCandidateProven: false,
+    candidateTrustBlocker: 'INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED',
     liveBuildProven: false,
   });
 }

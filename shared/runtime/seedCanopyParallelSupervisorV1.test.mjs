@@ -114,12 +114,18 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   assert.equal(projected.tasks[0].recovery, 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE');
   assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
   assert.equal(projected.tasks[0].merged, false);
-  assert.equal(projected.tasks[1].candidateCommitted, true);
-  assert.equal(projected.localSourceCandidateProven, true);
+  // A same-account Git readback cannot serve as its own independent proof.
+  assert.equal(projected.tasks[1].localCommitReadbackMatched, true);
+  assert.equal(projected.tasks[1].candidateCommitted, false);
+  assert.equal(projected.localCommitReadbackMatchedUntrusted, true);
+  assert.equal(projected.localSourceCandidateProven, false);
+  assert.equal(projected.candidateTrustBlocker, 'INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED');
   assert.equal(projected.liveBuildProven, false);
   const spoofed = projectParallelSeedReceiptStatusV1(claims, receipts.map((receipt) =>
     receipt.taskId === 'finished-two' ? { ...receipt, independentGitHeadVerified: false } : receipt), NOW);
   assert.equal(spoofed.tasks[1].candidateCommitted, false);
+  assert.equal(spoofed.tasks[1].localCommitReadbackMatched, false);
+  assert.equal(spoofed.localSourceCandidateProven, false);
   assert.equal(spoofed.liveBuildProven, false);
   assert.equal(projected.tasks[1].deployed, false);
   assert.equal(projected.doesNotDependOnCanonicalConveyor, true);

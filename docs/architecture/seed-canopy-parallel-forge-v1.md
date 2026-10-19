@@ -162,7 +162,7 @@ These are operator-invoked entrypoints today. No Task Scheduler service, automat
 
 The test at tests/seed-canopy-parallel-forge-integration.test.mjs constructs a disposable Git repository with a canonical seed fixture and a **mock loopback llama.cpp router** that accepts only `/v1/completions?autoload=false`, then proves real worktree creation, one file edit, actual tests, a local commit, durable receipts, main unchanged and refusal of duplicate retries. This is genuine Git execution proof using simulated model output, not live inference, deployment or autonomous completion.
 
-Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed. The supervisor reports `localSourceCandidateProven` for a fresh independently verified local source commit, while `liveBuildProven` remains false until separately authenticated unattended live build evidence exists.
+Task success and Canopy growth remain distinct: a committed candidate is not a reviewed PR, an installed skill or a fully realised seed. The supervisor exposes `localCommitReadbackMatchedUntrusted` when a physical local Git commit matches the expected receipt, but **does not** call that independent proof: the Git branch and receipt are writable by the same account. `candidateCommitted` and `localSourceCandidateProven` stay false with typed `INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED` until an independently protected host signs and authenticates the exact candidate. `liveBuildProven` also remains false until separately authenticated unattended build evidence exists. No software-only local receipt, even with valid owner approval, can bypass this custody requirement.
 
 ## Sovereign Commander fast mailbox observation
 
