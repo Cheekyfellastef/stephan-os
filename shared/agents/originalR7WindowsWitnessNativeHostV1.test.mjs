@@ -37,7 +37,7 @@ test('native host refuses trust even when expected SCM SID is present', () => {
   assert.doesNotMatch(program, /static\s+void\s+Main\s*\(\s*string\[\]\s+args\s*\)[\s\S]*CommandLine/);
   assert.match(guide, /NOT the\s+privileged Windows proof issuer/);
   assert.match(guide, /historical outcome UNKNOWN/);
-  assert.match(guide, /NO installer or release command/);
+  assert.match(guide, /no privileged commissioning, signing or lease-release command/);
 });
 
 test('project cannot run as native generic mutable helper', () => {
