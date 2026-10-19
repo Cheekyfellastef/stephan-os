@@ -38,6 +38,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   const path = (relative) => join(repo, relative);
   let server;
   let ownerComment = null;
+  let secondOwnerComment = null;
   let inferenceCount = 0;
   let advanceMainOnNextInference = false;
   let redirectParentOnNextInference = null;
@@ -107,10 +108,13 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('update-ref', 'refs/remotes/origin/main', main);
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
-        if (req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
-          && req.method === 'GET' && ownerComment) {
+        const comment = req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
+          ? ownerComment
+          : req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654322'
+            ? secondOwnerComment : null;
+        if (req.method === 'GET' && comment) {
           res.writeHead(200, { 'content-type': 'application/json' });
-          res.end(JSON.stringify(ownerComment));
+          res.end(JSON.stringify(comment));
           return;
         }
         if (req.url === '/models' && req.method === 'GET') {
@@ -630,6 +634,69 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       join(stateRoot, 'receipts', legacyId + '.json'), 'utf8'));
     assert.equal(legacyReceipt.stage, 'BLOCKED');
     assert.equal(legacyReceipt.goalCompleted, false);
+
+    // A blocked candidate must never jam a disjoint approved seed. Use
+    // production's disabled heavy-model flag for this actual Git fixture,
+    // and prove a two-attempt foreground batch continues to a distinct goal.
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
+    git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
+    git('commit', '-m', 'fixture restore model custody HOLD before batch');
+    const batchBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', batchBase);
+    const batchNow = new Date().toISOString();
+    const batchExpires = new Date(Date.parse(batchNow) + 3600000).toISOString();
+    const batchRows = [
+      { id: 'aaa-batch-fail', target: 'docs/architecture/batch-failed-inventory.md',
+        testPath: 'tests/missing-approved-fixture.test.mjs', commentId: 7654321 },
+      { id: 'aab-batch-success', target: 'docs/architecture/batch-successful-inventory.md',
+        testPath: 'tests/fixture-safe.test.mjs', commentId: 7654322 },
+    ];
+    const makeApprovalComment = (row, body) => ({
+      id: row.commentId, user: { login: 'Cheekyfellastef' }, author_association: 'OWNER',
+      issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3096',
+      created_at: batchNow, updated_at: batchNow,
+      body: ['```stephanos-seed-parallel-owner-approval', body, '```'].join('\n'),
+    });
+    for (const row of batchRows) {
+      const task = { ...request, taskId: row.id, targetPath: row.target,
+        baseSha: batchBase, generationMode: 'CANONICAL_INVENTORY_V1',
+        expectedTargetSha256: null, testPaths: [row.testPath] };
+      const raw = JSON.stringify(task);
+      const body = JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: task, manifestSha256: parallelSeedManifestHashV1(raw),
+        nowUtc: batchNow, expiryUtc: batchExpires,
+      }));
+      if (row.commentId === 7654321) ownerComment = makeApprovalComment(row, body);
+      else secondOwnerComment = makeApprovalComment(row, body);
+      await writeFile(join(stateRoot, 'inbox', row.id + '.json'), raw);
+      await writeFile(join(stateRoot, 'approvals', row.id + '.json'),
+        JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA,
+          commentId: row.commentId }));
+    }
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const beforeBatchModelCalls = inferenceCount;
+    const batch = await runAsync(process.execPath,
+      [supervisor, 'run-inventory-batch'], { cwd: repo, env });
+    assert.equal(batch.code, 1, batch.stderr);
+    assert.match(batch.stdout, /MODEL_FREE_APPROVED_INVENTORY_ONLY/);
+    assert.match(batch.stdout, /"attemptedCount": 2/);
+    assert.match(batch.stdout, /"blockedCount": 1/);
+    assert.equal(inferenceCount, beforeBatchModelCalls,
+      'a model-free fail-forward batch must not call an ungoverned model');
+    const failedBatchReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', batchRows[0].id + '.json'), 'utf8'));
+    const passedBatchReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', batchRows[1].id + '.json'), 'utf8'));
+    assert.equal(failedBatchReceipt.stage, 'BLOCKED');
+    assert.equal(passedBatchReceipt.stage, 'COMMITTED',
+      'a blocked source candidate cannot strand a separate approved seed');
+    assert.equal(passedBatchReceipt.merged, false);
+    assert.equal(passedBatchReceipt.goalCompleted, false);
+    assert.equal(git('rev-parse', 'main'), batchBase,
+      'neither blocked nor committed batch task may change canonical main');
 
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
