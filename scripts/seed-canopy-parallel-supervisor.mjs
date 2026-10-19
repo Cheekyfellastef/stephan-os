@@ -15,7 +15,7 @@ import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjec
 import { validateParallelSeedBuildRequestV1 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import {
   parallelSeedManifestHashV1, selectParallelSeedApprovedTaskV1,
-  projectParallelSeedReceiptStatusV1,
+  selectParallelSeedInventoryBatchTaskV1, projectParallelSeedReceiptStatusV1,
 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import {
   SEED_PARALLEL_APPROVAL_REF_SCHEMA, validateSeedParallelApprovalReferenceV1,
@@ -258,6 +258,69 @@ async function runOnce() {
   if (code !== 0) process.exitCode = 1;
 }
 
+// One local operator invocation may attempt at most two *independently*
+// owner-approved documentation tasks. Blocked, stale or spoofed tasks keep
+// their own durable custody and cannot starve a disjoint eligible task.
+// This is a bounded foreground command, NOT a daemon or new scheduler.
+async function runInventoryBatch() {
+  const attemptedIds = [];
+  const results = [];
+  const MAX_INVENTORY_ATTEMPTS = 2;
+  for (let attempt = 0; attempt < MAX_INVENTORY_ATTEMPTS; attempt += 1) {
+    const candidates = await inboxCandidates();
+    const selection = selectParallelSeedInventoryBatchTaskV1(
+      candidates, Date.now(), attemptedIds);
+    if (!selection.selected) break;
+    const selected = selection.selected;
+    const taskId = selected.request.taskId;
+    attemptedIds.push(taskId);
+    let reason = '';
+    let exitCode = null;
+    try {
+      const rawNow = await readFile(selected.path, 'utf8');
+      if (parallelSeedManifestHashV1(rawNow) !== selected.manifestSha256)
+        throw new Error('APPROVED_MANIFEST_CHANGED_BEFORE_DISPATCH');
+      const script = fileURLToPath(new URL('./seed-canopy-parallel-builder.mjs', import.meta.url));
+      const child = spawn(process.execPath, [script, 'build', selected.path, '--execute'], {
+        cwd: root, env: workerEnvironment(), shell: false,
+        windowsHide: true, stdio: 'inherit',
+      });
+      exitCode = await new Promise((resolveCode, reject) => {
+        child.once('error', reject);
+        child.once('close', resolveCode);
+      });
+      if (exitCode !== 0) reason = 'WORKER_HELD_INSPECT_INDIVIDUAL_RECEIPT';
+    } catch {
+      // Never retry this task in the same batch or reinterpret a transient
+      // error as source authority. A separate task may still be eligible.
+      reason = 'TASK_DISPATCH_REFUSED';
+    }
+    const issueLabel = await resolveSeedParallelOwnerIssueLabelV1(selected.request.ownerIssue);
+    results.push(Object.freeze({
+      taskId,
+      owner: issueLabel.label,
+      issueTitleTruth: issueLabel.issueTitleTruth,
+      childExitCode: exitCode,
+      outcome: reason || 'WORKER_EXIT_ZERO_INDEPENDENT_COMMIT_VERIFICATION_REQUIRED',
+    }));
+  }
+  const blockedCount = results.filter((item) =>
+    item.outcome !== 'WORKER_EXIT_ZERO_INDEPENDENT_COMMIT_VERIFICATION_REQUIRED').length;
+  output({
+    route: 'MODEL_FREE_APPROVED_INVENTORY_ONLY',
+    runMode: 'BOUNDED_FOREGROUND_NO_SCHEDULER',
+    attemptedCount: results.length,
+    maxAttempts: MAX_INVENTORY_ATTEMPTS,
+    blockedCount,
+    attempts: results,
+    individualCommitVerificationRequired: true,
+    originalR7LeaseTouched: false,
+    protectedMergeOrDeploymentAllowed: false,
+    liveSeedCompletionProven: false,
+  });
+  if (blockedCount) process.exitCode = 1;
+}
+
 async function main() {
   const [command, taskId] = process.argv.slice(2);
   if (command === 'status') return output(await status());
@@ -270,7 +333,9 @@ async function main() {
   if (command === 'approve' && taskId && /^[a-z0-9][a-z0-9-]{2,79}$/.test(taskId))
     return await approve(taskId);
   if (command === 'run-once') return await runOnce();
-  throw new Error('Usage: node scripts/seed-canopy-parallel-supervisor.mjs status | inbox | approve <task-id> | run-once');
+  if (command === 'run-inventory-batch' && !taskId && process.argv.length === 3)
+    return await runInventoryBatch();
+  throw new Error('Usage: node scripts/seed-canopy-parallel-supervisor.mjs status | inbox | approve <task-id> | run-once | run-inventory-batch');
 }
 main().catch((error) => {
   process.stderr.write('Seed Canopy independent supervisor: ' + String(error.message || error) + '\n');
