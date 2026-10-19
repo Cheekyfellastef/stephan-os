@@ -117,7 +117,7 @@ $candidate = Assert-PlainLocalExistingPath $CandidateExe
 if (-not (Test-Path -LiteralPath $sc -PathType Leaf)) {
     throw 'R7_STAGE_SCM_UNAVAILABLE'
 }
-$sidecars = @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($candidate)) -File |
+$sidecars = @(Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($candidate)) -File -Force |
     Where-Object { $_.Extension -in @('.dll', '.json', '.deps') })
 if ($sidecars.Count -ne 0) { throw 'R7_STAGE_NOT_SINGLE_FILE_BUNDLE' }
 $info = Get-Item -LiteralPath $candidate

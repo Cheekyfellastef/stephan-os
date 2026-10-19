@@ -58,6 +58,7 @@ test('service SID cannot be carried by an unrelated or elevated Windows principa
 
 test('Windows CI compiles real native SCM witness and proves CLI denial without commissioning', () => {
   assert.match(nativeCi, /src\/windows\/Stephanos\.OriginalR7CustodyWitness\/\*\*/);
+  assert.match(nativeCi, /- 'scripts\/windows\/stage-original-r7-witness-candidate\.ps1'/);
   assert.match(nativeCi, /dotnet build src\/windows\/Stephanos\.OriginalR7CustodyWitness\/Stephanos\.OriginalR7CustodyWitness\.csproj --configuration Release/);
   assert.match(nativeCi, /--unapproved-ci-invocation/);
   assert.match(nativeCi, /\$rejected -ne 2/);
@@ -158,6 +159,22 @@ test('Windows stage script read-only plan and incorrect-image negative test exec
     const withSidecar = call(digest);
     assert.notEqual(withSidecar.status, 0, 'a managed DLL sidecar must fail');
     assert.match(withSidecar.stderr, /R7_STAGE_NOT_SINGLE_FILE_BUNDLE/);
+    await rm(join(dir, 'untrusted-managed.dll'));
+
+    // Hidden files still affect the bundle identity. Exercise actual Windows
+    // attributes rather than assuming a filename convention hides a file.
+    for (const name of ['hidden-managed.dll', 'hidden.runtimeconfig.json']) {
+      const sidecar = join(dir, name);
+      await writeFile(sidecar, Buffer.from('hidden untrusted payload'));
+      const hide = spawnSync('attrib.exe', ['+H', sidecar], {
+        shell: false, windowsHide: true, encoding: 'utf8', timeout: 10000,
+      });
+      assert.equal(hide.status, 0, hide.stderr || hide.error?.message || 'set hidden attribute');
+      const hiddenSidecar = call(digest);
+      assert.notEqual(hiddenSidecar.status, 0, `hidden ${name} must fail`);
+      assert.match(hiddenSidecar.stderr, /R7_STAGE_NOT_SINGLE_FILE_BUNDLE/);
+      await rm(sidecar, { force: true });
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
