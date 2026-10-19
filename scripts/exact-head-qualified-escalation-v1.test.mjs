@@ -116,6 +116,14 @@ test('only a strict owner-authenticated immutable and expiring exact proof match
   ), /OWNER_EXPIRY/);
 });
 
+test('qualified independent workflow-run identity is bound to the exact PR number', () => {
+  const source = readFileSync(new URL('./exact-head-qualified-escalation-v1.mjs', import.meta.url), 'utf8');
+  const command = source.match(/const command = \\{([\\s\\S]*?)\\};\\s*const run = await api\\('\/actions\/runs\//);
+  assert.ok(command, 'trusted validation command must precede the review-run fetch');
+  assert.match(command[1], /\\bprNumber:\\s*input\\.prNumber\\b/,
+    'review-run name and GitHub association must use the exact PR, never undefined');
+});
+
 test('forged marker comments never shadow latest owner escalation', async () => {
   let requestedRun = false;
   await assert.rejects(() => qualifyExactHeadReviewV1(input, receipt, {
