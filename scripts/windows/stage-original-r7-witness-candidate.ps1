@@ -142,7 +142,7 @@ try {
         throw 'R7_STAGE_COPIED_IMAGE_HASH_MISMATCH'
     }
     # Deliberately DEMAND start, not AUTO, so the SCM preflight cannot claim
-    # an active commissioned host. No Start-Service or any process launch.
+    # an active commissioned host. No service or process launch.
     & $sc create $service 'type=' 'own' 'start=' 'demand' 'binPath=' ('"' + $installedExe + '"') 'obj=' $account 'password=' '' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'R7_STAGE_CREATE_SERVICE_FAILED' }
     $serviceCreated = $true
