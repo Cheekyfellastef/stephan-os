@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Local-only independent Seed Canopy supervisor. No main scheduler, Mission Worker or daemon dependency.
-import { readdir, readFile, mkdir, writeFile, realpath } from 'node:fs/promises';
-import { join, resolve, basename } from 'node:path';
+import { readdir, readFile, mkdir, writeFile, realpath, lstat } from 'node:fs/promises';
+import { join, resolve, basename, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -145,6 +145,30 @@ async function status() {
         // this is the canonical registered worktree, not a fabricated clean clone.
         const canonicalTopology = inspectBattleBridgeGitTopology(root);
         if (!canonicalTopology.ok) throw new Error(canonicalTopology.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN');
+        // A linked worktree uses a regular .git text file pointing into the
+        // canonical .git/worktrees directory. Refuse substituted links and
+        // redirected administrative metadata before source-proof promotion.
+        const pointerFile = join(worktree, '.git');
+        const pointerStat = await lstat(pointerFile);
+        if (!pointerStat.isFile() || pointerStat.isSymbolicLink()
+          || pointerStat.nlink !== 1 || pointerStat.size < 8 || pointerStat.size > 4096)
+          throw new Error('SEED_LINKED_WORKTREE_GIT_POINTER_UNSAFE');
+        const pointerLine = (await readFile(pointerFile, 'utf8')).trim();
+        if (!pointerLine.startsWith('gitdir: '))
+          throw new Error('SEED_LINKED_WORKTREE_GIT_POINTER_MALFORMED');
+        const canonicalGitDir = await realpath(join(root, '.git'));
+        const linkedAdminRoot = await realpath(join(canonicalGitDir, 'worktrees'));
+        const pointerAdmin = await realpath(resolve(worktree, pointerLine.slice(8)));
+        const reportedAdmin = verifyGit('rev-parse', '--absolute-git-dir');
+        const reportedAdminPhysical = reportedAdmin ? await realpath(reportedAdmin) : '';
+        const normalized = (value) => process.platform === 'win32'
+          ? value.toLowerCase() : value;
+        if (!reportedAdminPhysical || normalized(pointerAdmin) !== normalized(reportedAdminPhysical)
+          || !normalized(pointerAdmin).startsWith(normalized(linkedAdminRoot) + sep))
+          throw new Error('SEED_LINKED_WORKTREE_GIT_ADMIN_REDIRECTED');
+        const backlink = (await readFile(join(pointerAdmin, 'gitdir'), 'utf8')).trim();
+        if (normalized(resolve(backlink)) !== normalized(resolve(pointerFile)))
+          throw new Error('SEED_LINKED_WORKTREE_GIT_BACKLINK_MISMATCH');
         const canonicalTop = readGit(root, 'rev-parse', '--show-toplevel');
         const treeTop = verifyGit('rev-parse', '--show-toplevel');
         const canonicalCommon = readGit(root, 'rev-parse', '--path-format=absolute', '--git-common-dir');

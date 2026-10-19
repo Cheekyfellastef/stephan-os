@@ -284,6 +284,32 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(supervised.tasks[0].merged, false);
     assert.equal(supervised.localSourceCandidateProven, true);
     assert.equal(supervised.liveBuildProven, false);
+    // Even if a metadata pointer resolves to the SAME administrative directory,
+    // a symlink cannot authenticate the original linked worker checkout.
+    if (process.platform !== 'win32') {
+      const pointer = join(completed.worktree, '.git');
+      const parkedPointer = pointer + '.original';
+      const rawPointer = await readFile(pointer, 'utf8');
+      assert.match(rawPointer, /^gitdir: /);
+      await rename(pointer, parkedPointer);
+      symlinkSync(parkedPointer, pointer);
+      try {
+        const redirected = await runAsync(process.execPath,
+          [supervisor, 'status'], { cwd: repo, env });
+        assert.equal(redirected.code, 0, redirected.stderr);
+        const redirectedStatus = JSON.parse(redirected.stdout);
+        assert.equal(redirectedStatus.localSourceCandidateProven, false,
+          'symlinked worktree metadata is not independently attributable');
+        assert.equal(redirectedStatus.liveBuildProven, false);
+      } finally {
+        await rm(pointer);
+        await rename(parkedPointer, pointer);
+      }
+      const restored = await runAsync(process.execPath,
+        [supervisor, 'status'], { cwd: repo, env });
+      assert.equal(restored.code, 0, restored.stderr);
+      assert.equal(JSON.parse(restored.stdout).localSourceCandidateProven, true);
+    }
     const approvalPath = join(stateRoot, 'approvals', TASK_ID + '.json');
     const validPointer = await readFile(approvalPath, 'utf8');
     await writeFile(approvalPath, '{}');
