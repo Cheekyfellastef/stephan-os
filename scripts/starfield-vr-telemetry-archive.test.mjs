@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { validateSovereignCommanderRemoteCommandShape } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { serializeBoundedReceiptJson } from './battle-bridge-github-command-mailbox.mjs';
 import {
   readStarfieldVrTelemetryArchive,
   STARFIELD_VR_TELEMETRY_ARCHIVE_SCHEMA,
@@ -145,4 +147,91 @@ test('Sovereign Commander exposes archive via read-only local and bounded remote
   assert.match(mcp, /readOnlyHint: true/);
   assert.match(remote, /safeStarfieldVrTelemetryArchiveProjection/);
   assert.match(remote, /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_RECEIPT_INVALID/);
+});
+
+test('remote telemetry paging is bound to the archive verb and cannot widen other maintenance actions', () => {
+  const command = {
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    expectedHead: SHA,
+    remoteAction: 'starfield-vr-telemetry-archive',
+    telemetryOffset: 4,
+    telemetryLimit: 4,
+  };
+  const ready = validateSovereignCommanderRemoteCommandShape(command);
+  assert.equal(ready.ok, true);
+  assert.equal(ready.command.telemetryOffset, 4);
+  assert.equal(ready.command.telemetryLimit, 4);
+  const defaults = validateSovereignCommanderRemoteCommandShape({
+    operation: command.operation, expectedHead: SHA,
+    remoteAction: 'starfield-vr-telemetry-archive',
+  });
+  assert.equal(defaults.command.telemetryOffset, 0);
+  assert.equal(defaults.command.telemetryLimit, 4);
+  for (const edit of [
+    { telemetryLimit: 5 }, { telemetryLimit: 0 },
+    { telemetryOffset: -1 }, { telemetryOffset: '4' },
+    { searchQuery: 'secret' }, { remotePlan: ['status'] },
+  ]) {
+    assert.equal(validateSovereignCommanderRemoteCommandShape({ ...command, ...edit }).ok, false);
+  }
+  assert.equal(validateSovereignCommanderRemoteCommandShape({
+    ...command, remoteAction: 'gaming-resource-status',
+  }).ok, false);
+});
+
+test('GitHub receipt projects up to four sanitised historical rows, without raw telemetry', () => {
+  const sessionId = id('99');
+  const archive = {
+    schemaVersion: STARFIELD_VR_TELEMETRY_ARCHIVE_SCHEMA,
+    ok: true, readOnly: true, sourceMutationAllowed: false,
+    rawTelemetryReturned: false, hostPathsReturned: false,
+    secretMaterialReturned: false, arbitraryShellAllowed: false,
+    unknownMeansGreen: false,
+    generatedAtUtc: '2026-10-19T23:45:00.000Z',
+    directoryAvailable: true, totalSessions: 13,
+    newestSessionId: sessionId, offset: 0, limit: 4, nextOffset: 4,
+    hasMore: true,
+    sessions: [{
+      sessionId, enteredAtUtc: '2026-10-19T23:20:00.000Z',
+      endedAtUtc: '2026-10-19T23:40:00.000Z',
+      sourceHead: SHA, provider: 'mutar-openxr',
+      sessionOutcome: 'COMPLETED', sampleCount: 139,
+      csvPresent: true, summaryPresent: true,
+      sessionReceiptPresent: true, partialTelemetry: false,
+      avgApplicationFrameTimeMs: 13.37,
+      p95ApplicationFrameTimeMs: 20,
+      maxEyePresentationSkewMs: null,
+      rawLog: 'MY_SECRET_RAW_LOG_SHOULD_NOT_LEAK',
+    }],
+    rawPath: 'C:\\Users\\Private\\secret-telemetry.csv',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'starfield-telemetry-archive-test-0001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2808, branch: 'main', state: 'DONE',
+    expectedHead: SHA,
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        remoteAction: 'starfield-vr-telemetry-archive',
+        finalVerdict: 'STARFIELD_VR_TELEMETRY_ARCHIVE_READY',
+        telemetryArchive: archive,
+      },
+    },
+  };
+  const output = serializeBoundedReceiptJson(receipt);
+  const parsed = JSON.parse(output);
+  const publicArchive = parsed?.result?.result?.starfieldVrTelemetryArchive;
+  assert.equal(publicArchive.schemaVersion, STARFIELD_VR_TELEMETRY_ARCHIVE_SCHEMA);
+  assert.equal(publicArchive.totalSessions, 13);
+  assert.equal(publicArchive.sessions[0].sessionId, sessionId);
+  assert.equal(publicArchive.sessions[0].avgApplicationFrameTimeMs, 13.37);
+  assert.equal(publicArchive.sessions[0].maxEyePresentationSkewMs, null);
+  assert.equal(publicArchive.hasMore, true);
+  assert.equal(publicArchive.nextOffset, 4);
+  assert.ok(Buffer.byteLength(output, 'utf8') < 9 * 1024);
+  assert.doesNotMatch(output, /MY_SECRET_RAW_LOG_SHOULD_NOT_LEAK|secret-telemetry.csv/);
 });
