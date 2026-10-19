@@ -361,6 +361,45 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.match(deterministicSource, /No physical observations were supplied/);
     assert.match(deterministicReceipt.commitSha, /^[a-f0-9]{40}$/);
 
+    // A separately approved task cannot treat a stale locally tracked origin
+    // as proof of canonical source freshness. It must BLOCK its own claim
+    // without changing main or consuming other independent seed work.
+    const originTaskId = 'origin-drift-seed-pilot';
+    const originTarget = 'docs/architecture/origin-drift-seed-pilot.md';
+    const originRequest = { ...request, taskId: originTaskId,
+      targetPath: originTarget, baseSha: deterministicBase,
+      generationMode: 'CANONICAL_INVENTORY_V1', expectedTargetSha256: null };
+    const originRaw = JSON.stringify(originRequest);
+    const originManifest = join(scratch, 'origin-drift-seed-manifest.json');
+    await writeFile(originManifest, originRaw);
+    await writeFile(join(stateRoot, 'approvals', originTaskId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const originNow = new Date().toISOString();
+    ownerComment.created_at = originNow;
+    ownerComment.updated_at = originNow;
+    ownerComment.body = [
+      '```stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: originRequest,
+        manifestSha256: parallelSeedManifestHashV1(originRaw),
+        nowUtc: originNow,
+        expiryUtc: new Date(Date.parse(originNow) + 3600000).toISOString(),
+      })),
+      '```',
+    ].join(String.fromCharCode(10));
+    git('update-ref', 'refs/remotes/origin/main', main);
+    const originBlocked = await runAsync(process.execPath,
+      [executable, 'build', originManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(originBlocked.code, 0);
+    assert.match(originBlocked.stderr, /SEED_SOURCE_TRACKED_ORIGIN_MAIN_MISMATCH/);
+    const originReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', originTaskId + '.json'), 'utf8'));
+    assert.equal(originReceipt.stage, 'BLOCKED');
+    assert.equal(originReceipt.goalCompleted, false);
+    assert.equal(git('rev-parse', 'main'), deterministicBase);
+    assert.equal(git('rev-parse', 'refs/remotes/origin/main'), main);
+    git('update-ref', 'refs/remotes/origin/main', deterministicBase);
+
     // An already-approved model task must not write when main moves while
     // the mock model is answering. This is a real temporary Git concurrency
     // test, NOT a Battle Bridge source or OS-custody claim.
