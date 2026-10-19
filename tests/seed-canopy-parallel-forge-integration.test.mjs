@@ -319,13 +319,13 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const deterministicNow = new Date().toISOString();
     ownerComment.created_at = deterministicNow;
     ownerComment.updated_at = deterministicNow;
-    ownerComment.body = '```stephanos-seed-parallel-owner-approval\\n' +
+    ownerComment.body = '```stephanos-seed-parallel-owner-approval\n' +
       JSON.stringify(makeParallelSeedExactApprovalV1({
         request: deterministicRequest,
         manifestSha256: parallelSeedManifestHashV1(deterministicRaw),
         nowUtc: deterministicNow,
         expiryUtc: new Date(Date.parse(deterministicNow) + 3600000).toISOString(),
-      })) + '\\n```';
+      })) + '\n```';
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
         active: false, phase: 'NORMAL', localModelAllowed: true,
