@@ -257,6 +257,12 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const completed = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(completed.stage, 'COMMITTED');
+    assert.equal(completed.pickupProof?.localSourceReadback, 'VERIFIED');
+    assert.equal(completed.pickupProof?.gitHead, main);
+    assert.equal(completed.pickupProof?.gitBranch,
+      'seed-parallel/' + SEED_ID + '/' + TASK_ID);
+    assert.equal(completed.pickupProof?.independentHostCustody, 'NOT_PROVEN');
+    assert.equal(completed.pickupProof?.unattendedBuildQualified, false);
     assert.match(completed.commitSha, /^[a-f0-9]{40}$/);
     assert.equal(completed.merged, false);
     assert.equal(completed.deployed, false);
