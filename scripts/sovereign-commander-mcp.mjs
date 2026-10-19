@@ -153,7 +153,7 @@ const TOOLS = Object.freeze([
       additionalProperties: false,
       properties: {
         offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
-        limit: { type: 'integer', minimum: 1, maximum: 20, default: 12 },
+        limit: { type: 'integer', minimum: 1, maximum: 12, default: 12 },
       },
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
