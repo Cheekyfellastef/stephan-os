@@ -222,3 +222,64 @@ test('offline external-edge acceptance requires remote idempotency or verified r
   assert.doesNotMatch(markdown, /Without a remote idempotency contract, report delivery as `UNVERIFIED`/);
   assert.doesNotMatch(markdown, /later exactly-once guarded delivery is the acceptable behavior/);
 });
+
+test('rung-1 owner ledger cannot silently reassign a valid owner or weaken critical evidence', () => {
+  // Source-only custody regression: the existing canonical roster alone is
+  // insufficient because a different *valid* owner can still be a wrong owner.
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const section = markdown.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
+  assert.ok(section, 'missing original-owner discovery ledger');
+  const rows = section.split('\n').map((line) => line.trim())
+    .filter((line) => line.startsWith('| `'));
+  const expectedOwners = [
+    '#1898', 'UNRESOLVED', '#2972', '#2519',
+    '#1898 / #2972', '#1898', '#2972 / #2593', '#2593',
+    '#2519', 'UNRESOLVED', 'UNRESOLVED', 'UNRESOLVED',
+    'UNRESOLVED', '#2968 / #1898', '#2593', '#2670',
+  ];
+  const expectedWitnesses = new Map([
+    ['independent-local-review', 'Qualified independent non-hosted reviewer and negative forgery proof'],
+    ['worker-and-controller-endurance', 'Two simultaneous admitted source/test workers and terminal receipts'],
+    ['graceful-external-integration-queue', 'Durable offline PENDING and guarded exactly-once delivery'],
+    ['provider-and-meter-independence', 'Real alternate qualified worker after all provider meters exhaust'],
+  ]);
+  const validate = (source) => {
+    const section = source.split('## Rung-1 owner-discovery ledger')[1]?.split('## First safe evidence sequence')[0];
+    assert.ok(section, 'missing original-owner discovery ledger');
+    const lines = section.split('\n').map((line) => line.trim())
+      .filter((line) => line.startsWith('| `'));
+    assert.equal(lines.length, FULL_SOVEREIGNTY_DIMENSIONS_V1.length,
+      'all canonical owner rows must remain present');
+    const parsed = lines.map((line) => {
+      assert.ok(line.endsWith('|'), 'ledger rows must have complete delimiters');
+      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim());
+      assert.equal(cells.length, 3, 'ledger row must have exactly three cells');
+      return { dimension: cells[0].slice(1, -1), owner: cells[1], witness: cells[2] };
+    });
+    assert.deepEqual(parsed.map((row) => row.dimension), [...FULL_SOVEREIGNTY_DIMENSIONS_V1],
+      'canonical owner rows must retain dimension order');
+    assert.deepEqual(parsed.map((row) => row.owner), expectedOwners,
+      'an owner change requires explicit original-owner source-contract review');
+    for (const row of parsed) {
+      if (expectedWitnesses.has(row.dimension)) {
+        assert.equal(row.witness, expectedWitnesses.get(row.dimension),
+          'critical original-domain evidence cannot be silently weakened');
+      }
+    }
+  };
+  assert.equal(rows.length, 16, 'source fixture must expose sixteen original owners');
+  validate(markdown);
+  for (const [from, to] of [
+    ['| `independent-local-review` | #1898 |', '| `independent-local-review` | #2519 |'],
+    ['| `worker-and-controller-endurance` | #2972 / #2593 |', '| `worker-and-controller-endurance` | #2972 |'],
+    ['| `graceful-external-integration-queue` | UNRESOLVED |', '| `graceful-external-integration-queue` | #1898 |'],
+  ]) {
+    assert.ok(markdown.includes(from), 'missing adversarial owner fixture');
+    assert.throws(() => validate(markdown.replace(from, to)),
+      /owner change requires explicit original-owner source-contract review/);
+  }
+  const required = 'Two simultaneous admitted source/test workers and terminal receipts';
+  assert.ok(markdown.includes(required), 'missing physical parallel-pickup evidence fixture');
+  assert.throws(() => validate(markdown.replace(required, 'Two selected tasks with queued dispatch')),
+    /critical original-domain evidence cannot be silently weakened/);
+});
