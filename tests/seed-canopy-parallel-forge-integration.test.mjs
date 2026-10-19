@@ -473,7 +473,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     const racedReceipt = JSON.parse(await readFile(
       join(stateRoot, 'receipts', raceTaskId + '.json'), 'utf8'));
     assert.equal(racedReceipt.stage, 'BLOCKED');
-    assert.equal(racedReceipt.failedStage, 'CLAIMED');
+    assert.equal(racedReceipt.failedStage, 'PHYSICAL_PICKUP');
     await assert.rejects(() => access(join(racedReceipt.worktree, raceTarget)), /ENOENT/);
 
     // POSIX fixture adversary: while an approved local model is responding,
