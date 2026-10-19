@@ -255,14 +255,14 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const reviewWorkspace = path.posix.normalize(linuxPaths[1]);
   const reviewProofFile = path.posix.join(linuxPaths[1], expectedProof);
   if (reviewWorkspace !== linuxPaths[1]
-    || !reviewProofFile.startsWith(reviewWorkspace.replace(/\\/+$/, '') + '/')) {
+    || !reviewProofFile.startsWith(reviewWorkspace.replace(/\/+$/, '') + '/')) {
     return error('REVIEWER_PROOF_PATH_UNSAFE');
   }
   const readback = run(['/usr/bin/sha256sum', '--', reviewProofFile], 12_000);
   if (readback?.error || readback?.status !== 0) {
     return error('REVIEWER_PROOF_FILE_UNREADABLE');
   }
-  const hashMatch = String(readback.stdout || '').match(/^([a-f0-9]{64})  (.+)\\r?\\n?$/);
+  const hashMatch = String(readback.stdout || '').match(/^([a-f0-9]{64})  (.+)\r?\n?$/);
   if (!hashMatch || hashMatch[2] !== reviewProofFile) {
     return error('REVIEWER_PROOF_READBACK_INVALID');
   }
