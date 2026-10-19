@@ -107,6 +107,8 @@ export async function qualifyExactHeadReviewV1(input, receipt, { api, download, 
   const owner = validateOwnerEscalationCommentV1(ownerCandidates.at(-1), input,
     context.patchSha256, nowMs ?? Date.now());
   const command = {
+    // Bind the exact PR to the trusted workflow-run name and association.
+    prNumber: input.prNumber,
     reviewRunId: owner.reviewRunId, reviewRunAttempt: owner.reviewRunAttempt,
     reviewArtifactId: owner.reviewArtifactId, reviewArtifactDigest: owner.reviewArtifactDigest,
     expectedHead: input.headSha, expectedBase: input.baseSha,
