@@ -116,6 +116,15 @@ async function assertTrustedGitBoundary(cwd = repoRoot) {
   if (!config.ok) throw new Error(config.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID');
 }
 
+// A successful initial claim is not perpetual permission to author against an
+// old base. Re-read the canonical local main immediately before the source
+// write, before committing and before declaring success. No global lease,
+// R7 repair or remote mutation is performed by this comparison.
+async function assertSeedMainDidNotMove(expectedBase) {
+  const observed = await processExec('git', ['rev-parse', '--verify', 'refs/heads/main']);
+  if (observed !== expectedBase) throw new Error('SEED_SOURCE_MAIN_ADVANCED_DURING_BUILD');
+}
+
 async function saveReceipt(request, stage, more = {}) {
   const receipt = makeParallelSeedReceiptV1(request, stage, {
     recordedAtUtc: new Date().toISOString(), ...more,
@@ -391,6 +400,7 @@ async function build(request, manifestSha256) {
     // A long model call or directory creation can change the physical path.
     // Revalidate immediately before the narrowly scoped write. A separate
     // native stable-handle fence is still required for hostile Windows races.
+    await assertSeedMainDidNotMove(request.baseSha);
     const writeTarget = await safeTarget(worktree, request.targetPath);
     if (writeTarget !== target) throw new Error('TARGET_IDENTITY_MOVED');
     await writeFile(writeTarget, proposal.content, { flag: sha === null ? 'wx' : 'w' });
@@ -406,6 +416,7 @@ async function build(request, manifestSha256) {
     const changed = status.split('\n').filter(Boolean).map((line) => line.slice(3).replace(/\\/g, '/'));
     if (changed.length !== 1 || changed[0] !== request.targetPath) throw new Error('OUT_OF_SCOPE_WORKTREE_CHANGES');
     stage = 'TESTED';
+    await assertSeedMainDidNotMove(request.baseSha);
     await saveReceipt(request, stage, { worktree, proposedSha256: proposedSha, testPaths: request.testPaths });
     await processExec('git', ['add', '--', request.targetPath], worktree);
     const staged = await processExec('git', ['diff', '--cached', '--name-only'], worktree);
@@ -424,6 +435,8 @@ async function build(request, manifestSha256) {
     if (parents.length !== 2 || parents[0] !== commitSha || parents[1] !== request.baseSha
       || committedPaths !== request.targetPath || committedTree !== exactTree || workingStatus !== '')
       throw new Error('COMMIT_SCOPE_OR_PARENT_MISMATCH');
+    // A valid isolated commit is still held if canonical main advanced.
+    await assertSeedMainDidNotMove(request.baseSha);
     stage = 'COMMITTED';
     return await saveReceipt(request, stage, {
       worktree, proposedSha256: proposedSha, commitSha, testPaths: request.testPaths,
