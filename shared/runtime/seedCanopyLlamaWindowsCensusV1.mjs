@@ -55,6 +55,14 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
       && Date.parse(p.startedAtUtc) > observed))
     reasons.push('PROCESS_CREATION_AFTER_OBSERVATION');
 
+  // A process born while the process-wide scan is in flight proves the
+  // enumeration was racing launches. Even an unrelated PID makes a negative
+  // snapshot ambiguous; this read-only candidate must fail closed.
+  if (Array.isArray(processes) && Number.isFinite(started)
+    && processes.some(p => p && utc(p.startedAtUtc)
+      && Date.parse(p.startedAtUtc) >= started))
+    reasons.push('PROCESS_LAUNCHED_DURING_ENUMERATION');
+
   if (reasons.includes('LAUNCH_REGISTRATION_INCOMPLETE')
     || reasons.includes('PROCESS_CENSUS_INVALID')) {
     return Object.freeze({

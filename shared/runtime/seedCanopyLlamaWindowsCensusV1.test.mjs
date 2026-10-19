@@ -107,6 +107,22 @@ test('impossible future process creation never certifies an absent router tree',
   assert.equal(impossible.mayLiftInferenceHold, false);
 });
 
+test('processes launched during enumeration invalidate a negative census', () => {
+  // Even an unrelated process appearing during the scan shows a racing
+  // process table. A negative router-tree result cannot be trusted.
+  for (const launchedAt of [
+    snapshot.enumerationStartedAtUtc,
+    '2026-10-16T17:59:58.500Z',
+    snapshot.enumerationFinishedAtUtc,
+  ]) {
+    const result = check({ ...snapshot, processes: [one(120, 4, launchedAt)] });
+    assert.ok(result.reasonCodes.includes('PROCESS_LAUNCHED_DURING_ENUMERATION'));
+    assert.equal(result.processTreeAbsentCandidate, false);
+    assert.equal(result.zeroResidencyProven, false);
+    assert.equal(result.mayLiftInferenceHold, false);
+  }
+});
+
 test('recycled parent PID or inverted process chronology cannot certify absence', () => {
   // The current PID 120 process started after its purported child PID 121.
   // This may be PID reuse, not a trustworthy negative process-tree witness.
