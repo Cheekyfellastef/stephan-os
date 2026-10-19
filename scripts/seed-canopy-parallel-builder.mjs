@@ -534,6 +534,20 @@ async function build(request, manifestSha256) {
     stage = 'TESTED';
     await assertSeedMainDidNotMove(request.baseSha);
     await saveReceipt(request, stage, { worktree, proposedSha256: proposedSha, testPaths: request.testPaths });
+    // A passing test is not authority to replace the approved generated file.
+    // Recheck physical file type and the complete proposed bytes immediately
+    // before staging. The native Windows stable-handle/reparse-race gate is
+    // still separately required for real hostile-process commissioning.
+    const testOutput = await safeTarget(worktree, request.targetPath);
+    if (testOutput !== target || await readFile(testOutput, 'utf8') !== proposal.content)
+      throw new Error('SEED_OUTPUT_CHANGED_AFTER_TEST');
+    const expectedOutputBlob = createHash('sha1')
+      .update('blob ' + Buffer.byteLength(proposal.content, 'utf8') + '\0')
+      .update(proposal.content, 'utf8').digest('hex');
+    const observedOutputBlob = await processExec('git',
+      ['hash-object', '--no-filters', '--', request.targetPath], worktree);
+    if (observedOutputBlob !== expectedOutputBlob)
+      throw new Error('SEED_OUTPUT_BLOB_CHANGED_AFTER_TEST');
     await processExec('git', ['add', '--', request.targetPath], worktree);
     const staged = await processExec('git', ['diff', '--cached', '--name-only'], worktree);
     if (staged !== request.targetPath) throw new Error('OUT_OF_SCOPE_STAGED_FILES');
@@ -551,6 +565,16 @@ async function build(request, manifestSha256) {
     if (parents.length !== 2 || parents[0] !== commitSha || parents[1] !== request.baseSha
       || committedPaths !== request.targetPath || committedTree !== exactTree || workingStatus !== '')
       throw new Error('COMMIT_SCOPE_OR_PARENT_MISMATCH');
+    // Prove the committed Git object is the one exact regular-file proposal,
+    // not a post-test symlink, executable mode or same-path substitute.
+    const expectedTreeEntry = '100644 blob ' + expectedOutputBlob + '\t' + request.targetPath;
+    const committedEntry = await processExec('git',
+      ['ls-tree', 'HEAD', '--', request.targetPath], worktree);
+    if (committedEntry !== expectedTreeEntry)
+      throw new Error('SEED_COMMITTED_SOURCE_BLOB_OR_MODE_MISMATCH');
+    const committedOutput = await safeTarget(worktree, request.targetPath);
+    if (committedOutput !== target || await readFile(committedOutput, 'utf8') !== proposal.content)
+      throw new Error('SEED_COMMITTED_WORKTREE_CONTENT_MISMATCH');
     // A valid isolated commit is still held if canonical main advanced.
     await assertSeedMainDidNotMove(request.baseSha);
     stage = 'COMMITTED';
