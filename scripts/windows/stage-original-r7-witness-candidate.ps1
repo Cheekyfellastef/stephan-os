@@ -45,6 +45,19 @@ function Assert-PlainLocalExistingPath([string]$Value) {
     }
     return $canonical
 }
+function Read-LocalSha256([string]$Path) {
+    # Windows PowerShell may run with module auto-loading disabled. Use .NET
+    # directly rather than relying on an optional Get-FileHash cmdlet import.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open,
+        [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $hasher.Dispose()
+        $stream.Dispose()
+    }
+}
 function Assert-NoExistingServiceOrDestination {
     if ((Test-Path -LiteralPath $serviceKey) -or
         (Test-Path -LiteralPath $installDirectory)) {
@@ -103,7 +116,7 @@ $info = Get-Item -LiteralPath $candidate
 if ($info.PSIsContainer -or $info.Length -le 0 -or $info.Length -gt 250MB) {
     throw 'R7_STAGE_CANDIDATE_INVALID'
 }
-if ((Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSha256) {
+if ((Read-LocalSha256 $candidate) -cne $ExpectedSha256) {
     throw 'R7_STAGE_CANDIDATE_HASH_MISMATCH'
 }
 Assert-NoExistingServiceOrDestination
@@ -142,7 +155,7 @@ try {
     [void](New-Item -ItemType Directory -Path $installDirectory -ErrorAction Stop)
     $directoryCreated = $true
     Copy-Item -LiteralPath $candidate -Destination $installedExe -ErrorAction Stop
-    if ((Get-FileHash -LiteralPath $installedExe -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSha256) {
+    if ((Read-LocalSha256 $installedExe) -cne $ExpectedSha256) {
         throw 'R7_STAGE_COPIED_IMAGE_HASH_MISMATCH'
     }
     # Deliberately DEMAND start, not AUTO, so the SCM preflight cannot claim
