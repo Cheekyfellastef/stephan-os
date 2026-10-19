@@ -91,6 +91,19 @@ test('impossible future process creation never certifies an absent router tree',
   assert.equal(impossible.mayLiftInferenceHold, false);
 });
 
+test('recycled parent PID or inverted process chronology cannot certify absence', () => {
+  // The current PID 120 process started after its purported child PID 121.
+  // This may be PID reuse, not a trustworthy negative process-tree witness.
+  const result = check({ ...snapshot, processes: [
+    one(120, 4, '2026-10-16T17:00:00.000Z'),
+    one(121, 120, '2026-10-16T16:59:59.000Z'),
+  ] });
+  assert.ok(result.reasonCodes.includes('PROCESS_PARENT_CHRONOLOGY_AMBIGUOUS'));
+  assert.equal(result.processTreeAbsentCandidate, false);
+  assert.equal(result.independentlyQualified, false);
+  assert.equal(result.mayLiftInferenceHold, false);
+});
+
 test('registration missing exact descendant list or immutable launch identity fails closed', () => {
   for (const r of [
     { ...registration, registeredDescendants: null },
