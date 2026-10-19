@@ -654,6 +654,8 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
       return {
         spotifyInput: document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value,
         openLinkPresent: Array.from(card.querySelectorAll('a')).some((link) => link.href === spotifyUrl),
+        genericSearchPresent: Array.from(card.querySelectorAll('.media-controls a'))
+          .some((link) => /^Find on (Spotify|YouTube)$/.test(String(link.textContent || '').trim())),
         artworkSrc: image?.src,
         artworkAlt: image?.alt,
         iframeCount: card.querySelectorAll('iframe').length,
@@ -671,6 +673,7 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
     assert.deepEqual(proof, {
       spotifyInput: AUTO_SPOTIFY_URL,
       openLinkPresent: true,
+      genericSearchPresent: false,
       artworkSrc: AUTO_ARTWORK_URL,
       artworkAlt: 'Artwork for Enjoy the Silence',
       iframeCount: 0,
