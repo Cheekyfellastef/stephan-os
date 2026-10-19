@@ -26,6 +26,6 @@ test('stateful suites remain serial only inside their isolated parallel job', as
   // Five independent parallel job boundaries remain unchanged.
   assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 6);
   assert.match(workflow, /Run Seed Forge physical Git fixture integration/);
-  assert.match(workflow, /node --test --test-concurrency=1 tests\\/seed-canopy-parallel-forge-integration\\.test\\.mjs/);
+  assert.match(workflow, /node --test --test-concurrency=1 tests\/seed-canopy-parallel-forge-integration\.test\.mjs/);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
