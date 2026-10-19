@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { mkdirSync, symlinkSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -39,6 +40,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   let ownerComment = null;
   let inferenceCount = 0;
   let advanceMainOnNextInference = false;
+  let redirectParentOnNextInference = null;
   let modelResponsePath = TARGET;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
@@ -123,6 +125,15 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         inferenceCount += 1;
         req.resume();
         req.on('end', () => {
+          if (redirectParentOnNextInference) {
+            const { taskId, outside } = redirectParentOnNextInference;
+            redirectParentOnNextInference = null;
+            const docsParent = join(home, '.stephanos', 'seed-parallel',
+              createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 12),
+              'worktrees', taskId, 'docs');
+            mkdirSync(docsParent, { recursive: true });
+            symlinkSync(outside, join(docsParent, 'architecture'), 'dir');
+          }
           if (advanceMainOnNextInference) {
             advanceMainOnNextInference = false;
             const moved = command('git', ['commit', '--allow-empty', '-m',
@@ -444,6 +455,50 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(racedReceipt.stage, 'BLOCKED');
     assert.equal(racedReceipt.failedStage, 'CLAIMED');
     await assert.rejects(() => access(join(racedReceipt.worktree, raceTarget)), /ENOENT/);
+
+    // POSIX fixture adversary: while an approved local model is responding,
+    // replace the intended parent directory with an outward symlink. The
+    // bounded worker must not write its proposal through that redirected path.
+    // Windows junction/native stable-handle testing remains a host-specific gate.
+    if (process.platform !== 'win32') {
+      const aliasBase = git('rev-parse', 'main');
+      git('update-ref', 'refs/remotes/origin/main', aliasBase);
+      const aliasTaskId = 'model-parent-alias-pilot';
+      const aliasTarget = 'docs/architecture/model-parent-alias-pilot.md';
+      const aliasRequest = { ...request, taskId: aliasTaskId,
+        targetPath: aliasTarget, baseSha: aliasBase, expectedTargetSha256: null };
+      const aliasRaw = JSON.stringify(aliasRequest);
+      const aliasManifest = join(scratch, 'aliased-model-request.json');
+      await writeFile(aliasManifest, aliasRaw);
+      await writeFile(join(stateRoot, 'approvals', aliasTaskId + '.json'),
+        JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+      const aliasNow = new Date().toISOString();
+      ownerComment.created_at = aliasNow;
+      ownerComment.updated_at = aliasNow;
+      ownerComment.body = '```stephanos-seed-parallel-owner-approval\\n' +
+        JSON.stringify(makeParallelSeedExactApprovalV1({
+          request: aliasRequest, manifestSha256: parallelSeedManifestHashV1(aliasRaw),
+          nowUtc: aliasNow,
+          expiryUtc: new Date(Date.parse(aliasNow) + 3600000).toISOString(),
+        })) + '\\n```';
+      const outside = join(scratch, 'outside-owner-scope');
+      await mkdir(outside, { recursive: true });
+      modelResponsePath = aliasTarget;
+      redirectParentOnNextInference = { taskId: aliasTaskId, outside };
+      await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+        JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+          active: false, phase: 'NORMAL', localModelAllowed: true,
+          updatedAtUtc: new Date().toISOString() }));
+      const aliasedRun = await runAsync(process.execPath,
+        [executable, 'build', aliasManifest, '--execute'], { cwd: repo, env });
+      assert.notEqual(aliasedRun.code, 0);
+      assert.match(aliasedRun.stderr, /SYMLINK_TARGET_PARENT|SEED_TARGET_PARENT_PHYSICAL_REDIRECT/);
+      assert.equal(git('rev-parse', 'main'), aliasBase);
+      const blockedAlias = JSON.parse(await readFile(
+        join(stateRoot, 'receipts', aliasTaskId + '.json'), 'utf8'));
+      assert.equal(blockedAlias.stage, 'BLOCKED');
+      await assert.rejects(() => access(join(outside, 'model-parent-alias-pilot.md')), /ENOENT/);
+    }
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
