@@ -2,7 +2,7 @@
 // Bounded parallel source authoring through an already resident local llama.cpp router.
 // Its per-request autoload=false contract prevents an evicted model reloading.
 // Deliberately does not call the canonical scheduler, Goal Worker or Core Daemon.
-import { readFile, mkdir, writeFile, rename, lstat, realpath } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, lstat, realpath, readdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join, dirname, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -372,6 +372,30 @@ async function assertSeedTestInputsTrusted(worktree, request) {
   }
 }
 
+// Also inspect pre-upgrade raw-case claim filenames. Hashing only the new
+// folded spelling would otherwise overlook a historical claim persisted by
+// the previous worker revision. A malformed or redirected claim inventory is
+// untrusted custody, not permission to create another owner.
+async function assertNoLegacySeedTargetAlias(claimDirectory, targetPath) {
+  let entries;
+  try { entries = await readdir(claimDirectory, { withFileTypes: true }); }
+  catch { throw new Error('SEED_TARGET_CLAIM_INVENTORY_UNAVAILABLE'); }
+  if (entries.length > 512) throw new Error('SEED_TARGET_CLAIM_INVENTORY_UNBOUNDED');
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^[a-f0-9]{64}\.claim$/.test(entry.name))
+      throw new Error('SEED_TARGET_CLAIM_INVENTORY_UNTRUSTED');
+    let claim;
+    try { claim = JSON.parse(await readFile(join(claimDirectory, entry.name), 'utf8')); }
+    catch { throw new Error('SEED_TARGET_CLAIM_INVENTORY_UNREADABLE'); }
+    if (typeof claim?.targetPath !== 'string'
+        || !claim.targetPath.startsWith('docs/architecture/')
+        || !/^[a-zA-Z0-9/_-]+\.md$/.test(claim.targetPath.slice('docs/architecture/'.length)))
+      throw new Error('SEED_TARGET_CLAIM_INVENTORY_UNTRUSTED');
+    if (claim.targetPath.toLowerCase() === targetPath.toLowerCase())
+      throw new Error('TARGET_ALREADY_OWNED_BY_PARALLEL_TASK');
+  }
+}
+
 async function build(request, manifestSha256) {
   const checked = validateParallelSeedBuildRequestV1(request, HIGH_LEVEL_FLYWHEEL_SEEDS_V1);
   if (!checked.ok) throw new Error('REQUEST_REJECTED: ' + checked.errors.join(','));
@@ -417,9 +441,12 @@ async function build(request, manifestSha256) {
   try {
     // Target-level custody is deliberately independent from the old goal lease.
     // One failed path cannot block another seed or another non-overlapping path.
-    const targetKey = createHash('sha256').update(request.targetPath).digest('hex');
+    // Windows path identity is case-insensitive; even on POSIX, reserve the
+    // folded spelling so this queue cannot later fork duplicate owners on PC.
+    const targetKey = createHash('sha256').update(request.targetPath.toLowerCase()).digest('hex');
     const targetClaims = join(stateRoot, 'target-claims');
     await mkdir(targetClaims, { recursive: true });
+    await assertNoLegacySeedTargetAlias(targetClaims, request.targetPath);
     try {
       await writeFile(join(targetClaims, targetKey + '.claim'), JSON.stringify({
         taskId: request.taskId, seedId: request.seedId, ownerIssue: request.ownerIssue,
