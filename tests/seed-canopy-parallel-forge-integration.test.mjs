@@ -357,6 +357,50 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.match(deterministicSource, /SOURCE PROPOSAL ONLY/);
     assert.match(deterministicSource, /No physical observations were supplied/);
     assert.match(deterministicReceipt.commitSha, /^[a-f0-9]{40}$/);
+
+    // An already-approved model task must not write when main moves while
+    // the mock model is answering. This is a real temporary Git concurrency
+    // test, NOT a Battle Bridge source or OS-custody claim.
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'),
+      resourceModule.replace(custodyAnchor,
+        'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = true'));
+    git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
+    git('commit', '-m', 'fixture-only mock model-custody setup');
+    const raceBase = git('rev-parse', 'main');
+    const raceTaskId = 'model-main-race-pilot';
+    const raceTarget = 'docs/architecture/model-main-race-pilot.md';
+    const raceRequest = { ...request, taskId: raceTaskId, targetPath: raceTarget,
+      baseSha: raceBase, expectedTargetSha256: null };
+    const raceRaw = JSON.stringify(raceRequest);
+    const raceManifest = join(scratch, 'raced-model-request.json');
+    await writeFile(raceManifest, raceRaw);
+    await writeFile(join(stateRoot, 'approvals', raceTaskId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const raceNow = new Date().toISOString();
+    ownerComment.created_at = raceNow;
+    ownerComment.updated_at = raceNow;
+    ownerComment.body = '```stephanos-seed-parallel-owner-approval\n' +
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: raceRequest, manifestSha256: parallelSeedManifestHashV1(raceRaw),
+        nowUtc: raceNow,
+        expiryUtc: new Date(Date.parse(raceNow) + 3600000).toISOString(),
+      })) + '\n```';
+    modelResponsePath = raceTarget;
+    advanceMainOnNextInference = true;
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const racedRun = await runAsync(process.execPath,
+      [executable, 'build', raceManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(racedRun.code, 0);
+    assert.match(racedRun.stderr, /SEED_SOURCE_MAIN_ADVANCED_DURING_BUILD/);
+    assert.notEqual(git('rev-parse', 'main'), raceBase);
+    const racedReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', raceTaskId + '.json'), 'utf8'));
+    assert.equal(racedReceipt.stage, 'BLOCKED');
+    assert.equal(racedReceipt.failedStage, 'CLAIMED');
+    await assert.rejects(() => access(join(racedReceipt.worktree, raceTarget)), /ENOENT/);
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
