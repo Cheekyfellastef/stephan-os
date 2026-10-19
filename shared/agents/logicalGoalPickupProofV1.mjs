@@ -35,7 +35,7 @@ export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
     for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE']) delete env[key];
     const result = spawnSync(gitBinary, ['-C', root, ...args], {
       encoding: 'utf8', windowsHide: true, shell: false,
-      timeout: 12000, maxBuffer: 16384, env,
+      timeout: 12000, maxBuffer: 4 * 1024 * 1024, env,
     });
     return result.status === 0 && !result.error ? String(result.stdout).trim() : null;
   };
@@ -51,6 +51,17 @@ export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
   }
   if (trackedStatus !== '') {
     return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_SOURCE_DIRTY' });
+  }
+  // Git intentionally hides locally changed bytes when index flags
+  // assume-unchanged (lowercase 'h') or skip-worktree ('S') are present.
+  // Never sign physical BUILDING proof from a tree that can evade status.
+  const trackedIndex = git(['ls-files', '-v', '-z', '--']);
+  if (trackedIndex === null) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_INDEX_UNAVAILABLE' });
+  }
+  const entries = trackedIndex.split('\\0').filter(Boolean);
+  if (entries.some(entry => !entry.startsWith('H ') || entry.length < 3)) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE' });
   }
   return Object.freeze({ ok: true, sourceHead: head, blocker: '' });
 }

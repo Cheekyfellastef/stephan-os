@@ -146,6 +146,23 @@ test('canonical pickup proof rejects dirty tracked files, staged edits and stale
   assert.equal(clean.ok, true);
   assert.equal(clean.sourceHead, git('rev-parse', 'HEAD'));
 
+  // These index flags bypass porcelain status, even when tracked source is
+  // physically modified. They must not bypass the signing/readback gate.
+  git('update-index', '--assume-unchanged', 'proof-module.mjs');
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = false;\n');
+  assert.equal(git('status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker,
+    'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE');
+  git('update-index', '--no-assume-unchanged', 'proof-module.mjs');
+
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = true;\n');
+  git('update-index', '--skip-worktree', 'proof-module.mjs');
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = false;\n');
+  assert.equal(git('status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker,
+    'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE');
+  git('update-index', '--no-skip-worktree', 'proof-module.mjs');
+
   await writeFile(join(root, 'proof-module.mjs'), 'export const attested = false;\n');
   const modified = verifyCleanCanonicalTrackedMainV1(root);
   assert.equal(modified.ok, false);
