@@ -16,10 +16,17 @@ $ErrorActionPreference = 'Stop'
 $service = 'StephanosOriginalR7CustodyWitness'
 $account = "NT SERVICE\$service"
 $fixedExe = 'Stephanos.OriginalR7CustodyWitness.exe'
-$installDirectory = [IO.Path]::Combine($env:ProgramFiles, 'StephanosR7CustodyWitness')
+# Derive privileged destination and SCM executable from Windows known-folder
+# APIs, never from an inherited/overridable ProgramFiles or SystemRoot value.
+$programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+$systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
+if (-not $programFiles -or -not $systemDirectory) {
+    throw 'R7_STAGE_OS_KNOWN_FOLDERS_UNAVAILABLE'
+}
+$installDirectory = [IO.Path]::Combine($programFiles, 'StephanosR7CustodyWitness')
 $installedExe = [IO.Path]::Combine($installDirectory, $fixedExe)
 $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$service"
-$sc = [IO.Path]::Combine($env:SystemRoot, 'System32', 'sc.exe')
+$sc = [IO.Path]::Combine($systemDirectory, 'sc.exe')
 
 function Assert-PlainLocalExistingPath([string]$Value) {
     if ($Value -notmatch '^[A-Za-z]:\\' -or $Value.Contains('%')) {
@@ -106,6 +113,7 @@ if ([IO.Path]::GetFileName($CandidateExe) -cne $fixedExe) {
     throw 'R7_STAGE_FIXED_BUNDLE_FILENAME_REQUIRED'
 }
 $candidate = Assert-PlainLocalExistingPath $CandidateExe
+[void](Assert-PlainLocalExistingPath $sc)
 if (-not (Test-Path -LiteralPath $sc -PathType Leaf)) {
     throw 'R7_STAGE_SCM_UNAVAILABLE'
 }
@@ -151,7 +159,7 @@ if (-not $PSCmdlet.ShouldProcess($service, 'Stage disabled fixed SCM witness, wi
 $directoryCreated = $false
 $serviceCreated = $false
 try {
-    [void](Assert-PlainLocalExistingPath $env:ProgramFiles)
+    [void](Assert-PlainLocalExistingPath $programFiles)
     [void](New-Item -ItemType Directory -Path $installDirectory -ErrorAction Stop)
     $directoryCreated = $true
     Copy-Item -LiteralPath $candidate -Destination $installedExe -ErrorAction Stop
