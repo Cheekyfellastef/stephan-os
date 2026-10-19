@@ -283,3 +283,38 @@ test('rung-1 owner ledger cannot silently reassign a valid owner or weaken criti
   assert.throws(() => validate(markdown.replace(required, 'Two selected tasks with queued dispatch')),
     /critical original-domain evidence cannot be silently weakened/);
 });
+
+test('all sixteen sovereignty acceptance witnesses remain source-bound', () => {
+  const markdown = readFileSync(new URL('../../docs/architecture/full-sovereignty-external-edge-checklist-v1.md', import.meta.url), 'utf8');
+  const section = markdown.split('## Coverage checklist: every existing dimension')[1]
+    ?.split('## Rung-1 owner-discovery ledger')[0];
+  assert.ok(section, 'missing canonical coverage checklist');
+  const expected = [
+    'Local inference route + provider-loss + gaming transition, with zero-residency evidence',
+    'Durable local read/write, restart and replay receipts',
+    'Owner-scoped offline approval/admission behavior and reconnection dedupe',
+    'Machine-authenticated local probe and offline-mode receipts',
+    'Exact path/worker/commit/test proof in isolated custody',
+    'Independently qualified local reviewer, non-self-review and adversarial artifact proof',
+    'Two overlapping, independently admitted, resource-disjoint seed SELECT–CLAIM–physical PICKUP–source/test executions with separate terminal receipts, plus an unattended repeat cycle',
+    'Daemon survival and bounded repair after network loss/restart',
+    'Authorized private route, local fallback, terminal receipt and operator scope',
+    'Restored local snapshot and verified integrity with cloud disconnected',
+    'Tamper-evident local records verified by an independent consumer',
+    'Controlled disconnect/reconnect replay with no lost or duplicate tasks',
+    'Offline pending receipt, bounded online delivery and deduplication',
+    'Provider-blackout routing with a real alternate worker execution proof',
+    'Physical cold restart + signed service/worker/served-head proof',
+    'Exact-head provenance, fresh external witness and negative forgery tests',
+  ];
+  const witnessRows = (source) => source.split('\n').filter((line) =>
+    line.startsWith('| `') && line.includes(' | ')).map((line) =>
+    line.split('|').map((cell) => cell.trim()).at(-2));
+  const witnesses = witnessRows(section);
+  assert.deepEqual(witnesses, expected, 'all original-domain acceptance witnesses must remain intact');
+  for (const [i, witness] of expected.entries()) {
+    const altered = section.replace(witness, 'PASS');
+    assert.notDeepEqual(witnessRows(altered), expected,
+      `witness ${i + 1} must not silently become a self-attested PASS`);
+  }
+});
