@@ -517,3 +517,32 @@ test('skill provenance packet cannot silently drop recipient separation or insta
     assert.ok(matrix.includes(required), 'missing negative provenance case: ' + required);
   }
 });
+
+test('every OpenClaw observational rung requires independent Local and Standalone publisher identities', () => {
+  const rungs = [
+    'INVENTORY_BOTH_AGENTS',
+    'VERIFY_UPSTREAM_RELEASE_AND_SKILL_SAFETY',
+    'MAP_CODEX_TASK_CLASS_GAPS',
+    'REHEARSE_SAFE_UPDATES_AND_SKILLS',
+  ];
+  const payload = feed({ statusRecords: [heartbeat()] });
+  for (let i = 0; i < rungs.length; i++) {
+    const rung = rungs[i];
+    payload.records.eventRecords.push(event(rung, 'openclaw-local'));
+    payload.records.eventRecords.push({
+      ...event(rung, 'openclaw-standalone'),
+      participantId: 'untrusted-agent',
+      eventId: 'spoofed-standalone-' + rung,
+      proofRefs: ['proof/spoofed-' + rung],
+    });
+    let seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.nextGrowthRung, rung, rung + ' must not advance on Local-only proof');
+    assert.equal(seed.rungProofCount, i);
+    assert.equal(seed.proofCount, i * 2 + 1, 'foreign actor must not inflate proof telemetry');
+    payload.records.eventRecords.push(event(rung, 'openclaw-standalone'));
+    seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, i + 1);
+    assert.equal(seed.proofCount, (i + 1) * 2);
+    assert.equal(seed.nextGrowthRung, rungs[i + 1] || 'QUALIFY_AGENT_SPECIFIC_SKILLS');
+  }
+});

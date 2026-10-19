@@ -1776,12 +1776,11 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     && record?.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
     && isPositiveProofRecord(record) && proofRefs(record).length > 0);
   const agents = contract.agentIdentities.map((agent) => agent.participantId);
-  const agentScopedRungs = new Set([
-    'INVENTORY_BOTH_AGENTS',
-    'QUALIFY_AGENT_SPECIFIC_SKILLS',
-    'PROVE_END_TO_END_TASK_PARITY',
-    'PROVE_SOVEREIGN_ENDURANCE',
-  ]);
+  // Every pre-qualification rung describes BOTH distinct OpenClaw agents.
+  // A Local-only release audit, gap map or rehearsal cannot advance the
+  // Standalone seed, and foreign publishers cannot mint observational proof.
+  const agentScopedRungs = new Set(contract.growthRungs.filter(
+    (rung) => rung !== 'CONTINUOUS_UPLIFT_AND_RETEST'));
   // Authority-bearing outcome claims require independently authenticated,
   // task/agent-bound receipts. Shared Workspace PASS flags and arbitrary refs
   // are observational, not trusted qualification, endurance or uplift proof.
@@ -1799,7 +1798,9 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
       || evidence.rung !== rung || !contract.growthRungs.includes(rung)
       || trustedAdmissionRequiredRungs.has(rung)) return false;
-    return !agentId || (evidence.agentId === agentId && actorId(record) === agentId);
+    return agents.includes(evidence.agentId)
+      && actorId(record) === evidence.agentId
+      && (!agentId || evidence.agentId === agentId);
   };
   const admittedProofRecords = proved.filter((record) => {
     const rung = record.openClawExcellenceEvidence?.rung;
