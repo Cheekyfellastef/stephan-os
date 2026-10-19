@@ -9,6 +9,19 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
 - Fixed service identity: StephanosOriginalR7CustodyWitness
 - Fixed historical lease: critical-2962-elastic-goal-r7-lease
 - Windows-only, Session-0, non-interactive SCM invocation, no arguments
+- Read-only SCM image integrity preflight now requires `PinnedImageSha256`
+  (strict lowercase SHA-256 hex in the fixed HKLM service registration) to
+  match a freshly hashed on-disk running executable and rejects reparse points
+  anywhere in its local path ancestry. Missing/mismatched pins HOLD.
+  The preflight first rejects an ordinary apphost/adjacent-DLL build: the
+  witness must be the entry assembly and both it and managed core must have
+  empty `Assembly.Location`, as in a self-contained single-file bundle.
+  The `WitnessSingleFile` publish profile bundles managed payload and native
+  runtime libraries; native libraries are extracted by .NET at execution.
+  **This is not a protected trust root**: Windows SCM registry-value ACL
+  ownership, image mapped-at-launch identity, original source-writer exclusion,
+  old open handles, and independent pinned image provenance still require
+  separately qualified OS evidence. No instruction here provisions that key.
 - The actual process token must belong to the exact pinned virtual service
   account, or restricted LocalService (S-1-5-19) with the pinned *enabled*
   NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
@@ -47,6 +60,34 @@ network handlers, read-write access to the source checkout or generic shell.
 6. Only the canonical original-mission cancellation and compare-and-release
    reconciler can release the exact historical lease; real SELECT, CLAIM,
    PICKUP, BUILD, TEST, MERGE and unattended refill proof follows.
+
+This native witness host has no privileged commissioning, signing or lease-release command. Testing source or opening a PR is NOT a machine custody receipt, deployment or build proof.
+
+## Binary pin qualification boundary
+
+The new image digest preflight is an intentionally **read-only negative gate**.
+An ordinary `dotnet build` output cannot pass it, even with a matching apphost
+digest: changing the adjacent managed witness DLL would leave that digest
+unchanged. Build the candidate bundle with `dotnet publish
+src/windows/Stephanos.OriginalR7CustodyWitness -p:PublishProfile=WitnessSingleFile`.
+The profile targets Windows x64; this is a build operation, not an installer.
+Hosted tests execute the linked native adapter in both ordinary and bundled
+processes, then place an invalid adjacent DLL beside the bundle and repeat.
+The genuine service bundle is also built and rejects CLI invocation.
+The bundle guard is a necessary packaging check, not proof that all loaded
+code came from a protected file. The runtime's extracted native libraries,
+DLL search, process environment/startup hooks, mapped-at-launch identity and
+installation directory still require independently reviewed OS protection.
+It does not install or edit a service or set a registry key. CI may use
+synthetic matching digests to prove code paths, but cannot commission real
+Battle Bridge identity, registry ACL ownership, signer isolation or source
+custody. A commissioning owner must independently verify and protect the
+SCM `PinnedImageSha256` registration and running image through a separately
+reviewed Windows-admin procedure, with rollback and sealed audit, **before**
+this preflight may count as trusted identity. Even after success, the native
+host retains `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` until
+full original-writer containment, protected logging and two signer roots
+are qualified. The original R7 lease remains held.
 
 This witness host still has **no privileged commissioning, signing or lease-release command**. A separate reviewed Windows Stage-B staging recipe is proposed at `scripts/windows/stage-original-r7-witness-candidate.ps1`. It is not connected to public GitHub mailbox or autonomous actions.
 
