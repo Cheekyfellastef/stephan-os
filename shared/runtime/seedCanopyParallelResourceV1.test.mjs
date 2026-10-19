@@ -90,3 +90,17 @@ test('direct autoload-capable Ollama generation is not an admissible Seed Forge 
   assert.doesNotMatch(worker, /'\/api\/generate'/);
   assert.doesNotMatch(worker, /'\/api\/ps'/);
 });
+
+test('Seed Forge file write rejects physical junction aliases as well as symlinks', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const worker = await readFile(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url), 'utf8');
+  assert.match(worker, /SEED_WORKTREE_ROOT_REDIRECTED/);
+  assert.match(worker, /SEED_TARGET_PARENT_PHYSICAL_REDIRECT/);
+  assert.match(worker, /SEED_TARGET_LEAF_PHYSICAL_REDIRECT/);
+  assert.match(worker, /await realpath\(current\)/);
+  assert.match(worker, /await realpath\(full\)/);
+  assert.match(worker, /await realpath\(root\)/);
+  assert.match(worker, /await mkdir\(dirname\(target\), \{ recursive: true \}\);[\s\S]*await safeTarget\(worktree, request\.targetPath\)/);
+  assert.match(worker, /await writeFile\(writeTarget, proposal\.content/);
+  assert.match(worker, /SEED_SOURCE_TRACKED_ORIGIN_MAIN_MISMATCH/);
+});
