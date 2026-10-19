@@ -21,6 +21,11 @@ test('Build Stephanos UI fans independent proof families into five parallel jobs
 
 test('stateful suites remain serial only inside their isolated parallel job', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
-  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
+  // A sixth serial command exercises Seed Forge's real disposable Git
+  // worktree and commit fixture inside the EXISTING runtime-guardrail job.
+  // Five independent parallel job boundaries remain unchanged.
+  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 6);
+  assert.match(workflow, /Run Seed Forge physical Git fixture integration/);
+  assert.match(workflow, /node --test --test-concurrency=1 tests\\/seed-canopy-parallel-forge-integration\\.test\\.mjs/);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
