@@ -101,6 +101,14 @@ test('R7 stage candidate cannot start, commission or release the protected witne
   assert.match(source, /R7_STAGE_SERVICE_NOT_STOPPED/);
   assert.match(source, /R7_STAGE_PROTECTED_ACL_NOT_OBSERVED/);
   assert.match(source, /R7_STAGE_UNEXPECTED_ACL_PRINCIPAL/);
+  // A familiar SID alone is insufficient: verify each mandatory SID and its
+  // least-privilege effective ACE, with no duplicates or inherited surprises.
+  assert.match(source, /R7_STAGE_REQUIRED_ACL_PRINCIPAL_MISSING/);
+  assert.match(source, /R7_STAGE_UNEXPECTED_ACL_RIGHTS/);
+  assert.match(source, /\$seen\.ContainsKey\(\$sid\)/);
+  assert.match(source, /\$seen\.ContainsKey\(\$requiredSid\)/);
+  assert.match(source, /\$rights -band \(-bnot \$allowedRead\)/);
+  assert.match(source, /\$entry\.InheritanceFlags -ne \$expectedInheritance/);
   assert.match(source, /R7_STAGE_POST_ACL_IMAGE_HASH_MISMATCH/);
   assert.match(source, /\$props\.ImagePath/);
   assert.match(source, /SpecialFolder\]::ProgramFiles/);
