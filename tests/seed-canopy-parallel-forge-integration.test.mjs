@@ -475,12 +475,12 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       const aliasNow = new Date().toISOString();
       ownerComment.created_at = aliasNow;
       ownerComment.updated_at = aliasNow;
-      ownerComment.body = '```stephanos-seed-parallel-owner-approval\\n' +
+      ownerComment.body = '```stephanos-seed-parallel-owner-approval\n' +
         JSON.stringify(makeParallelSeedExactApprovalV1({
           request: aliasRequest, manifestSha256: parallelSeedManifestHashV1(aliasRaw),
           nowUtc: aliasNow,
           expiryUtc: new Date(Date.parse(aliasNow) + 3600000).toISOString(),
-        })) + '\\n```';
+        })) + '\n```';
       const outside = join(scratch, 'outside-owner-scope');
       await mkdir(outside, { recursive: true });
       modelResponsePath = aliasTarget;
