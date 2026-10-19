@@ -466,6 +466,16 @@ export function applyCatalogEnrichmentToBrowser(rawDetail = {}) {
     return { ok: false, changed: false, reason: 'music-state-persistence-failed' };
   }
   if (merged.changed) {
+    // A same-tab localStorage write does not notify the Music Tile's in-memory
+    // state. Reconcile its canonical state synchronously before any rating,
+    // tag, or feedback handler can save an older snapshot over this enrichment.
+    try {
+      globalThis.dispatchEvent?.(new CustomEvent('stephanos:music-catalog-enriched', {
+        detail: rawDetail,
+      }));
+    } catch {
+      // The persisted catalogue truth remains available for page hydration.
+    }
     updateTrackCard(merged.track, merged.detail.spotify);
     announceAppliedTrack(merged.track);
     queueHydration();
