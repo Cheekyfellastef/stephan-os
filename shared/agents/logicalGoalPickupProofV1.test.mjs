@@ -138,13 +138,25 @@ test('canonical pickup proof rejects dirty tracked files, staged edits and stale
   }).trim();
   git('init', '--initial-branch=main');
   await writeFile(join(root, 'proof-module.mjs'), 'export const attested = true;\n');
-  git('add', 'proof-module.mjs');
+  await writeFile(join(root, 'second-tracked.mjs'), 'export const second = true;\n');
+  git('add', 'proof-module.mjs', 'second-tracked.mjs');
   git('-c', 'user.name=Stephanos Test', '-c', 'user.email=ci@example.invalid',
     'commit', '-m', 'clean fixture');
   git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'HEAD'));
   const clean = verifyCleanCanonicalTrackedMainV1(root);
   assert.equal(clean.ok, true);
   assert.equal(clean.sourceHead, git('rev-parse', 'HEAD'));
+
+  // Put the hidden edit in the SECOND indexed path. A parser accidentally
+  // treating the complete NUL-delimited output as a single first entry must
+  // fail this regression rather than laundering a later unsafe flag.
+  git('update-index', '--assume-unchanged', 'second-tracked.mjs');
+  await writeFile(join(root, 'second-tracked.mjs'), 'export const second = false;\n');
+  assert.equal(git('status', '--porcelain=v1', '--untracked-files=no'), '');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker,
+    'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE');
+  git('update-index', '--no-assume-unchanged', 'second-tracked.mjs');
+  await writeFile(join(root, 'second-tracked.mjs'), 'export const second = true;\n');
 
   // These index flags bypass porcelain status, even when tracked source is
   // physically modified. They must not bypass the signing/readback gate.

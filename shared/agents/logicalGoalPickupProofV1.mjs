@@ -59,7 +59,7 @@ export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
   if (trackedIndex === null) {
     return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_INDEX_UNAVAILABLE' });
   }
-  const entries = trackedIndex.split('\\0').filter(Boolean);
+  const entries = trackedIndex.split('\0').filter(Boolean);
   if (entries.some(entry => !entry.startsWith('H ') || entry.length < 3)) {
     return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE' });
   }
