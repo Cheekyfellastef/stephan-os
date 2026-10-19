@@ -19,6 +19,8 @@ on:
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/starfield-vr-telemetry-archive.mjs'
+      - 'scripts/starfield-vr-telemetry-archive.test.mjs'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
       - 'scripts/sovereign-commander-http.mjs'
       - 'shared/agents/sovereignCommanderHttp.test.mjs'
@@ -71,6 +73,7 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/starfield-vr-telemetry-archive.mjs
           node --check scripts/sovereign-commander-http.mjs
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
@@ -99,6 +102,7 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test scripts/starfield-vr-telemetry-archive.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
