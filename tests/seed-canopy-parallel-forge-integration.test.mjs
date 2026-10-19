@@ -553,6 +553,48 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(poisonReceipt.goalCompleted, false);
     assert.equal(git('rev-parse', 'main'), poisonBase);
 
+    // Two tasks whose targets differ only by case are the SAME Windows file.
+    // Neither the new folded-hash claim nor any historical raw-case claim
+    // may permit another worker to adopt the existing source target.
+    const aliasClaimBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', aliasClaimBase);
+    const aliasClaimId = 'case-collision-claim-pilot';
+    const aliasClaimTarget = 'docs/architecture/Test-seed-parallel-result.md';
+    const aliasClaimRequest = { ...request, taskId: aliasClaimId,
+      targetPath: aliasClaimTarget, baseSha: aliasClaimBase,
+      generationMode: 'CANONICAL_INVENTORY_V1', expectedTargetSha256: null };
+    const aliasClaimRaw = JSON.stringify(aliasClaimRequest);
+    const aliasClaimManifest = join(scratch, 'case-collision-claim-manifest.json');
+    await writeFile(aliasClaimManifest, aliasClaimRaw);
+    await writeFile(join(stateRoot, 'approvals', aliasClaimId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const aliasClaimNow = new Date().toISOString();
+    ownerComment.created_at = aliasClaimNow;
+    ownerComment.updated_at = aliasClaimNow;
+    ownerComment.body = [
+      '```stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: aliasClaimRequest,
+        manifestSha256: parallelSeedManifestHashV1(aliasClaimRaw),
+        nowUtc: aliasClaimNow,
+        expiryUtc: new Date(Date.parse(aliasClaimNow) + 3600000).toISOString(),
+      })),
+      '```',
+    ].join('\n');
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const collision = await runAsync(process.execPath,
+      [executable, 'build', aliasClaimManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(collision.code, 0);
+    assert.match(collision.stderr, /TARGET_ALREADY_OWNED_BY_PARALLEL_TASK/);
+    const collisionReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', aliasClaimId + '.json'), 'utf8'));
+    assert.equal(collisionReceipt.stage, 'BLOCKED');
+    assert.equal(collisionReceipt.goalCompleted, false);
+    assert.equal(git('rev-parse', 'main'), aliasClaimBase);
+
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
