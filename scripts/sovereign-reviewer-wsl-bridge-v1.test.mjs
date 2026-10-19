@@ -47,17 +47,21 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
       calls.push({ command, args, options });
       if (calls.length === 1) return { status: 0, stdout: '/mnt/c/Users/Operator/Documents/GitHub/stephan-os/scripts/sovereign-reviewer-v1.mjs\n' };
       if (calls.length === 2) return { status: 0, stdout: '/mnt/c/Users/Operator/Documents/Stephanos-openclaw-workspace\n' };
-      return { status: 0, stdout: 'SOVEREIGN_REVIEWER_RESULT=' + JSON.stringify(receipt) + '\n' };
+      if (calls.length === 3) return { status: 0, stdout: 'SOVEREIGN_REVIEWER_RESULT=' + JSON.stringify(receipt) + '\n' };
+      assert.deepEqual(args.slice(0, 3), ['--exec', '/usr/bin/sha256sum', '--']);
+      assert.equal(args.at(-1), '/mnt/c/Users/Operator/Documents/Stephanos-openclaw-workspace/' + receipt.proofRef);
+      return { status: 0, stdout: 'd'.repeat(64) + '  ' + args.at(-1) + '\n' };
     },
   });
   assert.equal(result.ok, true);
   assert.equal(result.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.approvalAuthority, false);
-  assert.equal(calls.length, 3);
+  assert.equal(result.proofSha256, 'd'.repeat(64));
+  assert.equal(calls.length, 4);
   assert.equal(calls.every(x => x.command === path.win32.resolve('C:/Windows/System32/wsl.exe') && x.args[0] === '--exec' && x.options.shell === false), true);
   assert.equal(calls.every(x => x.options.env.WSLENV === ''), true);
-  assert.deepEqual(calls.map(x => x.options.timeout), [12_000, 12_000, 150_000]);
+  assert.deepEqual(calls.map(x => x.options.timeout), [12_000, 12_000, 150_000, 12_000]);
   assert.equal(calls.every(x => x.command !== 'wsl.exe'), true, 'never resolve executable from cwd or PATH');
   assert.equal(calls.every(x => path.win32.isAbsolute(x.command)), true, 'absolute Windows executable required');
   assert.deepEqual(calls[2].args.slice(0, 6), ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp', 'STEPHANOS_REVIEW_EXACT_HEAD=' + 'a'.repeat(40)]);
@@ -73,6 +77,8 @@ test('Windows bridge refuses unsupported platform, fake path, missing identity, 
     { env: { ...env, STEPHANOS_REVIEW_EXACT_HEAD: 'none' }, options: context, reason: 'EXACT_GIT_IDENTITY_REQUIRED' },
     { env: { ...env, STEPHANOS_SHARED_AGENT_WORKSPACE: '\\\\server\\share' }, options: context, reason: 'LOCAL_WORKSPACE_REQUIRED' },
     { env: { ...env, STEPHANOS_REVIEW_SESSION: '' }, options: context, reason: 'INDEPENDENT_REVIEW_IDENTITIES_REQUIRED' },
+    { env: { ...env, STEPHANOS_REVIEW_SESSION: 'BUILDER-SESSION-1' },
+      options: context, reason: 'REVIEWER_IMPLEMENTER_SESSION_COLLISION' },
   ];
   for (const entry of cases) {
     const got = runWindowsSovereignReviewerV1(entry.env, { ...entry.options, spawn() { throw Error('unexpected call'); } });
@@ -318,4 +324,39 @@ test('Windows bridge refuses forged success, mismatched PR/head, no Linux proof'
     verdict: 'approved', proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json', mergeAuthority: false },
     'REVIEWER_RECEIPT_UNBOUND');
   check({ status: 'SOVEREIGN_REVIEW_HELD', reason: 'LOCAL_MODEL_UNAVAILABLE' }, 'REVIEWER_RECEIPT_UNBOUND');
+});
+
+
+test('ordinary local review cannot be READY unless its exact proof file hashes on WSL', () => {
+  const receipt = {
+    status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    prNumber: 3059, verdict: 'clean',
+    proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json',
+    mergeAuthority: false,
+  };
+  const proof = '/mnt/c/safe/' + receipt.proofRef;
+  const run = (hashResult) => {
+    let stage = 0;
+    const result = runWindowsSovereignReviewerV1(env, { ...context,
+      spawn(_, args) {
+        stage++;
+        if (stage <= 2) return { status: 0, stdout: '/mnt/c/safe\n' };
+        if (stage === 3) return {
+          status: 0, stdout: 'SOVEREIGN_REVIEWER_RESULT=' + JSON.stringify(receipt) + '\n',
+        };
+        assert.deepEqual(args.slice(0, 3), ['--exec', '/usr/bin/sha256sum', '--']);
+        assert.equal(args.at(-1), proof);
+        return hashResult;
+      },
+    });
+    assert.equal(stage, 4, 'the candidate must physically read back a file');
+    assert.equal(result.approvalAuthority, false);
+    assert.equal(result.mergeAuthority, false);
+    return result;
+  };
+  assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  ' + proof + '\n' }).ok, true);
+  assert.equal(run({ status: 1, stdout: '' }).reason, 'REVIEWER_PROOF_FILE_UNREADABLE');
+  assert.equal(run({ status: 0, stdout: 'forged proof' }).reason, 'REVIEWER_PROOF_READBACK_INVALID');
+  assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  /mnt/c/other.json\n' }).reason,
+    'REVIEWER_PROOF_READBACK_INVALID');
 });
