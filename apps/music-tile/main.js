@@ -14,6 +14,7 @@ import { emitPresenceEvent as emitGlobalPresenceEvent } from '../../shared/runti
 import { runAiActionLifecycle } from '../../shared/runtime/aiActionLifecycle.mjs';
 import { initStephanosSurfacePanels } from '../../shared/runtime/stephanosSurfacePanels.mjs';
 import { catalogResultActionKey, catalogResultToMusicTileTrack, findExistingCatalogTrack, requestNativeCatalogSearch } from './engine/nativeCatalogSearch.js';
+import { mergePersistedCatalogState } from './engine/nativeCatalogAutoApply.js';
 import { applyTasteTeachingContribution, buildConversationAiPayload, buildMusicConversationPlan, removeTasteTeachingContribution, retainConversationTeachingHistory, summarizeTasteEvidence } from './engine/musicConversationPlanner.js';
 import { buildMusicDiscoverySpotlightView } from './engine/musicDiscoverySpotlightPresenter.js';
 
@@ -193,7 +194,32 @@ function buildMusicAiStatusView(diagnostics = {}) {
   };
 }
 
-const state = loadState(); initStephanosSurfacePanels({ surfaceId: 'music-tile' }); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
+const state = loadState();
+globalThis.addEventListener?.('stephanos:music-catalog-enriched', (event) => {
+  const detail = event?.detail;
+  if (!detail?.trackId || !detail?.enrichment) return;
+  // Reconcile only the exact validated media identity already saved by the
+  // catalogue adapter. Never promote a different/negative card from an event.
+  const target = state.listeningDeck.find((track) => String(track.id) === String(detail.trackId));
+  if (!target) return;
+  if ([AI_CANDIDATE_STATUSES.notFound, AI_CANDIDATE_STATUSES.likelyHallucinated]
+    .includes(getCandidateVerificationStatus(target))) return;
+  const persisted = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')?.listeningDeck
+        ?.find((track) => String(track.id) === String(detail.trackId));
+    } catch { return null; }
+  })();
+  const sameIdentity = (track) => String(track?.artist || '').trim().toLowerCase() === String(detail.artist || '').trim().toLowerCase()
+    && String(track?.title || track?.name || '').trim().toLowerCase() === String(detail.title || '').trim().toLowerCase();
+  if (!sameIdentity(target) || !sameIdentity(persisted)) return;
+  if (persisted.catalogVerificationStatus !== 'metadata_verified'
+    || persisted.catalogLinkSource !== 'native-catalog-search'
+    || persisted.spotifyUri !== detail.spotifyUri
+    || persisted.spotifyUrl !== detail.spotifyUrl) return;
+  mergePersistedCatalogState(state, detail);
+});
+initStephanosSurfacePanels({ surfaceId: 'music-tile' }); renderAll(); wireEvents(); updateAiStatus(); renderPresencePanel(); wireIntelligenceExperience(); refreshIntegrationSetupStatus({ announce: false }); refreshVerifiedSpotifyLinks(); void hydrateDurableConversationTeachings(); setInterval(() => { if (!document.hidden) refreshVerifiedSpotifyLinks(); }, SPOTIFY_LINK_FEED_POLL_MS);
 
 function updateAiStatus(extra = {}) {
   if (!ui.aiStatusText) return;
