@@ -13,6 +13,10 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSEdition -ne 'Desktop' -or
+    $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) {
+    throw 'R7_STAGE_WINDOWS_POWERSHELL_51_REQUIRED'
+}
 $service = 'StephanosOriginalR7CustodyWitness'
 $account = "NT SERVICE\$service"
 $fixedExe = 'Stephanos.OriginalR7CustodyWitness.exe'
@@ -168,7 +172,10 @@ try {
     }
     # Disable at creation, including partial failures before SID/ACL setup.
     # Enabling the candidate belongs to separately approved commissioning.
-    & $sc create $service 'type=' 'own' 'start=' 'disabled' 'binPath=' ('"' + $installedExe + '"') 'obj=' $account 'password=' '' | Out-Null
+    # Tripled quotes preserve one literal quoted path through the PS 5.1
+    # legacy binder, including its grouping around the Program Files space.
+    # Virtual service accounts require a NULL password: omit that option.
+    & $sc create $service 'type=' 'own' 'start=' 'disabled' 'binPath=' ('"""' + $installedExe + '"""') 'obj=' $account | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'R7_STAGE_CREATE_SERVICE_FAILED' }
     $serviceCreated = $true
     & $sc sidtype $service restricted | Out-Null

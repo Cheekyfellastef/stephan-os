@@ -86,6 +86,56 @@ test('SCM preflight checks the exact on-disk witness image pin before any custod
 
 const stagingScriptUrl = new URL('../../scripts/windows/stage-original-r7-witness-candidate.ps1', import.meta.url);
 
+test('Windows PowerShell 5.1 delivers the fixed SCM arguments to a harmless native receiver', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const source = await readFile(stagingScriptUrl, 'utf8');
+  const commands = source.split(/\r?\n/).map(line => line.trim())
+    .filter(line => line.startsWith('& $sc create '));
+  assert.equal(commands.length, 1, 'one fixed SCM creation invocation');
+  const command = commands[0].replace(/ \| Out-Null$/, '');
+  const dir = await mkdtemp(join(tmpdir(), 'r7-scm-argument-test-'));
+  const installedExe = 'C:\\Program Files\\StephanosR7CustodyWitness\\Stephanos.OriginalR7CustodyWitness.exe';
+  try {
+    const script = join(dir, 'argument-test.ps1');
+    // Compile a receiver that only reports argv. This never invokes SCM,
+    // stages an image, edits a service/registry/ACL, or requires elevation.
+    await writeFile(script, `
+$ErrorActionPreference = 'Stop'
+if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'TEST_REQUIRES_WINDOWS_POWERSHELL_51' }
+$sc = [IO.Path]::Combine($env:R7_ARGUMENT_TEST_DIRECTORY, 'argument-receiver.exe')
+Add-Type -OutputAssembly $sc -OutputType ConsoleApplication -TypeDefinition @'
+using System;
+using System.Text;
+public static class R7ArgumentReceiver {
+  public static void Main(string[] args) {
+    foreach (string arg in args) Console.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(arg)));
+  }
+}
+'@
+$service = 'StephanosOriginalR7CustodyWitness'
+$account = 'NT SERVICE\\StephanosOriginalR7CustodyWitness'
+$installedExe = '${installedExe}'
+${command}
+exit $LASTEXITCODE
+`, 'utf8');
+    const run = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+    ], {
+      shell: false, windowsHide: true, encoding: 'utf8', timeout: 60000,
+      env: { ...process.env, R7_ARGUMENT_TEST_DIRECTORY: dir },
+    });
+    assert.equal(run.status, 0, run.stderr || run.error?.message || 'native argument receiver failed');
+    const args = run.stdout.trim().split(/\r?\n/).map(value => Buffer.from(value, 'base64').toString('utf8'));
+    assert.deepEqual(args, [
+      'create', 'StephanosOriginalR7CustodyWitness', 'type=', 'own', 'start=', 'disabled',
+      'binPath=', `"${installedExe}"`, 'obj=', 'NT SERVICE\\StephanosOriginalR7CustodyWitness',
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('R7 stage candidate cannot start, commission or release the protected witness', async () => {
   const source = await readFile(stagingScriptUrl, 'utf8');
   assert.match(source, /\[CmdletBinding\(SupportsShouldProcess = \$true, ConfirmImpact = 'High'\)\]/);
