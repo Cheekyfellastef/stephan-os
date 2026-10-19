@@ -871,7 +871,7 @@ test('Discovery cards display trusted exact song and artwork actions instead of 
     }, { key: STORAGE_KEY, spotifyUrl: AUTO_SPOTIFY_URL,
       spotifyId: AUTO_SPOTIFY_ID, artworkUrl: AUTO_ARTWORK_URL });
     await page.goto(`${server.origin}/apps/music-tile/index.html`);
-    await page.waitForSelector('#discovery-results-list section');
+    await page.waitForSelector('#discovery-results-list section', { state: 'attached' });
     const proof = await page.evaluate(({ exactUrl, artworkUrl }) => {
       const sections = Array.from(document.querySelectorAll('#discovery-results-list section'));
       const row = (heading, title) => {
