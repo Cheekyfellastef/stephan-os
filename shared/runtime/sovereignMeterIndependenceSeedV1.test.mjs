@@ -116,6 +116,10 @@ const parseMeterBlackoutDimensions = (markdown) => {
   const section = markdown.split('## Twelve canonical dimensions')[1]?.split('## Verdict and original-owner routing')[0];
   assert.ok(section, 'missing bounded meter-specific inventory');
   const rows = section.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'));
+  // A second table outside the bounded section could otherwise display forged
+  // PASS verdicts while this parser silently validates only the original rows.
+  const allRows = markdown.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'));
+  assert.deepEqual(allRows, rows, 'meter evidence table rows must appear only inside the canonical inventory');
   assert.equal(rows.length, SOVEREIGN_METER_INDEPENDENCE_DIMENSIONS_V1.length + 2,
     'the bounded inventory must have one header, one separator and exactly twelve data rows');
   assert.equal(rows[0], '| Dimension | Existing owner candidate / first evidence required | Initial verdict |');
@@ -203,6 +207,20 @@ test('meter-blackout inventory rejects a duplicate forged dimensions section', (
     /exactly one canonical dimensions section/);
   assert.throws(() => parseMeterBlackoutDimensions(markdown + '\n## Verdict and original-owner routing\nPASS'),
     /exactly one verdict section/);
+});
+
+test('meter-blackout inventory rejects forged evidence tables outside its bounded section', () => {
+  const markdown = readMeterBlackoutInventory();
+  const forged = '| `codex-work-continuity` | #1898: fabricated receipt | PASS |';
+  for (const mutated of [
+    markdown.replace('## Twelve canonical dimensions', forged + '\n\n## Twelve canonical dimensions'),
+    markdown + '\n' + forged + '\n',
+    markdown + '\n| Dimension | Existing owner candidate / first evidence required | Initial verdict |\n| --- | --- | --- |\n' + forged + '\n',
+  ]) {
+    assert.throws(() => parseMeterBlackoutDimensions(mutated),
+      /meter evidence table rows must appear only inside the canonical inventory/,
+      'an out-of-band PASS table must not launder an UNVERIFIED acceptance inventory');
+  }
 });
 
 test('meter-blackout inventory rejects malformed or forged evidence rows', () => {
