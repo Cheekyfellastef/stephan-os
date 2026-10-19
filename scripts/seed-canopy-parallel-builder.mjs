@@ -187,6 +187,8 @@ async function localModelPreflight() {
     // llama.cpp endpoint must be configured locally; the Ollama API is not an
     // admissible fallback because it can implicitly reload a stopped model.
     const response = await fetch('http://127.0.0.1:' + port + '/models', {
+      // Loopback-only model inventory must not follow a redirect to another host.
+      redirect: 'error',
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error('RESIDENT_ROUTER_MODELS_UNAVAILABLE');
@@ -276,6 +278,8 @@ async function localModelWrite(request, existingContent, seed, preflight) {
     // Unlike Ollama /api/generate, llama.cpp router honours autoload=false
     // atomically at dispatch. An evicted model cannot reload via this request.
     const response = await fetch('http://127.0.0.1:' + port + '/v1/completions?autoload=false', {
+      // Model prompts and source snippets may never be redirected off-loopback.
+      redirect: 'error',
       method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
