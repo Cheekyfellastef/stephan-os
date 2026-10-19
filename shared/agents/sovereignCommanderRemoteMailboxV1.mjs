@@ -5,6 +5,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
+import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -14,9 +16,11 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'original-source-custody-census',
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
@@ -86,6 +90,7 @@ const ALLOWED_FIELDS = new Set([
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
+const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -363,13 +368,31 @@ async function settleWithinDeadline(promise, timeoutMs) {
 
 async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
+  const deadlineMs = boundedRemoteNetworkTimeoutMs(timeoutMs);
+  let timer = null;
   try {
-    const response = await fetchFn(url, { ...options, signal: controller.signal });
-    const bodyText = await response.text();
-    return Object.freeze({ response, bodyText });
+    // AbortSignal alone is advisory: a broken/custom transport or its body
+    // reader can ignore it and strand an ACCEPTED mailbox child until the
+    // outbox guard kills it. Race the *whole* request including response.text.
+    // Timeout does NOT prove remote cancellation and never permits replay.
+    return await Promise.race([
+      Promise.resolve().then(async () => {
+        const response = await fetchFn(url, { ...options, signal: controller.signal });
+        const bodyText = await response.text();
+        return Object.freeze({ response, bodyText });
+      }),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          const error = new Error('SOVEREIGN_COMMANDER_REMOTE_TRANSPORT_DEADLINE_EXCEEDED');
+          error.name = 'AbortError';
+          error.code = 'ABORT_ERR';
+          reject(error);
+        }, deadlineMs);
+      }),
+    ]);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1949,6 +1972,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       actionId === 'status'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
+      || actionId === 'original-source-custody-census'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
@@ -2105,6 +2129,77 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
   ]).has(text(value));
 }
 
+/**
+ * #3109: constant-vocabulary native Island diagnostic. It examines only the
+ * fixed process identity, exit status and closed-world marker shape, and NEVER
+ * publishes stdout, stderr, process arguments, paths, environment or tokens.
+ * It grants no source mutation authority, even when the marker is positive.
+ */
+export function diagnoseRescueIslandNativeReceiptInvalidV1({
+  envelope, expectedAction, projection, positive, negative,
+  rawMaintenance, mcpError = false,
+} = {}) {
+  if (expectedAction !== 'rescue-island-readonly-boundary')
+    return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).length === 0) {
+    // Do not silently flatten an MCP result that failed before a native
+    // process was launched. No private exception, argv, SID, path or stderr
+    // may enter public GitHub diagnostics. Always keep worker start denied.
+    let observation = rawMaintenance;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (!observation || typeof observation !== 'object'
+        || Array.isArray(observation)) break;
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+        // Only fixed known Commander command-planning blockers are eligible
+        // for projection. Never copy its raw blocker, plan, cwd or OS paths.
+        // No classification is evidence the running Commander was reloaded.
+        const known = observation.command?.blockers;
+        if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
+          if (known.includes('trusted-repository-root-required'))
+            return 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE';
+          if (known.includes('sovereign-commander-process-not-registered'))
+            return 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED';
+        }
+        return 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN';
+      }
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+        && observation.command?.plan?.processId === expectedAction
+        && !Number.isInteger(observation.structuredContent?.status)) {
+        return 'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS';
+      }
+      observation = observation.structuredContent;
+    }
+    return mcpError === true
+      ? 'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'
+      : 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  }
+  if (envelope?.command?.plan?.processId !== expectedAction)
+    return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
+  const status = envelope?.structuredContent?.status;
+  if (!Number.isInteger(status)) return 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE';
+  const stdout = envelope?.structuredContent?.stdout;
+  if (typeof stdout !== 'string') return 'ISLAND_NATIVE_STDOUT_UNAVAILABLE';
+  if (Buffer.byteLength(stdout, 'utf8') > 4096)
+    return 'ISLAND_NATIVE_STDOUT_TOO_LARGE';
+  const lines = stdout.trimEnd().split(/\r?\n/);
+  if (lines.length !== 1) return 'ISLAND_NATIVE_STDOUT_LINES_INVALID';
+  if (!lines[0].startsWith('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='))
+    return 'ISLAND_NATIVE_MARKER_NOT_OBSERVED';
+  if (!positive && !negative) return 'ISLAND_NATIVE_MARKER_REJECTED';
+  if (negative) return 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID';
+  if (positive && status !== 0) return 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH';
+  if (positive && (projection?.ok !== true
+      || projection?.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection?.proofHash || '')
+      || projection?.processId !== expectedAction
+      || projection?.status !== 0))
+    return 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID';
+  return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
+}
+
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
   const shape = validateSovereignCommanderRemoteCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -2128,26 +2223,35 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // recycle, health, MCP setup or maintenance work. The parent outbox guard gives
   // the child 15 minutes; plans get eight minutes total so a bounded terminal
   // receipt still has generous publication margin.
-  const planStartedAtMs = remotePlanRequested ? Number(nowFn()) : null;
+  // A single action previously had only per-MCP-call timeouts. Several slow
+  // setup calls could cumulatively exceed the parent's 15-minute child guard
+  // and leave ACCEPTED without a terminal receipt. Bound the full operation
+  // (single action OR plan) to eight minutes, from source identity onward.
+  const planStartedAtMs = Number(nowFn());
   const remainingPlanTimeoutMs = (perCallTimeoutMs = networkTimeoutMs) => (
-    remotePlanRequested
-      ? sovereignCommanderRemotePlanStepTimeoutMs({
-        startedAtMs: planStartedAtMs,
-        nowMs: Number(nowFn()),
-        perCallTimeoutMs,
-      })
-      : boundedRemoteNetworkTimeoutMs(perCallTimeoutMs)
+    sovereignCommanderRemotePlanStepTimeoutMs({
+      startedAtMs: planStartedAtMs,
+      nowMs: Number(nowFn()),
+      perCallTimeoutMs,
+    })
   );
-  const planDeadlineFailure = (details = {}) => fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
-    stepIndex: 0,
-    remoteAction: shape.command.remotePlan?.[0] || '',
-    remotePlan: shape.command.remotePlan || [],
-    stepCount: 0,
-    completedSteps: Object.freeze([]),
-    publicReceiptSafe: true,
-    secretMaterialReturned: false,
-    ...details,
-  });
+  const planDeadlineFailure = (details = {}) => fail(
+    remotePlanRequested
+      ? 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED'
+      : 'SOVEREIGN_COMMANDER_REMOTE_ACTION_DEADLINE_EXCEEDED',
+    {
+      ...(remotePlanRequested ? {
+        stepIndex: 0,
+        remotePlan: shape.command.remotePlan,
+        stepCount: 0,
+        completedSteps: Object.freeze([]),
+      } : {}),
+      remoteAction: remotePlanRequested ? shape.command.remotePlan[0] : shape.command.remoteAction,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+      ...details,
+    },
+  );
   const boundedPlanFetch = remotePlanRequested
     ? async (url, fetchOptions = {}) => {
       const remainingMs = remainingPlanTimeoutMs(networkTimeoutMs);
@@ -2188,6 +2292,75 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // The canonical owner-attested GitHub mailbox already supplies fixed authority.
   // Sample directly in this existing process, not by recycling the long-lived
   // Commander: diagnostic observation must never start a repair guardian.
+  if (shape.command.remoteAction === 'original-source-custody-census') {
+    // Single fixed unprivileged sampler. Never execute the mutable checkout
+    // script or accept user-supplied process IDs, paths, launch arguments or keys.
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const sourceBytes = committed.stdout;
+    // EncodedCommand has no script file path: explicitly bind PSScriptRoot to
+    // the canonical repository's scripts/windows directory. The committed
+    // census body is appended verbatim; no checkout copy can be swapped in.
+    const rootBase64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const fixedPrelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("'
+      + rootBase64 + '"))) "scripts\\windows"\r\n';
+    const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
+      ? Buffer.from(fixedPrelude + sourceBytes, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) return fail(
+      'SOVEREIGN_CUSTODY_CENSUS_COMMITTED_SOURCE_UNAVAILABLE',
+      { publicReceiptSafe: true, secretMaterialReturned: false },
+    );
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 16 * 1024 });
+    let rawCensus = null;
+    try {
+      if (sampled.ok && sampled.stdout.length <= 8_000) rawCensus = JSON.parse(sampled.stdout);
+    } catch {}
+    const custody = inspectOriginalSourceCustodyCensusV1(rawCensus);
+    if (!sampled.ok || custody.observable !== true
+      || custody.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD') {
+      return fail('SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE', {
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const inspection = Object.freeze({
+      originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+      inspectedAtUtc: rawCensus.inspectedAtUtc,
+      checkoutPresent: rawCensus.checkoutPresent,
+      aclReadable: rawCensus.aclReadable,
+      candidateProcessCount: rawCensus.candidateProcessCount,
+      stephanosScheduledTaskCount: rawCensus.stephanosScheduledTaskCount,
+      blockers: custody.blockers,
+      historicalExecutionOutcome: 'UNKNOWN',
+      independentWindowsExclusionProven: false,
+      independentOperatorApprovalProven: false,
+      leaseReleaseAuthorized: false,
+      sourceMutationAuthorized: false,
+      finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    });
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+      remoteAction: 'original-source-custody-census',
+      sourceHead: observedHead,
+      inspection,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, inspection })).digest('hex'),
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+      originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+      sourceMutationAllowed: false, arbitraryShellAllowed: false,
+      mergeAuthority: false, vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result,
+    });
+  }
+
   if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
     // Read exactly the blob from the SHA-approved immutable Git tree.
     // Never execute a checkout pathname: diff --quiet can be bypassed by
@@ -2768,7 +2941,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
+    'rescue-island-readonly-boundary']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -2904,6 +3078,75 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: convergenceResult,
+    });
+  }
+
+
+
+  if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
+    // Do not treat a generic successful maintenance call as an OS-scope proof.
+    // The fixed native child must publish its own one-line, closed-world result.
+    const nativeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const candidate = Object.keys(nativeEnvelope).length > 0 ? nativeEnvelope : failedEnvelope;
+    const nativeProcessId = text(candidate?.command?.plan?.processId);
+    const nativeStatus = candidate?.structuredContent?.status;
+    const nativeStdout = candidate?.structuredContent?.stdout;
+    const held = parseRescueIslandBoundaryHeldStdoutV1(nativeStdout, nativeProcessId);
+    if (held && nativeProcessId === shape.command.remoteAction
+        && nativeStatus === 1
+        && candidate?.ok === false
+        && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: held.blocker,
+        rescueIslandBoundary: held,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const readback = parseRescueIslandBoundaryStdoutV1(
+      nativeStdout, nativeProcessId,
+    );
+    if (projection.ok !== true
+      || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection.proofHash)
+      || projection.processId !== shape.command.remoteAction
+      || projection.status !== 0
+      || !readback) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: diagnoseRescueIslandNativeReceiptInvalidV1({
+          envelope: candidate,
+          expectedAction: shape.command.remoteAction,
+          projection, positive: readback, negative: held,
+          rawMaintenance,
+          mcpError: actionCall.body?.result?.isError === true,
+        }),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      rescueIslandBoundary: readback,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      originalSourceLeaseReleaseAllowed: false,
+      mergeAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
