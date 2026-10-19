@@ -91,6 +91,21 @@ test('direct autoload-capable Ollama generation is not an admissible Seed Forge 
   assert.doesNotMatch(worker, /'\/api\/ps'/);
 });
 
+test('both local model HTTP calls reject redirects rather than forwarding source to a remote host', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const worker = await readFile(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url), 'utf8');
+  // Inventory and completion requests may carry non-public model identity or source.
+  // A malicious or stale local proxy must not redirect either request off-host.
+  const loopbackCalls = [...worker.matchAll(/fetch\('http:\/\/127\.0\.0\.1:' \+ port \+ '([^']+)', \{([\s\S]*?)\n    \}\);/g)];
+  assert.equal(loopbackCalls.length, 2, 'only the two fixed loopback model calls are expected');
+  assert.deepEqual(loopbackCalls.map((match) => match[1]).sort(),
+    ['/models', '/v1/completions?autoload=false']);
+  for (const match of loopbackCalls) {
+    assert.match(match[2], /^\s*(?:\/\/[^\n]*\n\s*)*redirect: 'error',/);
+    assert.doesNotMatch(match[2], /redirect:\s*'follow'/);
+  }
+});
+
 test('Seed Forge file write rejects physical junction aliases as well as symlinks', async () => {
   const { readFile } = await import('node:fs/promises');
   const worker = await readFile(new URL('../../scripts/seed-canopy-parallel-builder.mjs', import.meta.url), 'utf8');
