@@ -113,6 +113,14 @@ const parseMeterBlackoutDimensions = (markdown) => {
     'the acceptance inventory must contain exactly one canonical dimensions section');
   assert.equal(markdown.split('## Verdict and original-owner routing').length, 2,
     'the acceptance inventory must contain exactly one verdict section');
+  const dimensionsPosition = markdown.indexOf('## Twelve canonical dimensions');
+  const verdictPosition = markdown.indexOf('## Verdict and original-owner routing');
+  assert.ok(dimensionsPosition < verdictPosition,
+    'canonical inventory must precede the verdict contract');
+  const verdictSection = markdown.slice(verdictPosition);
+  assert.ok(verdictSection.includes(
+    '`PASS` requires a qualified repeatable operation with the metered edge both present and absent, stable original identity, correct terminal outcome, independently reviewed evidence and no unauthorized resource use.'),
+  'the verdict contract must retain independent proof and real metered-edge blackout');
   const section = markdown.split('## Twelve canonical dimensions')[1]?.split('## Verdict and original-owner routing')[0];
   assert.ok(section, 'missing bounded meter-specific inventory');
   const rows = section.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'));
@@ -207,6 +215,24 @@ test('meter-blackout inventory rejects a duplicate forged dimensions section', (
     /exactly one canonical dimensions section/);
   assert.throws(() => parseMeterBlackoutDimensions(markdown + '\n## Verdict and original-owner routing\nPASS'),
     /exactly one verdict section/);
+});
+
+test('meter-blackout inventory rejects reordered or weakened PASS verdict contracts', () => {
+  const markdown = readMeterBlackoutInventory();
+  const dimensionsHeading = '## Twelve canonical dimensions';
+  const verdictHeading = '## Verdict and original-owner routing';
+  const [prefix, remainder] = markdown.split(dimensionsHeading);
+  const [inventory, verdict] = remainder.split(verdictHeading);
+  assert.ok(prefix && inventory && verdict, 'the mutation requires both canonical sections');
+  const reordered = prefix + verdictHeading + verdict + '\n' + dimensionsHeading + inventory;
+  assert.throws(() => parseMeterBlackoutDimensions(reordered),
+    /canonical inventory must precede the verdict contract/,
+    'a verdict before its evidence table cannot be accepted');
+  const weakened = markdown.replace('independently reviewed evidence', 'self-attested evidence');
+  assert.notEqual(weakened, markdown, 'the weakening mutation must alter the verdict');
+  assert.throws(() => parseMeterBlackoutDimensions(weakened),
+    /verdict contract must retain independent proof/,
+    'a source-only checklist cannot redefine PASS as self-attested proof');
 });
 
 test('meter-blackout inventory rejects forged evidence tables outside its bounded section', () => {
