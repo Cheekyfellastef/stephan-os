@@ -106,6 +106,38 @@ test('generic P1 or correct P2 cannot satisfy Windows critical detection', async
   noAuthority(p2);
 });
 
+test('shotgun finding lists cannot pass the Windows specialist exercise', async () => {
+  // All ten published finding codes fit the old response limit. This old
+  // strategy earned credit for every unsafe case while showing no attribution.
+  const codes = markers.map(([, code]) => code);
+  const result = await evaluate(identity, {invokeModel: (prompt, meta) => {
+    const answer = JSON.parse(correct(prompt, meta));
+    if (answer.findings.length === 1) {
+      answer.findings = codes.map(code => ({...answer.findings[0], code}));
+    }
+    return JSON.stringify(answer);
+  }});
+  assert.equal(result.completedCases, 13);
+  assert.equal(result.passedCases, 3);
+  assert.equal(result.status, 'WINDOWS_CALIBRATION_HELD');
+  noAuthority(result);
+});
+
+test('correct critical finding plus unrelated extra does not pass a single-defect challenge', async () => {
+  const result = await evaluate(identity, {invokeModel: (prompt, meta) => {
+    const answer = JSON.parse(correct(prompt, meta));
+    if (answer.findings.length === 1) {
+      answer.findings.push({...answer.findings[0],
+        code: 'unrelated-generic-warning'});
+    }
+    return JSON.stringify(answer);
+  }});
+  assert.equal(result.completedCases, 13);
+  assert.equal(result.passedCases, 3);
+  assert.equal(result.status, 'WINDOWS_CALIBRATION_HELD');
+  noAuthority(result);
+});
+
 test('rejects source, provider and principal collisions before invoking model', async () => {
   for (const delta of [
     { sourceHead: 'wrong' }, {baseSha: identity.sourceHead},
