@@ -5,8 +5,10 @@ import {
   loadControllerActivityProofRecordsV1,
   loadPinnedWorkerPickupVerifierV1,
   distinctPhysicalWorkerSigningIdentityV1,
+  verifyCleanCanonicalTrackedMainV1,
 } from './logicalGoalPickupProofV1.mjs';
 import { mkdir, mkdtemp, writeFile, utimes } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -126,4 +128,32 @@ test('unrelated and historical proof-file growth cannot veto current controller 
   assert.equal(result.ok, true, result.blocker);
   assert.equal(result.records.length, 1);
   assert.equal(result.records[0].proofId, currentId);
+});
+
+test('canonical pickup proof rejects dirty tracked files, staged edits and stale origin/main', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'logical-clean-main-'));
+  const git = (...args) => execFileSync('git', args, {
+    cwd: root, encoding: 'utf8', timeout: 12000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  }).trim();
+  git('init', '--initial-branch=main');
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = true;\n');
+  git('add', 'proof-module.mjs');
+  git('-c', 'user.name=Stephanos Test', '-c', 'user.email=ci@example.invalid',
+    'commit', '-m', 'clean fixture');
+  git('update-ref', 'refs/remotes/origin/main', git('rev-parse', 'HEAD'));
+  const clean = verifyCleanCanonicalTrackedMainV1(root);
+  assert.equal(clean.ok, true);
+  assert.equal(clean.sourceHead, git('rev-parse', 'HEAD'));
+
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = false;\n');
+  const modified = verifyCleanCanonicalTrackedMainV1(root);
+  assert.equal(modified.ok, false);
+  assert.equal(modified.blocker, 'LOGICAL_GOAL_TRACKED_SOURCE_DIRTY');
+  git('add', 'proof-module.mjs');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker, 'LOGICAL_GOAL_TRACKED_SOURCE_DIRTY');
+
+  git('-c', 'user.name=Stephanos Test', '-c', 'user.email=ci@example.invalid',
+    'commit', '-m', 'unfetched change');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker, 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED');
 });

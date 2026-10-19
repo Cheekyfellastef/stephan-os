@@ -1,12 +1,12 @@
 import { readFile, writeFile, open, lstat } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import {
   verifyLogicalGoalBuildTruthV1,
   loadControllerActivityProofRecordsV1,
   loadPinnedWorkerPickupVerifierV1,
+  verifyCleanCanonicalTrackedMainV1,
 } from './logicalGoalPickupProofV1.mjs';
 import {
   admitLogicalMonitor,
@@ -430,17 +430,11 @@ export async function loadLogicalGoalProofTrustV2(input = {}) {
       trustedPublicKeyPem = await handle.readFile('utf8');
     } finally { await handle.close(); }
   } catch { return Object.freeze({ blocker: 'LOGICAL_GOAL_PUBLIC_KEY_NOT_AVAILABLE' }); }
-  const git = args => {
-    const cmd = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
-    const result = spawnSync(cmd, args, { cwd: input.repoRoot || process.cwd(),
-      encoding: 'utf8', windowsHide: true, shell: false, timeout: 12000, maxBuffer: 4096 });
-    return result.status === 0 && !result.error ? text(result.stdout).toLowerCase() : '';
-  };
-  const expectedSourceHead = git(['rev-parse','HEAD']);
-  if (!/^[a-f0-9]{40}$/.test(expectedSourceHead) || git(['branch','--show-current']) !== 'main'
-    || git(['rev-parse','refs/remotes/origin/main']) !== expectedSourceHead) {
-    return Object.freeze({ blocker: 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED' });
-  }
+  // Green pickup proof requires the exact protected tracked tree, not just
+  // Git refs. A dirty original checkout remains untouched and non-authoritative.
+  const canonicalTree = verifyCleanCanonicalTrackedMainV1(input.repoRoot || process.cwd());
+  if (!canonicalTree.ok) return Object.freeze({ blocker: canonicalTree.blocker });
+  const expectedSourceHead = canonicalTree.sourceHead;
   const localStateRoot = resolve(text(env.LOCALAPPDATA) || resolve(text(env.USERPROFILE) || homedir(), 'AppData', 'Local'), 'Stephanos');
   const workerTrust = await loadPinnedWorkerPickupVerifierV1({ localStateRoot, env });
   if (!workerTrust.ok) return Object.freeze({ blocker: workerTrust.blocker });

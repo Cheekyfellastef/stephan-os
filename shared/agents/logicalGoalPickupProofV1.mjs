@@ -1,5 +1,6 @@
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { lstat, open, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
@@ -17,6 +18,42 @@ const MAX_AGE_MS = 15 * 60_000;
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const text = v => String(v ?? '').trim();
 const millis = v => Date.parse(text(v));
+
+
+/**
+ * A Git HEAD label is not evidence that the code evaluating physical pickup
+ * matches that commit. Fail closed if *any tracked* index/worktree file differs
+ * from canonical main, including staged edits. Untracked user files are left
+ * untouched; never reset or clean the operator's checkout.
+ */
+export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
+  const root = resolve(repoRoot);
+  const gitBinary = process.platform === 'win32'
+    ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
+  const git = args => {
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' };
+    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE']) delete env[key];
+    const result = spawnSync(gitBinary, ['-C', root, ...args], {
+      encoding: 'utf8', windowsHide: true, shell: false,
+      timeout: 12000, maxBuffer: 16384, env,
+    });
+    return result.status === 0 && !result.error ? String(result.stdout).trim() : null;
+  };
+  const head = git(['rev-parse', '--verify', 'HEAD']);
+  const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const originMain = git(['rev-parse', '--verify', 'refs/remotes/origin/main']);
+  if (!SHA40.test(head || '') || branch !== 'main' || originMain !== head) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED' });
+  }
+  const trackedStatus = git(['status', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=none']);
+  if (trackedStatus === null) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_TREE_STATUS_UNAVAILABLE' });
+  }
+  if (trackedStatus !== '') {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_SOURCE_DIRTY' });
+  }
+  return Object.freeze({ ok: true, sourceHead: head, blocker: '' });
+}
 
 // Public-key identities are cryptographic keys, not PEM byte strings. Different
 // whitespace/newline encodings of the same Ed25519 SPKI MUST NOT count as two

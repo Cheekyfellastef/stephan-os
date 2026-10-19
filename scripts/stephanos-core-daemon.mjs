@@ -54,6 +54,7 @@ import {
   loadControllerActivityProofRecordsV1,
   loadPinnedWorkerPickupVerifierV1,
   signLogicalGoalBuildTruthV1,
+  verifyCleanCanonicalTrackedMainV1,
 } from '../shared/agents/logicalGoalPickupProofV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
@@ -316,7 +317,9 @@ async function publishControllerLaneTruth() {
     // Reuse the existing independently commissioned Core key. Never sign
     // an unverified pickup reference; a missing key or raw proof stays UNKNOWN.
     let pickupAttestation = null;
-    if (currentHead() === sourceHead && Array.isArray(buildTruth.goals)) {
+    const canonicalTree = verifyCleanCanonicalTrackedMainV1(repoRoot);
+    if (canonicalTree.ok && canonicalTree.sourceHead === sourceHead
+      && currentHead() === sourceHead && Array.isArray(buildTruth.goals)) {
       try {
         const observed = await loadControllerActivityProofRecordsV1({ workspaceRoot });
         if (!observed.ok) throw new Error(observed.blocker);
