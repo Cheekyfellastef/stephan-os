@@ -43,6 +43,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   let advanceMainOnNextInference = false;
   let redirectParentOnNextInference = null;
   let poisonTestOnNextInference = null;
+  let poisonLocalGitConfigOnNextInference = false;
   let modelResponsePath = TARGET;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
@@ -147,6 +148,16 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
               'worktrees', taskId, 'docs');
             mkdirSync(docsParent, { recursive: true });
             symlinkSync(outside, join(docsParent, 'architecture'), 'dir');
+          }
+          if (poisonLocalGitConfigOnNextInference) {
+            poisonLocalGitConfigOnNextInference = false;
+            // Simulate a same-account actor altering persisted repository Git
+            // configuration while local inference is in flight. This must
+            // never cause git add to execute a local filter command.
+            const injected = command('git',
+              ['config', '--local', 'filter.seedtrap.clean', 'cat'],
+              { cwd: repo });
+            assert.equal(injected.status, 0, injected.stderr);
           }
           if (advanceMainOnNextInference) {
             advanceMainOnNextInference = false;
@@ -588,6 +599,51 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(poisonReceipt.failedStage, 'EDITED');
     assert.equal(poisonReceipt.goalCompleted, false);
     assert.equal(git('rev-parse', 'main'), poisonBase);
+
+    // Adversarial persisted Git config: an operator-account process adds a
+    // potentially executable filter while inference is in progress. The
+    // worker must detect it before git add/commit and leave main unchanged.
+    const configBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', configBase);
+    const configTaskId = 'model-git-local-config-poison';
+    const configTarget = 'docs/architecture/model-git-local-config-poison.md';
+    const configRequest = { ...request, taskId: configTaskId,
+      targetPath: configTarget, baseSha: configBase, expectedTargetSha256: null };
+    const configRaw = JSON.stringify(configRequest);
+    const configManifest = join(scratch, 'git-local-config-poison.json');
+    await writeFile(configManifest, configRaw);
+    await writeFile(join(stateRoot, 'approvals', configTaskId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const configNow = new Date().toISOString();
+    ownerComment.created_at = configNow;
+    ownerComment.updated_at = configNow;
+    ownerComment.body = [
+      '```stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: configRequest, manifestSha256: parallelSeedManifestHashV1(configRaw),
+        nowUtc: configNow,
+        expiryUtc: new Date(Date.parse(configNow) + 3600000).toISOString(),
+      })),
+      '```',
+    ].join('\\n');
+    modelResponsePath = configTarget;
+    poisonLocalGitConfigOnNextInference = true;
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    try {
+      const configRun = await runAsync(process.execPath,
+        [executable, 'build', configManifest, '--execute'], { cwd: repo, env });
+      assert.notEqual(configRun.code, 0);
+      assert.match(configRun.stderr, /CANONICAL_GIT_CONFIGURATION_INVALID/);
+      const configReceipt = JSON.parse(await readFile(
+        join(stateRoot, 'receipts', configTaskId + '.json'), 'utf8'));
+      assert.equal(configReceipt.stage, 'BLOCKED');
+      assert.equal(git('rev-parse', 'main'), configBase);
+    } finally {
+      git('config', '--local', '--unset', 'filter.seedtrap.clean');
+    }
 
     // Two tasks whose targets differ only by case are the SAME Windows file.
     // Neither the new folded-hash claim nor any historical raw-case claim
