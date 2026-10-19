@@ -83,6 +83,8 @@ const ALLOWED_FIELDS = new Set([
   'remotePlan',
   'searchQuery',
   'searchMaxResults',
+  'telemetryOffset',
+  'telemetryLimit',
   'targetPrNumber',
   'targetBranch',
   'targetHead',
@@ -2047,6 +2049,11 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
   if (remoteAction && remotePlanFieldPresent) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT', { requested: true });
   }
+  const telemetryPageFieldsPresent = ['telemetryOffset', 'telemetryLimit']
+    .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
+  if (telemetryPageFieldsPresent && (remoteAction !== 'starfield-vr-telemetry-archive' || remotePlanFieldPresent)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED', { requested: true });
+  }
   if (remotePlanSupplied) {
     const remotePlan = command.remotePlan.map((value) => text(value));
     if (remotePlan.length < 1 || remotePlan.length > SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS) {
@@ -2092,6 +2099,25 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
       remoteAction,
+    });
+  }
+  if (remoteAction === 'starfield-vr-telemetry-archive') {
+    const exclusiveFields = [
+      'searchQuery', 'searchMaxResults', 'controllerActivity',
+      'targetPrNumber', 'targetBranch', 'targetHead',
+    ];
+    if (exclusiveFields.some((field) => Object.prototype.hasOwnProperty.call(command, field))) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED', { requested: true });
+    }
+    const telemetryOffset = command.telemetryOffset ?? 0;
+    const telemetryLimit = command.telemetryLimit ?? 4;
+    if (!Number.isSafeInteger(telemetryOffset) || telemetryOffset < 0 || telemetryOffset > 1_000_000
+      || !Number.isSafeInteger(telemetryLimit) || telemetryLimit < 1 || telemetryLimit > 4) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_INVALID', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction, telemetryOffset, telemetryLimit }),
     });
   }
   const searchFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'searchQuery')
@@ -2198,6 +2224,8 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_TOO_LARGE',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID',
@@ -3005,8 +3033,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     id: 4,
     method: 'tools/call',
     params: {
-      name: 'maintenance_action',
-      arguments: shape.command.remoteAction === 'preservation-converge-pr-branch'
+      name: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
+        ? 'starfield_vr_telemetry_archive' : 'maintenance_action',
+      arguments: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
+        ? { offset: shape.command.telemetryOffset, limit: shape.command.telemetryLimit }
+        : shape.command.remoteAction === 'preservation-converge-pr-branch'
         ? {
           actionId: shape.command.remoteAction,
           targetPrNumber: shape.command.targetPrNumber,
