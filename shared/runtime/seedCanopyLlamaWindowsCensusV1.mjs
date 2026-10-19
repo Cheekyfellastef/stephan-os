@@ -105,13 +105,19 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
 
   // A child's recorded parent PID can survive after its parent exits. Treat
   // every reachable descendant as live, even if the root has disappeared.
-  // Parent PID reuse is treated conservatively: it may over-block, never clear.
+  // Registered descendants are ancestry anchors too: a grandchild can outlive
+  // both its registered parent and the router. PID reuse may over-block, never clear.
+  const registeredPids = new Set(registration.registeredDescendants.map(d => d.pid));
   for (const process of processes) {
     const visited = new Set([process.pid]);
     let ancestor = process.parentPid;
     for (let hops = 0; ancestor > 0 && hops < 8192; hops++) {
       if (ancestor === registration.routerPid) {
         reasons.push('ROUTER_DESCENDANT_STILL_RUNNING');
+        break;
+      }
+      if (registeredPids.has(ancestor)) {
+        reasons.push('REGISTERED_DESCENDANT_LINEAGE_STILL_RUNNING');
         break;
       }
       if (visited.has(ancestor)) {

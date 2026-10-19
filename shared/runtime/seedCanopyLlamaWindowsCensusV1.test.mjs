@@ -59,6 +59,22 @@ test('parent lineage catches unregistered children and grandchildren', () => {
     assert.equal(result.processTreeAbsentCandidate, false);
   }
 });
+test('orphan grandchildren of exited registered descendants cannot appear absent', () => {
+  // The registered parent PID 4101 has exited; its surviving children still
+  // belong to the registered launch lineage, even if router 4100 is also gone.
+  for (const processes of [
+    [one(5500, 4101)],
+    [one(5500, 4101), one(5501, 5500)],
+    [one(5501, 5500), one(5500, 4101)],
+  ]) {
+    const result = check({ ...snapshot, processes });
+    assert.ok(result.reasonCodes.includes('REGISTERED_DESCENDANT_LINEAGE_STILL_RUNNING'));
+    assert.equal(result.processTreeAbsentCandidate, false);
+    assert.equal(result.independentlyQualified, false);
+    assert.equal(result.mayLiftInferenceHold, false);
+  }
+});
+
 test('untrustworthy census freshness, completeness and schema fail closed', () => {
   for (const s of [
     { ...snapshot, observedAtUtc: '2026-10-16T17:59:54.000Z' },
