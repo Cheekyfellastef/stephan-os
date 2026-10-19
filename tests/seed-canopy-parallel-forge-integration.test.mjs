@@ -101,6 +101,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('add', '.');
     git('commit', '-m', 'fixture baseline');
     let main = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', main);
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
         if (req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
@@ -206,6 +207,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('commit', '-m', 'fixture-only mocked custody');
     // Bind all fixture approval evidence to its new exact fixture base.
     main = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', main);
     request.baseSha = main;
     const fixtureRaw = JSON.stringify(request);
     await writeFile(manifest, fixtureRaw);
@@ -315,6 +317,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'restore production router custody hold in fixture');
     const deterministicBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', deterministicBase);
     const deterministicTask = 'model-free-seed-inventory-fixture';
     const deterministicTarget = 'docs/architecture/model-free-seed-inventory.md';
     const deterministicRequest = { ...request, taskId: deterministicTask,
@@ -367,6 +370,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'fixture-only mock model-custody setup');
     const raceBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', raceBase);
     const raceTaskId = 'model-main-race-pilot';
     const raceTarget = 'docs/architecture/model-main-race-pilot.md';
     const raceRequest = { ...request, taskId: raceTaskId, targetPath: raceTarget,
