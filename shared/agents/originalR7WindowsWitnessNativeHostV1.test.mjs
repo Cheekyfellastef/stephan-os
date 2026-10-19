@@ -4,7 +4,8 @@ import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, fileURLToPath } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = new URL('../../src/windows/Stephanos.OriginalR7CustodyWitness/', import.meta.url);
 const program = await readFile(new URL('Program.cs', root), 'utf8');
@@ -81,7 +82,7 @@ test('R7 stage candidate cannot start, commission or release the protected witne
   assert.match(source, /leaseReleased = \$false/);
   assert.match(source, /R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED/);
   assert.match(source, /'start=' 'demand'/);
-  assert.match(source, /'sidtype \$service restricted'/);
+  assert.match(source, /& \$sc sidtype \$service restricted/);
   assert.match(source, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.doesNotMatch(source, /\b(?:Start-Service|Restart-Computer|Invoke-Expression|New-PSSession|Invoke-WebRequest|Remove-Item|Force-Push)\b/i);
   assert.doesNotMatch(source, /'start=' 'auto'/);
