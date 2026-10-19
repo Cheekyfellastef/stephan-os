@@ -479,7 +479,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         const offset = payload.offset === undefined ? 0 : payload.offset;
         const limit = payload.limit === undefined ? 12 : payload.limit;
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000
-            || !Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+            || !Number.isSafeInteger(limit) || limit < 1 || limit > 12) {
           blockers.push('sovereign-starfield-telemetry-archive-page-invalid');
         } else {
           args = [...args, '--offset', String(offset), '--limit', String(limit)];
