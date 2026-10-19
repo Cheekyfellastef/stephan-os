@@ -687,6 +687,38 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
       expectedArtworkUrl: AUTO_ARTWORK_URL,
     });
 
+    // Regression: the same-tab automatic catalogue adapter must update main.js
+    // state before any operator action serializes the state again.
+    await page.locator(`.player-deck-card [data-rate="1"]`).click();
+    await page.locator('.player-deck-card [data-tag]').first().click();
+    const afterOperatorStateWrite = await page.evaluate(({ key, trackId, spotifyUrl, artworkUrl }) => {
+      const snapshot = JSON.parse(localStorage.getItem(key));
+      const track = snapshot.listeningDeck.find((item) => item.id === trackId);
+      const card = document.querySelector('.player-deck-card');
+      return {
+        spotifyUrl: track?.spotifyUrl,
+        spotifyUri: track?.spotifyUri,
+        artworkUrl: track?.artworkUrl,
+        catalogVerified: track?.catalogVerificationStatus,
+        source: track?.catalogLinkSource,
+        hasExactLink: Array.from(card.querySelectorAll('.media-controls a'))
+          .some((link) => link.href === spotifyUrl && link.textContent === 'Open in Spotify'),
+        genericSearchPresent: Array.from(card.querySelectorAll('.media-controls a'))
+          .some((link) => /^Find on (Spotify|YouTube)$/.test(String(link.textContent || '').trim())),
+        rating: snapshot.ratings?.[trackId],
+      };
+    }, { key: STORAGE_KEY, trackId: AUTO_TRACK_ID, spotifyUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+    assert.deepEqual(afterOperatorStateWrite, {
+      spotifyUrl: AUTO_SPOTIFY_URL,
+      spotifyUri: AUTO_SPOTIFY_URI,
+      artworkUrl: AUTO_ARTWORK_URL,
+      catalogVerified: 'metadata_verified',
+      source: 'native-catalog-search',
+      hasExactLink: true,
+      genericSearchPresent: false,
+      rating: 1,
+    });
+
     await page.reload();
     await page.waitForFunction(({ trackId, spotifyUrl, artworkUrl }) => (
       document.querySelector(`[data-link-input="spotify-${trackId}"]`)?.value === spotifyUrl
