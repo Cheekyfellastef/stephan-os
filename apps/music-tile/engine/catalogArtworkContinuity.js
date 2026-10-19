@@ -1,6 +1,6 @@
 import './nativeCatalogLinkContinuity.js';
 import { hydrateAutomaticMediaOverlay } from './automaticMediaOverlay.js';
-import { AI_CANDIDATE_STATUSES, getCandidateVerificationStatus, isVerifiedCandidateTrack } from './candidateVerification.js';
+import { AI_CANDIDATE_STATUSES, getCandidateVerificationStatus, isVerifiedCandidateTrack, hasVerifiedCatalogSpotifyTrack } from './candidateVerification.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const OEMBED_OVERLAY_KEY = 'stephanos.musicTile.spotifyOembedArtwork.v1';
@@ -58,9 +58,7 @@ export function canUseVerifiedSpotifyArtwork(track = {}) {
   const status = getCandidateVerificationStatus(track);
   if (status === AI_CANDIDATE_STATUSES.notFound
     || status === AI_CANDIDATE_STATUSES.likelyHallucinated) return false;
-  return isVerifiedCandidateTrack(track)
-    || (track.sourceKind === 'native-catalog'
-      && track.catalogVerificationStatus === 'metadata_verified');
+  return isVerifiedCandidateTrack(track) || hasVerifiedCatalogSpotifyTrack(track);
 }
 
 function readListeningDeck(storage = globalThis.localStorage) {
