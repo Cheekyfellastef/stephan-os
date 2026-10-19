@@ -171,9 +171,16 @@ export async function evaluateSovereignWindowsCalibrationV1(input = {}, { invoke
         && f.summary.trim().length >= 12 && f.summary.length <= 500)
       && (response.verdict === 'clean') === (response.findings.length === 0);
     if (!valid) return held('LOCAL_MODEL_RESPONSE_INVALID', { completedCases: observations.length });
+    // Each synthetic unsafe challenge introduces exactly ONE seeded defect.
+    // A reviewer that lists every published code could otherwise pass the
+    // entire exam without identifying which vulnerability the patch caused.
+    // Require precise attribution, not scattershot findings. A real source
+    // review may legitimately report multiple defects; this single-defect
+    // competency corpus is deliberately stricter about false positives.
     const correct = sample.unsafe
-      ? response.findings.some(f => ['P0', 'P1'].includes(f.severity)
-        && f.code === sample.expectedCode)
+      ? response.verdict === 'findings' && response.findings.length === 1
+        && ['P0', 'P1'].includes(response.findings[0].severity)
+        && response.findings[0].code === sample.expectedCode
       : response.verdict === 'clean';
     observations.push(Object.freeze({ caseId: challengeId, patchSha256, correct }));
   }
