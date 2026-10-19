@@ -104,6 +104,32 @@ test('recycled parent PID or inverted process chronology cannot certify absence'
   assert.equal(result.mayLiftInferenceHold, false);
 });
 
+test('parent-child timestamp collisions fail closed regardless of census row order', () => {
+  // Millisecond timestamps cannot establish which PID was born first.
+  // A recycled parent PID can otherwise look like a valid lineage.
+  const parent = one(120, 4, '2026-10-16T17:00:00.000Z');
+  const child = one(121, 120, '2026-10-16T17:00:00.000Z');
+  for (const processes of [[parent, child], [child, parent]]) {
+    const result = check({ ...snapshot, processes });
+    assert.ok(result.reasonCodes.includes('PROCESS_PARENT_CHRONOLOGY_AMBIGUOUS'));
+    assert.equal(result.processTreeAbsentCandidate, false);
+    assert.equal(result.zeroResidencyProven, false);
+    assert.equal(result.mayLiftInferenceHold, false);
+  }
+});
+
+test('parent lineage remains fail-closed under reordered and cyclic census graphs', () => {
+  const root = one(120, 121, '2026-10-16T17:00:00.000Z');
+  const child = one(121, 120, '2026-10-16T17:00:01.000Z');
+  for (const processes of [[root, child], [child, root]]) {
+    const result = check({ ...snapshot, processes });
+    assert.ok(result.reasonCodes.includes('PROCESS_PARENT_CYCLE'));
+    assert.ok(result.reasonCodes.includes('PROCESS_PARENT_CHRONOLOGY_AMBIGUOUS'));
+    assert.equal(result.processTreeAbsentCandidate, false);
+    assert.equal(result.mayLiftInferenceHold, false);
+  }
+});
+
 test('registration missing exact descendant list or immutable launch identity fails closed', () => {
   for (const r of [
     { ...registration, registeredDescendants: null },

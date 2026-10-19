@@ -79,11 +79,12 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
     if (byPid.has(process.pid)) reasons.push('DUPLICATE_PROCESS_PID');
     byPid.set(process.pid, process);
   }
-  // A child older than the current parent PID indicates recycled custody or
-  // an inconsistent census. Either way, the tree cannot prove absence.
+  // A child older than or timestamp-identical to its current parent PID can
+  // indicate recycled custody or timestamp-granularity ambiguity. Treat both
+  // as uncertain; this read-only candidate cannot prove absence.
   for (const process of processes) {
     const parent = byPid.get(process.parentPid);
-    if (parent && Date.parse(process.startedAtUtc) < Date.parse(parent.startedAtUtc))
+    if (parent && Date.parse(process.startedAtUtc) <= Date.parse(parent.startedAtUtc))
       reasons.push('PROCESS_PARENT_CHRONOLOGY_AMBIGUOUS');
   }
   const root = byPid.get(registration.routerPid);
