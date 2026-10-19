@@ -87,6 +87,26 @@ After independently checking that no existing PR owns the exact target path and 
     node scripts/seed-canopy-parallel-supervisor.mjs approve <task-id>
     node scripts/seed-canopy-parallel-supervisor.mjs run-once
 
+After independently qualified merge and the first operator-approved physical pilot,
+the same supervisor also supports a **bounded foreground fail-forward inventory
+batch** (at most two tasks per invocation):
+
+    node scripts/seed-canopy-parallel-supervisor.mjs run-inventory-batch
+
+Only **individually GitHub-owner-approved** `CANONICAL_INVENTORY_V1` new
+documentation targets enter this batch. Each selected task is revalidated
+and started through the existing fixed worker, with fresh source, gaming and
+Git custody checks. A blocked task retains its claim/receipt; the next
+independently approved, disjoint task may still run. The batch reports
+**individual child exit codes**, not unverified successful builds. Neither
+process exit zero nor batch completion means review, merge, deployment or
+live seed completion. Any blocked attempt makes the overall batch return
+nonzero while preserving independent receipts. This command is NOT an
+unattended controller, a background service, or permission to override the
+original R7 lease. No heavy-model task is admitted by this route.
+
+
+
 A direct `build <request.json> --execute` invocation is a guarded internal worker entrypoint; without a verified exact approval it fails closed.
 
 The task runs **once**, in its own branch and worktree under the operator's .stephanos/seed-parallel directory, and records stage receipts under receipts/<taskId>.json.
