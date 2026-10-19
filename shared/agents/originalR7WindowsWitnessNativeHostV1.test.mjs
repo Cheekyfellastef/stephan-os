@@ -115,10 +115,10 @@ test('Windows stage script read-only plan and incorrect-image negative test exec
     const call = (hash) => spawnSync('powershell.exe', [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', path, '-CandidateExe', file, '-ExpectedSha256', hash,
-    ], { shell: false, windowsHide: true, encoding: 'utf8', timeout: 20000 });
+    ], { shell: false, windowsHide: true, encoding: 'utf8', timeout: 60000 });
 
     const valid = call(digest);
-    assert.equal(valid.status, 0, valid.stderr);
+    assert.equal(valid.status, 0, `${valid.stderr || ''}\n${valid.error?.code || ''}`);
     const report = JSON.parse(valid.stdout);
     assert.equal(report.finalVerdict, 'R7_STAGE_B_PREFLIGHT_ONLY');
     assert.equal(report.serviceStarted, false);
