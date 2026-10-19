@@ -595,6 +595,42 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(collisionReceipt.goalCompleted, false);
     assert.equal(git('rev-parse', 'main'), aliasClaimBase);
 
+    // Upgrade compatibility: an old revision hashed its original case spelling.
+    // That historical claim must still block the equivalent folded Windows path.
+    const legacyCasePath = 'docs/architecture/Legacy-Case-Claim.md';
+    const legacyCaseKey = createHash('sha256').update(legacyCasePath).digest('hex');
+    await writeFile(join(stateRoot, 'target-claims', legacyCaseKey + '.claim'),
+      JSON.stringify({ taskId: 'legacy-case-owner', targetPath: legacyCasePath,
+        seedId: SEED_ID, ownerIssue: '#3096', baseSha: aliasClaimBase }));
+    const legacyId = 'legacy-case-conflict-pilot';
+    const legacyRequest = { ...aliasClaimRequest, taskId: legacyId,
+      targetPath: 'docs/architecture/legacy-case-claim.md' };
+    const legacyRaw = JSON.stringify(legacyRequest);
+    const legacyManifest = join(scratch, 'legacy-case-claim-request.json');
+    await writeFile(legacyManifest, legacyRaw);
+    await writeFile(join(stateRoot, 'approvals', legacyId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const legacyNow = new Date().toISOString();
+    ownerComment.created_at = legacyNow;
+    ownerComment.updated_at = legacyNow;
+    ownerComment.body = [
+      '```stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: legacyRequest, manifestSha256: parallelSeedManifestHashV1(legacyRaw),
+        nowUtc: legacyNow,
+        expiryUtc: new Date(Date.parse(legacyNow) + 3600000).toISOString(),
+      })),
+      '```',
+    ].join('\n');
+    const legacyBlocked = await runAsync(process.execPath,
+      [executable, 'build', legacyManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(legacyBlocked.code, 0);
+    assert.match(legacyBlocked.stderr, /TARGET_ALREADY_OWNED_BY_PARALLEL_TASK/);
+    const legacyReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', legacyId + '.json'), 'utf8'));
+    assert.equal(legacyReceipt.stage, 'BLOCKED');
+    assert.equal(legacyReceipt.goalCompleted, false);
+
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
