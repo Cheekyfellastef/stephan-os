@@ -77,6 +77,12 @@ export function planWindowsSovereignReviewerV1(env, {
     env.STEPHANOS_REVIEW_SESSION].every(value => ID.test(text(value)))) {
     return error('INDEPENDENT_REVIEW_IDENTITIES_REQUIRED');
   }
+  // A callback-provided identity cannot make one session independent of itself.
+  // Check the explicit session collision even before invoking WSL or Ollama.
+  if (text(env.STEPHANOS_REVIEW_IMPLEMENTER_SESSION).toLowerCase()
+    === text(env.STEPHANOS_REVIEW_SESSION).toLowerCase()) {
+    return error('REVIEWER_IMPLEMENTER_SESSION_COLLISION');
+  }
   if (env.STEPHANOS_SOVEREIGN_REVIEW_MODEL
     && !/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL))) {
     return error('UNSAFE_LOCAL_MODEL');
@@ -243,11 +249,28 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     || receipt.proofRef !== expectedProof
     || !['clean', 'findings'].includes(receipt.verdict)
     || receipt.mergeAuthority !== false) return error('REVIEWER_RECEIPT_UNBOUND');
+  // A positive stdout marker alone proves no persisted evidence exists.
+  // Read the exact fixed artifact back through WSL before reporting READY.
+  // Do not expose the document, private diff, absolute machine path or model text.
+  const reviewWorkspace = path.posix.normalize(linuxPaths[1]);
+  const reviewProofFile = path.posix.join(linuxPaths[1], expectedProof);
+  if (reviewWorkspace !== linuxPaths[1]
+    || !reviewProofFile.startsWith(reviewWorkspace.replace(/\\/+$/, '') + '/')) {
+    return error('REVIEWER_PROOF_PATH_UNSAFE');
+  }
+  const readback = run(['/usr/bin/sha256sum', '--', reviewProofFile], 12_000);
+  if (readback?.error || readback?.status !== 0) {
+    return error('REVIEWER_PROOF_FILE_UNREADABLE');
+  }
+  const hashMatch = String(readback.stdout || '').match(/^([a-f0-9]{64})  (.+)\\r?\\n?$/);
+  if (!hashMatch || hashMatch[2] !== reviewProofFile) {
+    return error('REVIEWER_PROOF_READBACK_INVALID');
+  }
   return Object.freeze({
     ok: true, status: 'LOCAL_REVIEW_EVIDENCE_READY',
     qualification: 'PENDING_INDEPENDENT_ATTESTATION',
     prNumber: receipt.prNumber, sourceHead: receipt.sourceHead,
-    proofRef: receipt.proofRef, verdict: receipt.verdict,
+    proofRef: receipt.proofRef, proofSha256: hashMatch[1], verdict: receipt.verdict,
     approvalAuthority: false, mergeAuthority: false,
   });
 }
