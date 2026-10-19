@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+const commanderHttp = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
@@ -145,7 +146,10 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'/);
+  const runnerDefault = runner.match(/\[string\]\$RequireCapabilityVersion = '([^']+)'/)?.[1];
+  const httpDefault = commanderHttp.match(/export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '([^']+)'/)?.[1];
+  assert.equal(runnerDefault, '2026-10-18-island-action-contract-v6');
+  assert.equal(runnerDefault, httpDefault, 'Direct Windows runner must require the live HTTP capability generation');
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
