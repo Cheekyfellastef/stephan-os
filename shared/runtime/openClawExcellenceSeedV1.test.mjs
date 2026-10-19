@@ -546,3 +546,26 @@ test('every OpenClaw observational rung requires independent Local and Standalon
     assert.equal(seed.nextGrowthRung, rungs[i + 1] || 'QUALIFY_AGENT_SPECIFIC_SKILLS');
   }
 });
+
+test('canonical OpenClaw skill provenance references retain title-bound original owners', () => {
+  const packet = readFileSync(new URL('../../docs/architecture/openclaw-agent-skill-provenance-v1.md', import.meta.url), 'utf8');
+  const references = [
+    ['#3094', 'Seed: OpenClaw Local & Standalone Continuous Excellence and Codex Task Parity', 'issues/3094'],
+    ['#1903', 'Goal: Stephanos Governed Self-Improvement and Operator Gap-to-Change Loop V1', 'issues/1903'],
+    ['#2962', 'Goal: Repair Native Capacity Publisher generated-dist source gate mismatch', 'issues/2962'],
+    ['PR #3097', 'Bootstrap independent Seed Canopy Parallel Forge (#3096)', 'pull/3097'],
+  ];
+  const assertCanonical = (source) => {
+    for (const [label, title, target] of references) {
+      const canonical = '[' + label + ' — ' + title + '](https://github.com/Cheekyfellastef/stephan-os/' + target + ')';
+      assert.ok(source.includes(canonical), 'missing canonical owner/title link: ' + label);
+    }
+  };
+  assertCanonical(packet);
+  for (const [label, title, target] of references) {
+    const original = '[' + label + ' — ' + title + '](https://github.com/Cheekyfellastef/stephan-os/' + target + ')';
+    const weakened = '[' + label + '](https://github.com/Cheekyfellastef/stephan-os/' + target + ')';
+    assert.throws(() => assertCanonical(packet.replace(original, weakened)),
+      { message: 'missing canonical owner/title link: ' + label });
+  }
+});
