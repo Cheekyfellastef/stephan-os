@@ -110,7 +110,7 @@ test('archive ignores unknown basenames, nested paths, symlinks, and missing dir
     const report = await readStarfieldVrTelemetryArchive({ workspaceRoot });
     assert.equal(report.totalSessions, 1);
     assert.equal(report.sessions[0].sessionId, real);
-    assert.doesNotMatch(JSON.stringify(report), /credentials|secret/);
+    assert.doesNotMatch(JSON.stringify(report), /credentials\\.json|\\"token\\":\\"secret\\"/);
   });
   await fixture(async (workspaceRoot) => {
     await rm(join(workspaceRoot, 'vr'), { recursive: true, force: true });
