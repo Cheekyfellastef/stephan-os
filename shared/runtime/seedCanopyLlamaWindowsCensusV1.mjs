@@ -87,6 +87,14 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
     if (byPid.has(process.pid)) reasons.push('DUPLICATE_PROCESS_PID');
     byPid.set(process.pid, process);
   }
+  // A missing parent can be an exited intermediate child of the registered
+  // router. Without immutable Job/process-tree custody, a surviving grandchild
+  // cannot be distinguished from an unrelated orphan by this snapshot alone.
+  // Do not turn that unknown ancestry into a positive absence candidate.
+  for (const process of processes) {
+    if (process.parentPid > 0 && !byPid.has(process.parentPid))
+      reasons.push('PROCESS_PARENT_NOT_ENUMERATED');
+  }
   // A child older than or timestamp-identical to its current parent PID can
   // indicate recycled custody or timestamp-granularity ambiguity. Treat both
   // as uncertain; this read-only candidate cannot prove absence.

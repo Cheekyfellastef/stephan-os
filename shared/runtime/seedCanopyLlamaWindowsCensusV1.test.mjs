@@ -15,7 +15,10 @@ const snapshot = {
   enumerationStartedAtUtc: '2026-10-16T17:59:58.000Z',
   enumerationFinishedAtUtc: '2026-10-16T17:59:59.000Z',
   enumerationComplete: true,
-  processes: [{ pid: 120, parentPid: 4, startedAtUtc: '2026-10-16T17:00:00.000Z' }],
+  processes: [
+    { pid: 4, parentPid: 0, startedAtUtc: '2026-10-16T16:00:00.000Z' },
+    { pid: 120, parentPid: 4, startedAtUtc: '2026-10-16T17:00:00.000Z' },
+  ],
 };
 const check = (s = snapshot, r = registration) => assessLlamaWindowsProcessCensusV1(s, r, NOW);
 const one = (pid, parentPid, startedAtUtc = '2026-10-16T17:45:00.000Z') =>
@@ -73,6 +76,21 @@ test('orphan grandchildren of exited registered descendants cannot appear absent
     assert.equal(result.independentlyQualified, false);
     assert.equal(result.mayLiftInferenceHold, false);
   }
+});
+
+test('missing intermediate parent cannot conceal a surviving unregistered grandchild', () => {
+  // The registered router and its immediate child exited. The unregistered
+  // intermediate child also exited, leaving only a grandchild whose parent PID
+  // is absent from the process-wide snapshot. A negative tree cannot be proven.
+  const result = check({ ...snapshot, processes: [
+    one(4, 0, '2026-10-16T16:00:00.000Z'),
+    one(5501, 5500),
+  ] });
+  assert.ok(result.reasonCodes.includes('PROCESS_PARENT_NOT_ENUMERATED'));
+  assert.equal(result.processTreeAbsentCandidate, false);
+  assert.equal(result.independentlyQualified, false);
+  assert.equal(result.zeroResidencyProven, false);
+  assert.equal(result.mayLiftInferenceHold, false);
 });
 
 test('untrustworthy census freshness, completeness and schema fail closed', () => {
