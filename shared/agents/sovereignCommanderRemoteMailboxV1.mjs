@@ -42,6 +42,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'starfield-vr-performance-diagnosis',
   'report-starfield-vr-telemetry',
   'starfield-vr-telemetry-refresh',
+  'starfield-vr-telemetry-archive',
   'ignite-stephanos',
   'repair-battle-bridge',
   'repair-control-plane',
@@ -1344,6 +1345,92 @@ function safeCapabilityParityProjection(value = {}, processId = '') {
     daemonMayReportGreen: buildableGapCount === 0,
     mustContinueUntilZero: true,
     finalVerdict,
+  });
+}
+
+function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
+  if (processId !== 'starfield-vr-telemetry-archive') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed || parsed.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+    || parsed.ok !== true
+    || parsed.readOnly !== true || parsed.sourceMutationAllowed !== false
+    || parsed.arbitraryShellAllowed !== false || parsed.rawTelemetryReturned !== false
+    || parsed.hostPathsReturned !== false || parsed.secretMaterialReturned !== false
+    || parsed.unknownMeansGreen !== false
+    || !['STARFIELD_VR_TELEMETRY_ARCHIVE_READY', 'STARFIELD_VR_TELEMETRY_ARCHIVE_NO_SESSIONS'].includes(parsed.finalVerdict)) return null;
+  const count = (value, max = 1_000_000_000) => (
+    Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null
+  );
+  const metric = (value, max = 1_000_000) => (
+    value === null || value === undefined ? null
+      : Number.isFinite(value) && value >= 0 && value <= max ? value : null
+  );
+  const token = (value) => {
+    const s = typeof value === 'string' ? value : '';
+    return /^[A-Za-z0-9._:-]{1,120}$/.test(s) ? s : '';
+  };
+  const time = (value) => {
+    if (typeof value !== 'string' || value.length > 60) return '';
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  };
+  const totalSessions = count(parsed.totalSessions, 1_000_000);
+  const offset = count(parsed.offset, 1_000_000);
+  const limit = count(parsed.limit, 20);
+  const nextOffset = parsed.nextOffset === null ? null : count(parsed.nextOffset, 1_000_000);
+  if (!time(parsed.generatedAtUtc) || totalSessions === null
+    || offset === null || limit === null || limit < 1
+    || !Array.isArray(parsed.sessions) || parsed.sessions.length > limit
+    || (parsed.hasMore === true && nextOffset === null)
+    || (parsed.hasMore !== true && parsed.hasMore !== false)) return null;
+  const sessions = parsed.sessions.map((item) => ({
+    sessionId: token(item?.sessionId),
+    endedAtUtc: time(item?.endedAtUtc),
+    enteredAtUtc: time(item?.enteredAtUtc),
+    provider: ['mutar-openxr', 'vorpx'].includes(item?.provider) ? item.provider : 'UNKNOWN',
+    sourceHead: SHA_PATTERN.test(item?.sourceHead || '') ? item.sourceHead : '',
+    launchSessionId: token(item?.launchSessionId),
+    configurationFingerprintSha256: PROOF_HASH_PATTERN.test(item?.configurationFingerprintSha256 || '')
+      ? item.configurationFingerprintSha256 : '',
+    sessionOutcome: token(item?.sessionOutcome) || 'UNKNOWN',
+    sampleCount: count(item?.sampleCount),
+    partialTelemetry: item?.partialTelemetry === true,
+    csvPresent: item?.csvPresent === true,
+    summaryPresent: item?.summaryPresent === true,
+    sessionReceiptPresent: item?.sessionReceiptPresent === true,
+    avgApplicationFrameTimeMs: metric(item?.avgApplicationFrameTimeMs),
+    p95ApplicationFrameTimeMs: metric(item?.p95ApplicationFrameTimeMs),
+    p99ApplicationFrameTimeMs: metric(item?.p99ApplicationFrameTimeMs),
+    avgDeliveredCadenceHz: metric(item?.avgDeliveredCadenceHz, 1000),
+    headsetRefreshRateHz: metric(item?.headsetRefreshRateHz, 1000),
+    maxEyePresentationSkewMs: metric(item?.maxEyePresentationSkewMs),
+    maxPoseAgeMs: metric(item?.maxPoseAgeMs),
+    avgGpuUtilPct: metric(item?.avgGpuUtilPct, 100),
+    avgSystemCpuPct: metric(item?.avgSystemCpuPct, 100),
+    maxLlamaServerCount: count(item?.maxLlamaServerCount, 10000),
+    telemetryMissingCount: count(item?.telemetryMissingCount, 1000),
+    crashEvidenceCount: count(item?.crashEvidenceCount, 1000),
+  }));
+  if (sessions.some((s) => !s.sessionId)
+    || !token(parsed.newestSessionId) && totalSessions > 0) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true,
+    generatedAtUtc: time(parsed.generatedAtUtc),
+    directoryAvailable: parsed.directoryAvailable === true,
+    totalSessions,
+    newestSessionId: token(parsed.newestSessionId),
+    offset, limit, nextOffset, hasMore: parsed.hasMore,
+    sessions: Object.freeze(sessions),
+    readOnly: true, sourceMutationAllowed: false,
+    arbitraryShellAllowed: false, rawTelemetryReturned: false,
+    hostPathsReturned: false, secretMaterialReturned: false,
+    unknownMeansGreen: false, finalVerdict: parsed.finalVerdict,
   });
 }
 
@@ -3380,6 +3467,44 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: controllerLaneResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'starfield-vr-telemetry-archive') {
+    const telemetryArchive = safeStarfieldVrTelemetryArchiveProjection(rawMaintenance, projection.processId);
+    const proofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && telemetryArchive?.readOnly === true
+      && telemetryArchive.rawTelemetryReturned === false
+      && telemetryArchive.hostPathsReturned === false
+      && telemetryArchive.secretMaterialReturned === false;
+    if (!proofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: telemetryArchive.finalVerdict,
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      telemetryArchive,
+      vendorMeterRequired: false, externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false, sourceMutationAllowed: false,
+      mergeAuthority: false, pcRestartAuthority: false,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
