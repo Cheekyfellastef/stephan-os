@@ -690,7 +690,13 @@ test('iPad-width existing card receives Spotify URL and artwork without manual s
     // Regression: the same-tab automatic catalogue adapter must update main.js
     // state before any operator action serializes the state again.
     await page.locator(`.player-deck-card [data-rate="1"]`).click();
-    await page.locator('.player-deck-card [data-tag]').first().click();
+    // Tag tools are collapsed by default; exercise their existing click handler
+    // directly to verify its canonical save+rerender path without changing layout.
+    await page.evaluate(() => {
+      const tag = document.querySelector('.player-deck-card [data-tag]');
+      if (!tag) throw new Error('Listening Room tag action unavailable');
+      tag.click();
+    });
     const afterOperatorStateWrite = await page.evaluate(({ key, trackId, spotifyUrl, artworkUrl }) => {
       const snapshot = JSON.parse(localStorage.getItem(key));
       const track = snapshot.listeningDeck.find((item) => item.id === trackId);
