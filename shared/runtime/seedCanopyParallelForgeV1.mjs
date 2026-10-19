@@ -68,6 +68,15 @@ export function validateParallelSeedBuildRequestV1(request, seeds = []) {
   if (sourcePath(request?.targetPath) && !request.targetPath.endsWith('.md'))
     errors.push('CODE_PROPOSAL_NEEDS_QUALIFIED_SANDBOX');
   if (!text(request?.intent) || text(request.intent).length > 2400) errors.push('MISSING_OR_UNBOUNDED_INTENT');
+  if (request?.generationMode !== undefined && request.generationMode !== 'CANONICAL_INVENTORY_V1')
+    errors.push('UNQUALIFIED_GENERATION_MODE');
+  // Initial meter-free construction is deliberately documentation-only and
+  // creates a NEW file. It cannot overwrite a canonical source owner.
+  if (request?.generationMode === 'CANONICAL_INVENTORY_V1'
+    && (request.expectedTargetSha256 !== null
+      || !/^docs\\/architecture\\/[a-zA-Z0-9/_-]+\\.md$/.test(request.targetPath || '')))
+    errors.push('DETERMINISTIC_INVENTORY_NEW_DOC_ONLY');
+
   if (!Array.isArray(request?.testPaths) || request.testPaths.length < 1
     || request.testPaths.length > 5 || !request.testPaths.every(testPath)
     || new Set(request.testPaths).size !== request.testPaths.length) errors.push('INVALID_TEST_PATHS');
@@ -81,6 +90,55 @@ export function validateParallelSeedBuildRequestV1(request, seeds = []) {
   if (request?.modelEndpoint || request?.workerCommand || request?.shellCommand
     || request?.commitToMain || request?.existingLeaseBypass) errors.push('UNTRUSTED_EXECUTION_OVERRIDE');
   return Object.freeze({ ok: errors.length === 0, errors: Object.freeze(errors), seed: seed || null });
+}
+
+// Deterministic low-resource source proposal. This deliberately claims NO
+// machine observation, live seed growth or independent approval. It is useful
+// for seed inventory drafts when the ungoverned llama.cpp router must stay OFF.
+export function renderParallelSeedCanonicalInventoryV1(request, seed) {
+  if (request?.generationMode !== 'CANONICAL_INVENTORY_V1')
+    throw new Error('DETERMINISTIC_SEED_GENERATION_NOT_SELECTED');
+  const validation = validateParallelSeedBuildRequestV1(request, [seed]);
+  if (!validation.ok) throw new Error('DETERMINISTIC_SEED_REQUEST_REJECTED:' + validation.errors.join(','));
+  const scalar = (value) => text(value).replace(/[\\r\\n\\t<>]/g, ' ').slice(0, 2400);
+  const rung = Array.isArray(seed.growthRungs) && /^[A-Z0-9_]{3,90}$/.test(seed.growthRungs[0])
+    ? seed.growthRungs[0] : 'INVENTORY';
+  return Object.freeze({
+    path: request.targetPath,
+    content: [
+      '# ' + scalar(seed.title) + ': ' + rung + ' source inventory',
+      '',
+      '> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,',
+      '> source merge, runtime deployment or seed completion is claimed.',
+      '',
+      '## Canonical ownership',
+      '',
+      '- Seed: \`' + seed.seedId + '\`',
+      '- Owner: ' + scalar(seed.issue),
+      '- Contract source: \`' + scalar(seed.source) + '\`',
+      '- Exact request base: \`' + request.baseSha + '\`',
+      '- Approved target (proposal): \`' + request.targetPath + '\`',
+      '',
+      '## Requested outcome',
+      '',
+      scalar(request.intent),
+      '',
+      '## Evidence to collect before implementation',
+      '',
+      '- [ ] Confirm the current source and running host match this base.',
+      '- [ ] Verify the owner and check competing canonical, Island and Seed claims.',
+      '- [ ] Record independent, current physical evidence for any claimed gap.',
+      '- [ ] Identify the smallest disjoint implementation scope and test.',
+      '- [ ] Obtain exact-head independent review and protected merge approval.',
+      '- [ ] Prove post-merge runtime outcome before marking this seed grown.',
+      '',
+      '## Unverified observations',
+      '',
+      'No physical observations were supplied by this deterministic renderer.',
+      'Treat every proposed acceptance check as pending real evidence.',
+      '',
+    ].join('\\n'),
+  });
 }
 
 export function parallelSeedBranchNameV1(request) {
