@@ -181,6 +181,19 @@ test('registration missing exact descendant list or immutable launch identity fa
     assert.ok(result.reasonCodes.includes('LAUNCH_REGISTRATION_INCOMPLETE'));
   }
 });
+test('registered descendant with timestamp-identical router launch fails closed', () => {
+  // A millisecond-resolution collision cannot establish that the registered
+  // child was launched after the router rather than under a recycled PID.
+  const ambiguous = { ...registration, registeredDescendants: [
+    { pid: 4101, startedAtUtc: registration.routerStartedAtUtc },
+  ] };
+  const result = check(snapshot, ambiguous);
+  assert.ok(result.reasonCodes.includes('LAUNCH_REGISTRATION_INCOMPLETE'));
+  assert.equal(result.processTreeAbsentCandidate, false);
+  assert.equal(result.zeroResidencyProven, false);
+  assert.equal(result.mayLiftInferenceHold, false);
+});
+
 test('caller supplied qualified, custody and model claims cannot bypass the HOLD', () => {
   const result = check({ ...snapshot, qualified: true, zeroResidencyProven: true,
     mayLiftInferenceHold: true, gamingActive: false, gpuResidencyReleased: true });

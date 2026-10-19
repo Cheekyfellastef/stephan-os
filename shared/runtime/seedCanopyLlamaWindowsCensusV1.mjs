@@ -17,7 +17,7 @@ export function assessLlamaWindowsProcessCensusV1(snapshot, registration, nowMs 
     || !Array.isArray(registration.registeredDescendants)
     || registration.registeredDescendants.length > 2048
     || registration.registeredDescendants.some(d => !d || !pid(d.pid) || !utc(d.startedAtUtc))
-    || registration.registeredDescendants.some(d => Date.parse(d.startedAtUtc) < Date.parse(registration.routerStartedAtUtc))
+    || registration.registeredDescendants.some(d => Date.parse(d.startedAtUtc) <= Date.parse(registration.routerStartedAtUtc))
     || registration.registeredDescendants.some(d => d.pid === registration.routerPid)
     || new Set(registration.registeredDescendants.map(d => d.pid)).size !== registration.registeredDescendants.length)
     reasons.push('LAUNCH_REGISTRATION_INCOMPLETE');
