@@ -825,3 +825,94 @@ test('exact Spotify track oEmbed cover art survives reload and a rating never re
     await server.close();
   }
 });
+
+
+test('Discovery cards display trusted exact song and artwork actions instead of redundant searches', async () => {
+  const server = await startRepositoryServer();
+  let browser;
+  try {
+    browser = await chromium.launch(process.env.STEPHANOS_BROWSER_CHANNEL
+      ? { channel: process.env.STEPHANOS_BROWSER_CHANNEL, headless: true }
+      : { headless: true });
+    const page = await browser.newPage({ viewport: { width: 820, height: 1180 } });
+    await page.route('https://open.spotify.com/embed/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8',
+        body: '<!doctype html><title>Exact Discovery song player fixture</title>' });
+    });
+    await page.route('https://i.scdn.co/**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
+    });
+    await page.addInitScript(({ key, spotifyUrl, spotifyId, artworkUrl }) => {
+      localStorage.setItem(key, JSON.stringify({
+        candidates: [],
+        listeningDeck: [],
+        ratings: {},
+        tags: {},
+        trackFeedback: {},
+        linkMessages: {},
+        discoveryPipeline: {
+          query: 'Depeche Mode', summary: 'Bound trusted Discovery proof',
+          searchLeads: [{ id: 'lead', title: 'Search Only Lead', artist: 'Depeche Mode' }],
+          verifiedCandidates: [{
+            id: 'discovery-exact', artist: 'Depeche Mode', title: 'Enjoy the Silence',
+            spotifyUrl, artworkUrl, candidateVerificationStatus: 'search-only',
+            catalogProvider: 'spotify', catalogProviderItemId: spotifyId,
+            catalogLinkSource: 'native-catalog-search', catalogVerificationStatus: 'metadata_verified',
+          }, {
+            id: 'discovery-rejected', artist: 'Depeche Mode', title: 'Rejected Candidate',
+            spotifyUrl, artworkUrl, candidateVerificationStatus: 'likely-hallucinated',
+            catalogProvider: 'spotify', catalogProviderItemId: spotifyId,
+            catalogLinkSource: 'native-catalog-search', catalogVerificationStatus: 'metadata_verified',
+          }],
+          fallbackCandidates: [], warnings: [], resultCount: 2, targetCount: 2,
+        },
+      }));
+    }, { key: STORAGE_KEY, spotifyUrl: AUTO_SPOTIFY_URL,
+      spotifyId: AUTO_SPOTIFY_ID, artworkUrl: AUTO_ARTWORK_URL });
+    await page.goto(`${server.origin}/apps/music-tile/index.html`);
+    await page.waitForSelector('#discovery-results-list section');
+    const proof = await page.evaluate(({ exactUrl, artworkUrl }) => {
+      const sections = Array.from(document.querySelectorAll('#discovery-results-list section'));
+      const row = (heading, title) => {
+        const section = sections.find((item) => item.querySelector('h3')?.textContent === heading);
+        return Array.from(section?.querySelectorAll('article.music-card') || [])
+          .find((card) => card.querySelector('.music-card-title')?.textContent === title);
+      };
+      const actions = (card) => Array.from(card?.querySelectorAll('.actions a') || [])
+        .map((link) => ({ label: link.textContent.trim(), href: link.href }));
+      const trusted = row('Verified Candidates', 'Enjoy the Silence');
+      const rejected = row('Verified Candidates', 'Rejected Candidate');
+      const lead = row('Search Leads', 'Search Only Lead');
+      return {
+        trusted: {
+          actions: actions(trusted),
+          art: trusted?.querySelector('img.catalog-artwork-preview')?.src || '',
+          embed: Boolean(trusted?.querySelector('iframe[src*="/embed/track/"]')),
+        },
+        rejected: {
+          actions: actions(rejected),
+          art: Boolean(rejected?.querySelector('img.catalog-artwork-preview')),
+          embed: Boolean(rejected?.querySelector('iframe')),
+        },
+        lead: {
+          actions: actions(lead),
+          art: Boolean(lead?.querySelector('img.catalog-artwork-preview')),
+        },
+      };
+    }, { exactUrl: AUTO_SPOTIFY_URL, artworkUrl: AUTO_ARTWORK_URL });
+    assert.deepEqual(proof.trusted, {
+      actions: [{ label: 'Open in Spotify', href: AUTO_SPOTIFY_URL }],
+      art: AUTO_ARTWORK_URL,
+      embed: true,
+    });
+    assert.equal(proof.rejected.art, false);
+    assert.equal(proof.rejected.embed, false);
+    assert.deepEqual(proof.rejected.actions.map((x) => x.label), ['Search Spotify', 'Search YouTube']);
+    assert.equal(proof.lead.art, false);
+    assert.deepEqual(proof.lead.actions.map((x) => x.label), ['Search Spotify', 'Search YouTube']);
+  } finally {
+    if (browser) await browser.close();
+    await server.close();
+  }
+});
