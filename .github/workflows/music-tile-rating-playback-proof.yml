@@ -14,6 +14,8 @@ on:
       - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - 'tests/music-tile-spotify-oembed-artwork.test.mjs'
+      - 'tests/music-catalog-resolver.test.mjs'
+      - 'tests/music-discovery-pipeline.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
   push:
     branches: [main]
@@ -28,6 +30,8 @@ on:
       - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - 'tests/music-tile-spotify-oembed-artwork.test.mjs'
+      - 'tests/music-catalog-resolver.test.mjs'
+      - 'tests/music-discovery-pipeline.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
 
 permissions: {}
@@ -63,5 +67,7 @@ jobs:
           node --test tests/music-tile-auto-link-continuity.test.mjs
           node --test tests/music-tile-automatic-media-resolution.test.mjs
           node --test tests/music-tile-spotify-oembed-artwork.test.mjs
+          node --test tests/music-catalog-resolver.test.mjs
+          node --test tests/music-discovery-pipeline.test.mjs
           node --test tests/music-intelligence-centre-vnext.test.mjs
           node --test tests/music-tile-rating-playback-browser.test.mjs
