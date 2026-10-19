@@ -12,7 +12,28 @@ It is NOT a second protected merge service, a second daemon, a bypass for active
 
 ## Running on an authorized Battle Bridge checkout
 
-**Current execution status: HELD — RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED.**
+**Current deployment status: NOT COMMISSIONED.** The heavyweight llama.cpp
+model route remains **HELD — RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED**.
+A separate opt-in **CANONICAL_INVENTORY_V1** deterministic path now prepares
+documentation-only source proposals without contacting llama.cpp or Ollama.
+This is source code in PR #3097, not an installed or live Battle Bridge worker.
+It retains the same owner-authenticated exact-manifest approval, isolated
+Git branch/worktree, canonical governor check, source/path scope, tests,
+commit verification and protected review/merge restrictions. It is neither
+automatic seed admission nor proof of goal completion.
+
+For an operator-chosen **new documentation file** (expectedTargetSha256: null),
+set `"generationMode": "CANONICAL_INVENTORY_V1"` in the exact owner-approved
+manifest. The renderer uses only the canonical seed title, owner, source,
+declared rung and approved intent to create an evidence-gathering checklist.
+It does not invent live measurements, run a model, modify existing files or
+admit executable code. Any other generationMode fails closed. This avoids
+the independent llama.cpp GPU-residency problem for this narrow class only;
+it does NOT qualify the machine's Git/Windows source-writer safety or allow
+an unattended service. After protected merge, a separately approved first
+run-once with fresh OS custody and local proof is mandatory.
+
+**Existing model-based route:**
 The source intentionally disables production model execution before endpoint
 access, governor reconciliation, task claim or worktree creation. The canonical
 Windows governor owns Ollama eviction, not the independent llama.cpp router.
