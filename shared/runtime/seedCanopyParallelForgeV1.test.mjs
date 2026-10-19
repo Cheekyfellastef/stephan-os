@@ -155,7 +155,7 @@ test('local model may propose only one exact file with size bounds, not addition
 });
 
 test('all receipts explicitly deny merge/deploy/goal-completion even with malicious extras', () => {
-  for (const stage of ['SELECTED', 'CLAIMED', 'EDITED', 'TESTED', 'COMMITTED', 'BLOCKED']) {
+  for (const stage of ['SELECTED', 'CLAIMED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'COMMITTED', 'BLOCKED']) {
     const receipt = makeParallelSeedReceiptV1(request, stage, {
       merged: true, deployed: true, goalCompleted: true,
       commitSha: stage === 'COMMITTED' ? 'b'.repeat(40) : '',
