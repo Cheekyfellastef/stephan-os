@@ -121,8 +121,20 @@ async function assertTrustedGitBoundary(cwd = repoRoot) {
 // write, before committing and before declaring success. No global lease,
 // R7 repair or remote mutation is performed by this comparison.
 async function assertSeedMainDidNotMove(expectedBase) {
+  // Recheck both local source and its locally tracked origin before each edit
+  // and commit. This does NOT certify remote GitHub freshness: the guarded
+  // host sync must separately attest that origin/main is current.
   const observed = await processExec('git', ['rev-parse', '--verify', 'refs/heads/main']);
   if (observed !== expectedBase) throw new Error('SEED_SOURCE_MAIN_ADVANCED_DURING_BUILD');
+  let trackedOrigin;
+  try {
+    trackedOrigin = await processExec('git',
+      ['rev-parse', '--verify', 'refs/remotes/origin/main']);
+  } catch {
+    throw new Error('SEED_SOURCE_ORIGIN_MAIN_UNOBSERVED');
+  }
+  if (trackedOrigin !== expectedBase)
+    throw new Error('SEED_SOURCE_TRACKED_ORIGIN_MAIN_MISMATCH');
 }
 
 async function saveReceipt(request, stage, more = {}) {
