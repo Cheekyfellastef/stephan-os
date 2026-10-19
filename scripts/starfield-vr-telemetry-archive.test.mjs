@@ -125,7 +125,7 @@ test('archive ignores unknown basenames, nested paths, symlinks, and missing dir
 test('archive refuses invalid or unbounded pages', async () => {
   await fixture(async (workspaceRoot) => {
     for (const args of [
-      { offset: -1 }, { offset: 1_000_001 }, { limit: 0 }, { limit: 21 },
+      { offset: -1 }, { offset: 1_000_001 }, { limit: 0 }, { limit: 13 },
       { limit: '20' }, { offset: 1.5 },
     ]) {
       await assert.rejects(readStarfieldVrTelemetryArchive({ workspaceRoot, ...args }), /PAGE_INVALID/);
