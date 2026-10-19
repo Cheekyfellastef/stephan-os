@@ -67,8 +67,22 @@ test('unverified, not-found and hallucinated candidates cannot hydrate Spotify a
   assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, aiSuggested: true, candidateVerificationStatus: 'unverified' }), false);
   assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, candidateVerificationStatus: 'not-found' }), false);
   assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, candidateVerificationStatus: 'likely-hallucinated' }), false);
-  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, sourceKind: 'native-catalog', catalogVerificationStatus: 'metadata_verified', candidateVerificationStatus: 'search-only' }), true);
-  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, sourceKind: 'native-catalog', catalogVerificationStatus: 'metadata_verified', candidateVerificationStatus: 'likely-hallucinated' }), false);
+  const verifiedCatalog = {
+    catalogProvider: 'spotify',
+    catalogProviderItemId: TRACK_ID,
+    catalogLinkSource: 'native-catalog-search',
+    catalogVerificationStatus: 'metadata_verified',
+    candidateVerificationStatus: 'search-only',
+  };
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, sourceKind: 'journey-candidate' }), true,
+    'automatically enriched journey tracks must show the exact matched album artwork');
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, sourceKind: 'native-catalog' }), true);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, catalogProviderItemId: 'wrong-id' }), false,
+    'an unrelated Spotify recording can never lend artwork');
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, catalogLinkSource: '' }), false,
+    'unproven catalogue identity cannot lend artwork');
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, candidateVerificationStatus: 'likely-hallucinated' }), false);
+  assert.equal(canUseVerifiedSpotifyArtwork({ ...basic, ...verifiedCatalog, candidateVerificationStatus: 'not-found' }), false);
 });
 
 test('Music source preserves playback-bearing DOM and hides redundant search links for resolved cards', async () => {
@@ -84,6 +98,7 @@ test('Music source preserves playback-bearing DOM and hides redundant search lin
   assert.match(continuity, /hydrateCatalogArtworkContinuity\(\{ storage, root \}\)/);
   assert.match(continuity, /canUseVerifiedSpotifyArtwork\(current\)/);
   assert.match(main, /blockedSpotifyIdentity/);
+  assert.match(main, /hasValidatedCatalogLink = hasVerifiedCatalogSpotifyTrack\(track\)/);
   assert.doesNotMatch(continuity, /\.innerHTML\s*=/);
   assert.match(route, /router\.get\('\/spotify\/oembed-artwork'/);
   assert.match(route, /\^\[A-Za-z0-9\]\{22\}\$/);
