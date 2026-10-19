@@ -1381,7 +1381,7 @@ function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
   };
   const totalSessions = count(parsed.totalSessions, 1_000_000);
   const offset = count(parsed.offset, 1_000_000);
-  const limit = count(parsed.limit, 20);
+  const limit = count(parsed.limit, 12);
   const nextOffset = parsed.nextOffset === null ? null : count(parsed.nextOffset, 1_000_000);
   if (!time(parsed.generatedAtUtc) || totalSessions === null
     || offset === null || limit === null || limit < 1
