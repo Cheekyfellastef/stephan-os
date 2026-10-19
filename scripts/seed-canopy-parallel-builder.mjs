@@ -302,19 +302,39 @@ async function localModelWrite(request, existingContent, seed, preflight) {
 }
 
 async function safeTarget(worktree, targetPath) {
-  const full = resolve(worktree, targetPath);
-  if (!full.startsWith(resolve(worktree) + sep)) throw new Error('TARGET_ESCAPES_WORKTREE');
+  const root = resolve(worktree);
+  const physicalMatch = (a, b) => {
+    const left = resolve(a), right = resolve(b);
+    return process.platform === 'win32'
+      ? left.toLowerCase() === right.toLowerCase() : left === right;
+  };
+  // Git's isolated worktree must itself be a real physical directory, not a
+  // redirected or replacement path. A .git file is valid inside a worktree.
+  if (!physicalMatch(await realpath(root), root))
+    throw new Error('SEED_WORKTREE_ROOT_REDIRECTED');
+  const full = resolve(root, targetPath);
+  if (!full.startsWith(root + sep)) throw new Error('TARGET_ESCAPES_WORKTREE');
   let current = dirname(full);
-  while (current.startsWith(resolve(worktree) + sep)) {
+  while (current.startsWith(root + sep)) {
     try {
-      if ((await lstat(current)).isSymbolicLink()) throw new Error('SYMLINK_TARGET_PARENT');
+      const item = await lstat(current);
+      if (item.isSymbolicLink()) throw new Error('SYMLINK_TARGET_PARENT');
+      if (!item.isDirectory()) throw new Error('SEED_TARGET_PARENT_NOT_DIRECTORY');
+      // Windows junctions/reparse points can resolve elsewhere even when
+      // lstat().isSymbolicLink() is not sufficient to describe the alias.
+      if (!physicalMatch(await realpath(current), current))
+        throw new Error('SEED_TARGET_PARENT_PHYSICAL_REDIRECT');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
     current = dirname(current);
   }
   try {
-    if ((await lstat(full)).isSymbolicLink()) throw new Error('SYMLINK_TARGET');
+    const item = await lstat(full);
+    if (item.isSymbolicLink()) throw new Error('SYMLINK_TARGET');
+    if (!item.isFile()) throw new Error('SEED_TARGET_LEAF_NOT_FILE');
+    if (!physicalMatch(await realpath(full), full))
+      throw new Error('SEED_TARGET_LEAF_PHYSICAL_REDIRECT');
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
