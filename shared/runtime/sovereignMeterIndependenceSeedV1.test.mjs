@@ -109,6 +109,10 @@ const readMeterBlackoutInventory = () => readFileSync(
   new URL('../../docs/architecture/sovereign-meter-blackout-acceptance-v1.md', import.meta.url), 'utf8');
 
 const parseMeterBlackoutDimensions = (markdown) => {
+  assert.equal(markdown.split('## Twelve canonical dimensions').length, 2,
+    'the acceptance inventory must contain exactly one canonical dimensions section');
+  assert.equal(markdown.split('## Verdict and original-owner routing').length, 2,
+    'the acceptance inventory must contain exactly one verdict section');
   const section = markdown.split('## Twelve canonical dimensions')[1]?.split('## Verdict and original-owner routing')[0];
   assert.ok(section, 'missing bounded meter-specific inventory');
   const rows = section.split('\n').map((line) => line.trim()).filter((line) => line.startsWith('|'));
@@ -172,6 +176,15 @@ test('meter-blackout acceptance inventory remains aligned to canonical 12 dimens
   assert.match(markdown, /same original task ID and worker identity/);
   assert.match(markdown, /Gaming or Quest has absolute priority/);
   assert.match(markdown, /never from publication of this checklist/);
+});
+
+test('meter-blackout inventory rejects a duplicate forged dimensions section', () => {
+  const markdown = readMeterBlackoutInventory();
+  const duplicate = '\n## Twelve canonical dimensions\n| `forged` | #1898: fabricated | PASS |\n';
+  assert.throws(() => parseMeterBlackoutDimensions(markdown + duplicate),
+    /exactly one canonical dimensions section/);
+  assert.throws(() => parseMeterBlackoutDimensions(markdown + '\n## Verdict and original-owner routing\nPASS'),
+    /exactly one verdict section/);
 });
 
 test('meter-blackout inventory rejects malformed or forged evidence rows', () => {
