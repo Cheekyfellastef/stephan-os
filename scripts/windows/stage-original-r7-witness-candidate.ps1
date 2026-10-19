@@ -26,7 +26,11 @@ function Assert-PlainLocalExistingPath([string]$Value) {
         throw 'R7_STAGE_LOCAL_DRIVE_ABSOLUTE_REQUIRED'
     }
     $canonical = [IO.Path]::GetFullPath($Value)
-    if (-not [string]::Equals($canonical, $Value, [StringComparison]::OrdinalIgnoreCase)) {
+    # The canonical path may differ from a Windows temporary-directory alias
+    # without traversing to another target. Reject traversal components
+    # explicitly and independently reject all reparse ancestors below.
+    $segments = @($Value -split '[\\/]')
+    if ($segments -contains '.' -or $segments -contains '..') {
         throw 'R7_STAGE_TRAVERSAL_OR_ALIAS_FORBIDDEN'
     }
     $cursor = $canonical
