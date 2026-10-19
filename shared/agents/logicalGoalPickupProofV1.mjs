@@ -3,6 +3,8 @@ import { constants as fsConstants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { lstat, open, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { resolveBattleBridgeGitExecutable, createBattleBridgeMinimalChildEnvironment,
+  validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 // Use the EXISTING independently commissioned Core Ed25519 key; this
 // observation is diagnostic only and never grants source/lease/merge powers.
@@ -28,17 +30,24 @@ const millis = v => Date.parse(text(v));
  */
 export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
-  const gitBinary = process.platform === 'win32'
-    ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
+  // Never inherit Git's environment-controlled worktree/config overrides.
+  // The shared fixed boundary also disables executable Git monitors/hooks,
+  // external transports and dynamic credential helpers in every child call.
+  const gitBinary = resolveBattleBridgeGitExecutable();
+  const gitEnv = createBattleBridgeMinimalChildEnvironment(process.env, { git: true });
   const git = args => {
-    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' };
-    for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_NAMESPACE']) delete env[key];
     const result = spawnSync(gitBinary, ['-C', root, ...args], {
       encoding: 'utf8', windowsHide: true, shell: false,
-      timeout: 12000, maxBuffer: 4 * 1024 * 1024, env,
+      timeout: 12000, maxBuffer: 4 * 1024 * 1024, env: gitEnv,
     });
     return result.status === 0 && !result.error ? String(result.stdout).trim() : null;
   };
+  // A mutable local Git configuration can redirect the physical worktree or
+  // install an execution-bearing filter; audit it *before* source promotion.
+  const localConfig = git(['config', '--local', '--null', '--list']);
+  if (localConfig === null || !validateBattleBridgeLocalGitConfiguration(localConfig).ok) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_GIT_CONFIGURATION_UNTRUSTED' });
+  }
   const head = git(['rev-parse', '--verify', 'HEAD']);
   const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const originMain = git(['rev-parse', '--verify', 'refs/remotes/origin/main']);

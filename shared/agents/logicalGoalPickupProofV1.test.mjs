@@ -137,6 +137,7 @@ test('canonical pickup proof rejects dirty tracked files, staged edits and stale
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   }).trim();
   git('init', '--initial-branch=main');
+  git('remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
   await writeFile(join(root, 'proof-module.mjs'), 'export const attested = true;\n');
   await writeFile(join(root, 'second-tracked.mjs'), 'export const second = true;\n');
   git('add', 'proof-module.mjs', 'second-tracked.mjs');
@@ -146,6 +147,37 @@ test('canonical pickup proof rejects dirty tracked files, staged edits and stale
   const clean = verifyCleanCanonicalTrackedMainV1(root);
   assert.equal(clean.ok, true);
   assert.equal(clean.sourceHead, git('rev-parse', 'HEAD'));
+
+  // The claimed source tree must never be selected using inherited GIT_CONFIG
+  // or GIT_WORK_TREE environment variables. A second *clean* directory has
+  // the exact indexed files; the real checkout is modified during the probe.
+  const mirror = await mkdtemp(join(tmpdir(), 'logical-git-env-mirror-'));
+  await writeFile(join(mirror, 'proof-module.mjs'), 'export const attested = true;\n');
+  await writeFile(join(mirror, 'second-tracked.mjs'), 'export const second = true;\n');
+  await writeFile(join(root, 'proof-module.mjs'), 'export const attested = false;\n');
+  const poison = {
+    GIT_WORK_TREE: mirror, GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: mirror,
+  };
+  const original = Object.fromEntries(Object.keys(poison).map(key =>
+    [key, Object.prototype.hasOwnProperty.call(process.env, key) ? process.env[key] : null]));
+  try {
+    Object.assign(process.env, poison);
+    assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker,
+      'LOGICAL_GOAL_TRACKED_SOURCE_DIRTY');
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === null) delete process.env[key]; else process.env[key] = value;
+    }
+    await writeFile(join(root, 'proof-module.mjs'), 'export const attested = true;\n');
+  }
+  // Local repository config is also mutable and must not redirect signing
+  // even with a fully isolated child environment.
+  git('config', 'core.worktree', mirror);
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker,
+    'LOGICAL_GOAL_GIT_CONFIGURATION_UNTRUSTED');
+  git('config', '--unset', 'core.worktree');
+  assert.equal(verifyCleanCanonicalTrackedMainV1(root).ok, true);
 
   // Put the hidden edit in the SECOND indexed path. A parser accidentally
   // treating the complete NUL-delimited output as a single first entry must
