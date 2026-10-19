@@ -195,22 +195,53 @@ try {
     } finally {
         $controller.Dispose()
     }
-    $allowedSids = @('S-1-5-32-544', 'S-1-5-18',
-        ([Security.Principal.NTAccount]::new('NT SERVICE', $service)).Translate(
-            [Security.Principal.SecurityIdentifier]).Value)
+    # Verify the *actual* ACL grants, not just that its SID names are
+    # familiar. A missing service ACE or an overprivileged service ACE must
+    # never produce a positive staging receipt.
+    $witnessSid = ([Security.Principal.NTAccount]::new('NT SERVICE', $service)).Translate(
+        [Security.Principal.SecurityIdentifier]).Value
+    $expectedFull = [int][Security.AccessControl.FileSystemRights]::FullControl
+    $requiredRead = [int][Security.AccessControl.FileSystemRights]::ReadAndExecute
+    # Windows may normalize allowed ReadAndExecute ACEs by adding Synchronize.
+    $allowedRead = $requiredRead -bor [int][Security.AccessControl.FileSystemRights]::Synchronize
+    $expectedSids = @('S-1-5-32-544', 'S-1-5-18', $witnessSid)
     foreach ($target in @($installDirectory, $installedExe)) {
         $readback = Get-Acl -LiteralPath $target -ErrorAction Stop
         if (-not $readback.AreAccessRulesProtected -or
             $readback.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544') {
             throw 'R7_STAGE_PROTECTED_ACL_NOT_OBSERVED'
         }
+        $seen = @{}
+        $expectedInheritance = [Security.AccessControl.InheritanceFlags]::None
+        if ([string]::Equals($target, $installDirectory,
+            [StringComparison]::OrdinalIgnoreCase)) {
+            $expectedInheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+                [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        }
         foreach ($entry in $readback.Access) {
             $sid = $entry.IdentityReference.Translate(
                 [Security.Principal.SecurityIdentifier]).Value
             if ($entry.IsInherited -or
                 $entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
-                $sid -notin $allowedSids) {
+                $sid -notin $expectedSids -or $seen.ContainsKey($sid) -or
+                $entry.InheritanceFlags -ne $expectedInheritance -or
+                $entry.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
                 throw 'R7_STAGE_UNEXPECTED_ACL_PRINCIPAL'
+            }
+            $seen[$sid] = $true
+            $rights = [int]$entry.FileSystemRights
+            if ($sid -eq $witnessSid) {
+                if (($rights -band $requiredRead) -ne $requiredRead -or
+                    ($rights -band (-bnot $allowedRead)) -ne 0) {
+                    throw 'R7_STAGE_UNEXPECTED_ACL_RIGHTS'
+                }
+            } elseif ($rights -ne $expectedFull) {
+                throw 'R7_STAGE_UNEXPECTED_ACL_RIGHTS'
+            }
+        }
+        foreach ($requiredSid in $expectedSids) {
+            if (-not $seen.ContainsKey($requiredSid)) {
+                throw 'R7_STAGE_REQUIRED_ACL_PRINCIPAL_MISSING'
             }
         }
     }
