@@ -1,6 +1,6 @@
 # OpenClaw Local and Standalone: skill provenance acceptance V1
 
-Canonical seed: [#3094, OpenClaw Local & Standalone Continuous Excellence and Codex Task Parity](https://github.com/Cheekyfellastef/stephan-os/issues/3094). This is a **source-only evidence contract** for the existing seed and its existing owners, not an installed skill, approved update, physical worker pickup, or Codex-parity proof.
+Canonical seed: [#3094 — Seed: OpenClaw Local & Standalone Continuous Excellence and Codex Task Parity](https://github.com/Cheekyfellastef/stephan-os/issues/3094). This is a **source-only evidence contract** for the existing seed and its existing owners, not an installed skill, approved update, physical worker pickup, or Codex-parity proof.
 
 ## Separate principals
 
@@ -31,7 +31,7 @@ Do not transfer Local credentials, allowlists, tools, models, trust results, or 
 - `QUALIFIED_FOR_RECIPIENT`: all relevant exact-source security, exam, review and authorization prerequisites passed, but installation is still a separate consequential action.
 - `INSTALLED_AND_VERIFIED`: approved installation and rollback verified on the exact recipient with an independent runtime witness. This does not establish Codex parity.
 
-If an adapter is missing, reconcile one deduplicated capability request through existing [#1903](https://github.com/Cheekyfellastef/stephan-os/issues/1903) / Skill Forge intake under the original task identity. No new controller, scheduler, queue, authority or self-reviewer is created here. The original #2962/r7 custody HOLD and #3097 local inference gaming HOLD remain binding.
+If an adapter is missing, reconcile one deduplicated capability request through existing [#1903 — Goal: Stephanos Governed Self-Improvement and Operator Gap-to-Change Loop V1](https://github.com/Cheekyfellastef/stephan-os/issues/1903) / Skill Forge intake under the original task identity. No new controller, scheduler, queue, authority or self-reviewer is created here. The original [#2962 — Goal: Repair Native Capacity Publisher generated-dist source gate mismatch](https://github.com/Cheekyfellastef/stephan-os/issues/2962) revision-7 custody HOLD and [PR #3097 — Bootstrap independent Seed Canopy Parallel Forge (#3096)](https://github.com/Cheekyfellastef/stephan-os/pull/3097) local inference gaming HOLD remain binding.
 
 ## Negative acceptance matrix (mandatory fail-closed)
 
