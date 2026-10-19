@@ -221,7 +221,8 @@ test('router or descendant launch at the exact scan-start timestamp fails closed
   const atStart = snapshot.enumerationStartedAtUtc;
   const rootAtStart = check(snapshot, { ...registration,
     routerStartedAtUtc: atStart,
-    registeredDescendants: [{ pid: 4101, startedAtUtc: atStart }],
+    // A valid descendant launch must be strictly later than its router.
+    registeredDescendants: [{ pid: 4101, startedAtUtc: '2026-10-16T17:59:58.001Z' }],
   });
   assert.ok(rootAtStart.reasonCodes.includes('LAUNCH_OVERLAPS_CENSUS'));
   assert.equal(rootAtStart.processTreeAbsentCandidate, false);
