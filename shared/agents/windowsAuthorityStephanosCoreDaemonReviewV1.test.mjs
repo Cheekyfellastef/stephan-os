@@ -173,15 +173,24 @@ test('trusted switchboard byte-pins and invokes the Core Daemon specialist', asy
 test('only the two exact pinned v4 and v6 runner blobs qualify, never an arbitrary default or extra authority', () => {
   const v4 = '2026-10-05-continuous-repair-reporting-v4';
   const v6 = '2026-10-18-island-action-contract-v6';
-  assert.ok(runner.includes(v4));
-  const stagedV6 = runner.replace(v4, v6);
-  assert.notEqual(stagedV6, runner);
-  const accepted = review(stagedV6, status);
-  assert.equal(accepted.clean, true, accepted.findings.map(x => x.code).join(','));
+  // The protected runner may be at either reviewed generation when this
+  // reviewer lands. Reconstruct the counterpart from the *observed* source,
+  // rather than assuming the checkout still contains v4 after v6 rollout.
+  const installedV4 = runner.includes(v4) && !runner.includes(v6);
+  const installedV6 = runner.includes(v6) && !runner.includes(v4);
+  assert.equal(installedV4 || installedV6, true,
+    'checked-in runner must contain exactly one reviewed capability default');
+  const candidateV4 = installedV4 ? runner : runner.replace(v6, v4);
+  const candidateV6 = installedV6 ? runner : runner.replace(v4, v6);
+  assert.notEqual(candidateV4, candidateV6);
+  for (const candidate of [candidateV4, candidateV6]) {
+    const accepted = review(candidate, status);
+    assert.equal(accepted.clean, true, accepted.findings.map(x => x.code).join(','));
+  }
   for (const candidate of [
-    stagedV6.replace(v6, '2026-10-19-unreviewed-v7'),
-    stagedV6 + '\nStart-Process -FilePath $env:USER_COMMAND',
-    stagedV6.replace('duplicateLeaseAllowed = $false', 'duplicateLeaseAllowed = $true'),
+    candidateV6.replace(v6, '2026-10-19-unreviewed-v7'),
+    candidateV6 + '\nStart-Process -FilePath $env:USER_COMMAND',
+    candidateV6.replace('duplicateLeaseAllowed = $false', 'duplicateLeaseAllowed = $true'),
   ]) {
     const rejected = review(candidate, status);
     assert.equal(rejected.clean, false);
