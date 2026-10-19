@@ -112,9 +112,9 @@ test('Windows stage script read-only plan and incorrect-image negative test exec
     await writeFile(file, bytes);
     const digest = createHash('sha256').update(bytes).digest('hex');
     const path = fileURLToPath(stagingScriptUrl);
-    const call = (hash) => spawnSync('powershell.exe', [
+    const call = (hash, candidate = file) => spawnSync('powershell.exe', [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-      '-File', path, '-CandidateExe', file, '-ExpectedSha256', hash,
+      '-File', path, '-CandidateExe', candidate, '-ExpectedSha256', hash,
     ], { shell: false, windowsHide: true, encoding: 'utf8', timeout: 60000 });
 
     const valid = call(digest);
@@ -127,6 +127,19 @@ test('Windows stage script read-only plan and incorrect-image negative test exec
     const invalid = call('0'.repeat(64));
     assert.notEqual(invalid.status, 0, 'a changed candidate must fail');
     assert.match(invalid.stderr, /R7_STAGE_CANDIDATE_HASH_MISMATCH/);
+
+    // A matching hash is insufficient when the executable identity is wrong.
+    const wrongFilename = join(dir, 'untrusted-r7.exe');
+    await writeFile(wrongFilename, bytes);
+    const wrongName = call(digest, wrongFilename);
+    assert.notEqual(wrongName.status, 0, 'a different executable name must fail');
+    assert.match(wrongName.stderr, /R7_STAGE_FIXED_BUNDLE_FILENAME_REQUIRED/);
+
+    // A matching apphost with adjacent managed code is not a pinned bundle.
+    await writeFile(join(dir, 'untrusted-managed.dll'), Buffer.from('not a trusted bundle'));
+    const withSidecar = call(digest);
+    assert.notEqual(withSidecar.status, 0, 'a managed DLL sidecar must fail');
+    assert.match(withSidecar.stderr, /R7_STAGE_NOT_SINGLE_FILE_BUNDLE/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
