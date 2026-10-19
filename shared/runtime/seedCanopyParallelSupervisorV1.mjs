@@ -80,6 +80,19 @@ export function selectParallelSeedApprovedTaskV1(candidates, nowMs) {
   });
 }
 
+// Source-only bounded fail-forward selection for separately approved inventory
+// tasks. A blocked task may not monopolise the next invocation. The caller
+// tracks attempted IDs across this *one* operator-invoked bounded batch; no
+// original conveyor lease, model access or new scheduler is implied.
+export function selectParallelSeedInventoryBatchTaskV1(candidates, nowMs, attemptedTaskIds = []) {
+  const attempted = new Set(Array.isArray(attemptedTaskIds) ? attemptedTaskIds : []);
+  const inventory = Array.isArray(candidates)
+    ? candidates.filter((entry) => entry?.request?.generationMode === 'CANONICAL_INVENTORY_V1'
+        && !attempted.has(entry?.request?.taskId))
+    : [];
+  return selectParallelSeedApprovedTaskV1(inventory, nowMs);
+}
+
 export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], nowMs = Date.now()) {
   const receiptsByTask = new Map(receipts.filter((r) => safeTask(r?.taskId)).map((r) => [r.taskId, r]));
   const tasks = [];
