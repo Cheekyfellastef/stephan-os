@@ -37,6 +37,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   const path = (relative) => join(repo, relative);
   let server;
   let ownerComment = null;
+  let inferenceCount = 0;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
       await mkdir(path(folder), { recursive: true });
@@ -116,6 +117,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
           res.writeHead(404); res.end(); return;
         }
         // Deliberately no actual inference: verifies every real Git/receipt step only.
+        inferenceCount += 1;
         req.resume();
         req.on('end', () => {
           res.writeHead(200, { 'content-type': 'application/json' });
@@ -296,6 +298,57 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     }));
     const fakeStatus = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
     assert.equal(JSON.parse(fakeStatus.stdout).localSourceCandidateProven, false);
+
+    // A *second*, approved and disjoint seed task must be able to create a
+    // truthful isolated documentation commit with NO resident llama.cpp model.
+    // Restore the production GPU-custody hold in this temporary repository;
+    // the deterministic path may not quietly re-enable the model path.
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
+    git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
+    git('commit', '-m', 'restore production router custody hold in fixture');
+    const deterministicBase = git('rev-parse', 'main');
+    const deterministicTask = 'model-free-seed-inventory-fixture';
+    const deterministicTarget = 'docs/architecture/model-free-seed-inventory.md';
+    const deterministicRequest = { ...request, taskId: deterministicTask,
+      targetPath: deterministicTarget, baseSha: deterministicBase,
+      generationMode: 'CANONICAL_INVENTORY_V1', expectedTargetSha256: null };
+    const deterministicRaw = JSON.stringify(deterministicRequest);
+    await writeFile(join(stateRoot, 'inbox', deterministicTask + '.json'), deterministicRaw);
+    await writeFile(join(stateRoot, 'approvals', deterministicTask + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const deterministicNow = new Date().toISOString();
+    ownerComment.created_at = deterministicNow;
+    ownerComment.updated_at = deterministicNow;
+    ownerComment.body = '```stephanos-seed-parallel-owner-approval\\n' +
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: deterministicRequest,
+        manifestSha256: parallelSeedManifestHashV1(deterministicRaw),
+        nowUtc: deterministicNow,
+        expiryUtc: new Date(Date.parse(deterministicNow) + 3600000).toISOString(),
+      })) + '\\n```';
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const previousInferenceCalls = inferenceCount;
+    const deterministicRun = await runAsync(process.execPath,
+      [supervisor, 'run-once'], { cwd: repo, env });
+    assert.equal(deterministicRun.code, 0, deterministicRun.stderr);
+    const deterministicReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', deterministicTask + '.json'), 'utf8'));
+    assert.equal(deterministicReceipt.stage, 'COMMITTED');
+    assert.equal(deterministicReceipt.merged, false);
+    assert.equal(deterministicReceipt.deployed, false);
+    assert.equal(deterministicReceipt.goalCompleted, false);
+    assert.equal(inferenceCount, previousInferenceCalls,
+      'deterministic inventory never calls the unqualified local model');
+    assert.equal(git('rev-parse', 'main'), deterministicBase,
+      'even the model-free proposal must leave main unchanged');
+    const deterministicSource = await readFile(
+      join(deterministicReceipt.worktree, deterministicTarget), 'utf8');
+    assert.match(deterministicSource, /SOURCE PROPOSAL ONLY/);
+    assert.match(deterministicSource, /No physical observations were supplied/);
+    assert.match(deterministicReceipt.commitSha, /^[a-f0-9]{40}$/);
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
