@@ -7,6 +7,7 @@ import {
   listParallelSeedCandidatesV1,
   draftParallelSeedGoalV1,
   validateParallelSeedBuildRequestV1,
+  renderParallelSeedCanonicalInventoryV1,
   parallelSeedBranchNameV1,
   parseParallelSeedModelResponseV1,
   makeParallelSeedReceiptV1,
@@ -79,6 +80,35 @@ test('exact seed owner, issue, contract, path, tests, SHA and authority are mand
     const result = validateParallelSeedBuildRequestV1({ ...request, ...mutation }, seeds);
     assert.equal(result.ok, false, reason);
     assert.ok(result.errors.includes(reason), JSON.stringify(mutation));
+  }
+});
+
+test('deterministic inventory can draft a NEW canonical seed document without a GPU model', () => {
+  const approved = { ...request, generationMode: 'CANONICAL_INVENTORY_V1' };
+  assert.equal(validateParallelSeedBuildRequestV1(approved, seeds).ok, true);
+  const result = renderParallelSeedCanonicalInventoryV1(approved, seeds[0]);
+  assert.equal(result.path, request.targetPath);
+  assert.match(result.content, /SOURCE PROPOSAL ONLY/);
+  assert.match(result.content, /OpenClaw continuous excellence/);
+  assert.match(result.content, /INVENTORY_BOTH_AGENTS/);
+  assert.match(result.content, /#3094/);
+  assert.match(result.content, /a{40}/);
+  assert.match(result.content, /No physical observations were supplied/);
+  assert.doesNotMatch(result.content, /goalCompleted: true|sourceMutationAllowed: true/);
+  assert.throws(() => renderParallelSeedCanonicalInventoryV1(request, seeds[0]),
+    /DETERMINISTIC_SEED_GENERATION_NOT_SELECTED/);
+
+  for (const change of [
+    { generationMode: 'UNREVIEWED_SHELL_V1' },
+    { expectedTargetSha256: 'b'.repeat(64) },
+    { targetPath: 'shared/runtime/new-code.mjs' },
+    { targetPath: '.github/workflows/unsafe.yml' },
+    { ownerIssue: '#not-owner' },
+    { modelEndpoint: 'http://127.0.0.1:4444' },
+    { mergeAllowed: true },
+  ]) {
+    const result = validateParallelSeedBuildRequestV1({ ...approved, ...change }, seeds);
+    assert.equal(result.ok, false, JSON.stringify(change));
   }
 });
 
