@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -41,6 +41,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
   let inferenceCount = 0;
   let advanceMainOnNextInference = false;
   let redirectParentOnNextInference = null;
+  let poisonTestOnNextInference = null;
   let modelResponsePath = TARGET;
   try {
     for (const folder of ['scripts', 'shared/runtime', 'shared/project', 'shared/agents', 'tests']) {
@@ -125,6 +126,15 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         inferenceCount += 1;
         req.resume();
         req.on('end', () => {
+          if (poisonTestOnNextInference) {
+            const { taskId } = poisonTestOnNextInference;
+            poisonTestOnNextInference = null;
+            const testInWorktree = join(home, '.stephanos', 'seed-parallel',
+              createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 12),
+              'worktrees', taskId, 'tests', 'fixture-safe.test.mjs');
+            writeFileSync(testInWorktree,
+              'throw new Error("UNAPPROVED_TEST_CODE_EXECUTED");\n');
+          }
           if (redirectParentOnNextInference) {
             const { taskId, outside } = redirectParentOnNextInference;
             redirectParentOnNextInference = null;
@@ -499,6 +509,50 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       assert.equal(blockedAlias.stage, 'BLOCKED');
       await assert.rejects(() => access(join(outside, 'model-parent-alias-pilot.md')), /ENOENT/);
     }
+    // A model-backed proposal is not an approval to execute modified test code.
+    // Poison the independently selected test file in the isolated worktree
+    // while the mocked inference is in flight; the test must NEVER execute.
+    const poisonBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', poisonBase);
+    const poisonTaskId = 'model-test-source-poison-pilot';
+    const poisonTarget = 'docs/architecture/model-test-source-poison-pilot.md';
+    const poisonRequest = { ...request, taskId: poisonTaskId,
+      targetPath: poisonTarget, baseSha: poisonBase, expectedTargetSha256: null };
+    const poisonRaw = JSON.stringify(poisonRequest);
+    const poisonManifest = join(scratch, 'test-source-poison-request.json');
+    await writeFile(poisonManifest, poisonRaw);
+    await writeFile(join(stateRoot, 'approvals', poisonTaskId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const poisonNow = new Date().toISOString();
+    ownerComment.created_at = poisonNow;
+    ownerComment.updated_at = poisonNow;
+    ownerComment.body = [
+      '```stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: poisonRequest, manifestSha256: parallelSeedManifestHashV1(poisonRaw),
+        nowUtc: poisonNow,
+        expiryUtc: new Date(Date.parse(poisonNow) + 3600000).toISOString(),
+      })),
+      '```',
+    ].join('\n');
+    modelResponsePath = poisonTarget;
+    poisonTestOnNextInference = { taskId: poisonTaskId };
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const poisoned = await runAsync(process.execPath,
+      [executable, 'build', poisonManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(poisoned.code, 0);
+    assert.match(poisoned.stderr, /SEED_TEST_SOURCE_SCOPE_UNTRUSTED|SEED_TEST_SOURCE_BLOB_CHANGED/);
+    assert.doesNotMatch(poisoned.stderr, /UNAPPROVED_TEST_CODE_EXECUTED/);
+    const poisonReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', poisonTaskId + '.json'), 'utf8'));
+    assert.equal(poisonReceipt.stage, 'BLOCKED');
+    assert.equal(poisonReceipt.failedStage, 'EDITED');
+    assert.equal(poisonReceipt.goalCompleted, false);
+    assert.equal(git('rev-parse', 'main'), poisonBase);
+
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
