@@ -168,10 +168,46 @@ try {
     Protect-StagedImage
     New-ItemProperty -LiteralPath $serviceKey -Name PinnedImageSha256 -PropertyType String -Value $ExpectedSha256 -ErrorAction Stop | Out-Null
     $props = Get-ItemProperty -LiteralPath $serviceKey -ErrorAction Stop
+    $expectedImagePath = '"' + $installedExe + '"'
     if ($props.ObjectName -cne $account -or [int]$props.Type -ne 16 -or
         [int]$props.Start -ne 3 -or [int]$props.ServiceSidType -ne 3 -or
-        $props.PinnedImageSha256 -cne $ExpectedSha256) {
+        $props.PinnedImageSha256 -cne $ExpectedSha256 -or
+        -not [string]::Equals([string]$props.ImagePath, $expectedImagePath,
+            [StringComparison]::OrdinalIgnoreCase)) {
         throw 'R7_STAGE_POSTCONDITION_MISMATCH'
+    }
+    # The staging operation must never start the newly registered service.
+    # Trust the real SCM status, not only the Start=3 registry value.
+    $controller = [System.ServiceProcess.ServiceController]::new($service)
+    try {
+        $controller.Refresh()
+        if ($controller.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+            throw 'R7_STAGE_SERVICE_NOT_STOPPED'
+        }
+    } finally {
+        $controller.Dispose()
+    }
+    $allowedSids = @('S-1-5-32-544', 'S-1-5-18',
+        ([Security.Principal.NTAccount]::new('NT SERVICE', $service)).Translate(
+            [Security.Principal.SecurityIdentifier]).Value)
+    foreach ($target in @($installDirectory, $installedExe)) {
+        $readback = Get-Acl -LiteralPath $target -ErrorAction Stop
+        if (-not $readback.AreAccessRulesProtected -or
+            $readback.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544') {
+            throw 'R7_STAGE_PROTECTED_ACL_NOT_OBSERVED'
+        }
+        foreach ($entry in $readback.Access) {
+            $sid = $entry.IdentityReference.Translate(
+                [Security.Principal.SecurityIdentifier]).Value
+            if ($entry.IsInherited -or
+                $entry.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $sid -notin $allowedSids) {
+                throw 'R7_STAGE_UNEXPECTED_ACL_PRINCIPAL'
+            }
+        }
+    }
+    if ((Read-LocalSha256 $installedExe) -cne $ExpectedSha256) {
+        throw 'R7_STAGE_POST_ACL_IMAGE_HASH_MISMATCH'
     }
     $receipt.finalVerdict = 'R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED'
     $receipt | ConvertTo-Json -Compress
