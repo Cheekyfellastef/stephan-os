@@ -20,6 +20,7 @@ import {
   parallelSeedBranchNameV1,
   parseParallelSeedModelResponseV1,
   validateParallelSeedBuildRequestV1,
+  renderParallelSeedCanonicalInventoryV1,
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
@@ -85,6 +86,24 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
+}
+
+// The first deterministic inventory rung uses no GPU or model process. It
+// still reconciles the *existing* Windows gaming governor and fails closed on
+// missing/active/stale protection truth before any source or test work.
+async function deterministicInventoryPreflight() {
+  if (process.platform === 'win32') {
+    const canonicalGovernor = join(repoRoot, 'scripts', 'windows', 'run-vr-resource-governor.ps1');
+    try {
+      await processExec('powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-File', canonicalGovernor, '-Action', 'Reconcile'],
+        repoRoot, 18000);
+    } catch {
+      throw new Error('SEED_INVENTORY_GOVERNOR_RECONCILE_FAILED');
+    }
+  }
+  await assertHeavyLocalGamingHeadroom();
+  return Object.freeze({ generationMode: 'CANONICAL_INVENTORY_V1', usesLocalModel: false });
 }
 
 async function assertTrustedGitBoundary(cwd = repoRoot) {
@@ -298,7 +317,9 @@ async function build(request, manifestSha256) {
     request, manifestSha256, reference: approvalReference, nowMs: Date.now(),
   });
   if (!approved.ok) throw new Error('EXTERNAL_OWNER_APPROVAL_REJECTED: ' + approved.reason);
-  const resource = await localModelPreflight();
+  const resource = request.generationMode === 'CANONICAL_INVENTORY_V1'
+    ? await deterministicInventoryPreflight()
+    : await localModelPreflight();
   const branch = parallelSeedBranchNameV1(request);
   const worktree = join(stateRoot, 'worktrees', request.taskId);
   const receiptPath = join(stateRoot, 'receipts', request.taskId + '.json');
@@ -359,9 +380,20 @@ async function build(request, manifestSha256) {
     }
     const sha = targetExisted ? createHash('sha256').update(current).digest('hex') : null;
     if (sha !== request.expectedTargetSha256) throw new Error('TARGET_CONTENT_HASH_MISMATCH');
-    const proposal = await localModelWrite(request, current, checked.seed, resource);
+    // Only the exactly approved deterministic documentation mode may omit
+    // model inference. No task-controlled executable, endpoint or command.
+    const proposal = request.generationMode === 'CANONICAL_INVENTORY_V1'
+      ? renderParallelSeedCanonicalInventoryV1(request, checked.seed)
+      : await localModelWrite(request, current, checked.seed, resource);
+    if (request.generationMode === 'CANONICAL_INVENTORY_V1')
+      await deterministicInventoryPreflight();
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, proposal.content, { flag: sha === null ? 'wx' : 'w' });
+    // A long model call or directory creation can change the physical path.
+    // Revalidate immediately before the narrowly scoped write. A separate
+    // native stable-handle fence is still required for hostile Windows races.
+    const writeTarget = await safeTarget(worktree, request.targetPath);
+    if (writeTarget !== target) throw new Error('TARGET_IDENTITY_MOVED');
+    await writeFile(writeTarget, proposal.content, { flag: sha === null ? 'wx' : 'w' });
     stage = 'EDITED';
     const proposedSha = createHash('sha256').update(proposal.content).digest('hex');
     await saveReceipt(request, stage, { worktree, proposedSha256: proposedSha });
