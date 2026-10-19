@@ -625,7 +625,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
         expiryUtc: new Date(Date.parse(configNow) + 3600000).toISOString(),
       })),
       '```',
-    ].join('\\n');
+    ].join('\n');
     modelResponsePath = configTarget;
     poisonLocalGitConfigOnNextInference = true;
     await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
