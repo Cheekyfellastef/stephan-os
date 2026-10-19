@@ -704,6 +704,57 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.equal(git('rev-parse', 'main'), batchBase,
       'neither blocked nor committed batch task may change canonical main');
 
+    // A passing test inside its approved checkout may substitute proposal
+    // bytes before staging. It must not authorize a same-path replacement.
+    await writeFile(path('tests/fixture-safe.test.mjs'), [
+      'import test from "node:test";',
+      'import { writeFile } from "node:fs/promises";',
+      'test("approved test mutates output", async () => {',
+      '  await writeFile("docs/architecture/post-test-swap-proof.md", "substituted\\n");',
+      '});',
+    ].join('\n') + '\n');
+    git('add', '--', 'tests/fixture-safe.test.mjs');
+    git('commit', '-m', 'fixture-only post-test output mutation scenario');
+    const mutationBase = git('rev-parse', 'main');
+    git('update-ref', 'refs/remotes/origin/main', mutationBase);
+    const mutationId = 'post-test-output-swap-pilot';
+    const mutationTarget = 'docs/architecture/post-test-swap-proof.md';
+    const mutationRequest = { ...request, taskId: mutationId,
+      targetPath: mutationTarget, baseSha: mutationBase,
+      generationMode: 'CANONICAL_INVENTORY_V1', expectedTargetSha256: null,
+      testPaths: ['tests/fixture-safe.test.mjs'] };
+    const mutationRaw = JSON.stringify(mutationRequest);
+    const mutationManifest = join(scratch, 'post-test-swap-manifest.json');
+    await writeFile(mutationManifest, mutationRaw);
+    await writeFile(join(stateRoot, 'approvals', mutationId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    const mutationNow = new Date().toISOString();
+    ownerComment.created_at = mutationNow;
+    ownerComment.updated_at = mutationNow;
+    const fence = String.fromCharCode(96).repeat(3);
+    ownerComment.body = [
+      fence + 'stephanos-seed-parallel-owner-approval',
+      JSON.stringify(makeParallelSeedExactApprovalV1({
+        request: mutationRequest, manifestSha256: parallelSeedManifestHashV1(mutationRaw),
+        nowUtc: mutationNow,
+        expiryUtc: new Date(Date.parse(mutationNow) + 3600000).toISOString(),
+      })),
+      fence,
+    ].join('\n');
+    await writeFile(join(governorDir, 'vr-resource-governor-current.json'),
+      JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
+        active: false, phase: 'NORMAL', localModelAllowed: true,
+        updatedAtUtc: new Date().toISOString() }));
+    const mutated = await runAsync(process.execPath,
+      [executable, 'build', mutationManifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(mutated.code, 0);
+    assert.match(mutated.stderr, /SEED_OUTPUT_CHANGED_AFTER_TEST/);
+    const mutatedReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', mutationId + '.json'), 'utf8'));
+    assert.equal(mutatedReceipt.stage, 'BLOCKED');
+    assert.equal(mutatedReceipt.goalCompleted, false);
+    assert.equal(git('rev-parse', 'main'), mutationBase);
+
   } finally {
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
