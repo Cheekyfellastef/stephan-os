@@ -95,7 +95,8 @@ test('R7 stage candidate cannot start, commission or release the protected witne
   assert.match(source, /witnessCommissioned = \$false/);
   assert.match(source, /leaseReleased = \$false/);
   assert.match(source, /R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED/);
-  assert.match(source, /'start=' 'demand'/);
+  assert.match(source, /'start=' 'disabled'/);
+  assert.match(source, /\[int\]\$props\.Start -ne 4/);
   assert.match(source, /& \$sc sidtype \$service restricted/);
   assert.match(source, /SetAccessRuleProtection\(\$true, \$false\)/);
   assert.match(source, /R7_STAGE_SERVICE_NOT_STOPPED/);
@@ -116,7 +117,7 @@ test('R7 stage candidate cannot start, commission or release the protected witne
   assert.doesNotMatch(source, /\$env:(?:ProgramFiles|SystemRoot)/i);
 
   assert.doesNotMatch(source, /\b(?:Start-Service|Restart-Computer|Invoke-Expression|New-PSSession|Invoke-WebRequest|Remove-Item|Force-Push)\b/i);
-  assert.doesNotMatch(source, /'start=' 'auto'/);
+  assert.doesNotMatch(source, /'start=' '(?:auto|demand)'/);
 });
 
 test('Windows stage script read-only plan and incorrect-image negative test execute without admin', {

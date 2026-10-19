@@ -166,9 +166,9 @@ try {
     if ((Read-LocalSha256 $installedExe) -cne $ExpectedSha256) {
         throw 'R7_STAGE_COPIED_IMAGE_HASH_MISMATCH'
     }
-    # Deliberately DEMAND start, not AUTO, so the SCM preflight cannot claim
-    # an active commissioned host. No service or process launch.
-    & $sc create $service 'type=' 'own' 'start=' 'demand' 'binPath=' ('"' + $installedExe + '"') 'obj=' $account 'password=' '' | Out-Null
+    # Disable at creation, including partial failures before SID/ACL setup.
+    # Enabling the candidate belongs to separately approved commissioning.
+    & $sc create $service 'type=' 'own' 'start=' 'disabled' 'binPath=' ('"' + $installedExe + '"') 'obj=' $account 'password=' '' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'R7_STAGE_CREATE_SERVICE_FAILED' }
     $serviceCreated = $true
     & $sc sidtype $service restricted | Out-Null
@@ -178,14 +178,14 @@ try {
     $props = Get-ItemProperty -LiteralPath $serviceKey -ErrorAction Stop
     $expectedImagePath = '"' + $installedExe + '"'
     if ($props.ObjectName -cne $account -or [int]$props.Type -ne 16 -or
-        [int]$props.Start -ne 3 -or [int]$props.ServiceSidType -ne 3 -or
+        [int]$props.Start -ne 4 -or [int]$props.ServiceSidType -ne 3 -or
         $props.PinnedImageSha256 -cne $ExpectedSha256 -or
         -not [string]::Equals([string]$props.ImagePath, $expectedImagePath,
             [StringComparison]::OrdinalIgnoreCase)) {
         throw 'R7_STAGE_POSTCONDITION_MISMATCH'
     }
     # The staging operation must never start the newly registered service.
-    # Trust the real SCM status, not only the Start=3 registry value.
+    # Trust the real SCM status as well as the disabled Start=4 value.
     $controller = [System.ServiceProcess.ServiceController]::new($service)
     try {
         $controller.Refresh()
