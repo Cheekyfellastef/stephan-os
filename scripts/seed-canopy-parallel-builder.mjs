@@ -468,6 +468,29 @@ async function build(request, manifestSha256) {
     await processExec('git', ['worktree', 'add', '-b', branch, worktree, request.baseSha]);
     stage = 'CLAIMED';
     await saveReceipt(request, stage, { worktree, claimProof: branch + '@' + head });
+    // An issued worktree command is not physical pickup. Check the newly
+    // created physical checkout, exact Git branch and exact parent first.
+    // This readback is local source evidence, not Windows OS custody,
+    // independent review, permission to release R7 or proof of unattended work.
+    const pickupHead = await processExec('git', ['rev-parse', '--verify', 'HEAD'], worktree);
+    const pickupBranch = await processExec('git', ['symbolic-ref', '--short', 'HEAD'], worktree);
+    const pickupTop = await processExec('git', ['rev-parse', '--show-toplevel'], worktree);
+    const observedTop = await realpath(pickupTop);
+    const expectedTop = await realpath(worktree);
+    if (pickupHead !== request.baseSha || pickupBranch !== branch
+        || observedTop.toLowerCase() !== expectedTop.toLowerCase())
+      throw new Error('SEED_PHYSICAL_PICKUP_WORKTREE_UNPROVEN');
+    await safeTarget(worktree, request.targetPath);
+    const pickupProof = Object.freeze({
+      gitHead: pickupHead,
+      gitBranch: pickupBranch,
+      worktree: expectedTop,
+      localSourceReadback: 'VERIFIED',
+      independentHostCustody: 'NOT_PROVEN',
+      unattendedBuildQualified: false,
+    });
+    stage = 'PHYSICAL_PICKUP';
+    await saveReceipt(request, stage, { worktree, pickupProof });
     const target = await safeTarget(worktree, request.targetPath);
     let current = '';
     let targetExisted = false;
@@ -532,7 +555,7 @@ async function build(request, manifestSha256) {
     await assertSeedMainDidNotMove(request.baseSha);
     stage = 'COMMITTED';
     return await saveReceipt(request, stage, {
-      worktree, proposedSha256: proposedSha, commitSha, testPaths: request.testPaths,
+      worktree, pickupProof, proposedSha256: proposedSha, commitSha, testPaths: request.testPaths,
       publication: 'NOT_PUBLISHED', independentReview: 'NOT_PROVEN',
     });
   } catch (error) {
