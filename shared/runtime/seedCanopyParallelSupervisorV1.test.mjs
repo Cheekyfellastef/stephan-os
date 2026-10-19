@@ -5,6 +5,7 @@ import {
   makeParallelSeedExactApprovalV1,
   evaluateParallelSeedExactApprovalV1,
   selectParallelSeedApprovedTaskV1,
+  selectParallelSeedInventoryBatchTaskV1,
   projectParallelSeedReceiptStatusV1,
 } from './seedCanopyParallelSupervisorV1.mjs';
 
@@ -59,6 +60,41 @@ test('one independently approved candidate gets selected, held tasks do not bloc
   assert.equal(result.eligibleCount, 1);
   assert.equal(result.blocked.length, 2);
   assert.ok(result.blocked.some((entry) => entry.reason === 'PRESERVED_SOURCE_CUSTODY'));
+});
+
+test('bounded model-free inventory selector moves past one blocked lane without R7 lease', () => {
+  const entry = (taskId, targetPath, generationMode = 'CANONICAL_INVENTORY_V1') => {
+    const candidate = { ...request, taskId, targetPath, generationMode };
+    const hash = parallelSeedManifestHashV1(JSON.stringify(candidate));
+    return {
+      request: candidate, manifestSha256: hash,
+      approval: makeParallelSeedExactApprovalV1({
+        request: candidate, manifestSha256: hash,
+        nowUtc: '2026-10-13T15:30:00.000Z',
+        expiryUtc: '2026-10-14T15:30:00.000Z',
+      }),
+    };
+  };
+  const blocked = { ...entry('aaa-blocked', 'docs/architecture/one.md'),
+    existingClaim: true };
+  const first = entry('aab-first', 'docs/architecture/two.md');
+  const second = entry('aac-second', 'docs/architecture/three.md');
+  const heavy = entry('aaa-model', 'docs/architecture/model.md', undefined);
+  const normal = { ...heavy, request: { ...heavy.request, generationMode: undefined } };
+  const candidates = [blocked, first, second, normal];
+  const firstPick = selectParallelSeedInventoryBatchTaskV1(candidates, NOW);
+  assert.equal(firstPick.selected.request.taskId, 'aab-first');
+  assert.equal(firstPick.eligibleCount, 2);
+  const nextPick = selectParallelSeedInventoryBatchTaskV1(
+    candidates, NOW, ['aab-first']);
+  assert.equal(nextPick.selected.request.taskId, 'aac-second');
+  const exhausted = selectParallelSeedInventoryBatchTaskV1(
+    candidates, NOW, ['aab-first', 'aac-second']);
+  assert.equal(exhausted.selected, null);
+  assert.equal(exhausted.eligibleCount, 0);
+  assert.equal(selectParallelSeedInventoryBatchTaskV1(null, NOW).selected, null);
+  assert.equal(selectParallelSeedInventoryBatchTaskV1(candidates, NOW, []).selected.request.generationMode,
+    'CANONICAL_INVENTORY_V1');
 });
 
 test('supervisor status marks stale unfinished task, never claims merging or deployment', () => {
