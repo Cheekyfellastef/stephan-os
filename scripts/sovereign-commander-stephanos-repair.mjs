@@ -153,10 +153,19 @@ export function runVerifiedOrphanCpuRelief({ runStep = runFixedStephanosRepairSt
     && (packet.cpuReductionVerified === true
       ? packet.oneProcessTerminated === true
         && packet.finalVerdict === 'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED'
-      : packet.finalVerdict !== 'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED');
+      : packet.finalVerdict !== 'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED')
+    && (packet.finalVerdict !== 'CPU_RELIEF_PRESSURE_CLEARED'
+      || (packet.oneProcessTerminated === false
+        && typeof packet.sampledSystemCpuPct === 'number'
+        && Number.isFinite(packet.sampledSystemCpuPct)
+        && packet.sampledSystemCpuPct >= 0
+        && packet.sampledSystemCpuPct < 80));
   const numeric = (value) => Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
   const cpuBefore = numeric(packet?.beforeSystemCpuPct);
   const cpuAfter = numeric(packet?.afterSystemCpuPct);
+  const cpuSampled = numeric(packet?.sampledSystemCpuPct);
+  const pressureCleared = valid && packet.finalVerdict === 'CPU_RELIEF_PRESSURE_CLEARED'
+    && cpuSampled !== null && cpuSampled < 80 && packet.oneProcessTerminated === false;
   const limited = Object.freeze({
     actionId: STEPS.cpuRelief.id,
     ok: valid && packet.ok === true,
@@ -166,8 +175,9 @@ export function runVerifiedOrphanCpuRelief({ runStep = runFixedStephanosRepairSt
     cpuReductionVerified: valid && packet.cpuReductionVerified === true,
     cpuBefore,
     cpuAfter,
+    cpuSampled,
     unresolvedCpuPressure: valid && cpuBefore !== null && cpuBefore >= 80
-      && packet.cpuReductionVerified !== true,
+      && !pressureCleared && packet.cpuReductionVerified !== true,
     processPid: valid && packet.oneProcessTerminated === true
       && Number.isSafeInteger(packet.verifiedOrphanPid)
       ? packet.verifiedOrphanPid : null,
