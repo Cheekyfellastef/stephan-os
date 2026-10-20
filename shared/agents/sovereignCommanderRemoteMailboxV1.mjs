@@ -931,7 +931,8 @@ function safeControllerLaneStatusProjection(value = {}, processId = '') {
 }
 
 
-const CPU_SNAPSHOT_PROCESS_NAMES = new Set(['powershell','pwsh','node','msmpeng','ollama','llama-server']);
+const CPU_SNAPSHOT_BROWSER_APP_NAMES = Object.freeze(['msedge','brave','chrome','firefox','ChatGPT','msedgewebview2']);
+const CPU_SNAPSHOT_PROCESS_NAMES = new Set(['powershell','pwsh','node','msmpeng','ollama','llama-server', ...CPU_SNAPSHOT_BROWSER_APP_NAMES.map(name => name.toLowerCase())]);
 const CPU_SNAPSHOT_SCRIPT_NAMES = new Set([
   'run-vr-resource-governor.ps1',
   'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
@@ -978,7 +979,34 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     || typeof systemCpuMeasured !== 'boolean'
     || (systemCpuMeasured !== (systemCpuPct !== null))
     || (systemCpuPct !== null && (!Number.isFinite(systemCpuPct) || systemCpuPct < 0 || systemCpuPct > 100))
+    || parsed.browserTabsInspected !== false
+    || parsed.browserProfilesInspected !== false
+    || !Array.isArray(parsed.browserApps)
+    || parsed.browserApps.length !== CPU_SNAPSHOT_BROWSER_APP_NAMES.length
     || !Array.isArray(parsed.rows) || parsed.rows.length > 20) return null;
+  const safeBrowserApps = [];
+  for (let i = 0; i < CPU_SNAPSHOT_BROWSER_APP_NAMES.length; i += 1) {
+    const app = parsed.browserApps[i];
+    const expectedName = CPU_SNAPSHOT_BROWSER_APP_NAMES[i];
+    const count = app?.processCount;
+    const sampled = app?.cpuSampledCount;
+    const cpu = app?.cpuPercent;
+    const memory = app?.workingSetMiB;
+    if (app?.app !== expectedName
+      || !Number.isSafeInteger(count) || count < 0 || count > 512
+      || !Number.isSafeInteger(sampled) || sampled < 0 || sampled > count
+      || (cpu !== null && (!Number.isFinite(cpu) || cpu < 0 || cpu > 100))
+      || (cpu === null && (count === 0 || count === sampled))
+      || (cpu !== null && count !== sampled)
+      || (memory !== null && (!Number.isFinite(memory) || memory < 0 || memory > 2_000_000))) return null;
+    safeBrowserApps.push(Object.freeze({
+      app: expectedName,
+      processCount: count,
+      cpuSampledCount: sampled,
+      cpuPercent: cpu,
+      workingSetMiB: memory,
+    }));
+  }
   const safeRows = [];
   for (const row of parsed.rows) {
     const pid = Number(row?.pid);
@@ -1012,6 +1040,9 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     metadataAvailable: parsed.metadataAvailable === true,
     systemCpuMeasured,
     systemCpuPct,
+    browserApps: Object.freeze(safeBrowserApps),
+    browserTabsInspected: false,
+    browserProfilesInspected: false,
     rows: Object.freeze(safeRows),
     readOnly: true,
     processTerminationAllowed: false,
