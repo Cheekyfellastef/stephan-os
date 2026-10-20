@@ -170,6 +170,30 @@ test('OpenClaw growth rejects ambiguous status strings containing PASS', () => {
     'two exact PASS observations retain the original positive path');
 });
 
+test('non-event feed buckets cannot launder event-shaped OpenClaw rung evidence', () => {
+  const rung = 'INVENTORY_BOTH_AGENTS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event(rung, 'openclaw-local');
+  const standalone = event(rung, 'openclaw-standalone');
+  payload.records.eventRecords = [local];
+  for (const bucket of ['goalRecords', 'statusRecords', 'proofRecords', 'receiptRecords']) {
+    // A copied event-shaped record is still only a declaration in the wrong
+    // Shared Workspace bucket. Its PASS, refs and eventId cannot certify pickup.
+    payload.records[bucket] = [{ ...standalone,
+      eventId: 'forged-' + bucket,
+      proofRefs: ['proof/forged-' + bucket],
+    }];
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, 0, bucket + ' must not complete both agent inventories');
+    assert.equal(seed.proofCount, 1, bucket + ' must not inflate admitted evidence');
+    assert.equal(seed.nextGrowthRung, rung);
+    payload.records[bucket] = [];
+  }
+  payload.records.eventRecords = [local, standalone];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1,
+    'two genuine canonical eventRecords preserve the positive observational path');
+});
+
 test('OpenClaw proof requires an explicit publisher and replayable event identity', () => {
   const rung = 'INVENTORY_BOTH_AGENTS';
   const payload = feed({ statusRecords: [heartbeat()] });

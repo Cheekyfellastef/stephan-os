@@ -1825,7 +1825,11 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       && hasConsistentAgentIdentity(record, evidence.agentId)
       && (!agentId || evidence.agentId === agentId);
   };
+  // Only canonical eventRecords can witness an observational rung. A goal,
+  // status, proof or receipt declaration must not borrow an event-shaped body.
+  const eventRecordSet = new Set(list(records.eventRecords));
   const admittedProofRecords = proved.filter((record) => {
+    if (!eventRecordSet.has(record)) return false;
     const rung = record.openClawExcellenceEvidence?.rung;
     return agentScopedRungs.has(rung)
       ? agents.some((agentId) => isAdmittedRungRecord(record, rung, agentId))
