@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { planWindowsSovereignReviewerV1, runWindowsSovereignReviewerV1 } from './sovereign-reviewer-wsl-bridge-v1.mjs';
+import { planWindowsSovereignReviewerV1, runWindowsSovereignReviewerV1,
+  verifyWslReviewerExecutableBytesV1, REVIEWER_CRITICAL_SOURCE_PATHS,
+} from './sovereign-reviewer-wsl-bridge-v1.mjs';
 
 const ROOT = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const env = Object.freeze({
@@ -17,7 +19,10 @@ const env = Object.freeze({
   STEPHANOS_REVIEW_SESSION: 'reviewer-session-2',
   STEPHANOS_SOVEREIGN_REVIEW_MODEL: 'qwen:14b',
 });
-const context = { platform: 'win32', sourceRoot: ROOT, exists: () => true };
+// Existing receipt/WSL transport fixtures validate the post-attestation path.
+// Dedicated tests below validate the production pre-launch attestor itself.
+const context = { platform: 'win32', sourceRoot: ROOT, exists: () => true,
+  verifySource: () => ({ ok: true }) };
 
 test('Windows runner admits only fixed reviewed source and exact PR/head identity', () => {
   const plan = planWindowsSovereignReviewerV1(env, context);
@@ -385,4 +390,78 @@ test('ordinary local review cannot be READY unless its exact proof file hashes o
   assert.equal(run({ status: 0, stdout: 'forged proof' }).reason, 'REVIEWER_PROOF_READBACK_INVALID');
   assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  /mnt/c/other.json\n' }).reason,
     'REVIEWER_PROOF_READBACK_INVALID');
+});
+
+test('trusted WSL git verifies every reviewer executable and imported policy file before launch', () => {
+  const root = '/mnt/c/Users/Operator/Documents/GitHub/stephan-os';
+  const reviewerPath = root + '/scripts/sovereign-reviewer-v1.mjs';
+  const proof = {
+    STEPHANOS_REVIEW_EXACT_HEAD: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    STEPHANOS_REVIEW_EXACT_BASE: env.STEPHANOS_REVIEW_EXACT_BASE,
+    STEPHANOS_REVIEW_EXACT_BRANCH: env.STEPHANOS_REVIEW_EXACT_BRANCH,
+  };
+  const calls = [];
+  function verify({ flag = 'H', swap = '', badHead = false, failGit = false } = {}) {
+    calls.length = 0;
+    return verifyWslReviewerExecutableBytesV1({ reviewerPath, reviewEnv: proof,
+      run(argv, timeout) {
+        assert.equal(timeout, 12_000);
+        assert.deepEqual(argv.slice(0, 7),
+          ['/usr/bin/env','-i','PATH=/usr/bin:/bin','HOME=/tmp',
+            'GIT_CONFIG_NOSYSTEM=1','GIT_CONFIG_GLOBAL=/dev/null','/usr/bin/git']);
+        assert.equal(argv[7], '-C');
+        assert.equal(argv[8], root);
+        const git = argv.slice(9);
+        calls.push(git);
+        if (failGit) return { status: 1, stdout: '' };
+        if (git.join(' ') === 'rev-parse HEAD')
+          return { status: 0, stdout: (badHead ? 'c'.repeat(40) : proof.STEPHANOS_REVIEW_EXACT_HEAD) + '\n' };
+        if (git.join(' ') === 'symbolic-ref --quiet --short HEAD')
+          return { status: 0, stdout: proof.STEPHANOS_REVIEW_EXACT_BRANCH + '\n' };
+        if (git[0] === 'status' || git[0] === 'merge-base') return { status: 0, stdout: '' };
+        const file = git.at(-1);
+        if (git[0] === 'ls-files') return { status: 0, stdout: flag + ' ' + file + '\n' };
+        if (git[0] === 'rev-parse') return { status: 0, stdout: 'd'.repeat(40) + '\n' };
+        if (git[0] === 'hash-object') return {
+          status: 0, stdout: (file === swap ? 'e' : 'd').repeat(40) + '\n' };
+        throw Error('unapproved Git read: ' + git.join(' '));
+      },
+    });
+  }
+  const ok = verify();
+  assert.equal(ok.ok, true);
+  assert.equal(calls.filter(x => x[0] === 'hash-object').length,
+    REVIEWER_CRITICAL_SOURCE_PATHS.length);
+  assert.equal(REVIEWER_CRITICAL_SOURCE_PATHS.includes('scripts/sovereign-reviewer-v1.mjs'), true);
+  assert.equal(REVIEWER_CRITICAL_SOURCE_PATHS.includes('shared/agents/sovereignReviewerV1.mjs'), true);
+  assert.equal(REVIEWER_CRITICAL_SOURCE_PATHS.includes('scripts/sovereign-reviewer-ollama-calibration-v1.mjs'), true);
+  assert.equal(verify({ flag: 's' }).reason, 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE',
+    'skip-worktree may conceal changes from git status');
+  assert.equal(verify({ flag: 'h' }).reason, 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE',
+    'assume-unchanged may conceal changes from git status');
+  assert.equal(verify({ swap: 'scripts/sovereign-reviewer-v1.mjs' }).reason,
+    'REVIEWER_SOURCE_BYTES_NOT_HEAD');
+  assert.equal(verify({ swap: 'shared/agents/sovereignReviewerV1.mjs' }).reason,
+    'REVIEWER_SOURCE_BYTES_NOT_HEAD');
+  assert.equal(verify({ badHead: true }).reason, 'REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
+  assert.equal(verify({ failGit: true }).reason, 'REVIEWER_SOURCE_GIT_UNVERIFIED');
+  assert.equal(verifyWslReviewerExecutableBytesV1({
+    run() { throw Error('must not run'); }, reviewerPath: '../../forged/reviewer.mjs',
+    reviewEnv: proof,
+  }).ok, false);
+});
+test('Windows review does not launch unverified WSL Node reviewer after source preflight fails', () => {
+  const commands = [];
+  const result = runWindowsSovereignReviewerV1(env, {
+    ...context, verifySource: () => ({ ok: false, reason: 'REVIEWER_SOURCE_BYTES_NOT_HEAD' }),
+    spawn(_executable, args) {
+      commands.push(args);
+      return { status: 0, stdout: '/mnt/c/safe/scripts/sovereign-reviewer-v1.mjs\n' };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'REVIEWER_SOURCE_BYTES_NOT_HEAD');
+  assert.equal(commands.length, 2, 'only two bounded path conversions allowed');
+  assert.equal(commands.some(args => args.includes('/usr/bin/node')), false,
+    'tainted WSL reviewer executable must never start');
 });
