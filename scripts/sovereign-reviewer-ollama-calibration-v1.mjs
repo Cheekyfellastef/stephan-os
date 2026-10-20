@@ -187,6 +187,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
   const beforePin = await modelPin(model, {fetchImpl});
   if (!beforePin?.ok || !/^[a-f0-9]{64}$/.test(beforePin.digest??''))
     return held(beforePin?.reason || 'CALIBRATION_MODEL_DIGEST_UNPROVEN');
+  const immutableModel = 'sha256:' + beforePin.digest;
   const input = {
     repository: env.STEPHANOS_REVIEW_REPOSITORY,
     sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
@@ -235,7 +236,7 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model, prompt, stream: false, format: 'json',
+          model: immutableModel, prompt, stream: false, format: 'json',
           // Release GPU residency after each bounded candidate challenge.
           keep_alive: 0,
           options: { temperature: 0, num_ctx: 8192 },
@@ -256,7 +257,9 @@ export async function runSovereignOllamaCalibrationV1(env = process.env, {
       const result = JSON.parse(bytes);
       // An incomplete/truncated response or different actual model cannot
       // substantiate the claimed ten-case security qualification exam.
-      if (result?.model !== model || result?.done !== true
+      const completedModel = String(result?.model ?? '').toLowerCase();
+      if (![immutableModel, 'sha256-' + beforePin.digest].includes(completedModel)
+        || result?.done !== true
         || result?.done_reason !== 'stop'
         || typeof result.response !== 'string'
         || Buffer.byteLength(result.response, 'utf8') > 12_288) {
