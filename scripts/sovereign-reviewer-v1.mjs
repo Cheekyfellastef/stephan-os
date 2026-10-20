@@ -78,6 +78,11 @@ export async function localModel(prompt, env, {
   if (!duringPin?.ok || duringPin.digest !== pinned.digest) {
     throw new Error('LOCAL_REVIEW_MODEL_DIGEST_CHANGED');
   }
+  // Never send sensitive review input to a mutable Ollama model tag.
+  // Ollama versions with immutable manifest digest references can resolve the
+  // digest directly. Older versions must fail CLOSED, not retry with 'model'.
+  // The digest comes from a bounded exact local /api/tags observation.
+  const immutableModel = 'sha256:' + pinned.digest;
   const abort = new AbortController();
   let preempted = false;
   const monitor = startPolling(() => {
@@ -96,7 +101,7 @@ export async function localModel(prompt, env, {
       method: 'POST', redirect: 'error',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model, prompt, stream: false, format: 'json',
+        model: immutableModel, prompt, stream: false, format: 'json',
         keep_alive: 0,
         options: { temperature: 0, num_ctx: 8192 },
       }),
@@ -113,7 +118,12 @@ export async function localModel(prompt, env, {
       throw new Error('LOCAL_MODEL_OUTPUT_UNBOUNDED');
     }
     const parsed = JSON.parse(raw);
-    if (parsed?.model !== model || parsed?.done !== true
+    // A reply echoing only the caller-selected mutable tag is not proof of
+    // which manifest actually generated this private code-review verdict.
+    // Require an exact digest-addressed completion on supported Ollama.
+    const returned = String(parsed?.model ?? '').toLowerCase();
+    if (![immutableModel, 'sha256-' + pinned.digest].includes(returned)
+      || parsed?.done !== true
       || parsed?.done_reason !== 'stop' || typeof parsed?.response !== 'string'
       || Buffer.byteLength(parsed.response, 'utf8') > 12_288) {
       throw new Error('LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN');
