@@ -124,6 +124,19 @@ test('unattended repair rejects unproven gaming state before invoking reconciler
   assert.equal(repaired.pcRestartAllowed, false);
 });
 
+test('unattended Windows repair contains a governor read exception without launching', () => {
+  let called = false;
+  const repaired = runSovereignCommanderControlPlaneRepair({
+    repoRoot: 'C:\\repo', platform: 'win32', spawnSyncFn: spawnFor(),
+    unattendedGamingGuard: true,
+    gamingSafe: () => { throw Error('transient state write'); },
+    reconciler: () => { called = true; throw Error('must not enter'); },
+  });
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED');
+  assert.equal(called, false);
+});
+
 test('unattended repair rechecks live gaming before every child launch and fails closed', () => {
   let checks = 0;
   let executed = 0;
