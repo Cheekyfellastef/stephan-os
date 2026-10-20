@@ -138,6 +138,14 @@ export function runVerifiedOrphanCpuRelief({ runStep = runFixedStephanosRepairSt
         'CPU_RELIEF_NO_VERIFIED_ORPHAN',
         'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED',
         'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED'].includes(packet.finalVerdict)
+    && (packet.oneProcessTerminated !== true || (
+      Number.isSafeInteger(packet.verifiedOrphanPid)
+      && packet.verifiedOrphanPid > 0
+      && packet.verifiedOrphanPid <= 2147483647
+      && Number.isFinite(Date.parse(packet.verifiedOrphanStartedAtUtc))
+      && ['run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+          'run-battle-bridge-recovery-lifeboat-bank-v1.ps1'].includes(packet.fixedScriptBasename)
+    ))
     && (packet.oneProcessTerminated === true
       ? ['CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED',
           'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED'].includes(packet.finalVerdict)
