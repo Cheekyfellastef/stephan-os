@@ -250,7 +250,8 @@ test('public archive failure receipt contains only safe route and execution toke
         remoteAction: 'starfield-vr-telemetry-archive',
         blocker: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_EXECUTION_ENVELOPE_INVALID',
         dedicatedToolAdvertised: false,
-        fixedMaintenanceFallbackSelected: true,
+        fixedMaintenanceFallbackSelected: false,
+        runtimeRefreshRequired: true,
         mcpToolReturnedError: true,
         commanderBlocker: 'SOVEREIGN_ARCHIVE_READER_FAILED',
         executionStatus: 1,
@@ -265,7 +266,8 @@ test('public archive failure receipt contains only safe route and execution toke
   const parsed = JSON.parse(raw);
   const publicFailure = parsed?.result?.result;
   assert.equal(publicFailure.archiveDedicatedToolAdvertised, false);
-  assert.equal(publicFailure.archiveFixedFallbackSelected, true);
+  assert.equal(publicFailure.archiveFixedFallbackSelected, false);
+  assert.equal(publicFailure.archiveRuntimeRefreshRequired, true);
   assert.equal(publicFailure.archiveMcpToolReturnedError, true);
   assert.equal(publicFailure.archiveCommanderBlocker, 'SOVEREIGN_ARCHIVE_READER_FAILED');
   assert.equal(publicFailure.archiveExecutionStatus, 1);
