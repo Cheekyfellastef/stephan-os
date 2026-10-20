@@ -583,5 +583,6 @@ test('Windows calibration requires exact bounded identity and authenticated rout
     mcpSessionReady: true, transport: 'authenticated-http-jsonrpc' });
   assert.equal(passed.ok, true);
   assert.equal(calls, 1);
-  assert.equal(passed.mergeAuthority, false);
+  assert.equal(passed.command.mergeAuthority, false);
+  assert.equal(passed.command.arbitraryUnboundedCommandAllowed, false);
 });
