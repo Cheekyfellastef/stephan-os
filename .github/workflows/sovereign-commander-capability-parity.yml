@@ -109,5 +109,6 @@ jobs:
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
+          node --test scripts/sovereign-commander-stephanos-repair.test.mjs
           node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
           node --test shared/agents/sovereignCommanderWindows.test.mjs
