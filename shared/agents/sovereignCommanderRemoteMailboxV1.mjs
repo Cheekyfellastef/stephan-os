@@ -1352,7 +1352,12 @@ function safeCapabilityParityProjection(value = {}, processId = '') {
 
 function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
   if (processId !== 'starfield-vr-telemetry-archive') return null;
-  const stdout = String(value?.structuredContent?.stdout || '');
+  // The network completion envelope may contain an inner maintenance
+  // execution envelope. The generic projector unwraps it, so archive parsing
+  // must use that same trusted execution frame rather than the outer wrapper.
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
+  const stdout = String(source?.structuredContent?.stdout || '');
   const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
   const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
   if (!line) return null;
@@ -3515,6 +3520,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     if (!proofComplete) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        archivePresent: telemetryArchive !== null,
         publicReceiptSafe: true, secretMaterialReturned: false,
       });
     }
