@@ -51,10 +51,11 @@ test('exact approval binds all source task identities, bytes and expiry', () => 
 
 test('one independently approved candidate gets selected, held tasks do not block others', () => {
   const accepted = { request, manifestSha256, approval: approved };
-  const held = { ...accepted, request: { ...request, taskId: 'held-case' },
-    approval: { ...approved, taskId: 'held-case' }, existingClaim: true };
-  const bad = { ...accepted, request: { ...request, taskId: 'expired-case' },
-    approval: { ...approved, taskId: 'expired-case', expiresAtUtc: '2026-10-13T15:00:00.000Z' } };
+  const held = { ...accepted, request: { ...request, taskId: 'held-case', targetPath: 'docs/architecture/held-case.md' },
+    approval: { ...approved, taskId: 'held-case', targetPath: 'docs/architecture/held-case.md' }, existingClaim: true };
+  const bad = { ...accepted, request: { ...request, taskId: 'expired-case', targetPath: 'docs/architecture/expired-case.md' },
+    approval: { ...approved, taskId: 'expired-case', targetPath: 'docs/architecture/expired-case.md',
+      expiresAtUtc: '2026-10-13T15:00:00.000Z' } };
   const result = selectParallelSeedApprovedTaskV1([held, bad, accepted], NOW);
   assert.equal(result.selected.request.taskId, request.taskId);
   assert.equal(result.eligibleCount, 1);
@@ -64,8 +65,8 @@ test('one independently approved candidate gets selected, held tasks do not bloc
 
 test('malformed and duplicate inbox rows cannot jam unrelated Seed Canopy selection', () => {
   const usable = { request, manifestSha256, approval: approved };
-  const duplicate = { ...usable, request: { ...request, taskId: 'duplicate-seed-task' },
-    approval: { ...approved, taskId: 'duplicate-seed-task' } };
+  const duplicate = { ...usable, request: { ...request, taskId: 'duplicate-seed-task', targetPath: 'docs/architecture/duplicate.md' },
+    approval: { ...approved, taskId: 'duplicate-seed-task', targetPath: 'docs/architecture/duplicate.md' } };
   const candidates = [null, 19, {}, undefined, duplicate, { ...duplicate }, usable];
   const result = selectParallelSeedApprovedTaskV1(candidates, NOW);
   assert.equal(result.selected.request.taskId, request.taskId);
@@ -99,7 +100,15 @@ test('overlapping source-path custody parks only conflicting tasks across modes'
   assert.equal(selected.eligibleCount, 1);
   assert.deepEqual(selected.blocked.map(row => row.reason), [
     'RESOURCE_PATH_OWNERSHIP_AMBIGUOUS', 'RESOURCE_PATH_OWNERSHIP_AMBIGUOUS']);
-  const otherMode = { ...second, request: { ...second.request, generationMode: undefined } };
+  const otherModeRequest = { ...second.request };
+  delete otherModeRequest.generationMode;
+  const otherModeHash = parallelSeedManifestHashV1(JSON.stringify(otherModeRequest));
+  const otherMode = { request: otherModeRequest, manifestSha256: otherModeHash,
+    approval: makeParallelSeedExactApprovalV1({
+      request: otherModeRequest, manifestSha256: otherModeHash,
+      nowUtc: '2026-10-13T15:30:00.000Z',
+      expiryUtc: '2026-10-14T15:30:00.000Z',
+    }) };
   assert.equal(selectParallelSeedInventoryBatchTaskV1([first, otherMode, disjoint], NOW)
     .selected.request.taskId, 'aac-disjoint',
   'another task mode cannot hide a conflicting writer from inventory selection');
