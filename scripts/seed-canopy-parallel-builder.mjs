@@ -642,4 +642,3 @@ main().catch((error) => {
   process.stderr.write('Seed Canopy parallel lane BLOCKED: ' + String(error.message || error) + '\n');
   process.exitCode = 1;
 });
-

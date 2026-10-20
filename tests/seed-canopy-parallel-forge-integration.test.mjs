@@ -933,4 +933,3 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
   }
 });
-
