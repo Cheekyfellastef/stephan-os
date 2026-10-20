@@ -298,17 +298,10 @@ test('held R7 builder does not trigger independent installer if Core is healthy'
 test('unattended guardian refuses even caretaker when gaming is active or governor unknown', () => {
   for (const gamingSafe of [() => false, () => null, () => { throw Error('governor unavailable'); }]) {
     let calls = 0;
-    let repaired;
-    try {
-      repaired = runSovereignCommanderStephanosRepair({
-        readHead: () => HEAD, continuousRepairCycle: true,
-        gamingSafe, runStep: () => { calls++; return result({ ok: true }); },
-      });
-    } catch (error) {
-      // Invalid governor-reading exceptions must not invoke a Windows action.
-      assert.equal(calls, 0);
-      continue;
-    }
+    const repaired = runSovereignCommanderStephanosRepair({
+      readHead: () => HEAD, continuousRepairCycle: true,
+      gamingSafe, runStep: () => { calls++; return result({ ok: true }); },
+    });
     assert.equal(repaired.ok, false);
     assert.equal(repaired.blocker, 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED');
     assert.equal(calls, 0);
