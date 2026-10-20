@@ -288,6 +288,20 @@ test('Octopus productivity exposes material build truth and detects unused capac
   assert.equal(building.octopusMaterialActionsLastCycle, 3);
   assert.equal(building.octopusLastMaterialBuildAtUtc, '2026-10-03T21:45:00.000Z');
 
+  const partialProgress = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 2,
+    refillSweepAttemptCount: 15,
+    refillSafeEligibleWorkRemaining: 4,
+    refillProvenSafeFreeLanes: 3,
+    refillWorkConservingSweepExhausted: true,
+  });
+  assert.equal(partialProgress.octopusBuildVerdict, 'BUILDING_WITH_STRANDED_CAPACITY');
+  assert.equal(partialProgress.octopusMaterialActionsLastCycle, 2);
+  assert.equal(partialProgress.octopusNeedsRepair, true);
+  assert.equal(partialProgress.octopusBuildStallDetected, true);
+  assert.equal(projectOctopusSelfHealDecision(partialProgress, { nowMs: 1_000 }).shouldRepair, true);
+
   const stalled = summarizeOctopusBuildProductivity({
     refillStatus: 'READY',
     refillMaterialActionsSucceeded: 0,
