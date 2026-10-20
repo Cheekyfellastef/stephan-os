@@ -4,11 +4,23 @@ import { readFile } from 'node:fs/promises';
 
 import {
   coreGamingProtectionFromGovernor,
+  coreWorkerDependentWorkAllowed,
   projectStephanosCoreDaemonState,
   shouldReloadStephanosCoreDaemon,
 } from './stephanosCoreDaemonV1.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('worker-dependent Core admission requires both explicit health and measured fresh evidence', () => {
+  for (const age of [null, undefined, '', '0', NaN, Infinity, -1, 300001]) {
+    assert.equal(coreWorkerDependentWorkAllowed({ missionWorkerHealthy: true, missionWorkerHeartbeatAgeMs: age }), false);
+  }
+  for (const age of [0, 1000, 300000]) {
+    assert.equal(coreWorkerDependentWorkAllowed({ missionWorkerHealthy: true, missionWorkerHeartbeatAgeMs: age }), true);
+    assert.equal(coreWorkerDependentWorkAllowed({ missionWorkerHealthy: false, missionWorkerHeartbeatAgeMs: age }), false);
+  }
+  assert.equal(coreWorkerDependentWorkAllowed(null), false);
+});
 
 test('core daemon is a coordinator, not a second authority plane', () => {
   const state = projectStephanosCoreDaemonState({

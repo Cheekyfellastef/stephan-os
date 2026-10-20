@@ -380,7 +380,7 @@ function retryGuardianHarness() {
     clearTimeoutImpl: timer => cleared.add(timer),
     intervalMs: 60_000,
   });
-  const cycle = ({ head = 'a'.repeat(40), blocker = 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING', ok = false, exitCode = ok ? 0 : 2 } = {}) => {
+  const cycle = ({ head = 'a'.repeat(40), blocker = 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING', ok = false, exitCode = ok ? 0 : 2, receiptPatch = {} } = {}) => {
     const timer = timers.at(-1);
     assert.equal(cleared.has(timer), false);
     timer.fn();
@@ -389,6 +389,7 @@ function retryGuardianHarness() {
       ok, sourceHead: head, blocker,
       finalVerdict: ok ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
       reporting: { ok: true, outcome: ok ? 'HEALTHY' : 'BLOCKED', status: ok ? 'READY' : 'ATTENTION_REQUIRED' },
+      ...receiptPatch,
     }) + '\n');
     child.emit('close', exitCode);
     return timers.at(-1).delay;
@@ -439,6 +440,22 @@ test('missing child exit code cannot turn an earlier green receipt into successf
     assert.equal(h.guardian.status().successCount, 0);
     assert.equal(h.guardian.status().failureCount, 1);
   } finally { h.guardian.stop(); }
+});
+
+test('every unsuccessful cycle stays BLOCKED despite contradictory green child verdicts', () => {
+  for (const receiptPatch of [
+    { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+    { ok: undefined, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+    { ok: true, reporting: null, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+  ]) {
+    const h = retryGuardianHarness();
+    try {
+      h.cycle({ exitCode: 2, receiptPatch });
+      assert.equal(h.guardian.status().lastOk, false);
+      assert.equal(h.guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      assert.equal(h.guardian.status().successCount, 0);
+    } finally { h.guardian.stop(); }
+  }
 });
 
 test('manual repair wake cancels the old automatic timer and stop clears pending delay', () => {

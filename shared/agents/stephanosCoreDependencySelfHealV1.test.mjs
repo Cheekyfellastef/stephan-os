@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { projectStephanosCoreDaemonState } from './stephanosCoreDaemonV1.mjs';
+import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from './stephanosCoreDaemonV1.mjs';
 import { projectStephanosControlPlaneSpine } from './stephanosControlPlaneSpineV1.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -10,6 +10,23 @@ const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs',
 const start = source.indexOf('async function maybeRepairCoreDependencies(');
 const end = source.indexOf('async function runBoundedOctopusMaintenance(', start);
 assert.ok(start >= 0 && end > start);
+
+test('the actual Core Flywheel entry cannot enter indirect repair while worker custody is held', async () => {
+  const entryStart = source.indexOf('async function maybeStartPersistentFlywheel(');
+  const entryEnd = source.indexOf('async function publish(', entryStart);
+  assert.ok(entryStart >= 0 && entryEnd > entryStart);
+  const context = vm.createContext({
+    coreWorkerDependentWorkAllowed, lastFlywheelWakeReason: '',
+    persistentFlywheelEventFingerprint: () => { throw Error('INDIRECT_REPAIR_ENTRY_MUST_NOT_RUN'); },
+  });
+  vm.runInContext(source.slice(entryStart, entryEnd), context);
+  for (const age of [null, undefined, -1, NaN, 300001, 900000]) {
+    const result = await context.maybeStartPersistentFlywheel(HEAD, false, workerState({ age }));
+    assert.equal(result.shouldRun, false);
+    assert.equal(result.reason, 'PERSISTENT_FLYWHEEL_WORKER_CUSTODY_HELD');
+  }
+  assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive, state\)/);
+});
 
 // Exercise the actual daemon repair routine with controlled observations and
 // maintenance receipts, without loading its entrypoint or touching PC state.

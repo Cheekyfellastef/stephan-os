@@ -15,6 +15,7 @@ import {
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
   coreGamingProtectionFromGovernor,
+  coreWorkerDependentWorkAllowed,
   projectStephanosCoreDaemonState,
   shouldReloadStephanosCoreDaemon,
 } from '../shared/agents/stephanosCoreDaemonV1.mjs';
@@ -690,7 +691,11 @@ function persistentFlywheelStatus() {
   });
 }
 
-async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false) {
+async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false, workerState = {}) {
+  if (!coreWorkerDependentWorkAllowed(workerState)) {
+    lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_WORKER_CUSTODY_HELD';
+    return Object.freeze({ shouldRun: false, reason: lastFlywheelWakeReason });
+  }
   if (gamingProtected) {
     lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_GAMING_PROTECTED';
     return Object.freeze({
@@ -1219,7 +1224,7 @@ try {
     });
     const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
     const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
-    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
+    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive, state);
     await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
       worker: await readJsonIfPresent(workerHeartbeatPath),
       lease: await readJsonIfPresent(sourceLeasePath),
