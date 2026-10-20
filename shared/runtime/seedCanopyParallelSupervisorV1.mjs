@@ -114,18 +114,33 @@ export function selectParallelSeedInventoryBatchTaskV1(candidates, nowMs, attemp
 }
 
 export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], nowMs = Date.now()) {
-  const receiptsByTask = new Map(receipts.filter((r) => safeTask(r?.taskId)).map((r) => [r.taskId, r]));
+  // A duplicate task/receipt identity cannot select a winner by array order.
+  // Park only the ambiguous task; retain visibility of independent candidates.
+  const safeClaims = Array.isArray(claims) ? claims : [];
+  const safeReceipts = Array.isArray(receipts) ? receipts : [];
+  const countByTask = (items) => {
+    const counts = new Map();
+    for (const item of items) {
+      if (safeTask(item?.taskId)) counts.set(item.taskId, (counts.get(item.taskId) || 0) + 1);
+    }
+    return counts;
+  };
+  const claimCounts = countByTask(safeClaims);
+  const receiptCounts = countByTask(safeReceipts);
+  const receiptsByTask = new Map(safeReceipts.filter((r) => safeTask(r?.taskId)
+    && receiptCounts.get(r.taskId) === 1).map((r) => [r.taskId, r]));
   const tasks = [];
-  for (const claim of claims) {
+  for (const claim of safeClaims) {
     if (!safeTask(claim?.taskId)) continue;
-    const receipt = receiptsByTask.get(claim.taskId);
+    const ambiguous = claimCounts.get(claim.taskId) > 1 || (receiptCounts.get(claim.taskId) || 0) > 1;
+    const receipt = ambiguous ? null : receiptsByTask.get(claim.taskId);
     const timestamp = Date.parse(receipt?.recordedAtUtc || claim?.createdAtUtc);
-    const stale = !Number.isFinite(timestamp) || timestamp > nowMs || nowMs - timestamp > 2 * 3600 * 1000;
+    const stale = ambiguous || !Number.isFinite(timestamp) || timestamp > nowMs || nowMs - timestamp > 2 * 3600 * 1000;
     tasks.push(Object.freeze({
       taskId: claim.taskId,
       seedId: claim.seedId,
       targetPath: claim.targetPath,
-      stage: receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
+      stage: ambiguous ? 'AMBIGUOUS_SOURCE_CUSTODY' : receipt?.stage || 'CLAIM_ONLY_UNKNOWN',
       sourceTruth: stale ? 'STALE_OR_UNKNOWN' : 'CURRENT',
       // Local Git readback is observable and useful for diagnosis, but the
       // receipt and candidate branch are both mutable by the same account.
@@ -137,7 +152,8 @@ export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], n
       merged: false,
       deployed: false,
       requiresReview: true,
-      recovery: stale && receipt?.stage !== 'COMMITTED' ? 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE' : 'NONE',
+      recovery: ambiguous || (stale && receipt?.stage !== 'COMMITTED')
+        ? 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE' : 'NONE',
     }));
   }
   return Object.freeze({

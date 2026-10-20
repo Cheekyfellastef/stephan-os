@@ -148,3 +148,34 @@ test('supervisor status marks stale unfinished task, never claims merging or dep
   assert.equal(projected.tasks[1].deployed, false);
   assert.equal(projected.doesNotDependOnCanonicalConveyor, true);
 });
+
+test('ambiguous duplicate receipt or claim cannot manufacture local commit proof or jam disjoint tasks', () => {
+  const first = { taskId: 'ambiguous-one', seedId: request.seedId,
+    targetPath: request.targetPath, createdAtUtc: '2026-10-13T15:30:00.000Z' };
+  const second = { taskId: 'independent-two', seedId: request.seedId,
+    targetPath: 'docs/architecture/independent.md', createdAtUtc: '2026-10-13T15:30:00.000Z' };
+  const committed = (taskId) => ({ taskId, stage: 'COMMITTED',
+    recordedAtUtc: '2026-10-13T15:40:00.000Z',
+    commitSha: 'c'.repeat(40), independentGitHeadVerified: true });
+  const receipts = [committed(first.taskId),
+    { ...committed(first.taskId), commitSha: 'd'.repeat(40) },
+    committed(second.taskId)];
+  const projected = projectParallelSeedReceiptStatusV1([first, second], receipts, NOW);
+  assert.equal(projected.tasks[0].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
+  assert.equal(projected.tasks[0].sourceTruth, 'STALE_OR_UNKNOWN');
+  assert.equal(projected.tasks[0].localCommitReadbackMatched, false);
+  assert.equal(projected.tasks[0].recovery, 'INSPECT_TASK_WORKTREE_NO_AUTO_RELEASE');
+  assert.equal(projected.tasks[1].localCommitReadbackMatched, true,
+    'one ambiguous task must not suppress disjoint observational readback');
+  assert.equal(projected.localSourceCandidateProven, false);
+  assert.equal(projected.liveBuildProven, false);
+
+  const duplicateClaim = projectParallelSeedReceiptStatusV1(
+    [first, { ...first, targetPath: 'docs/architecture/other.md' }, second],
+    [committed(first.taskId), committed(second.taskId)], NOW);
+  assert.equal(duplicateClaim.tasks[0].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
+  assert.equal(duplicateClaim.tasks[1].stage, 'AMBIGUOUS_SOURCE_CUSTODY');
+  assert.equal(duplicateClaim.tasks[2].localCommitReadbackMatched, true);
+  assert.equal(projectParallelSeedReceiptStatusV1(null, null, NOW).taskCount, 0,
+    'malformed optional arrays must not jam the independent supervisor');
+});
