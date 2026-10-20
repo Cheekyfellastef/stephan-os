@@ -3781,7 +3781,7 @@ test('VR archive selects guarded fixed maintenance fallback when live dedicated 
     proofHash: 'a'.repeat(64), command: { plan: { processId } },
     structuredContent: {
       status: 0,
-      stdout: 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=' + JSON.stringify(parsed) + '\\n',
+      stdout: 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=' + JSON.stringify(parsed) + '\n',
       stderr: '',
     },
   }};
