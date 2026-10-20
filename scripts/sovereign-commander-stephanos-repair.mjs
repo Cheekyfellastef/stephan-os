@@ -190,6 +190,35 @@ export function runSovereignCommanderStephanosRepair({
     );
     const escalation = projectOctopusRepairEscalation(builderBlocker);
     if (!continuousRepairCycle || escalation.shouldRepairControlPlane !== true) {
+      // A protected historical R7/source-writer HOLD must not be "repaired" by
+      // retrying its lease or fabric. It also must not suppress a separately
+      // observed, safe Core control-plane repair. Inspect with the existing
+      // read-only fixed action; require affirmative physical owner/head and
+      // non-gaming proof before attempting the already registered reconciler.
+      if (continuousRepairCycle) {
+        const observeStep = boundedContinuousStep(
+          STEPS.coreStatus, CONTINUOUS_REPAIR_STEP_TIMEOUTS.coreStatus, true,
+        );
+        const observed = runStep(observeStep);
+        const core = parseJsonPayload(observed?.stdout);
+        steps.push(compactStep(observeStep, observed, core));
+        const independentCoreFault = observed?.ok === true
+          && core?.ok === true
+          && core?.singleWriterProven === true
+          && core?.sourceHeadMatchesLive === true
+          && text(core?.sourceHead).toLowerCase() === expectedHead
+          && core?.gamingActive === false
+          && (core?.repairRequired === true || text(core?.readiness).toUpperCase() === 'DEGRADED');
+        if (independentCoreFault) {
+          const repairStep = boundedContinuousStep(
+            STEPS.controlPlane, CONTINUOUS_REPAIR_STEP_TIMEOUTS.controlPlane, true,
+          );
+          const independentRepair = runStep(repairStep);
+          steps.push(compactStep(repairStep, independentRepair, parseJsonPayload(independentRepair?.stdout)));
+        }
+      }
+      // Independent Core maintenance, even if successful, is never proof
+      // that the original R7 builder/lease has recovered.
       return blocked(expectedHead, steps, builderBlocker);
     }
 
