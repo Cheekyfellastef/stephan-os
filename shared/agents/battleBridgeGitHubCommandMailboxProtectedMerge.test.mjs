@@ -228,6 +228,7 @@ function successfulRequiredChecks() {
     name: workflow === 'Build Stephanos UI' ? 'build' : 'proof',
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
