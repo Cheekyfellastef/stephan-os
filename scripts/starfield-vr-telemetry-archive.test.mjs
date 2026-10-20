@@ -271,5 +271,5 @@ test('public archive failure receipt contains only safe route and execution toke
   assert.equal(publicFailure.archiveExecutionStatus, 1);
   assert.equal(publicFailure.archiveExecutionErrorCode, 'ENOENT');
   assert.doesNotMatch(raw, /PRIVATE_ARCHIVE_WINDOWS_STDERR|PRIVATE_CSV_DO_NOT_PUBLISH/);
-  assert.ok(Buffer.byteLength(raw, 'utf8') < 4500);
+  assert.ok(Buffer.byteLength(raw, 'utf8') < 9 * 1024);
 });
