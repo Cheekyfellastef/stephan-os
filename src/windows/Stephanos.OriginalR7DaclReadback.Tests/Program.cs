@@ -23,9 +23,15 @@ internal static class Program
         Check(!observation.HistoricalReceiptReconstructed, "HISTORY_CANNOT_BE_RECONSTRUCTED");
     }
 
-    private static int Main()
+    private static int Main(string[] args)
     {
         if (!OperatingSystem.IsWindows()) return 2;
+        if (args.Length == 1 && args[0] == "--r7-process-fixture")
+        {
+            Console.ReadLine();
+            return 0;
+        }
+        if (args.Length != 0) return 2;
         var scratch = Path.Combine(Path.GetTempPath(), "stephanos-r7-acl-test-" + Guid.NewGuid().ToString("N"));
         // Synthetic identity is not the original r7 writer. A real original
         // writer must be identified independently and tested on Battle Bridge.
@@ -65,14 +71,20 @@ internal static class Program
             Check(!vanished.PolicyShapeObserved, "MISSING_DIRECTORY_MUST_FAIL");
             AssertNotCustody(vanished);
 
+            ProcessBoundWriteDenialTests.Run();
+            EffectiveWriteDenialTests.Run();
+
             Console.WriteLine("R7_DACL_NATIVE_READBACK_TESTS_PASSED=true");
             Console.WriteLine("R7_DACL_ORIGINAL_WRITER_TESTED=false");
             Console.WriteLine("R7_DACL_ORIGINAL_LEASE_RELEASED=false");
             return 0;
         }
-        catch
+        catch (Exception error)
         {
             Console.Error.WriteLine("R7_DACL_NATIVE_READBACK_TESTS_FAILED");
+            Console.Error.WriteLine("R7_DACL_TEST_EXCEPTION_TYPE=" + error.GetType().Name);
+            if (System.Text.RegularExpressions.Regex.IsMatch(error.Message, "^[A-Z0-9_]{1,120}$"))
+                Console.Error.WriteLine("R7_DACL_TEST_FAILURE_CODE=" + error.Message);
             return 1;
         }
         finally

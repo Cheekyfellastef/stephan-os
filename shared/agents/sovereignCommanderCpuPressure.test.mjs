@@ -80,7 +80,7 @@ const CPU_COMMAND = Object.freeze({
   requestId: 'test-fixed-cpu-snapshot',
   operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 2808,
+  issueNumber: 3149,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: CPU_HEAD,

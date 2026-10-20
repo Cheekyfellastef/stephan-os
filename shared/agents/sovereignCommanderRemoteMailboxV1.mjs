@@ -5,6 +5,8 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
+import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -14,9 +16,11 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'original-source-custody-census',
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
   'repair-ui-4173',
@@ -38,6 +42,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'starfield-vr-performance-diagnosis',
   'report-starfield-vr-telemetry',
   'starfield-vr-telemetry-refresh',
+  'starfield-vr-telemetry-archive',
   'ignite-stephanos',
   'repair-battle-bridge',
   'repair-control-plane',
@@ -78,6 +83,8 @@ const ALLOWED_FIELDS = new Set([
   'remotePlan',
   'searchQuery',
   'searchMaxResults',
+  'telemetryOffset',
+  'telemetryLimit',
   'targetPrNumber',
   'targetBranch',
   'targetHead',
@@ -86,6 +93,7 @@ const ALLOWED_FIELDS = new Set([
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
+const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -1342,6 +1350,97 @@ function safeCapabilityParityProjection(value = {}, processId = '') {
   });
 }
 
+function safeStarfieldVrTelemetryArchiveProjection(value = {}, processId = '') {
+  if (processId !== 'starfield-vr-telemetry-archive') return null;
+  // The network completion envelope may contain an inner maintenance
+  // execution envelope. The generic projector unwraps it, so archive parsing
+  // must use that same trusted execution frame rather than the outer wrapper.
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
+  const stdout = String(source?.structuredContent?.stdout || '');
+  const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed || parsed.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+    || parsed.ok !== true
+    || parsed.readOnly !== true || parsed.sourceMutationAllowed !== false
+    || parsed.arbitraryShellAllowed !== false || parsed.rawTelemetryReturned !== false
+    || parsed.hostPathsReturned !== false || parsed.secretMaterialReturned !== false
+    || parsed.unknownMeansGreen !== false
+    || !['STARFIELD_VR_TELEMETRY_ARCHIVE_READY', 'STARFIELD_VR_TELEMETRY_ARCHIVE_NO_SESSIONS'].includes(parsed.finalVerdict)) return null;
+  const count = (value, max = 1_000_000_000) => (
+    Number.isSafeInteger(value) && value >= 0 && value <= max ? value : null
+  );
+  const metric = (value, max = 1_000_000) => (
+    value === null || value === undefined ? null
+      : Number.isFinite(value) && value >= 0 && value <= max ? value : null
+  );
+  const token = (value) => {
+    const s = typeof value === 'string' ? value : '';
+    return /^[A-Za-z0-9._:-]{1,120}$/.test(s) ? s : '';
+  };
+  const time = (value) => {
+    if (typeof value !== 'string' || value.length > 60) return '';
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  };
+  const totalSessions = count(parsed.totalSessions, 1_000_000);
+  const offset = count(parsed.offset, 1_000_000);
+  const limit = count(parsed.limit, 12);
+  const nextOffset = parsed.nextOffset === null ? null : count(parsed.nextOffset, 1_000_000);
+  if (!time(parsed.generatedAtUtc) || totalSessions === null
+    || offset === null || limit === null || limit < 1
+    || !Array.isArray(parsed.sessions) || parsed.sessions.length > limit
+    || (parsed.hasMore === true && nextOffset === null)
+    || (parsed.hasMore !== true && parsed.hasMore !== false)) return null;
+  const sessions = parsed.sessions.map((item) => ({
+    sessionId: token(item?.sessionId),
+    endedAtUtc: time(item?.endedAtUtc),
+    enteredAtUtc: time(item?.enteredAtUtc),
+    provider: ['mutar-openxr', 'vorpx'].includes(item?.provider) ? item.provider : 'UNKNOWN',
+    sourceHead: SHA_PATTERN.test(item?.sourceHead || '') ? item.sourceHead : '',
+    launchSessionId: token(item?.launchSessionId),
+    configurationFingerprintSha256: PROOF_HASH_PATTERN.test(item?.configurationFingerprintSha256 || '')
+      ? item.configurationFingerprintSha256 : '',
+    sessionOutcome: token(item?.sessionOutcome) || 'UNKNOWN',
+    sampleCount: count(item?.sampleCount),
+    partialTelemetry: item?.partialTelemetry === true,
+    csvPresent: item?.csvPresent === true,
+    summaryPresent: item?.summaryPresent === true,
+    sessionReceiptPresent: item?.sessionReceiptPresent === true,
+    avgApplicationFrameTimeMs: metric(item?.avgApplicationFrameTimeMs),
+    p95ApplicationFrameTimeMs: metric(item?.p95ApplicationFrameTimeMs),
+    p99ApplicationFrameTimeMs: metric(item?.p99ApplicationFrameTimeMs),
+    avgDeliveredCadenceHz: metric(item?.avgDeliveredCadenceHz, 1000),
+    headsetRefreshRateHz: metric(item?.headsetRefreshRateHz, 1000),
+    maxEyePresentationSkewMs: metric(item?.maxEyePresentationSkewMs),
+    maxPoseAgeMs: metric(item?.maxPoseAgeMs),
+    avgGpuUtilPct: metric(item?.avgGpuUtilPct, 100),
+    avgSystemCpuPct: metric(item?.avgSystemCpuPct, 100),
+    maxLlamaServerCount: count(item?.maxLlamaServerCount, 10000),
+    telemetryMissingCount: count(item?.telemetryMissingCount, 1000),
+    crashEvidenceCount: count(item?.crashEvidenceCount, 1000),
+  }));
+  if (sessions.some((s) => !s.sessionId)
+    || !token(parsed.newestSessionId) && totalSessions > 0) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true,
+    generatedAtUtc: time(parsed.generatedAtUtc),
+    directoryAvailable: parsed.directoryAvailable === true,
+    totalSessions,
+    newestSessionId: token(parsed.newestSessionId),
+    offset, limit, nextOffset, hasMore: parsed.hasMore,
+    sessions: Object.freeze(sessions),
+    readOnly: true, sourceMutationAllowed: false,
+    arbitraryShellAllowed: false, rawTelemetryReturned: false,
+    hostPathsReturned: false, secretMaterialReturned: false,
+    unknownMeansGreen: false, finalVerdict: parsed.finalVerdict,
+  });
+}
+
 function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
   if (!['report-starfield-vr-telemetry', 'starfield-vr-telemetry-refresh'].includes(processId)) return null;
   const stdout = String(value?.structuredContent?.stdout || '');
@@ -1955,6 +2054,11 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
   if (remoteAction && remotePlanFieldPresent) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT', { requested: true });
   }
+  const telemetryPageFieldsPresent = ['telemetryOffset', 'telemetryLimit']
+    .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
+  if (telemetryPageFieldsPresent && (remoteAction !== 'starfield-vr-telemetry-archive' || remotePlanFieldPresent)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED', { requested: true });
+  }
   if (remotePlanSupplied) {
     const remotePlan = command.remotePlan.map((value) => text(value));
     if (remotePlan.length < 1 || remotePlan.length > SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS) {
@@ -1967,6 +2071,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       actionId === 'status'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
+      || actionId === 'original-source-custody-census'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
@@ -1999,6 +2104,25 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
       remoteAction,
+    });
+  }
+  if (remoteAction === 'starfield-vr-telemetry-archive') {
+    const exclusiveFields = [
+      'searchQuery', 'searchMaxResults', 'controllerActivity',
+      'targetPrNumber', 'targetBranch', 'targetHead',
+    ];
+    if (exclusiveFields.some((field) => Object.prototype.hasOwnProperty.call(command, field))) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED', { requested: true });
+    }
+    const telemetryOffset = command.telemetryOffset ?? 0;
+    const telemetryLimit = command.telemetryLimit ?? 4;
+    if (!Number.isSafeInteger(telemetryOffset) || telemetryOffset < 0 || telemetryOffset > 1_000_000
+      || !Number.isSafeInteger(telemetryLimit) || telemetryLimit < 1 || telemetryLimit > 4) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_INVALID', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction, telemetryOffset, telemetryLimit }),
     });
   }
   const searchFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'searchQuery')
@@ -2105,6 +2229,8 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_TELEMETRY_PAGE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_TOO_LARGE',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID',
@@ -2121,6 +2247,77 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_HEAD_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONVERGENCE_FIELDS_NOT_ALLOWED',
   ]).has(text(value));
+}
+
+/**
+ * #3109: constant-vocabulary native Island diagnostic. It examines only the
+ * fixed process identity, exit status and closed-world marker shape, and NEVER
+ * publishes stdout, stderr, process arguments, paths, environment or tokens.
+ * It grants no source mutation authority, even when the marker is positive.
+ */
+export function diagnoseRescueIslandNativeReceiptInvalidV1({
+  envelope, expectedAction, projection, positive, negative,
+  rawMaintenance, mcpError = false,
+} = {}) {
+  if (expectedAction !== 'rescue-island-readonly-boundary')
+    return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).length === 0) {
+    // Do not silently flatten an MCP result that failed before a native
+    // process was launched. No private exception, argv, SID, path or stderr
+    // may enter public GitHub diagnostics. Always keep worker start denied.
+    let observation = rawMaintenance;
+    for (let depth = 0; depth < 5; depth += 1) {
+      if (!observation || typeof observation !== 'object'
+        || Array.isArray(observation)) break;
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+        // Only fixed known Commander command-planning blockers are eligible
+        // for projection. Never copy its raw blocker, plan, cwd or OS paths.
+        // No classification is evidence the running Commander was reloaded.
+        const known = observation.command?.blockers;
+        if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
+          if (known.includes('trusted-repository-root-required'))
+            return 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE';
+          if (known.includes('sovereign-commander-process-not-registered'))
+            return 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED';
+        }
+        return 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN';
+      }
+      if (observation.ok === false
+        && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+        && observation.command?.plan?.processId === expectedAction
+        && !Number.isInteger(observation.structuredContent?.status)) {
+        return 'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS';
+      }
+      observation = observation.structuredContent;
+    }
+    return mcpError === true
+      ? 'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'
+      : 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED';
+  }
+  if (envelope?.command?.plan?.processId !== expectedAction)
+    return 'ISLAND_NATIVE_PROCESS_BINDING_INVALID';
+  const status = envelope?.structuredContent?.status;
+  if (!Number.isInteger(status)) return 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE';
+  const stdout = envelope?.structuredContent?.stdout;
+  if (typeof stdout !== 'string') return 'ISLAND_NATIVE_STDOUT_UNAVAILABLE';
+  if (Buffer.byteLength(stdout, 'utf8') > 4096)
+    return 'ISLAND_NATIVE_STDOUT_TOO_LARGE';
+  const lines = stdout.trimEnd().split(/\r?\n/);
+  if (lines.length !== 1) return 'ISLAND_NATIVE_STDOUT_LINES_INVALID';
+  if (!lines[0].startsWith('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='))
+    return 'ISLAND_NATIVE_MARKER_NOT_OBSERVED';
+  if (!positive && !negative) return 'ISLAND_NATIVE_MARKER_REJECTED';
+  if (negative) return 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID';
+  if (positive && status !== 0) return 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH';
+  if (positive && (projection?.ok !== true
+      || projection?.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection?.proofHash || '')
+      || projection?.processId !== expectedAction
+      || projection?.status !== 0))
+    return 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID';
+  return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
 }
 
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
@@ -2215,6 +2412,75 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // The canonical owner-attested GitHub mailbox already supplies fixed authority.
   // Sample directly in this existing process, not by recycling the long-lived
   // Commander: diagnostic observation must never start a repair guardian.
+  if (shape.command.remoteAction === 'original-source-custody-census') {
+    // Single fixed unprivileged sampler. Never execute the mutable checkout
+    // script or accept user-supplied process IDs, paths, launch arguments or keys.
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_CUSTODY_CENSUS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const sourceBytes = committed.stdout;
+    // EncodedCommand has no script file path: explicitly bind PSScriptRoot to
+    // the canonical repository's scripts/windows directory. The committed
+    // census body is appended verbatim; no checkout copy can be swapped in.
+    const rootBase64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const fixedPrelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("'
+      + rootBase64 + '"))) "scripts\\windows"\r\n';
+    const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
+      ? Buffer.from(fixedPrelude + sourceBytes, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) return fail(
+      'SOVEREIGN_CUSTODY_CENSUS_COMMITTED_SOURCE_UNAVAILABLE',
+      { publicReceiptSafe: true, secretMaterialReturned: false },
+    );
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 16 * 1024 });
+    let rawCensus = null;
+    try {
+      if (sampled.ok && sampled.stdout.length <= 8_000) rawCensus = JSON.parse(sampled.stdout);
+    } catch {}
+    const custody = inspectOriginalSourceCustodyCensusV1(rawCensus);
+    if (!sampled.ok || custody.observable !== true
+      || custody.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD') {
+      return fail('SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE', {
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const inspection = Object.freeze({
+      originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+      inspectedAtUtc: rawCensus.inspectedAtUtc,
+      checkoutPresent: rawCensus.checkoutPresent,
+      aclReadable: rawCensus.aclReadable,
+      candidateProcessCount: rawCensus.candidateProcessCount,
+      stephanosScheduledTaskCount: rawCensus.stephanosScheduledTaskCount,
+      blockers: custody.blockers,
+      historicalExecutionOutcome: 'UNKNOWN',
+      independentWindowsExclusionProven: false,
+      independentOperatorApprovalProven: false,
+      leaseReleaseAuthorized: false,
+      sourceMutationAuthorized: false,
+      finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+    });
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+      remoteAction: 'original-source-custody-census',
+      sourceHead: observedHead,
+      inspection,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, inspection })).digest('hex'),
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+      originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+      sourceMutationAllowed: false, arbitraryShellAllowed: false,
+      mergeAuthority: false, vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result,
+    });
+  }
+
   if (shape.command.remoteAction === 'cpu-pressure-snapshot') {
     // Read exactly the blob from the SHA-approved immutable Git tree.
     // Never execute a checkout pathname: diff --quiet can be bypassed by
@@ -2772,8 +3038,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     id: 4,
     method: 'tools/call',
     params: {
-      name: 'maintenance_action',
-      arguments: shape.command.remoteAction === 'preservation-converge-pr-branch'
+      name: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
+        ? 'starfield_vr_telemetry_archive' : 'maintenance_action',
+      arguments: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
+        ? { offset: shape.command.telemetryOffset, limit: shape.command.telemetryLimit }
+        : shape.command.remoteAction === 'preservation-converge-pr-branch'
         ? {
           actionId: shape.command.remoteAction,
           targetPrNumber: shape.command.targetPrNumber,
@@ -2795,7 +3064,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
+    'rescue-island-readonly-boundary']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -2931,6 +3201,75 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: convergenceResult,
+    });
+  }
+
+
+
+  if (shape.command.remoteAction === 'rescue-island-readonly-boundary') {
+    // Do not treat a generic successful maintenance call as an OS-scope proof.
+    // The fixed native child must publish its own one-line, closed-world result.
+    const nativeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const candidate = Object.keys(nativeEnvelope).length > 0 ? nativeEnvelope : failedEnvelope;
+    const nativeProcessId = text(candidate?.command?.plan?.processId);
+    const nativeStatus = candidate?.structuredContent?.status;
+    const nativeStdout = candidate?.structuredContent?.stdout;
+    const held = parseRescueIslandBoundaryHeldStdoutV1(nativeStdout, nativeProcessId);
+    if (held && nativeProcessId === shape.command.remoteAction
+        && nativeStatus === 1
+        && candidate?.ok === false
+        && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: held.blocker,
+        rescueIslandBoundary: held,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const readback = parseRescueIslandBoundaryStdoutV1(
+      nativeStdout, nativeProcessId,
+    );
+    if (projection.ok !== true
+      || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(projection.proofHash)
+      || projection.processId !== shape.command.remoteAction
+      || projection.status !== 0
+      || !readback) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        executionBlocker: diagnoseRescueIslandNativeReceiptInvalidV1({
+          envelope: candidate,
+          expectedAction: shape.command.remoteAction,
+          projection, positive: readback, negative: held,
+          rawMaintenance,
+          mcpError: actionCall.body?.result?.isError === true,
+        }),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      rescueIslandBoundary: readback,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      originalSourceLeaseReleaseAllowed: false,
+      mergeAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
@@ -3164,6 +3503,73 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: controllerLaneResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'starfield-vr-telemetry-archive') {
+    const telemetryArchive = safeStarfieldVrTelemetryArchiveProjection(rawMaintenance, projection.processId);
+    const proofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && telemetryArchive?.readOnly === true
+      && telemetryArchive.rawTelemetryReturned === false
+      && telemetryArchive.hostPathsReturned === false
+      && telemetryArchive.secretMaterialReturned === false;
+    if (!proofComplete) {
+      const safeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+      const source = Object.keys(safeEnvelope).length > 0 ? safeEnvelope : rawMaintenance;
+      const stdout = String(source?.structuredContent?.stdout || '');
+      const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
+      const markerLine = stdout.split(/\r?\n/).find((line) => line.startsWith(marker));
+      let decoded = null;
+      try { decoded = markerLine ? JSON.parse(markerLine.slice(marker.length)) : null; } catch {}
+      const reason = projection.ok !== true
+        || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        ? 'EXECUTION_ENVELOPE_INVALID'
+        : !PROOF_HASH_PATTERN.test(projection.proofHash)
+          ? 'PROOF_HASH_MISSING'
+          : projection.processId !== shape.command.remoteAction
+            ? 'PROCESS_ID_MISMATCH'
+            : projection.status !== 0
+              ? 'PROCESS_STATUS_INVALID'
+              : !markerLine
+                ? 'MARKER_MISSING'
+                : !decoded
+                  ? 'JSON_UNREADABLE'
+                  : decoded.ok !== true
+                    ? 'ARCHIVE_NOT_READY'
+                    : decoded.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+                      ? 'SCHEMA_MISMATCH'
+                      : 'ARCHIVE_CONTRACT_INVALID';
+      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_' + reason, {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        archivePresent: telemetryArchive !== null,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: telemetryArchive.finalVerdict,
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      telemetryArchive,
+      vendorMeterRequired: false, externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false, sourceMutationAllowed: false,
+      mergeAuthority: false, pcRestartAuthority: false,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 

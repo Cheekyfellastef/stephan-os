@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { projectBoundedRemoteControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
@@ -9,6 +10,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  diagnoseRescueIslandNativeReceiptInvalidV1,
   sovereignCommanderRemoteNetworkTimeoutMs,
   sovereignCommanderRemotePlanStepTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
@@ -22,7 +24,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-mobile-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2808,
+    issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -71,7 +73,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
       return response({
         jsonrpc: '2.0',
         id: 2,
-        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, { name: 'search_project' }] },
+        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, { name: 'starfield_vr_telemetry_archive' }, { name: 'search_project' }] },
       }, { sessionId: 'session-1' });
     }
     if (message.method === 'tools/call' && message.params?.name === 'get_config') {
@@ -120,8 +122,8 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
         },
       }, { sessionId: 'session-1' });
     }
-    if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
-      const actionId = message.params.arguments.actionId;
+    if (message.method === 'tools/call' && ['maintenance_action', 'starfield_vr_telemetry_archive'].includes(message.params?.name)) {
+      const actionId = message.params.arguments.actionId || 'starfield-vr-telemetry-archive';
       const selectedMaintenance = maintenanceByAction[actionId] || maintenance;
       return response({
         jsonrpc: '2.0',
@@ -3174,6 +3176,79 @@ test('single maintenance action reports a runner timeout as bounded failure inst
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
 });
+test('mobile original r7 census is fixed immutable-source and remains custody HOLD', async () => {
+  const invocations = [];
+  const census = {
+    schemaVersion: 'stephanos.original-source-custody-readonly-census.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectionMode: 'UNPRIVILEGED_READ_ONLY',
+    inspectedAtUtc: new Date().toISOString(),
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 7,
+    unknownObservations: [],
+    historicalExecutionOutcome: 'UNKNOWN', originalReceiptReconstructed: false,
+    independentWindowsExclusionProven: false, outOfJobWriterExclusionProven: false,
+    sourceAclDenialProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'INSPECTION_ONLY_CUSTODY_HOLD',
+    privateSecret: 'PRIVATE_HOST_PATH_DO_NOT_RETURN',
+  };
+  const spawn = (_exe, args) => {
+    invocations.push(args);
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('show')) return { status: 0, stdout: '# immutable script', stderr: '' };
+    if (args.includes('-EncodedCommand')) return { status: 0, stdout: JSON.stringify(census), stderr: '' };
+    return { status: 1, stdout: '', stderr: 'blocked' };
+  };
+  const { fetchFn, calls } = mcpFetch();
+  const examine = () => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'original-source-custody-census' }),
+    { spawnSyncFn: spawn, readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const result = await examine();
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD');
+  assert.equal(result.inspection.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+  assert.equal(result.inspection.leaseReleaseAuthorized, false);
+  assert.equal(result.privilegedWindowsWitnessCommissioned, false);
+  assert.equal(result.inspection.candidateProcessCount, 0);
+  assert.match(JSON.stringify(result), /INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED/);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_HOST_PATH_DO_NOT_RETURN/);
+  assert.equal(invocations.some(args => args.includes('-File')), false);
+  const encodedCommand = invocations.find(args => args.includes('-EncodedCommand'));
+  assert.ok(encodedCommand);
+  const decodedScript = Buffer.from(encodedCommand[encodedCommand.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+  assert.match(decodedScript, /PSScriptRoot = Join-Path/);
+  assert.ok(decodedScript.includes('scripts\\windows'));
+  assert.ok(decodedScript.endsWith('# immutable script'));
+  assert.equal(invocations.some(args => args.includes('show')
+    && args.includes(HEAD + ':scripts/windows/inspect-original-source-custody-readonly.ps1')), true);
+  assert.equal(calls.some(call => JSON.stringify(call).includes('maintenance_action')), false);
+  census.leaseReleaseAuthorized = true;
+  const forged = await examine();
+  assert.equal(forged.ok, false);
+  assert.equal(forged.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+  census.leaseReleaseAuthorized = false;
+  census.inspectedAtUtc = '2020-01-01T00:00:00.000Z';
+  const stale = await examine();
+  assert.equal(stale.ok, false);
+  assert.equal(stale.blocker, 'SOVEREIGN_CUSTODY_CENSUS_UNTRUSTED_OR_STALE');
+});
+test('mobile original r7 census rejects caller supplied executable targets or authority', () => {
+  for (const payload of [{pid:1},{path:'C:\\private'},{script:'evil'}, {signer:'self'}, {leaseReleaseAuthorized:true}]) {
+    const verdict = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction:'original-source-custody-census', ...payload,
+    }));
+    assert.equal(verdict.ok, false);
+    assert.equal(verdict.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '', remotePlan:['original-source-custody-census'],
+  })).ok, false);
+});
 test('read-only single action exits when MCP request ignores AbortSignal (no 16-minute ACCEPTED hang)', async () => {
   const base = mcpFetch();
   let stalledCalls = 0;
@@ -3252,4 +3327,458 @@ test('single maintenance action has an overall budget across health, MCP setup a
     return body.method === 'tools/call' && body.params?.name === 'maintenance_action';
   });
   assert.equal(actualMaintenance.length, 0);
+});
+
+test('75 logical goals produce a complete remote lane receipt through the real strict mailbox parser', async () => {
+  const source = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-16T20:47:30.459Z',
+    physical: {
+      expected: 5, building: 0, amber: 0, red: 5, unknown: 0,
+      allCurrent: false, allObservedEnabled: false,
+      finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+      controllers: Array.from({ length: 5 }, (_, index) => ({
+        controllerId: `controller-${index}`,
+        title: `Controller ${index}`,
+        freshness: 'STALE', activityState: 'WAITING',
+        trafficLight: 'RED', blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+        materialLaneCount: 0, activeLaneCount: 0,
+        parkedLaneCount: 0, safeEligibleWorkRemaining: 0,
+        materialLanes: [{ proofRef: 'PRIVATE_PROOF_DO_NOT_EXPOSE' }],
+      })),
+    },
+    logical: {
+      current: true, valid: true, observedAtUtc: '2026-10-16T20:47:30.459Z',
+      physicalControllerCount: 5, total: 75, active: 0,
+      tracking: 70, parked: 5, retired: 0, selectedForAdmission: 17,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [],
+      controllers: Array.from({ length: 75 }, (_, index) => ({
+        logicalControllerId: `logical-${index}`,
+        title: `PRIVATE_GOAL_${index}_${'x'.repeat(220)}`,
+        workerPath: 'PRIVATE_WORKER_PATH_DO_NOT_EXPOSE',
+        selectedForAdmission: index < 17,
+      })),
+    },
+    lanes: {
+      targetMaterialLanes: 15, activeMaterialLaneCount: 0,
+      selectedMaterialPickupProvenCount: 0, activeLaneClaimCount: 0,
+      reportedMaterialLaneCountSum: 0, occupancyPercent: 0,
+      freeTargetLaneSlots: 15, runnableBacklogCount: 0,
+      parkedPhysicalLaneCount: 0, reportedSafeEligibleWorkMax: 0,
+      reportedSafeEligibleWorkSum: 0,
+      refillHealth: 'AMBER', refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+    },
+    readOnly: true, arbitraryShellAllowed: false,
+    sourceMutationAllowed: false, mergeAuthority: false,
+    secretMaterialIncluded: false, unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(source)) > 16 * 1024);
+  const remote = projectBoundedRemoteControllerLaneStatus(source);
+  const stdout = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT='
+    + JSON.stringify(remote) + '\n';
+  assert.ok(Buffer.byteLength(stdout) < 12 * 1024);
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'controller-lane-status' } },
+    structuredContent: { ok: true, status: 0, stdout, stderr: '', errorCode: '' },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'controller-lane-status' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE');
+  assert.equal(result.controllerLaneStatus.logical.total, 75);
+  assert.equal(result.controllerLaneStatus.logical.selectedForAdmission, 17);
+  assert.equal(result.controllerLaneStatus.physical.red, 5);
+  assert.equal(result.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  assert.equal(result.controllerLaneStatus.unknownMeansGreen, false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_GOAL_'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_WORKER_PATH'), false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE_PROOF'), false);
+});
+
+test('Island boundary remote action permits only a fixed read-only probe and no caller path', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'rescue-island-readonly-boundary',
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.command.remoteAction, 'rescue-island-readonly-boundary');
+  for (const field of [{ targetPath: 'C:\\\\private' }, { args: ['--write'] },
+    { workerId: 'rescue-island-01' }, { command: 'git add .' }]) {
+    const value = validateSovereignCommanderRemoteCommandShape(command({
+      remoteAction: 'rescue-island-readonly-boundary', ...field,
+    }));
+    assert.equal(value.ok, false);
+    assert.equal(value.blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+  }
+});
+
+test('live Island scope needs an exact machine marker before public DONE', async () => {
+  const clean = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const run = async output => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        contentText: 'RAW PRIVATE NATIVE DATA',
+        structuredContent: {
+          ok: true, status: 0,
+          stdout: output, stderr: 'PRIVATE CENSUS STDERR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  const safe = await run('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\n');
+  assert.equal(safe.ok, true);
+  assert.equal(safe.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(safe.rescueIslandBoundary?.readOnly, true);
+  assert.equal(safe.rescueIslandBoundary?.sourceMutationAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(safe.rescueIslandBoundary?.originalSourceLeaseReleaseAllowed, false);
+  assert.doesNotMatch(JSON.stringify(safe), /RAW PRIVATE|PRIVATE CENSUS/);
+
+  for (const output of [
+    'private success without child proof',
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify({ ...clean, workerStartAllowed: true }),
+    'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(clean) + '\nPRIVATE FILE',
+  ]) {
+    const denied = await run(output);
+    assert.equal(denied.ok, false);
+    assert.equal(denied.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+    assert.equal(denied.sourceMutationAllowed, undefined);
+    assert.doesNotMatch(JSON.stringify(denied), /RAW PRIVATE|PRIVATE CENSUS/);
+  }
+});
+
+
+test('failed fixed Island probe supplies only a typed hold, not source authority', async () => {
+  const denied = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: false, blocker: 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED',
+    observedPathCount: 0, physicalScopeReadback: 'HELD',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_BLOCKED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const stdout = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(denied) + '\n';
+  const response = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+        command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+        structuredContent: {
+          status: 1, stdout, stderr: 'PRIVATE_NATIVE_ERROR', errorCode: '',
+        },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_HELD');
+  assert.equal(response.executionBlocker, 'RESCUE_ISLAND_CANONICAL_GIT_ROOT_UNTRUSTED');
+  assert.equal(response.rescueIslandBoundary?.readOnly, true);
+  assert.equal(response.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.equal(response.rescueIslandBoundary?.mergeAllowed, false);
+  assert.doesNotMatch(JSON.stringify(response), /PRIVATE_NATIVE_ERROR/);
+});
+
+test('Island scope readback is bound to nested native execution, not outer MCP content', async () => {
+  const scope = {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, blocker: '', observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    sourceMutationAllowed: false, workerStartAllowed: false,
+    independentOwnershipAuthenticated: false, gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false, seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false, publicReceiptSafe: true,
+  };
+  const inner = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    command: { plan: { processId: 'rescue-island-readonly-boundary' } },
+    structuredContent: {
+      status: 0, errorCode: '',
+      stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=' + JSON.stringify(scope) + '\n',
+      stderr: 'NATIVE_PRIVATE_STDERR',
+    },
+  };
+  const outer = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    structuredContent: inner,
+    contentText: 'UNTRUSTED_PRIVATE_OUTER_TEXT',
+  };
+  const inspect = async payload => executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'rescue-island-readonly-boundary' }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: payload }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  const success = await inspect(outer);
+  assert.equal(success.ok, true);
+  assert.equal(success.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED');
+  assert.equal(success.rescueIslandBoundary?.observedPathCount, 3);
+  assert.equal(success.rescueIslandBoundary?.workerStartAllowed, false);
+  assert.doesNotMatch(JSON.stringify(success), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+  const tampered = await inspect({
+    ...outer, structuredContent: {
+      ...inner,
+      structuredContent: {
+        ...inner.structuredContent,
+        stdout: 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT='
+          + JSON.stringify({ ...scope, workerStartAllowed: true }) + '\n',
+      },
+    },
+  });
+  assert.equal(tampered.ok, false);
+  assert.equal(tampered.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+  // A forged success must carry only the safe structural diagnostic, not
+  // an OS denial token, granted authority or any of the untrusted marker bytes.
+  assert.equal(tampered.executionBlocker, 'ISLAND_NATIVE_MARKER_REJECTED');
+  assert.doesNotMatch(JSON.stringify(tampered), /NATIVE_PRIVATE|UNTRUSTED_PRIVATE/);
+});
+
+
+test('native Island absent execution envelope distinguishes source denial from MCP failure without leaking secrets', () => {
+  const inspect = data => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: 'rescue-island-readonly-boundary',
+    envelope: {}, positive: null, negative: null,
+    projection: { ok: false, processId: '', status: null }, ...data,
+  });
+  const variants = [
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['sovereign-commander-process-not-registered'] },
+      blocker:'PRIVATE_SCRIPT_PATH_C:/Users/operator' } }, 'ISLAND_NATIVE_FIXED_ACTION_NOT_REGISTERED'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['sovereign-commander-process-not-registered', 'trusted-repository-root-required'] },
+      blocker:'PRIVATE_SID_AND_REPOSITORY_ROOT' } }, 'ISLAND_NATIVE_TRUSTED_REPOSITORY_ROOT_UNAVAILABLE'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      command: { blockers: ['PRIVATE_UNRECOGNISED_BLOCKER'] },
+      blocker:'PRIVATE_HOST_PATH' } }, 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+      blocker:'PRIVATE_SCRIPT_PATH_C:/Users/operator' } }, 'ISLAND_NATIVE_COMMAND_BLOCKED_BEFORE_RUN'],
+    [{ rawMaintenance: { ok:false, finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:'rescue-island-readonly-boundary'}},
+      blocker:'PRIVATE_SID_PROCESS', structuredContent:{ errorCode:'PRIVATE' } } },
+      'ISLAND_NATIVE_RUNNER_FAILED_WITHOUT_EXIT_STATUS'],
+    [{ mcpError:true, rawMaintenance:{isError:true, blocker:'PRIVATE_KEY'} },
+      'ISLAND_NATIVE_MCP_REJECTED_OR_UNAVAILABLE'],
+    [{ mcpError:false, rawMaintenance:{} }, 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED'],
+  ];
+  for (const [input, expected] of variants) {
+    const result = inspect(input);
+    assert.equal(result, expected);
+    assert.match(result, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(result, /PRIVATE|C:\\/);
+  }
+});
+
+test('Island invalid-proof diagnostics reveal only constant categories and cannot authorize writers', () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const baseProjection = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), processId, status: 0,
+  };
+  const envelope = (stdout, status = 0, process = processId) => ({
+    ok: status === 0,
+    command: { plan: { processId: process } },
+    structuredContent: { status, stdout, stderr: 'PRIVATE_NATIVE_ROOT_AND_KEYS' },
+  });
+  const inspect = args => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: processId, projection: baseProjection,
+    positive: null, negative: null, ...args,
+  });
+  const tests = [
+    [{ envelope: {} }, 'ISLAND_NATIVE_ENVELOPE_NOT_OBSERVED'],
+    [{ envelope: envelope('anything', 0, 'other') }, 'ISLAND_NATIVE_PROCESS_BINDING_INVALID'],
+    [{ envelope: { command: { plan: { processId } }, structuredContent: { status: null, stdout: 'private' } } }, 'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE'],
+    [{ envelope: { command: { plan: { processId } }, structuredContent: { status: 0 } } }, 'ISLAND_NATIVE_STDOUT_UNAVAILABLE'],
+    [{ envelope: envelope('PRIVATE_SOURCE_ROOT') }, 'ISLAND_NATIVE_MARKER_NOT_OBSERVED'],
+    [{ envelope: envelope('PRIVATE_SOURCE_ROOT' + String.fromCharCode(10) + 'OTHER_DATA') }, 'ISLAND_NATIVE_STDOUT_LINES_INVALID'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT=PRIVATE_JSON') }, 'ISLAND_NATIVE_MARKER_REJECTED'],
+    [{ envelope: envelope('X'.repeat(4097)) }, 'ISLAND_NATIVE_STDOUT_TOO_LARGE'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}', 1), negative: { ok: false } }, 'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}', 1), positive: { ok: true } }, 'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH'],
+    [{ envelope: envelope('RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}'), positive: { ok: true },
+      projection: { ...baseProjection, proofHash: '' } }, 'ISLAND_NATIVE_SUCCESS_ENVELOPE_INVALID'],
+  ];
+  for (const [input, expected] of tests) {
+    const observed = inspect(input);
+    assert.equal(observed, expected);
+    assert.match(observed, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(observed, /PRIVATE|ROOT_AND_KEYS|HOST|TOKEN/);
+  }
+  assert.equal(diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: 'other', envelope: envelope('PRIVATE'),
+  }), 'ISLAND_NATIVE_ACTION_NOT_ALLOWED');
+});
+
+test('native Island diagnostic remains negative on contradictory wrapper authority', () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const marker = 'RESCUE_ISLAND_BOUNDARY_PROBE_RESULT={}';
+  const envelope = (status) => ({
+    ok: status === 0,
+    command: { plan: { processId } },
+    structuredContent: { status, stdout: marker, stderr: 'PRIVATE_SYSTEM_DETAIL' },
+  });
+  const projection = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), processId, status: 0,
+  };
+  const diagnose = extra => diagnoseRescueIslandNativeReceiptInvalidV1({
+    expectedAction: processId, envelope: envelope(0), projection,
+    positive: null, negative: null, ...extra,
+  });
+  // Diagnostic invocation must not turn even a success-shaped outer wrapper
+  // into live Island worker admission or an invented boundary success.
+  assert.equal(diagnose({ positive: { ok: true } }),
+    'ISLAND_NATIVE_BOUNDARY_INCONSISTENT');
+  assert.equal(diagnose({ negative: { ok: false } }),
+    'ISLAND_NATIVE_DENIAL_ENVELOPE_INVALID');
+  assert.equal(diagnose({ envelope: envelope('0') }),
+    'ISLAND_NATIVE_EXIT_STATUS_UNAVAILABLE');
+  assert.equal(diagnose({ envelope: envelope(1), positive: { ok: true } }),
+    'ISLAND_NATIVE_POSITIVE_EXIT_MISMATCH');
+  for (const value of [
+    diagnose({ positive: { ok: true } }),
+    diagnose({ negative: { ok: false } }),
+    diagnose({ envelope: envelope('0') }),
+  ]) {
+    assert.match(value, /^ISLAND_NATIVE_[A-Z_]+$/);
+    assert.doesNotMatch(value, /PRIVATE|PATH|KEY|TOKEN|GRANTED/);
+  }
+});
+
+test('real remote Island malformed success is BLOCKED with only a safe diagnostic token', async () => {
+  const processId = 'rescue-island-readonly-boundary';
+  const response = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: {
+        ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+        proofHash: 'a'.repeat(64),
+        command: { plan: { processId } },
+        contentText: 'PRIVATE_WINDOWS_PATH',
+        structuredContent: { status: 0, stdout: 'PRIVATE_WINDOWS_PATH', stderr: 'PRIVATE_SECRET' },
+      } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_RECEIPT_INVALID');
+  assert.equal(response.executionBlocker, 'ISLAND_NATIVE_MARKER_NOT_OBSERVED');
+  assert.doesNotMatch(JSON.stringify(response), /PRIVATE_WINDOWS_PATH|PRIVATE_SECRET/);
+  assert.equal(response.rescueIslandBoundary, undefined);
+  assert.equal(response.sourceMutationAllowed, undefined);
+});
+
+test('VR archive remote accepts wrapped Windows execution envelope and returns only sanitised page', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const sessionId = 'starfield-vr-performance-20261019-234600';
+  const parsed = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true, generatedAtUtc: '2026-10-20T02:05:00.000Z',
+    directoryAvailable: true, totalSessions: 1,
+    newestSessionId: sessionId, offset: 0, limit: 4,
+    nextOffset: null, hasMore: false,
+    readOnly: true, sourceMutationAllowed: false,
+    rawTelemetryReturned: false, hostPathsReturned: false,
+    secretMaterialReturned: false, arbitraryShellAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_ARCHIVE_READY',
+    sessions: [{
+      sessionId, provider: 'mutar-openxr',
+      sourceHead: HEAD, sessionOutcome: 'COMPLETED',
+      sampleCount: 36, avgApplicationFrameTimeMs: 14.25,
+      partialTelemetry: false, csvPresent: true, summaryPresent: true,
+      sessionReceiptPresent: true,
+      rawSecret: 'PRIVATE_ARCHIVE_PAYLOAD_MUST_NOT_ESCAPE',
+    }],
+  };
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), command: { plan: { processId } },
+    contentText: 'PRIVATE_RAW_STDOUT_MUST_NOT_ESCAPE',
+    structuredContent: {
+      status: 0,
+      stdout: 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=' + JSON.stringify(parsed) + '\n',
+      stderr: 'PRIVATE_WINDOWS_STDERR_MUST_NOT_ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn, calls } = mcpFetch({ maintenance: { structuredContent: inner } });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 4 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, true, JSON.stringify({
+    blocker: result.blocker, proofHashPresent: result.proofHashPresent,
+    processIdMatch: result.processIdMatch, successfulStatus: result.successfulStatus,
+    archivePresent: result.archivePresent,
+  }));
+  assert.equal(result.finalVerdict, 'STARFIELD_VR_TELEMETRY_ARCHIVE_READY');
+  assert.equal(result.telemetryArchive.totalSessions, 1);
+  assert.equal(result.telemetryArchive.sessions[0].sampleCount, 36);
+  assert.equal(result.telemetryArchive.sessions[0].avgApplicationFrameTimeMs, 14.25);
+  assert.equal(result.telemetryArchive.rawTelemetryReturned, false);
+  assert.equal(result.telemetryArchive.hostPathsReturned, false);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_ARCHIVE_PAYLOAD|PRIVATE_RAW_STDOUT|PRIVATE_WINDOWS_STDERR/);
+  assert.equal(calls.some(({ options }) => {
+    try {
+      const message = JSON.parse(options?.body || '{}');
+      return message.method === 'tools/call' && message.params?.name === 'starfield_vr_telemetry_archive'
+        && message.params?.arguments?.offset === 0 && message.params?.arguments?.limit === 4;
+    } catch { return false; }
+  }), true);
+});
+
+test('VR archive failure distinguishes a missing marker with no private output', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), command: { plan: { processId } },
+    structuredContent: {
+      status: 0,
+      stdout: 'PRIVATE_INTERNAL_STDOUT_NOT_A_TELEMETRY_MARKER',
+      stderr: 'PRIVATE_INTERNAL_STDERR',
+      errorCode: '',
+    },
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 4 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: { structuredContent: inner } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_MARKER_MISSING');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTERNAL_STDOUT|PRIVATE_INTERNAL_STDERR/);
 });

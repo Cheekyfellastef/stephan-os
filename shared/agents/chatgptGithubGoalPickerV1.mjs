@@ -85,13 +85,35 @@ export function planChatgptGithubGoalCandidatesV1(input = {}) {
       blockers: Object.freeze([...new Set(blockers)]),
     });
   });
-  const candidatesForVerification = decisions.filter(d => d.disposition === 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED')
-    .sort((a, b) => a.issueNumber - b.issueNumber || a.taskId.localeCompare(b.taskId));
+  // Independently clear candidates must also be disjoint FROM ONE ANOTHER.
+  // Sort before arbitration so changing candidate order cannot change the winner.
+  // Never let a held/unknown candidate stop an unrelated eligible task.
+  // Planning only: authenticated physical claims are still required for execution.
+  const eligible = decisions.map((decision, index) => ({
+    decision, index, paths: candidates[index]?.paths,
+  })).filter(item => item.decision.disposition === 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED')
+    .sort((a, b) => a.decision.issueNumber - b.decision.issueNumber ||
+      a.decision.taskId.localeCompare(b.decision.taskId));
+  const selected = [];
+  const arbitratedDecisions = [...decisions];
+  for (const item of eligible) {
+    if (selected.some(winner => item.paths.some(path =>
+      winner.paths.some(owned => overlapping(path, owned))))) {
+      arbitratedDecisions[item.index] = Object.freeze({
+        ...item.decision,
+        disposition: 'HELD',
+        blockers: Object.freeze([...item.decision.blockers, 'BATCH_SCOPE_COLLISION_DEFERRED']),
+      });
+    } else {
+      selected.push(item);
+    }
+  }
+  const candidatesForVerification = selected.map(item => item.decision);
   return Object.freeze({
     schemaVersion: CHATGPT_GITHUB_PICKER_SCHEMA,
     disposition: 'PLANNING_ONLY_NOT_EXECUTION_AUTHORITY',
     suggestedForIndependentVerification: candidatesForVerification[0]?.taskId || null,
-    decisions: Object.freeze(decisions),
+    decisions: Object.freeze(arbitratedDecisions),
     workerStarted: false,
     physicalPickupProven: false,
     sourceMutationAllowed: false,
