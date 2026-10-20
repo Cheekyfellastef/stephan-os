@@ -49,6 +49,32 @@ test('core daemon deliberately reloads when canonical source head advances', () 
   assert.equal(shouldReloadStephanosCoreDaemon('', HEAD), true);
 });
 
+test('absent or malformed worker heartbeat evidence stays unknown and degrades the stack', () => {
+  for (const age of [null, undefined, '', '0', false, true, [], {}, NaN, Infinity, -1]) {
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: age, gamingActive: false,
+    });
+    assert.equal(state.missionWorkerHeartbeatAgeMs, null);
+    assert.equal(state.missionWorkerHealthy, false);
+    assert.equal(state.readiness, 'DEGRADED');
+    assert.equal(state.finalVerdict, 'STEPHANOS_CORE_DAEMON_DEGRADED');
+    assert.equal(state.daemonHealthy, true);
+  }
+});
+
+test('worker health requires a measured age within the existing five minute window', () => {
+  for (const [age, healthy] of [[0, true], [299999.5, true], [300000, true], [300001, false]]) {
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: age,
+    });
+    assert.equal(state.missionWorkerHeartbeatAgeMs, age);
+    assert.equal(state.missionWorkerHealthy, healthy);
+    assert.equal(state.readiness, healthy ? 'READY' : 'DEGRADED');
+  }
+});
+
 test('Core gaming posture uses canonical VR governor state and never admits unknown local work', async () => {
   const normal = {
     schemaVersion: 'stephanos.vr-resource-governor.v1',

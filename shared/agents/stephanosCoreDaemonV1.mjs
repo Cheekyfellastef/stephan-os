@@ -7,8 +7,10 @@ function bool(value) {
 }
 
 function finiteAge(value) {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  // fileAgeMs returns null on a missing/unreadable heartbeat. Coercing it
+  // to zero suppresses dependency repair by falsely proving a fresh worker.
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value : null;
 }
 
 // The Windows gaming governor publishes to Shared Workspace/vr, not status.
