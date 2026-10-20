@@ -85,6 +85,22 @@ $rows = @(
         }
     }
 )
+$systemCpuPct = $null
+$systemCpuMeasured = $false
+try {
+    $cpuPackages = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+    if ($cpuPackages.Count -gt 0 -and @($cpuPackages | Where-Object { $null -eq $_.LoadPercentage }).Count -eq 0) {
+        $total = [double](($cpuPackages | Measure-Object -Property LoadPercentage -Average).Average)
+        if (-not [double]::IsNaN($total) -and -not [double]::IsInfinity($total) -and $total -ge 0 -and $total -le 100) {
+            $systemCpuPct = [math]::Round($total, 2)
+            $systemCpuMeasured = $true
+        }
+    }
+} catch {
+    # Never convert missing OS counters into a misleading 0% CPU claim.
+    $systemCpuPct = $null
+    $systemCpuMeasured = $false
+}
 $selected = @($rows | Sort-Object @{Expression={if ($null -eq $_.cpuPercent) {-1} else {$_.cpuPercent}};Descending=$true} | Select-Object -First 20)
 [pscustomobject]@{
     schemaVersion = 'stephanos.battle-bridge-cpu-pressure.v1'
@@ -92,6 +108,8 @@ $selected = @($rows | Sort-Object @{Expression={if ($null -eq $_.cpuPercent) {-1
     sampleSeconds = [math]::Round($sampleSeconds, 2)
     processorCount = [Environment]::ProcessorCount
     metadataAvailable = $metadataAvailable
+    systemCpuMeasured = $systemCpuMeasured
+    systemCpuPct = $systemCpuPct
     rows = $selected
     readOnly = $true
     sourceMutationAllowed = $false
