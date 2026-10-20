@@ -119,6 +119,17 @@ function originalOwnerRecoveryBlocker(result) {
   return ORIGINAL_OWNER_RECOVERY_BLOCKERS.has(blocker) ? blocker : '';
 }
 
+function supervisorHasUnprovenDispatch(status) {
+  const dispatchCount = status?.dispatchCount;
+  if (!Number.isSafeInteger(dispatchCount) || dispatchCount <= 0) return false;
+  // Never accept a self-reported pending=0 on its own, especially from a
+  // pre-upgrade supervisor. Match the number of receipt-proven pickups too.
+  return !Number.isSafeInteger(status?.pickupPendingCount)
+    || status.pickupPendingCount > 0
+    || !Number.isSafeInteger(status?.provenPickupCount)
+    || status.provenPickupCount !== dispatchCount;
+}
+
 function supervisorFlowGreen(result) {
   const status = parseSupervisorStatus(result);
   if (result?.ok !== true || status?.ok !== true) return false;
@@ -131,6 +142,8 @@ function supervisorFlowGreen(result) {
   if (Number.isSafeInteger(status.nativeGapCandidateTotalCount)
       && status.nativeGapCandidateTotalCount > 0) return false;
   if (status.nativeGapSourceHealth === 'DEGRADED') return false;
+  // A grant is never execution without a matching verified pickup count.
+  if (supervisorHasUnprovenDispatch(status)) return false;
   const autonomyPending = status?.daemonMayReportGreen === false;
   const autonomousWorkActive = Number(status?.dispatchCount) > 0
     || Number(status?.runningMissionCount) > 0;
@@ -145,6 +158,7 @@ function supervisorFlowBlocker(result) {
       && status.nativeGapCandidateTotalCount > 0) return 'NATIVE_UPLIFT_PENDING';
   if (Number.isSafeInteger(status?.capabilityCompilerWorkCount)
       && status.capabilityCompilerWorkCount > 0) return 'NATIVE_UPLIFT_PENDING';
+  if (supervisorHasUnprovenDispatch(status)) return 'GOAL_DISPATCH_PICKUP_UNPROVEN';
   const blocker = text(status?.blocker);
   if (SAFE_BLOCKER.test(blocker)) return blocker;
   const verdict = text(status?.finalVerdict);
