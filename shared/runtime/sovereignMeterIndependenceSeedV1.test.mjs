@@ -364,3 +364,45 @@ test('stale heartbeat cannot manufacture a live canonical seed goal', () => {
   })] });
   assert.equal(pressure(payload).length, 0);
 });
+
+const METER_BLACKOUT_SAFETY_CLAUSES_V1 = [
+  [
+    "quota non-evasion",
+    "never evade quotas, use stolen credentials, bypass a subscription"
+  ],
+  [
+    "provider Retry-After cooldown",
+    "honor Retry-After and stop retries until permitted"
+  ],
+  [
+    "offline pending reconciliation",
+    "qualify durable local `PENDING` and safe reconnect behavior instead of claiming offline completion"
+  ],
+  [
+    "remote exactly-once proof",
+    "Remote delivery requires idempotency or independent reconciliation before claiming exactly-once behavior"
+  ],
+  [
+    "gaming resource custody",
+    "Gaming or Quest has absolute priority: do not reserve Battle Bridge CPU/GPU/VRAM for inference or build during gaming."
+  ]
+];
+
+const assertMeterBlackoutSafetyClauses = (markdown) => {
+  for (const [boundary, required] of METER_BLACKOUT_SAFETY_CLAUSES_V1) {
+    assert.ok(markdown.includes(required),
+      'meter blackout cannot silently weaken ' + boundary);
+  }
+};
+
+test('meter blackout acceptance rejects weakened provider, offline-delivery and gaming boundaries', () => {
+  const markdown = readMeterBlackoutInventory();
+  assertMeterBlackoutSafetyClauses(markdown);
+  for (const [boundary, required] of METER_BLACKOUT_SAFETY_CLAUSES_V1) {
+    const weakened = markdown.replace(required, 'not required for this blackout');
+    assert.notEqual(weakened, markdown, 'mutation must reach ' + boundary);
+    assert.throws(() => assertMeterBlackoutSafetyClauses(weakened),
+      /meter blackout cannot silently weaken/,
+      'an unsafe shortcut cannot masquerade as blackout acceptance: ' + boundary);
+  }
+});
