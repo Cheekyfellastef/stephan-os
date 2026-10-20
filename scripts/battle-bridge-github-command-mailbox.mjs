@@ -1467,6 +1467,75 @@ function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
   });
 }
 
+// Projection for the read-only Starfield VR archive. Public GitHub receipts
+// carry only four validated summary rows per page, never raw CSV, file paths,
+// arbitrary metadata, screenshots or host telemetry fields.
+function safeStarfieldVrTelemetryArchiveReceiptProjection(archive) {
+  if (!archive || archive.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+    || archive.ok !== true || archive.readOnly !== true
+    || archive.sourceMutationAllowed !== false
+    || archive.rawTelemetryReturned !== false || archive.hostPathsReturned !== false
+    || archive.secretMaterialReturned !== false || archive.arbitraryShellAllowed !== false
+    || archive.unknownMeansGreen !== false || !Array.isArray(archive.sessions)
+    || archive.sessions.length > 4) return null;
+  const safeCount = (value, maximum = 1000000000) => (
+    Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null
+  );
+  const metric = (value, maximum = 1000000) => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum
+      ? Math.round(value * 100) / 100 : null
+  );
+  const time = (value) => {
+    if (typeof value !== 'string' || value.length > 60) return '';
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  };
+  const limit = safeCount(archive.limit, 4);
+  const offset = safeCount(archive.offset, 1000000);
+  const totalSessions = safeCount(archive.totalSessions, 1000000);
+  const nextOffset = archive.nextOffset === null ? null : safeCount(archive.nextOffset, 1000000);
+  if (!limit || offset === null || totalSessions === null
+    || (archive.hasMore === true && nextOffset === null)
+    || archive.sessions.length > limit
+    || !time(archive.generatedAtUtc)) return null;
+  const sessions = archive.sessions.map((row) => ({
+    sessionId: safeTelemetryId(row.sessionId),
+    enteredAtUtc: time(row.enteredAtUtc),
+    endedAtUtc: time(row.endedAtUtc),
+    provider: ['mutar-openxr', 'vorpx'].includes(row.provider) ? row.provider : 'UNKNOWN',
+    sourceHead: safeTelemetrySha(row.sourceHead),
+    sessionOutcome: safeTelemetryText(row.sessionOutcome, 60),
+    sampleCount: safeCount(row.sampleCount),
+    partialTelemetry: row.partialTelemetry === true,
+    csvPresent: row.csvPresent === true,
+    summaryPresent: row.summaryPresent === true,
+    sessionReceiptPresent: row.sessionReceiptPresent === true,
+    avgApplicationFrameTimeMs: metric(row.avgApplicationFrameTimeMs),
+    p95ApplicationFrameTimeMs: metric(row.p95ApplicationFrameTimeMs),
+    p99ApplicationFrameTimeMs: metric(row.p99ApplicationFrameTimeMs),
+    avgDeliveredCadenceHz: metric(row.avgDeliveredCadenceHz, 1000),
+    headsetRefreshRateHz: metric(row.headsetRefreshRateHz, 1000),
+    maxEyePresentationSkewMs: metric(row.maxEyePresentationSkewMs),
+    maxPoseAgeMs: metric(row.maxPoseAgeMs),
+    avgGpuUtilPct: metric(row.avgGpuUtilPct, 100),
+    avgSystemCpuPct: metric(row.avgSystemCpuPct, 100),
+    telemetryMissingCount: safeCount(row.telemetryMissingCount, 1000),
+    crashEvidenceCount: safeCount(row.crashEvidenceCount, 1000),
+  }));
+  if (sessions.some((row) => !row.sessionId)) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true, generatedAtUtc: time(archive.generatedAtUtc),
+    directoryAvailable: archive.directoryAvailable === true,
+    totalSessions, newestSessionId: safeTelemetryId(archive.newestSessionId),
+    offset, limit, hasMore: archive.hasMore === true, nextOffset,
+    sessions: Object.freeze(sessions),
+    readOnly: true, sourceMutationAllowed: false,
+    rawTelemetryReturned: false, hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1507,6 +1576,19 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     maintenanceStatus: Number.isInteger(status) ? status : null,
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    // Archive diagnostics only: expose a typed, minimal failure shape so an
+    // operator can distinguish a stale served MCP tool from a failed reader.
+    // Do not mirror raw structuredContent, stdout, stderr or host paths.
+    ...(remoteAction === 'starfield-vr-telemetry-archive' ? {
+      archiveDedicatedToolAdvertised: safeBoolean(operationResult?.dedicatedToolAdvertised),
+      archiveFixedFallbackSelected: safeBoolean(operationResult?.fixedMaintenanceFallbackSelected),
+      archiveRuntimeRefreshRequired: safeBoolean(operationResult?.runtimeRefreshRequired),
+      archiveMcpToolReturnedError: safeBoolean(operationResult?.mcpToolReturnedError),
+      archiveCommanderBlocker: safeTelemetryId(operationResult?.commanderBlocker),
+      archiveExecutionStatus: Number.isInteger(operationResult?.executionStatus)
+        ? operationResult.executionStatus : null,
+      archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
+    } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
@@ -1518,6 +1600,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
     starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
+    starfieldVrTelemetryArchive: safeStarfieldVrTelemetryArchiveReceiptProjection(operationResult?.telemetryArchive),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
@@ -2386,6 +2469,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
         // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
         rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
