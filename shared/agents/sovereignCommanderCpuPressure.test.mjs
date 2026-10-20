@@ -14,6 +14,8 @@ const sample = (patch = {}) => ({
   sampleSeconds: 5,
   processorCount: 8,
   metadataAvailable: true,
+  systemCpuMeasured: true,
+  systemCpuPct: 94.7,
   rows: [
     {
       pid: 5996,
@@ -46,6 +48,9 @@ test('fixed registry, MCP, and GitHub mailbox expose only bounded CPU snapshot a
   assert.match(registry, /timeoutMs: 25_000/);
   assert.match(mcp, /'cpu-pressure-snapshot'/);
   assert.match(script, /Start-Sleep -Seconds 5/);
+  assert.match(script, /Get-CimInstance Win32_Processor/);
+  assert.match(script, /systemCpuMeasured = \$systemCpuMeasured/);
+  assert.match(script, /systemCpuPct = \$systemCpuPct/);
   assert.match(script, /StartedTicks -eq \$startTime\.Ticks/);
   assert.doesNotMatch(script, /\$id\b/i, 'PowerShell $id aliases the reserved $PID variable');
   assert.match(script, /\$processId = \[int\]\$p\.Id/);
@@ -59,6 +64,8 @@ test('mailbox projects measured CPU and known script basename without raw comman
   const p = safeCpuPressureSnapshotProjection(envelope(sample()), 'cpu-pressure-snapshot');
   assert.equal(p.finalVerdict, 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED');
   assert.equal(p.rows[0].pid, 5996);
+  assert.equal(p.systemCpuMeasured, true);
+  assert.equal(p.systemCpuPct, 94.7);
   assert.equal(p.rows[0].cpuPercent, 9.3);
   assert.equal(p.rows[0].script, 'run-vr-resource-governor.ps1');
   assert.equal(Object.hasOwn(p.rows[0], 'commandLine'), false);
@@ -73,6 +80,13 @@ test('mailbox CPU projection fails closed on fake permission or unsanitized path
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ processTerminationAllowed: true })), 'cpu-pressure-snapshot'), null);
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ rows: [{ ...sample().rows[0], script: 'secret.ps1' }] })), 'cpu-pressure-snapshot'), null);
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ rows: [{ ...sample().rows[0], cpuPercent: 999 }] })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuPct: 101 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuPct: -1 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: false, systemCpuPct: 1 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: true, systemCpuPct: null })), 'cpu-pressure-snapshot'), null);
+  const missingOsCounter = safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: false, systemCpuPct: null })), 'cpu-pressure-snapshot');
+  assert.equal(missingOsCounter.systemCpuPct, null);
+  assert.equal(missingOsCounter.systemCpuMeasured, false);
 });
 
 const CPU_HEAD = 'a'.repeat(40);
@@ -195,6 +209,8 @@ test('public CPU receipt retains 12 validated rows, exact process identity and e
   assert.equal(publicReceipt.state, 'DONE');
   assert.equal(publicReceipt.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE');
   assert.equal(cpu?.schemaVersion, 'stephanos.battle-bridge-cpu-pressure.v1');
+  assert.equal(cpu?.systemCpuMeasured, true);
+  assert.equal(cpu?.systemCpuPct, 94.7);
   assert.equal(cpu?.rows.length, 12);
   assert.equal(cpu?.observedRowCount, 20);
   assert.equal(cpu?.rowsTruncated, true);
