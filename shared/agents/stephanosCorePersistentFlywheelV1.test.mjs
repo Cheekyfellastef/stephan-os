@@ -405,7 +405,8 @@ test('Core daemon breaks the Commander repair circular dependency and publishes 
   assert.match(source, /probeSovereignCommanderRuntimeCompatibility/);
   assert.match(source, /maybeRepairCoreDependencies/);
   assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);
-  assert.match(source, /MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker'/);
+  assert.match(source, /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  assert.doesNotMatch(source, /MISSION_WORKER_START_ACTION_ID/);
   assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED/);
   assert.match(source, /projectStephanosControlPlaneSpine/);
   assert.match(source, /controlPlane\.wakeState/);

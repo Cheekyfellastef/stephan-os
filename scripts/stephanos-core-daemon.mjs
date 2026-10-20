@@ -85,7 +85,6 @@ const DEPENDENCY_SELF_HEAL_COOLDOWN_MS = 2 * 60_000;
 const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
-const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
@@ -425,30 +424,14 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   }
 
   if (state.missionWorkerHealthy !== true) {
-    // A missing/unreadable heartbeat can coexist with a detached live worker.
-    // The task-start action cannot prove its launch/lease custody. Preserve
-    // the degraded observation until the existing Windows owner qualifies it.
-    const workerAge = state.missionWorkerHeartbeatAgeMs;
-    if (typeof workerAge !== 'number' || !Number.isFinite(workerAge) || workerAge < 0) {
-      lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD';
-      lastDependencySelfHealBlocker = 'MISSION_WORKER_CUSTODY_UNPROVEN';
-      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
-      return Object.freeze({ attempted: true, recovered: false });
-    }
-    const workerRepair = await runBoundedDependencyMaintenance(
-      MISSION_WORKER_START_ACTION_ID,
-      sourceHead,
-      'stephanos-core-mission-worker-self-heal',
-    );
-    if (workerRepair?.proofHash) proofHashes.push(String(workerRepair.proofHash));
-    if (workerRepair?.ok !== true) {
-      lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_BLOCKED';
-      lastDependencySelfHealBlocker = String(
-        workerRepair?.blocker || 'MISSION_WORKER_SELF_HEAL_BLOCKED',
-      ).slice(0, 160);
-      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
-      return Object.freeze({ attempted: true, recovered: false });
-    }
+    // Neither missing nor measured-stale heartbeats exclude a detached live
+    // worker. The Core observes/escalates; restart remains with the existing
+    // Windows owner after process/launch/lease custody is independently proven.
+    // Do not infer restart authority from a heartbeat's numeric age.
+    lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD';
+    lastDependencySelfHealBlocker = 'MISSION_WORKER_CUSTODY_UNPROVEN';
+    lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
+    return Object.freeze({ attempted: true, recovered: false });
   }
 
   const [verifiedCommander, verifiedBackend, verifiedWorkerAge] = await Promise.all([

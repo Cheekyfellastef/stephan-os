@@ -23,13 +23,12 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
     lastDependencySelfHealAttemptCount: 0, lastDependencySelfHealProofHashes: [],
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120_000,
     BATTLE_BRIDGE_SELF_HEAL_ACTION_ID: 'repair-battle-bridge',
-    MISSION_WORKER_START_ACTION_ID: 'start-mission-orchestrator-worker',
     workerHeartbeatPath: 'test-worker-heartbeat',
     probe: async () => true,
     fileAgeMs: async () => verifiedAge,
     runBoundedDependencyMaintenance: async (actionId, head, missionId) => {
       actions.push({ actionId, head, missionId });
-      return { ok: repairOk, proofHash: 'b'.repeat(64), blocker: repairOk ? '' : 'WORKER_START_HELD' };
+      return { ok: repairOk, proofHash: 'b'.repeat(64), blocker: repairOk ? '' : 'BACKEND_REPAIR_HELD' };
     },
   });
   vm.runInContext(source.slice(start, end), context);
@@ -40,9 +39,9 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
   };
 }
 
-function workerState({ gamingActive = false, age = null } = {}) {
+function workerState({ gamingActive = false, age = null, backendHealthy = true } = {}) {
   return projectStephanosCoreDaemonState({
-    sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
+    sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy,
     missionWorkerHeartbeatAgeMs: age, gamingActive,
   });
 }
@@ -65,40 +64,61 @@ test('missing worker evidence reports degraded custody hold without starting a p
   assert.equal(h.actions.length, 0);
 });
 
-test('existing measured-stale worker repair still requires a newly observed heartbeat after its action', async () => {
+test('missing and measured-stale worker evidence share one no-start custody invariant', async () => {
+  for (const age of [null, undefined, -1, NaN, 300001, 900000]) {
+    const h = isolatedRepair({ verifiedAge: 1000 });
+    const result = await h.run(workerState({ age }));
+    assert.equal(result.attempted, true);
+    assert.equal(result.recovered, false);
+    assert.equal(h.actions.length, 0);
+    assert.equal(h.context.lastDependencySelfHealBlocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  }
+});
+
+test('independent backend repair is allowed but action receipt alone cannot prove recovery', async () => {
   const h = isolatedRepair();
-  const result = await h.run(workerState({ age: 300001 }));
+  const result = await h.run(workerState({ age: 1000, backendHealthy: false }));
   assert.equal(result.attempted, true);
   assert.equal(result.recovered, false);
   assert.deepEqual(h.actions, [{
-    actionId: 'start-mission-orchestrator-worker', head: HEAD,
-    missionId: 'stephanos-core-mission-worker-self-heal',
+    actionId: 'repair-battle-bridge', head: HEAD,
+    missionId: 'stephanos-core-backend-self-heal',
   }]);
   assert.equal(h.context.lastDependencySelfHealBlocker, 'MISSION_WORKER_UNHEALTHY_AFTER_REPAIR');
   assert.equal(h.context.lastDependencySelfHealVerdict, 'CORE_DEPENDENCY_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY');
   assert.equal(h.context.lastDependencySelfHealProofHashes[0], 'b'.repeat(64));
 });
 
-test('worker repair becomes recovered only with a newly observed fresh heartbeat', async () => {
+test('independent backend repair recovers only after fresh dependency verification', async () => {
   const h = isolatedRepair({ verifiedAge: 1000 });
-  const result = await h.run(workerState({ age: 300001 }));
+  const result = await h.run(workerState({ age: 1000, backendHealthy: false }));
   assert.equal(result.attempted, true);
   assert.equal(result.recovered, true);
   assert.equal(h.context.lastDependencySelfHealVerdict, 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED');
   assert.equal(h.context.lastDependencySelfHealBlocker, '');
 });
 
-test('unchanged measured-stale heartbeat respects existing cooldown before retrying the same repair', async () => {
+test('worker custody hold preserves completed independent backend repair evidence', async () => {
+  const h = isolatedRepair();
+  const result = await h.run(workerState({ age: 300001, backendHealthy: false }));
+  assert.equal(result.recovered, false);
+  assert.equal(h.actions.length, 1);
+  assert.equal(h.actions[0].actionId, 'repair-battle-bridge');
+  assert.equal(h.context.lastDependencySelfHealBlocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.equal(h.context.lastDependencySelfHealProofHashes[0], 'b'.repeat(64));
+});
+
+test('unchanged backend failure respects existing cooldown before retrying the same repair', async () => {
   const h = isolatedRepair({ repairOk: false });
-  await h.run(workerState({ age: 300001 }));
-  assert.equal(h.context.lastDependencySelfHealBlocker, 'WORKER_START_HELD');
-  const held = await h.run(workerState({ age: 300001 }));
+  await h.run(workerState({ age: 1000, backendHealthy: false }));
+  assert.equal(h.context.lastDependencySelfHealBlocker, 'BACKEND_REPAIR_HELD');
+  const held = await h.run(workerState({ age: 1000, backendHealthy: false }));
   assert.equal(held.attempted, false);
   assert.equal(held.recovered, false);
   assert.equal(h.actions.length, 1);
   assert.equal(h.context.lastDependencySelfHealVerdict, 'CORE_DEPENDENCY_SELF_HEAL_COOLDOWN_ACTIVE');
   h.advance(120_000);
-  await h.run(workerState({ age: 300001 }));
+  await h.run(workerState({ age: 1000, backendHealthy: false }));
   assert.equal(h.actions.length, 2);
   assert.equal(h.context.lastDependencySelfHealAttemptCount, 2);
 });
