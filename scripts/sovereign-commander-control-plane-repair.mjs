@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +10,39 @@ import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridge
 export const SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA = 'stephanos.sovereign-commander-control-plane-repair.v1';
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const SHA40 = /^[0-9a-f]{40}$/;
+const GAMING_GUARD_BLOCKER = 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED';
+const GOVERNOR_SCHEMA = 'stephanos.vr-resource-governor.v1';
+
+// Never let a stale Core status authorise a later unattended Windows installer.
+// Missing, stale, symlinked, corrupt or oversized evidence fails closed.
+export function sovereignControlPlaneGamingSafeV1({
+  workspaceRoot = process.env.USERPROFILE
+    ? resolve(process.env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace')
+    : '',
+  read = readFileSync,
+  stat = lstatSync,
+  nowMs = Date.now(),
+} = {}) {
+  if (!workspaceRoot || !Number.isFinite(nowMs)) return false;
+  try {
+    const file = resolve(workspaceRoot, 'vr', 'vr-resource-governor-current.json');
+    const info = stat(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.size < 2 || info.size > 32768) return false;
+    const raw = read(file, 'utf8');
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 32768) return false;
+    const state = JSON.parse(raw);
+    const when = Date.parse(state?.updatedAtUtc);
+    const flags = ['active','flatGameActive','airLinkActive','realAirLinkActive',
+      'virtualAirLinkTestActive','prepareLeaseActive'];
+    return state?.schemaVersion === GOVERNOR_SCHEMA
+      && state.governorVersion === 3 && state.phase === 'NORMAL'
+      && flags.every(flag => state[flag] === false)
+      && Number.isFinite(when) && nowMs >= when && nowMs - when <= 15000;
+  } catch {
+    return false;
+  }
+}
+
 
 function text(value) {
   return String(value ?? '').trim();
@@ -34,6 +68,8 @@ export function runSovereignCommanderControlPlaneRepair({
   platform = process.platform,
   spawnSyncFn = spawnSync,
   reconciler = reconcileBattleBridgeControlPlane,
+  unattendedGamingGuard = false,
+  gamingSafe = sovereignControlPlaneGamingSafeV1,
 } = {}) {
   const branch = fixedGit(spawnSyncFn, repoRoot, ['branch', '--show-current']);
   const head = fixedGit(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
@@ -53,11 +89,31 @@ export function runSovereignCommanderControlPlaneRepair({
     });
   }
 
+  // Recheck before each child, not only at scheduling. A game starting
+  // DURING an in-flight synchronous installer remains a separate Windows
+  // gaming-custody qualification requirement, not proven by this guard.
+  if (unattendedGamingGuard && gamingSafe() !== true) {
+    return Object.freeze({
+      schemaVersion: SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA,
+      ok: false, blocker: GAMING_GUARD_BLOCKER, sourceHead: observedHead,
+      sourceMutationAllowed: false, gitMutationAllowed: false,
+      arbitraryShellAllowed: false, pcRestartAllowed: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED',
+    });
+  }
+  let gamingGuardRejected = false;
+  const guardedSpawn = (executable, args, options) => {
+    if (unattendedGamingGuard && gamingSafe() !== true) {
+      gamingGuardRejected = true;
+      return { status: 1, stdout: '', stderr: GAMING_GUARD_BLOCKER };
+    }
+    return spawnSyncFn(executable, args, options);
+  };
   const repair = reconciler({
     repoRoot,
     expectedHead: observedHead,
     platform,
-    spawnSyncFn,
+    spawnSyncFn: unattendedGamingGuard ? guardedSpawn : spawnSyncFn,
   });
 
   const authoritySafe = repair?.sourceMutationAllowed === false
@@ -66,12 +122,15 @@ export function runSovereignCommanderControlPlaneRepair({
     && repair?.pcRestartAllowed === false;
   const ok = repair?.ok === true
     && repair?.sourceHead === observedHead
-    && authoritySafe;
+    && authoritySafe
+    && !gamingGuardRejected
+    && (!unattendedGamingGuard || gamingSafe() === true);
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA,
     ok,
-    blocker: ok ? '' : text(repair?.blocker || 'CONTROL_PLANE_REPAIR_UNPROVEN'),
+    blocker: ok ? '' : gamingGuardRejected ? GAMING_GUARD_BLOCKER
+      : text(repair?.blocker || 'CONTROL_PLANE_REPAIR_UNPROVEN'),
     sourceHead: observedHead,
     repair,
     sourceMutationAllowed: false,
@@ -85,7 +144,14 @@ export function runSovereignCommanderControlPlaneRepair({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = runSovereignCommanderControlPlaneRepair();
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--unattended-gaming-guard')) {
+    process.stderr.write('SOVEREIGN_COMMANDER_CONTROL_PLANE_ARGUMENTS_INVALID\n');
+    process.exit(2);
+  }
+  const result = runSovereignCommanderControlPlaneRepair({
+    unattendedGamingGuard: args.length === 1,
+  });
   process.stdout.write(JSON.stringify(result) + '\n');
   process.exitCode = result.ok ? 0 : 1;
 }
