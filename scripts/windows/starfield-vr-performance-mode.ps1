@@ -838,6 +838,7 @@ $samples = New-Object System.Collections.Generic.List[object]
 $logicalProcessorCount = [Math]::Max(1, [Environment]::ProcessorCount)
 $previousCpuByPid = @{}
 $cpuConsumerHistory = @{}
+$starfieldThreadCpuHistory = @{}
 $airLinkWasObserved = $false
 $airLinkInactiveSince = $null
 $audioRestoredOnAirLinkExit = $false
@@ -942,6 +943,7 @@ while ($true) {
     # Same-session fixed-name CPU attribution. No separate daemon or browser
     # inspection, no tab/URL capture, and no process mutation.
     $cpuConsumers = Get-StarfieldVrCpuConsumerSample -Previous $cpuConsumerHistory -LogicalProcessorCount $logicalProcessorCount
+    $gameThreads = Get-StarfieldVrGameThreadCpuSample -GameProcessId $currentGameProcessId -Previous $starfieldThreadCpuHistory
     $metaProcesses = @(Get-Process -Name 'OculusDash','OVRServer_x64','OVRServiceLauncher' -ErrorAction SilentlyContinue)
     $metaWorkingSetMiB = if ($metaProcesses.Count) {
         [math]::Round((($metaProcesses | Measure-Object WorkingSet64 -Sum).Sum / 1MB), 1)
@@ -1007,6 +1009,11 @@ while ($true) {
         gpuTemperatureC = if ($gpu) { $gpu.gpuTemperatureC } else { $null }
         gpuPowerW = if ($gpu) { $gpu.gpuPowerW } else { $null }
         starfieldCpuPct = $starfieldCpuPct
+        starfieldBusiestThreadCpuPct = $gameThreads.busiestThreadCpuPct
+        starfieldThreadCpuSource = [string]$gameThreads.source
+        starfieldThreadCpuReason = [string]$gameThreads.reason
+        starfieldThreadCount = $gameThreads.threadCount
+        starfieldMatchedThreadCount = [int]$gameThreads.matchedThreadCount
         systemCpuPct = $systemCpuPct
         cpuConsumersAvailable = [bool]$cpuConsumers.available
         cpuConsumersSource = [string]$cpuConsumers.source
@@ -1139,6 +1146,7 @@ $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
 $starfieldCpuSamples = @($samples | Where-Object { $null -ne $_.starfieldCpuPct })
+$busiestThreadSamples = @($samples | Where-Object { $null -ne $_.starfieldBusiestThreadCpuPct })
 $systemCpuSamples = @($samples | Where-Object { $null -ne $_.systemCpuPct })
 $chatGptCpuSamples = @($samples | Where-Object { $null -ne $_.chatGptCpuPct })
 $edgeCpuSamples = @($samples | Where-Object { $null -ne $_.edgeCpuPct })
@@ -1202,6 +1210,11 @@ $summary = [ordered]@{
     maxGpuDecoderUtilPct = if ($decoderSamples.Count) { ($decoderSamples | Measure-Object gpuDecoderUtilPct -Maximum).Maximum } else { $null }
     avgStarfieldCpuPct = if ($starfieldCpuSamples.Count) { [math]::Round(($starfieldCpuSamples | Measure-Object starfieldCpuPct -Average).Average, 1) } else { $null }
     maxStarfieldCpuPct = if ($starfieldCpuSamples.Count) { ($starfieldCpuSamples | Measure-Object starfieldCpuPct -Maximum).Maximum } else { $null }
+    avgStarfieldBusiestThreadCpuPct = if ($busiestThreadSamples.Count) { [math]::Round(($busiestThreadSamples | Measure-Object starfieldBusiestThreadCpuPct -Average).Average, 2) } else { $null }
+    maxStarfieldBusiestThreadCpuPct = if ($busiestThreadSamples.Count) { ($busiestThreadSamples | Measure-Object starfieldBusiestThreadCpuPct -Maximum).Maximum } else { $null }
+    starfieldThreadCpuMeasuredSampleCount = $busiestThreadSamples.Count
+    starfieldThreadCpuSource = 'STARFIELD_PROCESS_THREAD_CPU_DELTAS'
+    starfieldThreadRoleKnown = $false
     avgSystemCpuPct = if ($systemCpuSamples.Count) { [math]::Round(($systemCpuSamples | Measure-Object systemCpuPct -Average).Average, 1) } else { $null }
     maxSystemCpuPct = if ($systemCpuSamples.Count) { ($systemCpuSamples | Measure-Object systemCpuPct -Maximum).Maximum } else { $null }
     cpuConsumersSource = 'FIXED_APP_FAMILY_PROCESS_CPU_DELTAS'
