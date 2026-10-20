@@ -2688,6 +2688,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const tools = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.map((tool) => text(tool?.name))
     : [];
+  // Read-only fallback only when the served MCP advertises the earlier fixed
+  // maintenance tool but not the archive-specific tool. Never infer live
+  // capability from the repository source alone.
+  const archiveDedicatedAdvertised = tools.includes('starfield_vr_telemetry_archive');
+  const archiveActionRequested = shape.command.remoteAction === 'starfield-vr-telemetry-archive';
   if (!listed.ok
     || !tools.includes('get_config')
     || !tools.includes('maintenance_action')
@@ -3038,10 +3043,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     id: 4,
     method: 'tools/call',
     params: {
-      name: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
+      name: archiveActionRequested && archiveDedicatedAdvertised
         ? 'starfield_vr_telemetry_archive' : 'maintenance_action',
-      arguments: shape.command.remoteAction === 'starfield-vr-telemetry-archive'
-        ? { offset: shape.command.telemetryOffset, limit: shape.command.telemetryLimit }
+      arguments: archiveActionRequested
+        ? (archiveDedicatedAdvertised
+          ? { offset: shape.command.telemetryOffset, limit: shape.command.telemetryLimit }
+          : {
+            actionId: 'starfield-vr-telemetry-archive',
+            offset: shape.command.telemetryOffset,
+            limit: shape.command.telemetryLimit,
+          })
         : shape.command.remoteAction === 'preservation-converge-pr-branch'
         ? {
           actionId: shape.command.remoteAction,
@@ -3065,7 +3076,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
-    'rescue-island-readonly-boundary']
+    'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -3518,6 +3529,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && telemetryArchive.hostPathsReturned === false
       && telemetryArchive.secretMaterialReturned === false;
     if (!proofComplete) {
+      const mcpReply = actionCall.body?.result;
+      const mcpError = mcpReply?.isError === true;
       const safeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
       const source = Object.keys(safeEnvelope).length > 0 ? safeEnvelope : rawMaintenance;
       const stdout = String(source?.structuredContent?.stdout || '');
@@ -3543,8 +3556,22 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
                     : decoded.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
                       ? 'SCHEMA_MISMATCH'
                       : 'ARCHIVE_CONTRACT_INVALID';
+      const originalEnvelope = mcpReply?.structuredContent;
+      const classifiedCode = [
+        originalEnvelope?.blocker,
+        originalEnvelope?.structuredContent?.blocker,
+        originalEnvelope?.structuredContent?.structuredContent?.blocker,
+      ].map((value) => text(value)).find((value) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(value)) || '';
+      const failure = safeMaintenanceFailureProjection(originalEnvelope, shape.command.remoteAction);
       return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_' + reason, {
         remoteAction: shape.command.remoteAction,
+        dedicatedToolAdvertised: archiveDedicatedAdvertised,
+        fixedMaintenanceFallbackSelected: !archiveDedicatedAdvertised,
+        mcpToolReturnedError: mcpError,
+        commanderBlocker: classifiedCode,
+        executionStatus: failure?.status ?? null,
+        executionErrorCode: failure?.errorCode || '',
+        executionBlocker: failure?.executionBlocker || '',
         proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
         processIdMatch: projection.processId === shape.command.remoteAction,
         successfulStatus: projection.status === 0,
