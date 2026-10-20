@@ -235,3 +235,43 @@ test('GitHub receipt projects up to four sanitised historical rows, without raw 
   assert.ok(Buffer.byteLength(output, 'utf8') < 9 * 1024);
   assert.doesNotMatch(output, /MY_SECRET_RAW_LOG_SHOULD_NOT_LEAK|secret-telemetry.csv/);
 });
+
+test('public archive failure receipt contains only safe route and execution tokens', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'starfield-archive-failure-proof-v1',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149, branch: 'main', state: 'BLOCKED',
+    expectedHead: SHA,
+    result: {
+      ok: false, result: {
+        ok: false,
+        remoteAction: 'starfield-vr-telemetry-archive',
+        blocker: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_EXECUTION_ENVELOPE_INVALID',
+        dedicatedToolAdvertised: false,
+        fixedMaintenanceFallbackSelected: false,
+        runtimeRefreshRequired: true,
+        mcpToolReturnedError: true,
+        commanderBlocker: 'SOVEREIGN_ARCHIVE_READER_FAILED',
+        executionStatus: 1,
+        executionErrorCode: 'ENOENT',
+        executionBlocker: 'SOVEREIGN_ARCHIVE_READER_FAILED',
+        privateStderr: 'PRIVATE_ARCHIVE_WINDOWS_STDERR',
+        structuredContent: { stdout: 'PRIVATE_CSV_DO_NOT_PUBLISH' },
+      },
+    },
+  };
+  const raw = serializeBoundedReceiptJson(receipt);
+  const parsed = JSON.parse(raw);
+  const publicFailure = parsed?.result?.result;
+  assert.equal(publicFailure.archiveDedicatedToolAdvertised, false);
+  assert.equal(publicFailure.archiveFixedFallbackSelected, false);
+  assert.equal(publicFailure.archiveRuntimeRefreshRequired, true);
+  assert.equal(publicFailure.archiveMcpToolReturnedError, true);
+  assert.equal(publicFailure.archiveCommanderBlocker, 'SOVEREIGN_ARCHIVE_READER_FAILED');
+  assert.equal(publicFailure.archiveExecutionStatus, 1);
+  assert.equal(publicFailure.archiveExecutionErrorCode, 'ENOENT');
+  assert.doesNotMatch(raw, /PRIVATE_ARCHIVE_WINDOWS_STDERR|PRIVATE_CSV_DO_NOT_PUBLISH/);
+  assert.ok(Buffer.byteLength(raw, 'utf8') < 9 * 1024);
+});
