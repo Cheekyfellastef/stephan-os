@@ -62,6 +62,24 @@ test('one independently approved candidate gets selected, held tasks do not bloc
   assert.ok(result.blocked.some((entry) => entry.reason === 'PRESERVED_SOURCE_CUSTODY'));
 });
 
+test('malformed and duplicate inbox rows cannot jam unrelated Seed Canopy selection', () => {
+  const usable = { request, manifestSha256, approval: approved };
+  const duplicate = { ...usable, request: { ...request, taskId: 'duplicate-seed-task' },
+    approval: { ...approved, taskId: 'duplicate-seed-task' } };
+  const candidates = [null, 19, {}, undefined, duplicate, { ...duplicate }, usable];
+  const result = selectParallelSeedApprovedTaskV1(candidates, NOW);
+  assert.equal(result.selected.request.taskId, request.taskId);
+  assert.equal(result.eligibleCount, 1);
+  assert.equal(result.blocked.length, 6);
+  assert.equal(result.blocked.filter(row =>
+    row.reason === 'DUPLICATE_TASK_ID_OWNERSHIP_AMBIGUOUS').length, 2);
+  assert.equal(result.blocked.filter(row =>
+    row.reason === 'INVALID_INBOX_TASK_ENVELOPE').length, 4);
+  assert.equal(selectParallelSeedApprovedTaskV1(null, NOW).selected, null);
+  assert.equal(selectParallelSeedApprovedTaskV1([], NOW).selected, null);
+  assert.equal(result.selected.existingClaim, undefined);
+});
+
 test('bounded model-free inventory selector moves past one blocked lane without R7 lease', () => {
   const entry = (taskId, targetPath, generationMode = 'CANONICAL_INVENTORY_V1') => {
     const candidate = { ...request, taskId, targetPath, generationMode };
