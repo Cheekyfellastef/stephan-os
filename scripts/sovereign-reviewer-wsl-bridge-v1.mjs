@@ -100,9 +100,75 @@ export function planWindowsSovereignReviewerV1(env, {
   });
 }
 
+// This runs via fixed trusted WSL git BEFORE the reviewer script is executed.
+// In particular, git status alone ignores assume-unchanged and skip-worktree.
+// Every executable/policy dependency in this bounded reviewer import closure
+// must match HEAD byte-for-byte, with no index masking of modifications.
+export const REVIEWER_CRITICAL_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-reviewer-v1.mjs',
+  'scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+  'shared/agents/sovereignReviewerV1.mjs',
+  'shared/agents/sovereignCalibrationV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeWindowsHosts.mjs',
+  'shared/agents/providerNeutralReviewV1.mjs',
+  'shared/agents/executionReceiptV1.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+  'shared/agents/sharedWorkspaceRuntimeConfig.mjs',
+  'shared/agents/sharedAgentWorkspace.mjs',
+  'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+  'shared/agents/closedLoopLearningV1.mjs',
+]);
+export function verifyWslReviewerExecutableBytesV1({ run, reviewerPath, reviewEnv }) {
+  const safe = value => typeof value === 'string' ? value.trim() : '';
+  const suffix = '/scripts/sovereign-reviewer-v1.mjs';
+  if (typeof run !== 'function' || typeof reviewerPath !== 'string'
+    || !reviewerPath.startsWith('/') || !reviewerPath.endsWith(suffix)
+    || reviewerPath.includes('/../') || reviewerPath.includes('/./')) {
+    return error('REVIEWER_SOURCE_BYTES_UNVERIFIED');
+  }
+  const root = reviewerPath.slice(0, -suffix.length);
+  if (!root || root === '/') return error('REVIEWER_SOURCE_BYTES_UNVERIFIED');
+  const git = args => {
+    // No shell, user Git aliases, inherited Git config or mutable helper script.
+    const result = run(['/usr/bin/env', '-i',
+      'PATH=/usr/bin:/bin', 'HOME=/tmp', 'GIT_CONFIG_NOSYSTEM=1',
+      'GIT_CONFIG_GLOBAL=/dev/null', '/usr/bin/git', '-C', root,
+      ...args], 12_000);
+    if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string'
+      || result.stdout.length > 4096) throw Error('REVIEWER_SOURCE_GIT_UNVERIFIED');
+    return safe(result.stdout);
+  };
+  try {
+    if (git(['rev-parse', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD
+      || git(['symbolic-ref', '--quiet', '--short', 'HEAD']) !== reviewEnv.STEPHANOS_REVIEW_EXACT_BRANCH
+      || git(['status', '--porcelain', '--untracked-files=normal']) !== '') {
+      return error('REVIEWER_SOURCE_HEAD_OR_WORKTREE_UNVERIFIED');
+    }
+    git(['merge-base', '--is-ancestor', reviewEnv.STEPHANOS_REVIEW_EXACT_BASE,
+      reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD]);
+    for (const file of REVIEWER_CRITICAL_SOURCE_PATHS) {
+      // H = ordinary tracked entry. lowercase/skip-worktree variants are
+      // never accepted even if hash-object happens to match at this instant.
+      if (git(['ls-files', '-v', '--', file]) !== 'H ' + file) {
+        return error('REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE');
+      }
+      const expected = git(['rev-parse', 'HEAD:' + file]);
+      const actual = git(['hash-object', '--no-filters', '--', file]);
+      if (!/^[0-9a-f]{40}$/.test(expected) || actual !== expected) {
+        return error('REVIEWER_SOURCE_BYTES_NOT_HEAD');
+      }
+    }
+    return Object.freeze({ ok: true, sourceHead: reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD });
+  } catch {
+    return error('REVIEWER_SOURCE_GIT_UNVERIFIED');
+  }
+}
+
 export function runWindowsSovereignReviewerV1(env = process.env, {
   platform = process.platform, sourceRoot = SOURCE_ROOT, exists = existsSync,
   spawn = spawnSync, mode = 'review',
+  verifySource = verifyWslReviewerExecutableBytesV1,
 } = {}) {
   const plan = planWindowsSovereignReviewerV1(env, { platform, sourceRoot, exists });
   if (!plan.ok) return plan;
@@ -134,6 +200,20 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
       return error('WSL_PATH_TRANSLATION_UNAVAILABLE');
     }
     linuxPaths.push(output);
+  }
+  if (mode === 'review') {
+    // A tainted reviewer could fabricate its own clean status and receipt.
+    // Independently read actual Git HEAD bytes using trusted WSL executables
+    // before Node is allowed to load the reviewer or its policy imports.
+    const attested = verifySource({
+      run, reviewerPath: linuxPaths[0], reviewEnv: plan.reviewEnv,
+    });
+    if (attested?.ok !== true) return error(
+      attested?.reason === 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE'
+        ? 'REVIEWER_SOURCE_INDEX_FLAGS_UNSAFE'
+        : attested?.reason === 'REVIEWER_SOURCE_BYTES_NOT_HEAD'
+          ? 'REVIEWER_SOURCE_BYTES_NOT_HEAD'
+          : 'REVIEWER_SOURCE_GIT_UNVERIFIED');
   }
   const args = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp',
     ...Object.entries(plan.reviewEnv).map(([key, value]) => key + '=' + value),
