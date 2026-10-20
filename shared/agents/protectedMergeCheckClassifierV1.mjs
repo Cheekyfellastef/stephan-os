@@ -33,7 +33,12 @@ export function validateProtectedMergeCheckRows(checks) {
     // pull_request Build CI, regardless of whether Pages emitted a SKIPPED row.
     // Ignore other-trigger Build rows instead of letting their successes or
     // conclusions influence the genuine PR build evaluation.
-    if (workflow === 'Build Stephanos UI' && check?.event !== 'pull_request') continue;
+    if (workflow === 'Build Stephanos UI' && check?.event !== 'pull_request') {
+      // Ignore a non-PR success, but never silently accept an unexpected
+      // skipped/failed required Build check or forged Pages skip.
+      if (state === 'SUCCESS') continue;
+      return false;
+    }
 
     const identity = `${workflow}\0${name}`;
     if (state === 'SUCCESS') {
