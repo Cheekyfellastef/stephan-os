@@ -131,6 +131,11 @@ function supervisorFlowGreen(result) {
   if (Number.isSafeInteger(status.nativeGapCandidateTotalCount)
       && status.nativeGapCandidateTotalCount > 0) return false;
   if (status.nativeGapSourceHealth === 'DEGRADED') return false;
+  // A granted/published handoff is not material execution. A legacy status
+  // without the new count must also fail closed until pickup is reconciled.
+  if (Number(status?.dispatchCount) > 0
+      && (!Number.isSafeInteger(status?.pickupPendingCount)
+        || status.pickupPendingCount > 0)) return false;
   const autonomyPending = status?.daemonMayReportGreen === false;
   const autonomousWorkActive = Number(status?.dispatchCount) > 0
     || Number(status?.runningMissionCount) > 0;
@@ -140,6 +145,11 @@ function supervisorFlowGreen(result) {
 
 function supervisorFlowBlocker(result) {
   const status = parseSupervisorStatus(result);
+  if (Number(status?.pickupPendingCount) > 0
+      || (Number(status?.dispatchCount) > 0
+        && !Number.isSafeInteger(status?.pickupPendingCount))) {
+    return 'GOAL_DISPATCH_PICKUP_UNPROVEN';
+  }
   if (status?.nativeGapSourceHealth === 'DEGRADED') return 'NATIVE_GAP_INTAKE_UNVERIFIED';
   if (Number.isSafeInteger(status?.nativeGapCandidateTotalCount)
       && status.nativeGapCandidateTotalCount > 0) return 'NATIVE_UPLIFT_PENDING';
