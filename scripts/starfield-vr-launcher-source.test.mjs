@@ -5,6 +5,8 @@ import test from 'node:test';
 
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
+const flightRecorderUrl = new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url);
+const vrDiagnosisUrl = new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
 const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url);
@@ -93,6 +95,35 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /finalGameProcessId/);
   assert.match(source, /Restore-Session/);
   assert.match(source, /audioRestored/);
+});
+
+test('playtest CPU attribution includes Starfield busiest thread, normalised game CPU, and desktop apps without privacy expansion', async () => {
+  const [performance, recorder, diagnosis] = await Promise.all([
+    readFile(performanceModeUrl, 'utf8'),
+    readFile(flightRecorderUrl, 'utf8'),
+    readFile(vrDiagnosisUrl, 'utf8'),
+  ]);
+  assert.match(recorder, /function Get-StarfieldVrGameThreadCpuSample/);
+  assert.match(recorder, /function Get-StarfieldVrCpuConsumerSample/);
+  assert.match(recorder, /\$thread\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.TotalProcessorTime\.TotalSeconds/);
+  assert.match(recorder, /\$Previous\.processStartTicks -eq \$processStartedTicks/);
+  assert.match(recorder, /\$secondsElapsed -gt 0/);
+  assert.match(recorder, /\$g\.matched -eq \$g\.count/);
+  assert.match(recorder, /chatGpt = 'ChatGPT'/);
+  assert.match(recorder, /edge = 'msedge'/);
+  assert.match(recorder, /metaVr = 'OVRServer_x64'/);
+  assert.match(performance, /Get-StarfieldVrGameThreadCpuSample -GameProcessId \$currentGameProcessId/);
+  assert.match(performance, /Get-StarfieldVrCpuConsumerSample -Previous \$cpuConsumerHistory/);
+  assert.match(performance, /starfieldBusiestThreadCpuPct = \$gameThreads\.busiestThreadCpuPct/);
+  assert.match(performance, /starfieldCpuPct = \$starfieldCpuPct/);
+  assert.match(performance, /systemCpuPct = \$systemCpuPct/);
+  assert.match(performance, /starfieldThreadRoleKnown = \$false/);
+  assert.match(performance, /browserTabsInspected = \$false/);
+  assert.match(performance, /chatGptConversationContentsInspected = \$false/);
+  assert.match(diagnosis, /starfield-single-thread-saturation-observed/);
+  assert.match(diagnosis, /desktop-chatgpt-cpu-contention-observed/);
+  assert.doesNotMatch(recorder, /\b(?:Stop-Process|taskkill|Invoke-Expression|CommandLine|Get-CimInstance Win32_Process)\b/i);
 });
 
 test('Quest audio helper captures and restores exact Windows default endpoints without third-party utilities', async () => {
