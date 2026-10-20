@@ -211,6 +211,21 @@ test('CPU orphan caretaker runs only the fixed named script from the existing bo
   assert.match(calls[0].args.at(-1),/relieve-verified-orphan-cpu-pressure\.ps1$/);
   assert.equal(report.unresolvedCpuPressure,true);
   assert.equal(report.terminated,false);
+  const cleared=fixedCpuReliefResult(verifiedCpuReply({
+    finalVerdict:'CPU_RELIEF_PRESSURE_CLEARED',
+    sampledSystemCpuPct:45,
+  })).report;
+  assert.equal(cleared.unresolvedCpuPressure,false);
+  assert.equal(cleared.ok,true);
+  assert.equal(buildSovereignCommanderRepairReport({
+    repair:{ok:true,sourceHead:'a'.repeat(40),steps:[],cpuRelief:cleared},
+  }).outcome,'HEALTHY');
+  const forgedCleared=fixedCpuReliefResult(verifiedCpuReply({
+    finalVerdict:'CPU_RELIEF_PRESSURE_CLEARED',
+    sampledSystemCpuPct:91,
+  })).report;
+  assert.equal(forgedCleared.ok,false);
+  assert.equal(report.terminated,false);
   assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS<=240000,true);
 });
 test('CPU relief fails closed on forged authority and never grants arbitrary Windows termination',()=>{
