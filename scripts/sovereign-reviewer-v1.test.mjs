@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { main, persistReview } from './sovereign-reviewer-v1.mjs';
+import { main, persistReview, localModel } from './sovereign-reviewer-v1.mjs';
 
 const candidate = (timestampUtc = '2026-10-10T14:00:00.000Z', sourceHead = 'a'.repeat(40)) => ({
   status: 'LOCAL_REVIEW_EVIDENCE_READY', proofRef: `proofs/sovereign-review-pr-3005-${sourceHead.slice(0, 12)}.json`,
@@ -177,4 +177,69 @@ test('offline local model is held and still published as a blocked status, never
   assert.equal(result.status, 'SOVEREIGN_REVIEW_HELD');
   assert.equal(published.reason, 'REVIEW_WORKTREE_NOT_CLEAN');
   assert.equal(result.mergeAuthority, false);
+});
+
+test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial and unload', async () => {
+  const calls = [], pin = 'a'.repeat(64), guard = [], clear = [];
+  const deps = {
+    platform: 'linux',
+    gamingGuard: () => { guard.push(true); return { ok: true }; },
+    modelPin: async () => ({ ok: true, digest: pin }),
+    startPolling: callback => callback,
+    stopPolling: token => clear.push(token),
+    fetchImpl: async (url, opts) => {
+      calls.push({ url, opts });
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop',
+        response: JSON.stringify({ verdict: 'clean', reviewedPaths: [], findings: [] }),
+      }) };
+    },
+  };
+  const result = await localModel('sensitive review diff', {}, deps);
+  assert.match(result, /"verdict":"clean"/);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://127.0.0.1:11434/api/generate');
+  assert.equal(calls[0].opts.redirect, 'error');
+  assert.equal(calls[0].opts.method, 'POST');
+  assert.equal(JSON.parse(calls[0].opts.body).keep_alive, 0);
+  assert.ok(guard.length >= 4, 'resource state must be rechecked around inference');
+  assert.equal(clear.length, 1, 'inference governor monitor is always cleared');
+});
+
+test('localModel refuses gaming, tag replacement, redirected results, and aborts during gaming', async () => {
+  const good = 'b'.repeat(64);
+  const ready = { platform: 'linux', gamingGuard: () => ({ ok: true }),
+    modelPin: async () => ({ ok: true, digest: good }),
+    startPolling: fn => fn, stopPolling: () => {} };
+  let invoked = false;
+  await assert.rejects(localModel('private', {}, { ...ready,
+    gamingGuard: () => ({ ok: false }), fetchImpl: () => { invoked = true; },
+  }), /LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED/);
+  assert.equal(invoked, false, 'gaming denial must precede any private diff upload');
+  let pinCall = 0;
+  await assert.rejects(localModel('private', {}, { ...ready,
+    modelPin: async () => ({ ok: true, digest: (++pinCall === 1 ? good : 'c'.repeat(64)) }),
+    fetchImpl: () => { invoked = true; },
+  }), /LOCAL_REVIEW_MODEL_DIGEST_CHANGED/);
+  assert.equal(invoked, false, 'digest substitution must fail before generation');
+  await assert.rejects(localModel('private', {}, { ...ready,
+    fetchImpl: async () => { throw Error('fetch failed on redirect'); },
+  }), /fetch failed on redirect/);
+  let monitor;
+  await assert.rejects(localModel('private', {}, { ...ready,
+    startPolling: fn => { monitor = fn; return 1; },
+    gamingGuard: (() => { let calls = 0; return () => ({ ok: ++calls < 3 }); })(),
+    fetchImpl: async (_url, opts) => {
+      monitor();
+      assert.equal(opts.signal.aborted, true);
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
+      }) };
+    },
+  }), /LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED/);
+  await assert.rejects(localModel('private', {}, { ...ready,
+    fetchImpl: async () => ({ ok: true, text: async () => JSON.stringify({
+      model: 'wrong-model', done: true, done_reason: 'stop', response: '{}',
+    }) }),
+  }), /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
 });
