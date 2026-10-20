@@ -50,7 +50,7 @@ const STEPS = Object.freeze({
   controlPlane: Object.freeze({
     id: 'repair-control-plane',
     executable: node,
-    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-control-plane-repair.mjs')]),
+    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-control-plane-repair.mjs'), '--unattended-gaming-guard']),
     timeoutMs: 180_000,
   }),
   coreStatus: Object.freeze({
