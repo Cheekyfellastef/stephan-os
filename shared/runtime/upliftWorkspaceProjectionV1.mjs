@@ -1748,9 +1748,15 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const heartbeat = feedCurrent ? latestByTime(list(records.statusRecords).filter((record) => {
     const stamp = Date.parse(record?.timestampUtc);
     return record.statusId === OPENCLAW_EXCELLENCE_MISSION_ID
+      && record.status === 'SEED_ACTIVE'
       && record.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
       && record.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
+      && record.issueRef === OPENCLAW_EXCELLENCE_ISSUE
+      && record.seedContractSource === expectedSource
       && record.seedHeartbeat?.schemaVersion === 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+      && record.seedHeartbeat.refreshedAtUtc === record.timestampUtc
+      && record.seedHeartbeat.authorityWidened === false
+      && record.seedHeartbeat.createsReplacementMachinery === false
       && record.seedHeartbeat.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
       && record.seedHeartbeat.issueRef === OPENCLAW_EXCELLENCE_ISSUE
       && record.seedHeartbeat.contractSource === expectedSource

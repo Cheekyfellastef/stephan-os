@@ -101,6 +101,26 @@ test('stale or mismatched heartbeat cannot plant or enqueue growth', () => {
   }
 });
 
+test('OpenClaw heartbeat cannot plant growth when authority or source custody is contradicted', () => {
+  const valid = heartbeat();
+  const invalid = [
+    { ...valid, status: 'BLOCKED' },
+    { ...valid, status: 'UNKNOWN' },
+    { ...valid, issueRef: '#1657' },
+    { ...valid, seedContractSource: 'shared/runtime/foreignSeed.mjs' },
+    { ...valid, seedHeartbeat: { ...valid.seedHeartbeat, refreshedAtUtc: '2026-10-13T14:34:00.000Z' } },
+    { ...valid, seedHeartbeat: { ...valid.seedHeartbeat, authorityWidened: true } },
+    { ...valid, seedHeartbeat: { ...valid.seedHeartbeat, createsReplacementMachinery: true } },
+  ];
+  for (const record of invalid) {
+    const payload = feed({ statusRecords: [record] });
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.planted, false, 'contradictory heartbeat must not plant the seed');
+    assert.equal(seed.sourceTruth, 'UNKNOWN');
+    assert.deepEqual(pressure(payload), []);
+  }
+});
+
 test('inventory and skill qualification require separate proof for Local and Standalone', () => {
   const rungs = buildOpenClawExcellenceSeedV1().growthRungs;
   const payload = feed({ statusRecords: [heartbeat()] });
