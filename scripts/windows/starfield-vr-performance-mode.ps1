@@ -837,6 +837,7 @@ $handoffDeadline = $null
 $samples = New-Object System.Collections.Generic.List[object]
 $logicalProcessorCount = [Math]::Max(1, [Environment]::ProcessorCount)
 $previousCpuByPid = @{}
+$cpuConsumerHistory = @{}
 $airLinkWasObserved = $false
 $airLinkInactiveSince = $null
 $audioRestoredOnAirLinkExit = $false
@@ -938,6 +939,9 @@ while ($true) {
         cpuSeconds = $cpuSeconds
     }
 
+    # Same-session fixed-name CPU attribution. No separate daemon or browser
+    # inspection, no tab/URL capture, and no process mutation.
+    $cpuConsumers = Get-StarfieldVrCpuConsumerSample -Previous $cpuConsumerHistory -LogicalProcessorCount $logicalProcessorCount
     $metaProcesses = @(Get-Process -Name 'OculusDash','OVRServer_x64','OVRServiceLauncher' -ErrorAction SilentlyContinue)
     $metaWorkingSetMiB = if ($metaProcesses.Count) {
         [math]::Round((($metaProcesses | Measure-Object WorkingSet64 -Sum).Sum / 1MB), 1)
@@ -1004,6 +1008,32 @@ while ($true) {
         gpuPowerW = if ($gpu) { $gpu.gpuPowerW } else { $null }
         starfieldCpuPct = $starfieldCpuPct
         systemCpuPct = $systemCpuPct
+        cpuConsumersAvailable = [bool]$cpuConsumers.available
+        cpuConsumersSource = [string]$cpuConsumers.source
+        chatGptProcessCount = [int]$cpuConsumers.chatGptProcessCount
+        chatGptCpuPct = $cpuConsumers.chatGptCpuPct
+        edgeProcessCount = [int]$cpuConsumers.edgeProcessCount
+        edgeCpuPct = $cpuConsumers.edgeCpuPct
+        braveProcessCount = [int]$cpuConsumers.braveProcessCount
+        braveCpuPct = $cpuConsumers.braveCpuPct
+        chromeProcessCount = [int]$cpuConsumers.chromeProcessCount
+        chromeCpuPct = $cpuConsumers.chromeCpuPct
+        firefoxProcessCount = [int]$cpuConsumers.firefoxProcessCount
+        firefoxCpuPct = $cpuConsumers.firefoxCpuPct
+        webView2ProcessCount = [int]$cpuConsumers.webView2ProcessCount
+        webView2CpuPct = $cpuConsumers.webView2CpuPct
+        steamWebProcessCount = [int]$cpuConsumers.steamWebProcessCount
+        steamWebCpuPct = $cpuConsumers.steamWebCpuPct
+        metaVrProcessCount = [int]$cpuConsumers.metaVrProcessCount
+        metaVrCpuPct = $cpuConsumers.metaVrCpuPct
+        nodeProcessCount = [int]$cpuConsumers.nodeProcessCount
+        nodeCpuPct = $cpuConsumers.nodeCpuPct
+        powerShellProcessCount = [int]$cpuConsumers.powerShellProcessCount
+        powerShellCpuPct = $cpuConsumers.powerShellCpuPct
+        defenderProcessCount = [int]$cpuConsumers.defenderProcessCount
+        defenderCpuPct = $cpuConsumers.defenderCpuPct
+        desktopWindowManagerProcessCount = [int]$cpuConsumers.desktopWindowManagerProcessCount
+        desktopWindowManagerCpuPct = $cpuConsumers.desktopWindowManagerCpuPct
         starfieldWorkingSetMiB = [math]::Round($game.WorkingSet64 / 1MB, 1)
         starfieldPrivateMiB = [math]::Round($game.PrivateMemorySize64 / 1MB, 1)
         systemFreeMemoryMiB = [math]::Round($os.FreePhysicalMemory / 1KB, 1)
@@ -1110,6 +1140,14 @@ $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath,
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
 $starfieldCpuSamples = @($samples | Where-Object { $null -ne $_.starfieldCpuPct })
 $systemCpuSamples = @($samples | Where-Object { $null -ne $_.systemCpuPct })
+$chatGptCpuSamples = @($samples | Where-Object { $null -ne $_.chatGptCpuPct })
+$edgeCpuSamples = @($samples | Where-Object { $null -ne $_.edgeCpuPct })
+$braveCpuSamples = @($samples | Where-Object { $null -ne $_.braveCpuPct })
+$webView2CpuSamples = @($samples | Where-Object { $null -ne $_.webView2CpuPct })
+$nodeCpuSamples = @($samples | Where-Object { $null -ne $_.nodeCpuPct })
+$steamWebCpuSamples = @($samples | Where-Object { $null -ne $_.steamWebCpuPct })
+$metaVrCpuSamples = @($samples | Where-Object { $null -ne $_.metaVrCpuPct })
+$cpuConsumerAvailableSamples = @($samples | Where-Object { $_.cpuConsumersAvailable -eq $true })
 $encoderSamples = @($samples | Where-Object { $null -ne $_.gpuEncoderUtilPct })
 $decoderSamples = @($samples | Where-Object { $null -ne $_.gpuDecoderUtilPct })
 $gpuMemoryPctSamples = @($samples | Where-Object { $null -ne $_.gpuMemoryPct })
@@ -1166,6 +1204,23 @@ $summary = [ordered]@{
     maxStarfieldCpuPct = if ($starfieldCpuSamples.Count) { ($starfieldCpuSamples | Measure-Object starfieldCpuPct -Maximum).Maximum } else { $null }
     avgSystemCpuPct = if ($systemCpuSamples.Count) { [math]::Round(($systemCpuSamples | Measure-Object systemCpuPct -Average).Average, 1) } else { $null }
     maxSystemCpuPct = if ($systemCpuSamples.Count) { ($systemCpuSamples | Measure-Object systemCpuPct -Maximum).Maximum } else { $null }
+    cpuConsumersSource = 'FIXED_APP_FAMILY_PROCESS_CPU_DELTAS'
+    cpuConsumersAvailableSampleCount = $cpuConsumerAvailableSamples.Count
+    avgChatGptCpuPct = if ($chatGptCpuSamples.Count) { [math]::Round(($chatGptCpuSamples | Measure-Object chatGptCpuPct -Average).Average, 2) } else { $null }
+    maxChatGptCpuPct = if ($chatGptCpuSamples.Count) { ($chatGptCpuSamples | Measure-Object chatGptCpuPct -Maximum).Maximum } else { $null }
+    maxChatGptProcessCount = if ($samples.Count) { ($samples | Measure-Object chatGptProcessCount -Maximum).Maximum } else { $null }
+    avgEdgeCpuPct = if ($edgeCpuSamples.Count) { [math]::Round(($edgeCpuSamples | Measure-Object edgeCpuPct -Average).Average, 2) } else { $null }
+    maxEdgeCpuPct = if ($edgeCpuSamples.Count) { ($edgeCpuSamples | Measure-Object edgeCpuPct -Maximum).Maximum } else { $null }
+    avgBraveCpuPct = if ($braveCpuSamples.Count) { [math]::Round(($braveCpuSamples | Measure-Object braveCpuPct -Average).Average, 2) } else { $null }
+    avgWebView2CpuPct = if ($webView2CpuSamples.Count) { [math]::Round(($webView2CpuSamples | Measure-Object webView2CpuPct -Average).Average, 2) } else { $null }
+    avgNodeCpuPct = if ($nodeCpuSamples.Count) { [math]::Round(($nodeCpuSamples | Measure-Object nodeCpuPct -Average).Average, 2) } else { $null }
+    avgSteamWebCpuPct = if ($steamWebCpuSamples.Count) { [math]::Round(($steamWebCpuSamples | Measure-Object steamWebCpuPct -Average).Average, 2) } else { $null }
+    avgMetaVrCpuPct = if ($metaVrCpuSamples.Count) { [math]::Round(($metaVrCpuSamples | Measure-Object metaVrCpuPct -Average).Average, 2) } else { $null }
+    browserAndAppCpuAttributionComplete = [bool]($samples.Count -gt 1 -and
+        $chatGptCpuSamples.Count -gt 0 -and $edgeCpuSamples.Count -gt 0 -and
+        $braveCpuSamples.Count -gt 0 -and $webView2CpuSamples.Count -gt 0)
+    browserTabsInspected = $false
+    chatGptConversationContentsInspected = $false
     minSystemFreeMemoryMiB = if ($samples.Count) { ($samples | Measure-Object systemFreeMemoryMiB -Minimum).Minimum } else { $null }
     maxMetaVrWorkingSetMiB = if ($samples.Count) { ($samples | Measure-Object metaVrWorkingSetMiB -Maximum).Maximum } else { 0 }
     airLinkRuntimeSamplePct = if ($samples.Count) { [math]::Round((@($samples | Where-Object airLinkRuntimeActive).Count / $samples.Count) * 100, 1) } else { 0 }
