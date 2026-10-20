@@ -64,13 +64,21 @@ function Test-GamingInactive {
     $all = @(Get-Process -ErrorAction Stop)
     return @($all | Where-Object { $gamingNames -contains $_.ProcessName }).Count -eq 0
 }
-function Get-ApprovedScript([string]$CommandLine) {
-    # Exactly -File and an installed, fixed lifeboat script; no -Command or
-    # encoded command. The relative script basename alone is insufficient.
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or $CommandLine -match '(?i)\s-(?:command|encodedcommand|enc)\b') { return '' }
+$canonicalPowerShell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+function Get-ApprovedScript([string]$CommandLine, [string]$ExecutablePath) {
+    # Match the WHOLE invocation, not a substring that could appear in a
+    # -c/-Command script or comment. Necessary but not proof of task origin.
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or
+        [string]$ExecutablePath -ine $canonicalPowerShell) { return '' }
+    $hostRe = [regex]::Escape($canonicalPowerShell)
+    $hostArg = '(?:"' + $hostRe + '"|' + $hostRe + ')'
     foreach ($path in $allowed) {
-        $quoted = [regex]::Escape($path)
-        if ($CommandLine -match ('(?i)(?:^|\s)-File\s+(?:"{0}"|{0})(?:\s|$)' -f $quoted)) {
+        $scriptRe = [regex]::Escape($path)
+        $scriptArg = '(?:"' + $scriptRe + '"|' + $scriptRe + ')'
+        $pattern = '(?i)^' + $hostArg +
+            '\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-File\s+' +
+            $scriptArg + '$'
+        if ([regex]::IsMatch($CommandLine, $pattern)) {
             return [System.IO.Path]::GetFileName($path)
         }
     }
@@ -79,7 +87,7 @@ function Get-ApprovedScript([string]$CommandLine) {
 function Test-MatchingCimProcess($Before, $After) {
     if ($null -eq $Before -or $null -eq $After) { return $false }
     $difference = [math]::Abs(($Before.CreationDate.ToUniversalTime() - $After.CreationDate.ToUniversalTime()).TotalMilliseconds)
-    return [bool](($Before.ProcessId -eq $After.ProcessId) -and ($difference -le 2) -and ([string]$Before.CommandLine -ceq [string]$After.CommandLine) -and ([int]$Before.ParentProcessId -eq [int]$After.ParentProcessId))
+    return [bool](($Before.ProcessId -eq $After.ProcessId) -and ($difference -le 2) -and ([string]$Before.CommandLine -ceq [string]$After.CommandLine) -and ([string]$Before.ExecutablePath -ieq [string]$After.ExecutablePath) -and ([int]$Before.ParentProcessId -eq [int]$After.ParentProcessId))
 }
 try {
     if (-not $env:LOCALAPPDATA) { throw 'CPU_RELIEF_LOCALAPPDATA_UNAVAILABLE' }
@@ -101,7 +109,7 @@ try {
             $inventory = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop)
             $candidate = $null
             foreach ($item in $inventory) {
-                $scriptName = Get-ApprovedScript ([string]$item.CommandLine)
+                $scriptName = Get-ApprovedScript ([string]$item.CommandLine) ([string]$item.ExecutablePath)
                 if (-not $scriptName) { continue }
                 $started = $item.CreationDate.ToUniversalTime()
                 if (([DateTime]::UtcNow - $started).TotalMinutes -lt $minimumProcessAgeMinutes) { continue }
