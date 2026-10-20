@@ -3739,7 +3739,11 @@ test('VR archive remote accepts wrapped Windows execution envelope and returns o
     { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
       env: { USERPROFILE: 'C:\\Users\\Operator' } },
   );
-  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.ok, true, JSON.stringify({
+    blocker: result.blocker, proofHashPresent: result.proofHashPresent,
+    processIdMatch: result.processIdMatch, successfulStatus: result.successfulStatus,
+    archivePresent: result.archivePresent,
+  }));
   assert.equal(result.finalVerdict, 'STARFIELD_VR_TELEMETRY_ARCHIVE_READY');
   assert.equal(result.telemetryArchive.totalSessions, 1);
   assert.equal(result.telemetryArchive.sessions[0].sampleCount, 36);
