@@ -642,3 +642,21 @@ test('canonical OpenClaw skill provenance references retain title-bound original
       { message: 'missing canonical owner/title link: ' + label });
   }
 });
+
+test('OpenClaw seed never grants implicit mutation or cross-agent authority', () => {
+  const seed = buildOpenClawExcellenceSeedV1();
+  for (const [action, permitted] of Object.entries(seed.authority)) {
+    assert.equal(permitted, false, action + ' must remain operator-gated');
+  }
+  assert.equal(seed.agentIdentities.length, 2);
+  assert.notEqual(seed.agentIdentities[0].participantId, seed.agentIdentities[1].participantId);
+  assert.notEqual(seed.agentIdentities[0].runtimeAgentId, seed.agentIdentities[1].runtimeAgentId);
+  for (const agent of seed.agentIdentities) {
+    assert.equal(agent.permissionsSharedWithOtherAgent, false,
+      agent.participantId + ' cannot inherit another agent authority');
+  }
+  assert.equal(seed.growthContract.noCrossAgentScopeWidening, true);
+  assert.equal(seed.growthContract.noUnverifiedExternalSkillInstallation, true);
+  assert.equal(seed.growthContract.requireIndependentQualifiedReview, true);
+  assert.equal(seed.growthContract.preserveVrGamingResourceGovernor, true);
+});
