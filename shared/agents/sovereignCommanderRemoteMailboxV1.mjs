@@ -3522,7 +3522,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       const source = Object.keys(safeEnvelope).length > 0 ? safeEnvelope : rawMaintenance;
       const stdout = String(source?.structuredContent?.stdout || '');
       const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
-      const markerLine = stdout.split(/\\r?\\n/).find((line) => line.startsWith(marker));
+      const markerLine = stdout.split(/\r?\n/).find((line) => line.startsWith(marker));
       let decoded = null;
       try { decoded = markerLine ? JSON.parse(markerLine.slice(marker.length)) : null; } catch {}
       const reason = projection.ok !== true
