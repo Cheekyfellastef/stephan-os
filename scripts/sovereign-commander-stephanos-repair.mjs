@@ -166,13 +166,14 @@ export function runSovereignCommanderStephanosRepair({
     return blocked('', steps, 'STEPHANOS_REPAIR_SOURCE_HEAD_UNAVAILABLE');
   }
   const guardBlocker = 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED';
-  if (continuousRepairCycle && gamingSafe() !== true) {
+  const governorSafe = () => { try { return gamingSafe() === true; } catch { return false; } };
+  if (continuousRepairCycle && !governorSafe()) {
     return blocked(expectedHead, steps, guardBlocker);
   }
   // The daemon's guardian previously launched Windows caretaker actions
   // before checking gaming at all. Recheck the on-host governor before each
   // fixed step as well as inside the control-plane subprocess.
-  const guardedRunStep = step => continuousRepairCycle && gamingSafe() !== true
+  const guardedRunStep = step => continuousRepairCycle && !governorSafe()
     ? { ok: false, status: null, stdout: '', errorCode: guardBlocker }
     : runStep(step);
 
