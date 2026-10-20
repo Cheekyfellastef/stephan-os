@@ -175,7 +175,10 @@ export function collectCoreDaemonVisibility({ spawnSyncFn = spawnSync } = {}) {
     schemaVersion: 'stephanos.core-daemon-status.v1',
     available: true,
     ok: parsed.ok === true,
-    processCount: integer(parsed.processCount, 100),
+    processCount: parsed.processInventoryComplete === true && typeof parsed.processCount === 'number'
+      ? integer(parsed.processCount, 100) : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: state(parsed.processObservationBlocker, 120),
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: state(parsed.readiness, 40) || 'UNKNOWN',
     wakeState: state(parsed.wakeState, 40) || 'UNKNOWN',

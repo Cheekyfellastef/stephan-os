@@ -15,14 +15,9 @@ $coreLockPath = Join-Path $localStateRoot 'Stephanos\stephanos-core-daemon.lock.
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
-
-$processes = @(
-    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.Name -eq 'node.exe' -and
-            [string]$_.CommandLine -match $corePattern
-        }
-)
+. (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')
+$processObservation = Get-StephanosCoreProcessObservation -CoreScript $coreScript
+$processes = @($processObservation.processes)
 
 $status = $null
 if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
@@ -71,6 +66,7 @@ if ($null -ne $lockRecord -and $writerPid -gt 0 -and $lockOwnerPid -eq $writerPi
     }
 }
 $singleWriterProven = [bool](
+    $processObservation.complete -and
     $processes.Count -eq 1 -and $writerProcessObserved -and $lockOwnerMatchesWriter
 )
 # A current source SHA alone cannot prove that a running Node process
@@ -150,7 +146,9 @@ $healthy = [bool](
 [pscustomobject]@{
     schemaVersion = 'stephanos.core-daemon-status.v1'
     ok = $healthy
-    processCount = [int]$processes.Count
+    processCount = $processObservation.processCount
+    processInventoryComplete = [bool]$processObservation.complete
+    processObservationBlocker = [string]$processObservation.blocker
     daemonHealthy = $healthy
     reportedDaemonHealthy = if ($null -ne $status) { [bool]$status.daemonHealthy } else { $false }
     singleWriterProven = $singleWriterProven
@@ -184,6 +182,8 @@ $healthy = [bool](
     remoteCommanderRequired = $false
     finalVerdict = if ($healthy) {
         'STEPHANOS_CORE_DAEMON_STATUS_PASS'
+    } elseif (-not $processObservation.complete) {
+        'STEPHANOS_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
     } elseif (-not $singleWriterProven) {
         'STEPHANOS_CORE_DAEMON_OWNER_CUSTODY_UNPROVEN'
     } elseif (-not $rescueGenerationPresent) {
