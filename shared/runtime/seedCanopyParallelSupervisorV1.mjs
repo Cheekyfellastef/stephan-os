@@ -63,12 +63,32 @@ export function selectParallelSeedApprovedTaskV1(candidates, nowMs) {
   // All entries are pre-parsed exact manifest/approval combinations.
   const eligible = [];
   const blocked = [];
-  for (const entry of candidates) {
+  // A malformed persisted inbox row must not crash selection and suppress a
+  // completely separate approved seed. Duplicate task IDs are ambiguous
+  // custody, never an invitation to choose one version of the manifest.
+  const entries = Array.isArray(candidates) ? candidates : [];
+  const ids = new Map();
+  for (const entry of entries) {
+    const id = entry?.request?.taskId;
+    if (safeTask(id)) ids.set(id, (ids.get(id) || 0) + 1);
+  }
+  for (const entry of entries) {
+    const taskId = safeTask(entry?.request?.taskId) ? entry.request.taskId : '';
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+        || !entry.request || typeof entry.request !== 'object' || Array.isArray(entry.request)
+        || !taskId) {
+      blocked.push({ taskId, reason: 'INVALID_INBOX_TASK_ENVELOPE' });
+      continue;
+    }
+    if (ids.get(taskId) > 1) {
+      blocked.push({ taskId, reason: 'DUPLICATE_TASK_ID_OWNERSHIP_AMBIGUOUS' });
+      continue;
+    }
     const verdict = evaluateParallelSeedExactApprovalV1({ ...entry, nowMs });
     if (entry.existingClaim || entry.existingReceipt)
-      blocked.push({ taskId: entry.request?.taskId, reason: 'PRESERVED_SOURCE_CUSTODY' });
+      blocked.push({ taskId, reason: 'PRESERVED_SOURCE_CUSTODY' });
     else if (!verdict.ok)
-      blocked.push({ taskId: entry.request?.taskId, reason: verdict.reasons.join(',') });
+      blocked.push({ taskId, reason: verdict.reasons.join(',') });
     else eligible.push(entry);
   }
   eligible.sort((a, b) => (a.request.taskId < b.request.taskId ? -1 : 1));
