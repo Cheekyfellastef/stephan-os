@@ -190,7 +190,7 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
     fetchImpl: async (url, opts) => {
       calls.push({ url, opts });
       return { ok: true, text: async () => JSON.stringify({
-        model: 'qwen:14b', done: true, done_reason: 'stop',
+        model: 'sha256:' + pin, done: true, done_reason: 'stop',
         response: JSON.stringify({ verdict: 'clean', reviewedPaths: [], findings: [] }),
       }) };
     },
@@ -202,6 +202,8 @@ test('localModel uses fixed localhost, digest pin, gaming guard, redirect denial
   assert.equal(calls[0].opts.redirect, 'error');
   assert.equal(calls[0].opts.method, 'POST');
   assert.equal(JSON.parse(calls[0].opts.body).keep_alive, 0);
+  assert.equal(JSON.parse(calls[0].opts.body).model, 'sha256:' + pin,
+    'the actual private prompt MUST use an immutable digest, never a mutable tag');
   assert.ok(guard.length >= 4, 'resource state must be rechecked around inference');
   assert.equal(clear.length, 1, 'inference governor monitor is always cleared');
 });
@@ -242,4 +244,21 @@ test('localModel refuses gaming, tag replacement, redirected results, and aborts
       model: 'wrong-model', done: true, done_reason: 'stop', response: '{}',
     }) }),
   }), /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
+  await assert.rejects(localModel('private', {}, { ...ready,
+    fetchImpl: async (_url, options) => {
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good,
+        'tag replacement immediately before generation cannot change requested weights');
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
+      }) };
+    },
+  }), /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/,
+    'older Ollama runtimes reporting only mutable tag must fail closed');
+  await assert.rejects(localModel('private', {}, { ...ready,
+    fetchImpl: async (_url, options) => {
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + good);
+      return { ok: false, status: 404, text: async () => 'model digest not supported' };
+    },
+  }), /LOCAL_MODEL_REQUEST_FAILED/,
+    'older Ollama builds lacking immutable digest addressing MUST NOT fall back to mutable tag');
 });
