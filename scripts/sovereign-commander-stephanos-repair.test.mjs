@@ -213,6 +213,86 @@ test('continuous repair attempts independent repair for unproven elastic admissi
   ]);
 });
 
+test('held R7 builder does not suppress separately proven Core repair during an unattended cycle', () => {
+  const calls = [];
+  const queue = [
+    result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
+    result({ ok: false, blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING' }, 2),
+    result({
+      ok: true, daemonHealthy: true, sourceHead: HEAD,
+      singleWriterProven: true, sourceHeadMatchesLive: true,
+      gamingActive: false, readiness: 'DEGRADED', repairRequired: true,
+    }),
+    result({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_GREEN' }),
+  ];
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD, continuousRepairCycle: true,
+    runStep: (step) => { calls.push(step.id); return queue.shift(); },
+  });
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+  assert.deepEqual(calls, [
+    'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
+    'status-stephanos-core-daemon', 'repair-control-plane',
+  ]);
+  assert.equal(repaired.steps.at(-1).ok, true);
+  assert.equal(repaired.sourceMutationAllowed, false);
+  assert.equal(repaired.mergeAuthority, false);
+});
+
+test('held R7 builder never authorises maintenance while gaming or with unverified Core ownership', () => {
+  for (const overrides of [
+    { gamingActive: true },
+    { gamingActive: undefined },
+    { singleWriterProven: false },
+    { sourceHeadMatchesLive: false },
+    { sourceHead: 'b'.repeat(40) },
+  ]) {
+    const calls = [];
+    const queue = [
+      result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
+      result({ ok: false, blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING' }, 2),
+      result({
+        ok: true, sourceHead: HEAD, singleWriterProven: true,
+        sourceHeadMatchesLive: true, gamingActive: false, readiness: 'DEGRADED',
+        repairRequired: true, ...overrides,
+      }),
+    ];
+    const repaired = runSovereignCommanderStephanosRepair({
+      readHead: () => HEAD, continuousRepairCycle: true,
+      runStep: (step) => { calls.push(step.id); return queue.shift(); },
+    });
+    assert.equal(repaired.ok, false);
+    assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+    assert.deepEqual(calls, [
+      'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
+      'status-stephanos-core-daemon',
+    ]);
+  }
+});
+
+test('held R7 builder does not trigger independent installer if Core is healthy', () => {
+  const calls = [];
+  const queue = [
+    result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
+    result({ ok: false, blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING' }, 2),
+    result({
+      ok: true, sourceHead: HEAD, singleWriterProven: true,
+      sourceHeadMatchesLive: true, gamingActive: false,
+      readiness: 'READY', repairRequired: false,
+    }),
+  ];
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD, continuousRepairCycle: true,
+    runStep: (step) => { calls.push(step.id); return queue.shift(); },
+  });
+  assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+  assert.deepEqual(calls, [
+    'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
+    'status-stephanos-core-daemon',
+  ]);
+});
+
 test('continuous repair escalation fits inside the enclosing 220-second action budget', () => {
   assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS, 190_000);
   assert.deepEqual(CONTINUOUS_REPAIR_STEP_TIMEOUTS, {
