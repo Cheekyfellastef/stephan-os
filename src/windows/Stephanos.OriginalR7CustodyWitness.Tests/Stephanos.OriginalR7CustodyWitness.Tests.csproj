@@ -7,6 +7,8 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7RegistryProtection.cs"
+             Link="OriginalR7RegistryProtection.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs"
              Link="OriginalR7ScmPreflight.cs" />
   </ItemGroup>

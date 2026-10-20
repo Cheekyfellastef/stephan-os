@@ -20,6 +20,7 @@ void Check(bool condition, string name)
 }
 string image = Environment.ProcessPath
     ?? throw new InvalidOperationException("R7_SCM_TEST_EXECUTABLE_UNAVAILABLE");
+RegistryProtectionTests.Run(Check);
 const string account = @"NT SERVICE\StephanosOriginalR7CustodyWitness";
 // Test an actual binary digest while never commissioning this runner.
 string observed = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();

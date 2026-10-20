@@ -39,6 +39,36 @@ network handlers, read-write access to the source checkout or generic shell.
 
 ## Remaining service implementation
 
+### Service registration protection prerequisite
+
+`OriginalR7RegistryProtection` reads owner and DACL from the same retained
+registration-key handle used for image pin/configuration reads, using Windows
+`RegGetKeySecurity`. The descriptor must have protected inheritance, an
+Administrators or SYSTEM owner, exactly one explicit unconditional full-control
+ACE each for SYSTEM and Administrators, and one read-only KEY_READ ACE for the
+fixed service SID. Missing, NULL, empty, inherited, callback, generic-rights,
+duplicate, unknown or more-permissive descriptors fail closed. After hashing
+the binary, a second descriptor sample must exactly match the first.
+
+This is a new **read-only prerequisite**, not protected provenance or effective
+access proof. The Stage-B script does not yet provision this registry DACL;
+its default service key must not be assumed to pass. No installer permission
+is added here. The prerequisite requires a separately reviewed commissioning
+procedure. Parent-key replacement, already-open write handles, privileged
+administrators, service-object DACL/control rights, registry links, runtime
+modules, audit/signers and continuous original-writer isolation remain separate
+requirements. Two matching samples cannot prove continuing protection.
+
+The existing Windows SCM test executable now exercises adversarial synthetic
+descriptors and actual read-only native descriptor decoding through an HKCU
+handle, including a closed handle failure. These tests never modify registry
+permissions, install a service or authenticate the original R7 writer.
+
+API contracts: [RegGetKeySecurity](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-reggetkeysecurity)
+and [registry key rights](https://learn.microsoft.com/en-us/windows/win32/sysinfo/registry-key-security-and-access-rights).
+
+### Remaining commissioning work
+
 1. Independently provision a dedicated Windows service identity and a
    separate, restricted original-source writer identity, without touching
    the original eight uncommitted Battle Bridge checkout entries.
