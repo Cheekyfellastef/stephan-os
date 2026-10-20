@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { safeCpuPressureSnapshotProjection, SOVEREIGN_COMMANDER_REMOTE_ACTIONS, executeSovereignCommanderRemoteOnBattleBridge } from './sovereignCommanderRemoteMailboxV1.mjs';
+import { runVerifiedOrphanCpuRelief, CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS } from '../../scripts/sovereign-commander-stephanos-repair.mjs';
+import { buildSovereignCommanderRepairReport } from './sovereignCommanderRepairReportV1.mjs';
+const cpuReliefSource = await readFile(new URL('../../scripts/windows/relieve-verified-orphan-cpu-pressure.ps1', import.meta.url), 'utf8');
+
 
 const registry = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
@@ -150,4 +154,107 @@ test('immutable CPU route fails closed on missing/large commit blob, unexpected 
     assert.equal(runner.calls.length, callCount);
     assert.equal(JSON.stringify(receipt).includes('malformed'), false);
   }
+});
+
+function verifiedCpuReply(patch = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-verified-cpu-relief.v1',
+    ok: true, blocker: '',
+    finalVerdict: 'CPU_RELIEF_NO_VERIFIED_ORPHAN',
+    taskIdentity: 'Stephanos Battle Bridge Recovery Lifeboat',
+    rootScopedToLifeboat: true,
+    beforeSystemCpuPct: 95,
+    afterSystemCpuPct: null,
+    verifiedOrphanPid: 0,
+    verifiedOrphanStartedAtUtc: '',
+    fixedScriptBasename: '',
+    oneProcessTerminated: false,
+    cpuReductionVerified: false,
+    arbitraryPidAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryShellAllowed: false,
+    vrProcessTerminationAllowed: false,
+    protectedServiceTerminationAllowed: false,
+    sourceMutationAllowed: false,
+    pcRestartAllowed: false,
+    unknownMeansGreen: false,
+    ...patch,
+  };
+}
+function fixedCpuReliefResult(packet) {
+  const calls = [];
+  const report = runVerifiedOrphanCpuRelief({
+    runStep: step => {
+      calls.push(step);
+      return { ok: true, status: 0, stdout: JSON.stringify(packet) };
+    },
+  });
+  return { report, calls };
+}
+test('CPU orphan caretaker runs only the fixed named script from the existing bounded continuous guardian', () => {
+  assert.match(cpuReliefSource, /Get-ScheduledTask -TaskName \$taskName/);
+  assert.match(cpuReliefSource, /Get-TotalCpuLoad/);
+  assert.match(cpuReliefSource, /\$minimumProcessAgeMinutes = 15/);
+  assert.match(cpuReliefSource, /\$minimumWholeCpuPct = 80/);
+  assert.match(cpuReliefSource, /GetOwnerSid/);
+  assert.match(cpuReliefSource, /Test-MatchingCimProcess \$candidate \$followup/);
+  assert.match(cpuReliefSource, /\$handleStartUtc/);
+  assert.match(cpuReliefSource, /\$handle\.Kill\(\)/);
+  assert.match(cpuReliefSource, /\$gamingNames/);
+  assert.match(cpuReliefSource, /\$candidateCpuPct -lt \$minimumCandidateCpuPct/);
+  assert.doesNotMatch(cpuReliefSource, /\b(?:Stop-Process|taskkill|Invoke-Expression|Register-ScheduledTask|Restart-Computer)\b/i);
+  const {report,calls}=fixedCpuReliefResult(verifiedCpuReply());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].id,'verified-orphan-cpu-relief');
+  assert.equal(calls[0].timeoutMs,25000);
+  assert.deepEqual(calls[0].args.slice(-2),['-File',calls[0].args.at(-1)]);
+  assert.match(calls[0].args.at(-1),/relieve-verified-orphan-cpu-pressure\.ps1$/);
+  assert.equal(report.unresolvedCpuPressure,true);
+  assert.equal(report.terminated,false);
+  assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS<=240000,true);
+});
+test('CPU relief fails closed on forged authority and never grants arbitrary Windows termination',()=>{
+  for(const unsafe of [
+    verifiedCpuReply({ arbitraryPidAllowed:true }),
+    verifiedCpuReply({ vrProcessTerminationAllowed:true }),
+    verifiedCpuReply({ protectedServiceTerminationAllowed:true }),
+    verifiedCpuReply({ sourceMutationAllowed:true }),
+    verifiedCpuReply({ unknownMeansGreen:true }),
+    verifiedCpuReply({ oneProcessTerminated:true, finalVerdict:'CPU_RELIEF_NO_VERIFIED_ORPHAN' }),
+  ]) {
+    const {report}=fixedCpuReliefResult(unsafe);
+    assert.equal(report.ok,false);
+    assert.equal(report.finalVerdict,'CPU_RELIEF_EVIDENCE_INVALID');
+    assert.equal(report.terminated,false);
+  }
+});
+test('verified one-process cleanup becomes repaired only after independent CPU reduction proof',()=>{
+  const good=fixedCpuReliefResult(verifiedCpuReply({
+    oneProcessTerminated:true, verifiedOrphanPid:23440,
+    verifiedOrphanStartedAtUtc:'2026-10-12T01:02:03.000Z',
+    fixedScriptBasename:'run-battle-bridge-recovery-lifeboat-bank-v1.ps1',
+    finalVerdict:'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED',
+    cpuReductionVerified:true, afterSystemCpuPct:47,
+  })).report;
+  assert.equal(good.terminated,true);
+  assert.equal(good.cpuReductionVerified,true);
+  const report=buildSovereignCommanderRepairReport({
+    repair:{ok:true,sourceHead:'a'.repeat(40),steps:[],cpuRelief:good},
+    cycleId:'cpu-cycle-one',
+    completedAtUtc:'2026-10-20T13:35:00.000Z',
+  });
+  assert.equal(report.outcome,'REPAIRED');
+  assert.equal(report.status.cpuRelief.oneProcessTerminated,true);
+  assert.equal(report.status.cpuRelief.cpuReductionVerified,true);
+  assert.equal(report.status.cpuRelief.arbitraryProcessTerminationAllowed,false);
+  const unresolved=fixedCpuReliefResult(verifiedCpuReply({
+    oneProcessTerminated:true, verifiedOrphanPid:37608,
+    verifiedOrphanStartedAtUtc:'2026-10-12T01:02:03.000Z',
+    fixedScriptBasename:'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+    finalVerdict:'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED',
+    cpuReductionVerified:false, afterSystemCpuPct:96,
+  })).report;
+  assert.equal(buildSovereignCommanderRepairReport({
+    repair:{ok:true,sourceHead:'a'.repeat(40),steps:[],cpuRelief:unresolved},
+  }).outcome,'NEEDS_REPAIR');
 });
