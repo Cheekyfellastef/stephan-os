@@ -330,6 +330,16 @@ function Get-StarfieldVrGameThreadCpuSample {
         $out.reason = 'THREAD_IDENTITY_UNAVAILABLE'
         return [pscustomobject]$out
     }
+    # Collect thread-level evidence at most every five seconds. Sampling
+    # every frame or every adaptive 1s tick can itself create CPU overhead.
+    if ($Previous.ContainsKey('collectedAtUtc') -and $Previous.ContainsKey('processId') -and
+        $Previous.processId -eq $GameProcessId) {
+        $since = ($sampledAt - [DateTime]$Previous.collectedAtUtc).TotalSeconds
+        if ($since -ge 0 -and $since -lt 5) {
+            $out.reason = 'THREAD_SAMPLE_THROTTLED'
+            return [pscustomobject]$out
+        }
+    }
     try {
         $process = Get-Process -Id $GameProcessId -ErrorAction Stop
         $processStartedTicks = [long]$process.StartTime.ToUniversalTime().Ticks
@@ -381,6 +391,7 @@ function Get-StarfieldVrGameThreadCpuSample {
         $Previous.processId = $GameProcessId
         $Previous.processStartTicks = $processStartedTicks
         $Previous.threadCpu = $fresh
+        $Previous.collectedAtUtc = $sampledAt
         $out.matchedThreadCount = $matched
         if ($matched -gt 0) {
             $out.busiestThreadCpuPct = [Math]::Round([double]$maxCorePercent, 2)
