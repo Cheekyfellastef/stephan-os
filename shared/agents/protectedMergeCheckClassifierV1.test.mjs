@@ -32,4 +32,3 @@ test('intentional pull-request Pages deployment skip is neutral only with succes
     row.workflow === 'Build Stephanos UI' && row.state === 'SUCCESS'
       ? { ...row, state: 'SKIPPED' } : row)), false);
 });
-
