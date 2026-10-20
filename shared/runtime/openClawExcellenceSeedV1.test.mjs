@@ -196,6 +196,28 @@ test('non-event feed buckets cannot launder event-shaped OpenClaw rung evidence'
     'two genuine canonical eventRecords preserve the positive observational path');
 });
 
+test('non-event kinds inside eventRecords cannot impersonate OpenClaw rung observations', () => {
+  const rung = 'INVENTORY_BOTH_AGENTS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event(rung, 'openclaw-local');
+  const standalone = event(rung, 'openclaw-standalone');
+  for (const kind of [
+    'stephanos.shared_workspace.status',
+    'stephanos.shared_workspace.receipt',
+    '',
+    undefined,
+  ]) {
+    payload.records.eventRecords = [local, { ...standalone, kind }];
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, 0, 'non-event kind cannot complete inventory: ' + kind);
+    assert.equal(seed.proofCount, 1, 'non-event kind cannot inflate admitted proof telemetry');
+    assert.equal(seed.nextGrowthRung, rung);
+  }
+  payload.records.eventRecords = [local, standalone];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1,
+    'canonical event kind preserves genuine two-agent observational inventory');
+});
+
 test('OpenClaw proof requires an explicit publisher and replayable event identity', () => {
   const rung = 'INVENTORY_BOTH_AGENTS';
   const payload = feed({ statusRecords: [heartbeat()] });

@@ -1814,7 +1814,8 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     // Do not infer the publisher from a self-claimed agent/worker alias, or
     // accept an observation without a stable event identity for replay checks.
     const publisher = text(record?.participantId, '').toLowerCase();
-    if (record.status !== 'PASS' || !text(record?.eventId, '')
+    if (record.kind !== 'stephanos.shared_workspace.event'
+      || record.status !== 'PASS' || !text(record?.eventId, '')
       || !agents.includes(publisher)) return false;
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
