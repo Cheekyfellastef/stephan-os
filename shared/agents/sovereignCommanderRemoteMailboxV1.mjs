@@ -3518,7 +3518,32 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && telemetryArchive.hostPathsReturned === false
       && telemetryArchive.secretMaterialReturned === false;
     if (!proofComplete) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_RECEIPT_INVALID', {
+      const safeEnvelope = findMaintenanceExecutionEnvelope(rawMaintenance);
+      const source = Object.keys(safeEnvelope).length > 0 ? safeEnvelope : rawMaintenance;
+      const stdout = String(source?.structuredContent?.stdout || '');
+      const marker = 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=';
+      const markerLine = stdout.split(/\\r?\\n/).find((line) => line.startsWith(marker));
+      let decoded = null;
+      try { decoded = markerLine ? JSON.parse(markerLine.slice(marker.length)) : null; } catch {}
+      const reason = projection.ok !== true
+        || projection.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        ? 'EXECUTION_ENVELOPE_INVALID'
+        : !PROOF_HASH_PATTERN.test(projection.proofHash)
+          ? 'PROOF_HASH_MISSING'
+          : projection.processId !== shape.command.remoteAction
+            ? 'PROCESS_ID_MISMATCH'
+            : projection.status !== 0
+              ? 'PROCESS_STATUS_INVALID'
+              : !markerLine
+                ? 'MARKER_MISSING'
+                : !decoded
+                  ? 'JSON_UNREADABLE'
+                  : decoded.ok !== true
+                    ? 'ARCHIVE_NOT_READY'
+                    : decoded.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+                      ? 'SCHEMA_MISMATCH'
+                      : 'ARCHIVE_CONTRACT_INVALID';
+      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_' + reason, {
         remoteAction: shape.command.remoteAction,
         proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
         processIdMatch: projection.processId === shape.command.remoteAction,
