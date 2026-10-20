@@ -108,9 +108,16 @@ jobs:
               issue_number: mailboxIssueNumber,
               per_page: 100,
             });
+            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
+            const previousTruth = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: truthIssueNumber,
+            });
             const record = receiptIndexMirror.createTrustedMailboxReceiptIndexFromGitHubComments(comments, {
               ownerLogin: context.repo.owner,
               timestampUtc: new Date().toISOString(),
+              priorTruthIssueBody: previousTruth.data.body,
             });
             const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
             const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
@@ -132,7 +139,6 @@ jobs:
               core.info(`Created receipt index comment ${created.data.id}.`);
             }
 
-            const truthIssueNumber = receiptIndexMirror.MAILBOX_RECEIPT_GITHUB_TRUTH_ISSUE;
             const truthBody = receiptIndexMirror.buildTrustedMailboxReceiptTruthIssueBody(record);
             await github.rest.issues.update({
               owner: context.repo.owner,
