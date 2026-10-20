@@ -2,6 +2,7 @@
 // Run on Battle Bridge with a checked-out, exact, clean commit. No GitHub,
 // Codex, browser, remote API, merge, deployment or arbitrary command channel.
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -240,12 +241,18 @@ export async function main(env = process.env, dependencies = {}) {
   } };
   try { publish(result, env, dependencies); }
   catch { result = { status: 'SOVEREIGN_REVIEW_HELD', reason: 'SHARED_WORKSPACE_PUBLICATION_FAILED', mergeAuthority: false }; }
+  // Pin the exact bytes published through the stable no-replace proof writer.
+  // A later WSL readback must match THIS digest, never a digest of arbitrary
+  // same-name content supplied after child exit. Candidate only, not audit.
+  const proofSha256 = result.status === 'LOCAL_REVIEW_EVIDENCE_READY'
+    ? createHash('sha256').update(JSON.stringify(result, null, 2) + '\n').digest('hex') : '';
   const summary = {
     status: result.status,
     reason: result.reason || '',
     prNumber: result.candidateEvidence?.prNumber ?? null,
     sourceHead: result.candidateEvidence?.sourceHead || '',
     proofRef: result.proofRef || '',
+    proofSha256,
     verdict: result.candidateEvidence?.verdict || '',
     mergeAuthority: false,
   };
