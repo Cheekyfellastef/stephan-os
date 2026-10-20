@@ -30,6 +30,7 @@ function successfulRequiredChecks() {
     name: `required-${index}`,
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
@@ -79,6 +80,17 @@ test('intentional pull-request Pages skip is neutral only when its Build Stephan
     && row.state === 'SUCCESS' ? { ...row, event: undefined } : row);
   assert.equal(validateProtectedMergeCheckRows(buildWithoutEvent), false,
     'Pages skip requires a genuine PR Build success');
+  const dispatchOnly = successfulRequiredChecks().map(row => row.workflow === 'Build Stephanos UI'
+    ? { ...row, event: 'workflow_dispatch' } : row);
+  assert.equal(validateProtectedMergeCheckRows(dispatchOnly), false,
+    'without Pages-skip row, workflow_dispatch Build success still cannot replace PR CI');
+  const noBuildEvent = successfulRequiredChecks().map(row => row.workflow === 'Build Stephanos UI'
+    ? { ...row, event: undefined } : row);
+  assert.equal(validateProtectedMergeCheckRows(noBuildEvent), false,
+    'missing Build event alone must never satisfy protected CI');
+  assert.equal(validateProtectedMergeCheckRows([...successfulRequiredChecks(),
+    { name: 'dispatched-build', workflow: 'Build Stephanos UI', state: 'SUCCESS', event: 'workflow_dispatch' }]), true,
+    'non-PR Build must be ignored when authentic PR Build succeeded');
   const missingBuildSuccess = checks.filter(row => row.workflow !== 'Build Stephanos UI'
     || row.name === 'pages-deploy');
   assert.equal(validateProtectedMergeCheckRows(missingBuildSuccess), false);
