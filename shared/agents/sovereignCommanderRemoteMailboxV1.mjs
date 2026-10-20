@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
+import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -91,6 +92,7 @@ const ALLOWED_FIELDS = new Set([
   'targetBranch',
   'targetHead',
   'controllerActivity',
+  'reviewIdentity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -2109,6 +2111,26 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       remoteAction,
     });
   }
+  // Only the fixed reviewed calibration may accept per-review identity.
+  // The outer authenticated mailbox HEAD and repository must agree; a
+  // caller-supplied identity cannot create high-risk reviewer authority.
+  if (remoteAction === 'sovereign-windows-reviewer-calibration'
+    || Object.hasOwn(command, 'reviewIdentity')) {
+    if (remoteAction !== 'sovereign-windows-reviewer-calibration') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_ACTION_MISMATCH', { requested: true });
+    }
+    const identity = validateSovereignWindowsReviewIdentityV1(command.reviewIdentity);
+    if (!identity || identity.sourceHead !== expectedHead
+      || identity.repository !== text(command.repository)
+      || identity.branch !== text(command.branch)) {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_UNBOUND', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction,
+        reviewIdentity: identity }),
+    });
+  }
   if (remoteAction === 'starfield-vr-telemetry-archive') {
     const exclusiveFields = [
       'searchQuery', 'searchMaxResults', 'controllerActivity',
@@ -3061,7 +3083,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
               'utf8',
             ).toString('base64url'),
           }
-          : { actionId: shape.command.remoteAction },
+          : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
+            ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
