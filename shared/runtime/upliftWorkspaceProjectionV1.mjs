@@ -1809,6 +1809,9 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     return Boolean(owner && [owner.participantId, owner.runtimeAgentId].includes(explicitAgent));
   };
   const isAdmittedRungRecord = (record, rung, agentId = '') => {
+    // A substring such as NOT_PASS must not be promoted to a positive
+    // observation by the shared truth parser's broad status matching.
+    if (record.status !== 'PASS') return false;
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
       || evidence.rung !== rung || !contract.growthRungs.includes(rung)

@@ -153,6 +153,23 @@ test('mere prose, no receipt or wrong proof identity never counts toward agent p
   assert.equal(view(payload).openClawExcellenceSeedGrowth.nextGrowthRung, rung);
 });
 
+test('OpenClaw growth rejects ambiguous status strings containing PASS', () => {
+  const rung = 'INVENTORY_BOTH_AGENTS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event(rung, 'openclaw-local');
+  const standalone = event(rung, 'openclaw-standalone');
+  for (const status of ['NOT_PASS', 'FAIL_PASS', 'PASS_PENDING']) {
+    payload.records.eventRecords = [local, { ...standalone, status }];
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, 0, status + ' must not complete the inventory rung');
+    assert.equal(seed.proofCount, 1, status + ' must not inflate proof telemetry');
+    assert.equal(seed.nextGrowthRung, rung);
+  }
+  payload.records.eventRecords = [local, standalone];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1,
+    'two exact PASS observations retain the original positive path');
+});
+
 test('an OpenClaw Local publisher cannot spoof Standalone inventory or skill proofs', () => {
   const rung = buildOpenClawExcellenceSeedV1().growthRungs[0];
   const payload = feed({ statusRecords: [heartbeat()] });
