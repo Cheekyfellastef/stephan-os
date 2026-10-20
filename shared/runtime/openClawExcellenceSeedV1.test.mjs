@@ -263,6 +263,36 @@ test('self-claimed agent aliases cannot publish capability-gap pressure without 
     'the explicitly identified original publisher retains observational gap reporting');
 });
 
+test('non-event feed buckets and unidentifiable events cannot mint OpenClaw gap pressure', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const gap = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    eventId: 'forged-cross-bucket-gap',
+    status: 'BLOCKED',
+    reason: 'missing capability: forged cross-bucket pressure',
+    gapId: 'forged-cross-bucket',
+    capabilityId: 'forged-cross-bucket',
+  };
+  for (const bucket of ['goalRecords', 'statusRecords', 'proofRecords', 'receiptRecords']) {
+    payload.records[bucket] = bucket === 'statusRecords' ? [heartbeat(), gap] : [gap];
+    assert.deepEqual(view(payload).openClawExcellenceSeedGrowth.currentGaps, [],
+      bucket + ' cannot publish agent capability-gap pressure');
+    payload.records[bucket] = bucket === 'statusRecords' ? [heartbeat()] : [];
+  }
+  for (const invalid of [
+    { ...gap, kind: 'stephanos.shared_workspace.status' },
+    { ...gap, eventId: '' },
+    { ...gap, eventId: undefined },
+  ]) {
+    payload.records.eventRecords = [invalid];
+    assert.deepEqual(view(payload).openClawExcellenceSeedGrowth.currentGaps, [],
+      'wrong-kind or unidentifiable event cannot mint a gap');
+  }
+  payload.records.eventRecords = [gap];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.currentGaps.length, 1,
+    'an identified original-agent canonical event retains observational gap reporting');
+});
+
 test('an OpenClaw Local publisher cannot spoof Standalone inventory or skill proofs', () => {
   const rung = buildOpenClawExcellenceSeedV1().growthRungs[0];
   const payload = feed({ statusRecords: [heartbeat()] });

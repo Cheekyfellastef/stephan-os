@@ -1883,7 +1883,12 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
     // Missing participant identity must not fall back to a self-claimed agentId.
     const publisher = text(record?.participantId, '').toLowerCase();
     const claimedAgent = text(record?.openClawExcellenceEvidence?.agentId, '').toLowerCase();
-    return agents.includes(publisher)
+    // Capability-gap pressure must come from a replay-identifiable canonical
+    // event, never a goal/status/proof/receipt declaration in another bucket.
+    return eventRecordSet.has(record)
+      && record.kind === 'stephanos.shared_workspace.event'
+      && Boolean(text(record?.eventId, ''))
+      && agents.includes(publisher)
       && hasConsistentAgentIdentity(record, publisher)
       && (!claimedAgent || claimedAgent === publisher);
   });
