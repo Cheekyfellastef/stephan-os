@@ -129,15 +129,16 @@ function New-StagedRegistrationSecurity([Security.Principal.SecurityIdentifier]$
     }
     return $acl
 }
-function Assert-StagedRegistrationSecurity($Acl, [Security.Principal.SecurityIdentifier]$WitnessSid) {
+function Assert-StagedRegistrationSecurity([byte[]]$Descriptor, [Security.Principal.SecurityIdentifier]$WitnessSid) {
     # Inspect raw ACEs as the native reader does; Access rules alone can hide
     # callback/object ACE details. This samples shape, not effective access or
     # continuous protection against an administrator/parent-key replacement.
-    if ($null -eq $Acl -or $null -eq $WitnessSid -or
+    if ($null -eq $Descriptor -or $Descriptor.Length -eq 0 -or $Descriptor.Length -gt 65536 -or
+        $null -eq $WitnessSid -or
         $WitnessSid.Value -notmatch '^S-1-5-80-(\d+-){4}\d+$') {
         throw 'R7_STAGE_REGISTRY_DESCRIPTOR_UNPROVEN'
     }
-    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($Acl.GetSecurityDescriptorBinaryForm(), 0)
+    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($Descriptor, 0)
     $required = [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent -bor
         [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected
     if ($null -eq $raw.Owner -or $raw.Owner.Value -ne 'S-1-5-32-544' -or
@@ -170,7 +171,7 @@ function Protect-StagedRegistration {
     $witness = ([Security.Principal.NTAccount]::new('NT SERVICE', $service)).Translate(
         [Security.Principal.SecurityIdentifier])
     $acl = New-StagedRegistrationSecurity $witness
-    Assert-StagedRegistrationSecurity $acl $witness
+    Assert-StagedRegistrationSecurity ($acl.GetSecurityDescriptorBinaryForm()) $witness
     $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey(
         [Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
     $key = $null
@@ -185,13 +186,13 @@ function Protect-StagedRegistration {
             [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, $rights)
         if ($null -eq $key) { throw 'R7_STAGE_REGISTRY_KEY_MISSING' }
         $key.SetAccessControl($acl)
-        Assert-StagedRegistrationSecurity ($key.GetAccessControl()) $witness
+        Assert-StagedRegistrationSecurity ($key.GetAccessControl().GetSecurityDescriptorBinaryForm()) $witness
         $key.SetValue('PinnedImageSha256', $ExpectedSha256, [Microsoft.Win32.RegistryValueKind]::String)
         if ($key.GetValueKind('PinnedImageSha256') -ne [Microsoft.Win32.RegistryValueKind]::String -or
             $key.GetValue('PinnedImageSha256') -cne $ExpectedSha256) {
             throw 'R7_STAGE_REGISTRY_PIN_READBACK_FAILED'
         }
-        Assert-StagedRegistrationSecurity ($key.GetAccessControl()) $witness
+        Assert-StagedRegistrationSecurity ($key.GetAccessControl().GetSecurityDescriptorBinaryForm()) $witness
     } finally {
         if ($null -ne $key) { $key.Dispose() }
         $baseKey.Dispose()
@@ -342,7 +343,7 @@ try {
     if ((Read-LocalSha256 $installedExe) -cne $ExpectedSha256) {
         throw 'R7_STAGE_POST_ACL_IMAGE_HASH_MISMATCH'
     }
-    Assert-StagedRegistrationSecurity (Get-Acl -LiteralPath $serviceKey -ErrorAction Stop) (
+    Assert-StagedRegistrationSecurity ((Get-Acl -LiteralPath $serviceKey -ErrorAction Stop).GetSecurityDescriptorBinaryForm()) (
         [Security.Principal.SecurityIdentifier]::new($witnessSid))
     $receipt.finalVerdict = 'R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED'
     $receipt | ConvertTo-Json -Compress

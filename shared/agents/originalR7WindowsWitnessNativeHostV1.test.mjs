@@ -88,15 +88,16 @@ const stagingScriptUrl = new URL('../../scripts/windows/stage-original-r7-witnes
 
 test('registration protection stays behind interactive staging and uses only the fixed existing key', async () => {
   const source = await readFile(stagingScriptUrl, 'utf8');
-  const stage = source.indexOf('if (-not $Stage -or $WhatIfPreference)');
-  const admin = source.indexOf("throw 'R7_STAGE_INTERACTIVE_ADMIN_REQUIRED'");
-  const create = source.indexOf('& $sc create $service');
-  const protect = source.indexOf('\n    Protect-StagedRegistration\n');
+  const normalized = source.replace(/\r\n/g, '\n');
+  const stage = normalized.indexOf('if (-not $Stage -or $WhatIfPreference)');
+  const admin = normalized.indexOf("throw 'R7_STAGE_INTERACTIVE_ADMIN_REQUIRED'");
+  const create = normalized.indexOf('& $sc create $service');
+  const protect = normalized.indexOf('\n    Protect-StagedRegistration\n');
   assert.ok(stage > 0 && admin > stage && create > admin && protect > create);
   assert.match(source, /RegistryHive\]::LocalMachine, \[Microsoft\.Win32\.RegistryView\]::Registry64/);
   assert.match(source, /OpenSubKey\("SYSTEM\\CurrentControlSet\\Services\\\$service"/);
   assert.match(source, /\$key\.SetAccessControl\(\$acl\)/);
-  assert.match(source, /Assert-StagedRegistrationSecurity \(\$key\.GetAccessControl\(\)\) \$witness/);
+  assert.match(source, /Assert-StagedRegistrationSecurity \(\$key\.GetAccessControl\(\)\.GetSecurityDescriptorBinaryForm\(\)\) \$witness/);
   assert.match(source, /\$key\.SetValue\('PinnedImageSha256', \$ExpectedSha256/);
   assert.doesNotMatch(source, /\b(?:CreateSubKey|AdjustTokenPrivileges|Enable-Privilege)\b/);
 });
@@ -124,7 +125,7 @@ foreach ($name in @('New-StagedRegistrationSecurity', 'Assert-StagedRegistration
 }
 $sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-80-1-2-3-4-5')
 $acl = New-StagedRegistrationSecurity $sid
-Assert-StagedRegistrationSecurity $acl $sid
+Assert-StagedRegistrationSecurity ($acl.GetSecurityDescriptorBinaryForm()) $sid
 $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
 if ($raw.DiscretionaryAcl.Count -ne 3) { throw 'ACE_COUNT_MISMATCH' }
 $masks = @{}
@@ -149,11 +150,14 @@ $cases = @(
     'O:BAG:BAD:NO_ACCESS_CONTROL'
 )
 foreach ($sddl in $cases) {
-    $candidate = [Security.AccessControl.RegistrySecurity]::new()
-    $candidate.SetSecurityDescriptorSddlForm($sddl)
+    # Preserve the raw ACE inventory: RegistrySecurity normalizes/merges
+    # duplicate ACEs before serialization and would hide this negative case.
+    $candidate = [Security.AccessControl.RawSecurityDescriptor]::new($sddl)
+    $bytes = [byte[]]::new($candidate.BinaryLength)
+    $candidate.GetBinaryForm($bytes, 0)
     $rejected = $false
-    try { Assert-StagedRegistrationSecurity $candidate $sid } catch { $rejected = $true }
-    if (-not $rejected) { throw 'HOSTILE_DESCRIPTOR_ACCEPTED' }
+    try { Assert-StagedRegistrationSecurity $bytes $sid } catch { $rejected = $true }
+    if (-not $rejected) { throw ('HOSTILE_DESCRIPTOR_ACCEPTED: ' + $sddl) }
 }
 $rejected = $false
 try { New-StagedRegistrationSecurity ([Security.Principal.SecurityIdentifier]::new('S-1-5-18')) } catch { $rejected = $true }
