@@ -247,6 +247,7 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     || receipt.sourceHead.toLowerCase() !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
     || receipt.prNumber !== Number(plan.reviewEnv.STEPHANOS_REVIEW_PR)
     || receipt.proofRef !== expectedProof
+    || !/^[a-f0-9]{64}$/.test(receipt.proofSha256 ?? '')
     || !['clean', 'findings'].includes(receipt.verdict)
     || receipt.mergeAuthority !== false) return error('REVIEWER_RECEIPT_UNBOUND');
   // A positive stdout marker alone proves no persisted evidence exists.
@@ -265,6 +266,11 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const hashMatch = String(readback.stdout || '').match(/^([a-f0-9]{64})  (.+)\r?\n?$/);
   if (!hashMatch || hashMatch[2] !== reviewProofFile) {
     return error('REVIEWER_PROOF_READBACK_INVALID');
+  }
+  if (hashMatch[1] !== receipt.proofSha256) {
+    // The workspace file may have been replaced after the child published it.
+    // A successfully hashed but unrelated same-path file is NOT evidence.
+    return error('REVIEWER_PROOF_HASH_MISMATCH');
   }
   return Object.freeze({
     ok: true, status: 'LOCAL_REVIEW_EVIDENCE_READY',
