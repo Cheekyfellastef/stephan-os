@@ -58,7 +58,6 @@ import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereig
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   safeCpuPressureSnapshotProjection,
-  projectSovereignContinuousRepairGuardianStatus,
 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -1615,23 +1614,6 @@ function safeSovereignGuardianReceiptProjection(operationResult = {}) {
   });
 }
 
-function safeSovereignGuardianReceiptProjection(raw) {
-  const unknown = () => projectSovereignContinuousRepairGuardianStatus(null);
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return unknown();
-  const result = projectSovereignContinuousRepairGuardianStatus(raw);
-  // The private Commander may return partial or adversarial fields. Never
-  // mark the PUBLIC observation available when its bounded cycle counters or
-  // typed blockers were rejected. Zero is valid; missing is not success.
-  const originalBlocker = String(raw.lastBlocker || '');
-  const originalVerdict = String(raw.lastFinalVerdict || '');
-  if (!result.available || result.cycleCount === null
-    || result.successCount === null || result.failureCount === null
-    || result.running === null || result.scheduled === null
-    || (originalBlocker && !result.lastBlocker)
-    || (originalVerdict && !result.lastFinalVerdict)) return unknown();
-  return result;
-}
-
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1689,13 +1671,6 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
       archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
     } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
-    // The underlying private Commander status already projects this safely.
-    // The public mailbox used to silently drop it, hiding whether the
-    // daemon's guardian actually ran. Preserve only bounded typed counts and
-    // timestamps; no local paths, raw logs, tokens or success-by-heartbeat.
-    ...(remoteAction === 'status' ? {
-      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult?.continuousRepairGuardian),
-    } : {}),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
