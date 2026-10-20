@@ -63,6 +63,36 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
 
+test('Starfield VR playtest CPU attribution tracks desktop ChatGPT and browsers alongside game/frame telemetry', () => {
+  assert.match(recorder, /function Get-StarfieldVrCpuConsumerSample/);
+  assert.match(recorder, /chatGpt = 'ChatGPT'/);
+  assert.match(recorder, /edge = 'msedge'/);
+  assert.match(recorder, /brave = 'brave'/);
+  assert.match(recorder, /webView2 = 'msedgewebview2'/);
+  assert.match(recorder, /node = 'node'/);
+  assert.match(recorder, /metaVr = 'OVRServer_x64'/);
+  assert.match(recorder, /\$Previous\[\$pidValue\]/);
+  assert.match(recorder, /\$startTicks/);
+  assert.match(recorder, /\$duration -gt 0/);
+  assert.match(recorder, /\$g\.matched -eq \$g\.count/);
+  assert.match(recorder, /return \[pscustomobject\]\$out/);
+  assert.match(performance, /\$cpuConsumerHistory = @\{\}/);
+  assert.match(performance, /Get-StarfieldVrCpuConsumerSample -Previous \$cpuConsumerHistory/);
+  assert.match(performance, /chatGptCpuPct = \$cpuConsumers\.chatGptCpuPct/);
+  assert.match(performance, /edgeCpuPct = \$cpuConsumers\.edgeCpuPct/);
+  assert.match(performance, /webView2CpuPct = \$cpuConsumers\.webView2CpuPct/);
+  assert.match(performance, /cpuConsumersAvailable = \[bool\]\$cpuConsumers\.available/);
+  assert.match(performance, /avgChatGptCpuPct = if \(\$chatGptCpuSamples.Count\)/);
+  assert.match(performance, /maxChatGptCpuPct = if \(\$chatGptCpuSamples.Count\)/);
+  assert.match(performance, /browserTabsInspected = \$false/);
+  assert.match(performance, /chatGptConversationContentsInspected = \$false/);
+  assert.doesNotMatch(recorder, /\b(?:Stop-Process|taskkill|Invoke-Expression|Get-Content.*(?:Cookies|History)|Get-CimInstance Win32_Process|CommandLine)\b/i);
+  assert.doesNotMatch(recorder, /chrome:\/\/|edge:\/\/|brave:\/\//);
+  assert.match(diagnosis, /desktop-chatgpt-cpu-contention-observed/);
+  assert.match(diagnosis, /edge-process-cpu-contention-observed/);
+  assert.match(reporter, /avgChatGptCpuPct: safeMetric/);
+});
+
 test('Meta Air Link runtime metrics producer feeds measured render and transport telemetry', () => {
   assert.match(runtimeProducer, /META_OCULUS_PERFLOG_XRS_STATS/);
   assert.match(runtimeProducer, /oculus_pc_xrs_stats_event/);
