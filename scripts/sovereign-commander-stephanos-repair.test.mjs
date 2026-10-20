@@ -214,13 +214,14 @@ test('continuous repair attempts independent repair for unproven elastic admissi
 });
 
 test('continuous repair escalation fits inside the enclosing 220-second action budget', () => {
-  assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS, 190_000);
+  assert.equal(CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS, 215_000);
   assert.deepEqual(CONTINUOUS_REPAIR_STEP_TIMEOUTS, {
     caretaker: 30_000,
     goalBuilderInitial: 60_000,
     controlPlane: 40_000,
     goalBuilderRetry: 50_000,
     coreStatus: 10_000,
+    cpuRelief: 25_000,
   });
 
   const observedTimeouts = [];
