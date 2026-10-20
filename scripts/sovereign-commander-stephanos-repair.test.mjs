@@ -215,6 +215,7 @@ test('continuous repair attempts independent repair for unproven elastic admissi
 
 test('held R7 builder does not suppress separately proven Core repair during an unattended cycle', () => {
   const calls = [];
+  const steps = [];
   const queue = [
     result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
     result({ ok: false, blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING' }, 2),
@@ -227,9 +228,10 @@ test('held R7 builder does not suppress separately proven Core repair during an 
   ];
   const repaired = runSovereignCommanderStephanosRepair({
     readHead: () => HEAD, continuousRepairCycle: true,
-    runStep: (step) => { calls.push(step.id); return queue.shift(); },
+    runStep: (step) => { calls.push(step.id); steps.push(step); return queue.shift(); },
   });
   assert.equal(repaired.ok, false);
+  assert.deepEqual(steps.at(-1).args.slice(-1), ['--unattended-gaming-guard']);
   assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
   assert.deepEqual(calls, [
     'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
