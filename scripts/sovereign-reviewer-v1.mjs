@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { evaluateSovereignReviewSnapshot } from '../shared/agents/sovereignReviewerV1.mjs';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { inspectLocalSovereignGamingPermissionV1, observeLocalSovereignOllamaDigestV1 } from './sovereign-reviewer-ollama-calibration-v1.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
@@ -54,24 +55,77 @@ function exactLocalSnapshot(env, dependencies = {}) {
     timestampUtc: new Date().toISOString(),
   };
 }
-async function localModel(prompt, env) {
+export async function localModel(prompt, env, {
+  fetchImpl = fetch,
+  gamingGuard = inspectLocalSovereignGamingPermissionV1,
+  modelPin = observeLocalSovereignOllamaDigestV1,
+  startPolling = setInterval, stopPolling = clearInterval,
+  platform = process.platform,
+} = {}) {
   const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
   if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model)) throw new Error('UNSAFE_LOCAL_MODEL');
-  const response = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model, prompt, stream: false, format: 'json',
-      options: { temperature: 0, num_ctx: 8192 },
-    }),
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!response.ok) throw new Error('LOCAL_MODEL_REQUEST_FAILED');
-  const raw = await response.text();
-  if (Buffer.byteLength(raw, 'utf8') > maximumOutput) throw new Error('LOCAL_MODEL_OUTPUT_UNBOUNDED');
-  const parsed = JSON.parse(raw);
-  if (typeof parsed?.response !== 'string') throw new Error('LOCAL_MODEL_OUTPUT_INVALID');
-  return parsed.response;
+  const allowed = () => gamingGuard(env, { platform })?.ok === true;
+  // One real evidence-generating inference must obey the same resource, model,
+  // redirect and unload checks as local calibration. Claimed session labels
+  // alone never confer independent review or Windows authority.
+  if (!allowed()) throw new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED');
+  const pinned = await modelPin(model, { fetchImpl });
+  if (!pinned?.ok || !/^[a-f0-9]{64}$/.test(pinned.digest ?? '')) {
+    throw new Error('LOCAL_REVIEW_MODEL_DIGEST_UNPROVEN');
+  }
+  if (!allowed()) throw new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED');
+  const duringPin = await modelPin(model, { fetchImpl });
+  if (!duringPin?.ok || duringPin.digest !== pinned.digest) {
+    throw new Error('LOCAL_REVIEW_MODEL_DIGEST_CHANGED');
+  }
+  const abort = new AbortController();
+  let preempted = false;
+  const monitor = startPolling(() => {
+    try {
+      if (!allowed()) {
+        preempted = true;
+        abort.abort(new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED'));
+      }
+    } catch {
+      preempted = true;
+      abort.abort(new Error('LOCAL_REVIEW_GAMING_RESOURCE_UNPROVEN'));
+    }
+  }, 500);
+  try {
+    const response = await fetchImpl(OLLAMA_URL, {
+      method: 'POST', redirect: 'error',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model, prompt, stream: false, format: 'json',
+        keep_alive: 0,
+        options: { temperature: 0, num_ctx: 8192 },
+      }),
+      signal: AbortSignal.any([AbortSignal.timeout(120_000), abort.signal]),
+    });
+    if (!response?.ok || typeof response.text !== 'function') {
+      throw new Error('LOCAL_MODEL_REQUEST_FAILED');
+    }
+    const raw = await response.text();
+    if (preempted || abort.signal.aborted || !allowed()) {
+      throw new Error('LOCAL_REVIEW_GAMING_RESOURCE_PROTECTED');
+    }
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > maximumOutput) {
+      throw new Error('LOCAL_MODEL_OUTPUT_UNBOUNDED');
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed?.model !== model || parsed?.done !== true
+      || parsed?.done_reason !== 'stop' || typeof parsed?.response !== 'string'
+      || Buffer.byteLength(parsed.response, 'utf8') > 12_288) {
+      throw new Error('LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN');
+    }
+    const afterPin = await modelPin(model, { fetchImpl });
+    if (!afterPin?.ok || afterPin.digest !== pinned.digest || !allowed()) {
+      throw new Error('LOCAL_REVIEW_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE');
+    }
+    return parsed.response;
+  } finally {
+    stopPolling(monitor);
+  }
 }
 function pinDirectory(path) {
   const absolute = resolve(path);
