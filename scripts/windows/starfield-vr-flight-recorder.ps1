@@ -306,6 +306,93 @@ function Get-StarfieldVrCpuConsumerSample {
     return [pscustomobject]$out
 }
 
+
+# Read-only, bounded game-thread CPU evidence. A fully utilized *single*
+# logical processor corresponds to roughly 100%, independently of the
+# normalized whole-process CPU percentage. Do not label the busiest thread
+# the main/render thread: thread function/role is not determined here.
+function Get-StarfieldVrGameThreadCpuSample {
+    param(
+        [int]$GameProcessId,
+        [hashtable]$Previous,
+        [int]$MaximumThreadCount = 512
+    )
+    $sampledAt = (Get-Date).ToUniversalTime()
+    $out = [ordered]@{
+        source = 'STARFIELD_PROCESS_THREAD_CPU_DELTAS'
+        available = $false
+        reason = 'THREAD_SNAPSHOT_UNAVAILABLE'
+        threadCount = $null
+        matchedThreadCount = 0
+        busiestThreadCpuPct = $null
+    }
+    if ($GameProcessId -le 0 -or $null -eq $Previous) {
+        $out.reason = 'THREAD_IDENTITY_UNAVAILABLE'
+        return [pscustomobject]$out
+    }
+    try {
+        $process = Get-Process -Id $GameProcessId -ErrorAction Stop
+        $processStartedTicks = [long]$process.StartTime.ToUniversalTime().Ticks
+        $threads = @($process.Threads)
+        if ($threads.Count -gt $MaximumThreadCount) {
+            $out.reason = 'THREAD_INVENTORY_LIMIT'
+            $Previous.Clear()
+            return [pscustomobject]$out
+        }
+        $out.available = $true
+        $out.threadCount = $threads.Count
+        $out.reason = 'THREAD_WARMUP'
+        $prior = @{}
+        if ($Previous.processId -eq $GameProcessId -and
+            $Previous.processStartTicks -eq $processStartedTicks -and
+            $Previous.ContainsKey('threadCpu')) {
+            $prior = $Previous.threadCpu
+        }
+        $fresh = @{}
+        $maxCorePercent = $null
+        $matched = 0
+        foreach ($thread in $threads) {
+            try {
+                $threadId = [int]$thread.Id
+                $threadStartTicks = [long]$thread.StartTime.ToUniversalTime().Ticks
+                $cpuSeconds = [double]$thread.TotalProcessorTime.TotalSeconds
+                $old = $prior[$threadId]
+                if ($old -and [long]$old.startTicks -eq $threadStartTicks) {
+                    $secondsElapsed = ($sampledAt - [DateTime]$old.observedAtUtc).TotalSeconds
+                    $usedSeconds = $cpuSeconds - [double]$old.cpuSeconds
+                    if ($secondsElapsed -gt 0 -and $secondsElapsed -le 120 -and $usedSeconds -ge 0) {
+                        $corePercent = [Math]::Min(100, ($usedSeconds / $secondsElapsed) * 100)
+                        if ($null -eq $maxCorePercent -or $corePercent -gt $maxCorePercent) {
+                            $maxCorePercent = $corePercent
+                        }
+                        $matched++
+                    }
+                }
+                $fresh[$threadId] = @{
+                    startTicks = $threadStartTicks
+                    cpuSeconds = $cpuSeconds
+                    observedAtUtc = $sampledAt
+                }
+            } catch {
+                # Threads can exit while sampled; never manufacture a 0% CPU value.
+            }
+        }
+        $Previous.Clear()
+        $Previous.processId = $GameProcessId
+        $Previous.processStartTicks = $processStartedTicks
+        $Previous.threadCpu = $fresh
+        $out.matchedThreadCount = $matched
+        if ($matched -gt 0) {
+            $out.busiestThreadCpuPct = [Math]::Round([double]$maxCorePercent, 2)
+            $out.reason = 'THREAD_CPU_MEASURED'
+        }
+    } catch {
+        $Previous.Clear()
+        $out.reason = 'THREAD_SNAPSHOT_UNAVAILABLE'
+    }
+    return [pscustomobject]$out
+}
+
 function Get-StarfieldVrCrashFingerprint {
     param([string]$Message)
     $flat = ([string]$Message -replace '\s+', ' ').Trim()
