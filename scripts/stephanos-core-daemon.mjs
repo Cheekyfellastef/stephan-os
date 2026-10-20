@@ -425,6 +425,16 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   }
 
   if (state.missionWorkerHealthy !== true) {
+    // A missing/unreadable heartbeat can coexist with a detached live worker.
+    // The task-start action cannot prove its launch/lease custody. Preserve
+    // the degraded observation until the existing Windows owner qualifies it.
+    const workerAge = state.missionWorkerHeartbeatAgeMs;
+    if (typeof workerAge !== 'number' || !Number.isFinite(workerAge) || workerAge < 0) {
+      lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD';
+      lastDependencySelfHealBlocker = 'MISSION_WORKER_CUSTODY_UNPROVEN';
+      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
+      return Object.freeze({ attempted: true, recovered: false });
+    }
     const workerRepair = await runBoundedDependencyMaintenance(
       MISSION_WORKER_START_ACTION_ID,
       sourceHead,

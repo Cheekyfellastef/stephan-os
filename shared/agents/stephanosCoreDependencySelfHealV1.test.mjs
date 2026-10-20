@@ -40,21 +40,34 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
   };
 }
 
-function missingWorker(gamingActive = false) {
+function workerState({ gamingActive = false, age = null } = {}) {
   return projectStephanosCoreDaemonState({
     sourceHead: HEAD, sovereignCommanderHealthy: true, backendHealthy: true,
-    missionWorkerHeartbeatAgeMs: null, gamingActive,
+    missionWorkerHeartbeatAgeMs: age, gamingActive,
   });
 }
 
-test('missing worker heartbeat reaches existing repair and requires fresh recovery evidence', async () => {
+test('missing worker evidence reports degraded custody hold without starting a possible detached worker', async () => {
   const h = isolatedRepair();
-  const state = missingWorker();
+  const state = workerState();
   const spine = projectStephanosControlPlaneSpine({ coreState: state });
   assert.equal(spine.awake, false);
   assert.equal(spine.repairRequired, true);
   assert.equal(spine.repairReason, 'MISSION_WORKER_UNHEALTHY');
   const result = await h.run(state);
+  assert.equal(result.attempted, true);
+  assert.equal(result.recovered, false);
+  assert.equal(h.actions.length, 0);
+  assert.equal(h.context.lastDependencySelfHealBlocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.equal(h.context.lastDependencySelfHealVerdict, 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD');
+  const held = await h.run(state);
+  assert.equal(held.attempted, false);
+  assert.equal(h.actions.length, 0);
+});
+
+test('existing measured-stale worker repair still requires a newly observed heartbeat after its action', async () => {
+  const h = isolatedRepair();
+  const result = await h.run(workerState({ age: 300001 }));
   assert.equal(result.attempted, true);
   assert.equal(result.recovered, false);
   assert.deepEqual(h.actions, [{
@@ -68,31 +81,31 @@ test('missing worker heartbeat reaches existing repair and requires fresh recove
 
 test('worker repair becomes recovered only with a newly observed fresh heartbeat', async () => {
   const h = isolatedRepair({ verifiedAge: 1000 });
-  const result = await h.run(missingWorker());
+  const result = await h.run(workerState({ age: 300001 }));
   assert.equal(result.attempted, true);
   assert.equal(result.recovered, true);
   assert.equal(h.context.lastDependencySelfHealVerdict, 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED');
   assert.equal(h.context.lastDependencySelfHealBlocker, '');
 });
 
-test('unchanged missing heartbeat respects existing cooldown before retrying the same repair', async () => {
+test('unchanged measured-stale heartbeat respects existing cooldown before retrying the same repair', async () => {
   const h = isolatedRepair({ repairOk: false });
-  await h.run(missingWorker());
+  await h.run(workerState({ age: 300001 }));
   assert.equal(h.context.lastDependencySelfHealBlocker, 'WORKER_START_HELD');
-  const held = await h.run(missingWorker());
+  const held = await h.run(workerState({ age: 300001 }));
   assert.equal(held.attempted, false);
   assert.equal(held.recovered, false);
   assert.equal(h.actions.length, 1);
   assert.equal(h.context.lastDependencySelfHealVerdict, 'CORE_DEPENDENCY_SELF_HEAL_COOLDOWN_ACTIVE');
   h.advance(120_000);
-  await h.run(missingWorker());
+  await h.run(workerState({ age: 300001 }));
   assert.equal(h.actions.length, 2);
   assert.equal(h.context.lastDependencySelfHealAttemptCount, 2);
 });
 
 test('missing heartbeat remains degraded during gaming without starting a worker', async () => {
   const h = isolatedRepair();
-  const state = missingWorker(true);
+  const state = workerState({ gamingActive: true });
   const result = await h.run(state);
   assert.equal(state.readiness, 'DEGRADED');
   assert.equal(state.computePosture, 'GAMING_PROTECTED');

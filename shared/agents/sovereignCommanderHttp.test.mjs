@@ -435,6 +435,7 @@ test('missing child exit code cannot turn an earlier green receipt into successf
   try {
     h.cycle({ ok: true, blocker: '', exitCode: null });
     assert.equal(h.guardian.status().lastOk, false);
+    assert.equal(h.guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
     assert.equal(h.guardian.status().successCount, 0);
     assert.equal(h.guardian.status().failureCount, 1);
   } finally { h.guardian.stop(); }
