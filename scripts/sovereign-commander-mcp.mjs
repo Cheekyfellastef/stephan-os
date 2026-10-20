@@ -225,8 +225,6 @@ const TOOLS = Object.freeze([
         targetBranch: { type: 'string', minLength: 1, maxLength: 160 },
         targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
-        offset: { type: 'integer', minimum: 0, maximum: 1000000 },
-        limit: { type: 'integer', minimum: 1, maximum: 12 },
         controllerActivityPayloadBase64: { type: 'string', minLength: 1, maxLength: 48000, pattern: '^[A-Za-z0-9_-]+$' },
       },
     },
@@ -284,9 +282,6 @@ function payloadForTool(name, args = {}) {
     return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
   }
   if (name === 'maintenance_action') {
-    if (args.actionId === 'starfield-vr-telemetry-archive') {
-      return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
-    }
     if (args.actionId === 'publish-controller-activity') {
       return {
         actionId: args.actionId,
