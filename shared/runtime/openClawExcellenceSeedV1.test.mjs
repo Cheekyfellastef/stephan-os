@@ -170,6 +170,51 @@ test('OpenClaw growth rejects ambiguous status strings containing PASS', () => {
     'two exact PASS observations retain the original positive path');
 });
 
+test('OpenClaw proof requires an explicit publisher and replayable event identity', () => {
+  const rung = 'INVENTORY_BOTH_AGENTS';
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = event(rung, 'openclaw-local');
+  const standalone = event(rung, 'openclaw-standalone');
+  for (const invalid of [
+    { ...standalone, participantId: undefined, agentId: 'openclaw-standalone' },
+    { ...standalone, participantId: '', workerId: 'openclaw-standalone' },
+    { ...standalone, eventId: undefined },
+    { ...standalone, eventId: '' },
+  ]) {
+    payload.records.eventRecords = [local, invalid];
+    const seed = view(payload).openClawExcellenceSeedGrowth;
+    assert.equal(seed.rungProofCount, 0,
+      'a missing publisher or event identity must not complete both inventories');
+    assert.equal(seed.proofCount, 1,
+      'unattributed or unrepeatable proof cannot inflate admitted telemetry');
+    assert.equal(seed.nextGrowthRung, rung);
+  }
+  payload.records.eventRecords = [local, standalone];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1,
+    'two canonical publishers with distinct event identities remain eligible');
+});
+
+test('self-claimed agent aliases cannot publish capability-gap pressure without participant custody', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const gap = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    eventId: 'agent-alias-without-publisher',
+    participantId: undefined,
+    agentId: 'openclaw-local',
+    workerId: 'openclaw-local',
+    status: 'BLOCKED',
+    reason: 'missing capability: spoofed publisher',
+    gapId: 'spoofed-publisher',
+    capabilityId: 'spoofed-publisher',
+  };
+  payload.records.eventRecords = [gap];
+  assert.deepEqual(view(payload).openClawExcellenceSeedGrowth.currentGaps, [],
+    'an agentId or workerId fallback must not mint canonical gap pressure');
+  payload.records.eventRecords = [{ ...gap, participantId: 'openclaw-local' }];
+  assert.equal(view(payload).openClawExcellenceSeedGrowth.currentGaps.length, 1,
+    'the explicitly identified original publisher retains observational gap reporting');
+});
+
 test('an OpenClaw Local publisher cannot spoof Standalone inventory or skill proofs', () => {
   const rung = buildOpenClawExcellenceSeedV1().growthRungs[0];
   const payload = feed({ statusRecords: [heartbeat()] });

@@ -1811,13 +1811,17 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const isAdmittedRungRecord = (record, rung, agentId = '') => {
     // A substring such as NOT_PASS must not be promoted to a positive
     // observation by the shared truth parser's broad status matching.
-    if (record.status !== 'PASS') return false;
+    // Do not infer the publisher from a self-claimed agent/worker alias, or
+    // accept an observation without a stable event identity for replay checks.
+    const publisher = text(record?.participantId, '').toLowerCase();
+    if (record.status !== 'PASS' || !text(record?.eventId, '')
+      || !agents.includes(publisher)) return false;
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
       || evidence.rung !== rung || !contract.growthRungs.includes(rung)
       || trustedAdmissionRequiredRungs.has(rung)) return false;
     return agents.includes(evidence.agentId)
-      && actorId(record) === evidence.agentId
+      && publisher === evidence.agentId
       && hasConsistentAgentIdentity(record, evidence.agentId)
       && (!agentId || evidence.agentId === agentId);
   };
@@ -1871,7 +1875,8 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   // A foreign publisher or a Local record claiming Standalone must not steer
   // another agent's canonical growth task or displace legitimate gap pressure.
   const agentBoundGapRecords = observed.filter((record) => {
-    const publisher = actorId(record);
+    // Missing participant identity must not fall back to a self-claimed agentId.
+    const publisher = text(record?.participantId, '').toLowerCase();
     const claimedAgent = text(record?.openClawExcellenceEvidence?.agentId, '').toLowerCase();
     return agents.includes(publisher)
       && hasConsistentAgentIdentity(record, publisher)
