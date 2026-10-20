@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
 import { access, mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -15,6 +15,8 @@ const sourceRoot = resolve(fileURLToPath(new URL('../', import.meta.url)));
 const SEED_ID = 'test-seed-isolated-builder';
 const TARGET = 'docs/architecture/test-seed-parallel-result.md';
 const TASK_ID = 'isolated-build-fixture';
+const TRACKED_TARGET = 'docs/architecture/tracked-seed-result.md';
+const TRACKED_CONTENT = '# Existing seed proposal\n';
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, { encoding: 'utf8', ...options });
@@ -103,6 +105,8 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     git('remote', 'add', 'origin', 'https://github.com/Cheekyfellastef/stephan-os.git');
     git('config', 'user.name', 'Seed Fixture');
     git('config', 'user.email', 'fixture@example.invalid');
+    await mkdir(path('docs/architecture'), { recursive: true });
+    await writeFile(path(TRACKED_TARGET), TRACKED_CONTENT);
     git('add', '.');
     git('commit', '-m', 'fixture baseline');
     let main = git('rev-parse', 'main');
@@ -147,6 +151,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
               createHash('sha256').update(resolve(repo)).digest('hex').slice(0, 12),
               'worktrees', taskId, 'docs');
             mkdirSync(docsParent, { recursive: true });
+            renameSync(join(docsParent, 'architecture'), join(docsParent, 'architecture.original'));
             symlinkSync(outside, join(docsParent, 'architecture'), 'dir');
           }
           if (poisonLocalGitConfigOnNextInference) {
@@ -345,6 +350,38 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     assert.notEqual(second.code, 0);
     assert.match(second.stderr, /TASK_ALREADY_HAS_A_RECEIPT|TASK_ALREADY_CLAIMED/);
     assert.equal(git('rev-parse', 'main'), main);
+    // Porcelain's leading space is the index status for a tracked edit.
+    // Exercise the real worker, not a duplicate of its string parser: the
+    // approved existing file must survive scope checks and reach commit.
+    const trackedRequest = { ...request, taskId: 'tracked-file-update-fixture',
+      targetPath: TRACKED_TARGET,
+      expectedTargetSha256: createHash('sha256').update(TRACKED_CONTENT).digest('hex') };
+    const trackedRaw = JSON.stringify(trackedRequest);
+    const trackedManifest = join(scratch, 'tracked-file-update.json');
+    await writeFile(trackedManifest, trackedRaw);
+    await writeFile(join(stateRoot, 'approvals', trackedRequest.taskId + '.json'),
+      JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654322 }));
+    const trackedNow = new Date().toISOString();
+    secondOwnerComment = { ...ownerComment, id: 7654322,
+      created_at: trackedNow, updated_at: trackedNow,
+      body: '```stephanos-seed-parallel-owner-approval\n' + JSON.stringify(
+        makeParallelSeedExactApprovalV1({ request: trackedRequest,
+          manifestSha256: parallelSeedManifestHashV1(trackedRaw), nowUtc: trackedNow,
+          expiryUtc: new Date(Date.parse(trackedNow) + 3600000).toISOString() })) + '\n```' };
+    modelResponsePath = TRACKED_TARGET;
+    const trackedRun = await runAsync(process.execPath,
+      [executable, 'build', trackedManifest, '--execute'], { cwd: repo, env });
+    assert.equal(trackedRun.code, 0, trackedRun.stderr);
+    const trackedReceipt = JSON.parse(await readFile(
+      join(stateRoot, 'receipts', trackedRequest.taskId + '.json'), 'utf8'));
+    assert.equal(trackedReceipt.stage, 'COMMITTED');
+    assert.equal(git('rev-parse', 'main'), main);
+    assert.equal(await readFile(path(TRACKED_TARGET), 'utf8'), TRACKED_CONTENT);
+    assert.match(await readFile(join(trackedReceipt.worktree, TRACKED_TARGET), 'utf8'),
+      /Fixture model-generated source candidate/);
+    modelResponsePath = TARGET;
+    secondOwnerComment = null;
+
     // Adversarial post-build receipt forgery: a second clean commit plus a
     // locally rewritten receipt is NOT verified proof of the approved build.
     await writeFile(join(completed.worktree, 'unapproved-extra.md'), 'out-of-scope\\n');
@@ -896,3 +933,4 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
   }
 });
+

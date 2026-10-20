@@ -104,7 +104,9 @@ async function processExec(bin, args, cwd = repoRoot, timeoutMs = 120000, gaming
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
       if (outputOverflow) rej(new Error('SEED_CHILD_OUTPUT_LIMIT_EXCEEDED'));
       else if (abortOnGaming) rej(new Error('GAME_PRIORITY_LOCAL_TEST_ABORTED'));
-      else if (code === 0) res(Buffer.concat(stdoutChunks).toString('utf8').trim());
+      // Git porcelain uses leading spaces as status columns. Remove only
+      // the terminal line ending; trimming whitespace corrupts tracked paths.
+      else if (code === 0) res(Buffer.concat(stdoutChunks).toString('utf8').replace(/\r?\n$/, ''));
       else rej(new Error(executable + ' failed (' + code + '): ' + stderr.slice(-1500)));
     });
   });
@@ -640,3 +642,4 @@ main().catch((error) => {
   process.stderr.write('Seed Canopy parallel lane BLOCKED: ' + String(error.message || error) + '\n');
   process.exitCode = 1;
 });
+
