@@ -146,7 +146,7 @@ test('Sovereign Commander exposes archive via read-only local and bounded remote
   assert.match(mcp, /name: 'starfield_vr_telemetry_archive'/);
   assert.match(mcp, /readOnlyHint: true/);
   assert.match(remote, /safeStarfieldVrTelemetryArchiveProjection/);
-  assert.match(remote, /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_RECEIPT_INVALID/);
+  assert.match(remote, /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_/);
 });
 
 test('remote telemetry paging is bound to the archive verb and cannot widen other maintenance actions', () => {

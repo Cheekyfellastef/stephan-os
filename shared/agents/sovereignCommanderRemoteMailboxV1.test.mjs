@@ -3759,3 +3759,26 @@ test('VR archive remote accepts wrapped Windows execution envelope and returns o
     } catch { return false; }
   }), true);
 });
+
+test('VR archive failure distinguishes a missing marker with no private output', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const inner = {
+    ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64), command: { plan: { processId } },
+    structuredContent: {
+      status: 0,
+      stdout: 'PRIVATE_INTERNAL_STDOUT_NOT_A_TELEMETRY_MARKER',
+      stderr: 'PRIVATE_INTERNAL_STDERR',
+      errorCode: '',
+    },
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 4 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken,
+      fetchFn: mcpFetch({ maintenance: { structuredContent: inner } }).fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_MARKER_MISSING');
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTERNAL_STDOUT|PRIVATE_INTERNAL_STDERR/);
+});
