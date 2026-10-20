@@ -4,7 +4,7 @@ Status: source-built; live only after protected admission and an exact receipt p
 
 ## Authenticated fast-mailbox actor handoff
 
-The canonical mailbox is now #2808. Its owner-authored issue-comment event
+The canonical mailbox is now the current source-defined canonical mailbox. Its owner-authored issue-comment event
 dispatches the protected merge workflow using `github-actions[bot]`. That is a
 carrier identity; it does not inherit `Cheekyfellastef`'s operator permissions.
 The direct owner transport remains supported. Other carriers fail closed.
