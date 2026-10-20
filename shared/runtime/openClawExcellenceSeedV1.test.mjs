@@ -88,6 +88,8 @@ test('fresh exact source, mission and issue bound heartbeat releases one pressur
 test('stale or mismatched heartbeat cannot plant or enqueue growth', () => {
   for (const broken of [
     { ...heartbeat(), relatedIssue: '#1657' },
+    { ...heartbeat(), missionId: 'unrelated-seed' },
+    { ...heartbeat(), missionId: undefined },
     { ...heartbeat(), seedHeartbeat: { ...heartbeat().seedHeartbeat, missionId: 'other' } },
     { ...heartbeat(), seedHeartbeat: { ...heartbeat().seedHeartbeat, contractSource: 'wrong/path.mjs' } },
     heartbeat('2026-10-13T12:35:00.000Z'),

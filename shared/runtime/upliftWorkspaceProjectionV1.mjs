@@ -1748,6 +1748,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const heartbeat = feedCurrent ? latestByTime(list(records.statusRecords).filter((record) => {
     const stamp = Date.parse(record?.timestampUtc);
     return record.statusId === OPENCLAW_EXCELLENCE_MISSION_ID
+      && record.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
       && record.relatedIssue === OPENCLAW_EXCELLENCE_ISSUE
       && record.seedHeartbeat?.schemaVersion === 'stephanos.high-level-flywheel-seed-heartbeat.v1'
       && record.seedHeartbeat.missionId === OPENCLAW_EXCELLENCE_MISSION_ID
