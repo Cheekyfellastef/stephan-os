@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using Stephanos.OriginalR7CustodyWitness;
 
 // Hosted CI executes native Windows SCM readback on a machine without
@@ -20,10 +21,14 @@ void Check(bool condition, string name)
 string image = Environment.ProcessPath
     ?? throw new InvalidOperationException("R7_SCM_TEST_EXECUTABLE_UNAVAILABLE");
 const string account = @"NT SERVICE\StephanosOriginalR7CustodyWitness";
+// Test an actual binary digest while never commissioning this runner.
+string observed = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();
 OriginalR7ScmObservation Eval(
     string? who = account, int? type = 0x10, int? start = 2, int? sid = 3,
-    string? path = null, string? actual = null) =>
-        OriginalR7ScmPreflight.Evaluate(who, type, start, sid, path ?? image, actual ?? image);
+    string? path = null, string? actual = null,
+    string? pin = null, string? actualDigest = null) =>
+        OriginalR7ScmPreflight.Evaluate(who, type, start, sid,
+            path ?? image, actual ?? image, pin ?? observed, actualDigest ?? observed);
 
 void AlwaysHeld(OriginalR7ScmObservation report, string id)
 {
@@ -32,6 +37,14 @@ void AlwaysHeld(OriginalR7ScmObservation report, string id)
     Check(!report.IndependentSigningProven, id + "_SIGNER");
     Check(!report.LeaseReleaseAuthorized, id + "_LEASE");
 }
+
+// Run this same linked production adapter as an ordinary apphost AND as a
+// self-contained single-file process. This exercises real assembly loading,
+// rather than supplying a caller assertion about bundle identity.
+bool expectBundled = args.Length == 1 && args[0] == "--expect-bundled-payload";
+Check(args.Length == 0 || expectBundled, "TEST_INVOCATION");
+Check(OriginalR7ScmPreflight.BundledPayloadObserved() == expectBundled,
+    "REAL_PAYLOAD_BUNDLE_IDENTITY");
 
 // A synthetic *registration shape*, not proof of Windows custody.
 OriginalR7ScmObservation shape = Eval();
@@ -52,6 +65,11 @@ var tests = new (string Name, OriginalR7ScmObservation Result)[]
     ("ENV_ALIAS", Eval(path: "%SystemRoot%\\System32\\cmd.exe")),
     ("RELATIVE_IMAGE", Eval(path: @"witness.exe")),
     ("UNBALANCED_QUOTE", Eval(path: "\"" + image)),
+    ("MISMATCHED_PIN", Eval(pin: new string('0', 64))),
+    ("MISMATCHED_IMAGE_DIGEST", Eval(actualDigest: new string('f', 64))),
+    ("SHORT_IMAGE_DIGEST", Eval(pin: "012345")),
+    ("UPPERCASE_IMAGE_DIGEST", Eval(pin: observed.ToUpperInvariant())),
+    ("NONHEX_IMAGE_DIGEST", Eval(pin: new string('g', 64))),
 };
 foreach (var (name, report) in tests)
 {
@@ -59,11 +77,22 @@ foreach (var (name, report) in tests)
     AlwaysHeld(report, name);
 }
 
+// A valid synthetic pin still has zero containment, signing, lease or
+// protected audit authority. No root hash is provisioned by this test.
+Check(shape.Classification == "R7_SCM_SHAPE_OBSERVED_NOT_PHYSICAL_CUSTODY", "PIN_MATCH_NON_AUTHORITY");
+Check(!Eval(pin: new string('0', 64)).ScmConfigurationObserved, "MISMATCHED_PIN_SHAPE_DENIED");
+
 // The actual runner must not be able to commission this fixed service.
 // An unexpectedly registered service is not success or a permission grant.
 OriginalR7ScmObservation live = OriginalR7ScmPreflight.Inspect();
 AlwaysHeld(live, "LIVE");
 Check(!live.LeaseReleaseAuthorized, "LIVE_CANNOT_RELEASE");
+if (!expectBundled)
+{
+    Check(!live.ScmConfigurationObserved, "UNBUNDLED_CANNOT_REPORT_SHAPE");
+    Check(live.Classification == "R7_SCM_BUNDLED_PAYLOAD_UNPROVEN",
+        "UNBUNDLED_REFUSED_BEFORE_REGISTRY");
+}
 
 void ImageAlwaysHeld(OriginalR7ImagePinObservation r, string label)
 {

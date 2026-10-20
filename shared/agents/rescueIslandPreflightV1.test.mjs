@@ -112,6 +112,8 @@ test('invalid issue, unsafe paths, review downgrades and execution overrides are
   rejects('EXACT_TASK_AND_ISSUE_TITLE_REQUIRED', { ownerIssueNumber: 0 });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['../protected/secrets.txt'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['docs/architecture/a.md', 'DOCS/ARCHITECTURE/A.md'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['docs/island', 'docs/island/pilot.md'] });
+  rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['DOCS/ISLAND', 'docs/island/pilot.md'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist/index.html'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos/dist'] });
   rejects('BASE_OR_SCOPE_INVALID', { targetPaths: ['apps/stephanos'] });
@@ -149,6 +151,22 @@ test('ownership follows canonical issue and filesystem identity across all three
       taskId: 'another-task-01', ownerIssueNumber: undefined, targetPaths: ['different/file.md'],
     }] });
   }
+  rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {
+    targetPaths: ['docs/pilot-a.md', 'docs/pilot-b.md'],
+  }, {
+    scopeResolutions: [
+      { path: 'docs/pilot-a.md', canonicalPath: 'docs/pilot-a.md', repositoryContained: true },
+      { path: 'docs/pilot-b.md', canonicalPath: 'docs/pilot-a.md', repositoryContained: true },
+    ],
+  });
+  rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {
+    targetPaths: ['docs/pilot-a.md', 'docs/pilot-b.md'],
+  }, {
+    scopeResolutions: [
+      { path: 'docs/pilot-a.md', canonicalPath: 'docs/pilot', repositoryContained: true },
+      { path: 'docs/pilot-b.md', canonicalPath: 'docs/pilot/subdir', repositoryContained: true },
+    ],
+  });
   rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutions: [] });
   rejects('CANONICAL_SOURCE_SCOPE_UNPROVEN', {}, { scopeResolutionScan: 'UNKNOWN' });
   for (const canonicalPath of ['../outside', 'apps/stephanos', 'apps/stephanos/dist', 'packages/foo/node_modules']) {
