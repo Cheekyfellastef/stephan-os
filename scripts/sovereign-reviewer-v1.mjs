@@ -249,8 +249,15 @@ export async function main(env = process.env, dependencies = {}) {
   const summary = {
     status: result.status,
     reason: result.reason || '',
+    repository: result.candidateEvidence?.repository || '',
+    evidenceSchema: result.candidateEvidence?.schemaVersion || '',
+    baseSha: result.candidateEvidence?.baseSha || '',
     prNumber: result.candidateEvidence?.prNumber ?? null,
     sourceHead: result.candidateEvidence?.sourceHead || '',
+    findingsCount: Array.isArray(result.candidateEvidence?.findings)
+      ? result.candidateEvidence.findings.length : null,
+    riskTier: result.candidateEvidence?.claimedRiskTier || '',
+    qualification: result.candidateEvidence?.qualification || '',
     proofRef: result.proofRef || '',
     proofSha256,
     verdict: result.candidateEvidence?.verdict || '',
