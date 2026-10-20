@@ -58,6 +58,7 @@ import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereig
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   safeCpuPressureSnapshotProjection,
+  projectSovereignContinuousRepairGuardianStatus,
 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -1671,6 +1672,15 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
       archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
     } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    // The underlying private Commander status already projects this safely.
+    // The public mailbox used to silently drop it, hiding whether the
+    // daemon's guardian actually ran. Preserve only bounded typed counts and
+    // timestamps; no local paths, raw logs, tokens or success-by-heartbeat.
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: projectSovereignContinuousRepairGuardianStatus(
+        operationResult?.continuousRepairGuardian,
+      ),
+    } : {}),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
