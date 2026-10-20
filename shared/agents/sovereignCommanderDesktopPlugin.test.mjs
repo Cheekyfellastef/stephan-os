@@ -91,7 +91,7 @@ test('Plus/cloud orchestration contract is source-pinned to the private plugin s
   assert.match(skill, /BOUNDED_MAINTENANCE/);
   assert.match(skill, /MISSION_BUILD/);
   assert.match(skill, /ACCEPTED.*is not terminal completion/i);
-  assert.match(skill, /GitHub issue #2808 command mailbox/);
+  assert.match(skill, /current source-defined canonical GitHub command mailbox/);
   assert.match(skill, /source-binding\/custody\/lease disagreements remain held/i);
   assert.match(skill, /Do not use the public mailbox to transport source file contents/i);
   assert.match(skill, /same execution command fabric/);
