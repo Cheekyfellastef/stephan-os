@@ -1793,6 +1793,14 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   // Rejected qualification/parity self-attestations are neither rung proof
   // nor countable proof telemetry. Only accepted observational rung evidence
   // enters this display total; authority-bearing claims await trusted review.
+  // A participant cannot borrow another agent's explicit publisher identity.
+  // The runtime agent alias is legitimate only for its own canonical participant.
+  const hasConsistentAgentIdentity = (record, publisher) => {
+    const explicitAgent = text(record?.agentId, '').toLowerCase();
+    if (!explicitAgent) return true;
+    const owner = contract.agentIdentities.find((agent) => agent.participantId === publisher);
+    return Boolean(owner && [owner.participantId, owner.runtimeAgentId].includes(explicitAgent));
+  };
   const isAdmittedRungRecord = (record, rung, agentId = '') => {
     const evidence = record.openClawExcellenceEvidence;
     if (evidence?.schemaVersion !== 'stephanos.openclaw-excellence-rung-proof.v1'
@@ -1800,6 +1808,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       || trustedAdmissionRequiredRungs.has(rung)) return false;
     return agents.includes(evidence.agentId)
       && actorId(record) === evidence.agentId
+      && hasConsistentAgentIdentity(record, evidence.agentId)
       && (!agentId || evidence.agentId === agentId);
   };
   const admittedProofRecords = proved.filter((record) => {
@@ -1854,7 +1863,9 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const agentBoundGapRecords = observed.filter((record) => {
     const publisher = actorId(record);
     const claimedAgent = text(record?.openClawExcellenceEvidence?.agentId, '').toLowerCase();
-    return agents.includes(publisher) && (!claimedAgent || claimedAgent === publisher);
+    return agents.includes(publisher)
+      && hasConsistentAgentIdentity(record, publisher)
+      && (!claimedAgent || claimedAgent === publisher);
   });
   const currentGaps = deriveGapHistory(agentBoundGapRecords).current.slice(0, 8).map((gap) => Object.freeze({
     capabilityId: gap.capabilityId,

@@ -492,6 +492,29 @@ test('OpenClaw gap pressure rejects records cross-bound to another mission or is
   assert.match(admitted.nextBestAction, /missing capability: agent skill inventory/);
 });
 
+test('conflicting explicit agent identity cannot spoof another OpenClaw publisher', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const local = { ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    agentId: 'stephanos-scout-coder' };
+  const standalone = event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone');
+  payload.records.eventRecords = [local, { ...standalone, agentId: 'openclaw-local' }];
+  let seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 0, 'contradictory publisher cannot complete both inventories');
+  assert.equal(seed.proofCount, 1, 'contradictory publisher cannot add proof telemetry');
+
+  const forgedGap = { ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    eventId: 'cross-agent-publisher-gap', agentId: 'openclaw-standalone',
+    status: 'BLOCKED', reason: 'missing capability: cross-agent publisher',
+    gapId: 'cross-agent-publisher-gap', capabilityId: 'cross-agent-publisher' };
+  payload.records.eventRecords = [forgedGap];
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.deepEqual(seed.currentGaps, [], 'contradictory publisher cannot redirect gap pressure');
+
+  payload.records.eventRecords = [local, { ...standalone, agentId: 'openclaw-standalone' }];
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.rungProofCount, 1, 'matching canonical and runtime aliases remain eligible');
+});
+
 test('foreign or cross-agent OpenClaw gap publishers cannot hijack canonical growth pressure', () => {
   const payload = feed({ statusRecords: [heartbeat()] });
   const gap = {
