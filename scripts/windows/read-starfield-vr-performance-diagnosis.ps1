@@ -106,6 +106,7 @@ $gpu = Get-NumericValues -Rows $rows -Name 'gpuUtilPct'
 $gpuMemory = Get-NumericValues -Rows $rows -Name 'gpuMemoryPct'
 $encoder = Get-NumericValues -Rows $rows -Name 'gpuEncoderUtilPct'
 $starfieldCpu = Get-NumericValues -Rows $rows -Name 'starfieldCpuPct'
+$starfieldThreadCpu = Get-NumericValues -Rows $rows -Name 'starfieldBusiestThreadCpuPct'
 $systemCpu = Get-NumericValues -Rows $rows -Name 'systemCpuPct'
 $chatGptCpu = Get-NumericValues -Rows $rows -Name 'chatGptCpuPct'
 $edgeCpu = Get-NumericValues -Rows $rows -Name 'edgeCpuPct'
@@ -153,6 +154,9 @@ $metrics = [ordered]@{
     maxGpuEncoderUtilPct = Get-Maximum -Values $encoder
     avgStarfieldCpuPct = Get-Average -Values $starfieldCpu
     maxStarfieldCpuPct = Get-Maximum -Values $starfieldCpu
+    avgStarfieldBusiestThreadCpuPct = Get-Average -Values $starfieldThreadCpu
+    maxStarfieldBusiestThreadCpuPct = Get-Maximum -Values $starfieldThreadCpu
+    starfieldThreadCpuTelemetryAvailable = @($starfieldThreadCpu).Count -gt 0
     avgSystemCpuPct = Get-Average -Values $systemCpu
     maxSystemCpuPct = Get-Maximum -Values $systemCpu
     cpuAttributionAvailable = @($chatGptCpu).Count -gt 0
@@ -209,6 +213,7 @@ if ($null -ne $metrics.maxGpuMemoryPct -and $metrics.maxGpuMemoryPct -ge 90) { $
 if ($null -ne $metrics.avgGpuUtilPct -and $metrics.avgGpuUtilPct -ge 90) { $signals.Add('gpu-saturation-high') }
 if ($null -ne $metrics.maxGpuEncoderUtilPct -and $metrics.maxGpuEncoderUtilPct -ge 80) { $signals.Add('gpu-encoder-load-high') }
 if ($null -ne $metrics.avgSystemCpuPct -and $metrics.avgSystemCpuPct -ge 85) { $signals.Add('system-cpu-load-high') }
+if ($null -ne $metrics.maxStarfieldBusiestThreadCpuPct -and $metrics.maxStarfieldBusiestThreadCpuPct -ge 90) { $signals.Add('starfield-single-thread-saturation-observed') }
 if ($null -ne $metrics.maxChatGptCpuPct -and $metrics.maxChatGptCpuPct -ge 10) { $signals.Add('desktop-chatgpt-cpu-contention-observed') }
 if ($null -ne $metrics.avgEdgeCpuPct -and $metrics.avgEdgeCpuPct -ge 10) { $signals.Add('edge-process-cpu-contention-observed') }
 if (
