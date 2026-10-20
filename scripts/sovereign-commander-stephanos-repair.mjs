@@ -25,12 +25,22 @@ export const CONTINUOUS_REPAIR_STEP_TIMEOUTS = Object.freeze({
   controlPlane: 40_000,
   goalBuilderRetry: 50_000,
   coreStatus: 10_000,
+  cpuRelief: 25_000,
 });
 export const CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS = Object.values(
   CONTINUOUS_REPAIR_STEP_TIMEOUTS,
 ).reduce((sum, value) => sum + value, 0);
 
 const STEPS = Object.freeze({
+  cpuRelief: Object.freeze({
+    id: 'verified-orphan-cpu-relief',
+    executable: powershell,
+    args: Object.freeze([
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', resolve(repoRoot, 'scripts', 'windows', 'relieve-verified-orphan-cpu-pressure.ps1'),
+    ]),
+    timeoutMs: 25_000,
+  }),
   caretaker: Object.freeze({
     id: 'sovereign-control-plane-caretaker',
     executable: powershell,
@@ -102,6 +112,70 @@ export function runFixedStephanosRepairStep(step) {
     stdout: String(result?.stdout || ''),
     errorCode: text(result?.error?.code || result?.error?.message),
   });
+}
+
+export function runVerifiedOrphanCpuRelief({ runStep = runFixedStephanosRepairStep } = {}) {
+  const outcome = runStep(STEPS.cpuRelief);
+  const packet = parseJsonPayload(outcome?.stdout);
+  const valid = outcome?.ok === true
+    && packet?.schemaVersion === 'stephanos.battle-bridge-verified-cpu-relief.v1'
+    && packet?.arbitraryPidAllowed === false
+    && packet?.arbitraryPathAllowed === false
+    && packet?.arbitraryShellAllowed === false
+    && packet?.vrProcessTerminationAllowed === false
+    && packet?.protectedServiceTerminationAllowed === false
+    && packet?.pcRestartAllowed === false
+    && packet?.sourceMutationAllowed === false
+    && packet?.unknownMeansGreen === false
+    && packet?.rootScopedToLifeboat === true
+    && packet?.taskIdentity === 'Stephanos Battle Bridge Recovery Lifeboat'
+    && typeof packet?.oneProcessTerminated === 'boolean'
+    && typeof packet?.cpuReductionVerified === 'boolean'
+    && typeof packet?.ok === 'boolean'
+    && typeof packet?.finalVerdict === 'string'
+    && ['CPU_RELIEF_HELD','CPU_RELIEF_BLOCKED','CPU_RELIEF_NOT_NEEDED',
+        'CPU_RELIEF_PRESSURE_CLEARED','CPU_RELIEF_TARGET_NOT_HOT',
+        'CPU_RELIEF_NO_VERIFIED_ORPHAN',
+        'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED',
+        'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED'].includes(packet.finalVerdict)
+    && (packet.oneProcessTerminated !== true || (
+      Number.isSafeInteger(packet.verifiedOrphanPid)
+      && packet.verifiedOrphanPid > 0
+      && packet.verifiedOrphanPid <= 2147483647
+      && Number.isFinite(Date.parse(packet.verifiedOrphanStartedAtUtc))
+      && ['run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+          'run-battle-bridge-recovery-lifeboat-bank-v1.ps1'].includes(packet.fixedScriptBasename)
+    ))
+    && (packet.oneProcessTerminated === true
+      ? ['CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED',
+          'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED'].includes(packet.finalVerdict)
+      : !packet.finalVerdict.startsWith('CPU_RELIEF_ORPHAN_TERMINATED'))
+    && (packet.cpuReductionVerified === true
+      ? packet.oneProcessTerminated === true
+        && packet.finalVerdict === 'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED'
+      : packet.finalVerdict !== 'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED');
+  const numeric = (value) => Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+  const cpuBefore = numeric(packet?.beforeSystemCpuPct);
+  const cpuAfter = numeric(packet?.afterSystemCpuPct);
+  const limited = Object.freeze({
+    actionId: STEPS.cpuRelief.id,
+    ok: valid && packet.ok === true,
+    finalVerdict: valid ? packet.finalVerdict : 'CPU_RELIEF_EVIDENCE_INVALID',
+    blocker: valid ? text(packet.blocker).slice(0, 120) : 'CPU_RELIEF_EVIDENCE_INVALID',
+    terminated: valid && packet.oneProcessTerminated === true,
+    cpuReductionVerified: valid && packet.cpuReductionVerified === true,
+    cpuBefore,
+    cpuAfter,
+    unresolvedCpuPressure: valid && cpuBefore !== null && cpuBefore >= 80
+      && packet.cpuReductionVerified !== true,
+    processPid: valid && packet.oneProcessTerminated === true
+      && Number.isSafeInteger(packet.verifiedOrphanPid)
+      ? packet.verifiedOrphanPid : null,
+    processStartedAtUtc: valid && packet.oneProcessTerminated === true
+      && Number.isFinite(Date.parse(packet.verifiedOrphanStartedAtUtc))
+      ? packet.verifiedOrphanStartedAtUtc : '',
+  });
+  return limited;
 }
 
 function readCurrentHead() {
@@ -291,8 +365,16 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const startedAtUtc = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_STARTED_AT_UTC)
     || new Date().toISOString();
   const cycleId = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_ID);
-  const repair = runSovereignCommanderStephanosRepair({
+  // The authenticated, continuously scheduled Sovereign guardian already
+  // owns this cadence. No second scheduler or public shell/PID input exists.
+  // A failed CPU probe never hides the independent goal-builder repairs.
+  const cpuRelief = cycleId ? runVerifiedOrphanCpuRelief() : null;
+  const repairResult = runSovereignCommanderStephanosRepair({
     continuousRepairCycle: Boolean(cycleId),
+  });
+  const repair = Object.freeze({
+    ...repairResult,
+    ...(cpuRelief ? { cpuRelief } : {}),
   });
   const completedAtUtc = new Date().toISOString();
 

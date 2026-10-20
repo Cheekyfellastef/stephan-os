@@ -47,6 +47,11 @@ export function classifySovereignCommanderRepairOutcome(repair = {}) {
   if (repair?.ok !== true) {
     return text(repair?.blocker) ? 'BLOCKED' : 'NEEDS_REPAIR';
   }
+  if (repair?.cpuRelief?.terminated === true && repair?.cpuRelief?.cpuReductionVerified === true) {
+    return 'REPAIRED';
+  }
+  if (repair?.cpuRelief?.unresolvedCpuPressure === true
+    || repair?.cpuRelief?.ok === false) return 'NEEDS_REPAIR';
   if ((Array.isArray(repair?.steps) ? repair.steps : []).some(stepAppliedRepair)) {
     return 'REPAIRED';
   }
@@ -64,6 +69,27 @@ function projectedActions(repair = {}) {
         blocker: bounded(step?.blocker),
       })),
   );
+}
+
+function projectedCpuRelief(repair = {}) {
+  const cpu = repair?.cpuRelief;
+  if (!cpu || cpu.actionId !== 'verified-orphan-cpu-relief') return null;
+  const percent = value => typeof value === 'number'
+    && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+  return Object.freeze({
+    actionId: 'verified-orphan-cpu-relief',
+    ok: cpu.ok === true,
+    finalVerdict: bounded(cpu.finalVerdict, 100),
+    blocker: bounded(cpu.blocker, 100),
+    oneProcessTerminated: cpu.terminated === true,
+    cpuReductionVerified: cpu.cpuReductionVerified === true,
+    unresolvedCpuPressure: cpu.unresolvedCpuPressure === true,
+    beforeSystemCpuPct: percent(cpu.cpuBefore),
+    afterSystemCpuPct: percent(cpu.cpuAfter),
+    sourceMutationAllowed: false,
+    arbitraryProcessTerminationAllowed: false,
+    vrProcessTerminationAllowed: false,
+  });
 }
 
 function projectedVerification(repair = {}) {
@@ -95,12 +121,16 @@ export function buildSovereignCommanderRepairReport({
   const status = outcome === 'BLOCKED' || outcome === 'NEEDS_REPAIR'
     ? 'ATTENTION_REQUIRED'
     : 'READY';
-  const detectedFaults = text(repair?.blocker)
-    ? Object.freeze([bounded(repair.blocker)])
-    : Object.freeze([]);
+  const cpuRelief = projectedCpuRelief(repair);
+  const faults = text(repair?.blocker) ? [bounded(repair.blocker)] : [];
+  if (cpuRelief?.unresolvedCpuPressure === true) faults.push('CPU_PRESSURE_UNRESOLVED_OR_UNVERIFIED');
+  if (cpuRelief?.ok === false) faults.push(cpuRelief.blocker || 'CPU_RELIEF_NOT_PROVEN');
+  const detectedFaults = Object.freeze([...new Set(faults)].slice(0, 5));
   const actions = projectedActions(repair);
   const verification = projectedVerification(repair);
-  const summary = outcome === 'HEALTHY'
+  const summary = cpuRelief?.unresolvedCpuPressure === true
+    ? 'Sovereign observed high CPU; safe automatic relief did not prove a reduction.'
+    : outcome === 'HEALTHY'
     ? 'Sovereign Commander completed a repair cycle and verified Stephanos healthy.'
     : outcome === 'REPAIRED'
       ? 'Sovereign Commander repaired Stephanos and verified the post-repair state.'
@@ -120,6 +150,7 @@ export function buildSovereignCommanderRepairReport({
     detectedFaults,
     actions,
     verification,
+    cpuRelief,
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     mergeAuthority: false,

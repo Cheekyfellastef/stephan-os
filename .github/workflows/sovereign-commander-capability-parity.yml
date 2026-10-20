@@ -28,6 +28,9 @@ on:
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
       - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/relieve-verified-orphan-cpu-pressure.ps1'
+      - 'scripts/sovereign-commander-stephanos-repair.mjs'
+      - 'shared/agents/sovereignCommanderRepairReportV1.mjs'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
@@ -50,6 +53,9 @@ on:
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/relieve-verified-orphan-cpu-pressure.ps1'
+      - 'scripts/sovereign-commander-stephanos-repair.mjs'
+      - 'shared/agents/sovereignCommanderRepairReportV1.mjs'
 
 permissions:
   contents: read
@@ -79,7 +85,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1')) {
+          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1', 'scripts/windows/relieve-verified-orphan-cpu-pressure.ps1')) {
             $tokens = $null
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)
