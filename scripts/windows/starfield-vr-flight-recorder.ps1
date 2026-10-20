@@ -220,6 +220,92 @@ function Get-StarfieldVrControllerSample {
     }
 }
 
+
+# Fixed-name app-family CPU sampler. Keeps a per-PID start-time baseline in
+# memory for this playtest only, reads no tab/URL/profile/command-line data,
+# and never changes process priorities or termination state.
+function Get-StarfieldVrCpuConsumerSample {
+    param(
+        [hashtable]$Previous,
+        [int]$LogicalProcessorCount = 1
+    )
+    $families = [ordered]@{
+        chatGpt = 'ChatGPT'
+        edge = 'msedge'
+        brave = 'brave'
+        chrome = 'chrome'
+        firefox = 'firefox'
+        webView2 = 'msedgewebview2'
+        steamWeb = 'steamwebhelper'
+        metaVr = 'OVRServer_x64'
+        node = 'node'
+        powerShell = 'powershell'
+        defender = 'MsMpEng'
+        desktopWindowManager = 'dwm'
+    }
+    $now = (Get-Date).ToUniversalTime()
+    $group = @{}
+    $byName = @{}
+    foreach ($key in $families.Keys) {
+        $group[$key] = @{ count = 0; matched = 0; totalCpuPct = 0.0 }
+        $byName[([string]$families[$key]).ToLowerInvariant()] = [string]$key
+    }
+    $processes = @()
+    $inventoryAvailable = $true
+    try { $processes = @(Get-Process -Name @($families.Values) -ErrorAction Stop) }
+    catch {
+        # -ErrorAction Stop also rejects a missing app. A missing app is normal;
+        # retry best-effort and record unavailable values if access is denied.
+        try { $processes = @(Get-Process -Name @($families.Values) -ErrorAction SilentlyContinue) }
+        catch { $inventoryAvailable = $false }
+    }
+    $next = @{}
+    foreach ($p in $processes) {
+        $name = [string]$p.ProcessName
+        $key = $byName[$name.ToLowerInvariant()]
+        if (-not $key) { continue }
+        $g = $group[$key]
+        $g.count++
+        $pidValue = [int]$p.Id
+        try {
+            $startTicks = $p.StartTime.ToUniversalTime().Ticks
+            $seconds = [double]$p.TotalProcessorTime.TotalSeconds
+            $before = $Previous[$pidValue]
+            if ($before -and [long]$before.startTicks -eq $startTicks) {
+                $duration = ($now - [DateTime]$before.observedAt).TotalSeconds
+                $delta = $seconds - [double]$before.cpuSeconds
+                if ($duration -gt 0 -and $duration -le 120 -and $delta -ge 0) {
+                    $g.totalCpuPct += [Math]::Min(100, (($delta / $duration) / [Math]::Max(1, $LogicalProcessorCount)) * 100)
+                    $g.matched++
+                }
+            }
+            $next[$pidValue] = @{
+                startTicks = $startTicks
+                cpuSeconds = $seconds
+                observedAt = $now
+            }
+        } catch {
+            # No process CPU evidence is better than a fabricated 0% reading.
+        }
+    }
+    $Previous.Clear()
+    foreach ($id in $next.Keys) { $Previous[$id] = $next[$id] }
+    $out = [ordered]@{
+        available = $inventoryAvailable
+        source = 'FIXED_APP_FAMILY_PROCESS_CPU_DELTAS'
+        observedAtUtc = $now.ToString('o')
+    }
+    foreach ($key in $families.Keys) {
+        $g = $group[$key]
+        $out["${key}ProcessCount"] = [int]$g.count
+        $out["${key}CpuPct"] = if (-not $inventoryAvailable) { $null }
+            elseif ($g.count -eq 0) { 0.0 }
+            elseif ($g.matched -eq $g.count) { [Math]::Round([Math]::Min(100, $g.totalCpuPct), 2) }
+            else { $null }
+    }
+    return [pscustomobject]$out
+}
+
 function Get-StarfieldVrCrashFingerprint {
     param([string]$Message)
     $flat = ([string]$Message -replace '\s+', ' ').Trim()
