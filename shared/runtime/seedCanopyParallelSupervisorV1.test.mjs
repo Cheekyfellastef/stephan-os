@@ -80,6 +80,39 @@ test('malformed and duplicate inbox rows cannot jam unrelated Seed Canopy select
   assert.equal(result.selected.existingClaim, undefined);
 });
 
+test('overlapping source-path custody parks only conflicting tasks across modes', () => {
+  const make = (taskId, targetPath, generationMode = 'CANONICAL_INVENTORY_V1') => {
+    const next = { ...request, taskId, targetPath, generationMode };
+    const hash = parallelSeedManifestHashV1(JSON.stringify(next));
+    return { request: next, manifestSha256: hash,
+      approval: makeParallelSeedExactApprovalV1({
+        request: next, manifestSha256: hash,
+        nowUtc: '2026-10-13T15:30:00.000Z',
+        expiryUtc: '2026-10-14T15:30:00.000Z',
+      }) };
+  };
+  const first = make('aaa-first', 'docs/architecture/shared-target.md');
+  const second = make('aab-second', 'docs/architecture/shared-target.md');
+  const disjoint = make('aac-disjoint', 'docs/architecture/disjoint-target.md');
+  const selected = selectParallelSeedApprovedTaskV1([first, second, disjoint], NOW);
+  assert.equal(selected.selected.request.taskId, 'aac-disjoint');
+  assert.equal(selected.eligibleCount, 1);
+  assert.deepEqual(selected.blocked.map(row => row.reason), [
+    'RESOURCE_PATH_OWNERSHIP_AMBIGUOUS', 'RESOURCE_PATH_OWNERSHIP_AMBIGUOUS']);
+  const otherMode = { ...second, request: { ...second.request, generationMode: undefined } };
+  assert.equal(selectParallelSeedInventoryBatchTaskV1([first, otherMode, disjoint], NOW)
+    .selected.request.taskId, 'aac-disjoint',
+  'another task mode cannot hide a conflicting writer from inventory selection');
+  const claimed = { ...second, approval: null, existingClaim: true };
+  assert.equal(selectParallelSeedApprovedTaskV1([first, claimed, disjoint], NOW)
+    .selected.request.taskId, 'aac-disjoint',
+  'an existing claim reserves its source path');
+  const unapproved = { ...second, approval: null };
+  assert.equal(selectParallelSeedApprovedTaskV1([first, unapproved, disjoint], NOW)
+    .selected.request.taskId, 'aaa-first',
+  'unapproved inbox data cannot starve an authenticated path owner');
+});
+
 test('bounded model-free inventory selector moves past one blocked lane without R7 lease', () => {
   const entry = (taskId, targetPath, generationMode = 'CANONICAL_INVENTORY_V1') => {
     const candidate = { ...request, taskId, targetPath, generationMode };

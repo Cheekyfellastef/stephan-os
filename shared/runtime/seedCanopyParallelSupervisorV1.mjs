@@ -58,7 +58,25 @@ export function evaluateParallelSeedExactApprovalV1({ request, manifestSha256, a
   return Object.freeze({ ok: problems.length === 0, reasons: Object.freeze(problems) });
 }
 
-export function selectParallelSeedApprovedTaskV1(candidates, nowMs) {
+// Authenticate source-path custody across task IDs before selecting a writer.
+// An unapproved, unclaimed inbox row must not starve unrelated safe work.
+function conflictingParallelSeedTargetsV1(candidates, nowMs) {
+  const ownersByPath = new Map();
+  for (const entry of Array.isArray(candidates) ? candidates : []) {
+    const id = entry?.request?.taskId;
+    const path = entry?.request?.targetPath;
+    if (!safeTask(id) || typeof path !== 'string' || !path) continue;
+    if (!entry.existingClaim && !entry.existingReceipt
+      && !evaluateParallelSeedExactApprovalV1({ ...entry, nowMs }).ok) continue;
+    if (!ownersByPath.has(path)) ownersByPath.set(path, new Set());
+    ownersByPath.get(path).add(id);
+  }
+  return new Set([...ownersByPath].filter(([, owners]) => owners.size > 1)
+    .map(([path]) => path));
+}
+
+export function selectParallelSeedApprovedTaskV1(candidates, nowMs,
+  conflictingTargets = conflictingParallelSeedTargetsV1(candidates, nowMs)) {
   // Independent short batch selection: one eligible task, never a global lease.
   // All entries are pre-parsed exact manifest/approval combinations.
   const eligible = [];
@@ -85,7 +103,9 @@ export function selectParallelSeedApprovedTaskV1(candidates, nowMs) {
       continue;
     }
     const verdict = evaluateParallelSeedExactApprovalV1({ ...entry, nowMs });
-    if (entry.existingClaim || entry.existingReceipt)
+    if (conflictingTargets.has(entry.request.targetPath))
+      blocked.push({ taskId, reason: 'RESOURCE_PATH_OWNERSHIP_AMBIGUOUS' });
+    else if (entry.existingClaim || entry.existingReceipt)
       blocked.push({ taskId, reason: 'PRESERVED_SOURCE_CUSTODY' });
     else if (!verdict.ok)
       blocked.push({ taskId, reason: verdict.reasons.join(',') });
@@ -110,7 +130,10 @@ export function selectParallelSeedInventoryBatchTaskV1(candidates, nowMs, attemp
     ? candidates.filter((entry) => entry?.request?.generationMode === 'CANONICAL_INVENTORY_V1'
         && !attempted.has(entry?.request?.taskId))
     : [];
-  return selectParallelSeedApprovedTaskV1(inventory, nowMs);
+  // Preserve custody from other modes and already attempted tasks when
+  // selecting a deterministic-only source inventory batch.
+  return selectParallelSeedApprovedTaskV1(inventory, nowMs,
+    conflictingParallelSeedTargetsV1(candidates, nowMs));
 }
 
 export function projectParallelSeedReceiptStatusV1(claims = [], receipts = [], nowMs = Date.now()) {
