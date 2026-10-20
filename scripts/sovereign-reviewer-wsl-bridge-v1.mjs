@@ -243,6 +243,14 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     + plan.reviewEnv.STEPHANOS_REVIEW_PR + '-'
     + plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase().slice(0, 12) + '.json';
   if (receipt.status !== 'LOCAL_REVIEW_EVIDENCE_READY'
+    || receipt.repository !== plan.reviewEnv.STEPHANOS_REVIEW_REPOSITORY
+    || receipt.evidenceSchema !== 'stephanos.sovereign-review-candidate-evidence.v1'
+    || receipt.baseSha !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_BASE.toLowerCase()
+    || receipt.qualification !== 'PENDING_INDEPENDENT_ATTESTATION'
+    || receipt.riskTier !== 'standard'
+    || !Number.isSafeInteger(receipt.findingsCount)
+    || receipt.findingsCount < 0 || receipt.findingsCount > 64
+    || ((receipt.verdict === 'clean') !== (receipt.findingsCount === 0))
     || !SHA.test(receipt.sourceHead)
     || receipt.sourceHead.toLowerCase() !== plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD.toLowerCase()
     || receipt.prNumber !== Number(plan.reviewEnv.STEPHANOS_REVIEW_PR)
@@ -276,6 +284,8 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
     ok: true, status: 'LOCAL_REVIEW_EVIDENCE_READY',
     qualification: 'PENDING_INDEPENDENT_ATTESTATION',
     prNumber: receipt.prNumber, sourceHead: receipt.sourceHead,
+    baseSha: receipt.baseSha, repository: receipt.repository,
+    evidenceSchema: receipt.evidenceSchema, findingsCount: receipt.findingsCount,
     proofRef: receipt.proofRef, proofSha256: hashMatch[1], verdict: receipt.verdict,
     approvalAuthority: false, mergeAuthority: false,
   });
