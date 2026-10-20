@@ -19,6 +19,7 @@ function successfulRequiredChecks() {
     name: `required-${index}`,
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
