@@ -3069,9 +3069,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary']
-    .includes(shape.command.remoteAction)
-    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration';
-  const boundedFailure = dedicatedBoundedFailureAction
+    .includes(shape.command.remoteAction);
+  const boundedFailure = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
   if (boundedFailure) {
@@ -3085,7 +3085,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       secretMaterialReturned: false,
     });
   }
-  const rawMaintenance = dedicatedBoundedFailureAction
+  const rawMaintenance = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
