@@ -33,6 +33,8 @@ test('runner publishes only a candidate proof, with no GitHub, merge or deployme
     invokeModel: async () => JSON.stringify({ verdict: 'clean', reviewedPaths: ['src/test.js'], findings: [] }),
     persist: result => {
       assert.equal(result.qualification, 'PENDING_INDEPENDENT_ATTESTATION');
+      assert.equal(result.candidateEvidence.baseSha, 'b'.repeat(40),
+        'the persisted candidate must carry the exact reviewed base');
       assert.equal(result.mergeAuthority, false);
       published = true;
     },
