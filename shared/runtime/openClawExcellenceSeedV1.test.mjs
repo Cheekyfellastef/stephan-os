@@ -492,6 +492,34 @@ test('OpenClaw gap pressure rejects records cross-bound to another mission or is
   assert.match(admitted.nextBestAction, /missing capability: agent skill inventory/);
 });
 
+test('foreign or cross-agent OpenClaw gap publishers cannot hijack canonical growth pressure', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const gap = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    eventId: 'agent-inventory-gap',
+    status: 'BLOCKED',
+    reason: 'missing capability: agent skill inventory',
+    gapId: 'openclaw-agent-inventory-gap',
+    capabilityId: 'openclaw-agent-inventory',
+  };
+  payload.records.eventRecords = [
+    { ...gap, eventId: 'foreign-publisher', participantId: 'untrusted-agent',
+      openClawExcellenceEvidence: null },
+    { ...gap, eventId: 'cross-agent-claim', participantId: 'openclaw-local',
+      openClawExcellenceEvidence: { ...gap.openClawExcellenceEvidence,
+        agentId: 'openclaw-standalone' } },
+  ];
+  const rejected = view(payload).openClawExcellenceSeedGrowth;
+  assert.deepEqual(rejected.currentGaps, []);
+  assert.equal(rejected.nextGrowthRung, 'INVENTORY_BOTH_AGENTS');
+  assert.equal(rejected.pressureState, 'ACTIVE');
+  payload.records.eventRecords.push(gap);
+  const admitted = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(admitted.currentGaps.length, 1);
+  assert.equal(admitted.currentGaps[0].capabilityId, 'openclaw-agent-inventory');
+  assert.match(admitted.nextBestAction, /missing capability: agent skill inventory/);
+});
+
 test('skill provenance packet cannot silently drop recipient separation or install proof gates', () => {
   // A documentation contract is not a skill installation or runtime witness.
   const packet = readFileSync(new URL('../../docs/architecture/openclaw-agent-skill-provenance-v1.md', import.meta.url), 'utf8');

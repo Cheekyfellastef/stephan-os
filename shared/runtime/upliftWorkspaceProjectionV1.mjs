@@ -1848,7 +1848,15 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
   const currentRung = currentRungIndex === null
     ? 'AWAITING_LIVE_PROOF'
     : contract.growthRungs[currentRungIndex];
-  const currentGaps = deriveGapHistory(observed).current.slice(0, 8).map((gap) => Object.freeze({
+  // Gap pressure is observational, but must still belong to a known recipient.
+  // A foreign publisher or a Local record claiming Standalone must not steer
+  // another agent's canonical growth task or displace legitimate gap pressure.
+  const agentBoundGapRecords = observed.filter((record) => {
+    const publisher = actorId(record);
+    const claimedAgent = text(record?.openClawExcellenceEvidence?.agentId, '').toLowerCase();
+    return agents.includes(publisher) && (!claimedAgent || claimedAgent === publisher);
+  });
+  const currentGaps = deriveGapHistory(agentBoundGapRecords).current.slice(0, 8).map((gap) => Object.freeze({
     capabilityId: gap.capabilityId,
     owner: gap.owner,
     state: gap.state,
