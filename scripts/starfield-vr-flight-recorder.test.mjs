@@ -93,6 +93,31 @@ test('Starfield VR playtest CPU attribution tracks desktop ChatGPT and browsers 
   assert.match(reporter, /avgChatGptCpuPct: safeMetric/);
 });
 
+test('Starfield busiest-thread CPU uses bounded, lifetime-bound, low-overhead measurements', () => {
+  assert.match(recorder, /function Get-StarfieldVrGameThreadCpuSample/);
+  assert.match(recorder, /MaximumThreadCount = 512/);
+  assert.match(recorder, /THREAD_SAMPLE_THROTTLED/);
+  assert.match(recorder, /\$since -ge 0 -and \$since -lt 5/);
+  assert.match(recorder, /STARFIELD_PROCESS_THREAD_CPU_DELTAS/);
+  assert.match(recorder, /\$process\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(recorder, /\$thread\.TotalProcessorTime\.TotalSeconds/);
+  assert.match(recorder, /old\.startTicks -eq \$threadStartTicks/);
+  assert.match(recorder, /\$Previous\.processId -eq \$GameProcessId/);
+  assert.match(recorder, /\$out\.busiestThreadCpuPct/);
+  assert.match(recorder, /THREAD_SNAPSHOT_UNAVAILABLE/);
+  assert.doesNotMatch(recorder, /thread\.PriorityLevel\s*=|thread\.ProcessorAffinity\s*=/i);
+  assert.match(performance, /\$starfieldThreadCpuHistory = @\{\}/);
+  assert.match(performance, /Get-StarfieldVrGameThreadCpuSample -GameProcessId \$currentGameProcessId/);
+  assert.match(performance, /starfieldBusiestThreadCpuPct = \$gameThreads\.busiestThreadCpuPct/);
+  assert.match(performance, /starfieldThreadCpuReason = \[string\]\$gameThreads\.reason/);
+  assert.match(performance, /maxStarfieldBusiestThreadCpuPct = if \(\$busiestThreadSamples.Count\)/);
+  assert.match(performance, /starfieldThreadRoleKnown = \$false/);
+  assert.match(diagnosis, /starfield-single-thread-saturation-observed/);
+  assert.match(diagnosis, /maxStarfieldBusiestThreadCpuPct = Get-Maximum/);
+  assert.match(reporter, /maxStarfieldBusiestThreadCpuPct: safeMetric/);
+});
+
 test('Meta Air Link runtime metrics producer feeds measured render and transport telemetry', () => {
   assert.match(runtimeProducer, /META_OCULUS_PERFLOG_XRS_STATS/);
   assert.match(runtimeProducer, /oculus_pc_xrs_stats_event/);
