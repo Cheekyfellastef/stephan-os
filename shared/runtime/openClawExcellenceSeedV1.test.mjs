@@ -179,15 +179,17 @@ test('non-event feed buckets cannot launder event-shaped OpenClaw rung evidence'
   for (const bucket of ['goalRecords', 'statusRecords', 'proofRecords', 'receiptRecords']) {
     // A copied event-shaped record is still only a declaration in the wrong
     // Shared Workspace bucket. Its PASS, refs and eventId cannot certify pickup.
-    payload.records[bucket] = [{ ...standalone,
+    const forged = { ...standalone,
       eventId: 'forged-' + bucket,
       proofRefs: ['proof/forged-' + bucket],
-    }];
+    };
+    // Preserve the authentic heartbeat when testing forged status records.
+    payload.records[bucket] = bucket === 'statusRecords' ? [heartbeat(), forged] : [forged];
     const seed = view(payload).openClawExcellenceSeedGrowth;
     assert.equal(seed.rungProofCount, 0, bucket + ' must not complete both agent inventories');
     assert.equal(seed.proofCount, 1, bucket + ' must not inflate admitted evidence');
     assert.equal(seed.nextGrowthRung, rung);
-    payload.records[bucket] = [];
+    payload.records[bucket] = bucket === 'statusRecords' ? [heartbeat()] : [];
   }
   payload.records.eventRecords = [local, standalone];
   assert.equal(view(payload).openClawExcellenceSeedGrowth.rungProofCount, 1,
