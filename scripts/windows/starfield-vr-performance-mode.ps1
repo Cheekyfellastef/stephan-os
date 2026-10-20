@@ -1024,7 +1024,7 @@ while ($true) {
         webView2CpuPct = $cpuConsumers.webView2CpuPct
         steamWebProcessCount = [int]$cpuConsumers.steamWebProcessCount
         steamWebCpuPct = $cpuConsumers.steamWebCpuPct
-        metaVrProcessCount = [int]$cpuConsumers.metaVrProcessCount
+        metaVrCpuProcessCount = [int]$cpuConsumers.metaVrProcessCount
         metaVrCpuPct = $cpuConsumers.metaVrCpuPct
         nodeProcessCount = [int]$cpuConsumers.nodeProcessCount
         nodeCpuPct = $cpuConsumers.nodeCpuPct
