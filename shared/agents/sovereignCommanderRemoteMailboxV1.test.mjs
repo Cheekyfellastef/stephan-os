@@ -3728,7 +3728,7 @@ test('VR archive remote accepts wrapped Windows execution envelope and returns o
     contentText: 'PRIVATE_RAW_STDOUT_MUST_NOT_ESCAPE',
     structuredContent: {
       status: 0,
-      stdout: 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=' + JSON.stringify(parsed) + '\\n',
+      stdout: 'STARFIELD_VR_TELEMETRY_ARCHIVE_RESULT=' + JSON.stringify(parsed) + '\n',
       stderr: 'PRIVATE_WINDOWS_STDERR_MUST_NOT_ESCAPE',
       errorCode: '',
     },
