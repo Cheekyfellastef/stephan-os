@@ -1582,6 +1582,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     ...(remoteAction === 'starfield-vr-telemetry-archive' ? {
       archiveDedicatedToolAdvertised: safeBoolean(operationResult?.dedicatedToolAdvertised),
       archiveFixedFallbackSelected: safeBoolean(operationResult?.fixedMaintenanceFallbackSelected),
+      archiveRuntimeRefreshRequired: safeBoolean(operationResult?.runtimeRefreshRequired),
       archiveMcpToolReturnedError: safeBoolean(operationResult?.mcpToolReturnedError),
       archiveCommanderBlocker: safeTelemetryId(operationResult?.commanderBlocker),
       archiveExecutionStatus: Number.isInteger(operationResult?.executionStatus)
