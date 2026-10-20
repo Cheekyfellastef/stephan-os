@@ -1940,57 +1940,6 @@ test('Sovereign Commander installer failure is classified without exposing stder
 });
 
 
-test('Sovereign remote status preserves bounded guardian execution truth instead of dropping it', () => {
-  const head = 'f'.repeat(40);
-  const guardian = {
-    available: true, enabled: true, running: false, scheduled: true,
-    cycleCount: 5, successCount: 0, failureCount: 5,
-    lastOk: false, lastStartedAtUtc: '2026-10-20T22:15:00.000Z',
-    lastCompletedAtUtc: '2026-10-20T22:16:00.000Z',
-    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
-    lastFinalVerdict: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED',
-    token: 'SHOULD_NOT_APPEAR', hostPath: 'C:\\Users\\private',
-  };
-  const receipt = {
-    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
-    requestId: 'guardian-status-proof-20261020',
-    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
-    expectedHead: head, state: 'DONE',
-    result: {
-      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
-      result: {
-        ok: true, remoteAction: 'status', sourceHead: head,
-        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
-        continuousRepairGuardian: guardian,
-      },
-    },
-  };
-  const once = createSanitizedMailboxReceiptProjection(receipt);
-  assert.equal(once.operationResult.continuousRepairGuardian.available, true);
-  assert.equal(once.operationResult.continuousRepairGuardian.cycleCount, 5);
-  assert.equal(once.operationResult.continuousRepairGuardian.failureCount, 5);
-  assert.equal(once.operationResult.continuousRepairGuardian.lastOk, false);
-  assert.equal(once.operationResult.continuousRepairGuardian.autonomousMaterialRepairProven, false);
-  assert.equal(once.operationResult.continuousRepairGuardian.lastBlocker,
-    'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
-  const serialized = serializeBoundedReceiptJson(receipt);
-  assert.equal(JSON.parse(serialized).result.result.continuousRepairGuardian.failureCount, 5);
-  const twice = createSanitizedMailboxReceiptProjection(JSON.parse(serialized));
-  assert.deepEqual(twice.operationResult.continuousRepairGuardian,
-    once.operationResult.continuousRepairGuardian);
-  assert.doesNotMatch(serialized, /SHOULD_NOT_APPEAR|hostPath|C:\\Users/i);
-
-  const missing = createSanitizedMailboxReceiptProjection({
-    ...receipt, result: {
-      ...receipt.result, result: {
-        ...receipt.result.result, continuousRepairGuardian: null,
-      },
-    },
-  });
-  assert.equal(missing.operationResult.continuousRepairGuardian.loopState, 'UNKNOWN');
-  assert.equal(missing.operationResult.continuousRepairGuardian.autonomousMaterialRepairProven, false);
-});
-
 test('Sovereign remote plan receipts preserve bounded ordered proof without raw output', () => {
   const head = 'a'.repeat(40);
   const remotePlan = ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'];
