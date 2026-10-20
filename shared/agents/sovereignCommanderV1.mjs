@@ -84,6 +84,73 @@ function pathWithin(root, candidate) {
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
 }
 
+// Source-bound reviewer metadata is a bounded input to the existing fixed
+// calibration binary, NEVER independent signer identity or reviewer authority.
+// Reject inherited properties, accessors and unknown keys before observation.
+export function validateSovereignWindowsReviewIdentityV1(raw) {
+  const keys = [
+    'schemaVersion', 'repository', 'issueNumber', 'prNumber', 'branch',
+    'sourceHead', 'baseSha', 'implementerProvider', 'implementerSessionId',
+    'reviewerSessionId', 'implementerPrincipal', 'reviewerPrincipal',
+  ];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype
+    || Object.keys(raw).length !== keys.length
+    || keys.some(k => !Object.hasOwn(raw, k)
+      || !Object.hasOwn(Object.getOwnPropertyDescriptor(raw, k), 'value'))) {
+    return null;
+  }
+  const v = Object.fromEntries(keys.map(k => [k, raw[k]]));
+  const ref = /^[0-9a-f]{40}$/;
+  const id = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+  const branch = /^[a-z0-9][a-z0-9._/-]{0,159}$/i;
+  if (v.schemaVersion !== 'stephanos.sovereign-review-exact-request.v1'
+    || v.repository !== 'Cheekyfellastef/stephan-os'
+    || !Number.isSafeInteger(v.issueNumber) || v.issueNumber < 1
+    || !Number.isSafeInteger(v.prNumber) || v.prNumber < 1
+    || !branch.test(v.branch) || v.branch.includes('..') || v.branch.includes('//')
+    || v.branch.endsWith('/') || v.branch.startsWith('refs/')
+    || !ref.test(v.sourceHead) || !ref.test(v.baseSha)
+    || v.sourceHead === v.baseSha
+    || ['implementerProvider', 'implementerSessionId', 'reviewerSessionId',
+      'implementerPrincipal', 'reviewerPrincipal'].some(k => !id.test(v[k]))
+    || v.implementerSessionId === v.reviewerSessionId
+    || v.implementerPrincipal === v.reviewerPrincipal) {
+    return null;
+  }
+  return frozen(v);
+}
+const REVIEWER_ENV_KEYS = Object.freeze([
+  'STEPHANOS_REVIEW_REPOSITORY', 'STEPHANOS_REVIEW_ISSUE',
+  'STEPHANOS_REVIEW_PR', 'STEPHANOS_REVIEW_EXACT_BRANCH',
+  'STEPHANOS_REVIEW_EXACT_HEAD', 'STEPHANOS_REVIEW_EXACT_BASE',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER',
+  'STEPHANOS_REVIEW_IMPLEMENTER_SESSION', 'STEPHANOS_REVIEW_SESSION',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL',
+  'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
+]);
+function fixedReviewerEnvironment(identity, inherited) {
+  const env = { ...(inherited || process.env) };
+  // Never fall back to the long-lived daemon's ambient review metadata.
+  for (const key of REVIEWER_ENV_KEYS) delete env[key];
+  const p = validateSovereignWindowsReviewIdentityV1(identity);
+  if (!p) return null;
+  return {
+    ...env,
+    STEPHANOS_REVIEW_REPOSITORY: p.repository,
+    STEPHANOS_REVIEW_ISSUE: String(p.issueNumber),
+    STEPHANOS_REVIEW_PR: String(p.prNumber),
+    STEPHANOS_REVIEW_EXACT_BRANCH: p.branch,
+    STEPHANOS_REVIEW_EXACT_HEAD: p.sourceHead,
+    STEPHANOS_REVIEW_EXACT_BASE: p.baseSha,
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: p.implementerProvider,
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: p.implementerSessionId,
+    STEPHANOS_REVIEW_SESSION: p.reviewerSessionId,
+    STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL: p.implementerPrincipal,
+    STEPHANOS_REVIEW_REVIEWER_PRINCIPAL: p.reviewerPrincipal,
+  };
+}
+
 function fixedRegistry(repoRoot) {
   const root = normalizedAbsolutePath(repoRoot);
   if (!root) return frozen({});
@@ -489,6 +556,11 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         } else {
           args = [...args, '--offset', String(offset), '--limit', String(limit)];
         }
+      } else if (processId === 'sovereign-windows-reviewer-calibration') {
+        // An absent per-review identity must not borrow daemon startup env.
+        if (!validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity)) {
+          blockers.push('sovereign-windows-review-identity-required');
+        }
       } else if (processId === 'publish-controller-activity') {
         const encoded = text(payload.controllerActivityPayloadBase64);
         let decoded = null;
@@ -538,7 +610,12 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
           ];
         }
       }
-      if (blockers.length === 0) plan = frozen({ kind: 'fixed-process', processId, ...fixed, args: frozen(args) });
+      if (blockers.length === 0) plan = frozen({
+        kind: 'fixed-process', processId, ...fixed, args: frozen(args),
+        ...(processId === 'sovereign-windows-reviewer-calibration'
+          ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
+          : {}),
+      });
     }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
@@ -673,12 +750,20 @@ function fixedProcessStructuredBlocker(result) {
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const routeEnvironment = fixedProcessRouteEnvironment(options);
+  const reviewer = plan.processId === 'sovereign-windows-reviewer-calibration';
+  const candidateEnvironment = reviewer
+    ? fixedReviewerEnvironment(plan.reviewIdentity, routeEnvironment)
+    : routeEnvironment;
+  if (reviewer && (!candidateEnvironment || options?.routeProof?.authenticatedMcp !== true)) {
+    return frozen({ ok: false, status: null, stdout: '', stderr: '',
+      errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
+  }
   const result = runner(plan.executable, [...plan.args], {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
-    ...(routeEnvironment ? { env: routeEnvironment } : {}),
+    ...(candidateEnvironment ? { env: candidateEnvironment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
