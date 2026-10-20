@@ -92,7 +92,8 @@ export function runSovereignCommanderControlPlaneRepair({
   // Recheck before each child, not only at scheduling. A game starting
   // DURING an in-flight synchronous installer remains a separate Windows
   // gaming-custody qualification requirement, not proven by this guard.
-  if (unattendedGamingGuard && gamingSafe() !== true) {
+  const governorSafe = () => { try { return gamingSafe() === true; } catch { return false; } };
+  if (unattendedGamingGuard && !governorSafe()) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA,
       ok: false, blocker: GAMING_GUARD_BLOCKER, sourceHead: observedHead,
@@ -103,7 +104,7 @@ export function runSovereignCommanderControlPlaneRepair({
   }
   let gamingGuardRejected = false;
   const guardedSpawn = (executable, args, options) => {
-    if (unattendedGamingGuard && gamingSafe() !== true) {
+    if (unattendedGamingGuard && !governorSafe()) {
       gamingGuardRejected = true;
       return { status: 1, stdout: '', stderr: GAMING_GUARD_BLOCKER };
     }
@@ -124,7 +125,7 @@ export function runSovereignCommanderControlPlaneRepair({
     && repair?.sourceHead === observedHead
     && authoritySafe
     && !gamingGuardRejected
-    && (!unattendedGamingGuard || gamingSafe() === true);
+    && (!unattendedGamingGuard || governorSafe());
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA,
