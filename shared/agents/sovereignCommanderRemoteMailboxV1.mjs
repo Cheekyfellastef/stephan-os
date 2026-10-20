@@ -968,9 +968,16 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
   const sampleSeconds = Number(parsed.sampleSeconds);
   const processorCount = Number(parsed.processorCount);
   const capturedAt = text(parsed.capturedAtUtc);
+  // This is total machine utilisation, not the sum of our process allowlist.
+  // Missing OS counters must remain UNKNOWN, never silently become 0%.
+  const systemCpuMeasured = parsed.systemCpuMeasured;
+  const systemCpuPct = parsed.systemCpuPct === null ? null : Number(parsed.systemCpuPct);
   if (!Number.isFinite(Date.parse(capturedAt))
     || !Number.isFinite(sampleSeconds) || sampleSeconds < 4 || sampleSeconds > 20
     || !Number.isSafeInteger(processorCount) || processorCount < 1 || processorCount > 256
+    || typeof systemCpuMeasured !== 'boolean'
+    || (systemCpuMeasured !== (systemCpuPct !== null))
+    || (systemCpuPct !== null && (!Number.isFinite(systemCpuPct) || systemCpuPct < 0 || systemCpuPct > 100))
     || !Array.isArray(parsed.rows) || parsed.rows.length > 20) return null;
   const safeRows = [];
   for (const row of parsed.rows) {
@@ -1003,6 +1010,8 @@ export function safeCpuPressureSnapshotProjection(value = {}, processId = '') {
     sampleSeconds,
     processorCount,
     metadataAvailable: parsed.metadataAvailable === true,
+    systemCpuMeasured,
+    systemCpuPct,
     rows: Object.freeze(safeRows),
     readOnly: true,
     processTerminationAllowed: false,
