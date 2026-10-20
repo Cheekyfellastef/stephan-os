@@ -14,6 +14,9 @@ $preCpu = $null
 $postCpu = $null
 $selectedScript = ''
 $terminated = $false
+$handle = $null
+$cpuAfter = $null
+$cpuReductionVerified = $false
 $sampleSeconds = 5
 $minimumProcessAgeMinutes = 15
 $minimumWholeCpuPct = 80
@@ -35,7 +38,8 @@ function Get-TotalCpuLoad {
 }
 function Test-GamingInactive {
     # An unavailable process query never becomes an unsafe "no game" result.
-    return @(Get-Process -Name $gamingNames -ErrorAction SilentlyContinue).Count -eq 0
+    $all = @(Get-Process -ErrorAction Stop)
+    return @($all | Where-Object { $gamingNames -contains $_.ProcessName }).Count -eq 0
 }
 function Get-ApprovedScript([string]$CommandLine) {
     # Exactly -File and an installed, fixed lifeboat script; no -Command or
@@ -84,13 +88,12 @@ try {
                 if ($null -ne $parent -and $parent.CreationDate.ToUniversalTime() -le $started) { continue }
                 $owner = Invoke-CimMethod -InputObject $item -MethodName GetOwnerSid -ErrorAction Stop
                 if ($owner.ReturnValue -ne 0 -or [string]$owner.Sid -cne $selfSid) { continue }
-                if ($null -ne $candidate) {
-                    $candidate = $null
-                    $blocker = 'CPU_RELIEF_MULTIPLE_ORPHANS_REQUIRE_REVIEW'
-                    break
+                if ($null -eq $candidate -or $item.CreationDate.ToUniversalTime() -lt $candidate.CreationDate.ToUniversalTime()) {
+                    # Work-conserving: choose only the oldest *verified* orphan.
+                    # Later cycles may handle the next independent stale chain.
+                    $candidate = $item
+                    $selectedScript = $scriptName
                 }
-                $candidate = $item
-                $selectedScript = $scriptName
             }
             if ($null -ne $candidate -and -not $blocker) {
                 $processId = [int]$candidate.ProcessId
@@ -127,7 +130,14 @@ try {
                                 $blocker = 'CPU_RELIEF_TERMINATION_UNVERIFIED'
                             } else {
                                 $terminated = $true
-                                $verdict = 'CPU_RELIEF_ORPHAN_TERMINATED'
+                                Start-Sleep -Seconds 2
+                                $cpuAfter = Get-TotalCpuLoad
+                                $cpuReductionVerified = ($postCpu - $cpuAfter) -ge 5
+                                $verdict = if ($cpuReductionVerified) {
+                                    'CPU_RELIEF_ORPHAN_TERMINATED_CPU_IMPROVED'
+                                } else {
+                                    'CPU_RELIEF_ORPHAN_TERMINATED_CPU_RECHECK_REQUIRED'
+                                }
                             }
                         }
                     }
@@ -159,6 +169,8 @@ try {
     verifiedOrphanStartedAtUtc = $selectedStart
     fixedScriptBasename = $selectedScript
     oneProcessTerminated = $terminated
+    afterSystemCpuPct = $cpuAfter
+    cpuReductionVerified = $cpuReductionVerified
     arbitraryPidAllowed = $false
     arbitraryPathAllowed = $false
     arbitraryShellAllowed = $false
