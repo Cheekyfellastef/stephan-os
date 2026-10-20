@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -28,6 +29,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-recovery-mesh',
   'status-worker-watchdog',
   'status-stephanos-core-daemon',
+  'sovereign-windows-reviewer-calibration',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -2069,6 +2071,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'original-source-custody-census'
@@ -3065,7 +3068,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
-    'rescue-island-readonly-boundary']
+    'rescue-island-readonly-boundary', 'sovereign-windows-reviewer-calibration']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
@@ -3085,6 +3088,31 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
+  if (shape.command.remoteAction === 'sovereign-windows-reviewer-calibration') {
+    const calibration = parseWindowsCalibrationRemoteV1(
+      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead);
+    if (!calibration) return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    // DONE means candidate exam completed, not that a specialist was admitted.
+    if (calibration.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_HELD', {
+        remoteAction: shape.command.remoteAction, calibration,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true, finalVerdict: 'SOVEREIGN_WINDOWS_CALIBRATION_CANDIDATE_OBSERVED',
+      remoteAction: shape.command.remoteAction, sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash, calibration,
+      qualifiedWindowsSpecialist: false, mergeAuthority: false, leaseReleaseAuthority: false,
+      vendorMeterRequired: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({ ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result });
+  }
+
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;

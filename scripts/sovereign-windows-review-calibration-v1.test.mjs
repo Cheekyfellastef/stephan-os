@@ -104,7 +104,7 @@ test('executable bytes require H-index flags and exact tracked HEAD hash',()=>{
   const git = ()=>({executable:'git.exe',fixedConfigArgs:[],environment:{}});
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',
     resolveGit:git,spawn:mockSpawn}),true);
-  assert.equal(fileChecks.length,18);
+  assert.equal(fileChecks.length,21);
   const swapped=(_cmd,args)=>args.includes('ls-files')
     ? {status:0,stdout:'S '+args.at(-1)+'\n'} : {status:0,stdout:'a'.repeat(40)+'\n'};
   assert.equal(sourceCheck({}, {platform:'win32',root:'C:\\trusted',
@@ -127,4 +127,31 @@ test('gaming governor rejects absent state, stale state and active VR',()=>{
     {...options,read:()=>JSON.stringify({...state,active:true})}),false);
   assert.equal(governor({STEPHANOS_SHARED_AGENT_WORKSPACE:'C:\\workspace'},
     {...options,nowMs:1_100_000}),false);
+});
+
+test('total deadline stops inference after slow preflight or model identity read',async()=>{
+  let elapsed=0, invokes=0;
+  const r=await run(env,{...dependencies,clock:()=>elapsed,
+    digest:async()=>{elapsed=150_000;return 'c'.repeat(64)},
+    fetchImpl:async()=>{invokes++;throw Error('after deadline')}});
+  assert.equal(r.reason,'CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
+  assert.equal(invokes,0);noAuthority(r);
+  elapsed=0;let digests=0;
+  const r2=await run(env,{...dependencies,clock:()=>elapsed,
+    digest:async()=>{if(++digests===2)elapsed=150_000;return 'c'.repeat(64)},
+    fetchImpl:async()=>{invokes++;throw Error('after deadline')}});
+  assert.equal(r2.reason,'CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
+  assert.equal(invokes,0);noAuthority(r2);
+});
+
+test('deadline monitor aborts an inference already in progress',async()=>{
+  let elapsed=0,monitor;
+  const r=await run(env,{...dependencies,clock:()=>elapsed,
+    poll:fn=>{monitor=fn;return 1;},
+    fetchImpl:async(_url,args)=>{
+      elapsed=150_000;monitor();
+      assert.equal(args.signal.aborted,true);
+      throw Error('deadline');
+    }});
+  assert.equal(r.reason,'CALIBRATION_TOTAL_DEADLINE_EXCEEDED');noAuthority(r);
 });

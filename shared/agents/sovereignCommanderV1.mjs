@@ -158,6 +158,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
       timeoutMs: 10_000,
     }),
+    'sovereign-windows-reviewer-calibration': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-windows-review-calibration-v1.mjs'), '--commander-once']),
+      timeoutMs: 180_000,
+    }),
     'qwen35-canary': frozen({
       executable: node,
       args: frozen([nodeFile('qwen35-canary.mjs')]),

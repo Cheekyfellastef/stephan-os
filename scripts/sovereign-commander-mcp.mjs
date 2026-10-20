@@ -182,6 +182,7 @@ const TOOLS = Object.freeze([
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
+            'sovereign-windows-reviewer-calibration',
             'qwen35-canary',
             'vr-resource-governor',
             'gaming-resource-status',

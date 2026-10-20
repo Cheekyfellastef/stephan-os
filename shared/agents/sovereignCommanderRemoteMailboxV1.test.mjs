@@ -3782,3 +3782,37 @@ test('VR archive failure distinguishes a missing marker with no private output',
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_MARKER_MISSING');
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTERNAL_STDOUT|PRIVATE_INTERNAL_STDERR/);
 });
+
+test('fixed native Windows exam carries only a bounded candidate result through MCP',async()=>{
+  const { projectWindowsCalibrationForRemoteV1:project,
+    WINDOWS_CALIBRATION_REMOTE_MARKER:marker } = await import('./sovereignWindowsCalibrationRemoteV1.mjs');
+  const { sovereignWindowsCalibrationManifestV1:manifest }=await import('./sovereignWindowsCalibrationV1.mjs');
+  const denial=Object.fromEntries(Object.entries(project()).filter(([,v])=>v===false));
+  const candidate=project({status:'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED',reason:'',
+    repository:'Cheekyfellastef/stephan-os',sourceHead:HEAD,baseSha:'b'.repeat(40),
+    manifestSha256:manifest().manifestSha256,observationsSha256:'c'.repeat(64),
+    modelDigestSha256:'d'.repeat(64),completedCases:13,passedCases:13,
+    qualification:'PENDING_INDEPENDENT_WINDOWS_SPECIALIST_ATTESTATION',...denial});
+  const action='sovereign-windows-reviewer-calibration';
+  for(const mode of ['pass','held','forged','wrong-head']) {
+    const held=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
+    const payload=mode==='held'?held:mode==='forged'?{...candidate,leaseReleaseAuthority:true}
+      :mode==='wrong-head'?{...candidate,sourceHead:'f'.repeat(40)}:candidate;
+    const native={ok:mode!=='held',
+      finalVerdict:mode==='held'?'SOVEREIGN_COMMANDER_EXECUTION_FAILED':'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash:mode==='held'?undefined:'e'.repeat(64),command:{plan:{processId:action}},
+      contentText:'PRIVATE',structuredContent:{status:mode==='held'?2:0,
+        stdout:marker+JSON.stringify(payload),stderr:'PRIVATE'}};
+    const mcp=mcpFetch({maintenance:native});
+    const result=await executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn:mcp.fetchFn,
+      env:{USERPROFILE:'C:\\Users\\Operator'},
+    });
+    assert.equal(result.ok,mode==='pass',mode);
+    if(mode==='pass')assert.equal(result.calibration.qualifiedWindowsSpecialist,false);
+    if(mode==='held')assert.equal(result.calibration.reason,'EXACT_LOCAL_SOURCE_UNPROVEN');
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+  }
+  const plan=validateSovereignCommanderRemoteCommandShape(command({remoteAction:'',remotePlan:[action]}));
+  assert.equal(plan.ok,false); // No inference-bearing compound plan/replay.
+});

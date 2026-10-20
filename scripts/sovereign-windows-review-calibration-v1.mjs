@@ -2,6 +2,8 @@
 // Native Windows *candidate* competency exam for existing Sovereign Reviewer.
 // No Windows service operation, lease mutation, deployment or GitHub approval.
 import { spawnSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
+import { projectWindowsCalibrationForRemoteV1, WINDOWS_CALIBRATION_REMOTE_MARKER } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { lstatSync, readFileSync } from 'node:fs';
 import { join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +15,7 @@ const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const FILES = Object.freeze([
   'scripts/sovereign-windows-review-calibration-v1.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
@@ -113,8 +116,10 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   sourceCheck = inspectWindowsCalibrationSourceV1,
   gamingGuard = inspectWindowsCalibrationGamingGuardV1,
   digest = observeWindowsCalibrationModelDigestV1, fetchImpl = fetch,
-  poll = setInterval, clearPoll = clearInterval,
+  poll = setInterval, clearPoll = clearInterval, clock = () => performance.now(),
 } = {}) {
+  const deadline = clock() + 150_000;
+  const expired = () => clock() >= deadline;
   if (platform !== 'win32') return held('NATIVE_WINDOWS_HOST_REQUIRED');
   const model = String(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b').trim();
   if (!MODEL.test(model)) return held('MODEL_INVALID');
@@ -125,6 +130,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   if (!gamingGuard(env)) return held('GAMING_RESOURCE_UNAVAILABLE_OR_PROTECTED');
   const firstDigest = await digest(model, fetchImpl);
   if (!SHA64.test(firstDigest)) return held('LOCAL_MODEL_DIGEST_UNPROVEN');
+  if (expired()) return held('CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
   const identity = {
     repository: before.repository, sourceHead: before.sourceHead, baseSha: before.baseSha,
     implementerPrincipal: env.STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL,
@@ -135,12 +141,14 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   };
   const result = await evaluateSovereignWindowsCalibrationV1(identity, {
     invokeModel: async prompt => {
+      if (expired()) throw Error('CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
       if (!gamingGuard(env) || await digest(model, fetchImpl) !== firstDigest) {
         throw Error('GAMING_OR_MODEL_DIGEST_CHANGED');
       }
+      if (expired()) throw Error('CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
       const controller = new AbortController();
       const monitor = poll(() => {
-        if (!gamingGuard(env)) controller.abort();
+        if (expired() || !gamingGuard(env)) controller.abort();
       }, 500);
       try {
         const r = await fetchImpl('http://127.0.0.1:11434/api/generate', {
@@ -148,7 +156,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ model, prompt, stream:false, format:'json',
             keep_alive:0, options:{temperature:0,num_ctx:8192} }),
-          signal: AbortSignal.any([AbortSignal.timeout(45_000), controller.signal]),
+          signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
         if (!r?.ok || controller.signal.aborted) throw Error('LOCAL_MODEL_UNAVAILABLE');
         const raw = await r.text();
@@ -163,6 +171,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
       } finally { clearPoll(monitor); }
     },
   });
+  if (expired()) return held('CALIBRATION_TOTAL_DEADLINE_EXCEEDED');
   // Head/base, source bytes, governor and model identity must remain stable.
   let after;
   try { after = snapshot(env, {platform}); }
@@ -170,7 +179,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
   if (JSON.stringify([before.sourceHead,before.baseSha,before.branch])
       !== JSON.stringify([after.sourceHead,after.baseSha,after.branch])
     || !sourceCheck(env, {platform}) || !gamingGuard(env)
-    || await digest(model, fetchImpl) !== firstDigest) {
+    || await digest(model, fetchImpl) !== firstDigest || expired()) {
     return held('SOURCE_MODEL_OR_GAMING_CHANGED_DURING_CALIBRATION');
   }
   return Object.freeze({
@@ -182,14 +191,16 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv.length !== 3 || process.argv[2] !== '--once') {
+  const remote = process.argv.length === 3 && process.argv[2] === '--commander-once';
+  if (process.argv.length !== 3 || !['--once', '--commander-once'].includes(process.argv[2])) {
     process.stdout.write('SOVEREIGN_WINDOWS_CALIBRATION_RESULT='
       + JSON.stringify(held('FIXED_ONCE_ONLY')) + '\n');
     process.exitCode = 2;
   } else {
     const result = await runWindowsCalibrationCandidateV1().catch(() =>
       held('LOCAL_CALIBRATION_EXECUTION_FAILED'));
-    process.stdout.write('SOVEREIGN_WINDOWS_CALIBRATION_RESULT=' + JSON.stringify(result) + '\n');
+    const output = remote ? projectWindowsCalibrationForRemoteV1(result) : result;
+    process.stdout.write((remote ? WINDOWS_CALIBRATION_REMOTE_MARKER : 'SOVEREIGN_WINDOWS_CALIBRATION_RESULT=') + JSON.stringify(output) + '\n');
     if (result.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
       process.exitCode = 2;
     }

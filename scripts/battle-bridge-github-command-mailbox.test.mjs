@@ -3474,3 +3474,20 @@ test('mobile custody census survives normal and core public receipt projections 
   assert.equal(injected.result.result.originalSourceCustodyCensus, null);
   assert.doesNotMatch(JSON.stringify(injected), /SECRET_PATH_C:/);
 });
+
+test('native Windows reviewer exam survives bounded public receipt without identity or authority', async()=>{
+  const {projectWindowsCalibrationForRemoteV1:project}=await import('../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs');
+  const denial=Object.fromEntries(Object.entries(project()).filter(([,v])=>v===false));
+  const calibration=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
+  const receipt={requestId:'windows-calibration-public-1',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state:'BLOCKED',expectedHead:'a'.repeat(40),result:{
+      remoteAction:'sovereign-windows-reviewer-calibration',calibration,contentText:'PRIVATE',
+    }};
+  const safe=createSanitizedMailboxReceiptProjection(receipt);
+  assert.ok(JSON.stringify(safe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+  assert.doesNotMatch(JSON.stringify(safe),/PRIVATE/);
+  const unsafe=createSanitizedMailboxReceiptProjection({...receipt,result:{...receipt.result,
+    calibration:{...calibration,reviewerPrincipal:'PRIVATE'}}});
+  assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE/);
+  assert.ok(!JSON.stringify(unsafe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+});
