@@ -3068,7 +3068,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
-    'rescue-island-readonly-boundary', 'sovereign-windows-reviewer-calibration']
+    'sovereign-windows-reviewer-calibration',
+    'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
   const boundedFailure = dedicatedBoundedFailureAction
     ? null
