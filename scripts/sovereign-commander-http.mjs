@@ -19,6 +19,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS = 15 * 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
 const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
@@ -79,6 +80,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   let scheduledTimer = null;
   let killTimer = null;
   let child = null;
+  let lastFailureKey = '';
   const state = {
     enabled: true,
     running: false,
@@ -86,6 +88,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     cycleCount: 0,
     successCount: 0,
     failureCount: 0,
+    consecutiveFailureCount: 0,
+    nextDelayMs: null,
     currentCycleId: '',
     lastCycleId: '',
     lastStartedAtUtc: '',
@@ -104,9 +108,11 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const schedule = (delayMs) => {
     if (stopped) return;
     state.scheduled = true;
+    state.nextDelayMs = delayMs;
     scheduledTimer = setTimeoutImpl(() => {
       scheduledTimer = null;
       state.scheduled = false;
+      state.nextDelayMs = null;
       runNow();
     }, delayMs);
     scheduledTimer?.unref?.();
@@ -114,8 +120,13 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
 
   const runNow = () => {
     if (stopped || child) return false;
+    if (scheduledTimer) {
+      clearTimeoutImpl(scheduledTimer);
+      scheduledTimer = null;
+    }
     state.running = true;
     state.scheduled = false;
+    state.nextDelayMs = null;
     state.cycleCount += 1;
     state.currentCycleId = randomUUID();
     state.lastStartedAtUtc = now();
@@ -138,7 +149,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         ? receipt.reporting
         : {};
       const reportOk = reporting?.ok === true;
-      const ok = Number(code) === 0 && receipt?.ok === true && reportOk;
+      const ok = code === 0 && receipt?.ok === true && reportOk;
       state.running = false;
       state.lastCycleId = state.currentCycleId;
       state.currentCycleId = '';
@@ -152,10 +163,25 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       state.lastBlocker = ok
         ? ''
         : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
-      if (ok) state.successCount += 1;
-      else state.failureCount += 1;
+      if (ok) {
+        state.successCount += 1;
+        state.consecutiveFailureCount = 0;
+        lastFailureKey = '';
+      } else {
+        state.failureCount += 1;
+        // Repeated attempts against the same source/blocker are observations,
+        // not progress. Pace them without changing the original repair owner,
+        // lease, or authority. A new source/blocker starts a fresh retry window.
+        const failureKey = JSON.stringify([text(receipt?.sourceHead), state.lastBlocker]);
+        state.consecutiveFailureCount = failureKey === lastFailureKey
+          ? Math.min(1_000_000, state.consecutiveFailureCount + 1) : 1;
+        lastFailureKey = failureKey;
+      }
       child = null;
-      schedule(intervalMs);
+      schedule(ok ? intervalMs : Math.min(
+        Math.max(intervalMs, SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS),
+        intervalMs * 2 ** Math.min(20, state.consecutiveFailureCount - 1),
+      ));
     };
 
     try {
@@ -201,6 +227,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       stopped = true;
       state.enabled = false;
       state.scheduled = false;
+      state.nextDelayMs = null;
       state.running = false;
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       if (killTimer) clearTimeoutImpl(killTimer);

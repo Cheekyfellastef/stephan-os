@@ -357,3 +357,96 @@ test('continuous repair guardian rejects a green repair receipt without durable 
 
   guardian.stop();
 });
+
+function retryGuardianHarness() {
+  const timers = [];
+  const cleared = new Set();
+  let child;
+  let spawns = 0;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl: () => {
+      spawns++;
+      child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      return child;
+    },
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: timer => cleared.add(timer),
+    intervalMs: 60_000,
+  });
+  const cycle = ({ head = 'a'.repeat(40), blocker = 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING', ok = false, exitCode = ok ? 0 : 2 } = {}) => {
+    const timer = timers.at(-1);
+    assert.equal(cleared.has(timer), false);
+    timer.fn();
+    assert.equal(guardian.runNow(), false, 'in-flight cycle retains single flight');
+    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=' + JSON.stringify({
+      ok, sourceHead: head, blocker,
+      finalVerdict: ok ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+      reporting: { ok: true, outcome: ok ? 'HEALTHY' : 'BLOCKED', status: ok ? 'READY' : 'ATTENTION_REQUIRED' },
+    }) + '\n');
+    child.emit('close', exitCode);
+    return timers.at(-1).delay;
+  };
+  return { guardian, cycle, timers, cleared, spawns: () => spawns };
+}
+
+test('identical exact-source repair holds back off to a bounded recheck without claiming recovery', () => {
+  const h = retryGuardianHarness();
+  try {
+    assert.deepEqual(Array.from({ length: 8 }, () => h.cycle()), [
+      60_000, 120_000, 240_000, 480_000, 900_000, 900_000, 900_000, 900_000,
+    ]);
+    const state = h.guardian.status();
+    assert.equal(state.successCount, 0);
+    assert.equal(state.failureCount, 8);
+    assert.equal(state.consecutiveFailureCount, 8);
+    assert.equal(state.nextDelayMs, 900_000);
+    assert.equal(state.lastOk, false);
+    assert.equal(state.lastBlocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+    assert.equal(state.running, false);
+    assert.equal(state.scheduled, true);
+    assert.equal(h.spawns(), 8);
+  } finally { h.guardian.stop(); }
+});
+
+test('changed source or blocker and genuine recovery reset automatic repair pacing', () => {
+  const h = retryGuardianHarness();
+  try {
+    h.cycle();
+    assert.equal(h.cycle(), 120_000);
+    assert.equal(h.cycle({ blocker: 'BACKEND_8787_UNHEALTHY' }), 60_000);
+    assert.equal(h.cycle({ blocker: 'BACKEND_8787_UNHEALTHY' }), 120_000);
+    assert.equal(h.cycle({ head: 'b'.repeat(40), blocker: 'BACKEND_8787_UNHEALTHY' }), 60_000);
+    assert.equal(h.cycle({ ok: true, blocker: '' }), 60_000);
+    assert.equal(h.guardian.status().consecutiveFailureCount, 0);
+    assert.equal(h.guardian.status().successCount, 1);
+    assert.equal(h.cycle(), 60_000);
+  } finally { h.guardian.stop(); }
+});
+
+test('missing child exit code cannot turn an earlier green receipt into successful execution', () => {
+  const h = retryGuardianHarness();
+  try {
+    h.cycle({ ok: true, blocker: '', exitCode: null });
+    assert.equal(h.guardian.status().lastOk, false);
+    assert.equal(h.guardian.status().successCount, 0);
+    assert.equal(h.guardian.status().failureCount, 1);
+  } finally { h.guardian.stop(); }
+});
+
+test('manual repair wake cancels the old automatic timer and stop clears pending delay', () => {
+  const h = retryGuardianHarness();
+  const pending = h.timers.at(-1);
+  assert.equal(h.guardian.runNow(), true);
+  assert.equal(h.cleared.has(pending), true);
+  assert.equal(h.guardian.status().nextDelayMs, null);
+  h.guardian.stop();
+  assert.equal(h.guardian.status().scheduled, false);
+  assert.equal(h.guardian.status().nextDelayMs, null);
+});
