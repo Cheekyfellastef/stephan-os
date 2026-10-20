@@ -111,7 +111,7 @@ test('continuous repair escalates controller-fabric attention through control-pl
 
   const repaired = runSovereignCommanderStephanosRepair({
     readHead: () => HEAD,
-    continuousRepairCycle: true,
+    continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => {
       calls.push(step.id);
       return queue.shift();
@@ -167,7 +167,7 @@ test('continuous repair retries builder after an unrelated fixed control-plane i
 
   const repaired = runSovereignCommanderStephanosRepair({
     readHead: () => HEAD,
-    continuousRepairCycle: true,
+    continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => {
       calls.push(step.id);
       return queue.shift();
@@ -200,7 +200,7 @@ test('continuous repair attempts independent repair for unproven elastic admissi
   ];
   const repaired = runSovereignCommanderStephanosRepair({
     readHead: () => HEAD,
-    continuousRepairCycle: true,
+    continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => { calls.push(step.id); return queue.shift(); },
   });
   assert.equal(repaired.ok, false);
@@ -227,7 +227,7 @@ test('held R7 builder does not suppress separately proven Core repair during an 
     result({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_GREEN' }),
   ];
   const repaired = runSovereignCommanderStephanosRepair({
-    readHead: () => HEAD, continuousRepairCycle: true,
+    readHead: () => HEAD, continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => { calls.push(step.id); steps.push(step); return queue.shift(); },
   });
   assert.equal(repaired.ok, false);
@@ -261,7 +261,7 @@ test('held R7 builder never authorises maintenance while gaming or with unverifi
       }),
     ];
     const repaired = runSovereignCommanderStephanosRepair({
-      readHead: () => HEAD, continuousRepairCycle: true,
+      readHead: () => HEAD, continuousRepairCycle: true, gamingSafe: () => true,
       runStep: (step) => { calls.push(step.id); return queue.shift(); },
     });
     assert.equal(repaired.ok, false);
@@ -285,7 +285,7 @@ test('held R7 builder does not trigger independent installer if Core is healthy'
     }),
   ];
   const repaired = runSovereignCommanderStephanosRepair({
-    readHead: () => HEAD, continuousRepairCycle: true,
+    readHead: () => HEAD, continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => { calls.push(step.id); return queue.shift(); },
   });
   assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
@@ -293,6 +293,42 @@ test('held R7 builder does not trigger independent installer if Core is healthy'
     'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
     'status-stephanos-core-daemon',
   ]);
+});
+
+test('unattended guardian refuses even caretaker when gaming is active or governor unknown', () => {
+  for (const gamingSafe of [() => false, () => null, () => { throw Error('governor unavailable'); }]) {
+    let calls = 0;
+    let repaired;
+    try {
+      repaired = runSovereignCommanderStephanosRepair({
+        readHead: () => HEAD, continuousRepairCycle: true,
+        gamingSafe, runStep: () => { calls++; return result({ ok: true }); },
+      });
+    } catch (error) {
+      // Invalid governor-reading exceptions must not invoke a Windows action.
+      assert.equal(calls, 0);
+      continue;
+    }
+    assert.equal(repaired.ok, false);
+    assert.equal(repaired.blocker, 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED');
+    assert.equal(calls, 0);
+  }
+});
+
+test('unattended guardian rechecks governor when gaming starts between fixed actions', () => {
+  let governorReads = 0;
+  let actions = 0;
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD, continuousRepairCycle: true,
+    gamingSafe: () => ++governorReads === 1 || governorReads === 2,
+    runStep: () => {
+      actions++;
+      return result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD });
+    },
+  });
+  assert.equal(actions, 1); // only caretaker; no goal-builder is launched
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED');
 });
 
 test('continuous repair escalation fits inside the enclosing 220-second action budget', () => {
@@ -325,7 +361,7 @@ test('continuous repair escalation fits inside the enclosing 220-second action b
 
   const repaired = runSovereignCommanderStephanosRepair({
     readHead: () => HEAD,
-    continuousRepairCycle: true,
+    continuousRepairCycle: true, gamingSafe: () => true,
     runStep: (step) => {
       observedTimeouts.push(step.timeoutMs);
       return queue.shift();
