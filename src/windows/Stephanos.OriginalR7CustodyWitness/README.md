@@ -21,7 +21,9 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
   **This is not a protected trust root**: Windows SCM registry-value ACL
   ownership, image mapped-at-launch identity, original source-writer exclusion,
   old open handles, and independent pinned image provenance still require
-  separately qualified OS evidence. No instruction here provisions that key.
+  separately qualified OS evidence. The separately reviewed Stage-B `-Stage`
+  branch does modify that key's owner/DACL and image pin under an interactive
+  administrator. Those are staging mutations, not custody qualification.
 - The actual process token must belong to the exact pinned virtual service
   account, or restricted LocalService (S-1-5-19) with the pinned *enabled*
   NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
@@ -34,8 +36,9 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
 
 The intentionally failing final gate prevents a user account, Core daemon or
 unsigned service from presenting a running process as credible custody.
-There are no protected keys, receipts, service installer, remote endpoints,
-network handlers, read-write access to the source checkout or generic shell.
+The native service host has no protected signing keys, credible custody
+receipts, self-installing capability, remote endpoints, network handlers,
+read-write access to the source checkout or generic shell.
 
 ## Remaining service implementation
 
@@ -50,11 +53,15 @@ fixed service SID. Missing, NULL, empty, inherited, callback, generic-rights,
 duplicate, unknown or more-permissive descriptors fail closed. After hashing
 the binary, a second descriptor sample must exactly match the first.
 
-This is a new **read-only prerequisite**, not protected provenance or effective
-access proof. The Stage-B script does not yet provision this registry DACL;
-its default service key must not be assumed to pass. No installer permission
-is added here. The prerequisite requires a separately reviewed commissioning
-procedure. Parent-key replacement, already-open write handles, privileged
+The native `OriginalR7RegistryProtection` check is a **read-only prerequisite**,
+not protected provenance or effective access proof. Separately, the Stage-B
+`-Stage` branch DOES mutate the fixed HKLM registration key: after disabled
+SCM creation it sets an Administrators owner and protected DACL for SYSTEM,
+Administrators and the fixed service SID, then writes and reads
+`PinnedImageSha256`. The default service key must not be assumed to pass.
+This privileged staging requires separate explicit operator approval and
+is neither continuous custody nor source-writer exclusion. A separately
+reviewed commissioning procedure remains required. Parent-key replacement, already-open write handles, privileged
 administrators, service-object DACL/control rights, registry links, runtime
 modules, audit/signers and continuous original-writer isolation remain separate
 requirements. Two matching samples cannot prove continuing protection.
