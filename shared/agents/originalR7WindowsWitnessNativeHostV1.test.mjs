@@ -86,6 +86,91 @@ test('SCM preflight checks the exact on-disk witness image pin before any custod
 
 const stagingScriptUrl = new URL('../../scripts/windows/stage-original-r7-witness-candidate.ps1', import.meta.url);
 
+test('registration protection stays behind interactive staging and uses only the fixed existing key', async () => {
+  const source = await readFile(stagingScriptUrl, 'utf8');
+  const stage = source.indexOf('if (-not $Stage -or $WhatIfPreference)');
+  const admin = source.indexOf("throw 'R7_STAGE_INTERACTIVE_ADMIN_REQUIRED'");
+  const create = source.indexOf('& $sc create $service');
+  const protect = source.indexOf('\n    Protect-StagedRegistration\n');
+  assert.ok(stage > 0 && admin > stage && create > admin && protect > create);
+  assert.match(source, /RegistryHive\]::LocalMachine, \[Microsoft\.Win32\.RegistryView\]::Registry64/);
+  assert.match(source, /OpenSubKey\("SYSTEM\\CurrentControlSet\\Services\\\$service"/);
+  assert.match(source, /\$key\.SetAccessControl\(\$acl\)/);
+  assert.match(source, /Assert-StagedRegistrationSecurity \(\$key\.GetAccessControl\(\)\) \$witness/);
+  assert.match(source, /\$key\.SetValue\('PinnedImageSha256', \$ExpectedSha256/);
+  assert.doesNotMatch(source, /\b(?:CreateSubKey|AdjustTokenPrivileges|Enable-Privilege)\b/);
+});
+
+test('real PowerShell registration descriptor construction rejects hostile ACL shapes without registry mutation', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'r7-registry-descriptor-test-'));
+  try {
+    const script = join(dir, 'descriptors.ps1');
+    await writeFile(script, `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:R7_STAGE_SCRIPT, [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw 'STAGING_SCRIPT_PARSE_FAILED' }
+# Load only the two pure descriptor helpers. Never dot-source the installer,
+# register an SCM service, set a registry ACL or require administrator access.
+foreach ($name in @('New-StagedRegistrationSecurity', 'Assert-StagedRegistrationSecurity')) {
+    $nodes = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true))
+    if ($nodes.Count -ne 1) { throw 'DESCRIPTOR_HELPER_NOT_UNIQUE' }
+    . ([scriptblock]::Create($nodes[0].Extent.Text))
+}
+$sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-80-1-2-3-4-5')
+$acl = New-StagedRegistrationSecurity $sid
+Assert-StagedRegistrationSecurity $acl $sid
+$raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+if ($raw.DiscretionaryAcl.Count -ne 3) { throw 'ACE_COUNT_MISMATCH' }
+$masks = @{}
+foreach ($ace in $raw.DiscretionaryAcl) { $masks[$ace.SecurityIdentifier.Value] = $ace.AccessMask }
+if ($masks['S-1-5-18'] -ne 0xf003f -or $masks['S-1-5-32-544'] -ne 0xf003f -or
+    $masks[$sid.Value] -ne 0x20019) { throw 'NATIVE_READER_MASK_MISMATCH' }
+$good = 'O:BAG:BAD:P(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;S-1-5-80-1-2-3-4-5)'
+$cases = @(
+    $good.Replace('O:BA', 'O:SY'),
+    $good.Replace('D:P', 'D:'),
+    $good.Replace('(A;;KA;;;SY)', ''),
+    $good.Replace('(A;;KR;;;S-1-5-80-1-2-3-4-5)', ''),
+    $good.Replace('KR;;;S-1-5-80-1-2-3-4-5', 'KA;;;S-1-5-80-1-2-3-4-5'),
+    $good.Replace('KA;;;SY', 'KR;;;SY'),
+    $good.Replace('(A;;KA;;;BA)', '(D;;KA;;;BA)'),
+    $good.Replace('(A;;KA;;;SY)', '(A;ID;KA;;;SY)'),
+    $good.Replace('(A;;KA;;;SY)', '(A;CI;KA;;;SY)'),
+    $good.Replace('S-1-5-80-1-2-3-4-5', 'S-1-5-80-9-2-3-4-5'),
+    ($good + '(A;;KR;;;BU)'),
+    ($good + '(A;;KA;;;SY)'),
+    'O:BAG:BAD:P',
+    'O:BAG:BAD:NO_ACCESS_CONTROL'
+)
+foreach ($sddl in $cases) {
+    $candidate = [Security.AccessControl.RegistrySecurity]::new()
+    $candidate.SetSecurityDescriptorSddlForm($sddl)
+    $rejected = $false
+    try { Assert-StagedRegistrationSecurity $candidate $sid } catch { $rejected = $true }
+    if (-not $rejected) { throw 'HOSTILE_DESCRIPTOR_ACCEPTED' }
+}
+$rejected = $false
+try { New-StagedRegistrationSecurity ([Security.Principal.SecurityIdentifier]::new('S-1-5-18')) } catch { $rejected = $true }
+if (-not $rejected) { throw 'NON_SERVICE_SID_ACCEPTED' }
+Write-Output 'R7_REGISTRY_DESCRIPTOR_TESTS_PASSED'
+`, 'utf8');
+    const run = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+    ], { shell: false, windowsHide: true, encoding: 'utf8', timeout: 60000,
+      env: { ...process.env, R7_STAGE_SCRIPT: fileURLToPath(stagingScriptUrl) } });
+    assert.equal(run.status, 0, run.stderr || run.error?.message || 'descriptor test failed');
+    assert.match(run.stdout, /R7_REGISTRY_DESCRIPTOR_TESTS_PASSED/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('Windows PowerShell 5.1 delivers the fixed SCM arguments to a harmless native receiver', {
   skip: process.platform !== 'win32',
 }, async () => {

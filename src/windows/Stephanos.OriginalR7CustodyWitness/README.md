@@ -129,4 +129,24 @@ The proposed PowerShell recipe is read-only by default and verifies an exact loc
 
 The supplied SHA-256 is NOT independent code provenance: an operator could provide a matching hash for an untrusted file. Windows packaging, signing, loaded module/native extraction identity, registry key and ACL immutability, service-account correctness, time-of-check races, original-writer tokens, old handles, WMI/COM/services/tasks, continuous audit and separate Ed25519 trust roots all require independent Windows security review and actual physical proof before installation or final commissioning. The recipe returns only a local, redacted `R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED` candidate receipt; if partially failed it leaves explicit `R7_STAGE_B_PARTIAL_ARTIFACTS_REQUIRE_REVIEW` and does not silently delete a service or directory.
 
+The candidate now also aligns registry staging with the native reader's strict
+descriptor prerequisite. Only after disabled SCM creation, in the existing
+interactive administrator/ShouldProcess branch, it opens the fixed existing
+64-bit HKLM service registration. It sets Administrators ownership and a
+protected DACL containing exactly explicit SYSTEM/Administrators full-control
+and the resolved fixed service SID's KEY_READ ACEs, with no inheritance. It
+checks the raw descriptor through the retained key handle before and after
+writing/reading the image pin, then samples the named key again before a
+positive staging result. No token privilege is enabled, key created, caller
+path accepted or service started. Failure retains the disabled partial-stage
+HOLD. PowerShell 5.1 tests execute the pure descriptor helpers on synthetic
+hostile ACLs; those tests do not install or change HKLM permissions.
+
+These are sampled registration-shape checks. They do not prove effective
+access by the original writer, parent-key replacement denial, old-handle
+revocation, continuous containment, binary provenance or protected signing.
+This expanded staging candidate requires a fresh qualified exact-head
+Windows/security review before any physical staging; earlier staging review
+does not cover these new registry writes.
+
 **Do not execute `-Stage` until the new recipe has passed exact-head Windows/security specialist review, protected merge, approved immutable binary provenance and explicit operator-scoped Battle Bridge admin authorization.** An installed disabled service is not custody or proof. The original `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` OnStart gate and `critical-2962-elastic-goal-r7-lease` HOLD remain mandatory.
