@@ -109,6 +109,11 @@ const readMeterBlackoutInventory = () => readFileSync(
   new URL('../../docs/architecture/sovereign-meter-blackout-acceptance-v1.md', import.meta.url), 'utf8');
 
 const parseMeterBlackoutDimensions = (markdown) => {
+  // A source-only inventory must not acquire a second or promoted status label
+  // while the twelve evidence rows remain UNVERIFIED.
+  const statusDeclarations = markdown.match(/\*\*Status:[^*\n]*\*\*/g) ?? [];
+  assert.deepEqual(statusDeclarations, ['**Status: SOURCE-ONLY / UNVERIFIED.**'],
+    'meter blackout cannot silently promote or duplicate source-only status');
   assert.equal(markdown.split('## Twelve canonical dimensions').length, 2,
     'the acceptance inventory must contain exactly one canonical dimensions section');
   assert.equal(markdown.split('## Verdict and original-owner routing').length, 2,
@@ -206,6 +211,22 @@ test('meter-blackout acceptance inventory remains aligned to canonical 12 dimens
   assert.match(markdown, /same original task ID and worker identity/);
   assert.match(markdown, /Gaming or Quest has absolute priority/);
   assert.match(markdown, /never from publication of this checklist/);
+});
+
+test('meter-blackout inventory rejects forged live status despite UNVERIFIED rows', () => {
+  const markdown = readMeterBlackoutInventory();
+  const canonicalStatus = '**Status: SOURCE-ONLY / UNVERIFIED.**';
+  assert.ok(markdown.includes(canonicalStatus), 'source-only declaration must exist');
+  for (const forged of [
+    markdown.replace(canonicalStatus, '**Status: LIVE / VERIFIED.**'),
+    markdown.replace(canonicalStatus, ''),
+    markdown + '\n**Status: LIVE / PASS.**\n',
+  ]) {
+    assert.notEqual(forged, markdown, 'adversarial mutation must change the source packet');
+    assert.throws(() => parseMeterBlackoutDimensions(forged),
+      /meter blackout cannot silently promote or duplicate source-only status/,
+      'source-only acceptance cannot become physical proof through a status label');
+  }
 });
 
 test('meter-blackout inventory rejects a duplicate forged dimensions section', () => {
