@@ -197,6 +197,10 @@ test('CPU orphan caretaker runs only the fixed named script from the existing bo
   assert.match(cpuReliefSource, /\$minimumProcessAgeMinutes = 15/);
   assert.match(cpuReliefSource, /\$minimumWholeCpuPct = 80/);
   assert.match(cpuReliefSource, /GetOwnerSid/);
+  assert.match(cpuReliefSource, /Get-ApprovedScript\(\[string\]\$CommandLine, \[string\]\$ExecutablePath\)/);
+  assert.match(cpuReliefSource, /ExecutablePath -ine \$canonicalPowerShell/);
+  assert.match(cpuReliefSource, /\[regex\]::IsMatch\(\$CommandLine, \$pattern\)/);
+  assert.match(cpuReliefSource, /Before\.ExecutablePath -ieq \[string\]\$After\.ExecutablePath/);
   assert.match(cpuReliefSource, /Test-MatchingCimProcess \$candidate \$followup/);
   assert.match(cpuReliefSource, /\$handleStartUtc/);
   assert.match(cpuReliefSource, /\$handle\.Kill\(\)/);
