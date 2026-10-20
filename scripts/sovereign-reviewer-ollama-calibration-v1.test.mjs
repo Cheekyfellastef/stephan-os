@@ -77,14 +77,16 @@ test('real-model route submits ten fixed untrusted patches only to loopback Olla
     // All-clean model is unsafe and must FAIL calibration (eight seeded defects).
     const output = JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] });
     return { ok: true, text: async () => JSON.stringify({
-      model: 'qwen:14b', done: true, done_reason: 'stop', response: output,
+      model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop', response: output,
     }) };
   }});
   assert.equal(calls.length, 10);
+  assert.equal(calls.every(x => x.request.model === 'sha256:' + 'f'.repeat(64)), true,
+    'ALL ten private challenges must address pinned immutable bytes');
   assert.equal(calls.every(x => x.url === 'http://127.0.0.1:11434/api/generate'), true);
   assert.equal(calls.every(x => x.options.method === 'POST'
     && x.options.redirect === 'error'
-    && x.request.model === 'qwen:14b' && x.request.stream === false
+    && x.request.model === 'sha256:' + 'f'.repeat(64) && x.request.stream === false
     && x.request.format === 'json' && x.request.options.temperature === 0
     && x.request.keep_alive === 0), true);
   assert.equal(result.status, 'CALIBRATION_HELD');
@@ -199,7 +201,7 @@ test('calibration checks Git source again after the full ten-model-case exam', a
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'qwen:14b', done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256,
           verdict: 'clean', findings: [] }),
       }) };
@@ -320,7 +322,7 @@ test('Ollama polling monitor is cleared on completed or failed generation', asyn
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'qwen:14b', done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256, verdict: 'clean', findings: [] }),
       }) };
     },
@@ -342,7 +344,7 @@ test('local-model exam immediately holds when gaming activates between cases', a
       const id = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const digest = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return {ok: true, text: async () => JSON.stringify({
-        model: 'qwen:14b', done: true, done_reason: 'stop',
+        model: 'sha256:' + 'f'.repeat(64), done: true, done_reason: 'stop',
         response: JSON.stringify({
           challengeId: id, diffSha256: digest, verdict:'clean', findings: [],
         }),
@@ -397,7 +399,7 @@ test('calibration holds if model weights change during ten cases',async()=>{
       const prompt=JSON.parse(options.body).prompt;
       const challengeId=prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256=prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
-      return {ok:true,text:async()=>JSON.stringify({model:'qwen:14b',
+      return {ok:true,text:async()=>JSON.stringify({model:'sha256:' + 'a'.repeat(64),
         done:true,done_reason:'stop',response:JSON.stringify({
           challengeId,diffSha256,verdict:'clean',findings:[],
         })})};
@@ -419,7 +421,7 @@ test('calibration rejects a model tag changed mid-exam even when restored at com
       const challengeId = prompt.match(/Challenge: (case-[a-f0-9]{32})/)?.[1];
       const diffSha256 = prompt.match(/SHA256: ([a-f0-9]{64})/)?.[1];
       return { ok: true, text: async () => JSON.stringify({
-        model: 'qwen:14b', done: true, done_reason: 'stop',
+        model: 'sha256:' + 'a'.repeat(64), done: true, done_reason: 'stop',
         response: JSON.stringify({ challengeId, diffSha256,
           verdict: 'clean', findings: [] }),
       }) };
@@ -547,4 +549,33 @@ test('local candidate proof is source-bound, SHA-verified and no-overwrite, neve
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test('calibration never falls back to a mutable model tag if digest-addressing is unsupported', async () => {
+  let count = 0;
+  const result = await run(env, { ...gitProof(),
+    fetchImpl: async (_url, options) => {
+      count++;
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64));
+      return { ok: false, status: 404, text: async () => 'unknown digest' };
+    },
+  });
+  assert.equal(count, 1);
+  assert.equal(result.status, 'CALIBRATION_HELD');
+  noAuthority(project(result));
+});
+test('calibration rejects mutable-tag completion even if all digest observations match', async () => {
+  let count = 0;
+  const result = await run(env, { ...gitProof(),
+    fetchImpl: async (_url, options) => {
+      count++;
+      assert.equal(JSON.parse(options.body).model, 'sha256:' + 'f'.repeat(64));
+      return { ok: true, text: async () => JSON.stringify({
+        model: 'qwen:14b', done: true, done_reason: 'stop', response: '{}',
+      }) };
+    },
+  });
+  assert.equal(count, 1);
+  assert.equal(result.status, 'CALIBRATION_HELD');
+  noAuthority(project(result));
 });
