@@ -37,6 +37,10 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
   const calls = [];
   const receipt = {
     status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    repository: env.STEPHANOS_REVIEW_REPOSITORY, baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
+    evidenceSchema: 'stephanos.sovereign-review-candidate-evidence.v1',
+    riskTier: 'standard', qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+    findingsCount: 0,
     prNumber: 3059, verdict: 'clean',
     proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json',
     proofSha256: 'd'.repeat(64), mergeAuthority: false,
@@ -330,6 +334,10 @@ test('Windows bridge refuses forged success, mismatched PR/head, no Linux proof'
 test('ordinary local review cannot be READY unless its exact proof file hashes on WSL', () => {
   const receipt = {
     status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
+    repository: env.STEPHANOS_REVIEW_REPOSITORY, baseSha: env.STEPHANOS_REVIEW_EXACT_BASE,
+    evidenceSchema: 'stephanos.sovereign-review-candidate-evidence.v1',
+    riskTier: 'standard', qualification: 'PENDING_INDEPENDENT_ATTESTATION',
+    findingsCount: 0,
     prNumber: 3059, verdict: 'clean',
     proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json',
     proofSha256: 'e'.repeat(64), mergeAuthority: false,
@@ -355,6 +363,22 @@ test('ordinary local review cannot be READY unless its exact proof file hashes o
     return result;
   };
   assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  ' + proof + '\n' }).ok, true);
+  // A forged summary for a different base or repository never becomes READY.
+  for (const changes of [
+    { baseSha: 'c'.repeat(40) }, { repository: 'other/repo' },
+    { evidenceSchema: 'untrusted.v1' }, { qualification: 'QUALIFIED' },
+    { riskTier: 'high' }, { findingsCount: 1 },
+  ]) {
+    const fake = { ...receipt, ...changes };
+    let stage = 0;
+    const blocked = runWindowsSovereignReviewerV1(env, { ...context, spawn() {
+      stage++;
+      return stage <= 2 ? { status: 0, stdout: '/mnt/c/safe\n' }
+        : { status: 0, stdout: 'SOVEREIGN_REVIEWER_RESULT=' + JSON.stringify(fake) + '\n' };
+    } });
+    assert.equal(blocked.reason, 'REVIEWER_RECEIPT_UNBOUND');
+    assert.equal(stage, 3, 'invalid summary must not request WSL proof readback');
+  }
   assert.equal(run({ status: 0, stdout: 'f'.repeat(64) + '  ' + proof + '\n' }).reason,
     'REVIEWER_PROOF_HASH_MISMATCH', 'same path with replaced bytes must fail');
   assert.equal(run({ status: 1, stdout: '' }).reason, 'REVIEWER_PROOF_FILE_UNREADABLE');
