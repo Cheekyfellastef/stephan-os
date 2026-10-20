@@ -1953,7 +1953,7 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
-    ok: parsed.ok === true,
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
     processCount: parsed.processInventoryComplete === true
       && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
       ? parsed.processCount

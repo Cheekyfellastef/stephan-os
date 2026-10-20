@@ -2722,6 +2722,7 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
     schemaVersion: 'stephanos.core-daemon-status.v1',
     ok: true,
     processCount: 1,
+    processInventoryComplete: true,
     daemonHealthy: true,
     singleWriterProven: true,
     writerProcessObserved: true,
@@ -2771,6 +2772,20 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.available, true);
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+  for (const complete of [false, undefined]) {
+    const contradictory = { ...maintenance, structuredContent: {
+      ...maintenance.structuredContent,
+      stdout: JSON.stringify({ ...freshStatus, processInventoryComplete: complete }),
+    } };
+    const { fetchFn: incompleteFetch } = mcpFetch({ maintenance: contradictory });
+    const held = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn: incompleteFetch, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(held.ok, false);
+    assert.equal(held.coreDaemonStatus.ok, false);
+    assert.equal(held.coreDaemonStatus.processCount, null);
+  }
 });
 
 test('remote Core health refuses missing or false custody proofs despite fresh status', async () => {

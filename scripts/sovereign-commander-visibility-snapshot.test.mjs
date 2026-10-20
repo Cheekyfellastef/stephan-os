@@ -22,6 +22,7 @@ test('Core visibility preserves unknown inventory as null rather than zero owner
     const result = collectCoreDaemonVisibility({ spawnSyncFn: () => ({
       status: 0, stdout: JSON.stringify({
         schemaVersion: 'stephanos.core-daemon-status.v1', ...evidence,
+        ok: true,
         processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
       }),
     }) });
@@ -52,6 +53,8 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
     core: {
       available: true,
       ok: true,
+      processInventoryComplete: true,
+      processCount: 1,
       daemonHealthy: true,
       readiness: 'READY',
       wakeState: 'AWAKE',
