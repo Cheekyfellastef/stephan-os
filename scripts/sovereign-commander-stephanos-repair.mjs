@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { publishSovereignCommanderRepairReport } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { projectOctopusRepairEscalation } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
+import { sovereignControlPlaneGamingSafeV1 } from './sovereign-commander-control-plane-repair.mjs';
 
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-stephanos-repair.v1';
@@ -155,6 +156,7 @@ export function runSovereignCommanderStephanosRepair({
   runStep = runFixedStephanosRepairStep,
   readHead = readCurrentHead,
   continuousRepairCycle = false,
+  gamingSafe = sovereignControlPlaneGamingSafeV1,
 } = {}) {
   const expectedHead = text(readHead()).toLowerCase();
   const steps = [];
@@ -163,9 +165,19 @@ export function runSovereignCommanderStephanosRepair({
   if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
     return blocked('', steps, 'STEPHANOS_REPAIR_SOURCE_HEAD_UNAVAILABLE');
   }
+  const guardBlocker = 'SOVEREIGN_COMMANDER_UNATTENDED_GAMING_GUARD_BLOCKED';
+  if (continuousRepairCycle && gamingSafe() !== true) {
+    return blocked(expectedHead, steps, guardBlocker);
+  }
+  // The daemon's guardian previously launched Windows caretaker actions
+  // before checking gaming at all. Recheck the on-host governor before each
+  // fixed step as well as inside the control-plane subprocess.
+  const guardedRunStep = step => continuousRepairCycle && gamingSafe() !== true
+    ? { ok: false, status: null, stdout: '', errorCode: guardBlocker }
+    : runStep(step);
 
   const caretakerStep = boundedContinuousStep(STEPS.caretaker, CONTINUOUS_REPAIR_STEP_TIMEOUTS.caretaker, continuousRepairCycle);
-  const caretaker = runStep(caretakerStep);
+  const caretaker = guardedRunStep(caretakerStep);
   const caretakerPayload = parseJsonPayload(caretaker?.stdout);
   steps.push(compactStep(caretakerStep, caretaker, caretakerPayload));
   const caretakerGreen = caretaker?.ok === true
@@ -181,7 +193,7 @@ export function runSovereignCommanderStephanosRepair({
   }
 
   const initialBuilderStep = boundedContinuousStep(STEPS.goalBuilder, CONTINUOUS_REPAIR_STEP_TIMEOUTS.goalBuilderInitial, continuousRepairCycle);
-  let builder = runStep(initialBuilderStep);
+  let builder = guardedRunStep(initialBuilderStep);
   let builderPayload = parseJsonPayload(builder?.stdout);
   steps.push(compactStep(initialBuilderStep, builder, builderPayload));
   if (builder?.ok !== true || builderPayload?.ok !== true) {
@@ -199,7 +211,7 @@ export function runSovereignCommanderStephanosRepair({
         const observeStep = boundedContinuousStep(
           STEPS.coreStatus, CONTINUOUS_REPAIR_STEP_TIMEOUTS.coreStatus, true,
         );
-        const observed = runStep(observeStep);
+        const observed = guardedRunStep(observeStep);
         const core = parseJsonPayload(observed?.stdout);
         steps.push(compactStep(observeStep, observed, core));
         const independentCoreFault = observed?.ok === true
@@ -213,7 +225,7 @@ export function runSovereignCommanderStephanosRepair({
           const repairStep = boundedContinuousStep(
             STEPS.controlPlane, CONTINUOUS_REPAIR_STEP_TIMEOUTS.controlPlane, true,
           );
-          const independentRepair = runStep(repairStep);
+          const independentRepair = guardedRunStep(repairStep);
           steps.push(compactStep(repairStep, independentRepair, parseJsonPayload(independentRepair?.stdout)));
         }
       }
@@ -223,7 +235,7 @@ export function runSovereignCommanderStephanosRepair({
     }
 
     const controlPlaneStep = boundedContinuousStep(STEPS.controlPlane, CONTINUOUS_REPAIR_STEP_TIMEOUTS.controlPlane, true);
-    const controlPlane = runStep(controlPlaneStep);
+    const controlPlane = guardedRunStep(controlPlaneStep);
     const controlPlanePayload = parseJsonPayload(controlPlane?.stdout);
     steps.push(compactStep(controlPlaneStep, controlPlane, controlPlanePayload));
     controlPlaneComplete = controlPlane?.ok === true && controlPlanePayload?.ok === true;
@@ -241,7 +253,7 @@ export function runSovereignCommanderStephanosRepair({
     // Recovery Mesh/auxiliary installer hold must remain visible, but it must
     // not strand independently repairable builder capacity.
     const retryBuilderStep = boundedContinuousStep(STEPS.goalBuilder, CONTINUOUS_REPAIR_STEP_TIMEOUTS.goalBuilderRetry, true);
-    builder = runStep(retryBuilderStep);
+    builder = guardedRunStep(retryBuilderStep);
     builderPayload = parseJsonPayload(builder?.stdout);
     steps.push(compactStep(retryBuilderStep, builder, builderPayload));
     if (builder?.ok !== true || builderPayload?.ok !== true) {
@@ -258,7 +270,7 @@ export function runSovereignCommanderStephanosRepair({
   }
 
   const coreStatusStep = boundedContinuousStep(STEPS.coreStatus, CONTINUOUS_REPAIR_STEP_TIMEOUTS.coreStatus, continuousRepairCycle);
-  const status = runStep(coreStatusStep);
+  const status = guardedRunStep(coreStatusStep);
   const core = parseJsonPayload(status?.stdout);
   steps.push(compactStep(coreStatusStep, status, core));
   // Missing/null heartbeat ages must never coerce to zero and prove a live Core.
