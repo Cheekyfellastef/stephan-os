@@ -18,6 +18,8 @@ export function validateProtectedMergeCheckRows(checks) {
   if (!Array.isArray(checks) || checks.length < 1) return false;
   const successfulRequiredWorkflows = new Set();
   const requiredWorkflows = new Set(PROTECTED_MERGE_REQUIRED_WORKFLOWS);
+  let skippedPrPages = false;
+  let successfulPrBuild = false;
 
   for (const check of checks) {
     const name = String(check?.name || '').trim();
@@ -31,14 +33,21 @@ export function validateProtectedMergeCheckRows(checks) {
 
     const identity = `${workflow}\0${name}`;
     if (state === 'SUCCESS') {
+      if (workflow === 'Build Stephanos UI' && check?.event === 'pull_request') successfulPrBuild = true;
       successfulRequiredWorkflows.add(workflow);
       continue;
     }
     if (state === 'SKIPPED' && PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS.has(identity)
-      && (identity !== 'Build Stephanos UI\0pages-deploy' || check?.event === 'pull_request')) continue;
+      && (identity !== 'Build Stephanos UI\0pages-deploy' || check?.event === 'pull_request')) {
+      if (identity === 'Build Stephanos UI\0pages-deploy') skippedPrPages = true;
+      continue;
+    }
     return false;
   }
 
+  // A successful workflow_dispatch/push Build cannot substitute for the
+  // missing PR source/test jobs when neutralising a pull_request Pages skip.
+  if (skippedPrPages && !successfulPrBuild) return false;
   return PROTECTED_MERGE_REQUIRED_WORKFLOWS.every((workflow) => (
     successfulRequiredWorkflows.has(workflow)
   ));
