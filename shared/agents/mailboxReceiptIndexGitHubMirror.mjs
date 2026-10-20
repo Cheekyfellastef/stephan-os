@@ -66,7 +66,7 @@ export function extractRetiredMailboxTerminalReceiptsFromTruthIssueBody(body) {
     || !body.startsWith(`<!-- ${MAILBOX_RECEIPT_GITHUB_TRUTH_MARKER} -->`)) {
     throw new Error('RETIRED_MAILBOX_RECEIPT_TRUTH_UNVERIFIED');
   }
-  const match = body.match(/```json\\s*([\\s\\S]*?)```/i);
+  const match = body.match(/```json\s*([\s\S]*?)```/i);
   const value = match ? parseJson(match[1]) : null;
   if (value?.schemaVersion !== MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION
     || !Array.isArray(value.recentReceipts)
