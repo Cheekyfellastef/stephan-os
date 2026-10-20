@@ -39,7 +39,7 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
     status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
     prNumber: 3059, verdict: 'clean',
     proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json',
-    mergeAuthority: false,
+    proofSha256: 'd'.repeat(64), mergeAuthority: false,
   };
   const result = runWindowsSovereignReviewerV1(env, {
     ...context,
@@ -332,7 +332,7 @@ test('ordinary local review cannot be READY unless its exact proof file hashes o
     status: 'LOCAL_REVIEW_EVIDENCE_READY', sourceHead: env.STEPHANOS_REVIEW_EXACT_HEAD,
     prNumber: 3059, verdict: 'clean',
     proofRef: 'proofs/sovereign-review-pr-3059-aaaaaaaaaaaa.json',
-    mergeAuthority: false,
+    proofSha256: 'e'.repeat(64), mergeAuthority: false,
   };
   const proof = '/mnt/c/safe/' + receipt.proofRef;
   const run = (hashResult) => {
@@ -355,6 +355,8 @@ test('ordinary local review cannot be READY unless its exact proof file hashes o
     return result;
   };
   assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  ' + proof + '\n' }).ok, true);
+  assert.equal(run({ status: 0, stdout: 'f'.repeat(64) + '  ' + proof + '\n' }).reason,
+    'REVIEWER_PROOF_HASH_MISMATCH', 'same path with replaced bytes must fail');
   assert.equal(run({ status: 1, stdout: '' }).reason, 'REVIEWER_PROOF_FILE_UNREADABLE');
   assert.equal(run({ status: 0, stdout: 'forged proof' }).reason, 'REVIEWER_PROOF_READBACK_INVALID');
   assert.equal(run({ status: 0, stdout: 'e'.repeat(64) + '  /mnt/c/other.json\n' }).reason,
