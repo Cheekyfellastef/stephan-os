@@ -1,5 +1,24 @@
 # Core worker custody and repair admission
 
+## Negative supervisor evidence is a completed outcome
+
+The existing coordination task supplied a bounded producer/consumer correction
+(source patch SHA256 `81e15a75a82464591dcc314016b2332c93f5c7ab043c7aa72ae94444077dfae5`).
+The fixed supervisor exits 2 with a complete BLOCKED report; dropping every
+`ok:false` child result erased its original R7 hold and attempted discovery again.
+The new real-child regression reproduced this on the combined branch before
+adoption, reaching `goal-discovery-heartbeat` under the missing original receipt.
+
+Parsing now retains only a completed exit-2 negative report with exact supervisor
+schema, `ok:false`, exact BLOCKED verdict, safe typed blocker and matching child
+errorCode when present. This can preserve original-owner HOLD only; existing
+success/pickup gates stay separate. Timeout/transport, wrong schema, inconsistent
+verdict, exit 1 and contradictory error codes cannot take that shortcut.
+Real spawned Node fixtures cover all seven original-owner blockers; no runtime
+repair child is executed. The shared validated worker reader and removed worker
+bootstrap remain intact. This adopts preparation into the existing branch and
+owner rather than creating another source writer or claiming commissioning.
+
 Readonly maintenance classification is based on behavior, never a `status`
 name. Review of 8dc97ceee7 identified gaming Status's missing-state reconciliation
 and possible process eviction; that action now requires owner admission too.

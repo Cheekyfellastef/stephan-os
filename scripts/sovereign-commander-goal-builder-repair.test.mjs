@@ -233,6 +233,83 @@ test('missing historical r7 receipt hands off to original owner without restarti
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
 });
 
+test('real exit-2 original-owner reports retain custody without worker or discovery replay', () => {
+  const blockers = [
+    'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+    'REPAIR_ORIGINAL_EXECUTION_HISTORY_UNVERIFIED',
+    'REPAIR_ORIGINAL_TERMINAL_PAIR_PRESENT_RECEIPT_MISSING',
+    'REPAIR_ORIGINAL_WORK_STILL_IN_FLIGHT',
+    'CANCELLED_ORIGINAL_SOURCE_FENCE_REQUIRED',
+    'ORIGINAL_SOURCE_FENCE_PROOF_UNVERIFIED',
+  ];
+  for (const blocker of blockers) {
+    const report = {
+      schemaVersion: 'stephanos.sovereign-commander-fleet-goal-supervisor.v1',
+      ok: false,
+      blocker,
+      daemonMayReportGreen: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+    };
+    const child = runFixedGoalBuilderRepairStep({
+      id: 'exit-2-supervisor-report',
+      executable: process.execPath,
+      args: ['-e', `process.stdout.write(${JSON.stringify('SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=' + JSON.stringify(report) + '\n')}); process.exitCode = 2;`],
+      timeoutMs: 5_000,
+    });
+    assert.equal(child.status, 2);
+    assert.equal(child.ok, false);
+    assert.equal(child.errorCode, blocker);
+    const calls = [];
+    const result = runSovereignCommanderGoalBuilderRepair({
+      runStep(step) {
+        calls.push(step.id);
+        if (step.id === 'fleet-goal-supervisor') return child;
+        if (step.id === 'controller-lane-status') return laneStatus();
+        throw new Error(`Unexpected mutating step under ${blocker}: ${step.id}`);
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, blocker);
+    assert.equal(result.repairApplied, false);
+    assert.equal(result.originalSourceLeaseHeld, true);
+    assert.equal(result.recoveryOwner, '#2961');
+    assert.equal(result.leaseSeizureAllowed, false);
+    assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+  }
+});
+
+test('incomplete or contradictory failed reports cannot claim original-owner recovery evidence', () => {
+  const report = {
+    schemaVersion: 'stephanos.sovereign-commander-fleet-goal-supervisor.v1',
+    ok: false,
+    blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+  };
+  for (const [payload, status, errorCode] of [
+    [{ ...report, schemaVersion: 'other-schema' }, 2, report.blocker],
+    [{ ...report, ok: true }, 2, report.blocker],
+    [{ ...report, finalVerdict: 'OTHER_VERDICT' }, 2, report.blocker],
+    [report, 1, report.blocker],
+    [report, null, 'ETIMEDOUT'],
+    [report, 2, 'ETIMEDOUT'],
+  ]) {
+    const result = runSovereignCommanderGoalBuilderRepair({
+      runStep(step) {
+        if (step.id === 'fleet-goal-supervisor') return {
+          ok: false, status, errorCode,
+          stdout: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=' + JSON.stringify(payload) + '\n',
+        };
+        if (step.id === 'controller-lane-status') return laneStatus();
+        return { ok: false, status: null, errorCode: 'TEST_MUTATION_NOT_EXECUTED' };
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.originalSourceLeaseHeld, undefined);
+    assert.notEqual(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_ORIGINAL_OWNER_RECOVERY_REQUIRED');
+  }
+});
+
 test('unknown authority HOLD remains fail closed and cannot take original-owner shortcut', () => {
   const calls = [];
   const result = runSovereignCommanderGoalBuilderRepair({

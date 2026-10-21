@@ -80,14 +80,25 @@ function parseControllerLaneStatus(result) {
 }
 
 function parseSupervisorStatus(result) {
-  if (result?.ok !== true) return null;
+  // The fixed supervisor deliberately exits 2 for a complete BLOCKED report.
+  // Keep that negative evidence: dropping it retries worker/discovery mutation
+  // under an incumbent source-custody hold. Timeout/transport failure is not
+  // a terminal supervisor report and must not take this recovery shortcut.
+  const completedBlocked = result?.ok === false && result?.status === 2;
+  if (result?.ok !== true && !completedBlocked) return null;
   const stdout = text(result?.stdout);
   const markerIndex = stdout.lastIndexOf(FLEET_GOAL_SUPERVISOR_MARKER);
   if (markerIndex < 0) return null;
   const payload = stdout.slice(markerIndex + FLEET_GOAL_SUPERVISOR_MARKER.length).trim().split(/\r?\n/)[0];
   try {
     const parsed = JSON.parse(payload);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || parsed.schemaVersion !== 'stephanos.sovereign-commander-fleet-goal-supervisor.v1') return null;
+    if (completedBlocked && (parsed.ok !== false
+      || parsed.finalVerdict !== 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED'
+      || !SAFE_BLOCKER.test(text(parsed.blocker))
+      || (text(result.errorCode) && text(result.errorCode) !== text(parsed.blocker)))) return null;
+    return parsed;
   } catch {
     return null;
   }
