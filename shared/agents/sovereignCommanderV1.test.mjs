@@ -539,7 +539,12 @@ test('registered Rescue Island source-only probe exercises a real physical path 
   }
 });
 
-test('Windows calibration requires exact bounded identity and authenticated route before any process', async () => {
+test('Windows calibration requires exact bounded identity and authenticated route before any process', async t => {
+  for (const [key, value] of Object.entries({ NODE_OPTIONS: '--import=attacker.mjs', NODE_PATH: 'attacker' })) {
+    const before = process.env[key];
+    process.env[key] = value;
+    t.after(() => { if (before === undefined) delete process.env[key]; else process.env[key] = before; });
+  }
   const identity = {
     schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
     repository: 'Cheekyfellastef/stephan-os',
@@ -569,6 +574,13 @@ test('Windows calibration requires exact bounded identity and authenticated rout
   ), { repoRoot: REPO, routeProof, spawnSyncFn(_exe, _args, options) {
     calls++;
     assert.equal(options.shell, false);
+    assert.equal(_args[0], '--experimental-loader');
+    assert.match(_args[1], /^data:text\/javascript;base64,/);
+    assert.match(_args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
+    assert.equal(_args[3], '--commander-once');
+    assert.equal(_args.length, 4);
+    assert.equal(options.env.NODE_OPTIONS, undefined);
+    assert.equal(options.env.NODE_PATH, undefined);
     assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);
     assert.equal(options.env.STEPHANOS_REVIEW_EXACT_BASE, identity.baseSha);
     assert.equal(options.env.STEPHANOS_REVIEW_PR, '3090');

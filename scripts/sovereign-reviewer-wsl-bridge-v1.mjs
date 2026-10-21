@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { sovereignExactCommitLoaderV1 } from '../shared/agents/sovereignExactCommitLoaderV1.mjs';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const SOURCE_ROOT = path.resolve(fileURLToPath(new URL('../', import.meta.url)));
 const REVIEWER = path.join(SOURCE_ROOT, 'scripts', 'sovereign-reviewer-v1.mjs');
@@ -219,7 +221,12 @@ export function runWindowsSovereignReviewerV1(env = process.env, {
   const args = ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp',
     ...Object.entries(plan.reviewEnv).map(([key, value]) => key + '=' + value),
     'STEPHANOS_SHARED_AGENT_WORKSPACE=' + linuxPaths[1],
-    '/usr/bin/node', linuxPaths[0], ...(mode === 'preflight' ? ['--preflight']
+    '/usr/bin/node', '--experimental-loader', sovereignExactCommitLoaderV1({
+      root: path.posix.resolve(linuxPaths[0], '../..'),
+      head: plan.reviewEnv.STEPHANOS_REVIEW_EXACT_HEAD,
+      files: REVIEWER_CRITICAL_SOURCE_PATHS,
+      git: resolveBattleBridgeGitExecution({ platform: 'linux', environment: {} }),
+    }), linuxPaths[0], ...(mode === 'preflight' ? ['--preflight']
       : mode === 'calibration' ? ['--once'] : [])];
   const executed = run(args);
   if (executed?.error) return error('WSL_REVIEWER_EXECUTION_HELD');

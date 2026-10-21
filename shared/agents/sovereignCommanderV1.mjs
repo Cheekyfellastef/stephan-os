@@ -3,6 +3,8 @@ import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/p
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
+import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
@@ -129,8 +131,29 @@ const REVIEWER_ENV_KEYS = Object.freeze([
   'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL',
   'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
 ]);
+export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-windows-review-calibration-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
+  'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeWindowsHosts.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+  'shared/agents/sharedWorkspaceRuntimeConfig.mjs',
+  'shared/agents/sharedAgentWorkspace.mjs',
+  'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+  'shared/agents/closedLoopLearningV1.mjs',
+]);
 function fixedReviewerEnvironment(identity, inherited) {
-  const env = { ...(inherited || process.env) };
+  const sourceEnv = inherited || process.env;
+  const env = { ...createBattleBridgeMinimalChildEnvironment(sourceEnv) };
+  // The inference settings are data; never inherit Node preload/loader options.
+  for (const key of ['STEPHANOS_SHARED_AGENT_WORKSPACE', 'STEPHANOS_SOVEREIGN_REVIEW_MODEL',
+    'STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS']) {
+    if (typeof sourceEnv[key] === 'string') env[key] = sourceEnv[key];
+  }
   // Never fall back to the long-lived daemon's ambient review metadata.
   for (const key of REVIEWER_ENV_KEYS) delete env[key];
   const p = validateSovereignWindowsReviewIdentityV1(identity);
@@ -758,7 +781,15 @@ function runFixedProcess(plan, options = {}) {
     return frozen({ ok: false, status: null, stdout: '', stderr: '',
       errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
   }
-  const result = runner(plan.executable, [...plan.args], {
+  // This loader is supplied by the independently installed Commander parent,
+  // not by the candidate script. No candidate module evaluates before its
+  // complete import closure has been authenticated and captured in memory.
+  const args = reviewer ? ['--experimental-loader', sovereignExactCommitLoaderV1({
+    root: normalizedAbsolutePath(options.repoRoot), head: plan.reviewIdentity.sourceHead,
+    files: WINDOWS_CALIBRATION_SOURCE_PATHS,
+    git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
+  }), ...plan.args] : [...plan.args];
+  const result = runner(plan.executable, args, {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,

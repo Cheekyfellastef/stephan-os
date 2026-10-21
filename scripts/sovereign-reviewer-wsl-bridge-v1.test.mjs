@@ -75,6 +75,10 @@ test('Windows WSL runner makes only fixed shell-free calls and emits candidate, 
   assert.equal(calls.every(x => path.win32.isAbsolute(x.command)), true, 'absolute Windows executable required');
   assert.deepEqual(calls[2].args.slice(0, 6), ['--exec', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'HOME=/tmp', 'STEPHANOS_REVIEW_EXACT_HEAD=' + 'a'.repeat(40)]);
   assert.equal(calls[2].args.includes('/usr/bin/node'), true);
+  const nodeIndex = calls[2].args.indexOf('/usr/bin/node');
+  assert.equal(calls[2].args[nodeIndex + 1], '--experimental-loader');
+  assert.match(calls[2].args[nodeIndex + 2], /^data:text\/javascript;base64,/);
+  assert.match(Buffer.from(calls[2].args[nodeIndex + 2].split(',')[1], 'base64').toString(), /cat-file/);
   assert.equal(calls[2].args.some(x => x === 'STEPHANOS_SHARED_AGENT_WORKSPACE=/mnt/c/Users/Operator/Documents/Stephanos-openclaw-workspace'), true);
 });
 
