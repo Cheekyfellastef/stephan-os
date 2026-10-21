@@ -106,7 +106,8 @@ internal static class OriginalR7SigningPrimitives
                 foreach (JsonProperty item in parsed.RootElement.EnumerateObject())
                 {
                     if (seen.Count >= 64 || !seen.Add(item.Name)) throw Held("CLAIMS_DUPLICATE_OR_LIMIT");
-                    if (item.Name.Any(c => c < 0x20 || c >= 0x7f)) throw Held("CLAIMS_NAME_UNSUPPORTED");
+                    if (item.Name.Any(c => c < 0x20 || c >= 0x7f) || IsJavaScriptArrayIndex(item.Name))
+                        throw Held("CLAIMS_NAME_UNSUPPORTED");
                     writer.WritePropertyName(item.Name);
                     switch (item.Value.ValueKind)
                     {
@@ -164,6 +165,14 @@ internal static class OriginalR7SigningPrimitives
         }
         finally { CryptographicOperations.ZeroMemory(message); }
     }
+
+    // JSON.stringify sorts canonical array-index names ahead of other keys.
+    // This bounded encoder preserves insertion order, so reject that subset.
+    private static bool IsJavaScriptArrayIndex(string name)
+        => name.Length is >= 1 and <= 10 && (name == "0" || name[0] != '0')
+            && uint.TryParse(name, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out uint index)
+            && index != uint.MaxValue;
 
     private static InvalidOperationException Held(string code) => new("R7_SOFTWARE_" + code);
 }

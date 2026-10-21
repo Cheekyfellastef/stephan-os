@@ -77,7 +77,25 @@ Run the test executable with --signing-provider-only from the repository root.
 It checks RFC8032 section7.1 vectors, domain/format/length failures, owned-buffer
 clearing and terminal failure, candidate/role separation, actual current Windows
 context without granting authority, and Node canonical-verifier interoperability.
-The current private run passed 79 assertions; hosted CI repeats this against the
+The current private run passed 83 assertions; hosted CI repeats this against the
 delivered source. The service and test project compile with warnings as errors.
 
 Vector source: https://datatracker.ietf.org/doc/html/rfc8032#section-7.1.
+
+## Reproducible ordinary and single-file profiles
+
+Both Windows jobs install SDK8.0.426 and select it through a job-local exact
+global.json with rollForward disabled, then assert dotnet --version. No
+repository-wide SDK configuration is introduced. The self-contained profile
+pins runtime8.0.32 and uses packages.witnesssinglefile.lock.json, including the
+SDK-injected Microsoft.NET.ILLink.Tasks8.0.32. Ordinary builds retain their
+separate packages.lock.json. CI locked restore stays enabled for both graphs.
+Actual bundle execution, adjacent-DLL replacement independence, delivered-service
+CLI denial and manifest binding must pass; ordinary compilation alone is not
+bundle qualification. The SDK archive was verified against Microsoft release
+metadata SHA51210261657109f1c62126f106a9ac966739b025b5f6b4a9f88ab7c6e73cacce9aec771895daa3267b8da933a83c32ee91bf458dc6704e1ddcd9bcf0d5edd036abb.
+
+Canonical JavaScript array-index property names are outside the accepted claim
+subset because JSON.stringify sorts them numerically. The encoder rejects them
+rather than preserve an incompatible insertion order; a real Node canonicalization
+regression demonstrates the ordering difference.

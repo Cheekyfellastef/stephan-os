@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { authenticateLegacyOrphanQuarantine } from '../../../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-if (process.argv[2] === 'path') {
+if (process.argv[2] === 'canonical') {
+  const wire = process.argv[3];
+  if (typeof wire !== 'string' || Buffer.byteLength(wire) > 16384) throw new Error('TEST_WIRE_BOUND');
+  process.stdout.write(JSON.stringify({ canonical: JSON.stringify(JSON.parse(wire)) }));
+} else if (process.argv[2] === 'path') {
   process.stdout.write(JSON.stringify({ canonicalWorktree: fs.realpathSync(process.argv[3]) }));
 } else if (process.argv[2] === 'verify') {
   const f = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));

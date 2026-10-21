@@ -89,6 +89,8 @@ internal static class OriginalR7ImagePinPreflight
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("SingleFile", "IL3000",
+        Justification = "Intentional bundle identity check: a nonempty managed assembly location is rejected; no location is used as a load path.")]
     internal static OriginalR7ImagePinObservation Inspect()
     {
         if (!OperatingSystem.IsWindows())

@@ -5,6 +5,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
+      - 'global.json'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/**'
       - 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
@@ -37,7 +38,22 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.426'
+      - name: Select and assert the exact R7 SDK for this job
+        shell: pwsh
+        run: |
+          $pin = @{ sdk = @{ version = '8.0.426'; rollForward = 'disable'; allowPrerelease = $false } }
+          $path = Join-Path $PWD 'global.json'
+          if (Test-Path -LiteralPath $path) {
+            $existing = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($existing.sdk.version -cne '8.0.426' -or $existing.sdk.rollForward -cne 'disable' -or $existing.sdk.allowPrerelease -ne $false) {
+              throw 'R7_EXISTING_SDK_PIN_MISMATCH'
+            }
+          } else {
+            [IO.File]::WriteAllText($path, ($pin | ConvertTo-Json -Depth 3), [Text.UTF8Encoding]::new($false))
+          }
+          $selected = (& dotnet --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $selected -cne '8.0.426') { throw 'R7_EXACT_DOTNET_SDK_NOT_SELECTED' }
       - name: Compile actual SCM witness service binary
         shell: pwsh
         run: |

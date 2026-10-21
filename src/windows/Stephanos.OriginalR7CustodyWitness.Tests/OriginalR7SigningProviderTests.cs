@@ -47,7 +47,7 @@ internal static class OriginalR7SigningProviderTests
         Directory.CreateDirectory(own);
         try
         {
-            Vectors();
+            Vectors(script);
             string witnessPath = Path.Combine(own, "public-rfc8032-seed-one.bin");
             string operatorPath = Path.Combine(own, "public-rfc8032-seed-two.bin");
             File.WriteAllBytes(witnessPath, WitnessSeed);
@@ -55,9 +55,7 @@ internal static class OriginalR7SigningProviderTests
             Sessions(own, witnessPath);
             Profiles();
             Interop(own, script, witnessPath, operatorPath);
-            string provider = typeof(Org.BouncyCastle.Math.EC.Rfc8032.Ed25519).Assembly.Location;
-            Check(Sha(File.ReadAllBytes(provider)) == OriginalR7SigningPrimitives.PublisherNet6Sha256,
-                "ACTUALLY_LOADED_PROVIDER_MATCHES_OFFICIAL_NET6_SHA256");
+            CheckLoadedProvider();
             Console.WriteLine("R7_SIGNING_PROVIDER_ASSERTIONS_PASSED=" + total);
             Console.WriteLine("R7_SIGNING_TEST_ONLY_ROOTS=true");
             Console.WriteLine("R7_PRODUCTION_TRUST_ENROLLED=false");
@@ -74,7 +72,17 @@ internal static class OriginalR7SigningProviderTests
         }
     }
 
-    private static void Vectors()
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("SingleFile", "IL3000",
+        Justification = "Unbundled-only provenance test hashes the actually loaded provider and rejects an empty bundled location.")]
+    private static void CheckLoadedProvider()
+    {
+        string provider = typeof(Org.BouncyCastle.Math.EC.Rfc8032.Ed25519).Assembly.Location;
+        if (string.IsNullOrEmpty(provider)) throw new InvalidOperationException("R7_SIGNING_UNBUNDLED_PROVIDER_PROOF_REQUIRED");
+        Check(Sha(File.ReadAllBytes(provider)) == OriginalR7SigningPrimitives.PublisherNet6Sha256,
+            "ACTUALLY_LOADED_PROVIDER_MATCHES_OFFICIAL_NET6_SHA256");
+    }
+
+    private static void Vectors(string script)
     {
         foreach (var vector in new[] {
             (WitnessSeed, "", "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
@@ -103,6 +111,9 @@ internal static class OriginalR7SigningProviderTests
             "{\"a\":9007199254740992}", "{\"a\":\"\\u0061\"}", "{\"a\":\"é\"}", "{\"a\":\"\\n\"}", "{\"a\":{}}" })
             Reject(() => OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Witness, Encoding.UTF8.GetBytes(bad)), "NONCANONICAL_OR_UNSUPPORTED_CLAIMS");
         Reject(() => OriginalR7SigningPrimitives.DomainMessage((OriginalR7SignaturePurpose)99, Wire(new { a = 1 })), "PURPOSE_ENUM");
+        foreach (string numeric in new[] { "{\"1\":1,\"0\":0}", "{\"0\":0}", "{\"4294967294\":1}" })
+            Reject(() => OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Witness, Encoding.UTF8.GetBytes(numeric)), "JAVASCRIPT_INDEX_PROPERTY_UNSUPPORTED");
+        Check(Node(script,"canonical","{\"1\":1,\"0\":0}").GetProperty("canonical").GetString() == "{\"0\":0,\"1\":1}", "ACTUAL_NODE_INDEX_ORDER_DIFFERS");
         byte[] claims = Wire(new { path = "C:\\fixture + = apostrophe'", flag = true, number = 7 });
         byte[] w = OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Witness, claims);
         byte[] o = OriginalR7SigningPrimitives.DomainMessage(OriginalR7SignaturePurpose.Operator, claims);
