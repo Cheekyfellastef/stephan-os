@@ -93,6 +93,54 @@ jobs:
             scripts/sovereign-high-risk-advisory-v1.test.mjs \
             shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs
 
+  sovereign-reviewer-calibration-contract-tests:
+    # Source/contract proof only. Never connects to a real Battle Bridge model
+    # or claims independent reviewer qualification from hosted CI.
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assert Sovereign Reviewer WSL / local calibration contracts
+        run: |
+          node --test --test-concurrency=1 \
+            scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs \
+            scripts/sovereign-reviewer-ollama-calibration-v1.test.mjs \
+            shared/agents/sovereignCalibrationV1.test.mjs \
+            shared/agents/localReviewCapabilityExamV1.test.mjs
+
+  sovereign-reviewer-native-windows-contract-tests:
+    # This runs the candidate launcher regression tests on a genuine hosted
+    # Windows OS, not on a mocked Windows platform inside Linux CI. Hosted
+    # Windows is NOT Battle Bridge and supplies no independent attestation.
+    # Avoid spawning WSL, Ollama, or gaming resources on any machine.
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: windows-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Exercise WSL bridge fail-closed Windows contracts
+        run: node --test --test-concurrency=1 scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs
+
   surface-ignition-tests:
     if: >-
       github.event_name != 'issue_comment' ||

@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'scripts/sovereign-high-risk-advisory*'
+      - 'scripts/sovereign-windows-review-calibration*'
+      - 'scripts/sovereign-review-coverage*'
+      - 'shared/agents/sovereignWindowsCalibration*'
       - 'shared/agents/sovereignHighRiskReviewCandidateV1*'
       - 'shared/agents/sovereignReviewCoverageV1*'
       - 'shared/agents/sovereignAuthenticatedReviewDiffV1*'
@@ -26,7 +29,7 @@ jobs:
         with:
           node-version: '24'
       - name: Actual hostile pre-execution and reviewed-object fixtures; digest and coverage contracts
-        run: node --test scripts/sovereign-high-risk-advisory-launcher-v1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs shared/agents/sovereignReviewCoverageV1.test.mjs
+        run: node --test scripts/sovereign-high-risk-advisory-launcher-v1.test.mjs scripts/sovereign-windows-review-calibration-v1.test.mjs scripts/sovereign-review-coverage-v1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs shared/agents/sovereignReviewCoverageV1.test.mjs
       - name: Complete advisory suite with real POSIX path/governor semantics
         if: runner.os == 'Linux'
         run: node --test scripts/sovereign-high-risk-advisory-v1.test.mjs

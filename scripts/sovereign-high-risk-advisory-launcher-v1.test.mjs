@@ -30,28 +30,62 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
   try {
     invoke(['init','-b','main']);invoke(['config','user.name','Fixture']);
     invoke(['config','user.email','fixture@example.invalid']);invoke(['config','core.autocrlf','false']);
-    const files=[...HIGH_RISK_ADVISORY_EXECUTION_FILES,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs'];
+    const files=[...HIGH_RISK_ADVISORY_EXECUTION_FILES,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+      'scripts/sovereign-windows-review-calibration-v1.mjs','scripts/sovereign-review-coverage-v1.mjs',
+      'shared/agents/sovereignExactCommitLoaderV1.mjs'];
     for(const file of files){const p=join(root,file);mkdirSync(dirname(p),{recursive:true});
       writeFileSync(p,readFileSync(join(installed,file),'utf8').replaceAll('\r\n','\n'));}
     invoke(['add','.']);invoke(['commit','-m','reviewer fixture']); const base=invoke(['rev-parse','HEAD']);
     writeFileSync(join(root,'README.md'),'second source head\n');invoke(['add','README.md']);
     invoke(['commit','-m','reviewed source']);const head=invoke(['rev-parse','HEAD']);
     const marker=join(root,'ATTACKER_EVALUATED');
+    const fixtureEnv={STEPHANOS_REVIEW_EXACT_HEAD:head,STEPHANOS_REVIEW_EXACT_BASE:base,
+      STEPHANOS_REVIEW_EXACT_BRANCH:'main',STEPHANOS_REVIEW_PR:'3191',
+      STEPHANOS_REVIEW_REPOSITORY:'Cheekyfellastef/stephan-os'};
+    const positive=buildHighRiskAdvisoryLaunchPlanV1({root,gitExecution:trustedGit,
+      entryPoint:'coverage',env:fixtureEnv});
+    const good=spawnSync(positive.executable,positive.args,{cwd:root,env:positive.env,
+      shell:false,windowsHide:true,encoding:'utf8',timeout:12000,maxBuffer:65536});
+    assert.equal(good.status,0,String(good.stderr));
+    assert.match(good.stdout,/STANDARD_LOCAL_CANDIDATE_SCOPE_ONLY/);
     for(const file of ['scripts/sovereign-high-risk-advisory-v1.mjs',
-      'shared/agents/battleBridgeExecutionBoundaryV1.mjs','shared/agents/sharedAgentWorkspace.mjs']){
-      const plan=buildHighRiskAdvisoryLaunchPlanV1({root,gitExecution:trustedGit,env:{
+      'shared/agents/battleBridgeExecutionBoundaryV1.mjs','shared/agents/sharedAgentWorkspace.mjs',
+      'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs']){
+      for(const entryPoint of ['advisory','windows-calibration','coverage']) {
+      const plan=buildHighRiskAdvisoryLaunchPlanV1({root,gitExecution:trustedGit,entryPoint,env:{
         STEPHANOS_REVIEW_EXACT_HEAD:head,STEPHANOS_REVIEW_EXACT_BASE:base,
         STEPHANOS_SHARED_AGENT_WORKSPACE:join(root,'workspace'),NODE_OPTIONS:'--import=attacker',
       }});
       invoke(['update-index','--skip-worktree','--',file]);
-      writeFileSync(join(root,file),`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'bad');throw Error('ATTACKER');`);
+      writeFileSync(join(root,file),`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'bad');`
+        + (file.endsWith('sovereignAuthenticatedReviewDiffV1.mjs')
+          ? `export function captureAuthenticatedReviewDiffV1(){return {}};` : `throw Error('ATTACKER');`));
       const r=spawnSync(plan.executable,plan.args,{cwd:root,env:plan.env,shell:false,
         windowsHide:true,encoding:'utf8',timeout:12000,maxBuffer:65536});
       assert.equal(existsSync(marker),false,file);
       assert.doesNotMatch(r.stdout||'',/ATTACKER/);
-      assert.match(r.stdout||'',/SOVEREIGN_HIGH_RISK_REVIEW_HELD/,String(r.stderr));
+      assert.match(r.stdout||'',/SOVEREIGN_HIGH_RISK_REVIEW_HELD|WINDOWS_CALIBRATION_HELD|REVIEW_COVERAGE_HELD/,String(r.stderr));
+      if(file==='shared/agents/sovereignAuthenticatedReviewDiffV1.mjs' && entryPoint!=='advisory') {
+        const engine=entryPoint==='coverage'?'sovereign-review-coverage-v1-engine.mjs'
+          :'sovereign-windows-review-calibration-v1-engine.mjs';
+        // Counterfactual old topology: importing the engine directly evaluates
+        // this valid substituted transitive module before any source check.
+        spawnSync(process.execPath,[join(root,'scripts',engine)],{cwd:root,env:plan.env,
+          shell:false,windowsHide:true,encoding:'utf8',timeout:12000,maxBuffer:65536});
+        assert.equal(existsSync(marker),true,'unprotected direct import reproduces P2');
+        rmSync(marker);
+        const wrapper=entryPoint==='coverage'?'sovereign-review-coverage-v1.mjs'
+          :'sovereign-windows-review-calibration-v1.mjs';
+        const direct=spawnSync(process.execPath,[join(root,'scripts',wrapper),'--once'],
+          {cwd:root,env:{...plan.env,...fixtureEnv},shell:false,windowsHide:true,
+            encoding:'utf8',timeout:12000,maxBuffer:65536});
+        assert.equal(existsSync(marker),false,'public '+wrapper);
+        assert.match(direct.stdout||'',/STANDARD_LOCAL_CANDIDATE_SCOPE_ONLY|WINDOWS_CALIBRATION_HELD/,
+          String(direct.stderr));
+      }
       invoke(['update-index','--no-skip-worktree','--',file]);
       writeFileSync(join(root,file),readFileSync(join(installed,file),'utf8').replaceAll('\r\n','\n'));
+      }
     }
   }finally{rmSync(root,{recursive:true,force:true});}
 });

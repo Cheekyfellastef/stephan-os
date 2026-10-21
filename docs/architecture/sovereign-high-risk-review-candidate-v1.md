@@ -101,3 +101,28 @@ no-authority regressions remain fail-closed. Hosted Linux validates the complete
 POSIX snapshot/governor fixtures; Windows runs the actual object/loader fixtures
 and portable contracts. No live model inference, installation or R7 change is
 part of these tests.
+
+### Direct-consumer execution custody continuation
+
+Native Windows calibration and coverage intake now use the same independently
+protected installed-parent launcher as high-risk advisory. Their public entries
+import no candidate snapshot or diff implementation. The launcher authenticates
+the complete fixed native/coverage/advisory engine graph from raw exact-commit
+objects before ESM evaluation, including the authenticated diff reader and all
+transitive imports. Only fixed entry identifiers are admitted; no caller path,
+module, command or preload option is accepted. Private Commander remote output
+projection also executes inside that immutable graph.
+
+The #3090 source lineage is integrated into this candidate so that native digest
+addressing, total deadline, base-bound readback and original WSL/Commander loader
+fixes remain intact. #3090 itself remains unchanged. Unit tests import engine
+libraries as test subjects; production/public CLI entries use the trusted parent.
+The protected installation closure now includes those public entries, common
+launcher, serialized loader, Git boundary and OS binaries. An ordinary writable
+copy cannot establish that trust. No installation or signer enrollment is claimed.
+
+Real temporary Git fixtures exercise each route with hidden entry, Git verifier,
+diff reader and transitive workspace substitutions. The public coverage/native
+CLIs are exercised too; hostile bytes never evaluate. Clean coverage must still
+produce its bounded candidate scope. Windows/Linux exact-head CI runs these
+fixtures and native deadline/digest tests. All results retain no authority.
