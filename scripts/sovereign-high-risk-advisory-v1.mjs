@@ -81,7 +81,7 @@ export function inspectHighRiskGamingPermissionV1(env = process.env, {
 } = {}) {
   const workspace = text(env.STEPHANOS_SHARED_AGENT_WORKSPACE);
   if (platform !== 'linux' || !workspace.startsWith('/') || !isAbsolute(workspace)
-    || normalize(workspace) !== workspace || /[\\0\\r\\n]/.test(workspace)
+    || normalize(workspace) !== workspace || /[\0\r\n]/.test(workspace)
     || !Number.isSafeInteger(nowMs)) {
     return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_PATH_UNTRUSTED' });
   }
