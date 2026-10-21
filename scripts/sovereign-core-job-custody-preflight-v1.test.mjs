@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { runCoreJobCustodyPreflightV1, projectCoreJobCustodyCandidateV1,
   runCorePublicationDirectoryRepairCandidateV1, projectCoreDirectoryRepairCandidateV1 } from './sovereign-core-job-custody-preflight-v1.mjs';
@@ -127,5 +130,57 @@ test('invalid identity, unsupported host or pre-cancelled request never launches
   ]) {
     const out = await runCoreJobCustodyPreflightV1({ ...options, spawnFn() { throw Error('must not run'); } });
     assert.equal(out.ok, false);
+  }
+});
+
+test('timeout kill never settles before close or accepts a late green receipt', async () => {
+  for (const killBehavior of ['false', 'throw', 'synchronous-close']) {
+    let child, timeout, settled = false;
+    const pending = runCorePublicationDirectoryRepairCandidateV1({ ...binding, platform: 'win32',
+      expectedNativeSourceSha256,
+      setTimeoutFn(fn) { timeout = fn; return {}; }, clearTimeoutFn() {},
+      spawnFn() {
+        child = new EventEmitter();
+        child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+        child.kill = () => {
+          if (killBehavior === 'throw') throw Error('kill denied');
+          if (killBehavior === 'synchronous-close') child.emit('close', 0);
+          return false;
+        };
+        return child;
+      },
+    }).then(result => { settled = true; return result; });
+    timeout(); await Promise.resolve();
+    if (killBehavior !== 'synchronous-close') {
+      assert.equal(settled, false, 'termination request is not a terminal witness');
+      child.stdout.write('CORE_JOB_RESULT=' + JSON.stringify(directoryRaw) + '\n');
+      child.emit('close', 0);
+    }
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'CORE_JOB_TERMINAL_CUSTODY_UNPROVEN');
+    assert.equal(result.executionCustodyReleased, killBehavior !== 'synchronous-close');
+    assert.equal(result.workspaceMutationState, 'UNPROVEN_RETAIN_ORIGINAL_REQUEST');
+  }
+});
+
+test('Windows autocrlf checkout preserves the authenticated native blob bytes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'core-native-eol-'));
+  try {
+    const git = (...args) => execFileSync('git', ['-c', 'core.autocrlf=true', '-C', root, ...args]);
+    git('init', '--quiet');
+    mkdirSync(join(root, 'scripts', 'windows'), { recursive: true });
+    writeFileSync(join(root, '.gitattributes'), readFileSync(new URL('../.gitattributes', import.meta.url)));
+    const path = 'scripts/windows/SovereignCoreJobCustodyV1.cs';
+    writeFileSync(join(root, path), readFileSync(new URL('./windows/SovereignCoreJobCustodyV1.cs', import.meta.url)));
+    git('add', '.gitattributes', path);
+    const blob = git('show', ':' + path);
+    unlinkSync(join(root, path));
+    git('checkout-index', '-a');
+    assert.deepEqual(readFileSync(join(root, path)), blob);
+    assert.equal(blob.includes(Buffer.from('\r\n')), false);
+  } finally {
+    assert.ok(root.startsWith(join(tmpdir(), 'core-native-eol-')));
+    rmSync(root, { recursive: true, force: true });
   }
 });

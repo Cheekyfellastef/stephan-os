@@ -59,6 +59,35 @@ test('Core cancellation stays on the original session/request and never dispatch
   assert.equal(dispatched, 1);
 });
 
+test('Core admission is shared across sessions while cancellation stays with the original session', async () => {
+  let release, signal, calls = 0;
+  const params = { name: 'maintenance_action', arguments: {
+    actionId: 'repair-core-publication-directories', expectedMain: 'a'.repeat(40) } };
+  const request = { id: 10, isRequest: true, isNotification: false, transportAuthenticated: true };
+  const make = async () => {
+    const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo', executor: async (_e, o) => {
+      calls++; signal = o.signal;
+      await new Promise(resolve => { release = resolve; });
+      return { ok: true, executionCustodyReleased: true };
+    } });
+    await handler('initialize', {}, request);
+    await handler('notifications/initialized', {}, { isNotification: true, isRequest: false });
+    await handler('tools/list', {}, request);
+    return handler;
+  };
+  const a = await make(), b = await make();
+  const pending = a('tools/call', params, request);
+  assert.equal((await b('tools/call', params, request)).isError, true);
+  assert.equal(calls, 1);
+  await b('notifications/cancelled', { requestId: 10 }, { ...request, isRequest: false, isNotification: true });
+  assert.equal(signal.aborted, false);
+  await a('notifications/cancelled', { requestId: 10 }, { ...request, isRequest: false, isNotification: true });
+  assert.equal(signal.aborted, true);
+  release(); await pending;
+  const next = b('tools/call', params, request);
+  assert.equal(calls, 2); release(); await next;
+});
+
 test('Sovereign Commander MCP requires initialize, initialized, and tools/list before calls', async () => {
   const observed = [];
   const handler = createSovereignCommanderMcpHandler({
@@ -322,4 +351,31 @@ test('private MCP exposes bounded metadata and batch-reading parity without shel
   assert.equal(observed[1].operation, 'GET_FILE_INFO');
   assert.deepEqual(observed[1].targetPaths, [paths[0]]);
   assert.equal(JSON.stringify(observed).includes('do-not-forward'), false);
+});
+
+test('unproven terminal custody retains the server lane across a new session', async () => {
+  let finish, calls = 0;
+  const params = { name: 'maintenance_action', arguments: {
+    actionId: 'repair-core-publication-directories', expectedMain: 'a'.repeat(40) } };
+  const request = { id: 91, isRequest: true, isNotification: false, transportAuthenticated: true };
+  const make = async () => {
+    const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo', executor: async () => {
+      calls++;
+      await new Promise(resolve => { finish = resolve; });
+      return { ok: false, structuredContent: { executionCustodyReleased: false } };
+    } });
+    await handler('initialize', {}, request);
+    await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+    await handler('tools/list', {}, request);
+    return handler;
+  };
+  const a = await make();
+  const pending = a('tools/call', params, request);
+  const b = await make();
+  assert.equal((await b('tools/call', params, request)).isError, true);
+  finish(); assert.equal((await pending).isError, true);
+  assert.equal((await b('tools/call', params, request)).isError, true);
+  assert.equal(calls, 1);
+  assert.ok((await b('tools/list', {}, request)).tools.length > 0);
+  // Deliberately no test-only clear: an unproven witness cannot free this lane.
 });

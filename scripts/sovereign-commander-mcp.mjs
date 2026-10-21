@@ -308,6 +308,11 @@ function payloadForTool(name, args = {}) {
   return {};
 }
 
+// Admission belongs to the existing server, not to an individual HTTP session.
+// Session-local maps below still own cancellation; matching JSON-RPC IDs in a
+// different authenticated session cannot cancel or replace the original.
+const activeCoreRequests = new Map();
+
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
@@ -398,19 +403,27 @@ export function createSovereignCommanderMcpHandler({
         return asTextResult(result, result?.ok !== true);
       }
       if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
-        || coreRequests.size !== 0)
+        || activeCoreRequests.size !== 0)
         return asTextResult({ ok: false, blocker: 'CORE_DIRECTORY_ORIGINAL_REQUEST_REQUIRED_OR_BUSY' }, true);
       const controller = new AbortController();
+      const admission = Symbol('original-core-request');
+      let retainCustody = true;
       const cancel = () => controller.abort();
       coreRequests.set(message.id, controller);
+      activeCoreRequests.set(admission, controller);
       message.signal?.addEventListener('abort', cancel, { once: true });
       if (message.signal?.aborted) cancel();
       try {
         const result = await executor(envelope, { repoRoot, routeProof, signal: controller.signal });
+        retainCustody = result?.executionCustodyReleased === false
+          || result?.structuredContent?.executionCustodyReleased === false;
         return asTextResult(result, result?.ok !== true);
       } finally {
         message.signal?.removeEventListener('abort', cancel);
         coreRequests.delete(message.id);
+        // A timeout, missing OS witness or thrown executor does not release
+        // the server lane. No payload or subsequent session may clear it.
+        if (!retainCustody) activeCoreRequests.delete(admission);
       }
     }
 

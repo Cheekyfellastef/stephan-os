@@ -69,7 +69,8 @@ export function runCorePublicationDirectoryRepairCandidateV1(options = {}) {
   return runCoreJobCandidate(options, true);
 }
 async function runCoreJobCandidate({ requestId, sourceHead, signal, expectedNativeSourceSha256,
-  platform = process.platform, spawnFn = spawn, environment = process.env } = {}, repairDirectories) {
+  platform = process.platform, spawnFn = spawn, environment = process.env,
+  setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}, repairDirectories) {
   if (!/^[a-z0-9-]{8,80}$/.test(requestId ?? '') || !/^[a-f0-9]{40}$/.test(sourceHead ?? ''))
     return held('CORE_JOB_EXACT_REQUEST_REQUIRED');
   if (platform !== 'win32') return held('CORE_JOB_NATIVE_WINDOWS_REQUIRED');
@@ -110,17 +111,22 @@ async function runCoreJobCandidate({ requestId, sourceHead, signal, expectedNati
         Buffer.from(script, 'utf16le').toString('base64')], { shell: false, windowsHide: true,
         stdio: ['pipe','pipe','pipe'], env: createBattleBridgeMinimalChildEnvironment(environment, { platform: 'win32' }) });
     } catch { resolve(held('CORE_JOB_PARENT_LAUNCH_FAILED')); return; }
-    let stdout = '', overflow = false, settled = false, cancelled = false;
+    let stdout = '', overflow = false, settled = false, cancelled = false, timedOut = false;
     const finish = value => {
       if (settled) return;
-      settled = true; clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+      settled = true; clearTimeoutFn(timer); signal?.removeEventListener('abort', cancel);
       resolve(repairDirectories && value.ok !== true ? Object.freeze({ ...value,
         requestId, sourceHead, workspaceMutationState: 'UNPROVEN_RETAIN_ORIGINAL_REQUEST' }) : value);
     };
     // Deadline includes compilation, worker budget, cooperative stop and OS
     // drain. Forced parent death kills its non-inherited Job, but without its
     // terminal zero-active receipt this request remains HELD, never retried.
-    const timer = setTimeout(() => { child.kill(); finish(held('CORE_JOB_TERMINAL_CUSTODY_UNPROVEN')); }, 12000);
+    const timer = setTimeoutFn(() => {
+      timedOut = true;
+      // kill() is only a request. Keep the original promise/admission pending
+      // until close, even when kill returns false, throws or closes synchronously.
+      try { child.kill(); } catch {}
+    }, 12000);
     const cancel = () => { cancelled = true; try { child.stdin.write('CANCEL\n'); } catch {} };
     signal?.addEventListener('abort', cancel, { once: true });
     child.stdin.on('error', () => {});
@@ -129,14 +135,28 @@ async function runCoreJobCandidate({ requestId, sourceHead, signal, expectedNati
       else stdout += chunk;
     });
     child.stderr.on('data', () => {}); // Drain; never publish raw stderr/source.
-    child.on('error', () => finish(held('CORE_JOB_PARENT_EXECUTION_FAILED')));
+    // An execution error after spawn may precede close. Neither is a new lane.
+    child.on('error', () => { cancelled = true; });
     child.on('close', code => {
-      if (code !== 0 || overflow || cancelled) { finish(held('CORE_JOB_EXECUTION_OR_CANCEL_HELD')); return; }
       const lines = stdout.split(/\r?\n/).filter(l => l.startsWith('CORE_JOB_RESULT='));
-      if (lines.length !== 1) { finish(held('CORE_JOB_TERMINAL_RECEIPT_MISSING')); return; }
-      try { finish((repairDirectories ? projectCoreDirectoryRepairCandidateV1 : projectCoreJobCustodyCandidateV1)(JSON.parse(lines[0].slice(16)),
-        { requestId, sourceHead, nativeSourceSha256 })); }
-      catch { finish(held('CORE_JOB_TERMINAL_RECEIPT_INVALID')); }
+      let raw;
+      try { if (lines.length === 1 && !overflow) raw = JSON.parse(lines[0].slice(16)); } catch {}
+      const bound = raw?.SchemaVersion === 'stephanos.core-job-custody-candidate.v1'
+        && raw.RequestId === requestId && raw.SourceHead === sourceHead
+        && ['SourceMutationAllowed','OriginalR7Authority','SpecialistQualified'].every(k => raw[k] === false);
+      const custodyReleased = bound && ((raw.AssignedBeforeExecution === true && raw.ZeroActiveProcessesObserved === true
+        && raw.CustodyReleased === true && raw.ActiveProcesses === 0
+        && Number.isSafeInteger(raw.ChildPid) && raw.ChildPid > 0)
+        || (raw.ChildPid === 0 && raw.AssignedBeforeExecution === false && raw.RepairExecuted === false
+          && raw.WorkspaceMutationAttempted === false && raw.Verdict === 'HELD'
+          && ['GAMING_GUARD_BLOCKED','CANCELLED_BEFORE_LAUNCH'].includes(raw.Reason)));
+      const complete = value => finish(Object.freeze({ ...value, executionCustodyReleased: custodyReleased }));
+      if (timedOut) { complete(held('CORE_JOB_TERMINAL_CUSTODY_UNPROVEN')); return; }
+      if (code !== 0 || overflow || cancelled) { complete(held('CORE_JOB_EXECUTION_OR_CANCEL_HELD')); return; }
+      if (lines.length !== 1) { complete(held('CORE_JOB_TERMINAL_RECEIPT_MISSING')); return; }
+      if (!raw) { complete(held('CORE_JOB_TERMINAL_RECEIPT_INVALID')); return; }
+      complete((repairDirectories ? projectCoreDirectoryRepairCandidateV1 : projectCoreJobCustodyCandidateV1)(raw,
+        { requestId, sourceHead, nativeSourceSha256 }));
     });
     // Do not end stdin: EOF is a custody cancellation signal, including when
     // this Commander parent dies. No candidate script is read from disk.

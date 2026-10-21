@@ -180,3 +180,26 @@ uncertainty even with exit zero and positively drained OS custody. A native
 regression pauses the first post-resume poll until the real worker finishes;
 the old implementation demonstrably reported success in the counterfactual
 fixture, while the fixed implementation holds for gaming, unknown and cancel.
+
+## Admission lifetime and terminal ownership
+
+Structural follow-up: session identity is a cancellation boundary, not the
+repair-admission owner. All MCP handlers in the existing Commander server now
+share admission; each session retains only its own cancellation map. Equal
+JSON-RPC IDs across sessions cannot cancel or replace an admitted request.
+
+The native wrapper's deadline requests parent termination but does not resolve
+the original operation until process close. Kill refusal, a thrown kill or a
+synchronous close all preserve that ordering. A late green receipt never turns
+the timed-out operation into success. The server releases its lane only when
+the result does not carry unproven execution custody; a native result lacking
+a bound positive zero-active witness (or explicit pre-launch denial) retains
+the lane. An executor exception also retains it. No client clear/retry verb is
+provided. This is server-process custody, not a durable cross-restart or
+cross-process OS exclusion certificate. Those commissioning gates remain open;
+the source candidate must not be activated on the strength of this registry.
+
+The native C# file has an explicit LF Git attribute because admission compares
+raw installed bytes to the authenticated Git blob. A real autocrlf Git fixture
+checks that ordinary Windows checkout preserves those bytes; normalization is
+not used to excuse executable source drift at runtime.
