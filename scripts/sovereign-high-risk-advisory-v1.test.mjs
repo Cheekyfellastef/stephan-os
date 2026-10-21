@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   captureHighRiskAdvisorySnapshotV1 as capture,
+  localHighRiskModelV1,
   runSovereignHighRiskAdvisoryV1 as run,
 } from './sovereign-high-risk-advisory-v1.mjs';
 
@@ -109,4 +110,61 @@ test('blocked local model produces HELD advisory with zero approval authority',a
   assert.equal(result.reason,'LOCAL_MODEL_UNAVAILABLE');
   assert.equal(result.publicationOk,true);
   assert.equal(result.mergeAuthority,false);
+});
+
+test('source or principal drift during inference holds candidate even if every chunk is clean',async()=>{
+  for (const drift of [
+    {sourceHead:'c'.repeat(40)},
+    {diff:DIFF+'+changed after review\n'},
+    {changedFiles:['scripts/another-worker.mjs']},
+    {reviewerSessionId:'another-reviewer'},
+  ]) {
+    let reads=0, published;
+    const result=await run({
+      env:ENV,root:'/test/repo',
+      snapshot:()=>reads++===0?fixedSnapshot():{...fixedSnapshot(),...drift},
+      invokeModel:clean,
+      publish:async (...args)=>{published=args;return {ok:true}},
+    });
+    assert.equal(reads,2);
+    assert.equal(result.status,'SOVEREIGN_HIGH_RISK_REVIEW_HELD');
+    assert.equal(result.reason,'REVIEW_SOURCE_CHANGED_DURING_INFERENCE');
+    assert.equal(result.specialistAuthority,false);
+    assert.equal(published[2].status,'HELD');
+    assert.equal(published[2].highRiskAdvisory.findingCount,0);
+  }
+});
+test('source readback failure after inference holds rather than publishing stale candidate',async()=>{
+  let reads=0;
+  const result=await run({
+    env:ENV,root:'/test/repo',
+    snapshot:()=>{if(reads++===0)return fixedSnapshot();throw Error('git unavailable')},
+    invokeModel:clean,publish:async()=>({ok:true}),
+  });
+  assert.equal(reads,2);
+  assert.equal(result.status,'SOVEREIGN_HIGH_RISK_REVIEW_HELD');
+  assert.equal(result.reason,'REVIEW_SOURCE_CHANGED_DURING_INFERENCE');
+  assert.equal(result.mergeAuthority,false);
+});
+test('local model reply must be complete and from the explicitly requested model',async()=>{
+  const prompts=[];
+  const safeReply={model:'qwen:14b',done:true,done_reason:'stop',response:'{"verdict":"clean"}'};
+  const fetchImpl=async (url,opts)=>{
+    prompts.push({url,opts});
+    return {ok:true,text:async()=>JSON.stringify(safeReply)};
+  };
+  const out=await localHighRiskModelV1('read-only prompt',{}, {},{fetchImpl});
+  assert.equal(out,safeReply.response);
+  assert.equal(prompts[0].url,'http://127.0.0.1:11434/api/generate');
+  assert.equal(prompts[0].opts.redirect,'error');
+  assert.equal(JSON.parse(prompts[0].opts.body).model,'qwen:14b');
+  for (const change of [{model:'wrong-model'}, {done:false}, {done_reason:'length'},
+    {response:null}, {done_reason:undefined}]) {
+    await assert.rejects(
+      localHighRiskModelV1('safe prompt',{}, {},{fetchImpl:async()=>({
+        ok:true,text:async()=>JSON.stringify({...safeReply,...change}),
+      })}),
+      /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/
+    );
+  }
 });
