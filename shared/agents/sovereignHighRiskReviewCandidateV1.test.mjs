@@ -65,6 +65,15 @@ test('one observed model digest binds every chunk and final packet; drift/forged
   assert.equal(first.candidateEvidence.modelDigestSha256,modelPin);
   assert.ok(first.candidateEvidence.reviewedChunks.every(c=>c.modelDigestSha256===modelPin));
   assert.notEqual(first.candidateEvidence.reviewPacketSha256,second.candidateEvidence.reviewPacketSha256);
+  const finding=summary=>async(prompt,chunk)=>({modelDigestSha256:modelPin,
+    chunkId:chunk.chunkId,contentSha256:chunk.contentSha256,response:JSON.stringify({
+      chunkId:chunk.chunkId,contentSha256:chunk.contentSha256,verdict:'findings',
+      findings:[{severity:'P2',code:'source-finding',path:chunk.path,summary}],
+    })});
+  const resultA=await evaluateRaw(input(),{modelDigestSha256:modelPin,invokeModel:finding('First independently retained source finding.')});
+  const resultB=await evaluateRaw(input(),{modelDigestSha256:modelPin,invokeModel:finding('Second independently retained source finding.')});
+  assert.notEqual(resultA.candidateEvidence.reviewPacketSha256,resultB.candidateEvidence.reviewPacketSha256,
+    'equal finding counts cannot substitute result content under the same packet hash');
   assertNoAuthority(first.candidateEvidence);
   let n=0;
   const changed=await evaluateRaw(sample,{modelDigestSha256:modelPin,invokeModel:async(p,c)=>

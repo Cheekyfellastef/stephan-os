@@ -244,7 +244,7 @@ export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeM
     reviewedObjectClosureSha256: packet.reviewedObjectClosureSha256,
     sourcePacketSha256: packet.reviewPacketSha256,
     modelDigestSha256,
-    reviewPacketSha256: hash(JSON.stringify([packet.reviewPacketSha256, modelDigestSha256, reviewedChunks])),
+    reviewPacketSha256: hash(JSON.stringify([packet.reviewPacketSha256, modelDigestSha256, reviewedChunks, allFindings])),
     changedFiles: packet.changedFiles, chunkCount: packet.chunkCount,
     reviewedChunks: Object.freeze(reviewedChunks),
     findings: Object.freeze(allFindings),
