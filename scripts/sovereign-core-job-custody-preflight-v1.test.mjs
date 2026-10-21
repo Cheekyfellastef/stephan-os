@@ -72,6 +72,7 @@ test('repair requires authenticated native digest and refuses captured installed
     const result = await runCorePublicationDirectoryRepairCandidateV1({ ...binding, platform: 'win32',
       expectedNativeSourceSha256: expected, spawnFn() { assert.fail('must not compile or launch'); } });
     assert.equal(result.ok, false);
+    assert.equal(result.executionCustodyReleased, true, 'digest denial is proved before parent launch');
     assert.match(result.reason, /DIGEST_REQUIRED|SOURCE_DRIFT/);
   }
 });

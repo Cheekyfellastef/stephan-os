@@ -14,7 +14,7 @@ test('private Core maintenance keeps exact-head binding and rejects scope/author
   const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo',
     executor: async (envelope, options) => {
       seen.push({ envelope, options });
-      return { ok: true, finalVerdict: 'SOURCE_TEST_ONLY' };
+      return { ok: true, executionCustodyReleased: true, finalVerdict: 'SOURCE_TEST_ONLY' };
     } });
   const request = { id: 5, isRequest: true, isNotification: false, transportAuthenticated: true };
   await handler('initialize', { protocolVersion: '2025-11-25' }, request);
@@ -38,7 +38,7 @@ test('Core cancellation stays on the original session/request and never dispatch
     executor: async (_envelope, options) => {
       dispatched++; signal = options.signal; started();
       await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
-      return { ok: false, blocker: 'ORIGINAL_REQUEST_CANCELLED' };
+      return { ok: false, executionCustodyReleased: true, blocker: 'ORIGINAL_REQUEST_CANCELLED' };
     } });
   const request = { id: 10, isRequest: true, isNotification: false, transportAuthenticated: true };
   await handler('initialize', { protocolVersion: '2025-11-25' }, request);
@@ -86,6 +86,52 @@ test('Core admission is shared across sessions while cancellation stays with the
   release(); await pending;
   const next = b('tools/call', params, request);
   assert.equal(calls, 2); release(); await next;
+});
+
+test('missing/null/contradictory custody evidence cannot free admission in another session',async()=>{
+  const cases=[{ok:false,workspaceMutationState:'UNPROVEN_RETAIN_ORIGINAL_REQUEST'},
+    {ok:false,structuredContent:{workspaceMutationState:'UNPROVEN_RETAIN_ORIGINAL_REQUEST'}},
+    {ok:false,executionCustodyReleased:null},
+    {ok:false,executionCustodyReleased:'true',structuredContent:{executionCustodyReleased:true}},
+    {ok:false,executionCustodyReleased:null,structuredContent:{executionCustodyReleased:true}},
+    Object.create({executionCustodyReleased:true}),
+    {ok:true,executionCustodyReleased:true,structuredContent:{executionCustodyReleased:false}},
+    {ok:true,executionCustodyReleased:false,structuredContent:{executionCustodyReleased:true}}];
+  for(let i=0;i<cases.length;i++){
+    // Independent module instances model independent server processes, never
+    // a production/test-only clear operation on an uncertain original lane.
+    const {createSovereignCommanderMcpHandler:factory}=await import(
+      '../../scripts/sovereign-commander-mcp.mjs?custody-missing-'+i);
+    let calls=0;
+    const make=async()=>{
+      const handler=factory({repoRoot:'C:\\repo',executor:async()=>{calls++;return cases[i]}});
+      const request={id:1,isRequest:true,isNotification:false,transportAuthenticated:true};
+      await handler('initialize',{},request);
+      await handler('notifications/initialized',{}, {isRequest:false,isNotification:true});
+      await handler('tools/list',{},request);return {handler,request};
+    };
+    const a=await make(),b=await make();const params={name:'maintenance_action',arguments:{
+      actionId:'repair-core-publication-directories',expectedMain:'a'.repeat(40)}};
+    await a.handler('tools/call',params,a.request);
+    assert.equal((await b.handler('tools/call',params,b.request)).isError,true);
+    assert.equal(calls,1,'no second executor without positive, uncontradicted custody evidence');
+  }
+});
+
+test('real unenrolled command rejection proves no execution and does not poison the Core lane',async()=>{
+  const {createSovereignCommanderMcpHandler:factory}=await import(
+    '../../scripts/sovereign-commander-mcp.mjs?custody-prelaunch-denial');
+  const handler=factory({repoRoot:'C:\\repo'});
+  const request={id:1,isRequest:true,isNotification:false,transportAuthenticated:true};
+  await handler('initialize',{},request);
+  await handler('notifications/initialized',{}, {isRequest:false,isNotification:true});
+  await handler('tools/list',{},request);
+  for(let id=2;id<4;id++){
+    const r=await handler('tools/call',{name:'maintenance_action',arguments:{
+      actionId:'repair-core-publication-directories',expectedMain:'invalid'}},{...request,id});
+    assert.equal(r.structuredContent.executionCustodyReleased,true);
+    assert.equal(r.structuredContent.blocker,'sovereign-commander-process-not-registered');
+  }
 });
 
 test('Sovereign Commander MCP requires initialize, initialized, and tools/list before calls', async () => {
