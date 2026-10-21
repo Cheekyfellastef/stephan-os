@@ -25,7 +25,7 @@ function conveyorResult(overrides = {}) {
     elasticIgnition: {
       availableSlots: 1,
       dispatchCount: 1,
-      dispatched: [{ missionId: 'mission-b' }],
+      dispatched: [{ missionId: 'mission-b', pickupProven: true, pickupProofRef: 'workspace:receipts/mission-b.json' }],
       held: [],
     },
     workerRuntimeHold: false,
@@ -69,6 +69,8 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   }]);
   assert.equal(result.ok, true);
   assert.equal(result.dispatchCount, 1);
+  assert.equal(result.pickupPendingCount, 0);
+  assert.equal(result.provenPickupCount, 1);
   assert.equal(result.runningMissionCount, 1);
   assert.equal(result.programmeStatus, 'READY');
   assert.equal(result.commanderParityHealthy, true);
@@ -84,6 +86,28 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.duplicateLeaseAllowed, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED');
+});
+
+test('published grants without receipt-bound pickup remain non-green and request repair', async () => {
+  for (const unproven of [
+    { missionId: 'mission-b', pickupProven: false },
+    { missionId: 'mission-b', pickupProven: true },
+  ]) {
+    const result = await runSupervisor({
+      conveyor: async () => conveyorResult({
+        elasticIgnition: {
+          availableSlots: 1, dispatchCount: 1, dispatched: [unproven], held: [],
+        },
+      }),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.dispatchCount, 1);
+    assert.equal(result.provenPickupCount, 0);
+    assert.equal(result.pickupPendingCount, 1);
+    assert.equal(result.daemonMayReportGreen, false);
+    assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PICKUP_PENDING');
+    assert.equal(result.mergeAuthority, false);
+  }
 });
 
 test('unavailable native event feed cannot produce idle green despite unrelated dispatch', async () => {

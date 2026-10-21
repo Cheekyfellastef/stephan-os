@@ -61,8 +61,7 @@ network handlers, read-write access to the source checkout or generic shell.
    reconciler can release the exact historical lease; real SELECT, CLAIM,
    PICKUP, BUILD, TEST, MERGE and unattended refill proof follows.
 
-This package intentionally has NO installer or release command. Testing source
-or opening a PR is NOT a machine custody receipt, deployment or build proof.
+This native witness host has no privileged commissioning, signing or lease-release command. Testing source or opening a PR is NOT a machine custody receipt, deployment or build proof.
 
 ## Binary pin qualification boundary
 
@@ -89,3 +88,15 @@ this preflight may count as trusted identity. Even after success, the native
 host retains `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` until
 full original-writer containment, protected logging and two signer roots
 are qualified. The original R7 lease remains held.
+
+This witness host still has **no privileged commissioning, signing or lease-release command**. A separate reviewed Windows Stage-B staging recipe is proposed at `scripts/windows/stage-original-r7-witness-candidate.ps1`. It is not connected to public GitHub mailbox or autonomous actions.
+
+## Stage B staging candidate (not commissioning)
+
+The staging entry point requires Windows PowerShell **5.1 Desktop**, rather than assuming a newer native-argument binder has identical behavior. Its fixed SCM create invocation omits the password option for the virtual account and preserves literal image-path quotes. A Windows test extracts that exact invocation and sends it through the real 5.1 native binder to a harmless argument receiver; it verifies the complete argument vector without registering or starting any service. This is argument-marshalling proof only: the actual elevated SCM creation, registry readback and partial-failure behavior still require separately approved host proof.
+
+The proposed PowerShell recipe is read-only by default and verifies an exact local filename, strict operator-provided SHA-256, no adjacent managed DLL/config sidecars, stable non-reparse ancestors and absence of an existing witness service or installation directory. Under the separate explicit `-Stage` switch it requires an already elevated interactive administrator and PowerShell ShouldProcess confirmation. It may copy only that local binary to a fixed new Program Files location, register the **fixed witness as disabled (SCM Start=4)** under its own virtual service account, set restricted service SID, restrict binary/directory read/write ACLs and set a preliminary image digest. It **never starts the service**, grants auto-start, impersonates a writer, changes source permissions or invokes the lease reconciler.
+
+The supplied SHA-256 is NOT independent code provenance: an operator could provide a matching hash for an untrusted file. Windows packaging, signing, loaded module/native extraction identity, registry key and ACL immutability, service-account correctness, time-of-check races, original-writer tokens, old handles, WMI/COM/services/tasks, continuous audit and separate Ed25519 trust roots all require independent Windows security review and actual physical proof before installation or final commissioning. The recipe returns only a local, redacted `R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED` candidate receipt; if partially failed it leaves explicit `R7_STAGE_B_PARTIAL_ARTIFACTS_REQUIRE_REVIEW` and does not silently delete a service or directory.
+
+**Do not execute `-Stage` until the new recipe has passed exact-head Windows/security specialist review, protected merge, approved immutable binary provenance and explicit operator-scoped Battle Bridge admin authorization.** An installed disabled service is not custody or proof. The original `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` OnStart gate and `critical-2962-elastic-goal-r7-lease` HOLD remain mandatory.

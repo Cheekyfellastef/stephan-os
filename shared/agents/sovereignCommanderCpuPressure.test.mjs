@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { safeCpuPressureSnapshotProjection, SOVEREIGN_COMMANDER_REMOTE_ACTIONS, executeSovereignCommanderRemoteOnBattleBridge } from './sovereignCommanderRemoteMailboxV1.mjs';
+import { serializeBoundedReceiptJson } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 
 const registry = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
@@ -80,7 +81,7 @@ const CPU_COMMAND = Object.freeze({
   requestId: 'test-fixed-cpu-snapshot',
   operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 2808,
+  issueNumber: 3149,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: CPU_HEAD,
@@ -150,4 +151,67 @@ test('immutable CPU route fails closed on missing/large commit blob, unexpected 
     assert.equal(runner.calls.length, callCount);
     assert.equal(JSON.stringify(receipt).includes('malformed'), false);
   }
+});
+
+function publicCpuReceipt(cpu) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'cpu-public-proof-test-0001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149, branch: 'main',
+    state: 'DONE',
+    expectedHead: CPU_HEAD, processSourceHead: CPU_HEAD,
+    proofRefs: [],
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'cpu-public-proof-test-0001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE',
+        remoteAction: 'cpu-pressure-snapshot',
+        sourceHead: CPU_HEAD,
+        proofHash: 'b'.repeat(64),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+        cpuPressure: cpu,
+        rawOutput: 'C:\\private\\must-not-appear',
+      },
+    },
+  };
+}
+
+test('public CPU receipt retains 12 validated rows, exact process identity and explicit truncation even under 9 KiB core fallback', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => ({
+    ...sample().rows[0],
+    pid: 5900 + i,
+    parentPid: 7000,
+    cpuPercent: Number((20 - i / 2).toFixed(2)),
+  }));
+  const serialized = serializeBoundedReceiptJson(publicCpuReceipt(sample({ rows })));
+  const publicReceipt = JSON.parse(serialized);
+  const cpu = publicReceipt.result.result.cpuPressure;
+  assert.equal(publicReceipt.state, 'DONE');
+  assert.equal(publicReceipt.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE');
+  assert.equal(cpu?.schemaVersion, 'stephanos.battle-bridge-cpu-pressure.v1');
+  assert.equal(cpu?.rows.length, 12);
+  assert.equal(cpu?.observedRowCount, 20);
+  assert.equal(cpu?.rowsTruncated, true);
+  assert.equal(cpu?.rows[0].pid, 5900);
+  assert.equal(cpu?.rows[0].cpuPercent, 20);
+  assert.equal(cpu?.processTerminationAllowed, false);
+  assert.equal(cpu?.rawCommandLinesReturned, false);
+  assert.equal(serialized.includes('must-not-appear'), false);
+  assert.ok(Buffer.byteLength(serialized, 'utf8') <= 9 * 1024);
+});
+
+test('public CPU receipt fails closed on untrusted script/path and unknown capture', () => {
+  const bad = sample({ rows: [{ ...sample().rows[0], script: 'C:\\private\\secret.ps1' }] });
+  const rejected = JSON.parse(serializeBoundedReceiptJson(publicCpuReceipt(bad)));
+  assert.equal(rejected.result.result.cpuPressure, null);
+  const missing = JSON.parse(serializeBoundedReceiptJson(publicCpuReceipt(null)));
+  assert.equal(missing.result.result.cpuPressure, null);
+  const permissionEscalated = JSON.parse(serializeBoundedReceiptJson(publicCpuReceipt(sample({ processTerminationAllowed: true }))));
+  assert.equal(permissionEscalated.result.result.cpuPressure, null);
 });
