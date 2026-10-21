@@ -9,6 +9,56 @@ import {
   runSovereignCommanderStdioMcpServer,
 } from '../../scripts/sovereign-commander-mcp.mjs';
 
+test('private Core maintenance keeps exact-head binding and rejects scope/authority extras', async () => {
+  const seen = [];
+  const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo',
+    executor: async (envelope, options) => {
+      seen.push({ envelope, options });
+      return { ok: true, finalVerdict: 'SOURCE_TEST_ONLY' };
+    } });
+  const request = { id: 5, isRequest: true, isNotification: false, transportAuthenticated: true };
+  await handler('initialize', { protocolVersion: '2025-11-25' }, request);
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  const listed = await handler('tools/list', {}, request);
+  assert.ok(listed.tools.find(t => t.name === 'maintenance_action').inputSchema.properties.actionId.enum
+    .includes('repair-core-publication-directories'));
+  const args = { actionId: 'repair-core-publication-directories', expectedMain: 'a'.repeat(40) };
+  assert.equal((await handler('tools/call', { name: 'maintenance_action', arguments: args }, request)).isError, false);
+  assert.deepEqual(seen[0].envelope.payload, args);
+  assert.equal(seen[0].options.routeProof.authenticatedMcp, true);
+  await assert.rejects(handler('tools/call', { name: 'maintenance_action',
+    arguments: { ...args, specialistQualified: true } }, request), /CORE_DIRECTORY_FIXED_SCOPE_REQUIRED/);
+  assert.equal(seen.length, 1);
+});
+
+test('Core cancellation stays on the original session/request and never dispatches a retry', async () => {
+  let signal, dispatched = 0, started;
+  const ready = new Promise(resolve => { started = resolve; });
+  const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo',
+    executor: async (_envelope, options) => {
+      dispatched++; signal = options.signal; started();
+      await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      return { ok: false, blocker: 'ORIGINAL_REQUEST_CANCELLED' };
+    } });
+  const request = { id: 10, isRequest: true, isNotification: false, transportAuthenticated: true };
+  await handler('initialize', { protocolVersion: '2025-11-25' }, request);
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  await handler('tools/list', {}, request);
+  const params = { name: 'maintenance_action', arguments: {
+    actionId: 'repair-core-publication-directories', expectedMain: 'a'.repeat(40) } };
+  const pending = handler('tools/call', params, request);
+  await ready;
+  const busy = await handler('tools/call', params, { ...request, id: 11 });
+  assert.equal(busy.isError, true); assert.equal(dispatched, 1);
+  const note = { isRequest: false, isNotification: true, transportAuthenticated: true };
+  await handler('notifications/cancelled', { requestId: 11 }, note);
+  await handler('notifications/cancelled', { requestId: 10 }, { ...note, transportAuthenticated: false });
+  assert.equal(signal.aborted, false);
+  await handler('notifications/cancelled', { requestId: 10 }, note);
+  assert.equal((await pending).isError, true); assert.equal(signal.aborted, true);
+  assert.equal(dispatched, 1);
+});
+
 test('Sovereign Commander MCP requires initialize, initialized, and tools/list before calls', async () => {
   const observed = [];
   const handler = createSovereignCommanderMcpHandler({

@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { runCoreJobCustodyPreflightV1, projectCoreJobCustodyCandidateV1,
   runCorePublicationDirectoryRepairCandidateV1, projectCoreDirectoryRepairCandidateV1 } from './sovereign-core-job-custody-preflight-v1.mjs';
 
 const binding = { requestId: 'custody-request-1234', sourceHead: 'a'.repeat(40), nativeSourceSha256: 'f'.repeat(64) };
+const expectedNativeSourceSha256 = createHash('sha256').update(readFileSync(new URL('./windows/SovereignCoreJobCustodyV1.cs', import.meta.url))).digest('hex');
 const raw = { SchemaVersion: 'stephanos.core-job-custody-candidate.v1', RequestId: binding.requestId,
   SourceHead: binding.sourceHead, AssignedBeforeExecution: true, ZeroActiveProcessesObserved: true,
   CustodyReleased: true, ActiveProcesses: 0, ChildPid: 1234, CancellationRequested: true,
@@ -36,6 +39,7 @@ test('fixed repair wrapper accepts no path/command override and retains partial-
   const controller = new AbortController();
   let child;
   const outcome = await runCorePublicationDirectoryRepairCandidateV1({ ...binding, platform: 'win32',
+    expectedNativeSourceSha256,
     root: 'C:\\attacker', command: 'Restart-Service', signal: controller.signal,
     spawnFn(_exe, args, options) {
       const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
@@ -58,6 +62,15 @@ test('fixed repair wrapper accepts no path/command override and retains partial-
   assert.equal(outcome.workspaceMutationState, 'UNPROVEN_RETAIN_ORIGINAL_REQUEST');
   assert.equal(outcome.requestId, binding.requestId);
   assert.equal(outcome.sourceMutationAllowed, false);
+});
+
+test('repair requires authenticated native digest and refuses captured installed-source drift before launch', async () => {
+  for (const expected of [undefined, '', 'f'.repeat(64)]) {
+    const result = await runCorePublicationDirectoryRepairCandidateV1({ ...binding, platform: 'win32',
+      expectedNativeSourceSha256: expected, spawnFn() { assert.fail('must not compile or launch'); } });
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /DIGEST_REQUIRED|SOURCE_DRIFT/);
+  }
 });
 
 test('bound native proof remains candidate-only and cannot enroll a repair executor', () => {

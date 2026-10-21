@@ -117,3 +117,40 @@ repair still refuses mutation; no mailbox action or automatic retry is added.
 The earlier statement that no mutating worker exists is superseded by this
 section; no worker is yet admitted or installed. Hosted CI is source evidence,
 not commissioning or specialist acceptance.
+
+## Private action admission continuation
+
+The existing private Commander MCP now registers the single fixed
+`repair-core-publication-directories` maintenance action. Its only payload is
+`expectedMain`; path, shell, qualification and scope extras are rejected. It is
+not a public mailbox action, generic start-process route or guardian repair.
+The installed executor requires authenticated, initialized MCP transport proof,
+a clean current main checkout and an exact expected head. Dirty files are held
+and preserved. Canonical Git configuration disables helper execution and object
+substitution. Raw commit/tree/blob bytes are authenticated against their object
+hashes; only the fixed regular C# blob is admitted. Its SHA-256 must match the
+single captured installed native buffer before compilation. Raw canonical bytes
+must be installed, including line endings; drift fails closed.
+
+The native request identity derives from the existing command/mission identity.
+Authenticated MCP cancellation addresses only the same session's pending request;
+concurrent Core repair in that session is held. HTTP disconnect forwards abort
+to the original request. Native cancellation, parent pipe EOF and OS Job drain
+retain their existing bounded behaviour. No replacement mission, automatic retry,
+new scheduler, source writer or R7 lease is introduced.
+
+Tests cover protocol binding and cancellation, actual HTTP disconnection, dirty
+and stale main, corrupted raw objects, symlink mode, forged scope/qualification
+and a real Git checkout with hostile fsmonitor and hidden skip-worktree bytes.
+The latter still binds the original committed source digest and never runs the
+repository helper. A separate regression refuses installed-byte drift before
+compilation. The earlier unregistered-source statement is superseded: private
+source admission exists, but the action is not installed or independently
+qualified on Battle Bridge. The generic continuous mutation refusal stays intact.
+
+Protected installed-parent custody is an explicit external trust precondition,
+not something candidate JSON, a caller flag or the writable checkout can certify.
+Independent exact-head specialist review, operator merge, protected installation
+and physical acceptance remain required before commissioning. This action proves
+only directory restoration, not a healthy Core or recovered R7 builder. Other
+Core faults still require their own resource-disjoint operation design.

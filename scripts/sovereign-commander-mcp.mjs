@@ -213,6 +213,7 @@ const TOOLS = Object.freeze([
             'repair-openclaw-local',
             'repair-goal-builder-flow',
             'repair-stephanos',
+            'repair-core-publication-directories',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
             'prove-stephanos-ai-commander',
@@ -282,6 +283,11 @@ function payloadForTool(name, args = {}) {
     return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
   }
   if (name === 'maintenance_action') {
+    if (args.actionId === 'repair-core-publication-directories') {
+      if (Object.keys(args).some(key => !['actionId','expectedMain'].includes(key)))
+        throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');
+      return { actionId: args.actionId, expectedMain: args.expectedMain };
+    }
     if (args.actionId === 'publish-controller-activity') {
       return {
         actionId: args.actionId,
@@ -309,6 +315,9 @@ export function createSovereignCommanderMcpHandler({
 } = {}) {
   let session = null;
   let toolsListed = false;
+  // Ephemeral cancellation for this session's existing requests; no durable
+  // queue, lease, retry or second executor is introduced.
+  const coreRequests = new Map();
 
   return async function handle(method, params = {}, message = {}) {
     const request = message.isRequest === true && message.isNotification !== true;
@@ -343,6 +352,11 @@ export function createSovereignCommanderMcpHandler({
       return undefined;
     }
 
+    if (method === 'notifications/cancelled') {
+      if (notification && session?.ready && message.transportAuthenticated === true)
+        coreRequests.get(params.requestId)?.abort();
+      return undefined;
+    }
     if (method.startsWith('notifications/')) return undefined;
     if (!session?.ready) throw new Error('MCP_SESSION_NOT_READY');
 
@@ -378,8 +392,26 @@ export function createSovereignCommanderMcpHandler({
         transport: text(message.transportKind) || 'mcp-session',
         authenticatedMcp: message.transportAuthenticated === true,
       });
-      const result = await executor(envelope, { repoRoot, routeProof });
-      return asTextResult(result, result?.ok !== true);
+      const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
+      if (!isCoreRepair) {
+        const result = await executor(envelope, { repoRoot, routeProof });
+        return asTextResult(result, result?.ok !== true);
+      }
+      if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
+        || coreRequests.size !== 0)
+        return asTextResult({ ok: false, blocker: 'CORE_DIRECTORY_ORIGINAL_REQUEST_REQUIRED_OR_BUSY' }, true);
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      coreRequests.set(message.id, controller);
+      message.signal?.addEventListener('abort', cancel, { once: true });
+      if (message.signal?.aborted) cancel();
+      try {
+        const result = await executor(envelope, { repoRoot, routeProof, signal: controller.signal });
+        return asTextResult(result, result?.ok !== true);
+      } finally {
+        message.signal?.removeEventListener('abort', cancel);
+        coreRequests.delete(message.id);
+      }
     }
 
     throw new Error(`Unsupported MCP method: ${method}`);
