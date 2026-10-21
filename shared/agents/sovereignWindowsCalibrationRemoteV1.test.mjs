@@ -22,7 +22,7 @@ function candidate(patch={}) { return {
 }; }
 function envelope(value=project(candidate()), patch={}) { return {
   ok:true,finalVerdict:'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',proofHash:'e'.repeat(64),
-  command:{plan:{processId:action}},
+  command:{plan:{processId:action,reviewIdentity:{baseSha:base}}},
   structuredContent:{status:0,stdout:marker+JSON.stringify(value)+'\n'},...patch,
 }; }
 test('candidate success is bounded, exact-head and never specialist authority',()=>{
@@ -44,6 +44,21 @@ test('forged success, authority flags and incomplete exams fail closed',()=>{
   assert.equal(parse(envelope(undefined,{ok:false}),head),null);
   assert.equal(parse(envelope(undefined,{command:{plan:{processId:'other'}}}),head),null);
   assert.equal(parse(envelope(undefined,{structuredContent:{status:2,stdout:envelope().structuredContent.stdout}}),head),null);
+});
+test('native PASS must bind the authenticated request base as well as its head',()=>{
+  const good=envelope();
+  assert.equal(parse(good,head)?.baseSha,base);
+  for(const requested of [head,'c'.repeat(40),'',null,undefined,[base],{}]) {
+    const changed=envelope(undefined,{command:{plan:{
+      processId:action,reviewIdentity:{baseSha:requested},
+    }}});
+    assert.equal(parse(changed,head),null,'unbound or different request base');
+  }
+  assert.equal(parse(envelope(undefined,{
+    command:{plan:{processId:action}},
+  }),head),null,'missing review identity cannot supply expected base');
+  assert.equal(parse(envelope(project(candidate({baseSha:'c'.repeat(40)}))),head),null,
+    'valid but substituted result base is not the requested source pair');
 });
 test('held native prerequisites retain their typed result without borrowing completion proof',()=>{
   const value=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
