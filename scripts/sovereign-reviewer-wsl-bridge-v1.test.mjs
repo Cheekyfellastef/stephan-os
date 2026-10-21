@@ -408,7 +408,8 @@ test('trusted WSL git verifies every reviewer executable and imported policy fil
         assert.equal(timeout, 12_000);
         assert.deepEqual(argv.slice(0, 7),
           ['/usr/bin/env','-i','PATH=/usr/bin:/bin','HOME=/tmp',
-            'GIT_CONFIG_NOSYSTEM=1','GIT_CONFIG_GLOBAL=/dev/null','/usr/bin/git']);
+            'GIT_CONFIG_NOSYSTEM=1','GIT_CONFIG_GLOBAL=/dev/null',
+            'GIT_NO_REPLACE_OBJECTS=1','GIT_GRAFT_FILE=/dev/null','/usr/bin/git']);
         assert.equal(argv[7], '-C');
         assert.equal(argv[8], root);
         const git = argv.slice(9);
