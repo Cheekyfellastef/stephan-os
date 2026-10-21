@@ -122,6 +122,18 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'create_directory',
+    title: 'Create directory',
+    description: 'Create one new local folder at an explicit absolute path. No recursive creation, links, overwrite or shell. Private authenticated MCP only.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['path'],
+      properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
     name: 'search_project',
     title: 'Search Stephanos project',
     description: 'Search the canonical Stephanos repository with a bounded literal query. No arbitrary path or shell is accepted.',
@@ -259,6 +271,7 @@ function operationForTool(name) {
     write_file: SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE,
     edit_file: SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE,
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
+    create_directory: SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY,
     search_project: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
     starfield_vr_telemetry_archive: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
@@ -268,7 +281,7 @@ function operationForTool(name) {
 
 function targetPathsForTool(name, args = {}) {
   if (name === 'read_multiple_files') return Array.isArray(args.paths) ? args.paths : [];
-  if (['read_file', 'get_file_info', 'write_file', 'edit_file', 'list_directory'].includes(name)) return [text(args.path)].filter(Boolean);
+  if (['read_file', 'get_file_info', 'write_file', 'edit_file', 'list_directory', 'create_directory'].includes(name)) return [text(args.path)].filter(Boolean);
   return [];
 }
 

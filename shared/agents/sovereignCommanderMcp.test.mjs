@@ -50,6 +50,32 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   assert.equal(observed[0].arbitraryUnboundedCommandAllowed, false);
 });
 
+
+test('private MCP exposes guarded create_directory and forwards only an explicit path', async () => {
+  const observed = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async (command) => {
+      observed.push(command);
+      return { ok: true, proofHash: 'f'.repeat(64), finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' };
+    },
+  });
+  await handler('initialize', { protocolVersion: '2025-11-25', clientInfo: { name: 'mkdir-test' } }, { id: 1, isRequest: true, isNotification: false });
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  const listed = await handler('tools/list', {}, { id: 2, isRequest: true, isNotification: false });
+  assert.ok(listed.tools.some((tool) => tool.name === 'create_directory'));
+  const call = await handler('tools/call', {
+    name: 'create_directory',
+    arguments: { path: 'C:\\Users\\Operator\\Documents\\safe-folder', recursive: true, shell: 'bad' },
+  }, { id: 3, isRequest: true, isNotification: false });
+  assert.equal(call.isError, false);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].operation, 'CREATE_DIRECTORY');
+  assert.deepEqual(observed[0].targetPaths, ['C:\\Users\\Operator\\Documents\\safe-folder']);
+  assert.equal(JSON.stringify(observed[0]).includes('shell'), false);
+  assert.equal(JSON.stringify(observed[0]).includes('recursive'), false);
+});
+
 test('authenticated MCP tool call forwards authoritative route proof to execution', async () => {
   let routeProof = null;
   const handler = createSovereignCommanderMcpHandler({
