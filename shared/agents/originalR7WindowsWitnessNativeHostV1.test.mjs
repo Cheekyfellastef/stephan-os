@@ -23,7 +23,12 @@ test('SCM proof follows audit-parser edits and tests the delivered complete mana
     'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs']) {
     assert.ok(paths.includes("'" + path + "'"), path + ' must trigger hosted Windows proof');
   }
-  assert.match(scmCi, /--runtime win-x64 --self-contained false -p:PublishSingleFile=true/);
+  assert.match(scmCi, /-p:PublishProfile=WitnessSingleFile[^\n]*--output \$stage/);
+  assert.doesNotMatch(scmCi, /--self-contained false/);
+  assert.match(scmCi, /& \$binary --inspect-bundle-only/);
+  assert.match(scmCi, /R7_PUBLISHED_PACKAGE_BUNDLE_GATE_FAILED/);
+  assert.match(program, /args\.Length == 1 && args\[0\] == "--inspect-bundle-only"/);
+  assert.match(program, /return OriginalR7ScmPreflight\.BundledPayloadObserved\(\) \? 0 : 4/);
   assert.match(scmCi, /Get-ChildItem -LiteralPath \$stage -File -Filter '\*\.dll'/);
   assert.match(scmCi, /R7_UNBUNDLED_EXECUTABLE_PAYLOAD/);
   assert.match(scmCi, /& \$binary --unapproved-ci-invocation/);

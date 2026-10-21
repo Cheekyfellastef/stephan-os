@@ -172,14 +172,17 @@ has no protected Windows signing, installation or lease authority.
 
 ## Executable payload custody boundary
 
-The source-only Windows package now publishes a win-x64, framework-dependent
-single-file bundle. Its EXE digest therefore covers the managed witness and
-access-probe assemblies together. Packaging rejects adjacent DLLs and executes
-the delivered EXE to verify that unapproved CLI invocation still fails closed.
-The production image diagnostic refuses an unbundled witness assembly.
+The retained source-only Windows package uses the self-contained win-x64
+`WitnessSingleFile` profile, matching the SCM bundled-payload gate. Its EXE
+digest covers the bundled managed witness, access-probe and .NET assemblies.
+Packaging rejects adjacent DLLs and executes the exact delivered EXE with
+`--inspect-bundle-only`: exit 0 means this process passes the existing assembly
+layout predicate; exit 4 means it does not. This fixed diagnostic reads only
+its own assembly layout and never invokes SCM, registry, signing or custody.
+The package also verifies that other unapproved CLI invocation fails closed.
 
-This does not establish independently protected digest provenance, shared .NET
-runtime/configuration integrity, whole-source exclusion, or signer custody.
+This does not establish independently protected digest provenance, extracted
+native-library/configuration integrity, whole-source exclusion, or signer custody.
 OnStart still refuses commissioning. Stage B/C needs independently qualified
 Windows review and separate privileged installation/physical evidence before
 any signed witness can be eligible; historical outcome remains UNKNOWN.

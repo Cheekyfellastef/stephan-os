@@ -11,6 +11,14 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Fixed read-only package diagnostic. It inspects this process's
+        // assembly layout only: no SCM, registry, identity, custody or signing.
+        if (args.Length == 1 && args[0] == "--inspect-bundle-only")
+        {
+            if (!OperatingSystem.IsWindows()) return 2;
+            return OriginalR7ScmPreflight.BundledPayloadObserved() ? 0 : 4;
+        }
+
         if (args.Length != 0 || !OperatingSystem.IsWindows()
             || Environment.UserInteractive)
         {
