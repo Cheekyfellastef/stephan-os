@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { canUseVerifiedSpotifyArtwork } from '../apps/music-tile/engine/catalogArtworkContinuity.js';
+import { resolveUnlinkedDeckTracks } from '../apps/music-tile/engine/nativeCatalogAutoApply.js';
 
 import {
   createSpotifyOembedArtworkResolver,
@@ -102,4 +103,62 @@ test('Music source preserves playback-bearing DOM and hides redundant search lin
   assert.doesNotMatch(continuity, /\.innerHTML\s*=/);
   assert.match(route, /router\.get\('\/spotify\/oembed-artwork'/);
   assert.match(route, /\^\[A-Za-z0-9\]\{22\}\$/);
+});
+
+
+test('background catalogue enrichment preserves concurrent ratings and reconciles same-tab canonical state', async () => {
+  const songId = 'catalogue-race-regression';
+  const key = 'stephanos.musicTile.dashboardState.v1';
+  const storage = {
+    value: JSON.stringify({
+      listeningDeck: [{ id: songId, artist: 'Depeche Mode', title: 'Enjoy the Silence', candidateVerificationStatus: 'search-only' }],
+      ratings: { [songId]: 2 },
+      tags: {},
+    }),
+    getItem(name) { return name === key ? this.value : null; },
+    setItem(name, value) { assert.equal(name, key); this.value = value; },
+  };
+  const previous = {
+    document: globalThis.document,
+    dispatchEvent: globalThis.dispatchEvent,
+    CustomEvent: globalThis.CustomEvent,
+  };
+  const events = [];
+  try {
+    globalThis.document = { querySelectorAll: () => [], getElementById: () => null };
+    globalThis.CustomEvent = class { constructor(type, options) { this.type = type; this.detail = options?.detail; } };
+    globalThis.dispatchEvent = (event) => { events.push(event); return true; };
+    const result = await resolveUnlinkedDeckTracks({
+      storage,
+      maxTracks: 1,
+      fetchImpl: async () => {
+        // Reproduce a real user action after the background request started.
+        const fresh = JSON.parse(storage.value);
+        fresh.ratings[songId] = -1;
+        fresh.tags[songId] = ['latest human tag'];
+        storage.value = JSON.stringify(fresh);
+        return { ok: true, json: async () => ({ ok: true, results: [{
+          provider: 'spotify', verificationStatus: 'metadata_verified',
+          spotifyUrl: `https://open.spotify.com/track/${TRACK_ID}`,
+          providerItemId: TRACK_ID, title: 'Enjoy the Silence', artist: 'Depeche Mode',
+          artworkUrl: IMAGE,
+        }] }) };
+      },
+    });
+    await Promise.resolve(); // Flush the status-announcement microtask.
+    const persisted = JSON.parse(storage.value);
+    assert.equal(result.resolvedCount, 1);
+    assert.equal(persisted.ratings[songId], -1);
+    assert.deepEqual(persisted.tags[songId], ['latest human tag']);
+    assert.equal(persisted.listeningDeck[0].spotifyUrl, `https://open.spotify.com/track/${TRACK_ID}`);
+    assert.equal(events.length, 1, 'mounted main.js must learn the verified identity before its next save');
+    assert.equal(events[0].type, 'stephanos:music-catalog-enriched');
+    assert.equal(events[0].detail.trackId, songId);
+    assert.equal(events[0].detail.enrichment.catalogVerificationStatus, 'metadata_verified');
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete globalThis[name];
+      else globalThis[name] = value;
+    }
+  }
 });

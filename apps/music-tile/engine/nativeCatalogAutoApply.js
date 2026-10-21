@@ -147,6 +147,9 @@ export function mergePersistedCatalogState(snapshot, rawDetail = {}) {
   if (!detail) return { ok: false, changed: false, reason: 'catalogue-enrichment-invalid' };
   const track = findStoredTrack(snapshot.listeningDeck, detail);
   if (!track) return { ok: false, changed: false, reason: 'existing-track-not-persisted' };
+  if (['not-found', 'likely-hallucinated'].includes(String(track.candidateVerificationStatus || '').trim().toLowerCase())) {
+    return { ok: false, changed: false, reason: 'candidate-rejected' };
+  }
 
   const currentSpotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
   if (currentSpotify.valid && currentSpotify.type === 'track' && currentSpotify.uri !== detail.spotify.uri) {
@@ -369,7 +372,7 @@ export async function resolveUnlinkedDeckTracks({
   }
 
   let cursor = 0;
-  const resolved = [];
+  const matches = [];
   const worker = async () => {
     while (cursor < pending.length) {
       const track = pending[cursor];
@@ -379,27 +382,48 @@ export async function resolveUnlinkedDeckTracks({
       if (!result) continue;
       const detail = catalogResultDetailForTrack(track, result);
       if (!detail) continue;
-      const merged = mergePersistedCatalogState(snapshot, detail);
-      if (merged.ok && merged.changed) resolved.push({ track: merged.track, spotify: merged.detail.spotify });
+      matches.push(detail);
     }
   };
   const workerCount = Math.min(AUTO_RESOLVE_CONCURRENCY, pending.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  if (resolved.length) {
-    try {
-      storage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-    } catch {
-      return {
-        ok: false,
-        reason: 'music-state-persistence-failed',
-        attemptedCount: pending.length,
-        resolvedCount: 0,
-      };
+  // The network lookup may complete after a rating, tag or rejection. Merge
+  // only verified matches into the *latest* persisted snapshot, never the
+  // pre-request copy, so background enrichment cannot roll back user input.
+  const resolved = [];
+  if (matches.length) {
+    const latest = readStoredState(storage);
+    if (!latest || !Array.isArray(latest.listeningDeck)) {
+      return { ok: false, reason: 'music-state-invalid', attemptedCount: pending.length, resolvedCount: 0 };
     }
-    for (const item of resolved) {
-      updateTrackCard(item.track, item.spotify);
-      if (typeof document !== 'undefined') announceAppliedTrack(item.track);
+    for (const detail of matches) {
+      const merged = mergePersistedCatalogState(latest, detail);
+      if (merged.ok && merged.changed) {
+        resolved.push({ track: merged.track, spotify: merged.detail.spotify, detail });
+      }
+    }
+    if (resolved.length) {
+      try {
+        storage.setItem(STORAGE_KEY, JSON.stringify(latest));
+      } catch {
+        return { ok: false, reason: 'music-state-persistence-failed', attemptedCount: pending.length, resolvedCount: 0 };
+      }
+      for (const item of resolved) {
+        // Same-tab storage changes never notify main.js. Update its canonical
+        // state before a rating/tag handler can persist the old identity.
+        if (typeof document !== 'undefined') {
+          try {
+            globalThis.dispatchEvent?.(new CustomEvent('stephanos:music-catalog-enriched', {
+              detail: item.detail,
+            }));
+          } catch {
+            // Persisted truth remains available for subsequent hydration.
+          }
+        }
+        updateTrackCard(item.track, item.spotify);
+        if (typeof document !== 'undefined') announceAppliedTrack(item.track);
+      }
     }
   }
   return {
