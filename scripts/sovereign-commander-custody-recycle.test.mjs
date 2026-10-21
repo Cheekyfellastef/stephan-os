@@ -30,8 +30,11 @@ test('actual Windows caretaker retains timeout custody even with a stale capabil
       stops=$script:stops;starts=$script:starts;startRequested=$startRequested;blocker=$blocker}|ConvertTo-Json -Compress`;
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-    { shell: false, windowsHide: true, encoding: 'utf8', timeout: 10000 });
-  assert.equal(result.status, 0, result.stderr);
+    // Cold Windows PowerShell startup on hosted runners can exceed 10s when
+    // native fixtures initialize concurrently. Keep execution bounded without
+    // changing any hold/no-start/no-stop assertion or runtime repair deadline.
+    { shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
   assert.deepEqual(JSON.parse(result.stdout), { held: true, healthy: false, capability: false,
     stops: 0, starts: 0, startRequested: false,
     blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' });

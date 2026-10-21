@@ -58,4 +58,3 @@ export function readCanonicalMissionWorkerHeartbeatAgeMs({
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }
 }
-
