@@ -3,11 +3,26 @@ using System.Text;
 using System.Text.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Stephanos.OriginalR7CustodyWitness;
 
 try
 {
     NativePeerFixture.SetErrorMode(NativePeerFixture.GetErrorMode() | 3);
+    if (args.SequenceEqual(new[] { "--owned-system32-attribute-control" }))
+    {
+        uint size = 0;
+        NativePeerFixture.CredPackAuthenticationBufferW(1, "r7-public-not-an-account", "PUBLIC fixture, never a real password", 0, ref size);
+        Console.WriteLine(NativePeerFixture.LoadedCredentialOrigin());
+        return 0;
+    }
+    if (args.SequenceEqual(new[] { "--owned-fixed-system32-binding" }))
+    {
+        Console.WriteLine(OriginalR7OperatingSystemPeerDecision.FixedNativeModulesObserved()
+            ? NativePeerFixture.LoadedCredentialOrigin() : "UNPROVEN");
+        return 0;
+    }
+    if (args.Length != 0) return 2;
     int assertions = 0;
     void Check(bool value, string code) { assertions++; if (!value) throw new InvalidOperationException(code); }
     void Reject(Action action, string code)
@@ -157,7 +172,8 @@ try
         nodeDotNetGoldenBytesMatched = true, goldenFingerprint = pairing.Fingerprint,
         nativeOsPromptPerformed = false, realCredentialsRead = false, authenticatedEndpoint = false,
         actualWindowsCredentialApiExportsVerified = true, publicFixtureNativePackUnpackOnly = true,
-        nativeApiModulesObservedFromSystem32 = true, invalidOwnedAppAndCwdShadowsIgnored = true,
+        nativeApiModulesObservedFromSystem32 = true, genuineOwnedSidecarCopiesIgnoredByFixedChild = true,
+        system32AttributeControlOrigin = NativePeerFixture.AttributeControlOrigin,
         nativeApiBindingUsesBarePInvoke = false, framework = RuntimeInformation.FrameworkDescription,
         actualAccountLogonAttempted = false,
         policyAdopted = false, rootEnrollmentAuthorized = false, leaseReleaseAuthorized = false,
@@ -173,6 +189,7 @@ catch (Exception error)
 
 internal static class NativePeerFixture
 {
+    internal static string AttributeControlOrigin { get; private set; } = "NOT_RUN";
     internal static bool FixedBindingsIgnoreOwnedShadow()
     {
         if (Assembly.GetEntryAssembly()?.GetName().Name != "Stephanos.OriginalR7PeerPairing.Tests")
@@ -180,26 +197,32 @@ internal static class NativePeerFixture
         string adjacent = Path.Combine(AppContext.BaseDirectory, "credui.dll");
         string directory = Path.Combine(Path.GetTempPath(), "r7-os-bindings-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
-        string cwdShadow = Path.Combine(directory, "credui.dll"), previous = Environment.CurrentDirectory;
+        string cwdShadow = Path.Combine(directory, "credui.dll");
         bool appCreated = false, cwdCreated = false;
         try
         {
-            // PUBLIC invalid image bytes, never executable DLL code. CreateNew
-            // cannot overwrite a preexisting sidecar. Both files stay readable
-            // during resolution; the production loader checks actual module
-            // filenames and absolute OS paths, not fixture success booleans.
+            // Copy ONLY the genuine OS DLL, never malicious/test DLL code.
+            // Fresh owned children distinguish pre10 attribute-only probing
+            // from the production absolute loader before either loads credui.
             using var app = new FileStream(adjacent, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
             appCreated = true;
             using var cwd = new FileStream(cwdShadow, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
             cwdCreated = true;
-            byte[] marker = Encoding.ASCII.GetBytes("R7 PUBLIC NON_EXECUTABLE SHADOW DLL FIXTURE");
-            app.Write(marker); app.Flush(true); cwd.Write(marker); cwd.Flush(true);
-            Environment.CurrentDirectory = directory;
-            return OriginalR7OperatingSystemPeerDecision.FixedNativeModulesObserved();
+            using var original = new FileStream(Path.Combine(Environment.SystemDirectory, "credui.dll"),
+                FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (original.Length is < 1 or > 8388608) throw new InvalidOperationException("OS_DLL_FIXTURE_BOUND");
+            original.CopyTo(app); original.Position = 0; original.CopyTo(cwd); app.Flush(true); cwd.Flush(true);
+            // A writable file handle can prevent image mapping; close the
+            // completed copies before asking a cold child to load the image.
+            app.Dispose(); cwd.Dispose();
+            AttributeControlOrigin = RunOwnedBindingChild("--owned-system32-attribute-control", directory);
+            if (AttributeControlOrigin is not ("GENUINE_APPDIR_COPY" or "SYSTEM32"))
+                throw new InvalidOperationException("ATTRIBUTE_CONTROL_MODULE_ORIGIN_UNKNOWN");
+            string fixedOrigin = RunOwnedBindingChild("--owned-fixed-system32-binding", directory);
+            return fixedOrigin == "SYSTEM32" && OriginalR7OperatingSystemPeerDecision.FixedNativeModulesObserved();
         }
         finally
         {
-            Environment.CurrentDirectory = previous;
             // Owned disposable fixture paths only; no hostile-parent cleanup
             // or production disposition claim follows from these deletions.
             if (appCreated) File.Delete(adjacent);
@@ -207,9 +230,67 @@ internal static class NativePeerFixture
             Directory.Delete(directory, false);
         }
     }
+
+    private static string RunOwnedBindingChild(string mode, string directory)
+    {
+        string executable = Environment.ProcessPath ?? throw new InvalidOperationException("OWNED_RUNTIME_REQUIRED");
+        using var child = new Process { StartInfo = new(executable) { UseShellExecute = false, CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = directory,
+            RedirectStandardOutput = true, RedirectStandardError = true } };
+        string assembly = Assembly.GetExecutingAssembly().GetName().Name ?? throw new InvalidOperationException("OWNED_ASSEMBLY_REQUIRED");
+        if (Path.GetFileName(executable).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            string dll = (string?)typeof(Assembly).GetProperty("Location")!.GetValue(Assembly.GetExecutingAssembly()) ?? "";
+            if (!Path.IsPathFullyQualified(dll) || Path.GetFileName(dll) != assembly + ".dll")
+                throw new InvalidOperationException("OWNED_DLL_REQUIRED");
+            child.StartInfo.ArgumentList.Add(dll);
+        }
+        else if (!string.Equals(Path.GetFullPath(executable), Path.Combine(AppContext.BaseDirectory, assembly + ".exe"),
+            StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("OWNED_APPHOST_REQUIRED");
+        child.StartInfo.ArgumentList.Add(mode);
+        child.Start();
+        Task<string> output = child.StandardOutput.ReadToEndAsync(), error = child.StandardError.ReadToEndAsync();
+        if (!child.WaitForExit(10000))
+        {
+            // Exactly the fresh process created above, never a PID selector or
+            // production subject. A timeout is a failed fixture, never success.
+            child.Kill(); child.WaitForExit(3000);
+            throw new InvalidOperationException("OWNED_MODULE_CHILD_TIMEOUT");
+        }
+        string result = output.GetAwaiter().GetResult(), diagnostic = error.GetAwaiter().GetResult();
+        if (child.ExitCode != 0 || result.Length > 128 || diagnostic.Length != 0)
+            throw new InvalidOperationException("OWNED_MODULE_CHILD_FAILED");
+        return result.Trim();
+    }
+
+    internal static string LoadedCredentialOrigin()
+    {
+        // A query-only fixed bootstrap, independent of the production binder:
+        // obtaining the name must not load credui before the control import.
+        nint kernel = NativeLibrary.Load(Path.Combine(Environment.SystemDirectory, "kernel32.dll"));
+        try
+        {
+            var get = Marshal.GetDelegateForFunctionPointer<ModuleHandle>(NativeLibrary.GetExport(kernel, "GetModuleHandleW"));
+            var name = Marshal.GetDelegateForFunctionPointer<ModuleName>(NativeLibrary.GetExport(kernel, "GetModuleFileNameW"));
+            nint borrowed = get("credui.dll");
+            var path = new StringBuilder(1024);
+            uint length = name(borrowed, path, (uint)path.Capacity);
+            if (borrowed == 0 || length == 0 || length >= path.Capacity) return "UNPROVEN";
+            if (string.Equals(path.ToString(), Path.Combine(Environment.SystemDirectory, "credui.dll"), StringComparison.OrdinalIgnoreCase)) return "SYSTEM32";
+            if (string.Equals(path.ToString(), Path.Combine(AppContext.BaseDirectory, "credui.dll"), StringComparison.OrdinalIgnoreCase)) return "GENUINE_APPDIR_COPY";
+            return "UNPROVEN";
+        }
+        finally { NativeLibrary.Free(kernel); }
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+    private delegate nint ModuleHandle(string name);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+    private delegate uint ModuleName(nint module, StringBuilder path, uint capacity);
     [DllImport("kernel32.dll")] internal static extern uint GetErrorMode();
     [DllImport("kernel32.dll")] internal static extern uint SetErrorMode(uint mode);
     [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CredPackAuthenticationBufferW(uint flags, string user, string password, nint buffer, ref uint bytes);
 }

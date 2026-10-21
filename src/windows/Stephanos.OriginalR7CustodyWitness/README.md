@@ -13,6 +13,17 @@ encrypted owner credential's signature and exact first run attempt. This source
 has not been admitted or invoked against real credentials. It cannot provision
 roots or authorize custody/release; the SCM startup refusal remains intact.
 
+The credential API binding uses fixed absolute OS modules and verifies actual
+mapped module names before calling their retained exports. A System32 search
+attribute alone is insufficient in the pinned .NET8 single-file runtime; see
+the [Microsoft compatibility note](https://learn.microsoft.com/dotnet/core/compatibility/interop/10.0/native-library-search).
+The owned single-file fixture copies the genuine OS DLL beside the app and into
+a temporary working directory. Separate cold children compare attribute-only
+and fixed loading without any real account logon or password dialog. Local
+.NET8.0.32 reproduced application-directory loading in the control, while the
+fixed child loaded System32. Other contexts report the actual control origin;
+no unreproduced control is labeled a red/green result.
+
 ## What the code proves
 
 - Fixed service identity: StephanosOriginalR7CustodyWitness
