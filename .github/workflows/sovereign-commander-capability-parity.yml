@@ -17,6 +17,10 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignMaintenanceAdmissionV1*'
+      - 'scripts/sovereign-goal-builder-worker-evidence.test.mjs'
+      - 'scripts/sovereign-commander-goal-builder-repair*'
+      - 'shared/agents/goalDiscoveryWorkspaceV1*'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
@@ -100,6 +104,7 @@ jobs:
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
+          node --test shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs

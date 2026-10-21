@@ -1,5 +1,40 @@
 # Core worker custody and repair admission
 
+## Current structural correction after review of 9d09b599dc
+
+The previous mtime gate and custom-workspace acceptance are superseded. Actual
+worker heartbeat bytes must be a bounded regular JSON file, validated by the
+existing `projectMissionWorkerHeartbeat` against the canonical repository and
+its observed main head, task, PID, launch identity, process-start order and tick
+verdict. Future/stale/corrupt/unrelated records hold. Filesystem mtime is not
+admission evidence. The supervisor itself can reconcile/dispatch, so validation
+now precedes its first invocation and repeats before refill and final supervision.
+Git identity observation reuses the existing fixed executable, closed environment
+and canonical repository arguments, not inherited Git configuration or PATH.
+
+Canonical Windows publishers and witnesses still target the default workspace.
+Live repair therefore REFUSES a nondefault workspace rather than pretending its
+worker can publish there. The existing refill resolver preserves its configuration
+precedence, but no override can inherit live-worker admission until the complete
+publisher/witness estate is separately adapted and qualified. This does not add
+Windows path authority or silently redirect mutation to the default tree.
+
+Timeout admission now belongs to shared fixed maintenance execution, covering
+MCP/stdio/mailbox/ignition and START_PROCESS aliases. HTTP uses its actual guardian
+state; other local processes consult the existing fixed loopback health observer.
+Held, unknown, malformed or busy custody refuses new fixed mutation. Read-only
+observation remains available. A late child close never clears the guardian hold.
+This is an admission check on the current owner, NOT atomic cross-process/restart
+exclusion, an authenticated Windows OS witness, or proof that an unavailable or
+restarted owner has drained old descendants. Those original commissioning gates
+remain held; ordinary loopback health cannot replace them.
+
+Behavioral regressions exercise corrupt/foreign heartbeat bytes, a fresh directory,
+fresh unsupported workspace evidence, expiry between steps, all maintenance aliases,
+bounded owner observation and the actual default HTTP/MCP composition after timeout.
+Earlier sections below retain the source history and are superseded where they
+describe numeric mtime-only freshness or usable configured-workspace evidence.
+
 This structural review follows repeated independent source findings on PR #3189.
 A missing or stale heartbeat is a dependency fault, not proof that a worker is
 absent, and a return from one repair routine does not fence other callers.

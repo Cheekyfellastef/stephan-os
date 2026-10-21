@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveGoalDiscoveryWorkspaceV1 } from './goalDiscoveryWorkspaceV1.mjs';
-import { readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from '../../scripts/sovereign-commander-goal-builder-repair.mjs';
+import { readGoalBuilderWorkerHeartbeatAgeMs } from '../../scripts/sovereign-commander-goal-builder-repair.mjs';
 
 test('refill and custody use one workspace precedence and ignore unrelated legacy aliases', () => {
   const env = { USERPROFILE: resolve(tmpdir(), 'fixture-home'), STEPHANOS_SHARED_AGENT_WORKSPACE: resolve(tmpdir(), 'configured') };
@@ -19,20 +19,9 @@ test('refill and custody use one workspace precedence and ignore unrelated legac
   assert.equal(resolveGoalDiscoveryWorkspaceV1({ env }), join(env.USERPROFILE, 'Documents', 'Stephanos-openclaw-workspace'));
 });
 
-test('fresh default heartbeat cannot admit stale configured workspace and fresh configured evidence is usable', () => {
+test('live repair cannot honor an override unsupported by canonical Windows publishers', () => {
   const configured = resolve(tmpdir(), 'worker-custody-configured');
   const env = { USERPROFILE: resolve(tmpdir(), 'worker-custody-home'), STEPHANOS_SHARED_AGENT_WORKSPACE: configured };
-  const heartbeat = join(resolveGoalDiscoveryWorkspaceV1({ env }), 'status', 'mission-orchestrator-worker-heartbeat.json');
-  for (const fresh of [false, true]) {
-    const seen = [], calls = [];
-    const result = runSovereignCommanderGoalBuilderRepair({
-      readWorkerHeartbeatAgeMs: () => readGoalBuilderWorkerHeartbeatAgeMs({ env, nowMs: 1_000_000,
-        statFn(path) { seen.push(path); assert.equal(path, heartbeat); return { mtimeMs: fresh ? 1_000_000 : 0 }; } }),
-      runStep(step) { calls.push(step.id); return { ok: true, status: 0 }; },
-    });
-    assert.deepEqual(seen, [heartbeat]);
-    assert.equal(calls.includes('goal-discovery-heartbeat'), fresh);
-    assert.equal(calls.includes('start-mission-orchestrator-worker'), false);
-    if (!fresh) { assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN'); assert.equal(result.repairApplied, false); }
-  }
+  assert.equal(readGoalBuilderWorkerHeartbeatAgeMs({ env,
+    readSourceIdentity() { assert.fail('unsupported workspace cannot reach evidence admission'); } }), null);
 });

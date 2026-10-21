@@ -8,6 +8,7 @@ import {
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { admitSovereignMaintenanceV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
@@ -729,6 +730,13 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
   }
 
   try {
+    // Every registered fixed-process entry (MCP, stdio, mailbox, ignition and
+    // START_PROCESS aliases) shares the same owner-custody admission.
+    if (command.plan.kind === 'fixed-process') {
+      const admission = await admitSovereignMaintenanceV1(command.plan.processId, options.readMaintenanceGuardian);
+      if (!admission.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+        command, blocker: admission.blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+    }
     let contentText = '';
     let structuredContent = null;
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import {
   SOVEREIGN_COMMANDER_OPERATION,
   buildSovereignCommanderCommandV1,
-  executeSovereignCommanderCommandV1,
+  executeSovereignCommanderCommandV1 as executeActualCommand,
 } from './sovereignCommanderV1.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 import {
@@ -17,6 +17,11 @@ import {
 
 const REPO = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const OUTSIDE = 'C:\\Users\\Operator\\Downloads\\proof.txt';
+// Existing executor fixtures model an explicitly idle guardian; held/unknown
+// owner admission is exercised through the actual executor in its own suite.
+const executeSovereignCommanderCommandV1 = (envelope, options = {}) => executeActualCommand(envelope, {
+  readMaintenanceGuardian: () => ({ enabled: true, running: false, timeoutCustodyHeld: false }), ...options,
+});
 
 function envelope(operation, overrides = {}) {
   return buildStephanosExecutionCommandEnvelopeV1({

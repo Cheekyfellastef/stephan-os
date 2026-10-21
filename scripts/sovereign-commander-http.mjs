@@ -436,7 +436,13 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 
   const sessions = new Map();
   const ignitionNonces = new Map();
-  const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({ repoRoot: options.repoRoot }));
+  const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({
+    repoRoot: options.repoRoot, executor: options.commandExecutor,
+    // Use the actual owner directly in HTTP sessions. No loopback request to
+    // this server can deadlock its synchronous fixed-child execution.
+    readMaintenanceGuardian: () => continuousRepairGuardian?.status()
+      || { enabled: false, running: false, timeoutCustodyHeld: false },
+  }));
   const now = options.now || (() => new Date().toISOString());
   const nowMs = options.nowMs || (() => {
     const value = Date.parse(now());
@@ -471,6 +477,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           remoteIgnitionCsrfProtected: true,
           continuousRepairGuardian: continuousRepairGuardian?.status() || {
             enabled: false,
+            timeoutCustodyHeld: false,
             running: false,
             scheduled: false,
             cycleCount: 0,

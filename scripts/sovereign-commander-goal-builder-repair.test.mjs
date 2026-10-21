@@ -112,7 +112,7 @@ test('shared goal-builder boundary refuses unknown/stale worker custody for ever
     });
     assert.equal(result.ok, false); assert.equal(result.repairApplied, false);
     assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
-    assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+    assert.deepEqual(calls, []);
   }
   const held = runActualGoalBuilderRepair({
     readWorkerHeartbeatAgeMs() { throw Error('unreadable heartbeat'); },
