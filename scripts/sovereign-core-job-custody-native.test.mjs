@@ -52,6 +52,8 @@ test('native adapter uses atomic Job assignment and never enables breakaway or c
   assert.match(code, /limits\.basic\.flags=0x2000\|0x400\|0x8/);
   assert.doesNotMatch(code, /AssignProcessToJobObject\(/);
   assert.match(code, /QueryInformationJobObject/);
+  assert.match(code, /UseShellExecute=\$false/);
+  assert.doesNotMatch(code, /Start-Process -FilePath/);
 });
 
 test('native governor reader pins ancestors/file and denies reparse or an existing writer', { skip: !windows, timeout: 20000 }, () => {
@@ -118,7 +120,7 @@ test('game onset, cancellation and deadline terminate only the owned Job and dra
 test('native process limit denies descendant creation, preserving R7 exclusion', { skip: !windows, timeout: 20000 }, async () => {
   const { receipt, stderr } = await runner({ mode: 'descendant', deadline: 2500 }).done;
   assert.ok(receipt, stderr);
-  assert.equal(receipt.DescendantAttemptDenied, true);
+  assert.equal(receipt.DescendantAttemptDenied, true, JSON.stringify(receipt));
   closed(receipt);
 });
 

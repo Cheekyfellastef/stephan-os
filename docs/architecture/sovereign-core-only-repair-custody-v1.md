@@ -44,6 +44,14 @@ worker is a closed benign PowerShell probe, never an installer, source writer,
 service/task command, user script or caller-selected executable. The original
 continuous mutation guard remains in force.
 
+Hosted Windows exposed a test-boundary defect: `Start-Process` may use shell
+launch behaviour, which is not a direct CreateProcess containment test. The
+fixture now uses explicit `UseShellExecute=false` and requires the direct child
+attempt to be denied. Job Objects are NOT a security sandbox: shell/COM/task/
+service brokers must be excluded by the closed, independently reviewed worker
+scope, not asserted to be contained by an active-process limit. No arbitrary
+PowerShell/candidate script may be admitted through this primitive.
+
 The native monitor rechecks the governor before creation/resume and every 25ms,
 signals cooperative cancellation on gaming/cancel/deadline, waits boundedly for
 acknowledgement, terminates only its own Job and queries zero active processes

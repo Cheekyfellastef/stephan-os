@@ -21,6 +21,7 @@ test('bound native proof remains candidate-only and cannot enroll a repair execu
 });
 
 test('stale head, forged authority, missing stop acknowledgement or incomplete OS drain HOLD', () => {
+  assert.equal(projectCoreJobCustodyCandidateV1(raw, { ...binding, nativeSourceSha256: '' }).ok, false);
   for (const patch of [
     { RequestId: 'other-request' }, { SourceHead: 'b'.repeat(40) }, { ActiveProcesses: 1 },
     { AssignedBeforeExecution: false }, { ZeroActiveProcessesObserved: false },

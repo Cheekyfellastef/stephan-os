@@ -160,7 +160,8 @@ namespace Stephanos.Sovereign {
           var limits=new EXTENDED_LIMIT();
           // KILL_ON_JOB_CLOSE, DIE_ON_UNHANDLED_EXCEPTION, ACTIVE_PROCESS=1.
           // Neither BREAKAWAY_OK nor SILENT_BREAKAWAY_OK is set. A Core-only
-          // worker cannot spawn ANY descendant, including shell/git/installers.
+          // worker cannot spawn a direct descendant. Broker APIs are outside
+          // this custody boundary and forbidden in the fixed worker scope.
           limits.basic.flags=0x2000|0x400|0x8;
           limits.basic.activeLimit=1;
           Require(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(typeof(EXTENDED_LIMIT))));
@@ -178,7 +179,10 @@ namespace Stephanos.Sovereign {
             + "$c=[Threading.EventWaitHandle]::OpenExisting('"+prefix+"-cancel');"
             + "$a=[Threading.EventWaitHandle]::OpenExisting('"+prefix+"-ack');"
             + "$d=[Threading.EventWaitHandle]::OpenExisting('"+prefix+"-denied');";
-          if (mode=="descendant") worker += "try {$p=Start-Process -FilePath '"+exe+"' -ArgumentList '-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 20' -PassThru -ErrorAction Stop;exit 91} catch {$d.Set()|Out-Null};";
+          // Direct CreateProcess path only. ShellExecute/COM/service/task
+          // brokers can launch outside a Job and are forbidden in the fixed
+          // Core-only scope; a Job is resource custody, NOT a security sandbox.
+          if (mode=="descendant") worker += "$s=New-Object Diagnostics.ProcessStartInfo;$s.FileName='"+exe+"';$s.Arguments='-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20';$s.UseShellExecute=$false;try {$p=[Diagnostics.Process]::Start($s);if($null -ne $p){$p.Kill()};exit 91} catch {$d.Set()|Out-Null};";
           if (mode=="complete") worker += "exit 0;";
           else worker += "if($c.WaitOne(15000)){$a.Set()|Out-Null;exit 0};exit 92;";
           string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(worker));

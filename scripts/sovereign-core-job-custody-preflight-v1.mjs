@@ -12,6 +12,8 @@ const noAuthority = Object.freeze({ sourceMutationAllowed: false, originalR7Auth
 const held = reason => Object.freeze({ ok: false, reason, ...noAuthority });
 
 export function projectCoreJobCustodyCandidateV1(raw, { requestId, sourceHead, nativeSourceSha256 }) {
+  if (!/^[a-z0-9-]{8,80}$/.test(requestId ?? '') || !/^[a-f0-9]{40}$/.test(sourceHead ?? '')
+    || !/^[a-f0-9]{64}$/.test(nativeSourceSha256 ?? '')) return held('CORE_JOB_EXACT_REQUEST_REQUIRED');
   if (raw?.SchemaVersion === 'stephanos.core-job-custody-candidate.v1'
     && raw.RequestId === requestId && raw.SourceHead === sourceHead
     && ['SourceMutationAllowed','OriginalR7Authority','SpecialistQualified','RepairExecuted'].every(k => raw[k] === false)
