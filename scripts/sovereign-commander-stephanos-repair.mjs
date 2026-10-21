@@ -178,6 +178,8 @@ export function projectIndependentCoreRepairV1(core, expectedHead, observationOk
     && (core?.repairRequired === true || core?.readiness === 'DEGRADED');
   return Object.freeze({
     scope: 'CORE_ONLY', mutationAttempted: false, dispatchAllowed: false,
+    nativeCustodySourceVersion: 'atomic-job-list-v1',
+    nativeCustodyQualified: false, coreRepairWorkerAdmitted: false,
     exactCoreFaultObserved: exactCoreFault,
     blocker: exactCoreFault ? 'SOVEREIGN_CORE_ONLY_CANCELLABLE_BACKEND_UNQUALIFIED'
       : 'SOVEREIGN_CORE_ONLY_DISJOINT_SOURCE_PROOF_MISSING',
