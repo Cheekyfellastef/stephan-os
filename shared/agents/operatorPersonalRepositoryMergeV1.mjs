@@ -1496,6 +1496,20 @@ export function validatePersonalRepositoryCheckRuns(
       && text(run?.status).toLowerCase() === 'completed'
       && text(run?.conclusion).toLowerCase() === 'success';
 
+    // Closing an unmerged PR creates this exact bound skipped operational
+    // signal. Reopening it cannot make the post-merge-only job run: treating
+    // that skip as failed CI creates a merge-before-merge dependency. This
+    // exception never covers a build/test job, failed run or another trigger.
+    const postMergeSignalNotRequested = conclusion === 'skipped'
+      && path === '.github/workflows/battle-bridge-main-advance-express-sync-v1.yml'
+      && workflow === `Signal Battle Bridge main advance for PR ${prNumber}`
+      && name === 'publish-main-advance'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'skipped';
+
     let disposition = 'green';
     if (status !== 'completed') {
       blockers.push('personal-repository-check-run-not-terminal');
@@ -1509,6 +1523,8 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'superseded-draft-skip';
     } else if (prPagesDeploymentNotRequested) {
       disposition = 'pr-pages-deployment-not-requested';
+    } else if (postMergeSignalNotRequested) {
+      disposition = 'post-merge-signal-not-requested';
     } else if (cleanIndependentReviewProved
       && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
