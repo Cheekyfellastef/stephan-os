@@ -67,10 +67,10 @@ test('invalid exact head and missing workspace cannot produce valid review or gr
 });
 test('trusted git reader checks head, branch, clean worktree, base and read-only diff',()=>{
   let calls=0;
-  const outputs=[SHA+'\n',ENV.STEPHANOS_REVIEW_EXACT_BRANCH+'\n','',BASE+'\n','',
-    PATH+'\n',DIFF];
+  const outputs=[SHA+'\n',ENV.STEPHANOS_REVIEW_EXACT_BRANCH+'\n','',BASE+'\n',''];
   const snapshot=capture({...ENV,PATH:'/attacker',GIT_EXEC_PATH:'/attacker',GIT_CONFIG_COUNT:'3'},{
     root:'/verified/repo',platform:'linux',
+    captureDiff:()=>({changedFiles:[PATH],diff:DIFF,reviewedObjectClosureSha256:'c'.repeat(64)}),
     resolveGit:()=>({
       executable:'/usr/bin/git',fixedConfigArgs:['-c','core.fsmonitor=false'],
       environment:{PATH:'/usr/bin:/bin'},
@@ -85,7 +85,7 @@ test('trusted git reader checks head, branch, clean worktree, base and read-only
       return {status:0,stdout:outputs.shift()};
     },
   });
-  assert.equal(calls,7);
+  assert.equal(calls,5);
   assert.equal(snapshot.sourceHead,SHA);
   assert.equal(snapshot.diff,DIFF);
   assert.deepEqual(snapshot.changedFiles,[PATH]);

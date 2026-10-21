@@ -132,6 +132,7 @@ const REVIEWER_ENV_KEYS = Object.freeze([
   'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
 ]);
 export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
+  'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
   'scripts/sovereign-windows-review-calibration-v1.mjs',
   'scripts/sovereign-high-risk-advisory-v1.mjs',
   'shared/agents/sovereignWindowsCalibrationV1.mjs',

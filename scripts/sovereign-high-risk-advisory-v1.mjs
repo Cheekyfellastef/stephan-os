@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { captureAuthenticatedReviewDiffV1 } from '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs';
 
 import { resolveBattleBridgeGitExecution } from
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
@@ -23,6 +24,7 @@ const text = x => String(x ?? '').trim();
 export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   platform = process.platform, spawn = spawnSync,
   resolveGit = resolveBattleBridgeGitExecution,
+  captureDiff = captureAuthenticatedReviewDiffV1,
   root = repoRoot,
 } = {}) {
   const head = text(env.STEPHANOS_REVIEW_EXACT_HEAD).toLowerCase();
@@ -52,17 +54,14 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     throw Error('BASE_COMMIT_NOT_PROVEN');
   }
   git(['merge-base','--is-ancestor',base,head]);
-  const changedFiles = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
-    '--name-only',base,head,'--']).split('\n').filter(Boolean);
-  const diff = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
-    '--unified=3',base,head,'--']);
-  // Preserve the exact Git diff byte stream, including final newline.
+  const {changedFiles,diff,reviewedObjectClosureSha256}=captureDiff({root,head,base,
+    git:resolveGit({platform,environment:env}),run:spawn});
   return Object.freeze({
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
     prNumber: Number(env.STEPHANOS_REVIEW_PR),
     branch, sourceHead: head, baseSha: base, changedFiles,
-    diff,
+    diff,reviewedObjectClosureSha256,
     reviewerSessionId: text(env.STEPHANOS_REVIEW_SESSION),
     implementerSessionId: text(env.STEPHANOS_REVIEW_IMPLEMENTER_SESSION),
     implementerProvider: text(env.STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER),

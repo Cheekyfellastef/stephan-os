@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'shared/agents/sovereignExactCommitLoaderV1*'
+      - 'shared/agents/sovereignAuthenticatedReviewDiffV1*'
+      - 'scripts/sovereign-high-risk-advisory*'
       - 'shared/agents/sovereignCommanderV1*'
       - 'scripts/sovereign-reviewer*'
       - 'scripts/sovereign-windows-review-calibration-v1*'
@@ -25,9 +27,12 @@ jobs:
         with:
           node-version: '24'
       - name: Exact committed module custody and hostile checkout regressions
-        run: node --test shared/agents/sovereignExactCommitLoaderV1.test.mjs scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs scripts/sovereign-windows-review-calibration-v1.test.mjs
+        run: node --test shared/agents/sovereignExactCommitLoaderV1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs scripts/sovereign-windows-review-calibration-v1.test.mjs
       - name: Trusted Commander fixed launcher boundary
         run: node --test --test-name-pattern="Windows calibration" shared/agents/sovereignCommanderV1.test.mjs
       - name: Calibration Git boundary including real hostile repository
         if: runner.os == 'Linux'
         run: node --test scripts/sovereign-reviewer-ollama-calibration-v1.test.mjs
+      - name: Complete source snapshot and publication contracts on POSIX
+        if: runner.os == 'Linux'
+        run: node --test scripts/sovereign-reviewer-v1.test.mjs scripts/sovereign-high-risk-advisory-v1.test.mjs

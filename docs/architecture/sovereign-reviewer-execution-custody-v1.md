@@ -41,3 +41,15 @@ replace refs, substituted worktree/index bytes and an executable fsmonitor;
 inspection must HOLD without executing that helper or changing any source.
 This is meter-free source hardening, not a substitute for independent review or
 physical installed-Ollama digest-addressing proof.
+
+Reviewed-content correction: executable-module custody alone cannot authenticate
+ordinary Git diff reads. The native high-risk snapshot reader now
+reuses a shared bounded raw-object capture; the concurrent standard reader correction is retained without replacement. Both commits and the complete base/head
+tree estate are hash-verified; every changed old/new blob is captured and
+hash-verified before a bounded conservative unified diff is derived in memory. No
+ordinary Git diff consumes mutable object-store bytes after authentication.
+Unsupported/binary/oversize content holds rather than truncates. All new native imports are included in the Commander loader closure. Real fixtures corrupt
+a reviewed non-executable blob only during Git read and restore it afterward;
+the hash mismatch still prevents candidate evidence. Worktree substitution has
+no effect on the captured committed diff. This is source correctness evidence,
+not installation protection, a qualified specialist, or live model acceptance.
