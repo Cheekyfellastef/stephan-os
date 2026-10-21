@@ -1,4 +1,4 @@
-name: Rescue Island Native Snapshot Proof
+name: Rescue Island Native Custody Proof
 
 on:
   pull_request:
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
-      - name: Run actual Windows adversarial snapshot tests
+      - name: Run actual Windows adversarial native custody tests
         shell: pwsh
         env:
           DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
@@ -40,7 +40,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Write-Output 'NATIVE_SNAPSHOT_TESTS_ONLY=true'
+          Write-Output 'NATIVE_CUSTODY_TESTS_ONLY=true'
           Write-Output 'ISLAND_HOST_COMMISSIONED=false'
           Write-Output 'ISLAND_EXECUTION_ALLOWED=false'
           Write-Output 'R7_LEASE_ACCESSED=false'

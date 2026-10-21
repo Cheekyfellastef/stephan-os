@@ -105,7 +105,7 @@ public sealed class PinnedFileSnapshot : IDisposable
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 
-    private static string ValidatePath(string path)
+    internal static string ValidatePath(string path)
     {
         // Deliberately narrow DOS paths on local drives only. No UNC/device,
         // ADS, drive-relative, normalized traversal, case alias or short name.
@@ -126,10 +126,10 @@ public sealed class PinnedFileSnapshot : IDisposable
         return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$"
             || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal)
                 || stem.StartsWith("LPT", StringComparison.Ordinal))
-                && (stem[3] is >= '0' and <= '9' or 'Â¹' or 'Â²' or 'Â³'));
+                && (stem[3] is >= '0' and <= '9' or '¹' or '²' or '³'));
     }
 
-    private static SafeFileHandle Open(string path, bool directory)
+    internal static SafeFileHandle Open(string path, bool directory)
     {
         const uint readAttributes = 0x80, genericRead = 0x80000000;
         const uint shareRead = 1, shareWrite = 2, openExisting = 3;
@@ -146,7 +146,7 @@ public sealed class PinnedFileSnapshot : IDisposable
         return handle;
     }
 
-    private static FileInfoNative Inspect(SafeFileHandle handle, string expectedPath, bool directory)
+    internal static FileInfoNative Inspect(SafeFileHandle handle, string expectedPath, bool directory)
     {
         if (!GetFileInformationByHandle(handle, out var info))
             throw new CustodyException("ISLAND_CUSTODY_IDENTITY_UNAVAILABLE", Marshal.GetLastWin32Error());
@@ -162,7 +162,7 @@ public sealed class PinnedFileSnapshot : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct FileInfoNative
+    internal struct FileInfoNative
     {
         public uint Attributes;
         public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime, LastAccessTime, LastWriteTime;
