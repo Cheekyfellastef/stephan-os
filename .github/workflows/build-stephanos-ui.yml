@@ -66,35 +66,6 @@ jobs:
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
-  sovereign-high-risk-review-candidate-proof:
-    # A changed Sovereign Reviewer implementation must prove its own bounded,
-    # candidate-only fail-closed behavior at the EXACT PR source head. Hosted
-    # tests are source proof, never reviewer identity or Windows signer proof.
-    if: >-
-      github.event_name == 'pull_request' ||
-      github.event_name == 'push' ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout exact review candidate head
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Prove Sovereign candidate replay and hostile model response guards
-        run: |
-          node --check scripts/sovereign-high-risk-advisory-v1.mjs
-          node --check shared/agents/sovereignHighRiskReviewCandidateV1.mjs
-          node --test --test-concurrency=1 \
-            scripts/sovereign-high-risk-advisory-v1.test.mjs \
-            shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs
-
-
   runtime-guardrail-tests:
     if: >-
       github.event_name != 'issue_comment' ||
@@ -118,7 +89,9 @@ jobs:
             shared/runtime/stephanosHomeNode.test.mjs \
             shared/runtime/stephanosSessionMemory.test.mjs \
             stephanos-server/tests/runtime-status-model.test.js \
-            stephanos-server/tests/provider-routing.test.js
+            stephanos-server/tests/provider-routing.test.js \
+            scripts/sovereign-high-risk-advisory-v1.test.mjs \
+            shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs
 
   surface-ignition-tests:
     if: >-
