@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { resolve, dirname, join, isAbsolute, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { captureAuthenticatedReviewDiffV1 } from '../shared/agents/sovereignAuthenticatedReviewDiffV1.mjs';
 
 import { resolveBattleBridgeGitExecution } from
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
@@ -25,6 +26,7 @@ const text = x => String(x ?? '').trim();
 // to the exact HEAD before and after any private model inference.
 export const HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS = Object.freeze([
   'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
   'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
   'shared/agents/sovereignReviewCoverageV1.mjs',
   'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
@@ -35,6 +37,7 @@ export const HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS = Object.freeze([
 export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   platform = process.platform, spawn = spawnSync,
   resolveGit = resolveBattleBridgeGitExecution,
+  captureDiff = captureAuthenticatedReviewDiffV1,
   root = repoRoot,
 } = {}) {
   const head = text(env.STEPHANOS_REVIEW_EXACT_HEAD).toLowerCase();
@@ -74,17 +77,14 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
       throw Error('HIGH_RISK_REVIEWER_EXECUTABLE_BYTES_NOT_HEAD');
     }
   }
-  const changedFiles = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
-    '--name-only',base,head,'--']).split('\n').filter(Boolean);
-  const diff = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
-    '--unified=3',base,head,'--']);
-  // Preserve the exact Git diff byte stream, including final newline.
+  const {changedFiles,diff,reviewedObjectClosureSha256}=captureDiff({root,head,base,
+    git:resolveGit({platform,environment:env}),run:spawn});
   return Object.freeze({
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
     prNumber: Number(env.STEPHANOS_REVIEW_PR),
     branch, sourceHead: head, baseSha: base, changedFiles,
-    diff,
+    diff,reviewedObjectClosureSha256,
     reviewerSessionId: text(env.STEPHANOS_REVIEW_SESSION),
     implementerSessionId: text(env.STEPHANOS_REVIEW_IMPLEMENTER_SESSION),
     implementerProvider: text(env.STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER),
@@ -169,7 +169,7 @@ export async function observeHighRiskOllamaDigestV1(model, { fetchImpl = fetch }
   }
 }
 
-export async function localHighRiskModelV1(prompt, _chunk, env = process.env, {
+export async function localHighRiskModelV1(prompt, chunk, env = process.env, {
   fetchImpl = fetch,
   gamingGuard = inspectHighRiskGamingPermissionV1,
   modelPin = observeHighRiskOllamaDigestV1,
@@ -184,6 +184,8 @@ export async function localHighRiskModelV1(prompt, _chunk, env = process.env, {
   const pinned = await modelPin(model, { fetchImpl });
   if (!pinned?.ok || !/^[a-f0-9]{64}$/.test(pinned.digest ?? ''))
     throw Error('HIGH_RISK_MODEL_DIGEST_UNVERIFIED');
+  if (chunk?.modelDigestSha256 && pinned.digest !== chunk.modelDigestSha256)
+    throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_CHANGED');
   if (!allowed()) throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
   const before = await modelPin(model, { fetchImpl });
   if (!before?.ok || before.digest !== pinned.digest)
@@ -230,7 +232,8 @@ export async function localHighRiskModelV1(prompt, _chunk, env = process.env, {
     const after = await modelPin(model, { fetchImpl });
     if (!after?.ok || after.digest !== pinned.digest || !allowed())
       throw Error('HIGH_RISK_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE');
-    return parsed.response;
+    return Object.freeze({ response: parsed.response, modelDigestSha256: pinned.digest,
+      chunkId: chunk?.chunkId, contentSha256: chunk?.contentSha256 });
   } finally {
     stopPolling(monitor);
   }
@@ -241,7 +244,7 @@ export async function localHighRiskModelV1(prompt, _chunk, env = process.env, {
 function sameReviewSource(before, after) {
   const fields = ['repository', 'issueNumber', 'prNumber', 'branch',
     'sourceHead', 'baseSha', 'diff', 'reviewerSessionId',
-    'implementerSessionId', 'implementerProvider', 'modelClass'];
+    'implementerSessionId', 'implementerProvider', 'modelClass','reviewedObjectClosureSha256'];
   return Boolean(before && after && fields.every(key => before[key] === after[key])
     && Array.isArray(before.changedFiles) && Array.isArray(after.changedFiles)
     && JSON.stringify(before.changedFiles) === JSON.stringify(after.changedFiles));
@@ -251,6 +254,7 @@ export async function runSovereignHighRiskAdvisoryV1({
   env = process.env, now = new Date(),
   root = repoRoot,
   snapshot = captureHighRiskAdvisorySnapshotV1,
+  observeModel = observeHighRiskOllamaDigestV1,
   invokeModel = (prompt, chunk) => localHighRiskModelV1(prompt, chunk, env),
   publish = writeAtomicJson,
 } = {}) {
@@ -258,7 +262,14 @@ export async function runSovereignHighRiskAdvisoryV1({
   let identity = {};
   try {
     identity = snapshot(env, {root});
-    result = await evaluateSovereignHighRiskCandidateV1(identity, {invokeModel});
+    const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
+    const modelBefore = await observeModel(model);
+    if (!modelBefore?.ok || !/^[a-f0-9]{64}$/.test(modelBefore.digest ?? ''))
+      throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_UNVERIFIED');
+    result = await evaluateSovereignHighRiskCandidateV1(identity, {invokeModel, modelDigestSha256:modelBefore.digest});
+    const modelAfter = await observeModel(model);
+    if (!modelAfter?.ok || modelAfter.digest !== modelBefore.digest)
+      throw Error('HIGH_RISK_REVIEW_MODEL_DIGEST_CHANGED');
     let after;
     try { after = snapshot(env, {root}); }
     catch { throw Error('REVIEW_SOURCE_CHANGED_DURING_INFERENCE'); }
@@ -297,6 +308,7 @@ export async function runSovereignHighRiskAdvisoryV1({
       sourceHead: text(identity.sourceHead || ''),
       baseSha: text(identity.baseSha || ''),
       reviewPacketSha256: text(candidate?.reviewPacketSha256 || result.reviewPacketSha256 || ''),
+      modelDigestSha256: text(candidate?.modelDigestSha256 || ''),
       chunkCount: Number(candidate?.chunkCount || 0),
       findingCount: Number(candidate?.findings?.length || 0),
       independentAttestationProven: false,
@@ -316,6 +328,7 @@ export async function runSovereignHighRiskAdvisoryV1({
     status: result.status,
     reason: text(result.reason || ''),
     reviewPacketSha256: text(candidate?.reviewPacketSha256 || result.reviewPacketSha256 || ''),
+    modelDigestSha256: text(candidate?.modelDigestSha256 || ''),
     reviewedChunkCount: candidate?.reviewedChunks?.length || 0,
     findingCount: candidate?.findings?.length || 0,
     publicationOk: publication?.ok === true,
@@ -326,13 +339,13 @@ export async function runSovereignHighRiskAdvisoryV1({
   });
 }
 
+// Library code is evaluated only through the trusted closed-graph launcher on
+// admitted production routes. A direct source-checkout invocation is unsupported
+// and cannot run inference or publish a candidate. It is not a trust bootstrap.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (process.argv.length > 3 || (process.argv[2] && process.argv[2] !== '--once')) {
-    process.stderr.write('Usage: node scripts/sovereign-high-risk-advisory-v1.mjs --once\n');
-    process.exitCode=2;
-  } else {
-    const result = await runSovereignHighRiskAdvisoryV1();
-    process.stdout.write('SOVEREIGN_HIGH_RISK_ADVISORY_RESULT='+JSON.stringify(result)+'\n');
-    if (!result.publicationOk || result.status === 'SOVEREIGN_HIGH_RISK_REVIEW_HELD') process.exitCode=1;
-  }
+  process.stdout.write('SOVEREIGN_HIGH_RISK_ADVISORY_RESULT='+JSON.stringify({
+    status:'SOVEREIGN_HIGH_RISK_REVIEW_HELD',reason:'TRUSTED_PREEXECUTION_LAUNCHER_REQUIRED',
+    approvalAuthority:false,mergeAuthority:false,specialistAuthority:false,
+    independentAttestationProven:false,runtimeDeploymentProven:false,
+  })+'\n'); process.exitCode=1;
 }

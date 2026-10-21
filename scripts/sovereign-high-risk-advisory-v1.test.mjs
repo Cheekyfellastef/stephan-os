@@ -6,7 +6,7 @@ import {
   inspectHighRiskGamingPermissionV1,
   HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS,
   observeHighRiskOllamaDigestV1,
-  runSovereignHighRiskAdvisoryV1 as run,
+  runSovereignHighRiskAdvisoryV1 as runRaw,
 } from './sovereign-high-risk-advisory-v1.mjs';
 
 const SHA='a'.repeat(40), BASE='b'.repeat(40), PATH='scripts/battle-bridge-recovery-mesh.mjs';
@@ -28,6 +28,7 @@ function fixedSnapshot(){
     repository:ENV.STEPHANOS_REVIEW_REPOSITORY,issueNumber:1574,prNumber:3047,
     branch:ENV.STEPHANOS_REVIEW_EXACT_BRANCH,
     sourceHead:SHA,baseSha:BASE, changedFiles:[PATH],diff:DIFF,
+    reviewedObjectClosureSha256:'c'.repeat(64),
     reviewerSessionId:'local-review-b',implementerSessionId:'build-a',
     implementerProvider:'github-builder',modelClass:'qwen-14b',
   };
@@ -35,6 +36,14 @@ function fixedSnapshot(){
 const clean=(_prompt,c)=>JSON.stringify({
   chunkId:c.chunkId,contentSha256:c.contentSha256,verdict:'clean',findings:[],
 });
+const modelPin='d'.repeat(64);
+const run=options=>runRaw({...options,observeModel:options.observeModel||
+  (async()=>({ok:true,digest:modelPin})),
+  invokeModel:typeof options.invokeModel==='function'?async(prompt,chunk)=>{
+    const response=await options.invokeModel(prompt,chunk);
+    return typeof response==='string'?{response,modelDigestSha256:modelPin,
+      chunkId:chunk.chunkId,contentSha256:chunk.contentSha256}:response;
+  }:options.invokeModel});
 test('Windows-safe workspace status is always HELD even after every patch chunk is reviewed',async()=>{
   let published;
   const result=await run({
@@ -70,10 +79,11 @@ test('invalid exact head and missing workspace cannot produce valid review or gr
   assert.equal(result.mergeAuthority,false);
 });
 test('exact-head Git snapshot pins actual executable and high-risk policy bytes',()=>{
-  assert.equal(HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS.length,5);
+  assert.equal(HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS.length,6);
   const snapshotOptions=(overrides={})=>{
     let calls=0;
     const captured={root:'/verified/repo',platform:'linux',
+      captureDiff:()=>({changedFiles:[PATH],diff:DIFF+'\n',reviewedObjectClosureSha256:'c'.repeat(64)}),
       resolveGit:()=>({executable:'/usr/bin/git',
         fixedConfigArgs:['-c','core.fsmonitor=false'],
         environment:{PATH:'/usr/bin:/bin'}}),
@@ -105,14 +115,14 @@ test('exact-head Git snapshot pins actual executable and high-risk policy bytes'
   };
   const safe=snapshotOptions();
   const snap=capture({...ENV,GIT_EXEC_PATH:'/attacker',GIT_CONFIG_COUNT:'3'},safe.captured);
-  assert.equal(safe.getCalls(),22,'seven original git reads and three for each of five policy files');
+  assert.equal(safe.getCalls(),23,'five identity reads and three for each of six policy files');
   assert.equal(snap.sourceHead,SHA);
   assert.equal(snap.diff,DIFF+'\n');
   assert.deepEqual(snap.changedFiles,[PATH]);
   for(const indexFlag of ['s','h']) {
     const bad=snapshotOptions({indexFlag});
     assert.throws(()=>capture(ENV,bad.captured),/HIGH_RISK_REVIEWER_INDEX_FLAGS_UNSAFE/);
-    assert.equal(bad.getCalls()<22,true);
+    assert.equal(bad.getCalls()<23,true);
   }
   for(const swappedPath of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
     const bad=snapshotOptions({swappedPath});
@@ -186,7 +196,8 @@ test('high-risk review uses immutable model digest, gaming guard and releases lo
       model:'sha256:'+pin,done:true,done_reason:'stop',response:'{"verdict":"clean"}',
     })}},
   });
-  assert.equal(out,'{"verdict":"clean"}');
+  assert.equal(out.response,'{"verdict":"clean"}');
+  assert.equal(out.modelDigestSha256,pin);
   assert.equal(calls[0].url,'http://127.0.0.1:11434/api/generate');
   assert.equal(calls[0].opts.redirect,'error');
   assert.equal(JSON.parse(calls[0].opts.body).model,'sha256:'+pin);
@@ -208,6 +219,24 @@ test('model digest observation refuses missing or duplicated untrusted tags',asy
       fetchImpl:async()=>({ok:true,text:async()=>JSON.stringify({models})}),
     })).ok,false);
   }
+});
+
+test('a whole advisory cannot combine chunks from a changed installed model tag',async()=>{
+  let reads=0,calls=0,published;
+  const result=await run({env:ENV,root:'/test/repo',snapshot:()=>({...fixedSnapshot(),
+    diff:DIFF+'+bounded review line\n'.repeat(700)}),
+    observeModel:async()=>({ok:true,digest:++reads===1?modelPin:'e'.repeat(64)}),
+    invokeModel:async(p,c)=>{calls++;return clean(p,c)},
+    publish:async(...args)=>{published=args;return {ok:true}},
+  });
+  assert.ok(calls>1);assert.equal(result.status,'SOVEREIGN_HIGH_RISK_REVIEW_HELD');
+  assert.equal(result.reviewedChunkCount,0);assert.equal(published[2].highRiskAdvisory.modelDigestSha256,'');
+  const pin='c'.repeat(64);
+  await assert.rejects(localHighRiskModelV1('private',{
+    modelDigestSha256:pin,chunkId:'part',contentSha256:'a'.repeat(64)},ENV,{
+    gamingGuard:()=>({ok:true}),modelPin:async()=>({ok:true,digest:'e'.repeat(64)}),
+    fetchImpl:async()=>{assert.fail('must not infer with a different whole-review model')},
+  }),/REVIEW_MODEL_DIGEST_CHANGED/);
 });
 test('physical gaming-governor contract denies stale and gaming-active states',()=>{
   const nowMs=Date.parse('2026-10-21T12:00:00Z');
