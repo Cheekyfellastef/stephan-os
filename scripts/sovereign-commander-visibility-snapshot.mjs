@@ -174,8 +174,11 @@ export function collectCoreDaemonVisibility({ spawnSyncFn = spawnSync } = {}) {
   return Object.freeze({
     schemaVersion: 'stephanos.core-daemon-status.v1',
     available: true,
-    ok: parsed.ok === true,
-    processCount: integer(parsed.processCount, 100),
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true && typeof parsed.processCount === 'number'
+      ? integer(parsed.processCount, 100) : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: state(parsed.processObservationBlocker, 120),
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: state(parsed.readiness, 40) || 'UNKNOWN',
     wakeState: state(parsed.wakeState, 40) || 'UNKNOWN',
@@ -528,6 +531,8 @@ export function buildSovereignVisibilitySnapshot({
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
   const coreLight = core?.available === true
+    && core?.processInventoryComplete === true
+    && core?.processCount === 1
     && core?.ok === true
     && core?.daemonHealthy === true
     && core?.readiness === 'READY'

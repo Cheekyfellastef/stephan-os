@@ -38,15 +38,12 @@ $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
 $relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
+. (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')
+$script:coreProcessObservation = $null
 
 function Get-StephanosCoreDaemonProcesses {
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -eq 'node.exe' -and
-                [string]$_.CommandLine -match $coreDaemonScriptPattern
-            }
-    )
+    $script:coreProcessObservation = Get-StephanosCoreProcessObservation -CoreScript $coreDaemonScript
+    return @($script:coreProcessObservation.processes)
 }
 
 function Get-StephanosCoreDaemonHealth {
@@ -94,7 +91,8 @@ function Get-StephanosCoreDaemonHealth {
         }
         $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
         $writerCustodyProven = $false
-        if ($coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+        if ($script:coreProcessObservation.complete -and
+            $coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
             $lockOwnerPid -eq $writerPid -and $null -ne $lock -and
             [string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
             [string]$lock.sourceHead -cmatch '^[0-9a-f]{40}$' -and
@@ -451,7 +449,8 @@ $coreDaemonStartRequested = $false
 $coreDaemonRestartRequested = $false
 $coreDaemonStartedPid = 0
 $coreDaemonStoppedPidCount = 0
-$coreDaemonProcessCount = 0
+$coreDaemonProcessCount = $null
+$coreDaemonProcessInventoryComplete = $false
 $coreDaemonOk = $false
 $coreDaemonBlocker = ''
 $coreDaemonHeartbeatAgeSeconds = $null
@@ -624,15 +623,19 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 # never recycle the caller while it is establishing its first fresh heartbeat.
 if ($SkipCoreDaemonLifecycle) {
     $coreObserved = @(Get-StephanosCoreDaemonProcesses)
+    $coreObservedComplete = [bool]$script:coreProcessObservation.complete
     $coreObservedHealth = Get-StephanosCoreDaemonHealth
-    $coreDaemonProcessCount = $coreObserved.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreObservedComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreObserved.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreObservedHealth.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreObservedHealth.busyGraceActive
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    if ($coreObserved.Count -gt 1) {
+    if (-not $coreDaemonProcessInventoryComplete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreObserved.Count -gt 1) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
     }
     $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy -and -not $coreDaemonBlocker)
@@ -642,10 +645,13 @@ if ($SkipCoreDaemonLifecycle) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
 } else {
     $coreBefore = @(Get-StephanosCoreDaemonProcesses)
+    $coreBeforeComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthBefore = Get-StephanosCoreDaemonHealth
     # Multiple matching processes require independent lock/heartbeat custody
     # proof. Never force-terminate all matches and create another writer.
-    if ($coreBefore.Count -gt 1) {
+    if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreBefore.Count -gt 1) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
     } elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
         # The sole matching process can be the original lock owner. A stale
@@ -675,12 +681,14 @@ if ($SkipCoreDaemonLifecycle) {
         }
     }
     $coreAfter = @(Get-StephanosCoreDaemonProcesses)
+    $coreAfterComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthAfter = if ($coreDaemonStartRequested -or $coreDaemonRestartRequested) {
         Wait-StephanosCoreDaemonHealth
     } else {
         Get-StephanosCoreDaemonHealth
     }
-    $coreDaemonProcessCount = $coreAfter.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreAfterComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreAfter.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreHealthAfter.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreHealthAfter.busyGraceActive
@@ -830,7 +838,8 @@ $overallBlocker = if (-not $ok) {
     coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
     coreDaemonStartedPid = [int]$coreDaemonStartedPid
     coreDaemonStoppedPidCount = [int]$coreDaemonStoppedPidCount
-    coreDaemonProcessCount = [int]$coreDaemonProcessCount
+    coreDaemonProcessCount = $coreDaemonProcessCount
+    coreDaemonProcessInventoryComplete = [bool]$coreDaemonProcessInventoryComplete
     coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
     coreDaemonHeartbeatFresh = [bool]$coreDaemonHeartbeatFresh
     coreDaemonBusyGraceActive = [bool]$coreDaemonBusyGraceActive
