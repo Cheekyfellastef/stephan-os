@@ -3,8 +3,13 @@ import test from 'node:test';
 
 import {
   runFixedGoalBuilderRepairStep,
-  runSovereignCommanderGoalBuilderRepair,
+  runSovereignCommanderGoalBuilderRepair as runActualGoalBuilderRepair,
 } from './sovereign-commander-goal-builder-repair.mjs';
+
+// Source-only fixtures provide measured fresh worker evidence by default.
+const runSovereignCommanderGoalBuilderRepair = options => runActualGoalBuilderRepair({
+  readWorkerHeartbeatAgeMs: () => 0, ...options,
+});
 
 function laneStatus({
   finalVerdict = 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
@@ -93,6 +98,29 @@ test('fixed repair step preserves blocker from marker-prefixed child output', ()
   assert.equal(result.errorCode, 'CHILD_COMPONENT_BLOCKED');
 });
 
+test('shared goal-builder boundary refuses unknown/stale worker custody for every caller', () => {
+  for (const age of [null, undefined, NaN, -1, '0', 300001, 900000]) {
+    const calls = [];
+    const result = runActualGoalBuilderRepair({
+      readWorkerHeartbeatAgeMs: () => age,
+      runStep(step) {
+        calls.push(step.id);
+        if (step.id === 'fleet-goal-supervisor') return { ok: false, status: 2 };
+        if (step.id === 'controller-lane-status') return laneStatus({ refillHealth: 'RED' });
+        assert.fail('missing worker custody cannot reach mutating recovery');
+      },
+    });
+    assert.equal(result.ok, false); assert.equal(result.repairApplied, false);
+    assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+    assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+  }
+  const held = runActualGoalBuilderRepair({
+    readWorkerHeartbeatAgeMs() { throw Error('unreadable heartbeat'); },
+    runStep: () => ({ ok: false, status: 2 }),
+  });
+  assert.equal(held.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
 test('goal builder repair is a no-op only when supervisor and real lane health are green', () => {
   const calls = [];
   const result = runSovereignCommanderGoalBuilderRepair({
@@ -125,7 +153,7 @@ test('dispatch without physical pickup cannot short-circuit repair as green', ()
   assert.equal(result.ok, false);
   assert.equal(result.repairApplied, true);
   assert.equal(result.blocker, 'GOAL_DISPATCH_PICKUP_UNPROVEN');
-  assert.ok(calls.includes('start-mission-orchestrator-worker'));
+  assert.equal(calls.includes('start-mission-orchestrator-worker'), false);
   assert.ok(calls.includes('goal-discovery-heartbeat'));
 });
 
@@ -232,12 +260,12 @@ test('unknown authority HOLD remains fail closed and cannot take original-owner 
   assert.equal(result.repairApplied, true);
   assert.deepEqual(calls, [
     'fleet-goal-supervisor', 'controller-lane-status',
-    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'goal-discovery-heartbeat',
     'fleet-goal-supervisor', 'controller-lane-status',
   ]);
 });
 
-test('goal builder repair heals only worker and heartbeat before re-dispatching', () => {
+test('goal builder repair refills without starting the Mission Worker', () => {
   const calls = [];
   let supervisorCalls = 0;
   let laneCalls = 0;
@@ -266,7 +294,6 @@ test('goal builder repair heals only worker and heartbeat before re-dispatching'
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
     'controller-lane-status',
@@ -296,7 +323,6 @@ test('goal builder repair never re-enters control-plane repair while running thr
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
     'controller-lane-status',
@@ -316,16 +342,16 @@ test('goal builder repair stops at the first failed bounded recovery step and pr
           refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
         });
       }
-      if (step.id === 'start-mission-orchestrator-worker') return { ok: false, status: 1, errorCode: 'WORKER_START_FAILED' };
+      if (step.id === 'goal-discovery-heartbeat') return { ok: false, status: 1, errorCode: 'GOAL_HEARTBEAT_FAILED' };
       return { ok: true, status: 0 };
     },
   });
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'WORKER_START_FAILED');
+  assert.equal(result.blocker, 'GOAL_HEARTBEAT_FAILED');
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'start-mission-orchestrator-worker',
+    'goal-discovery-heartbeat',
   ]);
 });
 
@@ -351,7 +377,6 @@ test('goal builder repair never false-greens while safe work still waits in free
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
     'controller-lane-status',
@@ -380,7 +405,6 @@ test('goal builder repair never false-greens pending autonomous uplift with no d
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
     'controller-lane-status',
@@ -408,7 +432,7 @@ test('pending native skill cannot be greened by unrelated dispatch or held goals
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
   assert.deepEqual(calls, [
     'fleet-goal-supervisor', 'controller-lane-status',
-    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'goal-discovery-heartbeat',
     'fleet-goal-supervisor', 'controller-lane-status',
   ]);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
@@ -455,7 +479,7 @@ test('legacy parity dispatch with no proven pickup cannot suppress repair', () =
   assert.equal(result.blocker, 'GOAL_DISPATCH_PICKUP_UNPROVEN');
   assert.deepEqual(calls, [
     'fleet-goal-supervisor', 'controller-lane-status',
-    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'goal-discovery-heartbeat',
     'fleet-goal-supervisor', 'controller-lane-status',
   ]);
 });
@@ -499,7 +523,7 @@ test('selected logical work without material pickup never lets stale controllers
   assert.equal(result.blocker, 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN');
   assert.deepEqual(calls, [
     'fleet-goal-supervisor', 'controller-lane-status',
-    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'goal-discovery-heartbeat',
     'fleet-goal-supervisor', 'controller-lane-status',
   ]);
   assert.equal(result.duplicateSchedulerAllowed, false);
@@ -526,7 +550,7 @@ test('green lane headline cannot conceal selected goals without physical worker 
   assert.equal(repaired.ok, false);
   assert.equal(repaired.repairApplied, true);
   assert.equal(repaired.blocker, 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN');
-  assert.ok(calls.includes('start-mission-orchestrator-worker'));
+  assert.equal(calls.includes('start-mission-orchestrator-worker'), false);
 });
 
 test('unrelated occupied material lane cannot prove pickup for selected logical goals', () => {
@@ -548,7 +572,7 @@ test('unrelated occupied material lane cannot prove pickup for selected logical 
   assert.equal(result.ok, false);
   assert.equal(result.repairApplied, true);
   assert.equal(result.blocker, 'LOGICAL_GOAL_MATERIAL_PICKUP_UNPROVEN');
-  assert.ok(calls.includes('start-mission-orchestrator-worker'));
+  assert.equal(calls.includes('start-mission-orchestrator-worker'), false);
 });
 
 test('every selected goal with worker-bound material pickup may pass without repair', () => {

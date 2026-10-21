@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { defaultOpenClawWorkspaceRoot } from '../shared/agents/runtimeBoundaryRegistry.mjs';
 
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
@@ -16,7 +18,6 @@ const SAFE_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
-const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
 const STEPS = Object.freeze({
   supervisor: Object.freeze({
@@ -31,15 +32,6 @@ const STEPS = Object.freeze({
     // The repair's observation is read-only. The periodic status publisher
     // owns Shared Workspace writes; do not wait on them inside the mailbox.
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-controller-lane-status.mjs'), '--snapshot-only']),
-    timeoutMs: 20_000,
-  }),
-  startMissionWorker: Object.freeze({
-    id: 'start-mission-orchestrator-worker',
-    executable: powershell,
-    args: Object.freeze([
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-      resolve(repoRoot, 'scripts', 'windows', 'start-mission-orchestrator-worker-task.ps1'),
-    ]),
     timeoutMs: 20_000,
   }),
   goalHeartbeat: Object.freeze({
@@ -231,12 +223,12 @@ function compactStep(step, result) {
 }
 
 export function runFixedGoalBuilderRepairStep(step) {
-  // The worker-start and goal-heartbeat steps may launch descendants on Windows.
+  // The goal-heartbeat step may launch descendants on Windows.
   // If those descendants inherit the synchronous caller's stdout/stderr pipes,
   // Node can remain blocked waiting for pipe EOF even after the bounded direct
   // child has timed out. Keep proof-producing observation steps captured, but
-  // make the two mutating repair steps pipe-free so timeout always terminalizes.
-  const pipeFreeChild = step === STEPS.startMissionWorker || step === STEPS.goalHeartbeat;
+  // make that mutating repair step pipe-free so timeout always terminalizes.
+  const pipeFreeChild = step === STEPS.goalHeartbeat;
   const captureOutput = !pipeFreeChild;
   const result = spawnSync(step.executable, [...step.args], {
     ...(captureOutput ? { encoding: 'utf8' } : {}),
@@ -262,6 +254,10 @@ export function runFixedGoalBuilderRepairStep(step) {
 
 export function runSovereignCommanderGoalBuilderRepair({
   runStep = runFixedGoalBuilderRepairStep,
+  readWorkerHeartbeatAgeMs = () => {
+    try { return Date.now() - statSync(resolve(defaultOpenClawWorkspaceRoot(), 'status',
+      'mission-orchestrator-worker-heartbeat.json')).mtimeMs; } catch { return null; }
+  },
 } = {}) {
   const steps = [];
   const initialSupervisor = runStep(STEPS.supervisor);
@@ -312,7 +308,18 @@ export function runSovereignCommanderGoalBuilderRepair({
   // repair or reinstall that same control plane while holding the mailbox lease.
   // Independent lifeboat/recovery routes own control-plane recovery. This repair
   // is intentionally scoped to the builder fabric it can safely heal in-band.
-  for (const step of [STEPS.startMissionWorker, STEPS.goalHeartbeat]) {
+  // ALL callers (Core, guardian, mailbox and direct maintenance) meet at this
+  // shared boundary. Heartbeat loss is never permission to start another
+  // worker; only its qualified lifecycle owner can recover missing custody.
+  let workerAge = null;
+  try { workerAge = readWorkerHeartbeatAgeMs(); } catch {}
+  if (typeof workerAge !== 'number' || !Number.isFinite(workerAge) || workerAge < 0 || workerAge > 300_000) {
+    return Object.freeze({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+      repairApplied: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN', steps: Object.freeze(steps),
+      canonicalGoalFabricOnly: true, duplicateSchedulerAllowed: false, mergeAuthority: false,
+      arbitraryShellAllowed: false, finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED' });
+  }
+  for (const step of [STEPS.goalHeartbeat]) {
     const result = runStep(step);
     steps.push(compactStep(step, result));
     if (result?.ok !== true) {

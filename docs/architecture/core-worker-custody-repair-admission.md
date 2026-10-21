@@ -67,3 +67,18 @@ external crash/reboot or an independent OS custody certificate. Those remain
 unqualified; activation must preserve that hold and the affected Windows estate
 requires fresh specialist qualification. Do not clear timeout custody from
 heartbeat age, child kill/close, a current source head or this regression.
+
+## Shared lifecycle boundary replaces caller-only fencing
+
+Another full review exposed the guardian -> repair-stephanos -> goal-builder
+route bypassing Core entry checks. The structural correction is at the common
+goal-builder boundary: it now measures worker heartbeat freshness before its
+mutating refill, and the worker task-start step is removed entirely. No Core,
+guardian, mailbox or direct goal-builder caller can use heartbeat loss to start
+a replacement Mission Worker. Fresh evidence admits the existing refill only;
+worker lifecycle recovery belongs to its independently qualified native owner.
+Caller observations remain diagnostic defenses, not the lifecycle authority.
+
+Behavioral tests exercise the actual shared function with fresh, missing,
+malformed, unreadable and stale evidence; existing repair tests verify that
+refill can continue with a fresh worker and never starts a Mission Worker.
