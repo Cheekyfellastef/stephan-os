@@ -52,7 +52,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null, configReceipt = null, configIsError = false } = {}) {
+function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null, configReceipt = null, configIsError = false, archiveDedicatedAdvertised = true } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -73,7 +73,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
       return response({
         jsonrpc: '2.0',
         id: 2,
-        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, { name: 'starfield_vr_telemetry_archive' }, { name: 'search_project' }] },
+        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, ...(archiveDedicatedAdvertised ? [{ name: 'starfield_vr_telemetry_archive' }] : []), { name: 'search_project' }] },
       }, { sessionId: 'session-1' });
     }
     if (message.method === 'tools/call' && message.params?.name === 'get_config') {
@@ -3758,6 +3758,52 @@ test('VR archive remote accepts wrapped Windows execution envelope and returns o
         && message.params?.arguments?.offset === 0 && message.params?.arguments?.limit === 4;
     } catch { return false; }
   }), true);
+});
+
+test('VR archive detects stale served MCP capability and requests governed runtime refresh', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const { fetchFn, calls } = mcpFetch({ archiveDedicatedAdvertised: false });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 1 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_SERVED_TOOL_MISSING');
+  assert.equal(result.runtimeRefreshRequired, true);
+  assert.equal(result.dedicatedToolAdvertised, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  const archiveCalls = calls.map(({ options }) => {
+    try { return JSON.parse(options?.body || '{}'); } catch { return {}; }
+  }).filter((message) => message.method === 'tools/call'
+    && (message.params?.name === 'starfield_vr_telemetry_archive'
+      || message.params?.arguments?.actionId === processId));
+  assert.equal(archiveCalls.length, 0, 'must not fake an unreachable legacy fallback');
+});
+
+test('VR archive failure exports only a typed local Commander blocker, not private payload', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const { fetchFn } = mcpFetch({
+    maintenance: {
+      ok: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      blocker: 'SOVEREIGN_ARCHIVE_READER_FAILED',
+      command: { plan: { processId } },
+      structuredContent: { status: 1, stdout: 'PRIVATE_RAW_SESSION_CONTENT',
+        stderr: 'C:\\Users\\Private\\secrets.txt', errorCode: 'ENOENT' },
+    },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 1 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.blocker, /STARFIELD_VR_ARCHIVE_EXECUTION_ENVELOPE_INVALID/);
+  assert.equal(result.mcpToolReturnedError, true);
+  assert.equal(result.commanderBlocker, 'SOVEREIGN_ARCHIVE_READER_FAILED');
+  assert.equal(result.executionStatus, 1);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_RAW_SESSION_CONTENT|secrets\\.txt/);
 });
 
 test('VR archive failure distinguishes a missing marker with no private output', async () => {
