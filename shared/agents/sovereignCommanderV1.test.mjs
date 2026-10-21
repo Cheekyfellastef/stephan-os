@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -514,7 +514,9 @@ test('registered Rescue Island source-only probe exercises a real physical path 
   const { inspectRescueIslandLocalBoundaryV1 } = await import(
     '../../scripts/rescue-island-boundary-probe.mjs'
   );
-  const parent = await mkdtemp(join(tmpdir(), 'island-boundary-live-test-'));
+  // Windows TEMP may use an 8.3 alias. The positive fixture needs the physical
+  // spelling; production must continue to refuse a redirected repository root.
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'island-boundary-live-test-')));
   try {
     const root = join(parent, 'canonical');
     await mkdir(join(root, '.git'), { recursive: true });
