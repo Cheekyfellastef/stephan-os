@@ -20,6 +20,17 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[a-f0-9]{40}$/;
 const OLLAMA_URL = 'http://127.0.0.1:11434/api/generate';
 const text = x => String(x ?? '').trim();
+// Git status alone can hide altered executable bytes with skip-worktree or
+// assume-unchanged flags. Pin the candidate producer and critical policies
+// to the exact HEAD before and after any private model inference.
+export const HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+]);
+
 
 export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   platform = process.platform, spawn = spawnSync,
@@ -53,6 +64,16 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
     throw Error('BASE_COMMIT_NOT_PROVEN');
   }
   git(['merge-base','--is-ancestor',base,head]);
+  for (const path of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    if (git(['ls-files', '-v', '--', path]).trim() !== 'H ' + path) {
+      throw Error('HIGH_RISK_REVIEWER_INDEX_FLAGS_UNSAFE');
+    }
+    const expected = git(['rev-parse', 'HEAD:' + path]).trim().toLowerCase();
+    const actual = git(['hash-object', '--no-filters', '--', path]).trim().toLowerCase();
+    if (!SHA.test(expected) || actual !== expected) {
+      throw Error('HIGH_RISK_REVIEWER_EXECUTABLE_BYTES_NOT_HEAD');
+    }
+  }
   const changedFiles = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
     '--name-only',base,head,'--']).split('\n').filter(Boolean);
   const diff = git(['diff','--no-ext-diff','--no-textconv','--no-renames',
