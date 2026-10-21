@@ -3,6 +3,12 @@ using System.IO;
 using System.Security.Cryptography;
 using Stephanos.OriginalR7CustodyWitness;
 
+try
+{
+Stephanos.OriginalR7CustodyWitness.Tests.NativeTestProcessErrorMode.Apply();
+if (args.Length == 1 && args[0] == "--probe-harness-failure")
+    throw new InvalidOperationException("R7_EXPECTED_NONINTERACTIVE_HARNESS_PROBE");
+
 // Hosted CI executes native Windows SCM readback on a machine without
 // commissioning authority. All even-positive shape cases retain NO lease
 // or source mutation, historical receipt, signer or containment authority.
@@ -352,3 +358,14 @@ Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");
 Console.WriteLine("R7_SCM_LEASE_RELEASED=false");
 return 0;
+}
+catch (Exception error)
+{
+    // Deliberate and unexpected fixture failures remain failures. Catch at the
+    // process boundary so they cannot escape into an interactive WER dialog.
+    string detail = error.Message.StartsWith("R7_", StringComparison.Ordinal)
+        || error.Message.StartsWith("FIXTURE_", StringComparison.Ordinal)
+        ? error.Message[..Math.Min(error.Message.Length, 240)] : "UNEXPECTED_FIXTURE_FAILURE";
+    Console.Error.WriteLine("R7_SCM_NATIVE_TEST_FAILED=" + error.GetType().Name + ":" + detail);
+    return 1;
+}

@@ -64,6 +64,20 @@ jobs:
         run: |
           dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove fixture failures stay noninteractive and return a failing exit
+        shell: pwsh
+        run: |
+          $testExe = Join-Path $PWD 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/bin/Release/net8.0-windows/Stephanos.OriginalR7CustodyWitness.Tests.exe'
+          $stderr = Join-Path $env:RUNNER_TEMP 'r7-caught-fixture-failure.stderr.txt'
+          $stdout = Join-Path $env:RUNNER_TEMP 'r7-caught-fixture-failure.stdout.txt'
+          $child = Start-Process -FilePath $testExe -ArgumentList '--probe-harness-failure' -WindowStyle Hidden -Wait -PassThru -RedirectStandardError $stderr -RedirectStandardOutput $stdout
+          if ($child.ExitCode -ne 1) { throw 'R7_CAUGHT_FIXTURE_FAILURE_EXIT_NOT_PRESERVED' }
+          $failure = (Get-Content -LiteralPath $stderr -Raw).Trim()
+          if ($failure -cne 'R7_SCM_NATIVE_TEST_FAILED=InvalidOperationException:R7_EXPECTED_NONINTERACTIVE_HARNESS_PROBE') {
+            throw 'R7_CAUGHT_FIXTURE_FAILURE_NOT_OBSERVED'
+          }
+          # The test process sets only its own error mode. No machine-wide WER
+          # setting, production witness failure or service policy is changed.
       - name: Verify pinned software signatures with public test keys and canonical verifier
         shell: pwsh
         run: |
