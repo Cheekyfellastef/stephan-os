@@ -61,15 +61,31 @@ test('signal validation accepts GitHub second-resolution UTC and fails closed on
 
 test('GitHub workflow only signals merged PRs into main with a bounded publisher', () => {
   const workflow = readFileSync('.github/workflows/battle-bridge-main-advance-express-sync-v1.yml', 'utf8');
-  assert.match(workflow, /pull_request:\s*\n\s*types: \[closed\]/);
+  assert.match(workflow, /pull_request_target:\s*\n\s*types: \[closed\]/);
   assert.match(workflow, /github\.event\.pull_request\.merged == true/);
   assert.match(workflow, /github\.event\.pull_request\.base\.ref == 'main'/);
   assert.match(workflow, /issues: write/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /STEPHANOS_MAIN_ADVANCE_HEAD: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}/);
   assert.match(workflow, /node scripts\/publish-battle-bridge-main-advance-signal\.mjs/);
-  assert.doesNotMatch(workflow, /pull_request_target:/);
+  assert.doesNotMatch(workflow, /^\s*pull_request:/m);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(workflow, /ref:.*github\.event\.pull_request\.(?:head|merge_commit_sha)/);
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
+});
+
+test('main signal uses protected default-branch code and bounded post-merge data only', () => {
+  const workflow = readFileSync('.github/workflows/battle-bridge-main-advance-express-sync-v1.yml', 'utf8');
+  assert.match(workflow, /^permissions: \{\}$/m);
+  assert.match(workflow, /if: \$\{\{ github\.event\.pull_request\.merged == true && github\.event\.pull_request\.base\.ref == 'main' \}\}/);
+  assert.equal((workflow.match(/uses: actions\/checkout@v4/g) || []).length, 1);
+  assert.equal((workflow.match(/ref: \$\{\{ github\.sha \}\}/g) || []).length, 1);
+  assert.match(workflow, /contents: read/);
+  assert.doesNotMatch(workflow, /contents: write|pull-requests: write|id-token: write|secrets\./);
+  assert.match(workflow, /STEPHANOS_MAIN_ADVANCE_PR: \$\{\{ github\.event\.pull_request\.number \}\}/);
+  assert.match(workflow, /STEPHANOS_MAIN_ADVANCE_MERGED_AT: \$\{\{ github\.event\.pull_request\.merged_at \}\}/);
+  assert.doesNotMatch(workflow, /run:.*\$\{\{.*pull_request/);
+  assert.match(workflow, /timeout-minutes: 5/);
 });
 
 test('existing bounded GitHub Sync becomes a one-minute near-real-time fallback without new Git authority', () => {

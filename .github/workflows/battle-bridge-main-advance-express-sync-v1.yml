@@ -2,7 +2,9 @@ name: Battle Bridge Main Advance Express Sync V1
 run-name: Signal Battle Bridge main advance for PR ${{ github.event.pull_request.number }}
 
 on:
-  pull_request:
+  # The operational signal belongs to trusted main, not the candidate's CI.
+  # An unmerged close must not attach a skipped merge-only check to its head.
+  pull_request_target:
     types: [closed]
 
 permissions: {}
@@ -21,10 +23,12 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Check out exact merged main head
+      - name: Check out exact trusted main event head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          # pull_request_target binds github.sha to the protected default branch.
+          # The merged commit below is signal data, never executable PR input.
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@v4
