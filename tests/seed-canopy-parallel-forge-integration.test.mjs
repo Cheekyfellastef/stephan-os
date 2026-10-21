@@ -353,9 +353,16 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     git('config', '--local', 'filter.seedstatustrap.clean', filterCommand);
     await writeFile(attributes, TARGET + ' filter=seedstatustrap\n');
     try {
-      // A size change forces worktree comparison through the filter.
-      await writeFile(join(completed.worktree, TARGET),
-        Buffer.concat([targetBeforeTrap, Buffer.from('\nfixture delta\n')]));
+      // Git can classify a changed size without cleaning the file. Keep the
+      // size identical so its content comparison actually needs the filter.
+      const changedBytes = Buffer.from(targetBeforeTrap);
+      assert.ok(changedBytes.length > 0);
+      changedBytes[0] = changedBytes[0] === 35 ? 33 : 35;
+      await writeFile(join(completed.worktree, TARGET), changedBytes);
+      const attr = command('git', ['check-attr', 'filter', '--', TARGET],
+        { cwd: completed.worktree });
+      assert.equal(attr.status, 0, attr.stderr);
+      assert.match(attr.stdout, /filter: seedstatustrap/);
       const vulnerableControl = command('git',
         ['status', '--porcelain', '--untracked-files=all'], { cwd: completed.worktree });
       assert.equal(vulnerableControl.status, 0, vulnerableControl.stderr);
