@@ -70,11 +70,11 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   });
 }
 
-export async function localHighRiskModelV1(prompt, _chunk, env = process.env) {
+export async function localHighRiskModelV1(prompt, _chunk, env = process.env, { fetchImpl = fetch } = {}) {
   const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
   if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model)) throw Error('UNSAFE_LOCAL_MODEL_NAME');
-  const response = await fetch(OLLAMA_URL, {
-    method:'POST',
+  const response = await fetchImpl(OLLAMA_URL, {
+    method:'POST', redirect:'error',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       model, prompt, stream:false, format:'json',
@@ -86,8 +86,22 @@ export async function localHighRiskModelV1(prompt, _chunk, env = process.env) {
   const raw = await response.text();
   if (Buffer.byteLength(raw, 'utf8') > 64 * 1024) throw Error('LOCAL_MODEL_OUTPUT_TOO_LARGE');
   const parsed = JSON.parse(raw);
-  if (typeof parsed?.response !== 'string') throw Error('LOCAL_MODEL_RESULT_INVALID');
+  if (parsed?.model !== model || parsed?.done !== true
+    || parsed?.done_reason !== 'stop' || typeof parsed?.response !== 'string') {
+    throw Error('LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN');
+  }
   return parsed.response;
+}
+
+// Re-read the fixed Git evidence AFTER model inference: a stale review must
+// never be published as a candidate for a changed source, diff or principal.
+function sameReviewSource(before, after) {
+  const fields = ['repository', 'issueNumber', 'prNumber', 'branch',
+    'sourceHead', 'baseSha', 'diff', 'reviewerSessionId',
+    'implementerSessionId', 'implementerProvider', 'modelClass'];
+  return Boolean(before && after && fields.every(key => before[key] === after[key])
+    && Array.isArray(before.changedFiles) && Array.isArray(after.changedFiles)
+    && JSON.stringify(before.changedFiles) === JSON.stringify(after.changedFiles));
 }
 
 export async function runSovereignHighRiskAdvisoryV1({
@@ -102,10 +116,18 @@ export async function runSovereignHighRiskAdvisoryV1({
   try {
     identity = snapshot(env, {root});
     result = await evaluateSovereignHighRiskCandidateV1(identity, {invokeModel});
-  } catch {
+    let after;
+    try { after = snapshot(env, {root}); }
+    catch { throw Error('REVIEW_SOURCE_CHANGED_DURING_INFERENCE'); }
+    if (!sameReviewSource(identity, after)) {
+      throw Error('REVIEW_SOURCE_CHANGED_DURING_INFERENCE');
+    }
+  } catch (error) {
     result = {
       status: 'SOVEREIGN_HIGH_RISK_REVIEW_HELD',
-      reason: 'LOCAL_EXACT_SOURCE_OR_MODEL_UNVERIFIED',
+      reason: error?.message === 'REVIEW_SOURCE_CHANGED_DURING_INFERENCE'
+        ? 'REVIEW_SOURCE_CHANGED_DURING_INFERENCE'
+        : 'LOCAL_EXACT_SOURCE_OR_MODEL_UNVERIFIED',
       approvalAuthority: false, mergeAuthority: false,
       specialistAuthority: false, independentAttestationProven: false,
     };
