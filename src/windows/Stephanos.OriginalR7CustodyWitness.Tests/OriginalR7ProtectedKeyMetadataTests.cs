@@ -183,4 +183,3 @@ internal static class OriginalR7ProtectedKeyMetadataTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkW(string name, string existing, IntPtr attributes);
 }
-

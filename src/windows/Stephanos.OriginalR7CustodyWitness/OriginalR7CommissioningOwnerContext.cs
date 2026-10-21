@@ -58,4 +58,3 @@ internal static class OriginalR7CommissioningOwnerContext
     private static extern bool GetTokenInformation(SafeAccessTokenHandle token,
         int informationClass, out int information, uint length, out uint returned);
 }
-

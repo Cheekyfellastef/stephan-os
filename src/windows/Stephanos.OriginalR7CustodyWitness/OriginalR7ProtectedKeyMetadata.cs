@@ -186,4 +186,3 @@ internal sealed class OriginalR7ProtectedKeyMetadata : IDisposable
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int type,
         out NativeFileId information, uint size);
 }
-
