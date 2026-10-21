@@ -2713,7 +2713,7 @@ export default function App() {
       </footer>
 
       <DebugConsole />
-      <MeaningStrip finalRouteTruth={runtimeStatusModel?.finalRouteTruth} />
+      <MeaningStrip finalRouteTruth={routeTruthView} memoryMode={runtimeStatusModel?.finalRouteTruth?.memoryMode} lastExecutionMetadata={lastExecutionMetadata} />
     </main>
   );
 }
