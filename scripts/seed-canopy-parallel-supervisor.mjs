@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Local-only independent Seed Canopy supervisor. No main scheduler, Mission Worker or daemon dependency.
-import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, writeFile, open, rename, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
@@ -54,7 +54,6 @@ async function files(kind, extension) {
 }
 async function inboxCandidates() {
   const candidates = [];
-  let approvalVerifications = 0;
   for (const name of await files('inbox', '.json')) {
     if (!safeFilename(name)) continue;
     const taskId = name.slice(0, -5);
@@ -70,25 +69,62 @@ async function inboxCandidates() {
       const existingClaim = Boolean(await maybeJson(pathFor('receipts', taskId, '.claim')));
       const existingReceipt = Boolean(await maybeJson(pathFor('receipts', taskId)));
       const reference = await maybeJson(pathFor('approvals', taskId));
-      // Limit GitHub traffic: only a small batch of eligible, unclaimed task references
-      // is authenticated per supervisor cycle. Never continuously poll for approval.
-      const shouldVerify = !existingClaim && !existingReceipt
-        && validateSeedParallelApprovalReferenceV1(reference)
-        && approvalVerifications < 4;
-      if (shouldVerify) approvalVerifications += 1;
-      const verification = shouldVerify
-        ? await verifySeedParallelOwnerGitHubApprovalV1({ request, manifestSha256, reference })
-        : null;
       candidates.push({
-        request, path, manifestSha256,
-        approval: verification?.ok ? verification.approval : null,
+        request, path, manifestSha256, reference, approval: null,
         existingClaim, existingReceipt,
       });
     } catch {
       // Keep other approved tasks progressing; malformed entry has no execution authority.
     }
   }
-  return candidates;
+  // Cursor is untrusted availability state, never approval or execution proof.
+  // Collect first, then rotate only eligible references. Rejected references
+  // cannot monopolize every bounded sequential foreground invocation.
+  const cursorPath = join(stateRoot, 'approval-verification-cursor.json');
+  let after = '';
+  try {
+    const cursor = await maybeJson(cursorPath);
+    if (cursor?.schemaVersion === 'stephanos.seed-approval-cursor.v1'
+        && safeFilename(cursor.afterFilename)) after = cursor.afterFilename;
+  } catch {
+    // Corruption resets scheduling only. Every approval is still fetched fresh.
+  }
+  const eligible = candidates.filter((candidate) =>
+    !candidate.existingClaim && !candidate.existingReceipt
+    && validateSeedParallelApprovalReferenceV1(candidate.reference));
+  const index = eligible.findIndex((candidate) => candidate.request.taskId + '.json' > after);
+  const offset = index < 0 ? 0 : index;
+  const ordered = [...eligible.slice(offset), ...eligible.slice(0, offset)].slice(0, 4);
+  for (const candidate of ordered) {
+    // Persist progress BEFORE lookup, including failure/timeout. Atomic rename
+    // replaces the cursor entry instead of following an existing cursor link.
+    // Concurrent invocations may overlap; this is not a claim or scheduler lock.
+    await mkdir(stateRoot, { recursive: true });
+    const temporary = join(stateRoot, '.approval-cursor-' + randomUUID() + '.tmp');
+    let handle;
+    try {
+      handle = await open(temporary, 'wx', 0o600);
+      await handle.writeFile(JSON.stringify({
+        schemaVersion: 'stephanos.seed-approval-cursor.v1',
+        afterFilename: candidate.request.taskId + '.json',
+      }) + '\n');
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await rename(temporary, cursorPath);
+    } catch (error) {
+      if (handle) await handle.close().catch(() => {});
+      await unlink(temporary).catch(() => {});
+      throw error; // No network request without saved scheduling progress.
+    }
+    try {
+      const verification = await verifySeedParallelOwnerGitHubApprovalV1(candidate);
+      if (verification.ok) candidate.approval = verification.approval;
+    } catch {
+      // Cursor already advanced; this reference has no approval authority.
+    }
+  }
+  return candidates.map(({ reference, ...candidate }) => candidate);
 }
 
 async function status() {

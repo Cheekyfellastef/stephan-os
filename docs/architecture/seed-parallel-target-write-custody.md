@@ -46,3 +46,12 @@ then verifies supervisor status does not execute it and remains unproven.
 This removes the reachable executable-read path rather than adding a racy
 config check before Git status. Physical candidate proof requires a separately
 qualified reader bound to the complete operation.
+
+
+## Bounded approval verification fairness
+
+The supervisor collects valid unclaimed inbox entries before choosing up to four GitHub approval references. It rotates from a persisted filename cursor rather than restarting at the alphabetically first entry. Before each network lookup it writes and flushes a uniquely created temporary cursor file and atomically renames it over the fixed cursor entry. Unavailable, expired, wrong-task and thrown verification results therefore advance scheduling progress too. Failure to persist progress stops the invocation before that lookup.
+
+The cursor is untrusted availability state, contains no approval, and cannot authorize execution. A corrupt or absent cursor resets ordering; an absent prior filename resumes at its sorted successor, wrapping when necessary. A finite unchanged queue receives bounded round-robin coverage across sequential foreground invocations. Concurrent invocations may overlap and are not serialized by this cursor. No claim, source ownership, daemon or scheduler lock is introduced. Every selected reference still receives fresh independent GitHub verification, and both production execution holds remain in force.
+
+The real subprocess/HTTP regression places four schema-valid rejected references before a valid owner-approved task, verifies the first process makes exactly four lookups with no eligible task, then verifies a new process reaches the valid task without exceeding four lookups. It preserves the production no-claim/no-inference assertions. This is fixture proof, not host commissioning or live pickup.

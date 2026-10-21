@@ -41,6 +41,8 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
   let server;
   let ownerComment = null;
   let secondOwnerComment = null;
+  const extraOwnerComments = new Map();
+  let approvalFetches = 0;
   let inferenceCount = 0;
   let advanceMainOnNextInference = false;
   let redirectParentOnNextInference = null;
@@ -119,10 +121,11 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     git('update-ref', 'refs/remotes/origin/main', main);
     const portPromise = new Promise((done) => {
       server = createServer((req, res) => {
+        if (req.url.startsWith('/repos/Cheekyfellastef/stephan-os/issues/comments/')) approvalFetches += 1;
         const comment = req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654321'
           ? ownerComment
           : req.url === '/repos/Cheekyfellastef/stephan-os/issues/comments/7654322'
-            ? secondOwnerComment : null;
+            ? secondOwnerComment : extraOwnerComments.get(req.url);
         if (req.method === 'GET' && comment) {
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(JSON.stringify(comment));
@@ -241,6 +244,52 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     };
     await writeFile(join(stateRoot, 'approvals', TASK_ID + '.json'),
       JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId: 7654321 }));
+    // Schema-valid rejected references must not monopolize all four lookups
+    // across separate real supervisor processes. This uses unavailable, expired
+    // and wrong-task live HTTP responses, not malformed local-pointer shortcuts.
+    const rejectedTasks = ['aai-unavailable', 'aaj-expired', 'aak-wrong-task', 'aal-unavailable'];
+    for (let i = 0; i < rejectedTasks.length; i++) {
+      const taskId = rejectedTasks[i];
+      await writeFile(join(stateRoot, 'inbox', taskId + '.json'),
+        JSON.stringify({ ...request, taskId }));
+      const commentId = 7654330 + i;
+      await writeFile(join(stateRoot, 'approvals', taskId + '.json'),
+        JSON.stringify({ schemaVersion: SEED_PARALLEL_APPROVAL_REF_SCHEMA, commentId }));
+      if (i === 1 || i === 2) {
+        const rejectedRequest = i === 1 ? { ...request, taskId } : request;
+        const rejectedRaw = JSON.stringify(rejectedRequest);
+        const old = new Date(Date.now() - 7200000).toISOString();
+        const evidence = makeParallelSeedExactApprovalV1({
+          request: rejectedRequest, manifestSha256: parallelSeedManifestHashV1(rejectedRaw),
+          nowUtc: i === 1 ? old : issuedAtUtc,
+          expiryUtc: i === 1 ? new Date(Date.now() - 3600000).toISOString()
+            : new Date(Date.now() + 3600000).toISOString(),
+        });
+        extraOwnerComments.set('/repos/Cheekyfellastef/stephan-os/issues/comments/' + commentId,
+          { ...ownerComment, id: commentId,
+            created_at: i === 1 ? old : issuedAtUtc, updated_at: i === 1 ? old : issuedAtUtc,
+            body: '\x60\x60\x60stephanos-seed-parallel-owner-approval\n' + JSON.stringify(evidence) + '\n\x60\x60\x60' });
+      }
+    }
+    const fetchesBefore = approvalFetches;
+    const firstBatch = await runAsync(process.execPath, [supervisor, 'inbox'], { cwd: repo, env });
+    assert.equal(firstBatch.code, 0, firstBatch.stderr);
+    assert.equal(JSON.parse(firstBatch.stdout).selected, null);
+    assert.equal(approvalFetches - fetchesBefore, 4);
+    const savedCursor = JSON.parse(await readFile(join(stateRoot, 'approval-verification-cursor.json'), 'utf8'));
+    assert.equal(savedCursor.afterFilename, 'aal-unavailable.json');
+    const beforeSecond = approvalFetches;
+    const secondBatch = await runAsync(process.execPath, [supervisor, 'inbox'], { cwd: repo, env });
+    assert.equal(secondBatch.code, 0, secondBatch.stderr);
+    assert.equal(JSON.parse(secondBatch.stdout).selected, TASK_ID);
+    assert.equal(approvalFetches - beforeSecond, 4);
+    assert.equal(inferenceCount, 0);
+    await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
+    for (const taskId of rejectedTasks) {
+      await rm(join(stateRoot, 'inbox', taskId + '.json'));
+      await rm(join(stateRoot, 'approvals', taskId + '.json'));
+    }
+    extraOwnerComments.clear();
     // Production must reject even a valid owner approval before any router call
     // or new task claim. Only this ephemeral fixture uses a mocked custody gate.
     const held = await runAsync(process.execPath, [executable, 'build', manifest, '--execute'], { cwd: repo, env });
