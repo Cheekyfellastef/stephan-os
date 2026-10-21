@@ -87,7 +87,11 @@ export async function reconcileR7CommissioningInbox({
     operationStaleLockMs: 30_000, operationLockHeartbeatMs: 5000,
   });
   if (!guard?.ok) return rejected('R7_ADMISSION_RECONCILIATION_BUSY');
-  try {
+  // Keep the tentative outcome private until release confirms that the exact
+  // operation lock remained ours. A readback alone cannot prove serialization.
+  async function reconcileWhileOwned() {
+    if (typeof guard.verifyOwnership !== 'function' || await guard.verifyOwnership() !== true)
+      return rejected('R7_ADMISSION_OPERATION_LOCK_LOST');
     let persisted;
     try { persisted = JSON.parse(await readFileFn(inbox.path, 'utf8')); }
     catch { return rejected('R7_ADMISSION_PERSISTED_INBOX_UNREADABLE'); }
@@ -121,6 +125,8 @@ export async function reconcileR7CommissioningInbox({
     if (existing && JSON.stringify(existing) !== JSON.stringify(receipt))
       return rejected('R7_ADMISSION_RECEIPT_CONFLICT');
     if (!existing) {
+      if (await guard.verifyOwnership() !== true)
+        return rejected('R7_ADMISSION_OPERATION_LOCK_LOST');
       const written = await writeAtomicJsonFn(root, receiptSegments, receipt, writeOptions);
       if (written?.ok !== true) return rejected('R7_ADMISSION_RECEIPT_WRITE_FAILED');
     }
@@ -134,7 +140,15 @@ export async function reconcileR7CommissioningInbox({
     return Object.freeze({ applicable: true, ok: true, held: true,
       reason: existing ? 'R7_ADMISSION_ALREADY_RECONCILED_HELD' : 'R7_ADMISSION_RECONCILED_HELD',
       receiptId, ...noAuthority });
+  }
+  let outcome;
+  try { outcome = await reconcileWhileOwned(); }
+  catch { outcome = rejected('R7_ADMISSION_RECONCILIATION_FAILED_CLOSED'); }
+  try {
+    if (await guard.release() !== true)
+      return rejected('R7_ADMISSION_OPERATION_LOCK_RELEASE_UNPROVEN');
   } catch {
-    return rejected('R7_ADMISSION_RECONCILIATION_FAILED_CLOSED');
-  } finally { await guard.release(); }
+    return rejected('R7_ADMISSION_OPERATION_LOCK_RELEASE_UNPROVEN');
+  }
+  return outcome;
 }

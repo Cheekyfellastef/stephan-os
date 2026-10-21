@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, readdir } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { inspectR7CommissioningRequest, reconcileR7CommissioningInbox } from './r7-commissioning-inbox-reconciliation.mjs';
+import { acquireSharedWorkspaceOperationLock } from '../shared/agents/executionReceiptV1.mjs';
 
 const stamp = '2026-10-21T14:50:38.411Z';
 const nowMs = Date.parse(stamp) + 1000;
@@ -136,6 +137,72 @@ test('resumed delivery uses durable timestamp and rejects every other changed fi
     });
     assert.equal(conflict.reason, 'R7_ADMISSION_PERSISTED_INBOX_CONFLICT');
     noAuthority(conflict);
+  });
+});
+
+test('no success escapes a false, missing, truthy or throwing lock release', async () => {
+  for (const release of [async () => false, async () => undefined, async () => 'true',
+    async () => { throw new Error('disposable release fault'); }]) {
+    await fixture(async args => {
+      for (const repeat of [false, true]) {
+        if (repeat) assert.equal((await reconcileR7CommissioningInbox(args)).ok, true);
+        let releases = 0;
+        const result = await reconcileR7CommissioningInbox({ ...args,
+          acquireLockFn: async () => ({ ok: true, verifyOwnership: async () => true,
+            release: async () => { releases++; return release(); } }),
+        });
+        assert.equal(result.ok, false);
+        assert.equal(result.reason, 'R7_ADMISSION_OPERATION_LOCK_RELEASE_UNPROVEN');
+        assert.equal(releases, 1); noAuthority(result);
+      }
+    });
+  }
+});
+
+test('lost ownership before mutation prevents writes and still releases once', async () => {
+  for (const lostOn of [1, 2]) {
+    await fixture(async args => {
+      let checks = 0, writes = 0, releases = 0;
+      const result = await reconcileR7CommissioningInbox({ ...args,
+        acquireLockFn: async () => ({ ok: true,
+          verifyOwnership: async () => ++checks < lostOn,
+          release: async () => { releases++; return true; } }),
+        writeAtomicJsonFn: async () => { writes++; throw new Error('must not write'); },
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'R7_ADMISSION_OPERATION_LOCK_LOST');
+      assert.equal(writes, 0); assert.equal(releases, 1); noAuthority(result);
+    });
+  }
+});
+
+test('actual changed owner after readback cannot claim reconciliation or delete another owner lock', async () => {
+  await fixture(async args => {
+    let lockPath, ownerPath, changed = false;
+    const result = await reconcileR7CommissioningInbox({ ...args,
+      acquireLockFn: async (root, segments, options) => {
+        lockPath = path.join(root, ...segments);
+        return acquireSharedWorkspaceOperationLock(root, segments, options);
+      },
+      readFileFn: async (file, encoding) => {
+        const bytes = await readFile(file, encoding);
+        if (file.endsWith('.json') && path.basename(file).startsWith('r7-admission-')) {
+          const names = await readdir(lockPath);
+          assert.equal(names.length, 1);
+          ownerPath = path.join(lockPath, names[0]);
+          const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+          await writeFile(ownerPath, JSON.stringify({ ...owner, token: 'different-fixture-owner' }));
+          changed = true;
+        }
+        return bytes;
+      },
+    });
+    assert.equal(changed, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'R7_ADMISSION_OPERATION_LOCK_RELEASE_UNPROVEN');
+    assert.equal(JSON.parse(await readFile(ownerPath, 'utf8')).token,
+      'different-fixture-owner');
+    noAuthority(result);
   });
 });
 
