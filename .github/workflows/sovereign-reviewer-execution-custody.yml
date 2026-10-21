@@ -2,12 +2,8 @@ name: Sovereign Reviewer Execution Custody
 on:
   pull_request:
     paths:
-      - 'shared/agents/sovereignExactCommitLoaderV1*'
-      - 'shared/agents/sovereignAuthenticatedReviewDiffV1*'
-      - 'scripts/sovereign-high-risk-advisory*'
-      - 'shared/agents/sovereignCommanderV1*'
-      - 'scripts/sovereign-reviewer*'
-      - 'scripts/sovereign-windows-review-calibration-v1*'
+      - 'scripts/**'
+      - 'shared/agents/**'
       - '.github/workflows/sovereign-reviewer-execution-custody.yml'
 permissions:
   contents: read

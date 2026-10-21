@@ -2,14 +2,8 @@ name: Sovereign High-Risk Review Custody
 on:
   pull_request:
     paths:
-      - 'scripts/sovereign-high-risk-advisory*'
-      - 'scripts/sovereign-windows-review-calibration*'
-      - 'scripts/sovereign-review-coverage*'
-      - 'shared/agents/sovereignWindowsCalibration*'
-      - 'shared/agents/sovereignHighRiskReviewCandidateV1*'
-      - 'shared/agents/sovereignReviewCoverageV1*'
-      - 'shared/agents/sovereignAuthenticatedReviewDiffV1*'
-      - 'shared/agents/sovereignExactCommitLoaderV1*'
+      - 'scripts/**'
+      - 'shared/agents/**'
       - '.github/workflows/sovereign-high-risk-review-custody.yml'
 permissions:
   contents: read
