@@ -84,3 +84,36 @@ is requested while this known gap remains.
 
 API rationale: [Microsoft atomic Job-list launch guidance](https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812)
 and [Job accounting queries](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject).
+
+## Fixed publication-directory repair candidate
+
+The native implementation now includes a fixed mutating worker that creates only
+missing `status` and `proof` directories underneath the existing OS-profile
+`Documents/Stephanos-openclaw-workspace`. The production entry accepts no root,
+command, executable or script. It never starts Core Daemon, dependency repair,
+Flywheel, a writer, a service or a scheduled task. Existing files are preserved.
+The workspace and all existing publication directories are pinned against rename;
+reparse points and substituted files are refused. Directory handles use actual
+read access: metadata-only handles did not enforce the required sharing denial,
+as the adversarial rename fixture demonstrated.
+
+Creation, cancellation and drain use the same native Job boundary as the probe.
+Cancellation may leave a newly created directory: this is reported as uncertain
+partial mutation on the original request, never rollback, success or a new retry.
+Only a successful drained worker and final pinned directory witnesses produce
+`CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED`. This proves the narrow directory
+postcondition, not Core health, builder recovery, R7 release or qualification.
+
+Fixtures prove creation, idempotency with preserved R7/Core sentinel files,
+junction/file refusal, rename denial and gaming cancellation. Core health now
+also rejects coerced/missing heartbeat ages; governor permission requires fresh
+version-3 evidence with all relevant activity flags explicitly false. Unknown,
+stale or incomplete governor evidence protects gaming.
+
+The worker remains an unregistered source candidate. Protected installed-parent
+custody, authenticated exact-head action admission, independent Windows review
+and physical acceptance remain open activation requirements. Generic continuous
+repair still refuses mutation; no mailbox action or automatic retry is added.
+The earlier statement that no mutating worker exists is superseded by this
+section; no worker is yet admitted or installed. Hosted CI is source evidence,
+not commissioning or specialist acceptance.

@@ -6,6 +6,7 @@ on:
       - 'scripts/sovereign-commander-control-plane-repair*'
       - 'scripts/sovereign-core-job-custody*'
       - 'scripts/windows/SovereignCoreJobCustodyV1.cs'
+      - 'shared/agents/stephanosCoreDaemonV1*'
       - '.github/workflows/sovereign-core-repair-custody.yml'
 permissions:
   contents: read
@@ -25,4 +26,4 @@ jobs:
         with:
           node-version: '24'
       - name: Core-only admission, held R7, gaming and Windows descendant denial
-        run: node --test scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs
+        run: node --test scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs

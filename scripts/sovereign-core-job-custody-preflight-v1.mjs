@@ -38,8 +38,38 @@ export function projectCoreJobCustodyCandidateV1(raw, { requestId, sourceHead, n
     custodyReleased: true, ...noAuthority });
 }
 
-export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, signal,
-  platform = process.platform, spawnFn = spawn, environment = process.env } = {}) {
+export function projectCoreDirectoryRepairCandidateV1(raw, binding) {
+  const valid = /^[a-z0-9-]{8,80}$/.test(binding.requestId ?? '')
+    && /^[a-f0-9]{40}$/.test(binding.sourceHead ?? '')
+    && /^[a-f0-9]{64}$/.test(binding.nativeSourceSha256 ?? '')
+    && raw?.SchemaVersion === 'stephanos.core-job-custody-candidate.v1'
+    && raw.RequestId === binding.requestId && raw.SourceHead === binding.sourceHead
+    && raw.RepairScope === 'CORE_PUBLICATION_DIRECTORIES_ONLY'
+    && raw.WorkspaceMutationAttempted === true && raw.RepairExecuted === true
+    && raw.CorePublicationDirectoriesReady === true && raw.CancellationRequested === false
+    && raw.AssignedBeforeExecution === true && raw.ZeroActiveProcessesObserved === true
+    && raw.CustodyReleased === true && raw.ActiveProcesses === 0 && raw.ExitCode === 0
+    && Number.isSafeInteger(raw.ChildPid) && raw.ChildPid > 0
+    && ['SourceMutationAllowed','OriginalR7Authority','SpecialistQualified'].every(k => raw[k] === false)
+    && raw.Verdict === 'CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED' && raw.Reason === '';
+  if (!valid) return Object.freeze({ ...held('CORE_DIRECTORY_REPAIR_UNBOUND_OR_INCOMPLETE'),
+    // A cancelled/missing receipt never licenses retry or a no-change claim.
+    workspaceMutationState: 'UNPROVEN_RETAIN_ORIGINAL_REQUEST' });
+  return Object.freeze({ ...noAuthority, ok: true, status: 'CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED',
+    requestId: binding.requestId, sourceHead: binding.sourceHead, nativeSourceSha256: binding.nativeSourceSha256,
+    repairExecuted: true, workspaceMutationAttempted: true, corePublicationDirectoriesReady: true,
+    zeroActiveProcessesObserved: true, custodyReleased: true,
+    coreHealthProven: false, originalBuilderRecovered: false });
+}
+
+export function runCoreJobCustodyPreflightV1(options = {}) {
+  return runCoreJobCandidate(options, false);
+}
+export function runCorePublicationDirectoryRepairCandidateV1(options = {}) {
+  return runCoreJobCandidate(options, true);
+}
+async function runCoreJobCandidate({ requestId, sourceHead, signal,
+  platform = process.platform, spawnFn = spawn, environment = process.env } = {}, repairDirectories) {
   if (!/^[a-z0-9-]{8,80}$/.test(requestId ?? '') || !/^[a-f0-9]{40}$/.test(sourceHead ?? ''))
     return held('CORE_JOB_EXACT_REQUEST_REQUIRED');
   if (platform !== 'win32') return held('CORE_JOB_NATIVE_WINDOWS_REQUIRED');
@@ -47,7 +77,8 @@ export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, sign
   // Capture installed-parent native dependency once, then compile THAT memory
   // over stdin. A between-read-and-Add-Type path swap cannot substitute bytes.
   // Protection/versioning of this installed parent closure is a separate gate.
-  const bytes = readFileSync(SOURCE);
+  let bytes;
+  try { bytes = readFileSync(SOURCE); } catch { return held('CORE_JOB_INSTALLED_SOURCE_UNAVAILABLE'); }
   if (bytes.length > 32768) return held('CORE_JOB_INSTALLED_SOURCE_UNBOUNDED');
   const nativeSourceSha256 = createHash('sha256').update(bytes).digest('hex');
   const script = `$ErrorActionPreference='Stop';
@@ -55,7 +86,7 @@ export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, sign
     Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($source)));
     function GamingSafe {
       try {
-        $p=Join-Path $env:USERPROFILE 'Documents/Stephanos-openclaw-workspace/vr/vr-resource-governor-current.json';
+        $p=Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)) 'Documents/Stephanos-openclaw-workspace/vr/vr-resource-governor-current.json';
         $raw=[Stephanos.Sovereign.CoreJobCustodyV1]::ReadGovernorLocked($p);
         if($null -eq $raw){return $false}; $g=$raw | ConvertFrom-Json;
         $age=([DateTimeOffset]::UtcNow-[DateTimeOffset]::Parse($g.updatedAtUtc)).TotalMilliseconds;
@@ -66,7 +97,7 @@ export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, sign
         }; return $true
       }catch{return $false}
     };
-    $r=[Stephanos.Sovereign.CoreJobCustodyV1]::ProbeWithParentInput('${requestId}','${sourceHead}',[Func[bool]]{GamingSafe});
+    $r=[Stephanos.Sovereign.CoreJobCustodyV1]::${repairDirectories ? 'RepairCorePublicationDirectories' : 'ProbeWithParentInput'}('${requestId}','${sourceHead}',[Func[bool]]{GamingSafe});
     [Console]::WriteLine('CORE_JOB_RESULT='+($r|ConvertTo-Json -Compress));`;
   return new Promise(resolve => {
     let child;
@@ -79,7 +110,8 @@ export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, sign
     const finish = value => {
       if (settled) return;
       settled = true; clearTimeout(timer); signal?.removeEventListener('abort', cancel);
-      resolve(value);
+      resolve(repairDirectories && value.ok !== true ? Object.freeze({ ...value,
+        requestId, sourceHead, workspaceMutationState: 'UNPROVEN_RETAIN_ORIGINAL_REQUEST' }) : value);
     };
     // Deadline includes compilation, worker budget, cooperative stop and OS
     // drain. Forced parent death kills its non-inherited Job, but without its
@@ -98,7 +130,7 @@ export async function runCoreJobCustodyPreflightV1({ requestId, sourceHead, sign
       if (code !== 0 || overflow || cancelled) { finish(held('CORE_JOB_EXECUTION_OR_CANCEL_HELD')); return; }
       const lines = stdout.split(/\r?\n/).filter(l => l.startsWith('CORE_JOB_RESULT='));
       if (lines.length !== 1) { finish(held('CORE_JOB_TERMINAL_RECEIPT_MISSING')); return; }
-      try { finish(projectCoreJobCustodyCandidateV1(JSON.parse(lines[0].slice(16)),
+      try { finish((repairDirectories ? projectCoreDirectoryRepairCandidateV1 : projectCoreJobCustodyCandidateV1)(JSON.parse(lines[0].slice(16)),
         { requestId, sourceHead, nativeSourceSha256 })); }
       catch { finish(held('CORE_JOB_TERMINAL_RECEIPT_INVALID')); }
     });

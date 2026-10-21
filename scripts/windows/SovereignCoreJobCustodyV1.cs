@@ -32,6 +32,9 @@ namespace Stephanos.Sovereign {
     public bool OriginalR7Authority = false;
     public bool SpecialistQualified = false;
     public bool RepairExecuted = false;
+    public bool WorkspaceMutationAttempted;
+    public bool CorePublicationDirectoriesReady;
+    public string RepairScope = "NONE";
   }
 
   public static class CoreJobCustodyV1 {
@@ -56,7 +59,9 @@ namespace Stephanos.Sovereign {
           // Directory contents may change independently, but their identities
           // cannot be renamed/deleted while pinned. The final file also denies
           // existing/new write access until its bytes have been captured.
-          var handle=CreateFileW(cursor,last?0x80000000u:0x80u,last?1u:3u,IntPtr.Zero,3,0x02000000|0x00200000,IntPtr.Zero);
+          // Metadata-only access does not participate in Windows sharing
+          // exclusion. GENERIC_READ is required to actually deny renaming.
+          var handle=CreateFileW(cursor,0x80000000u,last?1u:3u,IntPtr.Zero,3,0x02000000|0x00200000,IntPtr.Zero);
           if(handle.IsInvalid) { handle.Dispose(); return null; }
           handles.Add(handle);
           FILE_INFO info; if(!GetFileInformationByHandle(handle,out info)) return null;
@@ -73,6 +78,37 @@ namespace Stephanos.Sovereign {
         return null;
     } catch { return null; }
       finally { for(int i=handles.Count-1;i>=0;i--) handles[i].Dispose(); }
+    }
+    static void PinDirectory(string directory,List<SafeFileHandle> pins) {
+      var h=CreateFileW(directory,0x80000000u,3,IntPtr.Zero,3,0x02000000|0x00200000,IntPtr.Zero);
+      if(h.IsInvalid) { h.Dispose(); throw new IOException("CORE_DIRECTORY_CUSTODY_UNAVAILABLE"); }
+      pins.Add(h); FILE_INFO info;
+      if(!GetFileInformationByHandle(h,out info) || (info.attributes&0x400)!=0 || (info.attributes&0x10)==0)
+        throw new IOException("CORE_DIRECTORY_CUSTODY_UNAVAILABLE");
+    }
+    static void PinDirectoryChain(string root,List<SafeFileHandle> pins) {
+      if(!Path.IsPathRooted(root) || root.Contains("..")) throw new IOException("CORE_DIRECTORY_ROOT_INVALID");
+      string full=Path.GetFullPath(root),drive=Path.GetPathRoot(full),cursor=drive;
+      if(full.StartsWith("\\\\")) throw new IOException("CORE_DIRECTORY_ROOT_INVALID");
+      PinDirectory(cursor,pins);
+      foreach(string part in full.Substring(drive.Length).Split(Path.DirectorySeparatorChar)) {
+        if(part.Length==0) continue;
+        cursor=Path.Combine(cursor,part); PinDirectory(cursor,pins);
+      }
+    }
+    static void PinExistingPublicationLeaves(string root,List<SafeFileHandle> pins) {
+      foreach(string leaf in new string[]{"status","proof"}) {
+        string file=Path.Combine(root,leaf);
+        var h=CreateFileW(file,0x80000000u,3,IntPtr.Zero,3,0x02000000|0x00200000,IntPtr.Zero);
+        if(h.IsInvalid) {
+          int error=Marshal.GetLastWin32Error(); h.Dispose();
+          if(error==2 || error==3) continue;
+          throw new IOException("CORE_DIRECTORY_LEAF_UNAVAILABLE");
+        }
+        pins.Add(h); FILE_INFO info;
+        if(!GetFileInformationByHandle(h,out info) || (info.attributes&0x400)!=0 || (info.attributes&0x10)==0)
+          throw new IOException("CORE_DIRECTORY_LEAF_UNTRUSTED");
+      }
     }
     [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO {
       public int cb; public IntPtr reserved, desktop, title;
@@ -131,13 +167,25 @@ namespace Stephanos.Sovereign {
       Func<bool> gamingSafe) {
       return RunProbe(requestId,sourceHead,"wait",gamingSafe,delegate { return false; },3000,true);
     }
+    // The FIRST fixed Core-only mutation. It creates only missing publication
+    // directories inside the existing canonical workspace; it never writes a
+    // file, starts Core/controllers, acquires/removes a lock or touches R7.
+    // No caller-supplied root/path/command is accepted by this public method.
+    public static CoreJobReceiptV1 RepairCorePublicationDirectories(string requestId,string sourceHead,
+      Func<bool> gamingSafe) {
+      string root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "Documents","Stephanos-openclaw-workspace");
+      return RunProbe(requestId,sourceHead,"directories",gamingSafe,delegate { return false; },3000,true,root);
+    }
     static CoreJobReceiptV1 RunProbe(string requestId,string sourceHead,string mode,
-      Func<bool> gamingSafe,Func<bool> cancelRequested,int deadlineMs,bool watchParentInput) {
+      Func<bool> gamingSafe,Func<bool> cancelRequested,int deadlineMs,bool watchParentInput,string directoryRoot=null) {
       if (!System.Text.RegularExpressions.Regex.IsMatch(requestId ?? "", "^[a-z0-9-]{8,80}$")
         || !System.Text.RegularExpressions.Regex.IsMatch(sourceHead ?? "", "^[a-f0-9]{40}$")
-        || (mode != "complete" && mode != "wait" && mode != "descendant")
+        || (mode != "complete" && mode != "wait" && mode != "descendant" && mode != "directories")
+        || (mode == "directories" && String.IsNullOrEmpty(directoryRoot))
         || deadlineMs < 200 || deadlineMs > 10000) throw new ArgumentException("CORE_JOB_FIXED_PROBE_ONLY");
       var r = new CoreJobReceiptV1 { RequestId=requestId, SourceHead=sourceHead };
+      if(mode=="directories") r.RepairScope="CORE_PUBLICATION_DIRECTORIES_ONLY";
       // The wrapper supplies source bytes on stdin, then retains the pipe.
       // Explicit cancel OR parent death/EOF stops the same owned Job.
       Task<string> parentInput=watchParentInput ? Task.Factory.StartNew(delegate { return Console.ReadLine(); }) : null;
@@ -147,6 +195,7 @@ namespace Stephanos.Sovereign {
       IntPtr job=IntPtr.Zero,attributes=IntPtr.Zero,jobList=IntPtr.Zero,environment=IntPtr.Zero;
       PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
       bool initialized=false,launched=false;
+      var scopePins=new List<SafeFileHandle>();
       string nonce=Guid.NewGuid().ToString("N");
       // Private non-inherited events: acknowledgement is corroborated by OS
       // zero-active query, never promoted from worker text or a PID check.
@@ -155,6 +204,10 @@ namespace Stephanos.Sovereign {
       using (var ack=new EventWaitHandle(false,EventResetMode.ManualReset,prefix+"-ack"))
       using (var denied=new EventWaitHandle(false,EventResetMode.ManualReset,prefix+"-denied")) {
         try {
+          if(mode=="directories") {
+            PinDirectoryChain(directoryRoot,scopePins);
+            PinExistingPublicationLeaves(directoryRoot,scopePins);
+          }
           job=CreateJobObjectW(IntPtr.Zero,IntPtr.Zero);
           Require(job!=IntPtr.Zero);
           var limits=new EXTENDED_LIMIT();
@@ -183,7 +236,12 @@ namespace Stephanos.Sovereign {
           // brokers can launch outside a Job and are forbidden in the fixed
           // Core-only scope; a Job is resource custody, NOT a security sandbox.
           if (mode=="descendant") worker += "$s=[Diagnostics.ProcessStartInfo]::new();$s.FileName='"+exe+"';$s.Arguments='-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20';$s.UseShellExecute=$false;$s.ErrorDialog=$false;try {$p=[Diagnostics.Process]::Start($s);if($null -ne $p){$p.Kill()};exit 91} catch {$d.Set()|Out-Null};";
-          if (mode=="complete") worker += "exit 0;";
+          if (mode=="directories") {
+            string literal=directoryRoot.Replace("'","''");
+            worker += "foreach($leaf in @('status','proof')){if($c.WaitOne(0)){$a.Set()|Out-Null;exit 77};"
+              + "[IO.Directory]::CreateDirectory([IO.Path]::Combine('"+literal+"',$leaf))|Out-Null;"
+              + "if($c.WaitOne(0)){$a.Set()|Out-Null;exit 77}};exit 0;";
+          } else if (mode=="complete") worker += "exit 0;";
           else worker += "if($c.WaitOne(15000)){$a.Set()|Out-Null;exit 0};exit 92;";
           string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(worker));
           var command=new StringBuilder(Quote(exe)+" -NoLogo -NoProfile -NonInteractive -EncodedCommand "+encoded);
@@ -205,6 +263,7 @@ namespace Stephanos.Sovereign {
             r.CancellationRequested=true; Require(TerminateJobObject(job,77));
           } else {
             Require(ResumeThread(pi.thread)!=UInt32.MaxValue);
+            r.WorkspaceMutationAttempted=mode=="directories";
             var clock=Stopwatch.StartNew();
             while (!Empty(job,r)) {
               bool game=!Safe(gamingSafe),external=cancelled(),timeout=clock.ElapsedMilliseconds>=deadlineMs;
@@ -231,7 +290,15 @@ namespace Stephanos.Sovereign {
           Require(GetExitCodeProcess(pi.process,out r.ExitCode));
           r.DescendantAttemptDenied=denied.WaitOne(0);
           if (!r.CustodyReleased) { r.Reason="DESCENDANT_EXCLUSION_UNPROVEN"; return r; }
-          if (!r.CancellationRequested && r.ExitCode==0) { r.Verdict="PROBE_PASSED_UNQUALIFIED"; r.Reason=""; }
+          if (!r.CancellationRequested && r.ExitCode==0) {
+            if(mode=="directories") {
+              PinDirectory(Path.Combine(directoryRoot,"status"),scopePins);
+              PinDirectory(Path.Combine(directoryRoot,"proof"),scopePins);
+              r.CorePublicationDirectoriesReady=true; r.RepairExecuted=true;
+              r.Verdict="CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED";
+            } else r.Verdict="PROBE_PASSED_UNQUALIFIED";
+            r.Reason="";
+          }
           return r;
         } catch {
           r.Reason="NATIVE_JOB_OPERATION_FAILED";
@@ -252,6 +319,7 @@ namespace Stephanos.Sovereign {
           if(attributes!=IntPtr.Zero) Marshal.FreeHGlobal(attributes);
           if(jobList!=IntPtr.Zero) Marshal.FreeHGlobal(jobList);
           if(environment!=IntPtr.Zero) Marshal.FreeHGlobal(environment);
+          for(int i=scopePins.Count-1;i>=0;i--) scopePins[i].Dispose();
         }
       }
     }

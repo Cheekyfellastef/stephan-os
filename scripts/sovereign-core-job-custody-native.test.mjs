@@ -1,19 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync, rmSync, existsSync, renameSync, readdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const source = resolve(import.meta.dirname, 'windows/SovereignCoreJobCustodyV1.cs');
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const windows = process.platform === 'win32';
-function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false } = {}) {
+function runner({ mode = 'complete', safe = '$true', cancel = '$false', deadline = 8000, watchInput = false, directoryRoot } = {}) {
   // Test harness invokes only the checked-in closed probe; no production
   // registry, canonical workspace, services, scheduler or model is accessed.
   const code = `$ErrorActionPreference='Stop'; Add-Type -Path '${source.replaceAll("'", "''")}';
     $script:n=0; $clock=[Diagnostics.Stopwatch]::StartNew();
-    $r=${watchInput
+    $r=${directoryRoot
+      ? `[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('RunProbe',[Reflection.BindingFlags]'NonPublic,Static').Invoke($null,@('custody-fixture-1234','${'a'.repeat(40)}','directories',[Func[bool]]{${safe}},[Func[bool]]{${cancel}},${deadline},$false,'${directoryRoot.replaceAll("'", "''")}'))`
+      : watchInput
       ? `[Stephanos.Sovereign.CoreJobCustodyV1]::ProbeWithParentInput('custody-fixture-1234','${'a'.repeat(40)}',[Func[bool]]{${safe}})`
       : `[Stephanos.Sovereign.CoreJobCustodyV1]::Probe('custody-fixture-1234','${'a'.repeat(40)}','${mode}',[Func[bool]]{${safe}},[Func[bool]]{${cancel}},${deadline})`};
     'CORE_JOB_RESULT='+($r|ConvertTo-Json -Compress)`;
@@ -44,6 +46,79 @@ function closed(receipt) {
   for (const key of ['SourceMutationAllowed', 'OriginalR7Authority', 'SpecialistQualified', 'RepairExecuted'])
     assert.equal(receipt[key], false, key);
 }
+
+function publicationFixture(fn) {
+  const root = mkdtempSync(join(tmpdir(), 'core-publication-fixture-'));
+  return Promise.resolve().then(() => fn(root)).finally(() => {
+    assert.ok(root.startsWith(join(tmpdir(), 'core-publication-fixture-')));
+    rmSync(root, { recursive: true, force: true });
+  });
+}
+
+test('fixed Core-only worker restores publication directories without touching any files or R7',
+  { skip: !windows, timeout: 20000 }, () => publicationFixture(async root => {
+    const sentinel = 'original Core/R7 evidence — must remain identical';
+    writeFileSync(join(root, 'original-custody-fixture.json'), sentinel);
+    let out = await runner({ directoryRoot: root }).done;
+    assert.ok(out.receipt, out.stderr);
+    for (const key of ['RepairExecuted','WorkspaceMutationAttempted','CorePublicationDirectoriesReady',
+      'ZeroActiveProcessesObserved','CustodyReleased']) assert.equal(out.receipt[key], true, JSON.stringify(out.receipt));
+    assert.equal(out.receipt.RepairScope, 'CORE_PUBLICATION_DIRECTORIES_ONLY');
+    assert.equal(out.receipt.OriginalR7Authority, false);
+    assert.deepEqual(readdirSync(root).sort(), ['original-custody-fixture.json','proof','status']);
+    assert.deepEqual(readdirSync(join(root, 'status')), []);
+    assert.deepEqual(readdirSync(join(root, 'proof')), []);
+    writeFileSync(join(root, 'status', 'source-mutation-lease-current.json'), sentinel);
+    writeFileSync(join(root, 'proof', 'stephanos-core-daemon-current.json'), sentinel);
+    out = await runner({ directoryRoot: root }).done;
+    assert.equal(out.receipt.RepairExecuted, true, JSON.stringify(out.receipt));
+    for (const file of ['original-custody-fixture.json', 'status/source-mutation-lease-current.json',
+      'proof/stephanos-core-daemon-current.json']) assert.equal(readFileSync(join(root, file), 'utf8'), sentinel);
+  }));
+
+test('Core publication repair rejects redirected roots/leaves and regular-file substitutions before launch',
+  { skip: !windows, timeout: 20000 }, () => publicationFixture(async root => {
+    mkdirSync(join(root, 'outside'));
+    symlinkSync(join(root, 'outside'), join(root, 'redirected'), 'junction');
+    let out = await runner({ directoryRoot: join(root, 'redirected') }).done;
+    assert.equal(out.receipt.ChildPid, 0, JSON.stringify(out.receipt));
+    assert.deepEqual(readdirSync(join(root, 'outside')), []);
+    mkdirSync(join(root, 'workspace'));
+    symlinkSync(join(root, 'outside'), join(root, 'workspace', 'status'), 'junction');
+    out = await runner({ directoryRoot: join(root, 'workspace') }).done;
+    assert.equal(out.receipt.ChildPid, 0, JSON.stringify(out.receipt));
+    assert.equal(existsSync(join(root, 'workspace', 'proof')), false);
+    mkdirSync(join(root, 'file-case')); writeFileSync(join(root, 'file-case', 'proof'), 'leave unchanged');
+    out = await runner({ directoryRoot: join(root, 'file-case') }).done;
+    assert.equal(out.receipt.ChildPid, 0, JSON.stringify(out.receipt));
+    assert.equal(readFileSync(join(root, 'file-case', 'proof'), 'utf8'), 'leave unchanged');
+    assert.equal(existsSync(join(root, 'file-case', 'status')), false);
+  }));
+
+test('Core directory repair pins its root across launch and holds on gaming/cancellation',
+  { skip: !windows, timeout: 20000 }, () => publicationFixture(async root => {
+    mkdirSync(join(root, 'workspace'));
+    const pinned = runner({ directoryRoot: join(root, 'workspace'),
+      safe: '[Threading.Thread]::Sleep(500);$true' });
+    await Promise.race([pinned.pid, pinned.done.then(x => { throw Error(x.stderr || 'no worker'); })]);
+    assert.throws(() => renameSync(join(root, 'workspace'), join(root, 'redirect-target')));
+    const success = await pinned.done;
+    assert.equal(success.receipt.CorePublicationDirectoriesReady, true, JSON.stringify(success.receipt));
+    for (const [name, options] of [['blocked', { safe: '$false' }],
+      ['cancel', { safe: '$script:n++;$script:n -lt 4' }]]) {
+      mkdirSync(join(root, name));
+      const { receipt } = await runner({ directoryRoot: join(root, name), ...options }).done;
+      assert.equal(receipt.RepairExecuted, false);
+      assert.equal(receipt.OriginalR7Authority, false);
+      if (name === 'blocked') {
+        assert.equal(receipt.ChildPid, 0); assert.deepEqual(readdirSync(join(root, name)), []);
+      } else {
+        assert.equal(receipt.CancellationRequested, true);
+        assert.equal(receipt.ZeroActiveProcessesObserved, true);
+        assert.equal(receipt.CustodyReleased, true);
+      }
+    }
+  }));
 
 test('native adapter uses atomic Job assignment and never enables breakaway or command input', () => {
   const code = readFileSync(source, 'utf8');
