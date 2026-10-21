@@ -17,7 +17,7 @@ test('trusted launcher rejects missing exact source pair and strips preload inje
 });
 
 test('real pre-launch entry/verifier/transitive substitutions never evaluate before immutable graph authentication',
-  {timeout:30000},()=>{
+  {timeout:60000},()=>{
   const root=mkdtempSync(join(tmpdir(),'high-risk-preexec-'));
   const installed=resolve(import.meta.dirname,'..');
   const git=resolveBattleBridgeGitExecution();
@@ -51,7 +51,7 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
     for(const file of ['scripts/sovereign-high-risk-advisory-v1.mjs',
       'shared/agents/battleBridgeExecutionBoundaryV1.mjs','shared/agents/sharedAgentWorkspace.mjs',
       'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs']){
-      for(const entryPoint of ['advisory','windows-calibration','coverage']) {
+      for(const entryPoint of ['advisory','windows-calibration','windows-calibration-remote','coverage']) {
       const plan=buildHighRiskAdvisoryLaunchPlanV1({root,gitExecution:trustedGit,entryPoint,env:{
         STEPHANOS_REVIEW_EXACT_HEAD:head,STEPHANOS_REVIEW_EXACT_BASE:base,
         STEPHANOS_SHARED_AGENT_WORKSPACE:join(root,'workspace'),NODE_OPTIONS:'--import=attacker',
@@ -76,7 +76,8 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
         rmSync(marker);
         const wrapper=entryPoint==='coverage'?'sovereign-review-coverage-v1.mjs'
           :'sovereign-windows-review-calibration-v1.mjs';
-        const direct=spawnSync(process.execPath,[join(root,'scripts',wrapper),'--once'],
+        const flag=entryPoint==='windows-calibration-remote'?'--commander-once':'--once';
+        const direct=spawnSync(process.execPath,[join(root,'scripts',wrapper),flag],
           {cwd:root,env:{...plan.env,...fixtureEnv},shell:false,windowsHide:true,
             encoding:'utf8',timeout:12000,maxBuffer:65536});
         assert.equal(existsSync(marker),false,'public '+wrapper);
