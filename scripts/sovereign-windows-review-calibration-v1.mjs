@@ -46,7 +46,11 @@ export function inspectWindowsCalibrationSourceV1(env = process.env, {
         ...execution.fixedConfigArgs,
         '--git-dir=' + join(root, '.git'), '--work-tree=' + root, ...args,
       ], { encoding: 'utf8', shell: false, windowsHide: true,
-        timeout: 12_000, maxBuffer: 4096, env: execution.environment });
+        timeout: 12_000, maxBuffer: 4096, env: {
+          ...execution.environment,
+          GIT_NO_REPLACE_OBJECTS: '1',
+          GIT_GRAFT_FILE: 'NUL',
+        } });
       if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string') {
         throw Error('GIT_READ_UNAVAILABLE');
       }
