@@ -30,6 +30,38 @@ test('the actual Core Flywheel entry cannot enter indirect repair while worker c
 
 // Exercise the actual daemon repair routine with controlled observations and
 // maintenance receipts, without loading its entrypoint or touching PC state.
+test('each actual Octopus maintenance edge re-samples worker evidence immediately before dispatch', async () => {
+  const maintenanceStart = source.indexOf('async function runBoundedOctopusMaintenance(');
+  const maintenanceEnd = source.indexOf('async function runBoundedOctopusSelfHeal(', maintenanceStart);
+  let age = 0, samples = 0, dispatches = 0;
+  const context = vm.createContext({
+    Object, projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed,
+    workerHeartbeatPath: 'worker-fixture',
+    fileAgeMs: async path => { assert.equal(path, 'worker-fixture'); samples++; return age; },
+    repoRoot: 'repo-fixture', workspaceRoot: 'workspace-fixture',
+    buildStephanosExecutionSurfaceCatalogV1: () => ({}),
+    buildStephanosExecutionCommandEnvelopeV1: input => input,
+    STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER' },
+    SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
+    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', PROOF_REF: 'proof-fixture', lastOctopusSelfHealAttemptCount: 1,
+    executeSovereignCommanderCommandV1: async () => { dispatches++; return { ok: true }; },
+  });
+  vm.runInContext(source.slice(maintenanceStart, maintenanceEnd), context);
+  for (const phase of ['goal-builder', 'control-plane', 'goal-builder-retry']) {
+    age = 0;
+    assert.equal((await context.runBoundedOctopusMaintenance('fixed-fixture', HEAD, phase)).ok, true);
+    const count = dispatches;
+    for (age of [null, undefined, -1, NaN, '0', 300001, 900000]) {
+      const result = await context.runBoundedOctopusMaintenance('fixed-fixture', HEAD, phase);
+      assert.equal(result.ok, false);
+      assert.equal(result.attempted, false);
+      assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+      assert.equal(dispatches, count);
+    }
+  }
+  assert.equal(samples, 24); assert.equal(dispatches, 3);
+});
+
 function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
   let clock = 1_000_000;
   const actions = [];

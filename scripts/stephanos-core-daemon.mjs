@@ -457,6 +457,15 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
 }
 
 async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
+  // The asynchronous refill/escalation may outlive cycle-entry evidence.
+  // Every initial, control-plane and retry edge shares this admission point.
+  const workerState = projectStephanosCoreDaemonState({
+    sourceHead, missionWorkerHeartbeatAgeMs: await fileAgeMs(workerHeartbeatPath),
+  });
+  if (!coreWorkerDependentWorkAllowed(workerState)) {
+    return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
+      finalVerdict: 'OCTOPUS_WORKER_CUSTODY_HELD', sourceMutationAllowed: false });
+  }
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
     repositoryRoot: repoRoot,
     sharedWorkspaceRoot: workspaceRoot,

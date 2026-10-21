@@ -44,3 +44,26 @@ Windows child. It does not qualify existing arbitrary/direct task callers,
 descendant cleanup, native process exclusion, or a stale historical lease.
 Those require their existing independent Windows witness and protected owner.
 PR #3188 remains held for its active-child gaming and descendant-custody findings.
+
+## Async boundary follow-up
+
+Cycle-entry admission is not a lease on future worker evidence. A refill or
+control-plane action may await long enough for its heartbeat to expire. Every
+Octopus maintenance edge now uses the existing shared dispatch function to
+re-sample the heartbeat immediately before envelope construction/execution.
+Missing, malformed or stale evidence holds initial goal-builder, control-plane
+and retry alike. A behavioral test executes that actual function for all three
+phases while changing fresh evidence to unknown/stale between invocations.
+This remains a freshness admission check, not atomic OS lifecycle exclusion.
+
+The caretaker now projects an observed timeout hold and refuses Commander
+recycling/start in its presence, including capability-version mismatch. The
+held process remains the custody owner, reports unhealthy, and is never replaced
+merely to restore a liveness count. A native PowerShell fixture exercises the
+actual health projection and lifecycle branch with all mutations mocked.
+
+This closes the caretaker's automatic recycle path, not persistence across an
+external crash/reboot or an independent OS custody certificate. Those remain
+unqualified; activation must preserve that hold and the affected Windows estate
+requires fresh specialist qualification. Do not clear timeout custody from
+heartbeat age, child kill/close, a current source head or this regression.
