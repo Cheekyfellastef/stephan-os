@@ -19,7 +19,7 @@ audience, run/replay identifiers and freshness are verified. GitHub's bounded
 optional `x5t` hint is metadata, never a trust anchor. Only the exact known
 legacy and immutable-ID repository subjects are supported.
 
-`OriginalR7OwnerTokenTransport` creates an ephemeral RSA-2048 encryption key.
+`OriginalR7OwnerEnvelopeTransport` creates an ephemeral RSA-2048 encryption key.
 It is not a third signing root. The signed JWT audience binds, in order,
 `stephanos:r7:first-root-owner-permit:v1:<permitSha256>:<nativeNonce64>:<recipientSpkiSha256>`.
 Compact JWE uses RSA-OAEP-256 and A256GCM, a fresh 256-bit content key and

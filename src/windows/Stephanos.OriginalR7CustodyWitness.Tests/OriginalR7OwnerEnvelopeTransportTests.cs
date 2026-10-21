@@ -6,7 +6,7 @@ using Stephanos.OriginalR7CustodyWitness;
 
 namespace Stephanos.OriginalR7CustodyWitness.Tests;
 
-internal static class OriginalR7OwnerTokenTransportTests
+internal static class OriginalR7OwnerEnvelopeTransportTests
 {
     private static int total;
     private const string Token = "eyJhbGciOiJSUzI1NiJ9.eyJmaXh0dXJlIjp0cnVlfQ.ZGlzcG9zYWJsZS10ZXN0LXNpZ25hdHVyZQ";
@@ -21,10 +21,10 @@ internal static class OriginalR7OwnerTokenTransportTests
         catch (InvalidOperationException error) when (error.Message.StartsWith("R7_OWNER_TOKEN_", StringComparison.Ordinal)) { rejected = true; }
         Check(rejected, code);
     }
-    private static OriginalR7OwnerTokenTransport Session(char nonce = 'b')
-        => OriginalR7OwnerTokenTransport.CreateUntrustedFixture(new string('a', 64), new string(nonce, 64));
+    private static OriginalR7OwnerEnvelopeTransport Session(char nonce = 'b')
+        => OriginalR7OwnerEnvelopeTransport.CreateUntrustedFixture(new string('a', 64), new string(nonce, 64));
     private static string Encrypt(OriginalR7OwnerTransportChallenge challenge, string token = Token)
-        => OriginalR7OwnerTokenTransport.EncryptForUntrustedChallenge(challenge, token, DateTimeOffset.UtcNow);
+        => OriginalR7OwnerEnvelopeTransport.EncryptForUntrustedChallenge(challenge, token, DateTimeOffset.UtcNow);
     private static void EqualAndClear(byte[] actual, string expected, string code)
     { try { Check(Encoding.ASCII.GetString(actual) == expected, code); } finally { CryptographicOperations.ZeroMemory(actual); } }
 

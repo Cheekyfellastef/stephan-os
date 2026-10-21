@@ -20,7 +20,7 @@ internal sealed record OriginalR7OwnerTransportChallenge(
 // The transport key is ephemeral encryption material, NOT a third signing root.
 // No endpoint, carrier, process launch, credential store or production root is
 // created. A carrier/OS context still needs independent admission before use.
-internal sealed class OriginalR7OwnerTokenTransport : IDisposable
+internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
 {
     private const string Type = "stephanos.r7-first-root-owner-token.v1";
     private const int MaxTokenBytes = 32768, MaxEnvelopeCharacters = 49152;
@@ -33,7 +33,7 @@ internal sealed class OriginalR7OwnerTokenTransport : IDisposable
     private readonly string keyDigest;
     private int terminal;
 
-    private OriginalR7OwnerTokenTransport(string exactPermitDigest,
+    private OriginalR7OwnerEnvelopeTransport(string exactPermitDigest,
         DateTimeOffset issuedAt, OriginalR7OwnerWorkflowAuthentication? nativeOwner, string? fixtureNonce = null)
     {
         permitDigest = exactPermitDigest; issued = issuedAt; owner = nativeOwner;
@@ -48,7 +48,7 @@ internal sealed class OriginalR7OwnerTokenTransport : IDisposable
         catch { recipient.Dispose(); throw; }
     }
 
-    internal static OriginalR7OwnerTokenTransport BeginCurrentNativeOwner(string exactPermitDigest)
+    internal static OriginalR7OwnerEnvelopeTransport BeginCurrentNativeOwner(string exactPermitDigest)
     {
         var owner = OriginalR7OwnerWorkflowAuthentication.BeginCurrentNativeOwner();
         try { return new(exactPermitDigest, owner.SessionIssuedAtUtc, owner); }
@@ -220,7 +220,7 @@ internal sealed class OriginalR7OwnerTokenTransport : IDisposable
 
     // Only disposable-fixture code can receive plaintext. No production
     // handler exports a key/decrypt/sign-any-payload endpoint or native grant.
-    internal static OriginalR7OwnerTokenTransport CreateUntrustedFixture(string permitDigest, string nonce)
+    internal static OriginalR7OwnerEnvelopeTransport CreateUntrustedFixture(string permitDigest, string nonce)
         => new(permitDigest, DateTimeOffset.UtcNow, null, nonce);
     internal byte[] ConsumeUntrustedFixture(string envelope)
     {

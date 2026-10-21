@@ -16,6 +16,42 @@ const nativeCi = await readFile(new URL('../../.github/workflows/original-r7-nat
 const scmCi = await readFile(new URL('../../.github/workflows/original-r7-scm-preflight.yml', import.meta.url), 'utf8');
 const imagePin = await readFile(new URL('OriginalR7ImagePinPreflight.cs', root), 'utf8');
 
+test('every executable action in both R7 source-proof workflows has an immutable reviewed identity', () => {
+  // Upstream actions/* v4 commit objects were read back on2026-10-21.
+  // These source checks are not package signing or Windows commissioning.
+  const pins = new Map([
+    ['actions/checkout', '11d5960a326750d5838078e36cf38b85af677262'],
+    ['actions/setup-dotnet', '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'],
+    ['actions/setup-node', '49933ea5288caeca8642d1e84afbd3f7d6820020'],
+    ['actions/upload-artifact', 'ea165f8d65b6e75b540449e92b4886f43607fa02'],
+  ]);
+  function inspect(source, required) {
+    const lines = source.split(/\r?\n/).filter(line => /^\s*(?:-\s*)?uses:/.test(line));
+    assert.equal(lines.length, required.length, 'every executable action is inspected');
+    const observed = [];
+    for (const line of lines) {
+      const value = /^\s*(?:-\s*)?uses:\s*([a-z0-9-]+\/[a-z0-9-]+)@([a-f0-9]{40})\s+# v4; immutable upstream commit\s*$/.exec(line);
+      assert.ok(value, 'action must use full immutable SHA and version comment: ' + line);
+      assert.equal(value[2], pins.get(value[1]), 'unexpected executable action identity');
+      observed.push(value[1]);
+    }
+    assert.deepEqual(observed, required);
+  }
+  const scmActions = ['actions/checkout', 'actions/setup-dotnet', 'actions/setup-node', 'actions/upload-artifact'];
+  inspect(nativeCi, ['actions/checkout', 'actions/setup-dotnet']);
+  inspect(scmCi, scmActions);
+  // A new/movable/short/mistyped identity fails even if every other action
+  // remains pinned. The invariant covers pre-build and artifact-upload code.
+  for (const [action, sha] of pins) {
+    for (const alternate of ['v4', 'main', sha.slice(0, 12), '0'.repeat(40)]) {
+      const changed = scmCi.replace(action + '@' + sha, action + '@' + alternate);
+      assert.notEqual(changed, scmCi);
+      assert.throws(() => inspect(changed, scmActions));
+    }
+  }
+  assert.throws(() => inspect(scmCi + '\n      - uses: unrelated/extra@' + 'a'.repeat(40) + '\n', scmActions));
+});
+
 test('SCM proof follows audit-parser edits and tests the delivered complete managed payload', () => {
   const paths = scmCi.slice(scmCi.indexOf('    paths:'), scmCi.indexOf('\npermissions:'));
   for (const path of ['shared/agents/originalR7WitnessCommissioningAuditV1.mjs',
