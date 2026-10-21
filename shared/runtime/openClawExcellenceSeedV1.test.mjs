@@ -293,6 +293,45 @@ test('non-event feed buckets and unidentifiable events cannot mint OpenClaw gap 
     'an identified original-agent canonical event retains observational gap reporting');
 });
 
+test('Standalone recovery cannot erase a Local capability gap with the same gap ID', () => {
+  const payload = feed({ statusRecords: [heartbeat()] });
+  const gap = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-local'),
+    eventId: 'local-gap-ownership',
+    timestampUtc: '2026-10-13T14:37:00.000Z',
+    status: 'BLOCKED',
+    reason: 'missing capability: Local tool',
+    gapId: 'shared-tool-gap',
+    capabilityId: 'shared-tool-gap',
+  };
+  const standaloneRecovery = {
+    ...event('INVENTORY_BOTH_AGENTS', 'openclaw-standalone'),
+    eventId: 'standalone-recovery-for-local-gap',
+    timestampUtc: '2026-10-13T14:39:00.000Z',
+    status: 'PASS',
+    resolvedGapId: 'shared-tool-gap',
+    proofRefs: ['proof/standalone-recovery'],
+  };
+  payload.records.eventRecords = [gap, standaloneRecovery];
+  let seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.currentGaps.length, 1,
+    'Standalone cannot close a Local-owned gap even with a matching gap ID');
+  assert.equal(seed.currentGaps[0].capabilityId, 'shared-tool-gap');
+  payload.records.eventRecords.push({
+    ...standaloneRecovery,
+    participantId: 'openclaw-local',
+    eventId: 'local-recovery-for-local-gap',
+    proofRefs: ['proof/local-recovery'],
+    openClawExcellenceEvidence: {
+      ...standaloneRecovery.openClawExcellenceEvidence,
+      agentId: 'openclaw-local',
+    },
+  });
+  seed = view(payload).openClawExcellenceSeedGrowth;
+  assert.equal(seed.currentGaps.length, 0,
+    'a later canonical Local recovery still closes its own observational gap');
+});
+
 test('an OpenClaw Local publisher cannot spoof Standalone inventory or skill proofs', () => {
   const rung = buildOpenClawExcellenceSeedV1().growthRungs[0];
   const payload = feed({ statusRecords: [heartbeat()] });

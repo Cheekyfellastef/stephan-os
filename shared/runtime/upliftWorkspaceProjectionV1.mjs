@@ -266,7 +266,7 @@ function isRecoverySignal(record = {}) {
   return proofRefs(record).length > 0;
 }
 
-function deriveGapHistory(records = []) {
+function deriveGapHistory(records = [], { requireSamePublisherRecovery = false } = {}) {
   const ordered = [...records].sort((a, b) => recordTimeMs(a) - recordTimeMs(b));
   const gaps = ordered
     .map((record, index) => ({ record, index }))
@@ -280,6 +280,10 @@ function deriveGapHistory(records = []) {
   const history = gaps.map((gap) => {
     const matchingRecovery = ordered.find((record) => {
       if (recordTimeMs(record) <= gap.atMs || !isRecoverySignal(record)) return false;
+      // A different OpenClaw agent cannot close this publisher's gap.
+      if (requireSamePublisherRecovery
+          && text(record.participantId, '').toLowerCase()
+            !== text(gap.record.participantId, '').toLowerCase()) return false;
       const direct = canonicalGapId(record);
       const explicitResolved = resolvedGapIds(record);
       return (direct && direct === gap.gapId) || explicitResolved.includes(gap.gapId);
@@ -1892,7 +1896,7 @@ function deriveOpenClawExcellenceSeedGrowth(payload = {}, nowMs = Date.now()) {
       && hasConsistentAgentIdentity(record, publisher)
       && (!claimedAgent || claimedAgent === publisher);
   });
-  const currentGaps = deriveGapHistory(agentBoundGapRecords).current.slice(0, 8).map((gap) => Object.freeze({
+  const currentGaps = deriveGapHistory(agentBoundGapRecords, { requireSamePublisherRecovery: true }).current.slice(0, 8).map((gap) => Object.freeze({
     capabilityId: gap.capabilityId,
     owner: gap.owner,
     state: gap.state,
