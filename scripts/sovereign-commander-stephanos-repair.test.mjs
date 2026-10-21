@@ -213,7 +213,7 @@ test('continuous repair attempts independent repair for unproven elastic admissi
   ]);
 });
 
-test('held R7 builder does not suppress separately proven Core repair during an unattended cycle', () => {
+test('held R7 builder preserves separate Core diagnosis without launching unsafe installers', () => {
   const calls = [];
   const steps = [];
   const queue = [
@@ -231,11 +231,11 @@ test('held R7 builder does not suppress separately proven Core repair during an 
     runStep: (step) => { calls.push(step.id); steps.push(step); return queue.shift(); },
   });
   assert.equal(repaired.ok, false);
-  assert.deepEqual(steps.at(-1).args.slice(-1), ['--unattended-gaming-guard']);
+  assert.equal(steps.at(-1).id, 'status-stephanos-core-daemon');
   assert.equal(repaired.blocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
   assert.deepEqual(calls, [
     'sovereign-control-plane-caretaker', 'repair-goal-builder-flow',
-    'status-stephanos-core-daemon', 'repair-control-plane',
+    'status-stephanos-core-daemon',
   ]);
   assert.equal(repaired.steps.at(-1).ok, true);
   assert.equal(repaired.sourceMutationAllowed, false);
@@ -273,7 +273,7 @@ test('held R7 builder never authorises maintenance while gaming or with unverifi
   }
 });
 
-test('held R7 builder does not trigger independent installer if Core is healthy', () => {
+test('held R7 builder never triggers installer, even if Core health is degraded', () => {
   const calls = [];
   const queue = [
     result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
@@ -295,6 +295,25 @@ test('held R7 builder does not trigger independent installer if Core is healthy'
   ]);
 });
 
+
+test('original R7 hold with independently DEGRADED Core never starts uncancellable Windows descendant',()=>{
+  const calls=[];
+  const queue=[
+    result({healthy:true,coreDaemonHealthy:true,coreDaemonSourceHead:HEAD}),
+    result({ok:false,blocker:'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING'},2),
+    result({ok:true,sourceHead:HEAD,singleWriterProven:true,
+      sourceHeadMatchesLive:true,gamingActive:false,readiness:'DEGRADED',repairRequired:true}),
+  ];
+  const out=runSovereignCommanderStephanosRepair({
+    readHead:()=>HEAD,continuousRepairCycle:true,gamingSafe:()=>true,
+    runStep:step=>{calls.push(step.id);if(step.id==='repair-control-plane')throw Error('unsafe Windows installer');return queue.shift()},
+  });
+  assert.equal(out.ok,false);
+  assert.equal(out.blocker,'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+  assert.deepEqual(calls,['sovereign-control-plane-caretaker','repair-goal-builder-flow','status-stephanos-core-daemon']);
+  assert.equal(out.mergeAuthority,false);
+  assert.equal(out.sourceMutationAllowed,false);
+});
 test('unattended guardian refuses even caretaker when gaming is active or governor unknown', () => {
   for (const gamingSafe of [() => false, () => null, () => { throw Error('governor unavailable'); }]) {
     let calls = 0;
