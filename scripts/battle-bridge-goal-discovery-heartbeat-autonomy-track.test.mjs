@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat as runActualHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+const runBattleBridgeGoalDiscoveryHeartbeat = options => runActualHeartbeat({ readWorkerHeartbeatAgeMs: () => 0, ...options });
 
 const lifeboatReady = async () => ({ ok: true, available: true, finalVerdict: 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED' });
 const githubLifeboatReady = async () => ({ ok: true, available: true, sourceHead: 'a'.repeat(40), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_READY' });

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from './stephanosCoreDaemonV1.mjs';
 import { projectStephanosControlPlaneSpine } from './stephanosControlPlaneSpineV1.mjs';
+import { canonicalMissionWorkerEvidenceAllowsWork } from './canonicalMissionWorkerEvidenceV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
@@ -17,6 +18,8 @@ test('the actual Core Flywheel entry cannot enter indirect repair while worker c
   assert.ok(entryStart >= 0 && entryEnd > entryStart);
   const context = vm.createContext({
     coreWorkerDependentWorkAllowed, lastFlywheelWakeReason: '',
+    canonicalMissionWorkerEvidenceAllowsWork, workspaceRoot: 'workspace-fixture',
+    readCanonicalMissionWorkerHeartbeatAgeMs: () => null,
     persistentFlywheelEventFingerprint: () => { throw Error('INDIRECT_REPAIR_ENTRY_MUST_NOT_RUN'); },
   });
   vm.runInContext(source.slice(entryStart, entryEnd), context);
@@ -25,6 +28,8 @@ test('the actual Core Flywheel entry cannot enter indirect repair while worker c
     assert.equal(result.shouldRun, false);
     assert.equal(result.reason, 'PERSISTENT_FLYWHEEL_WORKER_CUSTODY_HELD');
   }
+  const staleEntry = await context.maybeStartPersistentFlywheel(HEAD, false, workerState({ age: 0 }));
+  assert.equal(staleEntry.shouldRun, false, 'cached green cannot replace current validated evidence');
   assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive, state\)/);
 });
 
@@ -36,8 +41,7 @@ test('each actual Octopus maintenance edge re-samples worker evidence immediatel
   let age = 0, samples = 0, dispatches = 0;
   const context = vm.createContext({
     Object, projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed,
-    workerHeartbeatPath: 'worker-fixture',
-    fileAgeMs: async path => { assert.equal(path, 'worker-fixture'); samples++; return age; },
+    readCanonicalMissionWorkerHeartbeatAgeMs: ({ expectedSourceHead }) => { assert.equal(expectedSourceHead, HEAD); samples++; return age; },
     repoRoot: 'repo-fixture', workspaceRoot: 'workspace-fixture',
     buildStephanosExecutionSurfaceCatalogV1: () => ({}),
     buildStephanosExecutionCommandEnvelopeV1: input => input,
@@ -70,11 +74,13 @@ function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {
     lastDependencySelfHealAtMs: null, lastDependencySelfHealAtUtc: '',
     lastDependencySelfHealVerdict: 'NOT_RUN', lastDependencySelfHealBlocker: '',
     lastDependencySelfHealAttemptCount: 0, lastDependencySelfHealProofHashes: [],
+    canonicalMissionWorkerEvidenceAllowsWork,
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120_000,
     BATTLE_BRIDGE_SELF_HEAL_ACTION_ID: 'repair-battle-bridge',
     workerHeartbeatPath: 'test-worker-heartbeat',
+    workspaceRoot: 'workspace-fixture',
     probe: async () => true,
-    fileAgeMs: async () => verifiedAge,
+    readCanonicalMissionWorkerHeartbeatAgeMs: () => verifiedAge,
     runBoundedDependencyMaintenance: async (actionId, head, missionId) => {
       actions.push({ actionId, head, missionId });
       return { ok: repairOk, proofHash: 'b'.repeat(64), blocker: repairOk ? '' : 'BACKEND_REPAIR_HELD' };

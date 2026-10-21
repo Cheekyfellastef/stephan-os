@@ -18,6 +18,17 @@ on:
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
+      - 'scripts/windows/status-stephanos-core-daemon.ps1'
+      - 'scripts/windows/stephanos-core-process-observation.ps1'
+      - 'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1*'
+      - 'shared/agents/windowsAuthoritySpecialistReviewV1*'
+      - 'shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs'
+      - 'shared/agents/operatorMergeApprovalBoundaryV2*'
+      - 'shared/agents/canonicalMissionWorkerEvidenceV1*'
+      - 'scripts/mission-orchestrator-worker-heartbeat*'
+      - 'scripts/stephanos-core-daemon.mjs'
+      - 'scripts/battle-bridge-goal-discovery-heartbeat*'
+      - 'shared/agents/sovereignWindowsQualificationWorkflow.test.mjs'
       - 'scripts/sovereign-goal-builder-worker-evidence.test.mjs'
       - 'scripts/sovereign-commander-goal-builder-repair*'
       - 'shared/agents/goalDiscoveryWorkspaceV1*'
@@ -35,25 +46,57 @@ on:
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
+      - '.gitattributes'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
   push:
     branches:
       - main
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
-      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
       - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs'
+      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.mjs'
+      - 'shared/agents/sovereignCommanderNativeGapIntakeV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
+      - 'scripts/sovereign-commander-preservation-converge.test.mjs'
+      - 'shared/agents/sovereignCommanderRepairVerbs.test.mjs'
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignMaintenanceAdmissionV1*'
+      - 'scripts/windows/status-stephanos-core-daemon.ps1'
+      - 'scripts/windows/stephanos-core-process-observation.ps1'
+      - 'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1*'
+      - 'shared/agents/windowsAuthoritySpecialistReviewV1*'
+      - 'shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs'
+      - 'shared/agents/operatorMergeApprovalBoundaryV2*'
+      - 'shared/agents/canonicalMissionWorkerEvidenceV1*'
+      - 'scripts/mission-orchestrator-worker-heartbeat*'
+      - 'scripts/stephanos-core-daemon.mjs'
+      - 'scripts/battle-bridge-goal-discovery-heartbeat*'
+      - 'shared/agents/sovereignWindowsQualificationWorkflow.test.mjs'
+      - 'scripts/sovereign-goal-builder-worker-evidence.test.mjs'
+      - 'scripts/sovereign-commander-goal-builder-repair*'
+      - 'shared/agents/goalDiscoveryWorkspaceV1*'
+      - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'shared/agents/sovereignCommanderMcp.test.mjs'
       - 'scripts/sovereign-commander-http.mjs'
+      - 'shared/agents/sovereignCommanderHttp.test.mjs'
       - 'scripts/battle-bridge-observation.mjs'
+      - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
+      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
-      - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/sovereign-commander-ignition-autoheal.mjs'
+      - '.gitattributes'
+      - '.github/workflows/sovereign-commander-capability-parity.yml'
 
 permissions:
   contents: read
@@ -104,7 +147,7 @@ jobs:
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
-          node --test shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs
+          node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs

@@ -1,5 +1,33 @@
 # Core worker custody and repair admission
 
+## Complete worker-dependent source boundary after 582c487f37 review
+
+That review found the same invariant still violated in Core's direct refill:
+the repair wrapper validated record bytes, but Core's sampler and maintenance
+resampling still used mtime. The structural correction extracts ONE canonical
+bounded worker-evidence reader/predicate, reused by repair, Core sample,
+post-dependency verification, Octopus maintenance and Flywheel entry. The old
+mtime reader is removed. Cached green cycle input cannot replace a fresh
+validated canonical record at Flywheel entry.
+
+The mutating `runBattleBridgeGoalDiscoveryHeartbeat` entry itself now checks
+this same evidence before any work, before each conveyor attempt and again
+after awaited queue/capacity work immediately before each source build. Thus
+direct Core verification refill, ordinary Core refill, standalone invocation
+and repair invocation cannot bypass the common source-building boundary.
+Lost evidence holds the same cycle without manufacturing another owner.
+The existing source-builder/lease/governor remain the execution authorities;
+heartbeat validation alone still never proves Windows process exclusion.
+
+Native behavioral regressions run the actual Core sampler with corrupt/foreign
+records and exercise actual direct refill both before admission and after
+capacity/conveyor work expires its evidence. Existing source-only fixtures
+explicitly inject worker evidence instead of relying on this machine's heartbeat.
+The PR and main workflow path inventories are identical and cover the complete
+three-script Windows estate, reviewer composition/child/boundary, shared reader,
+publisher, Core, refill and regression sources. A contract test checks isolated
+changes against the native Windows job's trigger and fixture inventory.
+
 ## Current structural correction after review of 9d09b599dc
 
 The previous mtime gate and custom-workspace acceptance are superseded. Actual

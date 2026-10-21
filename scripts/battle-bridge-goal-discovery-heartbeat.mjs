@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 import {
   AUTONOMY_BUILD_TRACK_STATUS_ID,
@@ -412,6 +413,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
+  readWorkerHeartbeatAgeMs = readCanonicalMissionWorkerHeartbeatAgeMs,
   readProcessingPickupMissionIdsFn = readProcessingPickupMissionIds,
   maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
@@ -446,6 +448,18 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     repoRoot: builderOptions.repoRoot || paths.repoRoot,
     sharedWorkspaceRoot: resolveGoalDiscoveryWorkspaceV1({ builderOptions, paths }),
   });
+  const workerAllowed = () => {
+    try {
+      const age = readWorkerHeartbeatAgeMs({ workspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot });
+      return canonicalMissionWorkerEvidenceAllowsWork(age);
+    } catch { return false; }
+  };
+  const workerHold = () => Object.freeze({ schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+    ok: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN', cycleId,
+    materialActionsSucceeded, sweepAttemptCount: sweepAttempts.length,
+    sweepAttempts: Object.freeze([...sweepAttempts]), sourceBuild: latestSourceBuild,
+    ...authorityBoundary(), finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED' });
+  if (!workerAllowed()) return workerHold();
 
   try {
     try {
@@ -476,6 +490,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
+      if (!workerAllowed()) return workerHold();
       const result = await conveyor({
         allowLegacyMissionCreation: false,
         admissionOwner: 'battle-bridge-goal-discovery',
@@ -543,6 +558,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       for (const missionId of processingPickupMissionIds) pendingExternalPickupMissionIds.delete(String(missionId).trim().toLowerCase());
 
       let sourceBuild;
+      if (!workerAllowed()) return workerHold();
       try {
         sourceBuild = await buildClaimedGoal(effectiveBuilderOptions);
       } catch (error) {

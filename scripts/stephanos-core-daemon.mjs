@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { lstat, mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
@@ -52,6 +52,7 @@ import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorG
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
 import {
@@ -155,15 +156,6 @@ async function probe(url, expectedService = '') {
     return false;
   } finally {
     clearTimeout(timer);
-  }
-}
-
-async function fileAgeMs(path) {
-  try {
-    const info = await stat(path);
-    return Math.max(0, Date.now() - info.mtimeMs);
-  } catch {
-    return null;
   }
 }
 
@@ -438,9 +430,9 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   const [verifiedCommander, verifiedBackend, verifiedWorkerAge] = await Promise.all([
     probe('http://127.0.0.1:18791/health', 'stephanos-sovereign-commander'),
     probe('http://127.0.0.1:8787/api/health'),
-    fileAgeMs(workerHeartbeatPath),
+    readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
   ]);
-  const verifiedWorker = verifiedWorkerAge !== null && verifiedWorkerAge <= 5 * 60 * 1000;
+  const verifiedWorker = canonicalMissionWorkerEvidenceAllowsWork(verifiedWorkerAge);
   const recovered = verifiedCommander && verifiedBackend && verifiedWorker;
   lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
   lastDependencySelfHealVerdict = recovered
@@ -460,7 +452,7 @@ async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
   // The asynchronous refill/escalation may outlive cycle-entry evidence.
   // Every initial, control-plane and retry edge shares this admission point.
   const workerState = projectStephanosCoreDaemonState({
-    sourceHead, missionWorkerHeartbeatAgeMs: await fileAgeMs(workerHeartbeatPath),
+    sourceHead, missionWorkerHeartbeatAgeMs: readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
   });
   if (!coreWorkerDependentWorkAllowed(workerState)) {
     return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
@@ -701,7 +693,8 @@ function persistentFlywheelStatus() {
 }
 
 async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false, workerState = {}) {
-  if (!coreWorkerDependentWorkAllowed(workerState)) {
+  if (!coreWorkerDependentWorkAllowed(workerState)
+      || !canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) {
     lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_WORKER_CUSTODY_HELD';
     return Object.freeze({ shouldRun: false, reason: lastFlywheelWakeReason });
   }
@@ -1153,7 +1146,7 @@ async function sample(sourceHead) {
   const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
     sovereignCommanderRuntimePromise,
     probe('http://127.0.0.1:8787/api/health'),
-    fileAgeMs(workerHeartbeatPath),
+    readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
     gamingActive(),
   ]);
   return projectStephanosCoreDaemonState({

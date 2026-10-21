@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createMissionWorkerHeartbeatRecord, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
 import { readGoalBuilderSourceIdentity, readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from './sovereign-commander-goal-builder-repair.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from '../shared/agents/stephanosCoreDaemonV1.mjs';
+import vm from 'node:vm';
 
 const HEAD = 'a'.repeat(40), nowMs = Date.parse('2026-10-21T17:00:00Z');
-function fixture(action) {
+async function fixture(action) {
   const home = mkdtempSync(join(tmpdir(), 'sovereign-worker-evidence-'));
   const env = { USERPROFILE: home }, paths = resolveCanonicalMissionWorkerPaths({ env });
   mkdirSync(dirname(paths.heartbeatPath), { recursive: true });
@@ -16,7 +19,7 @@ function fixture(action) {
     launchIdentityId: 'b'.repeat(64), workerStartedAtUtc: '2026-10-21T16:00:00Z' });
   const read = () => readGoalBuilderWorkerHeartbeatAgeMs({ env, nowMs,
     readSourceIdentity: () => ({ ok: true, branch: 'main', sourceHead: HEAD }) });
-  try { action({ env, paths, record, read }); }
+  try { await action({ env, paths, record, read }); }
   finally { rmSync(home, { recursive: true, force: true }); }
 }
 
@@ -64,6 +67,50 @@ test('each mutating step rechecks evidence after the preceding awaited/process w
   });
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
+test('actual Core sampler and direct refill share validated bytes; malformed fresh records cannot open either path', () => fixture(async ({ paths, record, read }) => {
+  const source = readFileSync(new URL('./stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('async function sample('), end = source.indexOf('\nconst sourceHead = currentHead()', start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({ bootstrapSovereignParentProofAvailable: false,
+    probeSovereignCommanderRuntimeCompatibility: async () => ({ ok: true }),
+    probe: async () => true, gamingActive: async () => false, workspaceRoot: paths.workspaceRoot,
+    readCanonicalMissionWorkerHeartbeatAgeMs: read, projectStephanosCoreDaemonState });
+  vm.runInContext(source.slice(start, end), context);
+  for (const bytes of ['{bad', JSON.stringify({ ...record, headSha: 'c'.repeat(40) }), JSON.stringify({ ...record, taskName: 'other' })]) {
+    writeFileSync(paths.heartbeatPath, bytes);
+    const state = await context.sample(HEAD);
+    assert.equal(state.missionWorkerHealthy, false);
+    assert.equal(coreWorkerDependentWorkAllowed(state), false);
+    const refill = await runBattleBridgeGoalDiscoveryHeartbeat({ paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot },
+      readWorkerHeartbeatAgeMs: read,
+      conveyor() { assert.fail('direct refill reached conveyor with invalid worker'); },
+      refreshGithubLifeboat() { assert.fail('invalid worker reached any refill work'); },
+      buildClaimedGoal() { assert.fail('invalid worker reached source build'); },
+    });
+    assert.equal(refill.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  }
+  rmSync(paths.heartbeatPath); mkdirSync(paths.heartbeatPath);
+  assert.equal((await context.sample(HEAD)).missionWorkerHealthy, false);
+}));
+
+test('actual direct refill revalidates after awaited capacity and conveyor work before source building', async () => {
+  for (const expiry of ['capacity', 'conveyor']) {
+    let valid = true, conveyors = 0, builds = 0;
+    const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+      readWorkerHeartbeatAgeMs: () => valid ? 1000 : null,
+      refreshGithubLifeboat: async () => { if (expiry === 'capacity') valid = false; return { ok: true }; },
+      refreshGithubLifeboatClaimAck: async () => ({ ok: true }),
+      refreshLifeboatCapacity: async () => ({ ok: true }), refreshCommanderCapacity: async () => ({ ok: true }),
+      refreshSovereignCapacity: async () => ({ ok: true }), refreshOpenClawCapacity: async () => ({ ok: true }),
+      conveyor: async () => { conveyors++; valid = false; return { ok: true }; },
+      readProcessingPickupMissionIdsFn: async () => [],
+      buildClaimedGoal() { builds++; assert.fail('expired evidence reached source building'); },
+    });
+    assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+    assert.equal(conveyors, expiry === 'capacity' ? 0 : 1); assert.equal(builds, 0);
+  }
 });
 
 test('source identity observation reuses fixed Git custody and strips inherited execution settings', () => {

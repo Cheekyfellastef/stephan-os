@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { openSync, closeSync, fstatSync, readSync, lstatSync } from 'node:fs';
-import { dirname, resolve, relative } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
-import { projectMissionWorkerHeartbeat, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
-import { resolveBattleBridgeGitExecutable, battleBridgeCanonicalRepositoryArgs,
-  battleBridgeGitFixedConfigArgs, createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs as readGoalBuilderWorkerHeartbeatAgeMs,
+  canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
+export { readCanonicalMissionWorkerHeartbeatAgeMs as readGoalBuilderWorkerHeartbeatAgeMs,
+  readCanonicalMissionWorkerSourceIdentity as readGoalBuilderSourceIdentity } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
@@ -255,53 +254,6 @@ export function runFixedGoalBuilderRepairStep(step) {
   });
 }
 
-export function readGoalBuilderSourceIdentity({ env = process.env, spawnSyncFn = spawnSync } = {}) {
-  const root = resolveCanonicalMissionWorkerPaths({ env }).repositoryRoot;
-  const git = args => {
-    const result = spawnSyncFn(resolveBattleBridgeGitExecutable(), [
-      ...battleBridgeGitFixedConfigArgs(), ...battleBridgeCanonicalRepositoryArgs(root), ...args,
-    ], { cwd: root, env: createBattleBridgeMinimalChildEnvironment(env, { git: true }),
-      encoding: 'utf8', shell: false, windowsHide: true, timeout: 5_000, maxBuffer: 4096 });
-    if (result.error || result.status !== 0 || result.signal) throw new Error('WORKER_SOURCE_IDENTITY_UNPROVEN');
-    return String(result.stdout || '').trim();
-  };
-  const sourceHead = git(['rev-parse', '--verify', 'HEAD']);
-  const branch = git(['symbolic-ref', '--short', 'HEAD']);
-  return Object.freeze({ ok: /^[a-f0-9]{40}$/.test(sourceHead) && branch === 'main', sourceHead, branch });
-}
-
-export function readGoalBuilderWorkerHeartbeatAgeMs({
-  env = process.env, nowMs = Date.now(),
-  readSourceIdentity = () => readGoalBuilderSourceIdentity({ env }),
-} = {}) {
-  let fd;
-  try {
-    const paths = resolveCanonicalMissionWorkerPaths({ env });
-    // Windows publishers/witnesses are still fixed to this tree. A configured
-    // refill root cannot inherit their evidence until that whole estate moves.
-    if (relative(paths.workspaceRoot, resolve(resolveGoalDiscoveryWorkspaceV1({ env }))) !== '') return null;
-    const before = lstatSync(paths.heartbeatPath);
-    if (!before.isFile() || before.isSymbolicLink()) return null;
-    fd = openSync(paths.heartbeatPath, 'r');
-    const info = fstatSync(fd);
-    if (!info.isFile() || info.size <= 0 || info.size > 16_384
-        || info.dev !== before.dev || info.ino !== before.ino) return null;
-    const buffer = Buffer.alloc(16_385);
-    const count = readSync(fd, buffer, 0, buffer.length, 0);
-    if (count <= 0 || count > 16_384) return null;
-    const bytes = buffer.subarray(0, count).toString('utf8');
-    const source = readSourceIdentity();
-    if (source?.ok !== true || source.branch !== 'main') return null;
-    const projection = projectMissionWorkerHeartbeat(JSON.parse(bytes), {
-      nowUtc: new Date(nowMs).toISOString(), expectedRepositoryRoot: paths.repositoryRoot,
-      expectedHeadSha: source.sourceHead,
-    });
-    return projection.valid && projection.fresh && projection.lastTickAffirmative
-      && Date.parse(projection.timestampUtc) <= nowMs ? projection.ageMs : null;
-  } catch { return null; }
-  finally { if (fd !== undefined) closeSync(fd); }
-}
-
 export function runSovereignCommanderGoalBuilderRepair({
   runStep = runFixedGoalBuilderRepairStep,
   readWorkerHeartbeatAgeMs = readGoalBuilderWorkerHeartbeatAgeMs,
@@ -310,7 +262,7 @@ export function runSovereignCommanderGoalBuilderRepair({
   const workerAllowed = () => {
     try {
       const age = readWorkerHeartbeatAgeMs();
-      return typeof age === 'number' && Number.isFinite(age) && age >= 0 && age <= 120_000;
+      return canonicalMissionWorkerEvidenceAllowsWork(age);
     } catch { return false; }
   };
   const workerHold = () => Object.freeze({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
