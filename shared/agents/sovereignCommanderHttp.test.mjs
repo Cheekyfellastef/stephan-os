@@ -9,6 +9,33 @@ import {
 
 const TOKEN = 't'.repeat(48);
 
+test('authenticated HTTP disconnect aborts the same pending action signal', async () => {
+  let started, stopped;
+  const began = new Promise(resolve => { started = resolve; });
+  const ended = new Promise(resolve => { stopped = resolve; });
+  await withServer(async ({ base }) => {
+    const headers = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+    const init = await fetch(base + '/mcp', { method: 'POST', headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }) });
+    await init.json();
+    const controller = new AbortController();
+    const pending = fetch(base + '/mcp', { method: 'POST',
+      headers: { ...headers, 'mcp-session-id': init.headers.get('mcp-session-id') },
+      signal: controller.signal,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {} }) });
+    const rejected = assert.rejects(pending);
+    await began; controller.abort(); await rejected;
+    await Promise.race([ended, new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(Error('DISCONNECT_DID_NOT_CANCEL')), 2000); timer.unref();
+    })]);
+  }, { handlerFactory: () => async (method, _params, message) => {
+    if (method === 'initialize') return {};
+    started();
+    await new Promise(resolve => message.signal.addEventListener('abort', resolve, { once: true }));
+    stopped(); return {};
+  } });
+});
+
 async function withServer(action, overrides = {}) {
   const observed = [];
   const created = await createSovereignCommanderHttpServer({

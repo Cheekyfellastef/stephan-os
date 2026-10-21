@@ -513,13 +513,18 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       const hasId = Object.prototype.hasOwnProperty.call(message, 'id');
       const isRequest = hasId;
       const isNotification = !hasId;
-      const result = await handler(message.method, message.params || {}, {
+      const requestController = new AbortController();
+      const cancelDisconnected = () => { if (!res.writableEnded) requestController.abort(); };
+      res.once('close', cancelDisconnected);
+      let result;
+      try { result = await handler(message.method, message.params || {}, {
         id: message.id,
         isRequest,
         isNotification,
         transportKind: 'authenticated-http-jsonrpc',
         transportAuthenticated: true,
-      });
+        signal: requestController.signal,
+      }); } finally { res.removeListener('close', cancelDisconnected); }
       if (initializing) sessions.set(sessionId, handler);
       const headers = { 'mcp-session-id': sessionId };
 
