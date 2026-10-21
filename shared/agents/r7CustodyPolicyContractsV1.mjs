@@ -136,7 +136,7 @@ const time = value => typeof value === 'string' && stamp.pattern
   && new Date(Date.parse(value)).toISOString() === value ? Date.parse(value) : NaN;
 
 export function r7CustodyContractProposalSchemaV1(kind) {
-  if (!schemas[kind]) throw new Error('R7_POLICY_PROPOSAL_KIND_UNSUPPORTED');
+  if (typeof kind !== 'string' || !Object.hasOwn(schemas, kind)) throw new Error('R7_POLICY_PROPOSAL_KIND_UNSUPPORTED');
   return JSON.parse(JSON.stringify({
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'urn:stephanos:r7-policy-proposal:' + kind + ':v1', ...schemas[kind],
@@ -191,7 +191,7 @@ function result(valid, blockers, extra = {}) {
 export function validateR7CustodyContractProposalV1(kind, wire, {
   nowUtc, expectedOriginal, expectedCandidate,
 } = {}) {
-  if (!Object.hasOwn(schemas, kind)) return result(false, ['CONTRACT_KIND_UNSUPPORTED']);
+  if (typeof kind !== 'string' || !Object.hasOwn(schemas, kind)) return result(false, ['CONTRACT_KIND_UNSUPPORTED']);
   if (typeof wire !== 'string' || Buffer.byteLength(wire) > 32 * 1024)
     return result(false, ['CONTRACT_WIRE_INVALID_OR_OVER_BUDGET']);
   let value;

@@ -325,3 +325,11 @@ test('existing operator/root can own commissioning; no accidental third account 
   const r = validate('independent-signing-custody', signing);
   assert.equal(r.validProposal, true); noAuthority(r);
 });
+
+test('schema exports reject inherited object names and non-string selectors', () => {
+  for (const kind of ['__proto__', 'constructor', 'toString', null, {}]) {
+    assert.throws(() => r7CustodyContractProposalSchemaV1(kind), /KIND_UNSUPPORTED/);
+    const r = validateR7CustodyContractProposalV1(kind, '{}', { nowUtc: NOW });
+    assert.equal(r.validProposal, false); noAuthority(r);
+  }
+});
