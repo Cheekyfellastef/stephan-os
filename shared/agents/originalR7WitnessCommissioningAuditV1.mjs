@@ -9,8 +9,10 @@ const SERVICE = 'StephanosOriginalR7CustodyWitness';
 const UNKNOWN = new Set([
   'SERVICE_ENUMERATION_UNAVAILABLE',
   'PROCESS_ENUMERATION_UNAVAILABLE',
+  'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE',
   'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE',
   'CHECKOUT_INSPECTION_UNAVAILABLE',
+  'PUBLISHER_TASK_CONTEXT_UNAVAILABLE',
 ]);
 const strictTime = x => typeof x === 'string'
   && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(x)
@@ -27,6 +29,10 @@ function verdict(blockers, visible = false, context = {}) {
     observable: visible,
     servicePresent: context.servicePresent === true,
     serviceStatus: context.serviceStatus || 'UNKNOWN',
+    publisherTaskPresent: context.publisherTaskPresent === true,
+    publisherTaskState: context.publisherTaskState || 'UNKNOWN',
+    publisherLastResultClass: context.publisherLastResultClass || 'UNKNOWN',
+    publisherOriginalWriterAuthenticated: false,
     blockers: Object.freeze([...new Set(blockers)]),
     nextAction: 'COMMISSION_INDEPENDENT_WINDOWS_SERVICE_AND_SEPARATE_OPERATOR_ROOT',
     authenticatedWitness: false,
@@ -58,8 +64,16 @@ export function projectOriginalR7WitnessCommissioningAuditV1(input, { nowUtc = n
     || (input.servicePresent === false && !['NOT_INSTALLED', 'UNKNOWN'].includes(input.serviceStatus))
     || !count(input.originalProcessCandidateCount)
     || !count(input.relatedTaskCount)
+    || (input.publisherTaskPresent !== undefined && typeof input.publisherTaskPresent !== 'boolean')
+    || (input.publisherTaskState !== undefined
+      && !['RUNNING','READY','DISABLED','QUEUED','NOT_FOUND','UNKNOWN'].includes(input.publisherTaskState))
+    || (input.publisherLastResultClass !== undefined
+      && !['ZERO','NONZERO','NEVER_RUN','UNKNOWN'].includes(input.publisherLastResultClass))
+    || (input.publisherTaskPresent === true && input.publisherTaskState === 'NOT_FOUND')
+    || (input.publisherTaskPresent === false
+      && !['UNKNOWN','NOT_FOUND',undefined].includes(input.publisherTaskState))
     || !Array.isArray(input.unknownObservations)
-    || input.unknownObservations.length > 4
+    || input.unknownObservations.length > 6
     || input.unknownObservations.some(x => typeof x !== 'string' || !UNKNOWN.has(x))
     || input.privilegedServiceSidVerified !== false
     || input.sourceAclDenialEnforced !== false
