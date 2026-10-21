@@ -147,6 +147,11 @@ namespace Stephanos.Sovereign {
 
     static bool Safe(Func<bool> predicate) { try { return predicate != null && predicate(); } catch { return false; } }
     static bool Cancelled(Func<bool> predicate) { try { return predicate == null || predicate(); } catch { return true; } }
+    static string InterruptionReason(Func<bool> gamingSafe,Func<bool> cancelled,Stopwatch clock,int deadlineMs) {
+      // Completion does not exempt a fast child from any interruption channel.
+      bool game=!Safe(gamingSafe),external=cancelled(),timeout=clock.ElapsedMilliseconds>=deadlineMs;
+      return game ? "GAMING_CANCELLED" : external ? "OPERATOR_CANCELLED" : timeout ? "DEADLINE_CANCELLED" : "";
+    }
     static void Require(bool value) { if (!value) throw new Win32Exception(Marshal.GetLastWin32Error()); }
     static bool Empty(IntPtr job,CoreJobReceiptV1 r) {
       ACCOUNTING a;
@@ -195,6 +200,7 @@ namespace Stephanos.Sovereign {
       IntPtr job=IntPtr.Zero,attributes=IntPtr.Zero,jobList=IntPtr.Zero,environment=IntPtr.Zero;
       PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
       bool initialized=false,launched=false;
+      Stopwatch clock=null;
       var scopePins=new List<SafeFileHandle>();
       string nonce=Guid.NewGuid().ToString("N");
       // Private non-inherited events: acknowledgement is corroborated by OS
@@ -264,12 +270,12 @@ namespace Stephanos.Sovereign {
           } else {
             Require(ResumeThread(pi.thread)!=UInt32.MaxValue);
             r.WorkspaceMutationAttempted=mode=="directories";
-            var clock=Stopwatch.StartNew();
-            while (!Empty(job,r)) {
-              bool game=!Safe(gamingSafe),external=cancelled(),timeout=clock.ElapsedMilliseconds>=deadlineMs;
-              if (game || external || timeout) {
+            clock=Stopwatch.StartNew();
+            while (true) {
+              string interruption=InterruptionReason(gamingSafe,cancelled,clock,deadlineMs);
+              if (interruption!="") {
                 r.CancellationRequested=true;
-                r.Reason=game ? "GAMING_CANCELLED" : external ? "OPERATOR_CANCELLED" : "DEADLINE_CANCELLED";
+                r.Reason=interruption;
                 cancel.Set();
                 // Bounded cooperative acknowledgement. Escalation stays inside
                 // THIS Job; never kill a PID tree, service, task or R7 writer.
@@ -277,6 +283,7 @@ namespace Stephanos.Sovereign {
                 Require(TerminateJobObject(job,77));
                 break;
               }
+              if (Empty(job,r)) break;
               Thread.Sleep(25);
             }
           }
@@ -294,16 +301,14 @@ namespace Stephanos.Sovereign {
             if(mode=="directories") {
               PinDirectory(Path.Combine(directoryRoot,"status"),scopePins);
               PinDirectory(Path.Combine(directoryRoot,"proof"),scopePins);
-              // A fast worker may drain before the monitoring loop runs. Its
-              // zero exit is not a final gaming/cancellation observation.
-              // Recheck after final scope pinning and before claiming success;
-              // retain attempted-mutation uncertainty on this original request.
-              bool finalGamingSafe=Safe(gamingSafe),finalCancelled=cancelled();
-              if(!finalGamingSafe || finalCancelled) {
-                r.CancellationRequested=true;
-                r.Reason=!finalGamingSafe ? "GAMING_CANCELLED" : "OPERATOR_CANCELLED";
-                return r;
-              }
+            }
+            // Drain and directory pinning can outlive the last monitor sample.
+            // Revalidate ALL channels for EVERY success before setting flags.
+            string interruption=InterruptionReason(gamingSafe,cancelled,clock,deadlineMs);
+            if(interruption!="") {
+              r.CancellationRequested=true; r.Reason=interruption; return r;
+            }
+            if(mode=="directories") {
               r.CorePublicationDirectoriesReady=true; r.RepairExecuted=true;
               r.Verdict="CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED";
             } else r.Verdict="PROBE_PASSED_UNQUALIFIED";

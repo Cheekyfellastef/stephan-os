@@ -158,6 +158,32 @@ test('native adapter uses atomic Job assignment and never enables breakaway or c
   assert.doesNotMatch(code, /Start-Process -FilePath/);
 });
 
+test('common completion admission holds a drained child on deadline, unknown cancel and probe game onset',
+  { skip: !windows, timeout: 30000 }, () => publicationFixture(async root => {
+    // The unconditional first post-resume sample lets the fixed child finish.
+    // Change the channel at the terminal sample after it has drained.
+    const wait = '$script:n++;if($script:n -eq 4){[Threading.Thread]::Sleep(2500)};';
+    for (const [name, options, reason] of [
+      ['deadline', { safe: wait + 'if($script:n -ge 5){[Threading.Thread]::Sleep(2500)};$true', deadline: 4000 }, 'DEADLINE_CANCELLED'],
+      ['unknown-cancel', { safe: wait + '$true', cancel: 'if($script:n -ge 5){throw "cancel unavailable"};$false' }, 'OPERATOR_CANCELLED'],
+      ['probe-game', { mode: 'complete', safe: wait + '$script:n -lt 5' }, 'GAMING_CANCELLED'],
+    ]) {
+      const directoryRoot = name === 'probe-game' ? undefined : join(root, name);
+      if (directoryRoot) mkdirSync(directoryRoot);
+      const { receipt, status, stderr } = await runner({ directoryRoot, ...options }).done;
+      assert.equal(status, 0, stderr);
+      assert.ok(receipt, stderr);
+      assert.equal(receipt.ExitCode, 0, JSON.stringify(receipt));
+      assert.equal(receipt.Verdict, 'HELD');
+      assert.equal(receipt.Reason, reason);
+      assert.equal(receipt.CancellationRequested, true);
+      assert.equal(receipt.WorkspaceMutationAttempted, !!directoryRoot);
+      assert.equal(receipt.CorePublicationDirectoriesReady, false);
+      closed(receipt);
+      if (directoryRoot) assert.deepEqual(readdirSync(directoryRoot).sort(), ['proof', 'status']);
+    }
+  }));
+
 test('native governor reader pins ancestors/file and denies reparse or an existing writer', { skip: !windows, timeout: 20000 }, () => {
   const root = mkdtempSync(join(tmpdir(), 'core-governor-fixture-'));
   try {

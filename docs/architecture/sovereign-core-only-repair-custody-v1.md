@@ -155,6 +155,23 @@ and physical acceptance remain required before commissioning. This action proves
 only directory restoration, not a healthy Core or recovered R7 builder. Other
 Core faults still require their own resource-disjoint operation design.
 
+## Shared completion admission
+
+Fast directory-worker review also exposes a shared completion invariant: a
+drained Job and exit zero cannot exempt any worker from interruption checks.
+The native monitor now samples gaming/cancellation/deadline before testing for
+completion. After positive OS drain and final directory pinning, the same
+predicate must pass again before any probe or repair success field is set.
+This extends final gaming/cancel acceptance to deadlines and every success path.
+
+Native regressions let the real child exit during the first post-resume sample,
+then cross the deadline, throw from cancellation or activate gaming at the
+terminal sample. Exit remains zero and custody is proven drained, but the
+receipt must remain HELD and preserve any attempted directory mutation. No
+cancellation acknowledgement is invented after exit. This is completion
+admission, not an atomic gaming transition, rollback, installed-parent
+qualification or commissioning. Existing specialist/activation gates still bind.
+
 Review follow-up: a fast directory worker can drain before the monitor polls.
 Acceptance now rechecks governor and original-request cancellation after final
 scope pinning and before setting any successful repair postcondition. Active,
