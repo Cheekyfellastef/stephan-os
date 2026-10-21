@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync, spawn } from 'node:child_process';
-import { access, mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, writeFile, copyFile, rename, rm, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -34,7 +34,10 @@ async function runAsync(program, args, options = {}) {
   });
 }
 async function runForgeFixture({ admissionOnly = false } = {}) {
-  const scratch = await mkdtemp(join(tmpdir(), 'stephanos-seed-parallel-'));
+  // Windows TEMP may use an 8.3 alias. Qualify the newly owned fixture's
+  // native path rather than weakening production's no-redirection check.
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), 'stephanos-seed-parallel-')));
+  assert.equal(scratch, await realpath(scratch));
   const repo = join(scratch, 'fixture-repo');
   const home = join(scratch, 'operator-home');
   const path = (relative) => join(repo, relative);
@@ -1052,7 +1055,12 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
       JSON.stringify({ schemaVersion: 'stephanos.vr-resource-governor.v1',
         active: false, phase: 'NORMAL', localModelAllowed: true,
         updatedAtUtc: new Date().toISOString() }));
-    git('config', 'stephanos.safevalue', 'A'.repeat(70000));
+    // Create the oversized config-output adversary through the owned fixture
+    // file: a 70k argv exceeds Windows' command-line limit before Git can run.
+    // Keep the actual Git-config read/output-overflow regression unchanged.
+    const fixtureConfig = path('.git/config');
+    const configBeforeOverflow = await readFile(fixtureConfig, 'utf8');
+    await writeFile(fixtureConfig, `${configBeforeOverflow}\n[stephanos]\n\tsafevalue = ${'A'.repeat(70000)}\n`);
     try {
       const overflow = await runAsync(process.execPath,
         [executable, 'build', oversizedManifest, '--execute'], { cwd: repo, env });
@@ -1064,7 +1072,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
       assert.equal(receipt.goalCompleted, false);
       assert.equal(git('rev-parse', 'main'), oversizedRequest.baseSha);
     } finally {
-      git('config', '--unset', 'stephanos.safevalue');
+      await writeFile(fixtureConfig, configBeforeOverflow);
     }
 
   } finally {

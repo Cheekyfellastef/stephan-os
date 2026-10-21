@@ -1,9 +1,18 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Stephanos.SeedParallelCustody;
 
+try
+{
 if (!OperatingSystem.IsWindows()) return 2;
+// Test process only: failing assertions must not interrupt the desktop with
+// Windows error-reporting dialogs. No registry or machine policy is changed.
+TestErrorMode.Apply();
+if (args.Length == 1 && args[0] == "--probe-harness-failure")
+    throw new InvalidOperationException("SEED_EXPECTED_NONINTERACTIVE_HARNESS_FAILURE");
+if (args.Length != 0) return 2;
 int count = 0;
 void Check(bool pass, string label)
 { count++; if (!pass) throw new Exception("SEED_NATIVE_TEST_FAILED_" + label); }
@@ -85,7 +94,7 @@ try
     using (var child = Process.Start(setup) ?? throw new Exception("SEED_JUNCTION_FIXTURE_NOT_STARTED"))
     {
         if (!child.WaitForExit(10000))
-        { child.Kill(true); child.WaitForExit(); throw new Exception("SEED_JUNCTION_FIXTURE_TIMEOUT"); }
+        { child.Kill(); child.WaitForExit(); throw new Exception("SEED_JUNCTION_FIXTURE_TIMEOUT"); }
         Check(child.ExitCode == 0 && (File.GetAttributes(linked) & FileAttributes.ReparsePoint) != 0,
             "REAL_JUNCTION_FIXTURE");
     }
@@ -111,4 +120,23 @@ finally
     if (Path.GetFullPath(root).StartsWith(fixtureParent, StringComparison.OrdinalIgnoreCase)
         && Path.GetFileName(root).StartsWith("nt-", StringComparison.Ordinal))
         Directory.Delete(root, true);
+}
+}
+catch (Exception error)
+{
+    Console.Error.WriteLine("SEED_NATIVE_FIXTURE_FAILED_" + error.GetType().Name);
+    return 1;
+}
+
+internal static class TestErrorMode
+{
+    internal static void Apply()
+    {
+        const uint flags = 3; // SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+        _ = SetErrorMode(GetErrorMode() | flags);
+        if ((GetErrorMode() & flags) != flags)
+            throw new InvalidOperationException("SEED_TEST_ERROR_MODE_UNPROVEN");
+    }
+    [DllImport("kernel32.dll")] private static extern uint GetErrorMode();
+    [DllImport("kernel32.dll")] private static extern uint SetErrorMode(uint mode);
 }
