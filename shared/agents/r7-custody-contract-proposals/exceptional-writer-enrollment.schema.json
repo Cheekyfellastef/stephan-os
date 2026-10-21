@@ -235,21 +235,24 @@
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "adoptedPolicyDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "currentRevocationDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         }
       }
     },
@@ -289,7 +292,8 @@
             "pattern": "^[a-f0-9]{64}$",
             "not": {
               "const": "0000000000000000000000000000000000000000000000000000000000000000"
-            }
+            },
+            "x-r7-evidence-reference": "ALWAYS"
           },
           "observedAtUtc": {
             "type": "string",
@@ -353,14 +357,16 @@
             "pattern": "^[a-f0-9]{64}$",
             "not": {
               "const": "0000000000000000000000000000000000000000000000000000000000000000"
-            }
+            },
+            "x-r7-evidence-reference": "ALWAYS"
           },
           "tokenObjectEvidenceDigest": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$",
             "not": {
               "const": "0000000000000000000000000000000000000000000000000000000000000000"
-            }
+            },
+            "x-r7-evidence-reference": "ALWAYS"
           }
         }
       },
@@ -373,14 +379,16 @@
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "prospectiveEstateEvidenceDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "unknownIdentityPolicy": {
       "enum": [
@@ -419,42 +427,48 @@
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "priorKernelObjectDispositionEvidenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "writerTimeUpperBoundEvidenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "bootTimeLowerBoundEvidenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "clockProvenanceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "postBootEstateDispositionEvidenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "latestPossiblePreBootWriterEndUtc": {
           "type": "string",
@@ -500,56 +514,64 @@
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "principalCapabilityInventoryDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "openHandleAndMappingDispositionDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "detachedWriterDispositionDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "reentryEstateDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "sourceDenialProofDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "continuityEvidenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         },
         "queueQuiescenceDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
         }
       }
     },

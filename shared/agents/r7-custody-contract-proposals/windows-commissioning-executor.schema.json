@@ -242,21 +242,24 @@
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "adoptedPolicyDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         },
         "currentRevocationDigest": {
           "type": "string",
           "pattern": "^[a-f0-9]{64}$",
           "not": {
             "const": "0000000000000000000000000000000000000000000000000000000000000000"
-          }
+          },
+          "x-r7-evidence-reference": "ALWAYS"
         }
       }
     },
@@ -296,7 +299,8 @@
             "pattern": "^[a-f0-9]{64}$",
             "not": {
               "const": "0000000000000000000000000000000000000000000000000000000000000000"
-            }
+            },
+            "x-r7-evidence-reference": "ALWAYS"
           },
           "observedAtUtc": {
             "type": "string",
@@ -356,35 +360,40 @@
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "independentReviewArtifactDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "protectedSourceAdmissionDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "protectedOperatorConsentDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "executorEnrollmentDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
       "not": {
         "const": "0000000000000000000000000000000000000000000000000000000000000000"
-      }
+      },
+      "x-r7-evidence-reference": "ALWAYS"
     },
     "fixedRecipeDigest": {
       "type": "string",

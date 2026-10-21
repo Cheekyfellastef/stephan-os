@@ -206,7 +206,7 @@ test('actual changed owner after readback cannot claim reconciliation or delete 
   });
 });
 
-test('existing relay invokes consumer and backfills completed delivery without resubmission', async () => {
+test('existing relay invokes consumer and backfills completed delivery without resubmission', async t => {
   const { runChatGptSharedWorkspaceGitHubRelay, CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
     CHATGPT_SHARED_WORKSPACE_OWNER } = await import('./chatgpt-shared-workspace-github-relay.mjs');
   await fixture(async args => {
@@ -254,5 +254,81 @@ test('existing relay invokes consumer and backfills completed delivery without r
     assert.equal(second.commissioningReconciliation.reason, 'R7_ADMISSION_RECONCILED_HELD');
     assert.equal(responseWrites, 1);
     assert.equal(JSON.parse(await readFile(receipt, 'utf8')).admissionReconciliation.status, 'HELD');
+    const completion = path.join(args.root, 'receipts', first.completionReceiptId + '.json');
+    const completionBytes = await readFile(completion, 'utf8');
+    const lockPath = path.join(args.root, 'receipts', first.commissioningReconciliation.receiptId + '.lock');
+    const isInbox = file => path.basename(file) === args.segments.at(-1);
+    const isDiagnostic = file => path.basename(file) === path.basename(receipt);
+    const denied = () => Object.assign(new Error('disposable access denial'), { code: 'EACCES' });
+    const faults = [
+      ['inbox read', { readFileFn: async (...a) => { if (isInbox(a[0])) throw denied(); return readFile(...a); } }],
+      ['inbox parse', { readFileFn: async (...a) => isInbox(a[0]) ? '{' : readFile(...a) }],
+      ['inbox identity changed', { readFileFn: async (...a) => isInbox(a[0]) ? JSON.stringify({ body: '{}' }) : readFile(...a) }],
+      ['receipt write', { writeAtomicJsonFn: async () => ({ ok: false }) }],
+      ['receipt readback', { readFileFn: async (...a) => {
+        const bytes = await readFile(...a); if (isDiagnostic(a[0])) throw denied(); return bytes;
+      } }],
+      ['receipt readback conflict', { readFileFn: async (...a) => {
+        const bytes = await readFile(...a); return isDiagnostic(a[0]) ? '{}' : bytes;
+      } }],
+      ['busy actual lock', {}],
+      ['lost actual owner after readback', { readFileFn: async (...a) => {
+        const bytes = await readFile(...a);
+        if (isDiagnostic(a[0])) {
+          const names = await readdir(lockPath); assert.equal(names.length, 1);
+          const ownerPath = path.join(lockPath, names[0]);
+          const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+          await writeFile(ownerPath, JSON.stringify({ ...owner, token: 'different-backfill-fixture-owner' }));
+        }
+        return bytes;
+      } }],
+    ];
+    for (const [name, fault] of faults) await t.test('failed backfill: ' + name, async () => {
+      await rm(receipt, { force: true });
+      let guard;
+      if (name === 'busy actual lock') {
+        guard = await acquireSharedWorkspaceOperationLock(args.root,
+          ['receipts', path.basename(lockPath)], { repoRoot: args.writeOptions.repoRoot });
+        assert.equal(guard.ok, true);
+      }
+      try {
+        const failed = await runChatGptSharedWorkspaceGitHubRelay({ ...options, ...fault });
+        assert.equal(failed.ok, false, JSON.stringify(failed));
+        assert.equal(failed.classification, 'CHATGPT_SHARED_WORKSPACE_R7_RECONCILIATION_FAILED');
+        assert.equal(failed.deliveryPreviouslyCompleted, true);
+        assert.equal(failed.deliveryClassification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+        assert.equal(failed.commissioningReconciliation.ok, false);
+        noAuthority(failed.commissioningReconciliation);
+        assert.equal(failed.responsePublished, false);
+        assert.equal(responseWrites, 1);
+        assert.equal(await readFile(completion, 'utf8'), completionBytes);
+      } finally {
+        if (guard) assert.equal(await guard.release(), true);
+        if (name === 'lost actual owner after readback') {
+          const names = await readdir(lockPath);
+          assert.equal(JSON.parse(await readFile(path.join(lockPath, names[0]), 'utf8')).token,
+            'different-backfill-fixture-owner');
+          // Only our disposable fixture; production did not delete that owner.
+          await rm(lockPath, { recursive: true });
+        }
+      }
+    });
+    await t.test('unrelated completed request is not reclassified as R7 on missing inbox', async () => {
+      const unrelatedBody = body.replace('R7_COMMISSIONING_EXECUTOR_ADMISSION_NOT_PROVEN', 'UNRELATED_DIAGNOSTIC_ONLY');
+      const unrelated = await runChatGptSharedWorkspaceGitHubRelay({ ...options,
+        adapter: { ...options.adapter, readRequest: () => ({ ok: true, body: unrelatedBody,
+          authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }) },
+        readFileFn: async (...a) => { if (isInbox(a[0])) throw denied(); return readFile(...a); },
+      });
+      assert.equal(unrelated.ok, true);
+      assert.equal(unrelated.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+      assert.equal(unrelated.commissioningReconciliation, null);
+      assert.equal(responseWrites, 1);
+    });
+    const recovered = await runChatGptSharedWorkspaceGitHubRelay(options);
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.commissioningReconciliation.held, true);
+    assert.equal(responseWrites, 1);
+    assert.equal(await readFile(completion, 'utf8'), completionBytes);
   });
 });

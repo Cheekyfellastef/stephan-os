@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import {
   R7_POLICY_PROPOSAL_DOMAIN, R7_POLICY_PROPOSAL_KINDS,
   r7CustodyContractProposalSchemaV1, validateR7CustodyContractProposalV1,
@@ -19,7 +20,7 @@ const pin = sha(key.publicKey.export({ type: 'spki', format: 'der' }));
 const pem = key.publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const evidence = Array.from({ length: 8 }, (_, i) => ({
   evidenceId: 'proof-scope-' + i, evidenceDigest: sha('scope-' + i),
-  producerEnrollmentDigest: sha('producer-' + i), observedAtUtc: ISSUED,
+  producerEnrollmentDigest: sha('scope-0'), observedAtUtc: ISSUED,
 }));
 function base(kind) {
   const role = {
@@ -47,8 +48,8 @@ function base(kind) {
       serviceName: 'StephanosOriginalR7CustodyWitness',
     },
     issuer: {
-      role, keySpkiSha256: pin, enrollmentEvidenceDigest: sha('issuer-fixture'),
-      adoptedPolicyDigest: sha('unadopted-fixture-policy'), currentRevocationDigest: sha('fixture-revocations'),
+      role, keySpkiSha256: pin, enrollmentEvidenceDigest: evidence[0].evidenceDigest,
+      adoptedPolicyDigest: evidence[1].evidenceDigest, currentRevocationDigest: evidence[2].evidenceDigest,
     },
     historicalExecutionOutcome: 'UNKNOWN', historicalReceiptReconstructed: false,
     evidence: structuredClone(evidence),
@@ -59,8 +60,8 @@ function fixture(kind) {
   if (kind === 'exceptional-writer-enrollment') return {
     schemaVersion: 'stephanos.r7-exceptional-writer-enrollment-proposal.v1', ...common,
     identityMode: 'PROSPECTIVE_COMPLETE_ESTATE', enrolledPrincipalSids: [originalSid], processBindings: [],
-    consumedExecutionEvidenceDigest: sha('consumed-fixture-execution'),
-    prospectiveEstateEvidenceDigest: sha('estate-fixture'),
+    consumedExecutionEvidenceDigest: evidence[0].evidenceDigest,
+    prospectiveEstateEvidenceDigest: evidence[1].evidenceDigest,
     unknownIdentityPolicy: 'PRESERVE_UNKNOWN_REQUIRE_COMPLETE_PROSPECTIVE_SCOPE',
     handleLifetimeBasis: 'AUTHENTICATED_CURRENT_HANDLE_MAPPING_DISPOSITION', bootBoundary: null,
     prospectiveScope: {
@@ -80,9 +81,9 @@ function fixture(kind) {
     schemaVersion: 'stephanos.r7-windows-commissioning-executor-proposal.v1', ...common,
     executorSid, witnessSid, operatorSid, originalPrincipalSids: [originalSid],
     operations: ['STAGE_DISABLED_FIXED_WITNESS', 'VERIFY_FIXED_DISABLED_STAGE'],
-    originalEnrollmentDigest: sha('enrollment'), independentReviewArtifactDigest: sha('review'),
-    protectedSourceAdmissionDigest: sha('source-admission'), protectedOperatorConsentDigest: sha('consent'),
-    executorEnrollmentDigest: sha('executor'), fixedRecipeDigest: sha('recipe'),
+    originalEnrollmentDigest: evidence[0].evidenceDigest, independentReviewArtifactDigest: evidence[1].evidenceDigest,
+    protectedSourceAdmissionDigest: evidence[2].evidenceDigest, protectedOperatorConsentDigest: evidence[3].evidenceDigest,
+    executorEnrollmentDigest: evidence[4].evidenceDigest, fixedRecipeDigest: sha('recipe'),
     physicalTestPlanDigest: sha('physical-tests'), recoveryPlanDigest: sha('recovery'),
     recoveryMode: 'HOLD_DISABLED_PRESERVE_ARTIFACTS', arbitraryCommandAllowed: false,
     automaticRollbackAllowed: false, sourceLeaseMutationAllowed: false,
@@ -97,8 +98,8 @@ function fixture(kind) {
     providerImplementationDigest: sha('provider'), protectedStoragePolicyDigest: sha('storage'),
     keyEpoch: 1, lifecycle: 'PROVISION', predecessorCustodyDigest: null,
     currentRevocationDigest: common.issuer.currentRevocationDigest, oldKeyDisposition: 'NONE',
-    physicalContainmentEvidenceDigest: sha('physical'), protectedAuditContinuityDigest: sha('audit'),
-    operatorApprovalEvidenceDigest: sha('operator-approval'), arbitraryPayloadSigningAllowed: false,
+    physicalContainmentEvidenceDigest: evidence[3].evidenceDigest, protectedAuditContinuityDigest: evidence[4].evidenceDigest,
+    operatorApprovalEvidenceDigest: evidence[5].evidenceDigest, arbitraryPayloadSigningAllowed: false,
     sourceWorkerKeyAccessAllowed: false, operatorMayUseWitnessKey: false,
   };
 }
@@ -147,16 +148,16 @@ test('unknown/incomplete estate is explicit HOLD and cannot invent historical pr
   f.prospectiveScope.status = 'INCOMPLETE_UNKNOWN';
   const r = validate(kind, f); assert.equal(r.validProposal, true); assert.equal(r.policyDecisionRequired, true); noAuthority(r);
   reject(kind, p => { p.processBindings.push({ principalSid: originalSid, processId: 123,
-    creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: sha('binding'),
-    tokenObjectEvidenceDigest: sha('token-object') }); }, 'UNKNOWN_HISTORY_MUST_NOT_INVENT_PROCESSES');
+    creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: evidence[3].evidenceDigest,
+    tokenObjectEvidenceDigest: evidence[4].evidenceDigest }); }, 'UNKNOWN_HISTORY_MUST_NOT_INVENT_PROCESSES');
 });
 
 test('historical process mode binds exact principal, PID and non-floating kernel time', () => {
   const kind = 'exceptional-writer-enrollment', f = fixture(kind);
   f.identityMode = 'AUTHENTICATED_HISTORICAL_ENROLLMENT'; f.unknownIdentityPolicy = 'NO_UNKNOWN_IDENTITY';
   f.processBindings = [{ principalSid: originalSid, processId: 123,
-    creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: sha('binding'),
-    tokenObjectEvidenceDigest: sha('token-object') }];
+    creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: evidence[3].evidenceDigest,
+    tokenObjectEvidenceDigest: evidence[4].evidenceDigest }];
   assert.equal(validate(kind, f).validProposal, true);
   f.processBindings[0].principalSid = executorSid;
   assert.ok(validate(kind, f).blockers.includes('ENROLLMENT_PRINCIPAL_BINDING_INCOMPLETE'));
@@ -229,7 +230,7 @@ test('provision, rotation and revocation require independent roots and predecess
   reject(kind, p => { p.currentRevocationDigest = sha('stale'); }, 'REVOCATION_SNAPSHOT_MISMATCH');
   for (const lifecycle of ['ROTATE', 'REVOKE']) {
     const f = fixture(kind); f.lifecycle = lifecycle; f.keyEpoch = 2;
-    f.predecessorCustodyDigest = sha('predecessor'); f.oldKeyDisposition = 'DISABLED_AND_RETAINED_FOR_AUDIT';
+    f.predecessorCustodyDigest = evidence[6].evidenceDigest; f.oldKeyDisposition = 'DISABLED_AND_RETAINED_FOR_AUDIT';
     const r = validate(kind, f); assert.equal(r.validProposal, true); noAuthority(r);
   }
 });
@@ -341,8 +342,8 @@ test('authenticated historical enrollment cannot bypass complete correlated pros
     f.identityMode = 'AUTHENTICATED_HISTORICAL_ENROLLMENT';
     f.unknownIdentityPolicy = 'NO_UNKNOWN_IDENTITY';
     f.processBindings = [{ principalSid: originalSid, processId: 123,
-      creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: sha('binding'),
-      tokenObjectEvidenceDigest: sha('token-object') }];
+      creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: evidence[3].evidenceDigest,
+      tokenObjectEvidenceDigest: evidence[4].evidenceDigest }];
     return f;
   };
   const complete = historical();
@@ -421,4 +422,99 @@ test('all digest identities reject placeholders across every contract and signat
   Object.assign(rotated, { lifecycle: 'ROTATE', keyEpoch: 2,
     predecessorCustodyDigest: '0'.repeat(64), oldKeyDisposition: 'DISABLED_AND_RETAINED_FOR_AUDIT' });
   assert.equal(validate('independent-signing-custody', rotated).validProposal, false);
+});
+
+test('every declared evidence reference resolves in all contract and lifecycle variants, including signed wires', () => {
+  const variants = R7_POLICY_PROPOSAL_KINDS.map(kind => [kind, fixture(kind)]);
+  const historical = fixture('exceptional-writer-enrollment');
+  historical.identityMode = 'AUTHENTICATED_HISTORICAL_ENROLLMENT';
+  historical.unknownIdentityPolicy = 'NO_UNKNOWN_IDENTITY';
+  historical.processBindings = [{ principalSid: originalSid, processId: 123,
+    creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: evidence[3].evidenceDigest,
+    tokenObjectEvidenceDigest: evidence[4].evidenceDigest }];
+  variants.push(['exceptional-writer-enrollment', historical]);
+  const boot = fixture('exceptional-writer-enrollment');
+  boot.handleLifetimeBasis = 'AUTHENTICATED_KERNEL_BOUNDARY_AND_COMPLETE_POST_BOOT_ESTATE';
+  boot.bootBoundary = {
+    currentKernelInstanceDigest: evidence[0].evidenceDigest,
+    priorKernelObjectDispositionEvidenceDigest: evidence[1].evidenceDigest,
+    writerTimeUpperBoundEvidenceDigest: evidence[2].evidenceDigest,
+    bootTimeLowerBoundEvidenceDigest: evidence[3].evidenceDigest,
+    clockProvenanceDigest: evidence[4].evidenceDigest,
+    postBootEstateDispositionEvidenceDigest: evidence[5].evidenceDigest,
+    latestPossiblePreBootWriterEndUtc: '2026-10-10T04:50:00.000Z',
+    currentKernelStartLowerBoundUtc: '2026-10-11T23:37:00.000Z',
+    reentryFenceEffectiveAtUtc: '2026-10-21T15:58:00.000Z', postBootDispositionObservedAtUtc: ISSUED,
+  };
+  variants.push(['exceptional-writer-enrollment', boot]);
+  for (const lifecycle of ['ROTATE', 'REVOKE']) {
+    const previous = fixture('independent-signing-custody');
+    Object.assign(previous, { lifecycle, keyEpoch: 2, predecessorCustodyDigest: evidence[6].evidenceDigest,
+      oldKeyDisposition: 'DISABLED_AND_RETAINED_FOR_AUDIT' });
+    variants.push(['independent-signing-custody', previous]);
+  }
+  let exercised = 0;
+  for (const [kind, original] of variants) {
+    assert.equal(validate(kind, original).validProposal, true);
+    const paths = [];
+    function visit(value, spec, path = []) {
+      if (value === null) return;
+      if (spec['x-r7-evidence-reference']) paths.push(path);
+      if (Array.isArray(value)) value.forEach((item, i) => visit(item, spec.items, [...path, i]));
+      else if (value && typeof value === 'object') for (const [name, item] of Object.entries(value))
+        visit(item, spec.properties[name], [...path, name]);
+    }
+    visit(original, r7CustodyContractProposalSchemaV1(kind));
+    for (const required of ['issuer.enrollmentEvidenceDigest', 'issuer.adoptedPolicyDigest',
+      'issuer.currentRevocationDigest', 'evidence.0.producerEnrollmentDigest'])
+      assert.ok(paths.some(path => path.join('.') === required), kind + ':' + required);
+    if (kind === 'windows-commissioning-executor') for (const required of ['originalEnrollmentDigest',
+      'independentReviewArtifactDigest', 'protectedSourceAdmissionDigest', 'protectedOperatorConsentDigest',
+      'executorEnrollmentDigest']) assert.ok(paths.some(path => path.join('.') === required));
+    if (kind === 'independent-signing-custody') for (const required of ['physicalContainmentEvidenceDigest',
+      'protectedAuditContinuityDigest', 'operatorApprovalEvidenceDigest', 'currentRevocationDigest'])
+      assert.ok(paths.some(path => path.join('.') === required));
+    for (const path of paths) {
+      const bad = structuredClone(original); let parent = bad;
+      for (const name of path.slice(0, -1)) parent = parent[name];
+      parent[path.at(-1)] = sha('uncorrelated:' + kind + ':' + path.join('.'));
+      const rejected = validate(kind, bad);
+      assert.equal(rejected.validProposal, false, kind + ':' + path.join('.'));
+      assert.ok(rejected.blockers.includes('CONTRACT_EVIDENCE_REFERENCES_UNCORRELATED'));
+      assert.ok(rejected.uncorrelatedEvidenceReferences.includes('proposal.' + path.join('.')));
+      noAuthority(rejected);
+      const wire = JSON.stringify(bad);
+      const signature = sign(null, Buffer.from(R7_POLICY_PROPOSAL_DOMAIN + kind + '\0' + wire), key.privateKey).toString('base64');
+      const signed = verifyR7CustodyProposalSignatureV1(kind, wire, signature,
+        { publicKeyPem: pem, keySpkiSha256: pin, nowUtc: NOW });
+      assert.equal(signed.signatureValid, false); noAuthority(signed); exercised++;
+    }
+  }
+  assert.ok(exercised >= 130, 'declared reference traversal count: ' + exercised);
+});
+
+test('ambiguous evidence identities, missing producer enrollment and stale records never correlate', () => {
+  for (const kind of R7_POLICY_PROPOSAL_KINDS) {
+    reject(kind, p => { p.evidence.push({ ...p.evidence[0], evidenceId: 'different-fixture-identity' }); },
+      'EVIDENCE_DIGEST_AMBIGUOUS');
+    reject(kind, p => { p.evidence[0].producerEnrollmentDigest = sha('absent-producer'); },
+      'CONTRACT_EVIDENCE_REFERENCES_UNCORRELATED');
+    reject(kind, p => { p.evidence[0].observedAtUtc = '2026-10-20T15:59:00.000Z'; },
+      'EVIDENCE_IDENTITY_OR_FRESHNESS_UNPROVEN');
+  }
+  const held = fixture('exceptional-writer-enrollment');
+  Object.assign(held, { identityMode: 'HISTORICAL_IDENTITY_UNKNOWN_SCOPE_INCOMPLETE',
+    enrolledPrincipalSids: [], unknownIdentityPolicy: 'HOLD_SCOPE_INCOMPLETE' });
+  held.prospectiveScope.status = 'INCOMPLETE_UNKNOWN';
+  for (const name of Object.keys(held.prospectiveScope).filter(name => name !== 'status'))
+    held.prospectiveScope[name] = sha('explicit-unknown-scope:' + name);
+  const decision = validate('exceptional-writer-enrollment', held);
+  assert.equal(decision.validProposal, true); assert.equal(decision.policyDecisionRequired, true); noAuthority(decision);
+});
+
+test('persisted proposal schemas carry the same evidence-reference model as semantic validation', async () => {
+  for (const kind of R7_POLICY_PROPOSAL_KINDS) {
+    const saved = JSON.parse(await readFile(new URL('./r7-custody-contract-proposals/' + kind + '.schema.json', import.meta.url), 'utf8'));
+    assert.deepEqual(saved, r7CustodyContractProposalSchemaV1(kind));
+  }
 });

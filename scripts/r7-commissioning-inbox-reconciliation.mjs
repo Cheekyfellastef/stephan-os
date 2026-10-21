@@ -21,6 +21,7 @@ const noAuthority = Object.freeze({
   operatorApprovalCreated: false, historicalReceiptReconstructed: false,
 });
 const rejected = reason => Object.freeze({ applicable: true, ok: false, reason, ...noAuthority });
+export const createR7CommissioningReconciliationFailure = rejected;
 
 // This is diagnostic reconciliation of the existing request, not host admission.
 // A label, administrator flag, review link or caller-provided SID cannot grant

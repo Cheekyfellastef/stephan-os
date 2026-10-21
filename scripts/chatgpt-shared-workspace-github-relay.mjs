@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { inspectR7CommissioningRequest, reconcileR7CommissioningInbox } from './r7-commissioning-inbox-reconciliation.mjs';
+import { inspectR7CommissioningRequest, reconcileR7CommissioningInbox,
+  createR7CommissioningReconciliationFailure } from './r7-commissioning-inbox-reconciliation.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -307,6 +308,8 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
   let qaAnswerDiagnostic = null;
   let goalAdmission = null;
   let commissioningReconciliation = null;
+  let lastRequestObservation = null;
+  const rememberRequest = observed => { lastRequestObservation = observed; return observed; };
   const answerQuestionFn = typeof options.answerQuestionFn === 'function'
     ? options.answerQuestionFn
     : answerStephanosWorkspaceQuestionRecord;
@@ -360,9 +363,9 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
       return writeAtomicJsonFn(root, segments, augmented, writeOptions);
     },
     adapter: Object.freeze({
-      readRequest: (...args) => adapter.readRequest(...args),
+      readRequest: (...args) => rememberRequest(adapter.readRequest(...args)),
       ...(typeof adapter.readRequestFresh === 'function'
-        ? { readRequestFresh: (...args) => adapter.readRequestFresh(...args) }
+        ? { readRequestFresh: (...args) => rememberRequest(adapter.readRequestFresh(...args)) }
         : {}),
       writeResponse: (body) => adapter.writeResponse(renderResponseWithDiagnostic(body, qaAnswerDiagnostic)),
     }),
@@ -374,6 +377,15 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
       && result.classification === 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED'
       && /^[a-z0-9][a-z0-9._-]{7,59}$/.test(result.requestId || '')) {
     const paths = options.paths || resolveChatGptSharedWorkspaceRelayPaths(options);
+    const observed = lastRequestObservation;
+    const parsed = observed?.ok ? parseChatGptSharedWorkspaceRequestComment(observed.body) : null;
+    // This is only routing/failure attribution, never approval. An unreadable
+    // inbox for an unrelated completed request must not become an R7 failure.
+    const r7Observed = parsed?.ok && observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER
+      && parsed.request?.requestId === result.requestId
+      && inspectR7CommissioningRequest({ body: JSON.stringify({
+        recordKind: parsed.request.recordKind, boundedPayload: parsed.request.boundedPayload,
+      }) }).applicable;
     const segments = ['inbox', result.requestId + '.json'];
     const inbox = resolveSharedWorkspacePath({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, segments });
     if (inbox.ok) {
@@ -384,13 +396,24 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
             root: paths.workspaceRoot, segments, record: persisted, writeAtomicJsonFn, readFileFn,
             writeOptions: { repoRoot: paths.repoRoot, nowMs: (options.now || new Date()).getTime() },
           });
-        }
+        } else if (r7Observed) commissioningReconciliation =
+          createR7CommissioningReconciliationFailure('R7_ADMISSION_PERSISTED_INBOX_CONFLICT');
       } catch {
-        commissioningReconciliation = { applicable: true, ok: false, reason: 'R7_ADMISSION_BACKFILL_READ_FAILED' };
+        if (r7Observed) commissioningReconciliation =
+          createR7CommissioningReconciliationFailure('R7_ADMISSION_BACKFILL_READ_FAILED');
       }
-    }
+    } else if (r7Observed) commissioningReconciliation =
+      createR7CommissioningReconciliationFailure('R7_ADMISSION_INBOX_PATH_REJECTED');
   }
-  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission, commissioningReconciliation });
+  const failed = commissioningReconciliation?.applicable === true && commissioningReconciliation.ok !== true;
+  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission, commissioningReconciliation,
+    ...(failed ? {
+      ok: false, classification: 'CHATGPT_SHARED_WORKSPACE_R7_RECONCILIATION_FAILED',
+      reason: commissioningReconciliation.reason,
+      deliveryClassification: result.classification,
+      deliveryPreviouslyCompleted: result.classification === 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED',
+    } : {}),
+  });
 }
 
 export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = process.argv[1] } = {}) {

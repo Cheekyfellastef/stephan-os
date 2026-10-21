@@ -10,6 +10,10 @@ export const R7_POLICY_PROPOSAL_KINDS = Object.freeze([
 ]);
 const hex = size => ({ type: 'string', pattern: '^[a-f0-9]{' + size + '}$',
   not: { const: '0'.repeat(size) } });
+// Content identities and evidence references are different types. This shared
+// source annotation drives semantic correlation and exported-schema traversal
+// tests; no contract branch maintains its own selected reference list.
+const evidenceRef = (scope = 'ALWAYS') => ({ ...hex(64), 'x-r7-evidence-reference': scope });
 const id = { type: 'string', minLength: 8, maxLength: 120, pattern: '^[a-z0-9][a-z0-9._:-]*$' };
 const sid = { type: 'string', minLength: 8, maxLength: 184, pattern: '^S-1-[1-9][0-9]*(?:-(?:0|[1-9][0-9]*)){1,15}$' };
 const stamp = { type: 'string', pattern: '^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$' };
@@ -38,11 +42,11 @@ const candidate = object({
   serviceName: literal('StephanosOriginalR7CustodyWitness'),
 });
 const issuer = role => object({
-  role: literal(role), keySpkiSha256: hex(64), enrollmentEvidenceDigest: hex(64),
-  adoptedPolicyDigest: hex(64), currentRevocationDigest: hex(64),
+  role: literal(role), keySpkiSha256: hex(64), enrollmentEvidenceDigest: evidenceRef(),
+  adoptedPolicyDigest: evidenceRef(), currentRevocationDigest: evidenceRef(),
 });
 const evidence = object({
-  evidenceId: id, evidenceDigest: hex(64), producerEnrollmentDigest: hex(64),
+  evidenceId: id, evidenceDigest: hex(64), producerEnrollmentDigest: evidenceRef(),
   observedAtUtc: stamp,
 });
 const common = role => ({
@@ -61,26 +65,26 @@ const enrollment = object({
   processBindings: array(object({
     principalSid: sid, processId: integer(1, 2147483647),
     creationFileTimeUtc: { type: 'string', pattern: '^[1-9][0-9]{15,19}$' },
-    enrollmentEvidenceDigest: hex(64), tokenObjectEvidenceDigest: hex(64),
+    enrollmentEvidenceDigest: evidenceRef(), tokenObjectEvidenceDigest: evidenceRef(),
   }), 0, 16),
-  consumedExecutionEvidenceDigest: hex(64),
-  prospectiveEstateEvidenceDigest: hex(64),
+  consumedExecutionEvidenceDigest: evidenceRef(),
+  prospectiveEstateEvidenceDigest: evidenceRef(),
   unknownIdentityPolicy: enumeration('NO_UNKNOWN_IDENTITY', 'PRESERVE_UNKNOWN_REQUIRE_COMPLETE_PROSPECTIVE_SCOPE', 'HOLD_SCOPE_INCOMPLETE'),
   handleLifetimeBasis: enumeration('AUTHENTICATED_CURRENT_HANDLE_MAPPING_DISPOSITION',
     'AUTHENTICATED_KERNEL_BOUNDARY_AND_COMPLETE_POST_BOOT_ESTATE'),
   bootBoundary: { ...object({
-    currentKernelInstanceDigest: hex(64), priorKernelObjectDispositionEvidenceDigest: hex(64),
-    writerTimeUpperBoundEvidenceDigest: hex(64), bootTimeLowerBoundEvidenceDigest: hex(64),
-    clockProvenanceDigest: hex(64), postBootEstateDispositionEvidenceDigest: hex(64),
+    currentKernelInstanceDigest: evidenceRef(), priorKernelObjectDispositionEvidenceDigest: evidenceRef(),
+    writerTimeUpperBoundEvidenceDigest: evidenceRef(), bootTimeLowerBoundEvidenceDigest: evidenceRef(),
+    clockProvenanceDigest: evidenceRef(), postBootEstateDispositionEvidenceDigest: evidenceRef(),
     latestPossiblePreBootWriterEndUtc: stamp, currentKernelStartLowerBoundUtc: stamp,
     reentryFenceEffectiveAtUtc: stamp, postBootDispositionObservedAtUtc: stamp,
   }), type: ['object', 'null'] },
   prospectiveScope: object({
     status: enumeration('CLAIMED_COMPLETE_UNVERIFIED', 'INCOMPLETE_UNKNOWN'),
-    sourceBoundaryNativeDigest: hex(64), principalCapabilityInventoryDigest: hex(64),
-    openHandleAndMappingDispositionDigest: hex(64), detachedWriterDispositionDigest: hex(64),
-    reentryEstateDigest: hex(64), sourceDenialProofDigest: hex(64),
-    continuityEvidenceDigest: hex(64), queueQuiescenceDigest: hex(64),
+    sourceBoundaryNativeDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'), principalCapabilityInventoryDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'),
+    openHandleAndMappingDispositionDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'), detachedWriterDispositionDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'),
+    reentryEstateDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'), sourceDenialProofDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'),
+    continuityEvidenceDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'), queueQuiescenceDigest: evidenceRef('COMPLETE_PROSPECTIVE_SCOPE'),
   }),
   historicalIdentityAuthenticated: literal(false),
 });
@@ -90,9 +94,9 @@ const executor = object({
   executorSid: sid, witnessSid: sid, operatorSid: sid, originalPrincipalSids: array(sid, 1, 16),
   operations: array(enumeration('STAGE_DISABLED_FIXED_WITNESS', 'VERIFY_FIXED_DISABLED_STAGE',
     'COMMISSION_FIXED_PROSPECTIVE_CUSTODY'), 1, 3),
-  originalEnrollmentDigest: hex(64), independentReviewArtifactDigest: hex(64),
-  protectedSourceAdmissionDigest: hex(64), protectedOperatorConsentDigest: hex(64),
-  executorEnrollmentDigest: hex(64), fixedRecipeDigest: hex(64), physicalTestPlanDigest: hex(64),
+  originalEnrollmentDigest: evidenceRef(), independentReviewArtifactDigest: evidenceRef(),
+  protectedSourceAdmissionDigest: evidenceRef(), protectedOperatorConsentDigest: evidenceRef(),
+  executorEnrollmentDigest: evidenceRef(), fixedRecipeDigest: hex(64), physicalTestPlanDigest: hex(64),
   recoveryPlanDigest: hex(64), recoveryMode: literal('HOLD_DISABLED_PRESERVE_ARTIFACTS'),
   arbitraryCommandAllowed: literal(false), automaticRollbackAllowed: literal(false),
   sourceLeaseMutationAllowed: literal(false),
@@ -108,11 +112,11 @@ const signing = object({
   providerImplementationDigest: hex(64), protectedStoragePolicyDigest: hex(64),
   keyEpoch: integer(1, 2147483647),
   lifecycle: enumeration('PROVISION', 'ROTATE', 'REVOKE'),
-  predecessorCustodyDigest: { ...hex(64), type: ['string', 'null'] },
-  currentRevocationDigest: hex(64),
+  predecessorCustodyDigest: { ...evidenceRef(), type: ['string', 'null'] },
+  currentRevocationDigest: evidenceRef(),
   oldKeyDisposition: enumeration('NONE', 'DISABLED_AND_RETAINED_FOR_AUDIT'),
-  physicalContainmentEvidenceDigest: hex(64), protectedAuditContinuityDigest: hex(64),
-  operatorApprovalEvidenceDigest: hex(64),
+  physicalContainmentEvidenceDigest: evidenceRef(), protectedAuditContinuityDigest: evidenceRef(),
+  operatorApprovalEvidenceDigest: evidenceRef(),
   arbitraryPayloadSigningAllowed: literal(false),
   sourceWorkerKeyAccessAllowed: literal(false),
   operatorMayUseWitnessKey: literal(false),
@@ -199,6 +203,18 @@ function result(valid, blockers, extra = {}) {
   });
 }
 
+function evidenceReferences(value, spec, completeScope, location = 'proposal', found = []) {
+  if (value === null) return found;
+  const reference = spec['x-r7-evidence-reference'];
+  if (reference === 'ALWAYS' || (reference === 'COMPLETE_PROSPECTIVE_SCOPE' && completeScope))
+    found.push({ location, digest: value });
+  if (Array.isArray(value)) value.forEach((item, i) =>
+    evidenceReferences(item, spec.items, completeScope, location + '.' + i, found));
+  else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value))
+    evidenceReferences(item, spec.properties[key], completeScope, location + '.' + key, found);
+  return found;
+}
+
 export function validateR7CustodyContractProposalV1(kind, wire, {
   nowUtc, expectedOriginal, expectedCandidate,
 } = {}) {
@@ -228,7 +244,18 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
       || value.evidence.some(e => !Number.isFinite(time(e.observedAtUtc))
         || time(e.observedAtUtc) > issued || issued - time(e.observedAtUtc) > 300_000))
     errors.push('EVIDENCE_IDENTITY_OR_FRESHNESS_UNPROVEN');
-  const zero = '0'.repeat(64);
+  const evidenceDigests = new Set(value.evidence.map(e => e.evidenceDigest));
+  if (evidenceDigests.size !== value.evidence.length) errors.push('EVIDENCE_DIGEST_AMBIGUOUS');
+  const uncorrelated = evidenceReferences(value, schemas[kind],
+    value.prospectiveScope?.status === 'CLAIMED_COMPLETE_UNVERIFIED')
+    .filter(reference => !evidenceDigests.has(reference.digest)).map(reference => reference.location);
+  if (uncorrelated.length) {
+    errors.push('CONTRACT_EVIDENCE_REFERENCES_UNCORRELATED');
+    if (uncorrelated.some(field => field.startsWith('proposal.bootBoundary.')))
+      errors.push('BOOT_BOUNDARY_EVIDENCE_UNCORRELATED');
+    if (uncorrelated.some(field => field.startsWith('proposal.prospectiveScope.')))
+      errors.push('PROSPECTIVE_SCOPE_EVIDENCE_UNCORRELATED');
+  }
   let policyDecisionRequired = false;
   if (kind === 'exceptional-writer-enrollment') {
     const known = value.identityMode === 'AUTHENTICATED_HISTORICAL_ENROLLMENT';
@@ -271,14 +298,6 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
           || value.prospectiveScope.status !== 'CLAIMED_COMPLETE_UNVERIFIED')
         errors.push('BOOT_BOUNDARY_TIME_OR_POST_BOOT_SCOPE_UNPROVEN');
     } else if (boot !== null) errors.push('UNSELECTED_BOOT_EVIDENCE_FORBIDDEN');
-    const evidenceDigests = new Set(value.evidence.map(e => e.evidenceDigest));
-    if (boot && Object.entries(boot).some(([key, digest]) =>
-        key.endsWith('Digest') && !evidenceDigests.has(digest)))
-      errors.push('BOOT_BOUNDARY_EVIDENCE_UNCORRELATED');
-    if (value.prospectiveScope.status === 'CLAIMED_COMPLETE_UNVERIFIED'
-        && Object.entries(value.prospectiveScope).some(([key, digest]) =>
-          key !== 'status' && (!evidenceDigests.has(digest) || digest === zero)))
-      errors.push('PROSPECTIVE_SCOPE_EVIDENCE_UNCORRELATED');
   } else {
     // The executor is a role, not a required third account. Use the actual
     // admitted operator/fixed service profile; syntax is never host enrollment.
@@ -306,6 +325,7 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
     proposalDigest: sha(Buffer.from(wire)), contractKind: kind, policyDecisionRequired,
     replayKey: sha(Buffer.from(kind + '\0' + value.requestId + '\0' + value.nonce)),
     expectedBindingsCompared: Boolean(expectedOriginal && expectedCandidate),
+    uncorrelatedEvidenceReferences: Object.freeze(uncorrelated.slice(0, 24)),
     canonicalVerifierChanged: false,
   });
 }

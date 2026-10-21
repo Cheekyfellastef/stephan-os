@@ -238,3 +238,33 @@ correlation, principal separation, fixed identity, freshness and independent
 protected-adoption requirements remain mandatory. Complete historical enrollment
 still requires complete prospective estate, and the executor remains separate
 from the read-only witness.
+
+### Shared evidence-reference model after structural review
+
+The source-defined `evidenceRef` type annotates producer/enrollment, adopted
+policy/revocation, original execution/estate, process-token, boot/scope,
+commissioning review/source/consent, signing custody/audit/approval and lifecycle
+predecessor references in all three schemas. One semantic traversal resolves
+every present reference against the same fresh evidence-digest index. Duplicate
+digests with different record identities are ambiguous and rejected. A new
+reference cannot be added to one contract while silently missing a branch-local
+correlation check. Exported-schema annotations are documentation for JSON Schema
+clients; the shared semantic validator remains mandatory.
+
+Source/tree/image/bundle/manifest/lease/native identity and public-key hashes,
+and provider/recipe/test/recovery/storage-policy content pins, remain content
+identities. A content hash is not implicitly a producer's evidence record.
+Expected original/candidate binding and actual admitted provenance checks remain
+separate. Complete prospective-scope references are checked when completeness
+is claimed; an explicit incomplete/UNKNOWN proposal still requests a decision
+and grants no custody. A missing historical PID is not reconstructed.
+
+Producer-enrollment correlation is only a declared reference edge. A matching
+record, a fresh timestamp, a valid signature, or a cycle of matching declarations
+cannot authenticate a root or enroll a producer. Actual independently adopted
+issuer/producer policy and native proof remain required outside this preparation.
+
+Traversal regressions mutate every declared reference in normal, historical
+process, boot-boundary, rotation and revocation variants, then re-sign the invalid
+wire. Ambiguous digests, missing producer references and stale records are
+rejected. All adoption, execution, signing and lease authority remains false.
