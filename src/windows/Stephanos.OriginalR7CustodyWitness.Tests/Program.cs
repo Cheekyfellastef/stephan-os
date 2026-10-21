@@ -37,6 +37,12 @@ if (args.Length == 1 && args[0] == "--signing-provider-only")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--key-metadata-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
+    return 0;
+}
+
 int total = 0;
 void Check(bool condition, string name)
 {
@@ -338,6 +344,8 @@ using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7AuditJournalTests.Run();
 
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
 
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");

@@ -49,15 +49,9 @@ internal sealed class OriginalR7AuditStorage : IDisposable
             SafeFileHandle? leaf = null;
             while (path.TryPop(out string? part))
             {
-                // Only the audit leaf needs READ_CONTROL. Do not require or
-                // widen descriptor-read permission on unrelated ancestors.
-                int access = string.Equals(part, directory, StringComparison.OrdinalIgnoreCase)
-                    ? 0x20080 : 0x80;
-                SafeFileHandle h = CreateFileW(part, access, 3, IntPtr.Zero,
-                    3, 0x02200000, IntPtr.Zero);
+                SafeFileHandle h = OpenPinnedDirectory(part,
+                    string.Equals(part, directory, StringComparison.OrdinalIgnoreCase));
                 result.ancestors.Add(h);
-                if (!NativeIdentityMatches(h, part, directory: true))
-                    throw Held("ANCESTOR_IDENTITY_UNPROVEN");
                 leaf = h;
             }
             if (leaf is null || !PolicyMatches(ReadDescriptor(leaf), sid.Value, directory: true))
@@ -83,6 +77,25 @@ internal sealed class OriginalR7AuditStorage : IDisposable
             result.Dispose();
             throw Held("FIXED_STORAGE_UNAVAILABLE");
         }
+    }
+
+    // Shared by audit storage and the metadata observer, so native fixture
+    // tests exercise the actual audit ancestor-open operation. FILE_LIST_DIRECTORY
+    // makes this a read-access open: metadata-only access does not participate
+    // in Windows sharing checks and cannot pin names by refusing delete sharing.
+    // This is replacement-sharing protection only, not mapped-writer exclusion.
+    internal static SafeFileHandle OpenPinnedDirectory(string canonicalPath, bool descriptorRequired)
+    {
+        SafeFileHandle handle = CreateFileW(canonicalPath,
+            descriptorRequired ? 0x20081 : 0x81, 3 /* read/write, no delete */,
+            IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        try
+        {
+            if (!NativeIdentityMatches(handle, canonicalPath, directory: true))
+                throw Held("ANCESTOR_IDENTITY_UNPROVEN");
+            return handle;
+        }
+        catch { handle.Dispose(); throw; }
     }
 
     // Descriptor evaluator is also exercised with synthetic descriptors by
@@ -115,7 +128,7 @@ internal sealed class OriginalR7AuditStorage : IDisposable
         catch { return false; }
     }
 
-    private static byte[] ReadDescriptor(SafeFileHandle handle)
+    internal static byte[] ReadDescriptor(SafeFileHandle handle)
     {
         IntPtr descriptor = IntPtr.Zero;
         try
@@ -131,7 +144,7 @@ internal sealed class OriginalR7AuditStorage : IDisposable
         finally { if (descriptor != IntPtr.Zero) LocalFree(descriptor); }
     }
 
-    private static bool NativeIdentityMatches(SafeFileHandle handle, string path, bool directory)
+    internal static bool NativeIdentityMatches(SafeFileHandle handle, string path, bool directory)
     {
         if (handle.IsInvalid || !GetFileInformationByHandle(handle, out FileInfo info)
             || (info.Attributes & 0x400) != 0
@@ -144,7 +157,7 @@ internal sealed class OriginalR7AuditStorage : IDisposable
             && string.Equals(native[4..], path, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string KnownProgramData()
+    internal static string KnownProgramData()
     {
         Guid id = new("62AB5D82-FDC1-4DC3-A9DD-070D1D495D97");
         IntPtr value = IntPtr.Zero;

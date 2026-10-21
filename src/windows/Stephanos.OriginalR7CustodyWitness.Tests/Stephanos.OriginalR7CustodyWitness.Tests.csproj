@@ -10,6 +10,8 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7CommissioningOwnerContext.cs" Link="OriginalR7CommissioningOwnerContext.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ProtectedKeyMetadata.cs" Link="OriginalR7ProtectedKeyMetadata.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs" Link="OriginalR7SigningPrimitives.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7FixedSigningHostProfile.cs" Link="OriginalR7FixedSigningHostProfile.cs" />
     <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />

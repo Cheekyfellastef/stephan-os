@@ -325,3 +325,24 @@ and fixed unadopted host-profile parser are described in
 fixture tests use the unchanged canonical Node verifier. They do not enroll or
 read production keys or issue physical witness receipts. The production startup
 refusal and complete physical/independent-signing prerequisites remain in force.
+
+## Native metadata and replacement-sharing observations
+
+`OriginalR7ProtectedKeyMetadata` separates passive metadata readback from real
+Windows data-access sharing. A metadata-only file handle does not exclude other
+writers or replacement. Internal disposable material fixtures request read-data
+access and verify conflicting write/delete opens are rejected; no production
+material API exists. The fixed service-context observer never reads key data.
+
+Audit and metadata paths share `OpenPinnedDirectory`, which requests list-directory
+read access and retains no-delete sharing. Actual disposable directory-renaming
+tests exercise this same operation. Missing directory permissions cause HOLD;
+the implementation does not grant them. File identity, link count and descriptor
+readback are bounded observations, not proof of existing writable mappings,
+credential revocation, complete re-entry exclusion or independently enrolled roots.
+
+`OriginalR7CommissioningOwnerContext` observes the current primary Windows token,
+process creation time, SID, session and elevation. It never equates these facts
+with human consent, authenticated repository ownership or an admitted executor.
+The focused `--key-metadata-only` tests and full native test entry point cover
+these observations using disposable files and public fixture bytes only.
