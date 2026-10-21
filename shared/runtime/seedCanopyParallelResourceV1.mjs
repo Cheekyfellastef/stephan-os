@@ -76,4 +76,3 @@ export function checkParallelSeedModelResourceV1({ governor, modelInventory, sel
     gamingResourceProtectionRequired: true,
   });
 }
-

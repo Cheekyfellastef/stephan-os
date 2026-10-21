@@ -123,4 +123,3 @@ test('Seed Forge file write rejects physical junction aliases as well as symlink
   assert.match(worker, /await writeFile\(writeTarget, proposal\.content/);
   assert.match(worker, /SEED_SOURCE_TRACKED_ORIGIN_MAIN_MISMATCH/);
 });
-

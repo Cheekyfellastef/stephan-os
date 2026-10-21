@@ -979,4 +979,3 @@ test('production target custody holds authenticated model and deterministic work
 
 test('independent forge performs real fixture worktree, scoped edit, tests, commit and durable receipt',
   { timeout: 90000 }, () => runForgeFixture());
-
