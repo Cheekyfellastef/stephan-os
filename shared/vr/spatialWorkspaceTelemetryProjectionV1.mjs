@@ -76,8 +76,10 @@ function sourceRecord(input = {}) {
 export function projectSpatialWorkspaceTelemetryForConsumersV1(input = {}) {
   const source = sourceRecord(input);
   const evidence = source.evidence;
+  // Cached evidence must not promote a waiting/unavailable feed to READY.
+  // Keep the last observed provenance while preserving live transport state.
   const projectedState = evidence
-    ? (source.feedState === 'stale' ? 'stale' : 'ready')
+    ? source.feedState
     : (source.feedState === 'unavailable' ? 'unavailable' : 'waiting');
   const fps = number(evidence?.frame?.estimatedFps);
 
