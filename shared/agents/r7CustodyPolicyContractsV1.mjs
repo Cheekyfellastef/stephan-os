@@ -8,7 +8,8 @@ export const R7_POLICY_PROPOSAL_DOMAIN = 'stephanos.r7-policy-proposal-signature
 export const R7_POLICY_PROPOSAL_KINDS = Object.freeze([
   'exceptional-writer-enrollment', 'windows-commissioning-executor', 'independent-signing-custody',
 ]);
-const hex = size => ({ type: 'string', pattern: '^[a-f0-9]{' + size + '}$' });
+const hex = size => ({ type: 'string', pattern: '^[a-f0-9]{' + size + '}$',
+  not: { const: '0'.repeat(size) } });
 const id = { type: 'string', minLength: 8, maxLength: 120, pattern: '^[a-z0-9][a-z0-9._:-]*$' };
 const sid = { type: 'string', minLength: 8, maxLength: 184, pattern: '^S-1-[1-9][0-9]*(?:-(?:0|[1-9][0-9]*)){1,15}$' };
 const stamp = { type: 'string', pattern: '^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$' };
@@ -107,7 +108,7 @@ const signing = object({
   providerImplementationDigest: hex(64), protectedStoragePolicyDigest: hex(64),
   keyEpoch: integer(1, 2147483647),
   lifecycle: enumeration('PROVISION', 'ROTATE', 'REVOKE'),
-  predecessorCustodyDigest: { type: ['string', 'null'], pattern: '^[a-f0-9]{64}$' },
+  predecessorCustodyDigest: { ...hex(64), type: ['string', 'null'] },
   currentRevocationDigest: hex(64),
   oldKeyDisposition: enumeration('NONE', 'DISABLED_AND_RETAINED_FOR_AUDIT'),
   physicalContainmentEvidenceDigest: hex(64), protectedAuditContinuityDigest: hex(64),
@@ -164,6 +165,7 @@ function shape(value, spec, location, errors) {
   }
   if (type === 'null') return;
   if (type === 'string') {
+    if (spec.not && value === spec.not.const) errors.push(location + ':placeholder');
     if (spec.pattern && !new RegExp(spec.pattern).test(value)) errors.push(location + ':pattern');
     if (value.length < (spec.minLength ?? 0) || value.length > (spec.maxLength ?? 4096))
       errors.push(location + ':length');
@@ -211,7 +213,9 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
     if (JSON.stringify(value) !== wire) return result(false, ['CONTRACT_WIRE_NONCANONICAL']);
   } catch { return result(false, ['CONTRACT_WIRE_INVALID']); }
   const errors = []; shape(value, schemas[kind], 'proposal', errors);
-  if (errors.length) return result(false, ['CONTRACT_SHAPE_INVALID'], { fields: Object.freeze(errors.slice(0, 24)) });
+  if (errors.length) return result(false, ['CONTRACT_SHAPE_INVALID',
+    ...(errors.some(error => error.endsWith(':placeholder')) ? ['PLACEHOLDER_IDENTITY_NOT_EVIDENCE'] : [])
+  ], { fields: Object.freeze(errors.slice(0, 24)) });
   const issued = time(value.issuedAtUtc), expires = time(value.expiresAtUtc), now = time(nowUtc);
   if (![issued, expires, now].every(Number.isFinite) || issued > now || expires <= now
       || expires <= issued || expires - issued > 300_000) errors.push('VALIDITY_OR_CLOCK_UNPROVEN');
@@ -225,9 +229,6 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
         || time(e.observedAtUtc) > issued || issued - time(e.observedAtUtc) > 300_000))
     errors.push('EVIDENCE_IDENTITY_OR_FRESHNESS_UNPROVEN');
   const zero = '0'.repeat(64);
-  if ([value.nonce, value.original.leaseDigest, value.issuer.enrollmentEvidenceDigest,
-      value.issuer.adoptedPolicyDigest, value.issuer.currentRevocationDigest].includes(zero))
-    errors.push('PLACEHOLDER_IDENTITY_NOT_EVIDENCE');
   let policyDecisionRequired = false;
   if (kind === 'exceptional-writer-enrollment') {
     const known = value.identityMode === 'AUTHENTICATED_HISTORICAL_ENROLLMENT';

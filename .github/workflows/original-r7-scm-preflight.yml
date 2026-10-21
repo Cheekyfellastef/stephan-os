@@ -12,6 +12,9 @@ on:
       - 'shared/agents/originalR7WitnessCommissioningAuditV1.mjs'
       - 'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs'
       - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
+      - 'shared/agents/r7CustodyPolicyContractsV1.*'
+      - 'shared/agents/r7-custody-contract-proposals/**'
+      - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - '.github/workflows/original-r7-scm-preflight.yml'
@@ -44,6 +47,11 @@ jobs:
         shell: pwsh
         run: |
           dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify pinned software signatures with public test keys and canonical verifier
+        shell: pwsh
+        run: |
+          dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release -- --signing-provider-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prove bundled payload identity and sidecar independence without commissioning
         shell: pwsh
@@ -128,7 +136,7 @@ jobs:
       - name: Test bounded Sovereign receipt against forged authority
         shell: pwsh
         run: |
-          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs shared/agents/r7CustodyPolicyContractsV1.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package source-only Windows witness binary with exact source checksum
         shell: pwsh

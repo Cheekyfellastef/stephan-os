@@ -4,11 +4,16 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <AssemblyName>Stephanos.OriginalR7CustodyWitness</AssemblyName>
     <RootNamespace>Stephanos.OriginalR7CustodyWitness</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <None Update="THIRD_PARTY_NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.0" />
     <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
   </ItemGroup>

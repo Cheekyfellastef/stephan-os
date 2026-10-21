@@ -219,3 +219,22 @@ The read-only witness SID cannot be the commissioning executor SID. The executor
 may still be the operator SID or another actually admitted fixed route; this does
 not require a third account or third signing root. Schema shape alone is
 insufficient: the semantic principal/evidence checks remain mandatory.
+
+### Digest identity invariant after independent review
+
+Review of e4174c1 identified that evidence producer-enrollment placeholders could
+pass the selected-field zero check. The structural correction defines every
+schema-declared SHA/digest/nonce identity as nonzero in the shared hex schema,
+including each evidenceDigest and producerEnrollmentDigest, candidate/issuer
+bindings, boot-boundary references and a non-null lifecycle predecessor.
+The local shape validator and all three exported JSON Schemas apply that same
+definition; the selected-field list is removed. A traversal test mutates every
+declared digest field in every proposal and re-signs each invalid wire, proving
+that neither structural validity nor the signature wrapper admits placeholders.
+
+This is input integrity only. A nonzero hash is not correlated producer evidence,
+issuer enrollment, host policy adoption, native custody or authority. Existing
+correlation, principal separation, fixed identity, freshness and independent
+protected-adoption requirements remain mandatory. Complete historical enrollment
+still requires complete prospective estate, and the executor remains separate
+from the read-only witness.

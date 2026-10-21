@@ -316,3 +316,12 @@ Focused native execution: pass --observation-session-only to the test executable
 This runs the new disposable-file/process observation tests while retaining the
 previously recorded audit-suite evidence. The full normal test entry point also
 includes the new session tests.
+
+## Software signature implementation preparation
+
+The internal pinned Ed25519 primitive, untrusted retained-stream material session,
+and fixed unadopted host-profile parser are described in
+[SIGNING_PROVIDER_PROVENANCE.md](SIGNING_PROVIDER_PROVENANCE.md). Focused public-key
+fixture tests use the unchanged canonical Node verifier. They do not enroll or
+read production keys or issue physical witness receipts. The production startup
+refusal and complete physical/independent-signing prerequisites remain in force.

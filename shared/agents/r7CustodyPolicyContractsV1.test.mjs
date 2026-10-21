@@ -379,3 +379,46 @@ test('read-only witness cannot be its commissioning executor; operator or admitt
     }
   }
 });
+
+test('all digest identities reject placeholders across every contract and signature wrapper', () => {
+  let cases = 0;
+  for (const kind of R7_POLICY_PROPOSAL_KINDS) {
+    const original = fixture(kind), schema = r7CustodyContractProposalSchemaV1(kind);
+    const paths = [];
+    function visit(value, spec, path = []) {
+      if (typeof value === 'string' && [40, 64].some(size => spec.pattern === '^[a-f0-9]{' + size + '}$')) {
+        assert.equal(spec.not.const, '0'.repeat(value.length), path.join('.'));
+        paths.push(path);
+      } else if (Array.isArray(value)) value.forEach((v, i) => visit(v, spec.items, [...path, i]));
+      else if (value && typeof value === 'object')
+        for (const [k, v] of Object.entries(value)) visit(v, spec.properties[k], [...path, k]);
+    }
+    visit(original, schema);
+    for (const path of paths) {
+      const bad = structuredClone(original);
+      let parent = bad;
+      for (const key of path.slice(0, -1)) parent = parent[key];
+      const name = path.at(-1);
+      parent[name] = '0'.repeat(parent[name].length);
+      const rejected = validate(kind, bad);
+      assert.equal(rejected.validProposal, false, kind + ':' + path.join('.'));
+      assert.ok(rejected.blockers.includes('PLACEHOLDER_IDENTITY_NOT_EVIDENCE'));
+      noAuthority(rejected);
+      const wire = JSON.stringify(bad);
+      const signature = sign(null, Buffer.from(R7_POLICY_PROPOSAL_DOMAIN + kind + '\0' + wire), key.privateKey).toString('base64');
+      const signed = verifyR7CustodyProposalSignatureV1(kind, wire, signature, {
+        publicKeyPem: pem, keySpkiSha256: pin, nowUtc: NOW,
+      });
+      assert.equal(signed.signatureValid, false, kind + ':' + path.join('.'));
+      noAuthority(signed); cases++;
+    }
+    assert.ok(paths.some(p => p.join('.') === 'evidence.0.producerEnrollmentDigest'));
+    assert.ok(paths.some(p => p.join('.') === 'evidence.0.evidenceDigest'));
+  }
+  assert.ok(cases >= 100, 'all authority-bearing digest fields exercised: ' + cases);
+  // Nullable predecessor uses the same non-placeholder definition when present.
+  const rotated = fixture('independent-signing-custody');
+  Object.assign(rotated, { lifecycle: 'ROTATE', keyEpoch: 2,
+    predecessorCustodyDigest: '0'.repeat(64), oldKeyDisposition: 'DISABLED_AND_RETAINED_FOR_AUDIT' });
+  assert.equal(validate('independent-signing-custody', rotated).validProposal, false);
+});

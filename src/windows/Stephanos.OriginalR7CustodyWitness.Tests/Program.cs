@@ -31,6 +31,12 @@ if (args.Length == 1 && args[0] == "--registry-and-observation-only")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--signing-provider-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7SigningProviderTests.Run();
+    return 0;
+}
+
 int total = 0;
 void Check(bool condition, string name)
 {
