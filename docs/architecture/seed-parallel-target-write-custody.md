@@ -26,3 +26,14 @@ authenticated fixture owner approvals for both generation modes. It requires
 the typed hold, no task/path claim, no worktree, no model inference and unchanged
 main. Subsequent construction tests modify only the fixture copy of the
 custody constants; their Git commits are test artifacts, never host admission.
+
+The unadopted `src/windows/Stephanos.SeedParallelCustody` class library now
+implements one bounded new-file primitive: retained root/ancestor handles,
+parent-relative no-reparse opens, atomic no-overwrite create and same-handle
+write/flush/digest readback. Actual Windows fixture tests cover concurrent
+replacement attempts and junction denial. It does not protect existing-file
+replacement, sibling Git/test/claim/receipt state, the host process or its
+principal. It is not yet called by the worker. Both production capability
+constants remain false until complete operation-bound custody is independently
+implemented, reviewed and physically admitted. A passed primitive test must not
+be promoted to physical Seed pickup or R7 release evidence.
