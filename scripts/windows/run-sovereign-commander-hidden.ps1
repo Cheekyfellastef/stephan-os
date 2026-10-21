@@ -331,13 +331,16 @@ function Get-SovereignCommanderHealth {
         $continuousRepairRunning = $false
         $continuousRepairScheduled = $false
         $timeoutCustodyHeld = $false
+        $maintenanceInFlight = $false
         if ($null -ne $continuousRepairProperty -and $null -ne $continuousRepairProperty.Value) {
             $continuousRepair = $continuousRepairProperty.Value
             $enabledProperty = $continuousRepair.PSObject.Properties['enabled']
             $runningProperty = $continuousRepair.PSObject.Properties['running']
             $scheduledProperty = $continuousRepair.PSObject.Properties['scheduled']
             $custodyProperty = $continuousRepair.PSObject.Properties['timeoutCustodyHeld']
+            $maintenanceProperty = $continuousRepair.PSObject.Properties['maintenanceInFlight']
             $timeoutCustodyHeld = [bool]($null -ne $custodyProperty -and $custodyProperty.Value -eq $true)
+            $maintenanceInFlight = [bool]($null -ne $maintenanceProperty -and $maintenanceProperty.Value -eq $true)
             $continuousRepairEnabled = [bool]($null -ne $enabledProperty -and $enabledProperty.Value -eq $true)
             $continuousRepairRunning = [bool]($null -ne $runningProperty -and $runningProperty.Value -eq $true)
             $continuousRepairScheduled = [bool]($null -ne $scheduledProperty -and $scheduledProperty.Value -eq $true)
@@ -358,6 +361,7 @@ function Get-SovereignCommanderHealth {
             continuousRepairScheduled = [bool]$continuousRepairScheduled
             capabilityVersion = $capabilityVersion
             timeoutCustodyHeld = $timeoutCustodyHeld
+            maintenanceInFlight = $maintenanceInFlight
         }
     } catch {
         return [pscustomobject]@{
@@ -370,6 +374,7 @@ function Get-SovereignCommanderHealth {
             continuousRepairScheduled = $false
             capabilityVersion = ''
             timeoutCustodyHeld = $false
+            maintenanceInFlight = $false
         }
     }
 }
@@ -421,6 +426,7 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
         continuousRepairScheduled = $false
         capabilityVersion = $RequireCapabilityVersion
         timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Get-SovereignCommanderHealth
@@ -480,6 +486,8 @@ if ($healthBefore.timeoutCustodyHeld -eq $true) {
     # version is stale. Recycling it would erase the guardian's timeout fence.
     # Keep the original owner and report HOLD; do not pretend it is healthy.
     $blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'
+} elseif ($healthBefore.maintenanceInFlight -eq $true) {
+    $blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'
 } elseif (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
@@ -524,6 +532,7 @@ $healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
         continuousRepairSatisfied = $true
         capabilityVersion = $RequireCapabilityVersion
         timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Wait-SovereignCommanderHealth

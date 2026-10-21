@@ -20,7 +20,7 @@ const OUTSIDE = 'C:\\Users\\Operator\\Downloads\\proof.txt';
 // Existing executor fixtures model an explicitly idle guardian; held/unknown
 // owner admission is exercised through the actual executor in its own suite.
 const executeSovereignCommanderCommandV1 = (envelope, options = {}) => executeActualCommand(envelope, {
-  readMaintenanceGuardian: () => ({ enabled: true, running: false, timeoutCustodyHeld: false }), ...options,
+  withMaintenanceOwner: (_command, run) => run(), ...options,
 });
 
 function envelope(operation, overrides = {}) {

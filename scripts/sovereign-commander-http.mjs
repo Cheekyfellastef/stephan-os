@@ -9,6 +9,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
@@ -83,7 +84,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   let child = null;
   let lastFailureKey = '';
   const state = {
-    enabled: true,
+    enabled: options.enabled !== false,
+    maintenanceInFlight: false,
     running: false,
     scheduled: false,
     cycleCount: 0,
@@ -106,10 +108,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     timeoutCustodyHeld: false,
   };
 
-  const status = () => Object.freeze({ ...state });
+  const status = () => Object.freeze({ ...state, running: state.running || state.maintenanceInFlight });
 
   const schedule = (delayMs) => {
-    if (stopped || state.timeoutCustodyHeld) return;
+    if (stopped || !state.enabled || state.timeoutCustodyHeld || state.maintenanceInFlight) return;
     state.scheduled = true;
     state.nextDelayMs = delayMs;
     scheduledTimer = setTimeoutImpl(() => {
@@ -122,7 +124,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   };
 
   const runNow = () => {
-    if (stopped || child || state.timeoutCustodyHeld) return false;
+    if (stopped || !state.enabled || child || state.maintenanceInFlight || state.timeoutCustodyHeld) return false;
     if (scheduledTimer) {
       clearTimeoutImpl(scheduledTimer);
       scheduledTimer = null;
@@ -238,6 +240,46 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   return Object.freeze({
     status,
     runNow,
+    withMaintenanceOwner: async (command, run) => {
+      const blocked = blocker => Object.freeze({ ok: false, command,
+        blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      // Reserve synchronously BEFORE the first await. This is the existing
+      // guardian owner, shared by all authenticated HTTP sessions and its timer.
+      if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
+      if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
+      const resumeDelayMs = state.nextDelayMs ?? intervalMs;
+      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+      scheduledTimer = null;
+      state.scheduled = false;
+      state.nextDelayMs = null;
+      state.maintenanceInFlight = true;
+      try {
+        const result = await run();
+        // A direct-child timeout/unknown result cannot release Windows
+        // descendant custody. No caller retry or timer clears this hold.
+        const execution = result?.structuredContent;
+        if (!execution || !Number.isInteger(execution.status) || execution.signal
+            || ['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)) {
+          state.timeoutCustodyHeld = true;
+          state.lastOk = false;
+          state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+          return Object.freeze({ ...result, ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+            finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+        }
+        return result;
+      } catch (error) {
+        state.timeoutCustodyHeld = true;
+        state.lastOk = false;
+        state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+        return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      } finally {
+        state.maintenanceInFlight = false;
+        if (!state.timeoutCustodyHeld) schedule(resumeDelayMs);
+      }
+    },
     stop: () => {
       stopped = true;
       state.enabled = false;
@@ -438,18 +480,17 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({
     repoRoot: options.repoRoot, executor: options.commandExecutor,
-    // Use the actual owner directly in HTTP sessions. No loopback request to
-    // this server can deadlock its synchronous fixed-child execution.
-    readMaintenanceGuardian: () => continuousRepairGuardian?.status()
-      || { enabled: false, running: false, timeoutCustodyHeld: false },
+    // HTTP sessions reserve the actual existing owner directly. External local
+    // callers delegate here; owned fixed mutation leaves health responsive.
+    withMaintenanceOwner: (command, run) => continuousRepairGuardian.withMaintenanceOwner(command, run),
   }));
   const now = options.now || (() => new Date().toISOString());
   const nowMs = options.nowMs || (() => {
     const value = Date.parse(now());
     return Number.isFinite(value) ? value : Date.now();
   });
-  const continuousRepairGuardian = options.continuousRepairEnabled === true
-    ? startSovereignCommanderContinuousRepairGuardian({
+  const continuousRepairGuardian = startSovereignCommanderContinuousRepairGuardian({
+      enabled: options.continuousRepairEnabled === true,
       repoRoot: options.repoRoot,
       spawnImpl: options.continuousRepairSpawnImpl,
       setTimeoutImpl: options.continuousRepairSetTimeoutImpl,
@@ -458,8 +499,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       startDelayMs: options.continuousRepairStartDelayMs,
       intervalMs: options.continuousRepairIntervalMs,
       maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
-    })
-    : null;
+    });
 
   const server = createServer(async (req, res) => {
     try {
@@ -469,6 +509,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           ok: true,
           service: 'stephanos-sovereign-commander',
           capabilityVersion: SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION,
+          maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
           remoteIgnitionPath: SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH,

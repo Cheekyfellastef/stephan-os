@@ -76,19 +76,31 @@ precedence, but no override can inherit live-worker admission until the complete
 publisher/witness estate is separately adapted and qualified. This does not add
 Windows path authority or silently redirect mutation to the default tree.
 
-Timeout admission now belongs to shared fixed maintenance execution, covering
-MCP/stdio/mailbox/ignition and START_PROCESS aliases. HTTP uses its actual guardian
-state; other local processes consult the existing fixed loopback health observer.
-Held, unknown, malformed or busy custody refuses new fixed mutation. Read-only
-observation remains available. A late child close never clears the guardian hold.
-This is an admission check on the current owner, NOT atomic cross-process/restart
-exclusion, an authenticated Windows OS witness, or proof that an unavailable or
-restarted owner has drained old descendants. Those original commissioning gates
-remain held; ordinary loopback health cannot replace them.
+Fixed maintenance execution now belongs to the existing authenticated HTTP
+guardian owner. Core and stdio callers delegate to that owner; they never use a
+health snapshot as permission or launch a local fallback. The owner synchronously
+reserves maintenance before awaiting execution, cancels its next scheduled cycle,
+and refuses concurrent requests or timer entry. Fixed mutation runs asynchronously
+so owner health remains observable while the reservation is held. Receipts retain
+the original mission and the authenticated owner's command/proof identity.
 
-Behavioral regressions exercise corrupt/foreign heartbeat bytes, a fresh directory,
-fresh unsupported workspace evidence, expiry between steps, all maintenance aliases,
-bounded owner observation and the actual default HTTP/MCP composition after timeout.
+Unknown, signalled or timed-out execution retains custody and prevents another
+cycle. A late close cannot clear that hold. The native caretaker also refuses to
+replace an owner with maintenance in flight, even for a stale capability version.
+An absent or old-protocol owner holds delegation without starting a replacement.
+This serializes this source owner's direct execution only; protected Windows
+roots, descendant exclusion across process crashes/restarts and original R7
+reconciliation remain separate commissioning requirements.
+
+The full dispatch inventory includes the late durable reconciliation after awaited
+refill/self-heal. Core revalidates canonical worker evidence immediately before
+that entry. Both workflow event filters and the native fixture inventory include
+the shared Core state model and its tests.
+
+Behavioral regressions exercise corrupt/foreign heartbeat bytes, expiry between
+steps, every maintenance alias, authenticated owner delegation with no local child,
+a scheduled timer fired during a reserved operation, concurrent requests, responsive
+health, timeout/late-close retention and actual PowerShell caretaker decisions.
 Earlier sections below retain the source history and are superseded where they
 describe numeric mtime-only freshness or usable configured-workspace evidence.
 

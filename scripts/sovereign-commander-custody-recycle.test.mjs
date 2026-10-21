@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-test('actual Windows caretaker retains timeout custody even with a stale capability', { skip: process.platform !== 'win32' }, () => {
+for (const heldKind of ['timeout', 'maintenance']) test(`actual Windows caretaker retains ${heldKind} custody even with a stale capability`, { skip: process.platform !== 'win32' }, () => {
   const source = readFileSync(new URL('./windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
   const extract = (start, end) => {
     const a = source.indexOf(start), b = source.indexOf(end, a);
@@ -15,7 +15,7 @@ test('actual Windows caretaker retains timeout custody even with a stale capabil
     $port=18791;$RequireCapabilityVersion='new-version';$script:stops=0;$script:starts=0;
     function Invoke-RestMethod { [pscustomobject]@{ok=$true;service='stephanos-sovereign-commander';
       capabilityVersion='old-version';continuousRepairGuardian=[pscustomobject]@{
-        enabled=$true;running=$false;scheduled=$false;timeoutCustodyHeld=$true}} }
+        enabled=$true;running=$false;scheduled=$false;timeoutCustodyHeld=$${heldKind === 'timeout'};maintenanceInFlight=$${heldKind === 'maintenance'}}} }
     function Test-Path { return $true }
     function Stop-Process { $script:stops++ }
     function Start-Process { $script:starts++;return [pscustomobject]@{Id=1234} }
@@ -35,7 +35,7 @@ test('actual Windows caretaker retains timeout custody even with a stale capabil
     // changing any hold/no-start/no-stop assertion or runtime repair deadline.
     { shell: false, windowsHide: true, encoding: 'utf8', timeout: 30000 });
   assert.equal(result.status, 0, result.stderr || result.error?.message);
-  assert.deepEqual(JSON.parse(result.stdout), { held: true, healthy: false, capability: false,
+  assert.deepEqual(JSON.parse(result.stdout), { held: heldKind === 'timeout', healthy: false, capability: false,
     stops: 0, starts: 0, startRequested: false,
-    blocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' });
+    blocker: heldKind === 'timeout' ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' : 'SOVEREIGN_MAINTENANCE_OWNER_BUSY' });
 });

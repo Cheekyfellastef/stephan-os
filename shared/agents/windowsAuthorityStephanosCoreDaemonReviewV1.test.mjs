@@ -101,6 +101,7 @@ test('omitted, duplicated, extra, wrong-head or rehashed altered helpers never i
 test('incomplete inventory and timeout hold cannot be bypassed while safe snippets remain', () => {
   for (const changed of [
     runner.replace('if ($healthBefore.timeoutCustodyHeld -eq $true)', 'if ($false)'),
+    runner.replace('elseif ($healthBefore.maintenanceInFlight -eq $true)', 'elseif ($false)'),
     runner.replace('if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete)', 'if ($false)'),
     runner.replace('$script:coreProcessObservation.complete -and', '$true -and'),
   ]) {

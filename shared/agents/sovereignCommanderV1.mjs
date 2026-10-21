@@ -1,14 +1,14 @@
 import { createHash } from 'node:crypto';
 import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import process from 'node:process';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
-import { admitSovereignMaintenanceV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
@@ -690,6 +690,40 @@ function runFixedProcess(plan, options = {}) {
   });
 }
 
+function runOwnedFixedProcess(plan, options = {}) {
+  // Source-only executor fixtures inject the synchronous primitive explicitly.
+  if (options.spawnSyncFn) return Promise.resolve(runFixedProcess(plan, options));
+  return new Promise(resolveResult => {
+    let child, timer, settled = false, stdout = '', stderr = '';
+    const finish = (status, signal = '', errorCode = '') => {
+      if (settled) return;
+      settled = true;
+      if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
+      resolveResult(frozen({ ok: status === 0 && !signal && !errorCode, status,
+        signal, errorCode, stdout, stderr }));
+    };
+    try {
+      const routeEnvironment = fixedProcessRouteEnvironment(options);
+      child = (options.spawnFn || spawn)(plan.executable, [...plan.args], {
+        cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
+        shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        ...(routeEnvironment ? { env: routeEnvironment } : {}),
+      });
+      child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.once('error', error => finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED')));
+      child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
+      timer = (options.setTimeoutFn || setTimeout)(() => {
+        if (settled) return;
+        // Settle as unknown custody before a synchronous close can look green.
+        finish(null, '', 'ETIMEDOUT');
+        try { child.kill(); } catch {}
+      }, safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS));
+      timer?.unref?.();
+    } catch (error) { finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED')); }
+  });
+}
+
 function listProcesses(options = {}) {
   if (typeof options.listProcessesFn === 'function') return options.listProcessesFn();
   if (process.platform !== 'win32' && options.allowNonWindowsForTest !== true) {
@@ -729,14 +763,34 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
     });
   }
 
-  try {
-    // Every registered fixed-process entry (MCP, stdio, mailbox, ignition and
-    // START_PROCESS aliases) shares the same owner-custody admission.
-    if (command.plan.kind === 'fixed-process') {
-      const admission = await admitSovereignMaintenanceV1(command.plan.processId, options.readMaintenanceGuardian);
-      if (!admission.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
-        command, blocker: admission.blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+  const run = () => executeAdmittedSovereignCommandV1(command, options);
+  if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
+    if (typeof options.withMaintenanceOwner === 'function') {
+      return options.withMaintenanceOwner(command, run);
     }
+    // Local Core/stdio callers never launch beside an independently scheduled
+    // guardian. The existing authenticated HTTP owner performs the operation.
+    try {
+      const callOwner = options.callMaintenanceOwner || (await import('./sovereignCommanderRemoteMailboxV1.mjs')).callSovereignMaintenanceOwnerV1;
+      const owned = await callOwner({ actionId: command.plan.processId,
+        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs });
+      if (!owned || owned.command?.plan?.processId !== command.plan.processId) {
+        return frozen({ ok: false, command, blocker: owned?.blocker || 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID',
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      }
+      const structuredContent = frozen({ ...owned.structuredContent,
+        ownerCommandId: owned.command.commandId, ownerProofHash: owned.proofHash || '' });
+      return frozen({ ...owned, command, structuredContent,
+        proofHash: hash({ commandId: command.commandId, missionId: command.missionId,
+          operation: command.operation, plan: command.plan, contentText: owned.contentText, structuredContent }) });
+    } catch { return frozen({ ok: false, command, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }); }
+  }
+  return run();
+}
+
+async function executeAdmittedSovereignCommandV1(command, options) {
+  try {
     let contentText = '';
     let structuredContent = null;
 
@@ -892,7 +946,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         });
       }
     } else if (command.plan.kind === 'fixed-process') {
-      const result = runFixedProcess(command.plan, options);
+      const result = isSovereignMaintenanceObservationV1(command.plan.processId)
+        ? runFixedProcess(command.plan, options) : await runOwnedFixedProcess(command.plan, options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
       structuredContent = result;
       if (!result.ok) {

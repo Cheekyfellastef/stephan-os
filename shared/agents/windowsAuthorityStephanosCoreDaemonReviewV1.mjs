@@ -10,7 +10,7 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
 // The textual checks below add defense in depth, but may not approve a
 // modified script merely because familiar safe snippets still occur.
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
-  'scripts/windows/run-sovereign-commander-hidden.ps1': '10bbe4bd3fe82d2ab4cf859021863bc5cf53353b',
+  'scripts/windows/run-sovereign-commander-hidden.ps1': '43ea1940733bfa7bfa470109fd32c296f5db956a',
   'scripts/windows/status-stephanos-core-daemon.ps1': '523aca4b93fe9adf434fd157137c7cb4ef52fbca',
   'scripts/windows/stephanos-core-process-observation.ps1': '81679199d1b842ae054c6cd8e509c6051a28ceb6',
 });
@@ -169,6 +169,9 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, activeSource,
     /if \(\$healthBefore\.timeoutCustodyHeld -eq \$true\)\s*\{\s*\$blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'\s*\} elseif/,
     'core-daemon-runner-timeout-owner-hold-absent', path);
+  requirePattern(findings, activeSource,
+    /elseif \(\$healthBefore\.maintenanceInFlight -eq \$true\)\s*\{\s*\$blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'\s*\} elseif/,
+    'core-daemon-runner-maintenance-owner-hold-absent', path);
   requirePattern(findings, activeSource,
     /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);

@@ -13,7 +13,7 @@ Non-Windows fixture skips cannot substitute for that native job.
 
 | Fixed source | Candidate Git blob |
 | --- | --- |
-| scripts/windows/run-sovereign-commander-hidden.ps1 | 10bbe4bd3fe82d2ab4cf859021863bc5cf53353b |
+| scripts/windows/run-sovereign-commander-hidden.ps1 | 43ea1940733bfa7bfa470109fd32c296f5db956a |
 | scripts/windows/status-stephanos-core-daemon.ps1 | 523aca4b93fe9adf434fd157137c7cb4ef52fbca |
 | scripts/windows/stephanos-core-process-observation.ps1 | 81679199d1b842ae054c6cd8e509c6051a28ceb6 |
 
@@ -29,7 +29,8 @@ PID/process-start/source-head, no-Core-kill and read-only status requirements.
 Core process matching now delegates to the exact fixed helper. New shared checks
 require failed/hidden inventory to remain incomplete with null count, prevent a
 Core lifecycle start before complete inventory, and retain the Commander owner
-before any capability-based recycle when timeout custody is held. The helper
+before any capability-based recycle when timeout custody is held or manual
+maintenance is reserved. The helper
 is constrained to one CIM observation and no process/task/file/network mutation.
 Behavioral Windows fixtures execute the actual classifier and lifecycle branches
 with native mutation mocked; they prove source behavior, not original R7 exclusion.

@@ -25,6 +25,7 @@ on:
       - 'shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs'
       - 'shared/agents/operatorMergeApprovalBoundaryV2*'
       - 'shared/agents/canonicalMissionWorkerEvidenceV1*'
+      - 'shared/agents/stephanosCoreDaemonV1*'
       - 'scripts/mission-orchestrator-worker-heartbeat*'
       - 'scripts/stephanos-core-daemon.mjs'
       - 'scripts/battle-bridge-goal-discovery-heartbeat*'
@@ -74,6 +75,7 @@ on:
       - 'shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs'
       - 'shared/agents/operatorMergeApprovalBoundaryV2*'
       - 'shared/agents/canonicalMissionWorkerEvidenceV1*'
+      - 'shared/agents/stephanosCoreDaemonV1*'
       - 'scripts/mission-orchestrator-worker-heartbeat*'
       - 'scripts/stephanos-core-daemon.mjs'
       - 'scripts/battle-bridge-goal-discovery-heartbeat*'
@@ -163,4 +165,4 @@ jobs:
         with:
           node-version: '24'
       - name: Actual Windows classifier, custody hold and shared admission regressions
-        run: node --test --test-concurrency=1 scripts/sovereign-commander-custody-recycle.test.mjs shared/agents/stephanosCoreProcessObservationV1.test.mjs shared/agents/sovereignCommanderWindows.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs
+        run: node --test --test-concurrency=1 shared/agents/stephanosCoreDaemonV1.test.mjs scripts/sovereign-commander-custody-recycle.test.mjs shared/agents/stephanosCoreProcessObservationV1.test.mjs shared/agents/sovereignCommanderWindows.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs

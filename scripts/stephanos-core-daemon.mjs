@@ -764,6 +764,9 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false,
       // degradation cannot suppress Octopus construction progress.
       try {
         markFlywheelStage('RECONCILE');
+        if (!canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) {
+          throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN');
+        }
         const result = await runDurableFlywheelStartupCycle({}, {
           sourceRevision: sourceHead,
           repoRoot,

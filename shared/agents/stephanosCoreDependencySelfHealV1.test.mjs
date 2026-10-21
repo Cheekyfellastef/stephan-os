@@ -12,6 +12,26 @@ const start = source.indexOf('async function maybeRepairCoreDependencies(');
 const end = source.indexOf('async function runBoundedOctopusMaintenance(', start);
 assert.ok(start >= 0 && end > start);
 
+test('actual late Core reconciliation rechecks worker evidence after awaited maintenance', async () => {
+  const a = source.indexOf("markFlywheelStage('RECONCILE');");
+  const b = source.indexOf('lastFlywheelSummary =', a);
+  assert.ok(a >= 0 && b > a);
+  let age = 0, dispatches = 0;
+  const context = vm.createContext({
+    canonicalMissionWorkerEvidenceAllowsWork,
+    readCanonicalMissionWorkerHeartbeatAgeMs: () => age,
+    markFlywheelStage: () => {}, sourceHead: HEAD, repoRoot: 'repo', workspaceRoot: 'workspace', process: { env: {} },
+    runDurableFlywheelStartupCycle: async () => { dispatches++; return {}; },
+  });
+  const run = vm.runInContext(`(async () => { ${source.slice(a, b)} })`, context);
+  await run();
+  assert.equal(dispatches, 1);
+  for (age of [null, undefined, -1, NaN, '0', 120001, 900000]) {
+    await assert.rejects(run(), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+    assert.equal(dispatches, 1);
+  }
+});
+
 test('the actual Core Flywheel entry cannot enter indirect repair while worker custody is held', async () => {
   const entryStart = source.indexOf('async function maybeStartPersistentFlywheel(');
   const entryEnd = source.indexOf('async function publish(', entryStart);
