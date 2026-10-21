@@ -87,11 +87,12 @@ export function runFixedSovereignReviewEntryV1(entryPoint, options = {}) {
     const plan = buildHighRiskAdvisoryLaunchPlanV1({...options, entryPoint});
     const result = spawnSync(plan.executable, plan.args, {cwd:plan.root, env:plan.env,
       shell:false, windowsHide:true, timeout:13*60*1000, maxBuffer:65536, encoding:'utf8'});
-    if (result.error || result.status !== 0) return held();
+    if (result.error || ![0,1].includes(result.status)) return held();
     const lines = result.stdout.trim().split(/\r?\n/);
     if (lines.length !== 1 || !lines[0].startsWith(route.prefix+'=')) return held();
     const value = JSON.parse(lines[0].slice(route.prefix.length+1));
     if (!value || typeof value !== 'object' || typeof value.status !== 'string') return held();
+    if (result.status === 1 && value.status !== route.held) return held();
     return Object.freeze(value);
   } catch { return held(); }
 }

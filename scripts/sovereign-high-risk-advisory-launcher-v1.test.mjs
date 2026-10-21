@@ -83,6 +83,12 @@ test('real pre-launch entry/verifier/transitive substitutions never evaluate bef
         assert.equal(existsSync(marker),false,'public '+wrapper);
         assert.match(direct.stdout||'',/STANDARD_LOCAL_CANDIDATE_SCOPE_ONLY|WINDOWS_CALIBRATION_HELD/,
           String(direct.stderr));
+        if(entryPoint==='windows-calibration-remote') {
+          const projected=JSON.parse(direct.stdout.trim().split('=')[1]);
+          assert.equal(projected.schemaVersion,'stephanos.sovereign-windows-calibration-remote.v1');
+          assert.equal(projected.qualifiedWindowsSpecialist,false);
+          assert.notEqual(projected.reason,'TRUSTED_PREEXECUTION_CUSTODY_UNPROVEN');
+        }
       }
       invoke(['update-index','--no-skip-worktree','--',file]);
       writeFileSync(join(root,file),readFileSync(join(installed,file),'utf8').replaceAll('\r\n','\n'));
