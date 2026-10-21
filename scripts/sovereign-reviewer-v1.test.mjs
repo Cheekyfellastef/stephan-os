@@ -3,7 +3,93 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { main, persistReview, localModel } from './sovereign-reviewer-v1.mjs';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { deflateSync } from 'node:zlib';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { main, persistReview, localModel, authenticatedReviewDiff } from './sovereign-reviewer-v1.mjs';
+
+function reviewedObjects() {
+  const objects = new Map();
+  const put = (type, value) => {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const sha = createHash('sha1').update(type + ' ' + bytes.length + '\0').update(bytes).digest('hex');
+    objects.set(type + ':' + sha, bytes);
+    return sha;
+  };
+  const tree = (name, sha, mode = '100644') => put('tree', Buffer.concat([
+    Buffer.from(mode + ' ' + name + '\0'), Buffer.from(sha, 'hex'),
+  ]));
+  const oldBlob = put('blob', 'old\n'), newBlob = put('blob', 'new\n');
+  const baseTree = tree('src', tree('test.js', oldBlob), '40000');
+  const headTree = tree('src', tree('test.js', newBlob), '40000');
+  const base = put('commit', 'tree ' + baseTree + '\n\nbase\n');
+  const head = put('commit', 'tree ' + headTree + '\nparent ' + base + '\n\nhead\n');
+  const read = (type, sha) => Buffer.from(objects.get(type + ':' + sha));
+  return { objects, put, tree, base, head, oldBlob, newBlob, read };
+}
+
+test('review diff is derived from authenticated committed buffers, never Git diff', () => {
+  const f = reviewedObjects();
+  const result = authenticatedReviewDiff(f.base, f.head, f.read);
+  assert.deepEqual(result.changedFiles, ['src/test.js']);
+  assert.match(result.diff, /@@ -1,1 \+1,1 @@\n-old\n\+new\n/);
+});
+
+test('review input rejects substituted base/head blobs and trees under their original object names', () => {
+  for (const kind of ['oldBlob', 'newBlob', 'tree', 'commit']) {
+    const f = reviewedObjects();
+    const target = kind === 'tree' ? [...f.objects.keys()].find(k => k.startsWith('tree:'))
+      : kind === 'commit' ? 'commit:' + f.head : 'blob:' + f[kind];
+    const original = f.objects.get(target);
+    f.objects.set(target, Buffer.concat([original, Buffer.from('substitution')]));
+    assert.throws(() => authenticatedReviewDiff(f.base, f.head, f.read), /REVIEW_OBJECT_HASH_MISMATCH/);
+  }
+});
+
+test('object replacement after capture cannot change the model diff', () => {
+  const f = reviewedObjects();
+  const result = authenticatedReviewDiff(f.base, f.head, (type, sha) => {
+    const captured = f.read(type, sha);
+    if (type === 'blob') f.objects.set(type + ':' + sha, Buffer.from('forged restored-object race\n'));
+    return captured;
+  });
+  assert.match(result.diff, /-old\n\+new\n/);
+  assert.doesNotMatch(result.diff, /forged/);
+});
+
+test('real Git loose-object substitution cannot enter the reviewed diff', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reviewed-objects-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const execution = resolveBattleBridgeGitExecution({ platform: process.platform, environment: process.env });
+  const run = args => {
+    const result = spawnSync(execution.executable, [...execution.fixedConfigArgs, '-C', root, ...args], {
+      env: execution.environment, shell: false, windowsHide: true, timeout: 12000,
+    });
+    assert.equal(result.status, 0, String(result.stderr));
+    return result.stdout;
+  };
+  run(['init', '--bare']);
+  const f = reviewedObjects();
+  const objectPath = sha => path.join(root, 'objects', sha.slice(0, 2), sha.slice(2));
+  const encode = (type, bytes) => deflateSync(Buffer.concat([Buffer.from(type + ' ' + bytes.length + '\0'), bytes]));
+  for (const [key, bytes] of f.objects) {
+    const [type, sha] = key.split(':');
+    fs.mkdirSync(path.dirname(objectPath(sha)), { recursive: true });
+    fs.writeFileSync(objectPath(sha), encode(type, bytes));
+  }
+  const read = (type, sha) => run(['cat-file', type, sha]);
+  assert.match(authenticatedReviewDiff(f.base, f.head, read).diff, /-old\n\+new\n/);
+  for (const sha of [f.oldBlob, f.newBlob]) {
+    const saved = fs.readFileSync(objectPath(sha));
+    try {
+      const forged = Buffer.from('forged object bytes under original pathname\n');
+      fs.writeFileSync(objectPath(sha), encode('blob', forged));
+      assert.deepEqual(read('blob', sha), forged, 'ordinary Git reads the substituted loose bytes');
+      assert.throws(() => authenticatedReviewDiff(f.base, f.head, read), /REVIEW_OBJECT_HASH_MISMATCH/);
+    } finally { fs.writeFileSync(objectPath(sha), saved); }
+  }
+});
 
 const candidate = (timestampUtc = '2026-10-10T14:00:00.000Z', sourceHead = 'a'.repeat(40)) => ({
   status: 'LOCAL_REVIEW_EVIDENCE_READY', proofRef: `proofs/sovereign-review-pr-3005-${sourceHead.slice(0, 12)}.json`,
@@ -45,22 +131,28 @@ test('runner publishes only a candidate proof, with no GitHub, merge or deployme
 
 test('trusted Git boundary ignores hostile PATH and Git overrides', async () => {
   const calls = [];
-  const outputs = ['a'.repeat(40), 'goal/review', '', 'b'.repeat(40), '', 'src/test.js', 'diff --git a/src/test.js b/src/test.js\n-old\n+new\n'];
+  const fixture = reviewedObjects();
+  const outputs = [fixture.head, 'goal/review', '', fixture.base, ''];
   const result = await main({
     PATH: '/attacker', GIT_EXEC_PATH: '/attacker', GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath',
-    GIT_CONFIG_VALUE_0: '/attacker', STEPHANOS_REVIEW_EXACT_HEAD: 'a'.repeat(40), STEPHANOS_REVIEW_EXACT_BASE: 'b'.repeat(40),
+    GIT_CONFIG_VALUE_0: '/attacker', STEPHANOS_REVIEW_EXACT_HEAD: fixture.head, STEPHANOS_REVIEW_EXACT_BASE: fixture.base,
     STEPHANOS_REVIEW_EXACT_BRANCH: 'goal/review', STEPHANOS_REVIEW_REPOSITORY: 'owner/repo', STEPHANOS_REVIEW_ISSUE: '1',
     STEPHANOS_REVIEW_PR: '3005', STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: 'builder', STEPHANOS_REVIEW_IMPLEMENTER_SESSION: 'build-1',
     STEPHANOS_REVIEW_SESSION: 'review-2',
   }, {
     platform: 'linux', environment: { PATH: '/attacker', GIT_EXEC_PATH: '/attacker', GIT_CONFIG_COUNT: '99' },
-    spawn: (executable, args, options) => { calls.push({ executable, args, env: options.env }); return { status: 0, stdout: outputs.shift() }; },
+    spawn: (executable, args, options) => {
+      calls.push({ executable, args, env: options.env });
+      const index = args.indexOf('cat-file');
+      return { status: 0, stdout: index < 0 ? outputs.shift() : fixture.read(args[index + 1], args[index + 2]) };
+    },
     invokeModel: async () => JSON.stringify({ verdict: 'clean', reviewedPaths: ['src/test.js'], findings: [] }), persist: () => true,
   });
   assert.equal(result.status, 'LOCAL_REVIEW_EVIDENCE_READY');
   assert.equal(calls.every(call => call.executable === '/usr/bin/git'), true);
   assert.equal(calls.every(call => call.env.PATH === '/usr/bin:/bin' && call.env.GIT_EXEC_PATH === undefined), true);
   assert.equal(calls.every(call => call.env.GIT_CONFIG_COUNT !== '99' && call.args.includes('core.fsmonitor=false')), true);
+  assert.equal(calls.some(call => call.args.includes('diff')), false);
 });
 
 test('publication rejects linked workspace ancestors', (t) => {

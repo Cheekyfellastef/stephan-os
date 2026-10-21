@@ -16,7 +16,7 @@ const SHA = /^[0-9a-f]{40}$/i;
 const text = value => String(value ?? '').trim();
 const maximumOutput = 128 * 1024;
 
-function git(args, maxBuffer = 256 * 1024, dependencies = {}) {
+function git(args, maxBuffer = 256 * 1024, dependencies = {}, raw = false) {
   const execution = (dependencies.resolveGit || resolveBattleBridgeGitExecution)({
     platform: dependencies.platform || process.platform,
     environment: dependencies.environment || process.env,
@@ -24,11 +24,104 @@ function git(args, maxBuffer = 256 * 1024, dependencies = {}) {
   const result = (dependencies.spawn || spawnSync)(execution.executable, [
     ...execution.fixedConfigArgs, `--git-dir=${join(ROOT, '.git')}`, `--work-tree=${ROOT}`, ...args,
   ], {
-    encoding: 'utf8', shell: false, windowsHide: true, timeout: 12_000,
+    encoding: raw ? null : 'utf8', shell: false, windowsHide: true, timeout: 12_000,
     maxBuffer, env: execution.environment,
   });
   if (result?.error || result?.status !== 0) throw new Error('LOCAL_GIT_PROOF_UNAVAILABLE');
-  return text(result.stdout);
+  if (raw && !Buffer.isBuffer(result.stdout)) throw new Error('LOCAL_GIT_RAW_OBJECT_REQUIRED');
+  return raw ? result.stdout : text(result.stdout);
+}
+
+// Derive review input solely from hash-authenticated bytes. Git diff/status
+// do not authenticate loose objects and must never supply the model's diff.
+export function authenticatedReviewDiff(baseSha, sourceHead, readObject) {
+  const cache = new Map();
+  let capturedBytes = 0;
+  function object(type, sha) {
+    if (!/^[a-f0-9]{40}$/.test(sha)) throw Error('REVIEW_OBJECT_ID_INVALID');
+    const key = type + ':' + sha;
+    if (cache.has(key)) return cache.get(key);
+    const bytes = readObject(type, sha);
+    if (!Buffer.isBuffer(bytes) || bytes.length > 2 * 1024 * 1024)
+      throw Error('REVIEW_OBJECT_UNBOUNDED');
+    const owned = Buffer.from(bytes);
+    if (createHash('sha1').update(type + ' ' + owned.length + '\0').update(owned).digest('hex') !== sha)
+      throw Error('REVIEW_OBJECT_HASH_MISMATCH');
+    capturedBytes += owned.length;
+    if (capturedBytes > 16 * 1024 * 1024) throw Error('REVIEW_OBJECT_CLOSURE_UNBOUNDED');
+    cache.set(key, owned);
+    return owned;
+  }
+  function filesAt(commitSha) {
+    const commit = object('commit', commitSha).toString('utf8');
+    const tree = /^tree ([a-f0-9]{40})\n/.exec(commit)?.[1];
+    if (!tree) throw Error('REVIEW_COMMIT_TREE_INVALID');
+    const files = new Map();
+    let entries = 0;
+    function walk(sha, prefix, depth) {
+      if (depth > 32) throw Error('REVIEW_TREE_DEPTH_UNBOUNDED');
+      const bytes = object('tree', sha);
+      const names = new Set();
+      for (let i = 0; i < bytes.length;) {
+        const space = bytes.indexOf(32, i), nul = bytes.indexOf(0, space + 1);
+        if (space < i || nul < space || nul + 21 > bytes.length)
+          throw Error('REVIEW_TREE_INVALID');
+        const mode = bytes.toString('ascii', i, space);
+        const name = bytes.toString('utf8', space + 1, nul);
+        if (!/^[A-Za-z0-9._-]+$/.test(name) || name === '.' || name === '..' || names.has(name))
+          throw Error('REVIEW_TREE_PATH_UNSUPPORTED');
+        names.add(name);
+        const id = bytes.subarray(nul + 1, nul + 21).toString('hex');
+        const path = prefix + name;
+        if (++entries > 40000 || path.length > 240) throw Error('REVIEW_TREE_UNBOUNDED');
+        if (mode === '40000') walk(id, path + '/', depth + 1);
+        else if (['100644', '100755', '120000', '160000'].includes(mode)) files.set(path, { mode, sha: id });
+        else throw Error('REVIEW_TREE_MODE_UNSUPPORTED');
+        i = nul + 21;
+      }
+    }
+    walk(tree, '', 0);
+    return files;
+  }
+  const before = filesAt(baseSha), after = filesAt(sourceHead);
+  const changedFiles = [...new Set([...before.keys(), ...after.keys()])].sort()
+    .filter(path => before.get(path)?.sha !== after.get(path)?.sha || before.get(path)?.mode !== after.get(path)?.mode);
+  if (changedFiles.length > 100) throw Error('REVIEW_CHANGED_FILES_UNBOUNDED');
+  function lines(entry) {
+    if (!entry) return [];
+    if (entry.mode === '160000') throw Error('REVIEW_SUBMODULE_DIFF_UNSUPPORTED');
+    const bytes = object('blob', entry.sha), value = bytes.toString('utf8');
+    if (bytes.includes(0) || !Buffer.from(value, 'utf8').equals(bytes)) throw Error('REVIEW_BINARY_DIFF_UNSUPPORTED');
+    return value.match(/[^\n]*\n|[^\n]+$/g) || [];
+  }
+  const patches = [];
+  for (const path of changedFiles) {
+    const old = before.get(path), current = after.get(path);
+    const a = lines(old), b = lines(current);
+    let patch = `diff --git a/${path} b/${path}\n`;
+    if (!old) patch += `new file mode ${current.mode}\n`;
+    else if (!current) patch += `deleted file mode ${old.mode}\n`;
+    else if (old.mode !== current.mode) patch += `old mode ${old.mode}\nnew mode ${current.mode}\n`;
+    if (old?.sha !== current?.sha) {
+      patch += `index ${old?.sha || '0'.repeat(40)}..${current?.sha || '0'.repeat(40)}\n`;
+      patch += `--- ${old ? 'a/' + path : '/dev/null'}\n+++ ${current ? 'b/' + path : '/dev/null'}\n`;
+      let prefix = 0, suffix = 0;
+      while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
+      while (suffix < a.length - prefix && suffix < b.length - prefix
+        && a[a.length - suffix - 1] === b[b.length - suffix - 1]) suffix++;
+      const start = Math.max(0, prefix - 3);
+      const endA = a.length - Math.max(0, suffix - 3), endB = b.length - Math.max(0, suffix - 3);
+      patch += `@@ -${endA === start ? start : start + 1},${endA - start} +${endB === start ? start : start + 1},${endB - start} @@\n`;
+      const append = (marker, value) => { patch += marker + value + (value.endsWith('\n') ? '' : '\n\\ No newline at end of file\n'); };
+      for (let i = start; i < prefix; i++) append(' ', a[i]);
+      for (let i = prefix; i < a.length - suffix; i++) append('-', a[i]);
+      for (let i = prefix; i < b.length - suffix; i++) append('+', b[i]);
+      for (let i = a.length - suffix; i < endA; i++) append(' ', a[i]);
+    }
+    patches.push(patch);
+    if (Buffer.byteLength(patches.join(''), 'utf8') > 128 * 1024) throw Error('REVIEW_DIFF_UNBOUNDED');
+  }
+  return { changedFiles, diff: patches.join('') };
 }
 function exactLocalSnapshot(env, dependencies = {}) {
   const sourceHead = text(env.STEPHANOS_REVIEW_EXACT_HEAD).toLowerCase();
@@ -41,8 +134,8 @@ function exactLocalSnapshot(env, dependencies = {}) {
   if (runGit(['status', '--porcelain', '--untracked-files=normal'])) throw new Error('REVIEW_WORKTREE_NOT_CLEAN');
   if (runGit(['rev-parse', '--verify', `${baseSha}^{commit}`]).toLowerCase() !== baseSha) throw new Error('REVIEW_BASE_UNPROVEN');
   runGit(['merge-base', '--is-ancestor', baseSha, sourceHead]);
-  const changedFiles = runGit(['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', baseSha, sourceHead, '--']).split('\n').filter(Boolean);
-  const diff = runGit(['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--unified=3', baseSha, sourceHead, '--'], 128 * 1024);
+  const { changedFiles, diff } = authenticatedReviewDiff(baseSha, sourceHead,
+    (type, sha) => git(['cat-file', type, sha], 2 * 1024 * 1024, dependencies, true));
   return {
     repository: text(env.STEPHANOS_REVIEW_REPOSITORY),
     issueNumber: Number(env.STEPHANOS_REVIEW_ISSUE),
