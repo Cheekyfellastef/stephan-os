@@ -33,7 +33,7 @@ async function runAsync(program, args, options = {}) {
     child.once('close', (code) => resolveRun({ code, stdout, stderr }));
   });
 }
-test('independent forge performs real fixture worktree, scoped edit, tests, commit and durable receipt', { timeout: 90000 }, async () => {
+async function runForgeFixture({ admissionOnly = false } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), 'stephanos-seed-parallel-'));
   const repo = join(scratch, 'fixture-repo');
   const home = join(scratch, 'operator-home');
@@ -85,6 +85,12 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
       'shared/runtime/seedCanopyParallelResourceV1.mjs'), 'utf8');
     const custodyAnchor = 'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = false';
     assert.ok(resourceModule.includes(custodyAnchor));
+    const writeCustodyAnchor = 'SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED = false';
+    assert.ok(resourceModule.includes(writeCustodyAnchor));
+    // This modified copy is exclusively a disposable Git test fixture. There
+    // is no production environment/manifest switch for either missing custody.
+    const fixtureWriteResourceModule = resourceModule.replace(writeCustodyAnchor,
+      'SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED = true');
     await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
     await writeFile(path('shared/project/seedGardenProjectionV1.mjs'),
       'export const HIGH_LEVEL_FLYWHEEL_SEEDS_V1 = ' + JSON.stringify([{
@@ -239,11 +245,45 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     // or new task claim. Only this ephemeral fixture uses a mocked custody gate.
     const held = await runAsync(process.execPath, [executable, 'build', manifest, '--execute'], { cwd: repo, env });
     assert.notEqual(held.code, 0);
-    assert.match(held.stderr, /RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED/);
+    assert.match(held.stderr, /SEED_TARGET_WRITE_CUSTODY_UNIMPLEMENTED/);
     const { access } = await import('node:fs/promises');
     await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
+    await assert.rejects(() => access(join(stateRoot, 'target-claims')));
+    await assert.rejects(() => access(join(stateRoot, 'worktrees')));
+    assert.equal(inferenceCount, 0);
+    // Deterministic generation must hit the SAME production custody hold;
+    // a fresh owner approval cannot turn pathname checks into physical fencing.
+    const inventoryRequest = { ...request, generationMode: 'CANONICAL_INVENTORY_V1' };
+    const inventoryRaw = JSON.stringify(inventoryRequest);
+    const originalOwnerBody = ownerComment.body;
+    ownerComment.body = '```stephanos-seed-parallel-owner-approval\n' + JSON.stringify(
+      makeParallelSeedExactApprovalV1({ request: inventoryRequest,
+        manifestSha256: parallelSeedManifestHashV1(inventoryRaw), nowUtc: issuedAtUtc,
+        expiryUtc: new Date(Date.parse(issuedAtUtc) + 3600000).toISOString() })) + '\n```';
+    await writeFile(manifest, inventoryRaw);
+    const inventoryHeld = await runAsync(process.execPath,
+      [executable, 'build', manifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(inventoryHeld.code, 0);
+    assert.match(inventoryHeld.stderr, /SEED_TARGET_WRITE_CUSTODY_UNIMPLEMENTED/);
+    await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
+    await assert.rejects(() => access(join(stateRoot, 'target-claims')));
+    await assert.rejects(() => access(join(stateRoot, 'worktrees')));
+    assert.equal(inferenceCount, 0);
+    assert.equal(git('rev-parse', 'main'), main);
+    ownerComment.body = originalOwnerBody;
+    await writeFile(manifest, raw);
+    // Independently retain the original model-custody admission hold after
+    // mocking ONLY target custody in the disposable fixture.
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), fixtureWriteResourceModule);
+    const routerHeld = await runAsync(process.execPath,
+      [executable, 'build', manifest, '--execute'], { cwd: repo, env });
+    assert.notEqual(routerHeld.code, 0);
+    assert.match(routerHeld.stderr, /RESIDENT_ROUTER_GOVERNOR_CUSTODY_UNIMPLEMENTED/);
+    assert.equal(inferenceCount, 0);
+    await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
+    if (admissionOnly) return;
     await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'),
-      resourceModule.replace(custodyAnchor, 'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = true'));
+      fixtureWriteResourceModule.replace(custodyAnchor, 'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = true'));
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'fixture-only mocked custody');
     // Bind all fixture approval evidence to its new exact fixture base.
@@ -424,7 +464,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     // truthful isolated documentation commit with NO resident llama.cpp model.
     // Restore the production GPU-custody hold in this temporary repository;
     // the deterministic path may not quietly re-enable the model path.
-    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), fixtureWriteResourceModule);
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'restore production router custody hold in fixture');
     const deterministicBase = git('rev-parse', 'main');
@@ -515,7 +555,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     // the mock model is answering. This is a real temporary Git concurrency
     // test, NOT a Battle Bridge source or OS-custody claim.
     await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'),
-      resourceModule.replace(custodyAnchor,
+      fixtureWriteResourceModule.replace(custodyAnchor,
         'SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = true'));
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'fixture-only mock model-custody setup');
@@ -769,7 +809,7 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     // A blocked candidate must never jam a disjoint approved seed. Use
     // production's disabled heavy-model flag for this actual Git fixture,
     // and prove a two-attempt foreground batch continues to a distinct goal.
-    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), resourceModule);
+    await writeFile(path('shared/runtime/seedCanopyParallelResourceV1.mjs'), fixtureWriteResourceModule);
     git('add', '--', 'shared/runtime/seedCanopyParallelResourceV1.mjs');
     git('commit', '-m', 'fixture restore model custody HOLD before batch');
     const batchBase = git('rev-parse', 'main');
@@ -932,4 +972,11 @@ test('independent forge performs real fixture worktree, scoped edit, tests, comm
     if (server) await new Promise((resolveDone) => server.close(resolveDone));
     await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 });
   }
-});
+}
+
+test('production target custody holds authenticated model and deterministic workers before any claim or source write',
+  { timeout: 30000 }, () => runForgeFixture({ admissionOnly: true }));
+
+test('independent forge performs real fixture worktree, scoped edit, tests, commit and durable receipt',
+  { timeout: 90000 }, () => runForgeFixture());
+

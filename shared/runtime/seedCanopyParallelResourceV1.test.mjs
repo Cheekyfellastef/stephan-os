@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1 } from './seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED } from './seedCanopyParallelResourceV1.mjs';
+
+test('source write custody remains uncommissioned independently of model residency', () => {
+  assert.equal(SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED, false);
+});
 
 const NOW = Date.parse('2026-10-13T16:00:00.000Z');
 const idle = { schemaVersion: 'stephanos.vr-resource-governor.v1',
@@ -119,3 +123,4 @@ test('Seed Forge file write rejects physical junction aliases as well as symlink
   assert.match(worker, /await writeFile\(writeTarget, proposal\.content/);
   assert.match(worker, /SEED_SOURCE_TRACKED_ORIGIN_MAIN_MISMATCH/);
 });
+

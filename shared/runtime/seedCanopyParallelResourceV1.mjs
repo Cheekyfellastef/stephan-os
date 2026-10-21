@@ -10,6 +10,14 @@ export const SEED_PARALLEL_GOVERNOR_MAX_AGE_MS = 30000;
 // remove this hold. No environment variable or caller JSON can override it.
 export const SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED = false;
 
+// Pathname rechecks cannot bind the eventual source write against a hostile
+// same-account parent/leaf replacement. This affects deterministic inventory
+// proposals too: avoiding inference does not supply source-write custody.
+// Keep actual worker admission held until a separately reviewed, physically
+// qualified writer protects the complete operation. Caller approval, platform
+// labels and environment flags cannot commission that missing capability.
+export const SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED = false;
+
 // Shared freshness predicate for the on-demand canonical governor reconcile and
 // the final independent pre-inference safety verdict. Never infer idle from age.
 export function isParallelSeedGovernorSnapshotFreshV1(governor, nowMs = Date.now()) {
@@ -68,3 +76,4 @@ export function checkParallelSeedModelResourceV1({ governor, modelInventory, sel
     gamingResourceProtectionRequired: true,
   });
 }
+

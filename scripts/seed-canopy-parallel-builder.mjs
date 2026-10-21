@@ -24,7 +24,7 @@ import {
 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
 import { parallelSeedManifestHashV1 } from '../shared/runtime/seedCanopyParallelSupervisorV1.mjs';
 import { verifySeedParallelOwnerGitHubApprovalV1 } from '../shared/runtime/seedCanopyParallelGitHubApprovalV1.mjs';
-import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
+import { checkParallelSeedModelResourceV1, isParallelSeedGovernorSnapshotFreshV1, isParallelSeedLocalWorkAllowedV1, SEED_PARALLEL_ROUTER_GOVERNOR_CUSTODY_IMPLEMENTED, SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED } from '../shared/runtime/seedCanopyParallelResourceV1.mjs';
 
 const repoRoot = resolve(import.meta.dirname, '..');
 const scope = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
@@ -441,6 +441,11 @@ async function build(request, manifestSha256) {
     request, manifestSha256, reference: approvalReference, nowMs: Date.now(),
   });
   if (!approved.ok) throw new Error('EXTERNAL_OWNER_APPROVAL_REJECTED: ' + approved.reason);
+  // Owner approval and model-free generation do not close the final pathname
+  // write race. Hold BEFORE reserving a task/path, creating a worktree, issuing
+  // physical-pickup evidence or generating/writing proposed source bytes.
+  if (!SEED_PARALLEL_TARGET_WRITE_CUSTODY_IMPLEMENTED)
+    throw new Error('SEED_TARGET_WRITE_CUSTODY_UNIMPLEMENTED');
   const resource = request.generationMode === 'CANONICAL_INVENTORY_V1'
     ? await deterministicInventoryPreflight()
     : await localModelPreflight();
@@ -642,3 +647,4 @@ main().catch((error) => {
   process.stderr.write('Seed Canopy parallel lane BLOCKED: ' + String(error.message || error) + '\n');
   process.exitCode = 1;
 });
+
