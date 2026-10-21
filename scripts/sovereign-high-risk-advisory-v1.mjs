@@ -2,8 +2,9 @@
 // Read-only local source/candidate producer for Battle Bridge. This is NOT a
 // qualified independent specialist or a protected GitHub review author.
 import { spawnSync } from 'node:child_process';
+import { openSync, readFileSync, fstatSync, closeSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
-import { resolve, dirname, join } from 'node:path';
+import { resolve, dirname, join, isAbsolute, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
@@ -70,27 +71,148 @@ export function captureHighRiskAdvisorySnapshotV1(env = process.env, {
   });
 }
 
-export async function localHighRiskModelV1(prompt, _chunk, env = process.env, { fetchImpl = fetch } = {}) {
-  const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
-  if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model)) throw Error('UNSAFE_LOCAL_MODEL_NAME');
-  const response = await fetchImpl(OLLAMA_URL, {
-    method:'POST', redirect:'error',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model, prompt, stream:false, format:'json',
-      options:{temperature:0,num_ctx:8192},
-    }),
-    signal:AbortSignal.timeout(120_000),
-  });
-  if (!response.ok) throw Error('LOCAL_MODEL_REQUEST_FAILED');
-  const raw = await response.text();
-  if (Buffer.byteLength(raw, 'utf8') > 64 * 1024) throw Error('LOCAL_MODEL_OUTPUT_TOO_LARGE');
-  const parsed = JSON.parse(raw);
-  if (parsed?.model !== model || parsed?.done !== true
-    || parsed?.done_reason !== 'stop' || typeof parsed?.response !== 'string') {
-    throw Error('LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN');
+// The same independently written VR/flat governor protects ordinary local
+// reviews, Windows exams and this high-risk advisory. Any missing, stale or
+// malformed observation is a HOLD, never permission to load a heavy model.
+export function inspectHighRiskGamingPermissionV1(env = process.env, {
+  nowMs = Date.now(), platform = process.platform,
+  openFile = openSync, readFile = readFileSync,
+  statFile = fstatSync, closeFile = closeSync,
+} = {}) {
+  const workspace = text(env.STEPHANOS_SHARED_AGENT_WORKSPACE);
+  if (platform !== 'linux' || !workspace.startsWith('/') || !isAbsolute(workspace)
+    || normalize(workspace) !== workspace || /[\\0\\r\\n]/.test(workspace)
+    || !Number.isSafeInteger(nowMs)) {
+    return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_PATH_UNTRUSTED' });
   }
-  return parsed.response;
+  let fd;
+  try {
+    fd = openFile(join(workspace, 'vr', 'vr-resource-governor-current.json'),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = statFile(fd);
+    if (!stat.isFile() || stat.size < 2 || stat.size > 32768)
+      return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_FILE_INVALID' });
+    const raw = readFile(fd, 'utf8');
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 32768)
+      return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_FILE_INVALID' });
+    const state = JSON.parse(raw);
+    const when = Date.parse(state?.updatedAtUtc);
+    const flags = ['active', 'flatGameActive', 'airLinkActive', 'realAirLinkActive',
+      'virtualAirLinkTestActive', 'prepareLeaseActive',
+      'localModelAllowed', 'heavyModelAllowed'];
+    if (state?.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+      || state.governorVersion !== 3
+      || flags.some(k => typeof state[k] !== 'boolean')
+      || !['balanced','cool','off'].includes(state.ollamaLoadMode)
+      || !Number.isFinite(when) || nowMs - when > 30000 || when - nowMs > 5000)
+      return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_STALE_OR_INVALID' });
+    if (state.active || state.flatGameActive || state.airLinkActive
+      || state.realAirLinkActive || state.virtualAirLinkTestActive || state.prepareLeaseActive
+      || !state.localModelAllowed || !state.heavyModelAllowed
+      || state.ollamaLoadMode !== 'balanced')
+      return Object.freeze({ ok: false, reason: 'HIGH_RISK_GAMING_RESOURCE_PROTECTED' });
+    return Object.freeze({ ok: true, reason: '' });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'HIGH_RISK_GOVERNOR_UNAVAILABLE' });
+  } finally {
+    if (fd !== undefined) {
+      try { closeFile(fd); } catch { /* no permissions inferred from close failure */ }
+    }
+  }
+}
+
+// Tag names can be replaced while the reviewer is running. Resolve only an
+// observed local digest, never a caller's unverified model identifier.
+export async function observeHighRiskOllamaDigestV1(model, { fetchImpl = fetch } = {}) {
+  if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model) || typeof fetchImpl !== 'function')
+    return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_NAME_UNSAFE' });
+  try {
+    const response = await fetchImpl('http://127.0.0.1:11434/api/tags', {
+      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(6000),
+    });
+    if (!response?.ok || typeof response.text !== 'function')
+      return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_INVENTORY_UNAVAILABLE' });
+    const raw = await response.text();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 32768)
+      return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_INVENTORY_UNBOUNDED' });
+    const models = JSON.parse(raw)?.models;
+    if (!Array.isArray(models) || models.length > 256)
+      return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_INVENTORY_INVALID' });
+    const matches = models.filter(x => x && typeof x === 'object'
+      && (x.name === model || x.model === model));
+    if (matches.length !== 1 || !/^[a-f0-9]{64}$/.test(matches[0]?.digest ?? ''))
+      return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_DIGEST_UNVERIFIED' });
+    return Object.freeze({ ok: true, reason: '', digest: matches[0].digest });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'LOCAL_MODEL_DIGEST_READ_FAILED' });
+  }
+}
+
+export async function localHighRiskModelV1(prompt, _chunk, env = process.env, {
+  fetchImpl = fetch,
+  gamingGuard = inspectHighRiskGamingPermissionV1,
+  modelPin = observeHighRiskOllamaDigestV1,
+  startPolling = setInterval, stopPolling = clearInterval,
+  platform = process.platform,
+} = {}) {
+  const model = text(env.STEPHANOS_SOVEREIGN_REVIEW_MODEL || 'qwen:14b');
+  if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/i.test(model))
+    throw Error('UNSAFE_LOCAL_MODEL_NAME');
+  const allowed = () => gamingGuard(env, { platform })?.ok === true;
+  if (!allowed()) throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+  const pinned = await modelPin(model, { fetchImpl });
+  if (!pinned?.ok || !/^[a-f0-9]{64}$/.test(pinned.digest ?? ''))
+    throw Error('HIGH_RISK_MODEL_DIGEST_UNVERIFIED');
+  if (!allowed()) throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+  const before = await modelPin(model, { fetchImpl });
+  if (!before?.ok || before.digest !== pinned.digest)
+    throw Error('HIGH_RISK_MODEL_DIGEST_CHANGED');
+  const immutableModel = 'sha256:' + pinned.digest;
+  const controller = new AbortController();
+  let preempted = false;
+  const monitor = startPolling(() => {
+    try {
+      if (!allowed()) {
+        preempted = true;
+        controller.abort(Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED'));
+      }
+    } catch {
+      preempted = true;
+      controller.abort(Error('HIGH_RISK_GAMING_RESOURCE_UNPROVEN'));
+    }
+  }, 500);
+  try {
+    const response = await fetchImpl(OLLAMA_URL, {
+      method: 'POST', redirect: 'error',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: immutableModel, prompt, stream: false, format: 'json',
+        keep_alive: 0,
+        options: { temperature: 0, num_ctx: 8192 },
+      }),
+      signal: AbortSignal.any([AbortSignal.timeout(120000), controller.signal]),
+    });
+    if (!response?.ok || typeof response.text !== 'function')
+      throw Error('LOCAL_MODEL_REQUEST_FAILED');
+    const raw = await response.text();
+    if (preempted || controller.signal.aborted || !allowed())
+      throw Error('HIGH_RISK_GAMING_RESOURCE_PROTECTED');
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 65536)
+      throw Error('LOCAL_MODEL_OUTPUT_TOO_LARGE');
+    const parsed = JSON.parse(raw);
+    const returnedModel = text(parsed?.model).toLowerCase();
+    if (![immutableModel, 'sha256-' + pinned.digest].includes(returnedModel)
+      || parsed?.done !== true || parsed?.done_reason !== 'stop'
+      || typeof parsed?.response !== 'string'
+      || Buffer.byteLength(parsed.response, 'utf8') > 12288)
+      throw Error('LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN');
+    const after = await modelPin(model, { fetchImpl });
+    if (!after?.ok || after.digest !== pinned.digest || !allowed())
+      throw Error('HIGH_RISK_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE');
+    return parsed.response;
+  } finally {
+    stopPolling(monitor);
+  }
 }
 
 // Re-read the fixed Git evidence AFTER model inference: a stale review must
