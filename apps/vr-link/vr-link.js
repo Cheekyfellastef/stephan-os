@@ -15,22 +15,40 @@ chamber();
 $('device').textContent = /Quest|Oculus/i.test(navigator.userAgent) ? 'Quest browser (reported)' : 'Browser (unverified)';
 $('backend').textContent = location.protocol === 'file:' ? 'Offline' : /^(localhost|127\.0\.0\.1)$/.test(location.hostname) ? 'Local' : 'Hosted';
 let session = null;
+let xrSupported = false;
+let openingSession = false;
 async function detect() {
   if (!navigator.xr) { $('xr').textContent = 'No (WebXR API unavailable)'; $('notice').textContent = 'Desktop fallback. WebXR is unavailable in this browser or context.'; return; }
   try {
     const supported = await navigator.xr.isSessionSupported('immersive-vr');
+    xrSupported = Boolean(supported);
     $('xr').textContent = supported ? 'Yes (immersive-vr supported)' : 'No (immersive-vr unsupported)';
-    $('enter').disabled = !supported;
-  } catch(e) { $('xr').textContent='Unknown'; $('notice').textContent='WebXR check failed: '+String(e.message||e); }
+    $('enter').disabled = !xrSupported || openingSession || Boolean(session);
+  } catch(e) { xrSupported = false; $('enter').disabled = true; $('xr').textContent='Unknown'; $('notice').textContent='WebXR check failed: '+String(e.message||e); }
 }
 $('enter').addEventListener('click', async () => {
-  if (!navigator.xr) return;
+  if (!navigator.xr || !xrSupported || session || openingSession) return;
+  openingSession = true;
+  $('enter').disabled = true;
   try {
-    session = await navigator.xr.requestSession('immersive-vr');
-    $('session').textContent='immersive-vr';
-    $('notice').textContent='WebXR session entered. This V0 confirms connection only; no spatial renderer has been attached.';
-    session.addEventListener('end',()=>{session=null;$('session').textContent='Fallback';$('notice').textContent='VR session ended. Desktop fallback ready.';},{once:true});
-  } catch(e) { $('session').textContent='Fallback';$('notice').textContent='VR session failed: '+String(e.message||e); }
+    const opened = await navigator.xr.requestSession('immersive-vr');
+    session = opened;
+    $('session').textContent = 'immersive-vr';
+    $('notice').textContent = 'WebXR session entered. This V0 confirms connection only; no spatial renderer has been attached.';
+    opened.addEventListener('end', () => {
+      if (session !== opened) return;
+      session = null;
+      $('enter').disabled = !xrSupported;
+      $('session').textContent = 'Fallback';
+      $('notice').textContent = 'VR session ended. Desktop fallback ready.';
+    }, { once: true });
+  } catch (e) {
+    $('session').textContent = 'Fallback';
+    $('notice').textContent = 'VR session failed: ' + String(e.message || e);
+  } finally {
+    openingSession = false;
+    $('enter').disabled = !xrSupported || Boolean(session);
+  }
 });
 $('ping').addEventListener('click',async()=>{
   $('notice').textContent='Checking Stephanos…';
