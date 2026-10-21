@@ -458,6 +458,97 @@ test('every unsuccessful cycle stays BLOCKED despite contradictory green child v
   }
 });
 
+test('timed-out Windows repair holds descendant custody instead of launching a second cycle', () => {
+  for (const killOutcome of [true, false]) {
+    const timers = [];
+    let child;
+    let launches = 0;
+    let killCount = 0;
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      spawnImpl: () => {
+        launches++;
+        child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => { killCount++; return killOutcome; };
+        return child;
+      },
+      setTimeoutImpl: (fn, delay) => {
+        const timer = { fn, delay, unref() {} };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeoutImpl: () => {},
+      startDelayMs: 5,
+      intervalMs: 60_000,
+      maxRuntimeMs: 240_000,
+    });
+    try {
+      timers[0].fn();
+      assert.equal(launches, 1);
+      assert.equal(guardian.status().running, true);
+      const timeout = timers.at(-1);
+      assert.equal(timeout.delay, 240_000);
+      timeout.fn();
+      const held = guardian.status();
+      assert.equal(killCount, 1);
+      assert.equal(held.timeoutCustodyHeld, true);
+      assert.equal(held.lastOk, false);
+      assert.equal(held.lastBlocker, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN');
+      assert.equal(held.lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      assert.equal(held.failureCount, 1);
+      assert.equal(held.running, false);
+      assert.equal(held.scheduled, false);
+      assert.equal(guardian.runNow(), false);
+      assert.equal(timers.length, 2, 'no retry timer may follow an unqualified timeout');
+
+      // Even a late success receipt or direct-child exit proves nothing about
+      // grandchild Task Scheduler/PowerShell work still in flight on Windows.
+      child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
+        + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
+          reporting: { ok: true, outcome: 'HEALTHY' } }) + '\n');
+      child.emit('close', 0);
+      assert.equal(guardian.status().timeoutCustodyHeld, true);
+      assert.equal(guardian.status().successCount, 0);
+      assert.equal(guardian.runNow(), false);
+      assert.equal(launches, 1);
+      assert.equal(timers.length, 2);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('close delivered synchronously by timeout kill still holds original child custody', () => {
+  const timers = [];
+  let launches = 0;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl: () => {
+      launches++;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => { child.emit('close', 0); return true; };
+      return child;
+    },
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: () => {},
+    startDelayMs: 5,
+    intervalMs: 60_000,
+  });
+  try {
+    timers[0].fn();
+    timers.at(-1).fn();
+    assert.equal(guardian.status().timeoutCustodyHeld, true);
+    assert.equal(guardian.status().lastOk, false);
+    assert.equal(guardian.status().scheduled, false);
+    assert.equal(guardian.runNow(), false);
+    assert.equal(launches, 1);
+  } finally { guardian.stop(); }
+});
+
 test('manual repair wake cancels the old automatic timer and stop clears pending delay', () => {
   const h = retryGuardianHarness();
   const pending = h.timers.at(-1);
