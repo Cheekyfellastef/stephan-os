@@ -9,11 +9,11 @@ export function sovereignExactCommitLoaderV1({ root, head, files, git }) {
   }
   const config = JSON.stringify({ root, head, files, git });
   const source = `
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { resolve as resolvePath } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { isBuiltin } from 'node:module';
+const { spawnSync } = await import('node:child_process');
+const { createHash } = await import('node:crypto');
+const { resolve: resolvePath } = await import('node:path');
+const { pathToFileURL } = await import('node:url');
+const { isBuiltin } = await import('node:module');
 const cfg = ${config};
 const objects = new Map();
 function object(type, sha) {
