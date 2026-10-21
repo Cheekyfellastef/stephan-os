@@ -1,5 +1,15 @@
 # Core worker custody and repair admission
 
+Readonly maintenance classification is based on behavior, never a `status`
+name. Review of 8dc97ceee7 identified gaming Status's missing-state reconciliation
+and possible process eviction; that action now requires owner admission too.
+The opaque OpenClaw status/plugin-inspection CLI likewise gets no observation
+bypass without a proved nonmutating closure. The remaining fixed observational
+scripts were inspected for stateful fallbacks. A native fixture executes the
+actual gaming Status branch with harmless mocked reconciliation to demonstrate
+why it must be fenced; the actual common executor proves both maintenance and
+START_PROCESS aliases cannot launch it under held, busy or unknown custody.
+
 ## Complete worker-dependent source boundary after 582c487f37 review
 
 That review found the same invariant still violated in Core's direct refill:

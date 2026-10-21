@@ -4,10 +4,13 @@ const READ_ONLY_ACTIONS = new Set([
   'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
   'cpu-pressure-snapshot', 'status-recovery-mesh', 'status-worker-watchdog',
-  'status-stephanos-core-daemon', 'gaming-resource-status',
+  'status-stephanos-core-daemon',
   'status-mission-orchestrator-worker', 'status-stephanos-backend',
-  'status-openclaw-whatsapp', 'starfield-vr-telemetry-archive',
+  'starfield-vr-telemetry-archive',
 ]);
+// Names do not prove observation-only behavior. Gaming Status can reconcile
+// missing state and evict Ollama; the opaque OpenClaw CLI can load plugins.
+// Both retain ordinary owner admission rather than bypassing a custody hold.
 export const SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER =
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
 

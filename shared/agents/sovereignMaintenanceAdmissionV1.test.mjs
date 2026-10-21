@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { admitSovereignMaintenanceV1, readFixedSovereignMaintenanceGuardianV1, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from './sovereignMaintenanceAdmissionV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
@@ -22,7 +24,7 @@ test('all common fixed mutation entry aliases hold on timeout, unknown or busy o
     { ...idle, timeoutCustodyHeld: 'false' }, { ...idle, timeoutCustodyHeld: true },
     { ...idle, running: true }, Object.assign(Object.create({ timeoutCustodyHeld: false }), { enabled: true, running: false })]) {
     for (const operation of ['MAINTENANCE_ACTION', 'START_PROCESS']) {
-      for (const actionId of ['repair-stephanos', 'repair-goal-builder-flow', 'repair-control-plane', 'ignite-stephanos', 'goal-discovery-heartbeat', 'fleet-goal-supervisor']) {
+      for (const actionId of ['repair-stephanos', 'repair-goal-builder-flow', 'repair-control-plane', 'ignite-stephanos', 'goal-discovery-heartbeat', 'fleet-goal-supervisor', 'gaming-resource-status', 'status-openclaw-whatsapp']) {
         const result = await executeSovereignCommanderCommandV1(envelope(actionId, operation), {
           repoRoot: root, readMaintenanceGuardian: () => guardian,
           spawnSyncFn() { assert.fail('held owner reached fixed mutation'); },
@@ -38,6 +40,21 @@ test('all common fixed mutation entry aliases hold on timeout, unknown or busy o
   });
   assert.equal(observed.ok, true);
   assert.equal((await admitSovereignMaintenanceV1('repair-stephanos', () => idle)).ok, true);
+});
+
+test('actual gaming Status reconciles absent state and therefore cannot receive an observation-only bypass', { skip: process.platform !== 'win32' }, () => {
+  const source = readFileSync(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
+  const start = source.indexOf("if ($Action -eq 'Status')"), end = source.indexOf("if ($Action -eq 'Reconcile')", start);
+  assert.ok(start >= 0 && end > start);
+  const script = `$ErrorActionPreference='Stop';$Action='Status';
+    function Read-GovernorState { return $null }
+    function Invoke-CurrentReconcile { @{reconciled=$true} }
+    ${source.slice(start, end)}`;
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000 });
+  assert.equal(r.status, 0, r.stderr || r.error?.message);
+  assert.equal(JSON.parse(r.stdout).reconciled, true);
 });
 
 test('cross-process owner observation uses only bounded fresh fixed health, never a caller URL', async () => {
