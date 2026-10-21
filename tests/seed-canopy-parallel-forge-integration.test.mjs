@@ -295,7 +295,6 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     const held = await runAsync(process.execPath, [executable, 'build', manifest, '--execute'], { cwd: repo, env });
     assert.notEqual(held.code, 0);
     assert.match(held.stderr, /SEED_TARGET_WRITE_CUSTODY_UNIMPLEMENTED/);
-    const { access } = await import('node:fs/promises');
     await assert.rejects(() => access(join(stateRoot, 'receipts', TASK_ID + '.claim')));
     await assert.rejects(() => access(join(stateRoot, 'target-claims')));
     await assert.rejects(() => access(join(stateRoot, 'worktrees')));
