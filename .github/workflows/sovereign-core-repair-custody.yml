@@ -1,0 +1,26 @@
+name: Sovereign Core Repair Custody
+on:
+  pull_request:
+    paths:
+      - 'scripts/sovereign-commander-stephanos-repair*'
+      - 'scripts/sovereign-commander-control-plane-repair*'
+      - '.github/workflows/sovereign-core-repair-custody.yml'
+permissions:
+  contents: read
+jobs:
+  custody:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Core-only admission, held R7, gaming and Windows descendant denial
+        run: node --test scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs

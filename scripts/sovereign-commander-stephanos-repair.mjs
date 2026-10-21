@@ -89,8 +89,17 @@ function parseJsonPayload(stdout) {
   return null;
 }
 
-export function runFixedStephanosRepairStep(step) {
-  const result = spawnSync(step.executable, [...step.args], {
+export function runFixedStephanosRepairStep(step, { spawnSyncFn = spawnSync } = {}) {
+  // A timeout on Node is NOT a Windows descendant-exclusion witness. Until an
+  // independently admitted native Job backend exists, continuous mutation is
+  // not executable. Do not accept a caller flag or child's self-attestation as
+  // a substitute. Read-only fixed Core status remains available.
+  if (step.requiresWindowsJobCustody === true) {
+    return Object.freeze({ ok: false, status: null, stdout: '',
+      errorCode: 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE',
+      custodyReleased: false, descendantExclusionProven: false });
+  }
+  const result = spawnSyncFn(step.executable, [...step.args], {
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -98,10 +107,14 @@ export function runFixedStephanosRepairStep(step) {
     maxBuffer: 512 * 1024,
   });
   return Object.freeze({
-    ok: !result?.error && Number(result?.status) === 0,
+    ok: !result?.error && result?.status === 0,
     status: Number.isInteger(result?.status) ? result.status : null,
     stdout: String(result?.stdout || ''),
     errorCode: text(result?.error?.code || result?.error?.message),
+    custodyReleased: step.id === 'status-stephanos-core-daemon'
+      && !result?.error && result?.status === 0,
+    // Parent exit alone never proves native descendants or scheduled work gone.
+    descendantExclusionProven: false,
   });
 }
 
@@ -121,6 +134,7 @@ function boundedContinuousStep(step, timeoutMs, enabled) {
   return Object.freeze({
     ...step,
     timeoutMs: Math.min(Number(step.timeoutMs) || timeoutMs, timeoutMs),
+    requiresWindowsJobCustody: step.id !== 'status-stephanos-core-daemon',
   });
 }
 
@@ -132,10 +146,12 @@ function compactStep(step, result, payload = null) {
     errorCode: text(result?.errorCode).slice(0, 120),
     finalVerdict: text(payload?.finalVerdict).slice(0, 160),
     blocker: text(payload?.blocker).slice(0, 160),
+    custodyReleased: result?.custodyReleased === true,
+    descendantExclusionProven: result?.descendantExclusionProven === true,
   });
 }
 
-function blocked(expectedHead, steps, blocker) {
+function blocked(expectedHead, steps, blocker, independentCoreRepair = null) {
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA,
     ok: false,
@@ -149,6 +165,25 @@ function blocked(expectedHead, steps, blocker) {
     mergeAuthority: false,
     pcRestartAllowed: false,
     finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    ...(independentCoreRepair ? { independentCoreRepair } : {}),
+  });
+}
+
+// Diagnostic projection only. A Core status (even a forged all-green one)
+// cannot enroll a native custody executor or authorise the broad reconciler.
+export function projectIndependentCoreRepairV1(core, expectedHead, observationOk) {
+  const exactCoreFault = observationOk === true
+    && core?.sourceHead === expectedHead && core?.singleWriterProven === true
+    && core?.sourceHeadMatchesLive === true && core?.gamingActive === false
+    && (core?.repairRequired === true || core?.readiness === 'DEGRADED');
+  return Object.freeze({
+    scope: 'CORE_ONLY', mutationAttempted: false, dispatchAllowed: false,
+    exactCoreFaultObserved: exactCoreFault,
+    blocker: exactCoreFault ? 'SOVEREIGN_CORE_ONLY_CANCELLABLE_BACKEND_UNQUALIFIED'
+      : 'SOVEREIGN_CORE_ONLY_DISJOINT_SOURCE_PROOF_MISSING',
+    originalR7Authority: false, controllerInstallerAuthority: false,
+    taskSchedulerAuthority: false, serviceRestartAuthority: false,
+    custodyReleased: false, descendantExclusionProven: false,
   });
 }
 
@@ -186,6 +221,14 @@ export function runSovereignCommanderStephanosRepair({
     && caretakerPayload?.coreDaemonHealthy === true
     && text(caretakerPayload?.coreDaemonSourceHead).toLowerCase() === expectedHead;
   if (!caretakerGreen) {
+    if (caretaker?.errorCode === 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE') {
+      const observed = guardedRunStep(boundedContinuousStep(
+        STEPS.coreStatus, CONTINUOUS_REPAIR_STEP_TIMEOUTS.coreStatus, true));
+      const core = parseJsonPayload(observed?.stdout);
+      steps.push(compactStep(STEPS.coreStatus, observed, core));
+      return blocked(expectedHead, steps, caretaker.errorCode,
+        projectIndependentCoreRepairV1(core, expectedHead, observed?.ok));
+    }
     return blocked(
       expectedHead,
       steps,
@@ -222,7 +265,8 @@ export function runSovereignCommanderStephanosRepair({
         // custody and post-timeout exclusion proof, invoking it here would
         // violate both gaming custody and the original-writer boundary.
         // Preserve the read-only observation and original builder blocker.
-        void core;
+        return blocked(expectedHead, steps, builderBlocker,
+          projectIndependentCoreRepairV1(core, expectedHead, observed?.ok));
 
       }
       // Independent Core maintenance, even if successful, is never proof

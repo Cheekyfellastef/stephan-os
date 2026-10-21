@@ -6,9 +6,68 @@ import {
   CONTINUOUS_REPAIR_STEP_TIMEOUTS,
   REQUIRED_COMMANDER_CAPABILITY_VERSION,
   runSovereignCommanderStephanosRepair,
+  runFixedStephanosRepairStep,
+  projectIndependentCoreRepairV1,
 } from './sovereign-commander-stephanos-repair.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('production continuous steps never launch Windows descendants without native custody', () => {
+  let processCalls = 0;
+  const steps = [];
+  const out = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD, continuousRepairCycle: true, gamingSafe: () => true,
+    runStep(step) {
+      steps.push(step);
+      return runFixedStephanosRepairStep(step, { spawnSyncFn() {
+        processCalls++;
+        assert.equal(step.id, 'status-stephanos-core-daemon');
+        return { status: 0, stdout: JSON.stringify({ sourceHead: HEAD,
+          singleWriterProven: true, sourceHeadMatchesLive: true, gamingActive: false,
+          repairRequired: true, readiness: 'DEGRADED' }) };
+      } });
+    },
+  });
+  assert.equal(processCalls, 1, 'only fixed read-only Core observation executes');
+  assert.equal(out.ok, false);
+  assert.equal(out.blocker, 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
+  assert.equal(steps[0].requiresWindowsJobCustody, true);
+  assert.equal(out.independentCoreRepair.dispatchAllowed, false);
+  assert.equal(out.independentCoreRepair.originalR7Authority, false);
+  assert.equal(out.steps[0].custodyReleased, false);
+});
+
+test('timeout, missing exit status and parent exit never prove Windows descendant exclusion', () => {
+  const step = { id: 'repair-control-plane', executable: process.execPath,
+    args: [], timeoutMs: 1000 };
+  for (const child of [
+    { status: null }, { status: null, error: { code: 'ETIMEDOUT' } },
+    { status: 0 }, { status: 1 },
+  ]) {
+    const out = runFixedStephanosRepairStep(step, { spawnSyncFn: () => child });
+    assert.equal(out.custodyReleased, false);
+    assert.equal(out.descendantExclusionProven, false);
+    if (child.status === null) assert.equal(out.ok, false);
+  }
+});
+
+test('forged Core/native custody flags cannot enroll an executor or widen Core-only scope', () => {
+  const core = { sourceHead: HEAD, singleWriterProven: true,
+    sourceHeadMatchesLive: true, gamingActive: false, readiness: 'DEGRADED',
+    jobObjectProven: true, signed: true, dispatchAllowed: true,
+    originalR7Authority: true, descendantExclusionProven: true };
+  for (const delta of [{}, { sourceHead: 'b'.repeat(40) }, { singleWriterProven: false },
+    { sourceHeadMatchesLive: false }, { gamingActive: true }, { gamingActive: undefined }]) {
+    const p = projectIndependentCoreRepairV1({ ...core, ...delta }, HEAD, true);
+    assert.equal(p.dispatchAllowed, false);
+    assert.equal(p.mutationAttempted, false);
+    assert.equal(p.taskSchedulerAuthority, false);
+    assert.equal(p.serviceRestartAuthority, false);
+    assert.equal(p.controllerInstallerAuthority, false);
+    assert.equal(p.originalR7Authority, false);
+    assert.equal(p.descendantExclusionProven, false);
+  }
+});
 
 test('repair-stephanos requires the current continuous-repair liveness capability', () => {
   assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-13-private-mcp-batch-metadata-v5');
@@ -238,6 +297,10 @@ test('held R7 builder preserves separate Core diagnosis without launching unsafe
     'status-stephanos-core-daemon',
   ]);
   assert.equal(repaired.steps.at(-1).ok, true);
+  assert.equal(repaired.independentCoreRepair.exactCoreFaultObserved, true);
+  assert.equal(repaired.independentCoreRepair.dispatchAllowed, false);
+  assert.equal(repaired.independentCoreRepair.blocker,
+    'SOVEREIGN_CORE_ONLY_CANCELLABLE_BACKEND_UNQUALIFIED');
   assert.equal(repaired.sourceMutationAllowed, false);
   assert.equal(repaired.mergeAuthority, false);
 });
