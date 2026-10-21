@@ -1,5 +1,6 @@
 import test from 'node:test';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -33,8 +34,15 @@ const gitProof = (overrides = {}) => ({
     assert.equal(command, '/usr/bin/git');
     assert.equal(options.shell, false);
     assert.equal(options.env.GIT_CONFIG_NOSYSTEM, '1');
-    assert.deepEqual(args.slice(0, 2), ['-C', '/tmp/nonproduction-review-fixture']);
-    const cmd = args.slice(2).join(' ');
+    assert.equal(options.env.GIT_NO_REPLACE_OBJECTS, '1');
+    assert.equal(options.env.GIT_GRAFT_FILE, '/dev/null');
+    assert.equal(options.env.GIT_NO_LAZY_FETCH, '1');
+    assert.equal(options.env.GIT_CONFIG_GLOBAL, '/dev/null');
+    assert.ok(args.includes('core.fsmonitor=false'));
+    assert.ok(args.includes('credential.helper='));
+    const root = args.indexOf('-C');
+    assert.deepEqual(args.slice(root, root + 2), ['-C', '/tmp/nonproduction-review-fixture']);
+    const cmd = args.slice(root + 2).join(' ');
     const file = args.at(-1);
     if (cmd.startsWith('ls-files -v -- ')) {
       return { status: 0, stdout: (overrides.indexFlag || 'H') + ' ' + file + '\n' };
@@ -57,6 +65,50 @@ const gitProof = (overrides = {}) => ({
   },
 });
 const allowGaming = () => ({ ok: true });
+
+test('real WSL calibration rejects replacement-object checkout and never executes local fsmonitor',
+  { skip: process.platform !== 'linux' }, () => {
+  const root = mkdtempSync(join(tmpdir(), 'calibration-git-custody-'));
+  try {
+    const git = args => {
+      const r = spawnSync('/usr/bin/git', ['-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false',
+        '-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-C',root,...args],
+      { encoding:'utf8', shell:false, env:{ PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null' } });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    git(['init','-b','fixture']);
+    mkdirSync(join(root,'scripts'));
+    mkdirSync(join(root,'shared','agents'),{recursive:true});
+    const files = ['scripts/sovereign-reviewer-ollama-calibration-v1.mjs',
+      'shared/agents/sovereignCalibrationV1.mjs','scripts/sovereign-reviewer-v1.mjs',
+      'shared/agents/providerNeutralReviewV1.mjs'];
+    for(const file of files) writeFileSync(join(root,file),'// genuine\n');
+    git(['add','.']); git(['commit','-m','base']);
+    const base=git(['rev-parse','HEAD']);
+    writeFileSync(join(root,files[0]),'// genuine head\n');
+    git(['add','.']); git(['commit','-m','head']);
+    const head=git(['rev-parse','HEAD']);
+    writeFileSync(join(root,files[0]),'// substituted source\n');
+    git(['add','.']); git(['commit','-m','attacker']);
+    const attacker=git(['rev-parse','HEAD']);
+    git(['replace',head,attacker]);
+    git(['update-ref','refs/heads/fixture',head]);
+    const monitor=join(root,'fsmonitor-fixture.sh');
+    const marker=join(root,'MONITOR_EXECUTED');
+    writeFileSync(monitor,'#!/bin/sh\ntouch "'+marker+'"\n'); chmodSync(monitor,0o755);
+    git(['config','core.fsmonitor',monitor]);
+    const result=inspectGit({...env,STEPHANOS_REVIEW_EXACT_HEAD:head,
+      STEPHANOS_REVIEW_EXACT_BASE:base,STEPHANOS_REVIEW_EXACT_BRANCH:'fixture'},
+    {platform:'linux',sourceRoot:root});
+    assert.equal(result.ok,false);
+    assert.equal(existsSync(marker),false,'local Git helper must never execute');
+    assert.equal(readFileSync(join(root,files[0]),'utf8'),'// substituted source\n','inspection never changes source');
+  } finally {
+    assert.ok(root.startsWith(join(tmpdir(),'calibration-git-custody-')));
+    rmSync(root,{recursive:true,force:true});
+  }
+});
 function noAuthority(r) {
   for (const key of ['independentHostAttestation','signatureVerified','specialistAuthority',
     'independentReviewSatisfied','protectedMergeAuthority','sourceMutationAuthority',

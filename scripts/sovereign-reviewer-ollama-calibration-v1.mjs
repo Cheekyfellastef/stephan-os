@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { join, isAbsolute, normalize } from 'node:path';
 import { resolve } from 'node:path';
 import { evaluateSovereignCalibrationV1, SOVEREIGN_CALIBRATION_MANIFEST_SHA256 } from '../shared/agents/sovereignCalibrationV1.mjs';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const MODEL_RE = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 const SOURCE_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
@@ -48,9 +49,10 @@ export function inspectLocalCalibrationGitIdentityV1(env = process.env, {
     return Object.freeze({ ok: false, reason: 'CALIBRATION_EXACT_SOURCE_IDENTITY_INVALID' });
   }
   const readGit = args => {
-    const r = gitSpawn('/usr/bin/git', ['-C', sourceRoot, ...args], {
+    const execution = resolveBattleBridgeGitExecution({ platform: 'linux', environment: env });
+    const r = gitSpawn(execution.executable, [...execution.fixedConfigArgs, '-C', sourceRoot, ...args], {
       encoding: 'utf8', shell: false, timeout: 12_000, maxBuffer: 4096,
-      env: { PATH: '/usr/bin:/bin', HOME: '/tmp', GIT_CONFIG_NOSYSTEM: '1' },
+      env: execution.environment,
     });
     if (r?.error || r?.status !== 0 || typeof r.stdout !== 'string')
       throw new Error('LOCAL_GIT_UNAVAILABLE');

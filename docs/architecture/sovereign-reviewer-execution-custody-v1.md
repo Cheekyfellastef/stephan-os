@@ -32,3 +32,12 @@ operator merge; independently installed parent protection and OS identities;
 Battle Bridge WSL/native acceptance; installed Ollama digest support; protected
 signer enrollment. Candidate results remain unqualified. No R7 lease authority,
 reviewer self-approval, automatic merge, gaming override or deployment is added.
+
+Follow-up closure: the calibration's own Git identity check now also uses the
+canonical fixed execution boundary, not merely the bridge's trusted preflight.
+It disables replacements/grafts/lazy fetch, global configuration, hooks,
+fsmonitor and credential helpers. A real hostile-repository regression combines
+replace refs, substituted worktree/index bytes and an executable fsmonitor;
+inspection must HOLD without executing that helper or changing any source.
+This is meter-free source hardening, not a substitute for independent review or
+physical installed-Ollama digest-addressing proof.
