@@ -43,6 +43,18 @@ if (args.Length == 1 && args[0] == "--signing-provider-only")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--owner-token-transport-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerTokenTransportTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--owner-workflow-auth-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--key-metadata-only")
 {
     Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
@@ -352,6 +364,10 @@ total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7AuditJournalTests.Ru
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
 
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerTokenTransportTests.Run();
 
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");

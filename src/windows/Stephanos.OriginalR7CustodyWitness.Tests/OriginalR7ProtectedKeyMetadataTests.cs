@@ -112,6 +112,35 @@ internal static class OriginalR7ProtectedKeyMetadataTests
                 Check(writerBlocked, "ACTUAL_READ_ACCESS_BLOCKS_NEW_DATA_WRITER");
                 Check(renameBlocked, "ACTUAL_READ_ACCESS_BLOCKS_LEAF_REPLACEMENT");
             }
+            // Existing metadata mutation rights are a separate capability from
+            // data-write sharing. Exercise only this disposable fixture's DACL,
+            // retain its original descriptor and restore it through the same
+            // owned handle even when new WRITE_DAC opens are explicitly denied.
+            using (var dac = CreateFileW(file, 0x60000 /* READ_CONTROL | WRITE_DAC */,
+                7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero))
+            {
+                Check(!dac.IsInvalid, "ACTUAL_METADATA_MUTATION_HANDLE_CREATED");
+                var original = new RawSecurityDescriptor(OriginalR7AuditStorage.ReadDescriptor(dac), 0);
+                using var material = OriginalR7ProtectedKeyMetadata.OpenUntrustedMaterialFixture(file, Role);
+                using var identity = WindowsIdentity.GetCurrent();
+                var deniedOwner = new RawSecurityDescriptor("D:P(D;;WD;;;OW)(A;;RC;;;" + identity.User!.Value + ")");
+                try
+                {
+                    Check(SetFixtureDacl(dac, deniedOwner.DiscretionaryAcl!, true) == 0,
+                        "OLD_WRITE_DAC_MUTATES_DESCRIPTOR_DESPITE_READ_SHARING_GUARD");
+                    using var newDac = CreateFileW(file, 0x40000, 7, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+                    Check(newDac.IsInvalid && Marshal.GetLastWin32Error() == 5,
+                        "OWNER_RIGHTS_DENIAL_BLOCKS_NEW_WRITE_DAC_BUT_NOT_OLD_HANDLE");
+                    Reject(() => material.Refresh(), "METADATA_RIGHTS_CHANGE_DETECTED_TERMINALLY");
+                }
+                finally
+                {
+                    Check(SetFixtureDacl(dac, original.DiscretionaryAcl!,
+                        (original.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0) == 0,
+                        "OWNED_FIXTURE_DACL_RESTORED_USING_RETAINED_HANDLE");
+                }
+                Check(File.ReadAllBytes(file).Length == 32, "RESTORED_FIXTURE_DATA_REMAINS_READABLE");
+            }
             using (var passive = OriginalR7ProtectedKeyMetadata.OpenUntrustedFixture(file, Role))
             {
                 File.Move(file, file + ".renamed");
@@ -179,6 +208,20 @@ internal static class OriginalR7ProtectedKeyMetadataTests
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetLongPathNameW(string path, StringBuilder expanded, uint capacity);
+    private static uint SetFixtureDacl(SafeFileHandle handle, RawAcl dacl, bool protect)
+    {
+        byte[] bytes = new byte[dacl.BinaryLength]; dacl.GetBinaryForm(bytes, 0);
+        var pinned = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+        try { return SetSecurityInfo(handle, 1, 4u | (protect ? 0x80000000u : 0x20000000u),
+            IntPtr.Zero, IntPtr.Zero, pinned.AddrOfPinnedObject(), IntPtr.Zero); }
+        finally { pinned.Free(); }
+    }
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern uint SetSecurityInfo(SafeFileHandle handle, uint type, uint information,
+        IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, int access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkW(string name, string existing, IntPtr attributes);

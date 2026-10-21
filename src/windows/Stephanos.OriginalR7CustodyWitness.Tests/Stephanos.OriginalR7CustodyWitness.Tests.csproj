@@ -10,6 +10,8 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerTokenTransport.cs" Link="OriginalR7OwnerTokenTransport.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerWorkflowAuthentication.cs" Link="OriginalR7OwnerWorkflowAuthentication.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7CommissioningOwnerContext.cs" Link="OriginalR7CommissioningOwnerContext.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ProtectedKeyMetadata.cs" Link="OriginalR7ProtectedKeyMetadata.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs" Link="OriginalR7SigningPrimitives.cs" />
