@@ -3,6 +3,7 @@ import process from 'node:process';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 
 import {
   AUTONOMY_BUILD_TRACK_STATUS_ID,
@@ -443,10 +444,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   const effectiveBuilderOptions = Object.freeze({
     ...builderOptions,
     repoRoot: builderOptions.repoRoot || paths.repoRoot,
-    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot
-      || builderOptions.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || paths.workspaceRoot,
+    sharedWorkspaceRoot: resolveGoalDiscoveryWorkspaceV1({ builderOptions, paths }),
   });
 
   try {

@@ -4,7 +4,7 @@ import { statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { defaultOpenClawWorkspaceRoot } from '../shared/agents/runtimeBoundaryRegistry.mjs';
+import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 
 export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-goal-builder-repair.v1';
@@ -252,12 +252,14 @@ export function runFixedGoalBuilderRepairStep(step) {
   });
 }
 
+export function readGoalBuilderWorkerHeartbeatAgeMs({ env = process.env, statFn = statSync, nowMs = Date.now() } = {}) {
+  try { return nowMs - statFn(resolve(resolveGoalDiscoveryWorkspaceV1({ env }), 'status',
+    'mission-orchestrator-worker-heartbeat.json')).mtimeMs; } catch { return null; }
+}
+
 export function runSovereignCommanderGoalBuilderRepair({
   runStep = runFixedGoalBuilderRepairStep,
-  readWorkerHeartbeatAgeMs = () => {
-    try { return Date.now() - statSync(resolve(defaultOpenClawWorkspaceRoot(), 'status',
-      'mission-orchestrator-worker-heartbeat.json')).mtimeMs; } catch { return null; }
-  },
+  readWorkerHeartbeatAgeMs = readGoalBuilderWorkerHeartbeatAgeMs,
 } = {}) {
   const steps = [];
   const initialSupervisor = runStep(STEPS.supervisor);

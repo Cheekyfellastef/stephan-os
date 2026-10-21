@@ -82,3 +82,10 @@ Caller observations remain diagnostic defenses, not the lifecycle authority.
 Behavioral tests exercise the actual shared function with fresh, missing,
 malformed, unreadable and stale evidence; existing repair tests verify that
 refill can continue with a fresh worker and never starts a Mission Worker.
+
+Workspace selection is also an authority binding: custody observation and
+refill now share `resolveGoalDiscoveryWorkspaceV1`, preserving refill's explicit
+builder-root, builder-env, process-env and fallback precedence. The custody
+gate cannot consult an unrelated legacy OpenClaw/default tree. Regression
+checks precedence and the actual repair admission with stale/fresh configured
+evidence, including a fresh default tree that must not authorize that target.
