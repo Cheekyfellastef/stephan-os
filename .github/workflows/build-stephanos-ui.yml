@@ -90,8 +90,8 @@ jobs:
         run: |
           node --check scripts/sovereign-high-risk-advisory-v1.mjs
           node --check shared/agents/sovereignHighRiskReviewCandidateV1.mjs
-          node --test --test-concurrency=1 \\
-            scripts/sovereign-high-risk-advisory-v1.test.mjs \\
+          node --test --test-concurrency=1 \
+            scripts/sovereign-high-risk-advisory-v1.test.mjs \
             shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs
 
 
