@@ -37,7 +37,9 @@ const result = (classification, blockers, extra = {}) => Object.freeze({
   classification, blockers: Object.freeze([...new Set(blockers)]), ...extra, ...NO_AUTHORITY,
 });
 
-function recipientSpkiDigest(value) {
+// One canonical Node recipient profile shared by intake, peer binding and JWE.
+// This is public-key shape validation, never native authentication or adoption.
+export function r7FirstRootRecipientSpkiDigest(value) {
   if (typeof value !== 'string' || value.length < 128 || value.length > 1536
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return '';
   try {
@@ -130,7 +132,7 @@ export function prepareR7FirstRootOwnerIntakeProposal({
     return rejected('INTAKE_VALIDITY_INVALID');
   const binding = typeof nativeAudience === 'string' && nativeAudience.startsWith(R7_FIRST_ROOT_INTAKE_AUDIENCE)
     ? nativeAudience.slice(R7_FIRST_ROOT_INTAKE_AUDIENCE.length).split(':') : [];
-  const recipientDigest = recipientSpkiDigest(nativeRecipientSpkiBase64);
+  const recipientDigest = r7FirstRootRecipientSpkiDigest(nativeRecipientSpkiBase64);
   if (binding.length !== 3 || binding.some(value => !hex(value, 64))
       || binding[0] !== permitSha256 || !recipientDigest || binding[2] !== recipientDigest)
     return rejected('NATIVE_PURPOSE_AND_NONCE_BINDING_INVALID');

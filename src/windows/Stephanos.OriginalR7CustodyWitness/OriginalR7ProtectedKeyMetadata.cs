@@ -156,7 +156,7 @@ internal sealed class OriginalR7ProtectedKeyMetadata : IDisposable
         catch { return false; }
     }
 
-    private static string FileIdentity(SafeFileHandle handle)
+    internal static string FileIdentity(SafeFileHandle handle)
     {
         if (!GetFileInformationByHandleEx(handle, 18, out NativeFileId id, (uint)Marshal.SizeOf<NativeFileId>()))
             throw Failure("NATIVE_FILE_ID_UNAVAILABLE");

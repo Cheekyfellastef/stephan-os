@@ -32,6 +32,7 @@ internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
     private readonly byte[] publicSpki;
     private readonly string keyDigest;
     private int terminal;
+    private int osPairingAttempt;
 
     private OriginalR7OwnerEnvelopeTransport(string exactPermitDigest,
         DateTimeOffset issuedAt, OriginalR7OwnerWorkflowAuthentication? nativeOwner, string? fixtureNonce = null)
@@ -65,7 +66,8 @@ internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
 
     // No plaintext token is returned by the native intake. Successful AEAD is
     // not owner authenticity: the fixed GitHub issuer verifier still runs.
-    internal async Task<OriginalR7OwnerWorkflowObservation> ConsumeOwnerTokenAsync(string envelope, string expectedMain)
+    internal async Task<OriginalR7OwnerWorkflowObservation> ConsumeOwnerTokenAsync(string envelope, string expectedMain,
+        OriginalR7OperatingSystemPeerDecision? operatingSystemDecision)
     {
         byte[]? token = null;
         bool claimed = false;
@@ -74,16 +76,46 @@ internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
             ClaimLive();
             claimed = true;
             if (owner is null) throw Failure("FIXTURE_CANNOT_CONSUME_NATIVE_OWNER_TOKEN");
+            if (operatingSystemDecision is null
+                || !operatingSystemDecision.TryConsumeFor(this, expectedMain, out var paired) || paired is null)
+                throw Failure("REAL_PAIRED_OS_DECISION_REQUIRED");
             token = Decrypt(envelope);
             // Owned byte buffers are cleared below. Managed strings/provider
             // scratch memory are not claimed to be hardware-erased.
-            return await owner.ObserveIssuerAsync(Encoding.ASCII.GetString(token), permitDigest, expectedMain, keyDigest);
+            var observed = await owner.ObserveIssuerAsync(Encoding.ASCII.GetString(token), permitDigest, expectedMain,
+                keyDigest, paired.RunId, paired.RunAttempt);
+            return observed with { OsPeerPairingDecisionAuthenticated = observed.IssuerSignatureAuthenticated
+                && observed.CurrentNativeActorBound && observed.PairedRunMatched };
         }
         catch
         {
             return new("R7_OWNER_TOKEN_TRANSPORT_FAILED_CLOSED", false, false, "", "", "", "");
         }
-        finally { if (token is not null) CryptographicOperations.ZeroMemory(token); if (claimed) Dispose(); }
+        finally
+        {
+            if (token is not null) CryptographicOperations.ZeroMemory(token);
+            operatingSystemDecision?.Dispose();
+            if (claimed) Dispose();
+        }
+    }
+
+    internal void ClaimOperatingSystemPairingAttempt()
+    {
+        RequireLive();
+        if (owner is null || !owner.HasCurrentUnclaimedNativeActor()
+            || Interlocked.CompareExchange(ref osPairingAttempt, 1, 0) != 0)
+            throw Failure("NATIVE_OS_PAIRING_ATTEMPT_UNAVAILABLE");
+    }
+
+    internal bool ClaimedSessionMatchesPeer(OriginalR7OwnerPeerTranscript paired)
+    {
+        return Volatile.Read(ref terminal) == 1 && Volatile.Read(ref osPairingAttempt) == 1
+            && owner is not null && owner.HasCurrentUnclaimedNativeActor()
+            && DateTimeOffset.UtcNow >= issued && DateTimeOffset.UtcNow - issued <= TimeSpan.FromMinutes(5)
+            && Stopwatch.GetElapsedTime(opened) <= TimeSpan.FromMinutes(5)
+            && paired.NativeAudience == audience && paired.PermitSha256 == permitDigest
+            && paired.NativeIssuedAtUtc == issued.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture)
+            && paired.NativeExpiresAtUtc == issued.AddMinutes(5).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture);
     }
 
     internal static string EncryptForUntrustedChallenge(OriginalR7OwnerTransportChallenge challenge,
@@ -97,15 +129,7 @@ internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
                 throw Failure("COMPACT_OWNER_TOKEN_REQUIRED");
             plaintext = Encoding.ASCII.GetBytes(ownerToken);
             ValidateToken(plaintext, ownerToken);
-            byte[] spki = Convert.FromBase64String(challenge.PublicSpkiBase64);
-            if (Convert.ToBase64String(spki) != challenge.PublicSpkiBase64 || Hash(spki) != challenge.PublicSpkiSha256)
-                throw Failure("RECIPIENT_ENCODING_OR_DIGEST");
-            using RSA key = RSA.Create(); key.ImportSubjectPublicKeyInfo(spki, out int consumed);
-            if (consumed != spki.Length || key.KeySize != 2048
-                || !key.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(spki)
-                || key.ExportParameters(false).Exponent is not { Length: 3 } exponent
-                || !exponent.AsSpan().SequenceEqual(new byte[] { 1, 0, 1 }))
-                throw Failure("RECIPIENT_KEY_PROFILE");
+            using RSA key = ImportChallengeRecipient(challenge, now);
             string header = Header(challenge.Audience, challenge.PublicSpkiSha256);
             string protectedHeader = B64(Encoding.ASCII.GetBytes(header));
             aesKey = RandomNumberGenerator.GetBytes(32);
@@ -169,6 +193,28 @@ internal sealed class OriginalR7OwnerEnvelopeTransport : IDisposable
         RequireLive();
         if (Interlocked.CompareExchange(ref terminal, 1, 0) != 0)
             throw Failure("SESSION_TERMINAL_OR_EXPIRED");
+    }
+
+    // One canonical recipient/key/window validator shared with the native peer
+    // transcript. Importing a public key is not endpoint authentication.
+    internal static RSA ImportChallengeRecipient(OriginalR7OwnerTransportChallenge challenge, DateTimeOffset now)
+    {
+        ValidateChallenge(challenge, now);
+        byte[] spki = Convert.FromBase64String(challenge.PublicSpkiBase64);
+        if (Convert.ToBase64String(spki) != challenge.PublicSpkiBase64 || Hash(spki) != challenge.PublicSpkiSha256)
+            throw Failure("RECIPIENT_ENCODING_OR_DIGEST");
+        RSA key = RSA.Create();
+        try
+        {
+            key.ImportSubjectPublicKeyInfo(spki, out int consumed);
+            if (consumed != spki.Length || key.KeySize != 2048
+                || !key.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(spki)
+                || key.ExportParameters(false).Exponent is not { Length: 3 } exponent
+                || !exponent.AsSpan().SequenceEqual(new byte[] { 1, 0, 1 }))
+                throw Failure("RECIPIENT_KEY_PROFILE");
+            return key;
+        }
+        catch { key.Dispose(); throw; }
     }
 
     private static void ValidateChallenge(OriginalR7OwnerTransportChallenge challenge, DateTimeOffset now)

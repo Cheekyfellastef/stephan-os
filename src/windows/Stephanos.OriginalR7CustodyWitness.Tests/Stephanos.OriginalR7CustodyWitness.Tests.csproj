@@ -10,6 +10,8 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerPeerPairing.cs" Link="OriginalR7OwnerPeerPairing.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OperatingSystemPeerDecision.cs" Link="OriginalR7OperatingSystemPeerDecision.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerEnvelopeTransport.cs" Link="OriginalR7OwnerEnvelopeTransport.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerWorkflowAuthentication.cs" Link="OriginalR7OwnerWorkflowAuthentication.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7CommissioningOwnerContext.cs" Link="OriginalR7CommissioningOwnerContext.cs" />

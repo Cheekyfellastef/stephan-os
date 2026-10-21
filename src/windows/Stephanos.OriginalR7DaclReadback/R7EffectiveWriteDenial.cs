@@ -233,9 +233,9 @@ public static class R7EffectiveWriteDenial
         return handle.IsInvalid ? Marshal.GetLastWin32Error() : 0;
     }
 
-    private readonly record struct FileIdentity(uint Volume, uint High, uint Low);
+    internal readonly record struct FileIdentity(uint Volume, uint High, uint Low);
 
-    private static bool TryIdentity(SafeFileHandle handle, out FileIdentity identity)
+    internal static bool TryIdentity(SafeFileHandle handle, out FileIdentity identity)
     {
         identity = default;
         if (!GetFileInformationByHandle(handle, out ByHandleInfo info)

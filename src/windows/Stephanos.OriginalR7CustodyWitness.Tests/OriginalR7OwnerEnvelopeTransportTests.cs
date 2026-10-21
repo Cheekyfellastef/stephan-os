@@ -131,7 +131,7 @@ internal static class OriginalR7OwnerEnvelopeTransportTests
         using (var session = Session())
         {
             string envelope = Encrypt(session.PublicChallenge());
-            var observation = session.ConsumeOwnerTokenAsync(envelope, new string('d',40)).GetAwaiter().GetResult();
+            var observation = session.ConsumeOwnerTokenAsync(envelope, new string('d',40), null).GetAwaiter().GetResult();
             Check(!observation.IssuerSignatureAuthenticated && !observation.CurrentNativeActorBound
                 && !observation.RootProvisioningAuthorized && !observation.LeaseReleaseAuthorized,
                 "FIXTURE_CANNOT_ENTER_NATIVE_ISSUER_ROUTE");

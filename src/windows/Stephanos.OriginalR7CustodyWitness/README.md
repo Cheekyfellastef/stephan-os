@@ -4,6 +4,15 @@ STATUS: SOURCE-ONLY. This is a buildable .NET 8 Windows Service Control
 Manager host for the exact original #2962/r7 custody witness. It is NOT the
 privileged Windows proof issuer, is NOT installed and cannot release a lease.
 
+The same fixed executable now also has the purpose-bound, one-shot
+`--authenticate-owner-peer-only` operation described in
+[`r7-native-owner-peer-operation.md`](../../../docs/architecture/r7-native-owner-peer-operation.md).
+It retains an ephemeral recipient, displays the exact protected run/fingerprint,
+obtains a genuine local OS authentication factor and independently verifies the
+encrypted owner credential's signature and exact first run attempt. This source
+has not been admitted or invoked against real credentials. It cannot provision
+roots or authorize custody/release; the SCM startup refusal remains intact.
+
 ## What the code proves
 
 - Fixed service identity: StephanosOriginalR7CustodyWitness

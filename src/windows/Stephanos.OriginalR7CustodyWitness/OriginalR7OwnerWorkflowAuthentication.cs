@@ -10,6 +10,8 @@ internal sealed record OriginalR7OwnerWorkflowObservation(
     string Classification, bool IssuerSignatureAuthenticated,
     bool CurrentNativeActorBound, string TokenDigest, string WorkflowSha, string RunId, string RunAttempt)
 {
+    internal bool PairedRunMatched { get; init; }
+    internal bool OsPeerPairingDecisionAuthenticated { get; init; }
     // Authenticating an owner workflow is one input to a future adopted native
     // ceremony. Existing merge approval is deliberately not host adoption.
     internal bool HumanOsConsentProven => false;
@@ -43,6 +45,15 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
 
     internal DateTimeOffset SessionIssuedAtUtc => issued;
 
+    internal bool HasCurrentUnclaimedNativeActor()
+    {
+        try { return Volatile.Read(ref terminal) == 0 && DateTimeOffset.UtcNow >= issued
+            && DateTimeOffset.UtcNow - issued <= TimeSpan.FromMinutes(5)
+            && Stopwatch.GetElapsedTime(opened) <= TimeSpan.FromMinutes(5)
+            && SameNativeActor(OriginalR7CommissioningOwnerContext.ObserveCurrent()); }
+        catch { return false; }
+    }
+
     internal static OriginalR7OwnerWorkflowAuthentication BeginCurrentNativeOwner()
     {
         var actual = OriginalR7CommissioningOwnerContext.ObserveCurrent();
@@ -66,14 +77,16 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
     }
 
     internal async Task<OriginalR7OwnerWorkflowObservation> ObserveIssuerAsync(
-        string untrustedToken, string exactPermitDigest, string expectedMain, string recipientSpkiSha256)
+        string untrustedToken, string exactPermitDigest, string expectedMain, string recipientSpkiSha256,
+        string expectedPairedRunId, string expectedPairedRunAttempt)
     {
         // Claim before any await. Concurrent consumers cannot share a native
         // nonce or race the one-attempt boundary.
         if (Interlocked.CompareExchange(ref terminal, 1, 0) != 0) return Held("SESSION_TERMINAL");
         try
         {
-            if (!Hex(exactPermitDigest, 64) || !Hex(expectedMain, 40) || !Hex(recipientSpkiSha256, 64)
+            if (!PositiveDecimal(expectedPairedRunId) || expectedPairedRunAttempt != "1"
+                || !Hex(exactPermitDigest, 64) || !Hex(expectedMain, 40) || !Hex(recipientSpkiSha256, 64)
                 || Stopwatch.GetElapsedTime(opened) > TimeSpan.FromMinutes(5)) return Held("SESSION_EXPIRED_OR_UNBOUND");
             var before = OriginalR7CommissioningOwnerContext.ObserveCurrent();
             if (!SameNativeActor(before)) return Held("NATIVE_ACTOR_CHANGED");
@@ -102,7 +115,8 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
                 || !SameNativeActor(OriginalR7CommissioningOwnerContext.ObserveCurrent()))
                 return Held("NATIVE_SESSION_CONTINUITY_LOST");
             var verified = VerifyCore(untrustedToken, bytes.ToArray(),
-                Audience(exactPermitDigest, nonce, recipientSpkiSha256), expectedMain, issued, now);
+                Audience(exactPermitDigest, nonce, recipientSpkiSha256), expectedMain, issued, now,
+                expectedPairedRunId, expectedPairedRunAttempt);
             if (Volatile.Read(ref terminal) != 1 || DateTimeOffset.UtcNow < issued
                 || DateTimeOffset.UtcNow - issued > TimeSpan.FromMinutes(5)
                 || Stopwatch.GetElapsedTime(opened) > TimeSpan.FromMinutes(5)
@@ -116,7 +130,9 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
     private bool SameNativeActor(OriginalR7CommissioningOwnerObservation current)
         => current.NativeElevatedInteractiveContextObserved && current.ProcessId == actor.ProcessId
             && current.CreationFileTimeUtc == actor.CreationFileTimeUtc && current.CurrentSid == actor.CurrentSid
-            && current.SessionId == actor.SessionId;
+            && current.SessionId == actor.SessionId
+            && current.NativePrincipalIdentityDigest == actor.NativePrincipalIdentityDigest
+            && current.NativePrincipalMutationDigest == actor.NativePrincipalMutationDigest;
 
     // Synthetic issuer keys are accepted only by this internal fixture seam.
     // Its result never binds a native actor, adopts policy or authorizes roots.
@@ -125,8 +141,15 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
         DateTimeOffset challengeIssued, DateTimeOffset now)
         => VerifyCore(token, fixtureJwks, expectedAudience, expectedMain, challengeIssued, now);
 
+    internal static OriginalR7OwnerWorkflowObservation VerifyPairedRunUntrustedFixture(
+        string token, byte[] fixtureJwks, string expectedAudience, string expectedMain,
+        DateTimeOffset challengeIssued, DateTimeOffset now, string expectedRunId, string expectedRunAttempt)
+        => !PositiveDecimal(expectedRunId) || expectedRunAttempt != "1" ? Held("PAIRED_RUN_EXPECTATION_INVALID")
+            : VerifyCore(token, fixtureJwks, expectedAudience, expectedMain, challengeIssued, now, expectedRunId, expectedRunAttempt);
+
     private static OriginalR7OwnerWorkflowObservation VerifyCore(string token, byte[] jwks,
-        string audience, string expectedMain, DateTimeOffset challengeIssued, DateTimeOffset now)
+        string audience, string expectedMain, DateTimeOffset challengeIssued, DateTimeOffset now,
+        string? expectedRunId = null, string? expectedRunAttempt = null)
     {
         try
         {
@@ -188,8 +211,11 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
             string run = S(p, "run_id"), attempt = S(p, "run_attempt"), jti = S(p, "jti");
             if (!PositiveDecimal(run) || !PositiveDecimal(attempt) || jti.Length is < 8 or > 128
                 || jti.Any(c => c < 33 || c > 126)) return Held("RUN_OR_REPLAY_ID_INVALID");
+            if (expectedRunId is not null && (run != expectedRunId || attempt != expectedRunAttempt))
+                return Held("SIGNED_RUN_DIFFERS_FROM_PAIRED_NATIVE_DECISION");
             return new("R7_OWNER_WORKFLOW_SIGNATURE_OBSERVED_NOT_HOST_ADOPTION", true, false,
-                Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(token))).ToLowerInvariant(), expectedMain, run, attempt);
+                Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(token))).ToLowerInvariant(), expectedMain, run, attempt)
+                { PairedRunMatched = expectedRunId is not null };
         }
         catch { return Held("TOKEN_INVALID_FAILED_CLOSED"); }
     }

@@ -13,6 +13,15 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Purpose-bound one-shot peer authentication only. No signing/root or
+        // custody grant follows; the SCM commissioning refusal below remains.
+        if (args.Length == 1 && args[0] == OriginalR7OwnerPeerOperation.Argument)
+        {
+            if (!OperatingSystem.IsWindows() || !Environment.UserInteractive || !Console.IsInputRedirected)
+                return 2;
+            return OriginalR7OwnerPeerOperation.RunAsync(Console.OpenStandardInput(), Console.Out)
+                .GetAwaiter().GetResult();
+        }
         // Fixed read-only package diagnostic. It inspects this process's
         // bundle layout and its own bytes only: no SCM, registry, identity,
         // custody or signing. A self-computed digest is explicitly untrusted.

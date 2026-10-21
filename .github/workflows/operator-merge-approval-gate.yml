@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Exact personal-repository fallback mode
+        description: Exact personal-repository lifecycle or R7 endpoint enrollment mode
         required: true
         type: string
       pr_number:
@@ -52,6 +52,46 @@ on:
         type: string
       authorization_comment_id:
         description: Event-derived exact owner-authored #2808 authorization comment ID for protected squash only
+        required: false
+        default: ''
+        type: string
+      r7_owner_permit_json:
+        description: Canonical bounded R7 first-root proposal bytes; no credential or private key
+        required: false
+        default: ''
+        type: string
+      r7_owner_permit_sha256:
+        description: Exact SHA-256 of the R7 proposal bytes
+        required: false
+        default: ''
+        type: string
+      r7_native_challenge_audience:
+        description: Untrusted permit/nonce/recipient-bound audience; not native authentication
+        required: false
+        default: ''
+        type: string
+      r7_native_recipient_spki_base64:
+        description: Untrusted canonical ephemeral RSA public SPKI; never a signing root
+        required: false
+        default: ''
+        type: string
+      r7_source_references_json:
+        description: Closed exact source completion and package provenance locators
+        required: false
+        default: ''
+        type: string
+      r7_source_references_sha256:
+        description: Exact SHA-256 of the provenance locator bytes
+        required: false
+        default: ''
+        type: string
+      r7_native_challenge_issued_at_utc:
+        description: Original native ephemeral challenge issuance time, exact millisecond UTC
+        required: false
+        default: ''
+        type: string
+      r7_native_challenge_expires_at_utc:
+        description: Original native expiry, never refreshed by the workflow
         required: false
         default: ''
         type: string
@@ -136,7 +176,7 @@ jobs:
 
   personal-repository-evidence:
     name: personal-repository-evidence
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'user-owned-r7-first-root-policy-intake' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -297,7 +337,7 @@ jobs:
 
   operator-personal-repository-approval:
     name: operator-personal-repository-approval
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'user-owned-r7-first-root-policy-intake' }}
     needs: [personal-repository-evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -405,7 +445,7 @@ jobs:
 
   operator-personal-repository-squash-merge:
     name: operator-personal-repository-squash-merge
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'user-owned-r7-first-root-policy-intake' }}
     needs: [personal-repository-evidence, operator-personal-repository-approval]
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -885,3 +925,110 @@ jobs:
           path: ready-proof/
           if-no-files-found: error
           retention-days: 30
+
+  # Proposed purpose-bound policy: display the full pairing fingerprint BEFORE
+  # the protected owner decision. No environment approval or OIDC capability is
+  # available in this read-only job. Adoption requires exact independent review
+  # and the existing protected owner source route; preparation never deploys it.
+  r7-first-root-peer-evidence:
+    name: r7-first-root-peer-evidence
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-r7-first-root-policy-intake' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Check out the trusted exact peer policy revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Use the pinned producer runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.21.0'
+      - name: Prepare source-bound endpoint pairing before owner enrollment
+        id: peer-evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/operator-protected-r7-first-root.mjs prepare-peer \
+            | tee "${RUNNER_TEMP}/r7-first-root-peer-evidence.json"
+          node --input-type=module <<'NODE'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          const proof=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'r7-first-root-peer-evidence.json'),'utf8'));
+          if(proof.classification!=='R7_OWNER_PEER_PREPARED_EXPLICIT_ENROLLMENT_REQUIRED'
+            ||!/^[a-f0-9]{64}$/.test(proof.peerBindingFingerprint)
+            ||proof.peerApprovalComment!=='ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:'+proof.peerBindingFingerprint)
+            throw new Error('R7_PAIRING_SUMMARY_INVALID');
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            '## R7 ephemeral endpoint enrollment\n\nCompare this full fingerprint with the independently displayed Windows fingerprint. '
+            +'Approve only if they match and the Windows decision is genuine. This enrolls one endpoint; it does not assert custody or release r7.\n\n'
+            +'Fingerprint: `'+proof.peerBindingFingerprint+'`\n\nRequired approval comment: `'+proof.peerApprovalComment+'`\n\n'
+            +'Original expiry: `'+proof.nativeChallengeExpiresAtUtc+'`\n');
+          NODE
+      - name: Preserve the bounded read-only pairing evidence
+        if: ${{ always() && steps.peer-evidence.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r7-first-root-peer-evidence-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/r7-first-root-peer-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+  r7-first-root-owner-intake:
+    name: r7-first-root-owner-intake
+    needs: [r7-first-root-peer-evidence]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'user-owned-r7-first-root-policy-intake' && needs.r7-first-root-peer-evidence.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: operator-merge-approval
+      url: https://github.com/Cheekyfellastef/stephan-os/actions/runs/${{ github.run_id }}/attempts/1
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      deployments: read
+      issues: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - name: Check out the trusted exact protected producer revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Use the pinned producer runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.21.0'
+      - name: Authenticate explicit endpoint enrollment and prepare only its encrypted owner envelope
+        id: owner-envelope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/operator-protected-r7-first-root.mjs issue-owner-envelope \
+            | tee "${RUNNER_TEMP}/r7-first-root-owner-envelope-proof.json"
+      - name: Preserve the encrypted envelope and bounded proof, never plaintext credentials
+        if: ${{ always() && steps.owner-envelope.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r7-first-root-owner-envelope-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/r7-first-root-owner-envelope-proof.json
+            ${{ runner.temp }}/r7-first-root-owner-envelope.jwe
+          if-no-files-found: error
+          retention-days: 1

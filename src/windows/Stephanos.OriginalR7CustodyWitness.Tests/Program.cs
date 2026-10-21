@@ -49,6 +49,12 @@ if (args.Length == 1 && args[0] == "--owner-token-transport-only")
     return 0;
 }
 
+if (args.Length == 1 && args[0] == "--native-principal-identity-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7NativePrincipalIdentityTests.Run();
+    return 0;
+}
+
 if (args.Length == 1 && args[0] == "--owner-workflow-auth-only")
 {
     Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
@@ -364,6 +370,8 @@ total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7AuditJournalTests.Ru
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
 
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7NativePrincipalIdentityTests.Run();
 
 total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
 

@@ -113,7 +113,8 @@ test('service SID cannot be carried by an unrelated or elevated Windows principa
   assert.match(program, /\(!exactVirtualServiceAccount && !localServiceWithEnabledSid\)/);
   assert.match(program, /identity\.IsSystem \|\| elevatedAdministrator/);
   assert.doesNotMatch(program, /identity\.Groups\?\.Contains\(expected\)/);
-  assert.doesNotMatch(program, /(?:RunAs|TokenImpersonationLevel|LogonUser|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)/);
+  // Match actual identifiers, not the RunAs substring in ordinary RunAsync.
+  assert.doesNotMatch(program, /\b(?:RunAs|TokenImpersonationLevel|LogonUser(?:W|A)?|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)\b/);
   assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
 });
 

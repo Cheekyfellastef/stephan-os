@@ -10,6 +10,11 @@ on:
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
+      - 'src/windows/Stephanos.OriginalR7*.Tests/**'
+      - 'shared/agents/r7ProtectedOwner*.mjs'
+      - 'shared/agents/r7NativeOwnerPeerPairingV1.*'
+      - 'scripts/operator-protected-r7-first-root*.mjs'
+      - '.github/workflows/operator-merge-approval-gate.yml'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js'
       - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
@@ -63,17 +68,39 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $witnessExe = Join-Path $PWD 'src/windows/Stephanos.OriginalR7CustodyWitness/bin/Release/net8.0-windows/Stephanos.OriginalR7CustodyWitness.exe'
           if (-not (Test-Path -LiteralPath $witnessExe -PathType Leaf)) { throw 'WITNESS_NATIVE_BINARY_MISSING' }
-          # Main rejects any argument with exit 2 before calling ServiceBase.Run.
+          # Main rejects an unapproved argument before calling ServiceBase.Run.
           # This proves the negative guard executes on real Windows, not OS containment.
           # Start-Process exposes an expected nonzero native exit without
           # GitHub Actions pwsh's terminating native-command preference.
           $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -NoNewWindow -Wait -PassThru
           $rejected = $child.ExitCode
           if ($rejected -ne 2) { throw "WITNESS_INTERACTIVE_ARGUMENT_DENIAL_NOT_PROVEN: $rejected" }
+      - name: Execute owned native capability and peer preparation regressions
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          # Disposable fixtures only. None invokes a real password dialog,
+          # registers a service, creates production roots or releases a lease.
+          $projects = @(
+            'Stephanos.OriginalR7CapabilityObservation.Tests',
+            'Stephanos.OriginalR7PrincipalGroups.Tests',
+            'Stephanos.OriginalR7ThreadIdentity.Tests',
+            'Stephanos.OriginalR7PeerPairing.Tests',
+            'Stephanos.OriginalR7SeedCreation.Tests',
+            'Stephanos.OriginalR7EstateSnapshot.Tests'
+          )
+          foreach ($project in $projects) {
+            dotnet run --project "src/windows/$project" --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:RestoreLockedMode=true
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Test native witness source and workflow boundaries
         shell: pwsh
         run: |
           node --test shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test shared/agents/r7ProtectedOwnerEnvelopeV1.test.mjs shared/agents/r7ProtectedOwnerEnvelopeIssuerV1.test.mjs shared/agents/r7ProtectedOwnerSourceReadbackV1.test.mjs shared/agents/r7NativeOwnerPeerPairingV1.test.mjs scripts/operator-protected-r7-first-root.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test independent R7 signed evidence trust-file handling
         shell: pwsh

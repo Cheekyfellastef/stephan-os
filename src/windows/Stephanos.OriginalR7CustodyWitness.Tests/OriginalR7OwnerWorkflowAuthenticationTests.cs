@@ -56,6 +56,20 @@ internal static class OriginalR7OwnerWorkflowAuthenticationTests
         Check(valid.IssuerSignatureAuthenticated && valid.WorkflowSha == sha && valid.RunId == "123456789"
             && valid.RunAttempt == "2" && valid.TokenDigest.Length == 64, "REAL_RSA_FIXTURE_SIGNATURE_BOUND");
         NoAuthority(valid);
+        var pairedClaims = new Dictionary<string, object>(claims) { ["run_attempt"] = "1" };
+        OriginalR7OwnerWorkflowObservation VerifyPaired(Dictionary<string, object> value,
+            string expectedRun = "123456789", string expectedAttempt = "1")
+            => OriginalR7OwnerWorkflowAuthentication.VerifyPairedRunUntrustedFixture(Token(value), Keys(key),
+                audience, sha, now, now, expectedRun, expectedAttempt);
+        var pairedValid = VerifyPaired(pairedClaims);
+        Check(pairedValid.IssuerSignatureAuthenticated && pairedValid.PairedRunMatched
+            && !pairedValid.OsPeerPairingDecisionAuthenticated, "EXACT_PAIRED_SIGNED_RUN_ONLY_NOT_OS_CONSENT");
+        NoAuthority(pairedValid);
+        Reject(VerifyPaired(new(pairedClaims) { ["run_id"] = "123456790" }), "OTHER_VALID_SIGNED_OWNER_RUN_REJECTED");
+        Reject(VerifyPaired(new(pairedClaims) { ["run_attempt"] = "2" }), "SIGNED_RERUN_NOT_FRESH_FIRST_PAIRING");
+        foreach (string invalid in new[] { "0", "01", "123456789 ", "18446744073709551616" })
+            Reject(VerifyPaired(pairedClaims, invalid), "PAIRED_RUN_EXPECTATION_MUST_BE_CANONICAL");
+        Reject(VerifyPaired(pairedClaims, expectedAttempt: "2"), "NO_SECOND_ATTEMPT_NATIVE_ENROLLMENT");
         Reject(Verify(good, aud: audience[..^64] + new string('e', 64)), "SIGNED_AUDIENCE_BINDS_RECIPIENT_SPKI_DIGEST");
         var immutable = new Dictionary<string, object>(claims) {
             ["sub"] = "repo:Cheekyfellastef@267490109/stephan-os@1179385578:environment:operator-merge-approval"
@@ -140,9 +154,9 @@ internal static class OriginalR7OwnerWorkflowAuthenticationTests
             Check(challenge.StartsWith("stephanos:r7:first-root-owner-permit:v1:" + new string('b', 64) + ":", StringComparison.Ordinal)
                 && challenge.Length == audience.Length, "ACTUAL_NATIVE_NONCE_CHALLENGE_BOUND");
             // The malformed exact digest is rejected before any HTTP request.
-            Reject(session.ObserveIssuerAsync("not-a-token", new string('0', 64), sha, new string('d', 64)).GetAwaiter().GetResult(),
+            Reject(session.ObserveIssuerAsync("not-a-token", new string('0', 64), sha, new string('d', 64), "123456789", "1").GetAwaiter().GetResult(),
                 "ACTUAL_SESSION_INVALID_INPUT_TERMINAL_WITHOUT_NETWORK");
-            Reject(session.ObserveIssuerAsync("not-a-token", new string('b', 64), sha, new string('d', 64)).GetAwaiter().GetResult(),
+            Reject(session.ObserveIssuerAsync("not-a-token", new string('b', 64), sha, new string('d', 64), "123456789", "1").GetAwaiter().GetResult(),
                 "ACTUAL_NATIVE_SESSION_SINGLE_ATTEMPT");
             bool terminal = false;
             try { session.ChallengeAudience(new string('b', 64), new string('d', 64)); } catch (InvalidOperationException) { terminal = true; }
