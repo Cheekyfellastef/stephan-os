@@ -154,7 +154,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         const r = await fetchImpl('http://127.0.0.1:11434/api/generate', {
           method:'POST', redirect:'error',
           headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ model, prompt, stream:false, format:'json',
+          body: JSON.stringify({ model:'sha256:' + firstDigest, prompt, stream:false, format:'json',
             keep_alive:0, options:{temperature:0,num_ctx:8192} }),
           signal: AbortSignal.any([AbortSignal.timeout(Math.max(1, Math.min(45_000, Math.floor(deadline - clock())))), controller.signal]),
         });
@@ -163,7 +163,7 @@ export async function runWindowsCalibrationCandidateV1(env = process.env, {
         if (controller.signal.aborted || typeof raw !== 'string'
           || Buffer.byteLength(raw, 'utf8') > 64 * 1024) throw Error('LOCAL_MODEL_OUTPUT_UNSAFE');
         const response = JSON.parse(raw);
-        if (response?.model !== model || response?.done !== true
+        if (!['sha256:' + firstDigest, 'sha256-' + firstDigest].includes(response?.model) || response?.done !== true
           || response?.done_reason !== 'stop' || typeof response.response !== 'string') {
           throw Error('MODEL_COMPLETION_IDENTITY_UNPROVEN');
         }
