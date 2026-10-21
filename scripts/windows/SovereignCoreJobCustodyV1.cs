@@ -182,7 +182,7 @@ namespace Stephanos.Sovereign {
           // Direct CreateProcess path only. ShellExecute/COM/service/task
           // brokers can launch outside a Job and are forbidden in the fixed
           // Core-only scope; a Job is resource custody, NOT a security sandbox.
-          if (mode=="descendant") worker += "$s=New-Object Diagnostics.ProcessStartInfo;$s.FileName='"+exe+"';$s.Arguments='-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20';$s.UseShellExecute=$false;try {$p=[Diagnostics.Process]::Start($s);if($null -ne $p){$p.Kill()};exit 91} catch {$d.Set()|Out-Null};";
+          if (mode=="descendant") worker += "$s=[Diagnostics.ProcessStartInfo]::new();$s.FileName='"+exe+"';$s.Arguments='-NoProfile -NonInteractive -Command Start-Sleep -Seconds 20';$s.UseShellExecute=$false;$s.ErrorDialog=$false;try {$p=[Diagnostics.Process]::Start($s);if($null -ne $p){$p.Kill()};exit 91} catch {$d.Set()|Out-Null};";
           if (mode=="complete") worker += "exit 0;";
           else worker += "if($c.WaitOne(15000)){$a.Set()|Out-Null;exit 0};exit 92;";
           string encoded=Convert.ToBase64String(Encoding.Unicode.GetBytes(worker));

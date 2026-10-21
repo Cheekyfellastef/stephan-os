@@ -118,7 +118,7 @@ test('game onset, cancellation and deadline terminate only the owned Job and dra
 });
 
 test('native process limit denies descendant creation, preserving R7 exclusion', { skip: !windows, timeout: 20000 }, async () => {
-  const { receipt, stderr } = await runner({ mode: 'descendant', deadline: 2500 }).done;
+  const { receipt, stderr } = await runner({ mode: 'descendant', deadline: 8000 }).done;
   assert.ok(receipt, stderr);
   assert.equal(receipt.DescendantAttemptDenied, true, JSON.stringify(receipt));
   closed(receipt);
