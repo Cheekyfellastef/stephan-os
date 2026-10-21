@@ -139,6 +139,15 @@ jobs:
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs
 
+      - name: Prove independent Seed Forge custody and disposable Git construction
+        run: |
+          node --test --test-concurrency=1 \
+            shared/runtime/seedCanopyParallelForgeV1.test.mjs \
+            shared/runtime/seedCanopyParallelResourceV1.test.mjs \
+            shared/runtime/seedCanopyParallelGitHubApprovalV1.test.mjs \
+            shared/runtime/seedCanopyParallelSupervisorV1.test.mjs \
+            tests/seed-canopy-parallel-forge-integration.test.mjs
+
   vr-research-tests:
     if: >-
       github.event_name != 'issue_comment' ||
