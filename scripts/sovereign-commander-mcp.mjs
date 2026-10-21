@@ -213,7 +213,6 @@ const TOOLS = Object.freeze([
             'repair-openclaw-local',
             'repair-goal-builder-flow',
             'repair-stephanos',
-            'repair-core-publication-directories',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
             'prove-stephanos-ai-commander',

@@ -93,7 +93,8 @@ function fixedRegistry(repoRoot) {
   const psFile = (name) => resolve(root, 'scripts', 'windows', name);
   const nodeFile = (name) => resolve(root, 'scripts', name);
   return frozen({
-    'repair-core-publication-directories': frozen({ args: frozen([]) }),
+    // Core directory mutation is deliberately unenrolled. The candidate lacks
+    // qualified installed-parent/compiler and cross-process Windows custody.
     'battle-bridge-status': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-status.mjs')]),

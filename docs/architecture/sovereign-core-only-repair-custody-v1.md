@@ -1,5 +1,22 @@
 # Core-only repair custody (#2961 / PR #3188)
 
+**Current disposition: SOURCE CANDIDATE ONLY, MUTATION UNENROLLED.** This
+supersedes the earlier private-registration continuation below. Specialist
+review of `085d0cd8087f038b26ab6d49c7d5462e59538b46` found uncontained Add-Type
+compiler/scratch work, absent cross-process/restart exclusion and an unqualified
+writable installed executor closure. The fixed action is removed from both
+the production registry and advertised MCP actions. Even an authenticated
+exact-head request cannot dispatch it. Candidate functions, fixtures and the
+process-local admission work remain source preparation, not installed authority.
+
+Structural decision: do not add another caller guard to paper over these three
+missing trust roots. Before any future enrollment, independently qualify a
+protected precompiled assembly (or contain the compiler's entire parent tree),
+Windows-visible original-request exclusion surviving overlapping/restarted
+Commander processes, and the complete protected/versioned installed executor
+closure. Reuse the existing owner and receipts; no client flag or source hash
+can commission those roots. No specialist or activation success is claimed.
+
 Structural review: the broad control-plane reconciler is not disjoint from R7.
 It starts controller installers and scheduled work outside a Node timeout's
 custody. Sampling the governor before/after spawn cannot cancel active work.

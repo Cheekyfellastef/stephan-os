@@ -87,10 +87,10 @@ test('dirty/stale/non-main/corrupt/missing/symlink Git evidence preserves checko
   }
 });
 
-test('Commander exposes only the fixed private maintenance action and refuses caller scope/qualification', () => {
+test('Commander refuses unenrolled Core mutation even with valid identity or caller qualification', () => {
   const f = fixture();
   for (const [operation, extra, allowed] of [
-    [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION, {}, true],
+    [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION, {}, false],
     [SOVEREIGN_COMMANDER_OPERATION.START_PROCESS, {}, false],
     [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION, { root: 'C:\\outside' }, false],
     [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION, { specialistQualified: true }, false],
@@ -104,7 +104,7 @@ test('Commander exposes only the fixed private maintenance action and refuses ca
     });
     const plan = buildSovereignCommanderCommandV1(envelope, { repoRoot: root });
     assert.equal(plan.dispatchAllowed, allowed);
-    if (allowed) assert.equal(plan.plan.kind, 'core-publication-repair');
+    assert.equal(plan.plan, null);
   }
 });
 

@@ -20,8 +20,8 @@ test('private Core maintenance keeps exact-head binding and rejects scope/author
   await handler('initialize', { protocolVersion: '2025-11-25' }, request);
   await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
   const listed = await handler('tools/list', {}, request);
-  assert.ok(listed.tools.find(t => t.name === 'maintenance_action').inputSchema.properties.actionId.enum
-    .includes('repair-core-publication-directories'));
+  assert.equal(listed.tools.find(t => t.name === 'maintenance_action').inputSchema.properties.actionId.enum
+    .includes('repair-core-publication-directories'), false, 'unqualified candidate must not be advertised');
   const args = { actionId: 'repair-core-publication-directories', expectedMain: 'a'.repeat(40) };
   assert.equal((await handler('tools/call', { name: 'maintenance_action', arguments: args }, request)).isError, false);
   assert.deepEqual(seen[0].envelope.payload, args);
