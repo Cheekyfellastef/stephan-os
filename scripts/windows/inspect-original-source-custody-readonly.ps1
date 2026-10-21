@@ -17,9 +17,21 @@ try {
 try {
     # Count only; do not export command lines, usernames, paths, tokens or PIDs.
     # This is a heuristic, never evidence that other writers do not exist.
-    $seen = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop |
-        Where-Object { ([string]$_.CommandLine).Contains($leaseId) })
+    $allProcesses = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
+    $seen = @($allProcesses | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string]$_.CommandLine) -and
+        ([string]$_.CommandLine).Contains($leaseId)
+    })
     $candidateCount = $seen.Count
+    # A process can exist even when its CommandLine is hidden or unreadable.
+    # Do not treat a zero exact-lease match as a full original-writer exclusion.
+    # Emit only an allowlisted uncertainty code, never a PID, SID, username or path.
+    $unreadable = @($allProcesses | Where-Object {
+        [string]::IsNullOrWhiteSpace([string]$_.CommandLine)
+    })
+    if ($unreadable.Count -gt 0) {
+        $unknown += 'CIM_PROCESS_COMMAND_LINE_UNOBSERVED'
+    }
 } catch { $unknown += 'CIM_PROCESS_INVENTORY_UNAVAILABLE' }
 
 try {
