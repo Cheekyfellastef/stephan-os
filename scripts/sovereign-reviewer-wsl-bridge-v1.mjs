@@ -133,7 +133,8 @@ export function verifyWslReviewerExecutableBytesV1({ run, reviewerPath, reviewEn
     // No shell, user Git aliases, inherited Git config or mutable helper script.
     const result = run(['/usr/bin/env', '-i',
       'PATH=/usr/bin:/bin', 'HOME=/tmp', 'GIT_CONFIG_NOSYSTEM=1',
-      'GIT_CONFIG_GLOBAL=/dev/null', '/usr/bin/git', '-C', root,
+      'GIT_CONFIG_GLOBAL=/dev/null', 'GIT_NO_REPLACE_OBJECTS=1',
+      'GIT_GRAFT_FILE=/dev/null', '/usr/bin/git', '-C', root,
       ...args], 12_000);
     if (result?.error || result?.status !== 0 || typeof result.stdout !== 'string'
       || result.stdout.length > 4096) throw Error('REVIEWER_SOURCE_GIT_UNVERIFIED');
