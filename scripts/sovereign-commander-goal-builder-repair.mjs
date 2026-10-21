@@ -349,6 +349,7 @@ export function runSovereignCommanderGoalBuilderRepair({
     });
   }
 
+  if (!workerAllowed()) return workerHold();
   if (supervisorFlowGreen(initialSupervisor) && laneStatusGreen(initialLaneStatus)) {
     return Object.freeze({
       ok: true,
@@ -371,7 +372,6 @@ export function runSovereignCommanderGoalBuilderRepair({
   // ALL callers (Core, guardian, mailbox and direct maintenance) meet at this
   // shared boundary. Heartbeat loss is never permission to start another
   // worker; only its qualified lifecycle owner can recover missing custody.
-  if (!workerAllowed()) return workerHold();
   for (const step of [STEPS.goalHeartbeat]) {
     const result = runStep(step);
     steps.push(compactStep(step, result));

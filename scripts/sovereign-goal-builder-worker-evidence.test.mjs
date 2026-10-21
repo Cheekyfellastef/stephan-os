@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createMissionWorkerHeartbeatRecord, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
-import { readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from './sovereign-commander-goal-builder-repair.mjs';
+import { readGoalBuilderSourceIdentity, readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from './sovereign-commander-goal-builder-repair.mjs';
 
 const HEAD = 'a'.repeat(40), nowMs = Date.parse('2026-10-21T17:00:00Z');
 function fixture(action) {
@@ -64,4 +64,22 @@ test('each mutating step rechecks evidence after the preceding awaited/process w
   });
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
+test('source identity observation reuses fixed Git custody and strips inherited execution settings', () => {
+  const calls = [];
+  const result = readGoalBuilderSourceIdentity({ env: { ...process.env, GIT_DIR: 'foreign', GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'hostile', NODE_OPTIONS: '--require hostile' },
+    spawnSyncFn(executable, args, options) {
+      calls.push(args);
+      assert.match(executable, /(?:Program Files[\\/]Git[\\/]cmd[\\/]git\.exe|\/usr\/bin\/git)$/);
+      assert.ok(args.includes('core.fsmonitor=false'));
+      assert.equal(options.shell, false); assert.equal(options.windowsHide, true);
+      assert.notEqual(options.env.GIT_DIR, 'foreign'); assert.equal(options.env.NODE_OPTIONS, undefined);
+      assert.equal(Object.values(options.env).includes('hostile'), false);
+      return { status: 0, stdout: args.includes('symbolic-ref') ? 'main\n' : HEAD + '\n' };
+    },
+  });
+  assert.deepEqual(result, { ok: true, sourceHead: HEAD, branch: 'main' });
+  assert.equal(calls.length, 2);
 });
