@@ -332,15 +332,59 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
     const persisted = JSON.parse(await readFile(
       join(stateRoot, 'receipts', TASK_ID + '.json'), 'utf8'));
     assert.equal(persisted.commitSha, completed.commitSha);
+    // A status request must never execute persisted Git filters. Prove this
+    // exact fixture is executable by ordinary Git, then require the production
+    // supervisor to stay passive even with a plausible COMMITTED receipt.
+    const attributes = path('.git/info/attributes');
+    const trapScript = join(scratch, 'status-filter-trap.cjs');
+    const trapMarker = join(scratch, 'status-filter-ran.txt');
+    const targetBeforeTrap = await readFile(join(completed.worktree, TARGET));
+    let attributesBeforeTrap = null;
+    try { attributesBeforeTrap = await readFile(attributes); } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await writeFile(trapScript, [
+      "const fs = require('node:fs');",
+      'fs.writeFileSync(' + JSON.stringify(trapMarker) + ', "fixture-only");',
+      'process.stdout.write(fs.readFileSync(0));',
+    ].join('\n'));
+    const filterCommand = '"' + process.execPath.replaceAll('\\', '/') + '" "'
+      + trapScript.replaceAll('\\', '/') + '"';
+    git('config', '--local', 'filter.seedstatustrap.clean', filterCommand);
+    await writeFile(attributes, TARGET + ' filter=seedstatustrap\n');
+    try {
+      // A size change forces worktree comparison through the filter.
+      await writeFile(join(completed.worktree, TARGET),
+        Buffer.concat([targetBeforeTrap, Buffer.from('\nfixture delta\n')]));
+      const vulnerableControl = command('git',
+        ['status', '--porcelain', '--untracked-files=all'], { cwd: completed.worktree });
+      assert.equal(vulnerableControl.status, 0, vulnerableControl.stderr);
+      await access(trapMarker);
+      await rm(trapMarker);
+      const passiveStatus = await runAsync(process.execPath,
+        [supervisor, 'status'], { cwd: repo, env });
+      assert.equal(passiveStatus.code, 0, passiveStatus.stderr);
+      assert.equal(JSON.parse(passiveStatus.stdout).localCommitReadbackMatchedUntrusted, false);
+      assert.equal(JSON.parse(passiveStatus.stdout).localSourceCandidateProven, false);
+      await assert.rejects(access(trapMarker), { code: 'ENOENT' },
+        'supervisor status must not execute the persisted filter');
+    } finally {
+      git('config', '--local', '--unset', 'filter.seedstatustrap.clean');
+      if (attributesBeforeTrap === null) await rm(attributes, { force: true });
+      else await writeFile(attributes, attributesBeforeTrap);
+      await writeFile(join(completed.worktree, TARGET), targetBeforeTrap);
+      await rm(trapMarker, { force: true });
+    }
+
     const status = await runAsync(process.execPath, [supervisor, 'status'], { cwd: repo, env });
     assert.equal(status.code, 0, status.stderr);
     const supervised = JSON.parse(status.stdout);
     assert.equal(supervised.taskCount, 1);
-    assert.equal(supervised.tasks[0].localCommitReadbackMatched, true);
+    assert.equal(supervised.tasks[0].localCommitReadbackMatched, false);
     assert.equal(supervised.tasks[0].candidateCommitted, false);
     assert.equal(supervised.tasks[0].merged, false);
     assert.equal(supervised.localSourceCandidateProven, false);
-    assert.equal(supervised.localCommitReadbackMatchedUntrusted, true);
+    assert.equal(supervised.localCommitReadbackMatchedUntrusted, false);
     assert.equal(supervised.candidateTrustBlocker,
       'INDEPENDENT_CANDIDATE_PROVENANCE_NOT_COMMISSIONED');
     assert.equal(supervised.liveBuildProven, false);
@@ -369,7 +413,7 @@ async function runForgeFixture({ admissionOnly = false } = {}) {
         [supervisor, 'status'], { cwd: repo, env });
       assert.equal(restored.code, 0, restored.stderr);
       const recovered = JSON.parse(restored.stdout);
-      assert.equal(recovered.localCommitReadbackMatchedUntrusted, true);
+      assert.equal(recovered.localCommitReadbackMatchedUntrusted, false);
       assert.equal(recovered.localSourceCandidateProven, false);
     }
     const approvalPath = join(stateRoot, 'approvals', TASK_ID + '.json');

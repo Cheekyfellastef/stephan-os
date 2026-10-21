@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 // Local-only independent Seed Canopy supervisor. No main scheduler, Mission Worker or daemon dependency.
-import { readdir, readFile, mkdir, writeFile, realpath, lstat } from 'node:fs/promises';
-import { join, resolve, basename, sep } from 'node:path';
+import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import readline from 'node:readline/promises';
 import {
-  createBattleBridgeMinimalChildEnvironment, resolveBattleBridgeGitExecutable,
-  inspectBattleBridgeGitTopology,
+  createBattleBridgeMinimalChildEnvironment,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { HIGH_LEVEL_FLYWHEEL_SEEDS_V1 } from '../shared/project/seedGardenProjectionV1.mjs';
 import { validateParallelSeedBuildRequestV1 } from '../shared/runtime/seedCanopyParallelForgeV1.mjs';
@@ -27,11 +26,6 @@ const scope = createHash('sha256').update(root).digest('hex').slice(0, 12);
 const stateRoot = join(homedir(), '.stephanos', 'seed-parallel', scope);
 const safeFilename = (value) => /^[a-z0-9][a-z0-9-]{2,79}\.json$/.test(value);
 const output = (obj) => process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
-const fixedGit = resolveBattleBridgeGitExecutable();
-const fixedGitEnvironment = () => ({
-  ...createBattleBridgeMinimalChildEnvironment(process.env, { git: true }),
-  ...(process.platform !== 'win32' ? { HOME: homedir() } : {}),
-});
 const workerEnvironment = () => ({
   ...createBattleBridgeMinimalChildEnvironment(process.env),
   ...(process.platform !== 'win32' ? { HOME: homedir() } : {}),
@@ -109,111 +103,11 @@ async function status() {
     if (!safeFilename(name)) continue;
     const receipt = await maybeJson(join(stateRoot, 'receipts', name));
     if (!receipt) continue;
-    let independentGitHeadVerified = false;
-    const expectedClaim = claims.find((claim) => claim.taskId === receipt.taskId);
-    if (expectedClaim && receipt.stage === 'COMMITTED'
-      && receipt.taskId === name.slice(0, -5)
-      && /^[a-f0-9]{40}$/.test(receipt.commitSha || '')
-      && /^[a-f0-9]{64}$/.test(receipt.proposedSha256 || '')
-      && /^[a-f0-9]{40}$/.test(expectedClaim.baseSha || '')
-      && receipt.seedId === expectedClaim.seedId
-      && receipt.targetPath === expectedClaim.targetPath) {
-      const worktree = pathFor('worktrees', expectedClaim.taskId, '');
-      const readGit = (cwd, ...args) => {
-        const result = spawnSync(fixedGit, ['-C', cwd, ...args], {
-          encoding: 'utf8', shell: false, windowsHide: true, timeout: 5000,
-          env: fixedGitEnvironment(),
-        });
-        return result.status === 0 ? result.stdout.trim() : null;
-      };
-      const verifyGit = (...args) => readGit(worktree, ...args);
-      let authorityAndWorktreeVerified = false;
-      try {
-        const rawManifest = await readFile(pathFor('inbox', receipt.taskId), 'utf8');
-        const request = JSON.parse(rawManifest);
-        const checked = validateParallelSeedBuildRequestV1(request, HIGH_LEVEL_FLYWHEEL_SEEDS_V1);
-        const reference = await maybeJson(pathFor('approvals', receipt.taskId));
-        const exactManifest = checked.ok && request.taskId === receipt.taskId
-          && request.seedId === expectedClaim.seedId && request.ownerIssue === expectedClaim.ownerIssue
-          && request.ownerIssue === receipt.ownerIssue && request.baseSha === expectedClaim.baseSha
-          && request.targetPath === expectedClaim.targetPath;
-        const approval = exactManifest ? await verifySeedParallelOwnerGitHubApprovalV1({
-          request, manifestSha256: parallelSeedManifestHashV1(rawManifest), reference,
-          nowMs: Date.now(),
-        }) : null;
-        // A valid exact approval grants only source proposal scope. Also prove
-        // this is the canonical registered worktree, not a fabricated clean clone.
-        const canonicalTopology = inspectBattleBridgeGitTopology(root);
-        if (!canonicalTopology.ok) throw new Error(canonicalTopology.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN');
-        // A linked worktree uses a regular .git text file pointing into the
-        // canonical .git/worktrees directory. Refuse substituted links and
-        // redirected administrative metadata before source-proof promotion.
-        const pointerFile = join(worktree, '.git');
-        const pointerStat = await lstat(pointerFile);
-        if (!pointerStat.isFile() || pointerStat.isSymbolicLink()
-          || pointerStat.nlink !== 1 || pointerStat.size < 8 || pointerStat.size > 4096)
-          throw new Error('SEED_LINKED_WORKTREE_GIT_POINTER_UNSAFE');
-        const pointerLine = (await readFile(pointerFile, 'utf8')).trim();
-        if (!pointerLine.startsWith('gitdir: '))
-          throw new Error('SEED_LINKED_WORKTREE_GIT_POINTER_MALFORMED');
-        const canonicalGitDir = await realpath(join(root, '.git'));
-        const linkedAdminRoot = await realpath(join(canonicalGitDir, 'worktrees'));
-        const pointerAdmin = await realpath(resolve(worktree, pointerLine.slice(8)));
-        const reportedAdmin = verifyGit('rev-parse', '--absolute-git-dir');
-        const reportedAdminPhysical = reportedAdmin ? await realpath(reportedAdmin) : '';
-        const normalized = (value) => process.platform === 'win32'
-          ? value.toLowerCase() : value;
-        if (!reportedAdminPhysical || normalized(pointerAdmin) !== normalized(reportedAdminPhysical)
-          || !normalized(pointerAdmin).startsWith(normalized(linkedAdminRoot) + sep))
-          throw new Error('SEED_LINKED_WORKTREE_GIT_ADMIN_REDIRECTED');
-        const backlink = (await readFile(join(pointerAdmin, 'gitdir'), 'utf8')).trim();
-        if (normalized(resolve(backlink)) !== normalized(resolve(pointerFile)))
-          throw new Error('SEED_LINKED_WORKTREE_GIT_BACKLINK_MISMATCH');
-        const canonicalTop = readGit(root, 'rev-parse', '--show-toplevel');
-        const treeTop = verifyGit('rev-parse', '--show-toplevel');
-        const canonicalCommon = readGit(root, 'rev-parse', '--path-format=absolute', '--git-common-dir');
-        const treeCommon = verifyGit('rev-parse', '--path-format=absolute', '--git-common-dir');
-        const samePhysical = async (a, b) => Boolean(a && b
-          && (await realpath(a)).toLowerCase() === (await realpath(b)).toLowerCase());
-        const registered = readGit(root, 'worktree', 'list', '--porcelain')?.split('\n\n') || [];
-        let exactRegistration = false;
-        for (const record of registered) {
-          const lines = record.split('\n');
-          const path = lines.find(line => line.startsWith('worktree '))?.slice(9);
-          if (path && await samePhysical(path, worktree)
-              && lines.includes('branch refs/heads/seed-parallel/' + request.seedId + '/' + request.taskId)
-              && lines.includes('HEAD ' + receipt.commitSha)) exactRegistration = true;
-        }
-        authorityAndWorktreeVerified = approval?.ok === true && exactRegistration
-          && await samePhysical(canonicalTop, root) && await samePhysical(treeTop, worktree)
-          && await samePhysical(canonicalCommon, treeCommon);
-      } catch {
-        authorityAndWorktreeVerified = false;
-      }
-      const head = verifyGit('rev-parse', 'HEAD');
-      const branch = verifyGit('branch', '--show-current');
-      const clean = verifyGit('status', '--porcelain', '--untracked-files=all');
-      const parentLine = verifyGit('rev-list', '--parents', '-n', '1', 'HEAD');
-      const parents = parentLine?.split(' ') || [];
-      const committedPaths = verifyGit('diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD');
-      const committedTree = verifyGit('rev-parse', 'HEAD^{tree}');
-      let contentSha256 = null;
-      try {
-        // A mutable receipt or unrelated second commit must never impersonate the
-        // original single-file, exact-base source proposal.
-        const content = await readFile(join(worktree, expectedClaim.targetPath));
-        contentSha256 = createHash('sha256').update(content).digest('hex');
-      } catch {
-        contentSha256 = null;
-      }
-      independentGitHeadVerified = Boolean(authorityAndWorktreeVerified && head === receipt.commitSha
-        && branch === 'seed-parallel/' + expectedClaim.seedId + '/' + expectedClaim.taskId
-        && clean === '' && receipt.exactBaseSha === expectedClaim.baseSha
-        && parents.length === 2 && parents[0] === head && parents[1] === expectedClaim.baseSha
-        && committedPaths === expectedClaim.targetPath
-        && /^[a-f0-9]{40}$/.test(committedTree || '')
-        && contentSha256 === receipt.proposedSha256);
-    }
+    // Persisted receipts and Git metadata are same-account, untrusted data.
+    // Until an independently admitted reader exists, status is passive only.
+    // In particular, never run Git status/filters or use a local config audit
+    // followed by a racy executable read to manufacture candidate provenance.
+    const independentGitHeadVerified = false;
     receipts.push({ ...receipt, independentGitHeadVerified });
   }
   return projectParallelSeedReceiptStatusV1(claims, receipts);

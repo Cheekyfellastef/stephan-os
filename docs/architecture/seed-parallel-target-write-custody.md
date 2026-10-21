@@ -37,3 +37,12 @@ principal. It is not yet called by the worker. Both production capability
 constants remain false until complete operation-bound custody is independently
 implemented, reviewed and physically admitted. A passed primitive test must not
 be promoted to physical Seed pickup or R7 release evidence.
+
+Supervisor status is now a passive claim/receipt projection while candidate
+provenance is uncommissioned. It performs no Git worktree inspection, clean
+filter, executable config read or local commit-proof promotion. The integration
+fixture first proves a malicious clean filter executes under ordinary Git,
+then verifies supervisor status does not execute it and remains unproven.
+This removes the reachable executable-read path rather than adding a racy
+config check before Git status. Physical candidate proof requires a separately
+qualified reader bound to the complete operation.
