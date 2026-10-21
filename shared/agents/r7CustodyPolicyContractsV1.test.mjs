@@ -333,3 +333,49 @@ test('schema exports reject inherited object names and non-string selectors', ()
     assert.equal(r.validProposal, false); noAuthority(r);
   }
 });
+
+test('authenticated historical enrollment cannot bypass complete correlated prospective estate', () => {
+  const kind = 'exceptional-writer-enrollment';
+  const historical = () => {
+    const f = fixture(kind);
+    f.identityMode = 'AUTHENTICATED_HISTORICAL_ENROLLMENT';
+    f.unknownIdentityPolicy = 'NO_UNKNOWN_IDENTITY';
+    f.processBindings = [{ principalSid: originalSid, processId: 123,
+      creationFileTimeUtc: '134000000000000000', enrollmentEvidenceDigest: sha('binding'),
+      tokenObjectEvidenceDigest: sha('token-object') }];
+    return f;
+  };
+  const complete = historical();
+  assert.equal(validate(kind, complete).validProposal, true);
+  const incomplete = historical();
+  incomplete.prospectiveScope.status = 'INCOMPLETE_UNKNOWN';
+  for (const field of Object.keys(incomplete.prospectiveScope).filter(k => k !== 'status'))
+    incomplete.prospectiveScope[field] = sha('uncorrelated-' + field);
+  const held = validate(kind, incomplete);
+  assert.equal(held.validProposal, false);
+  assert.ok(held.blockers.includes('COMPLETE_CORRELATED_PROSPECTIVE_ESTATE_REQUIRED'));
+  noAuthority(held);
+  for (const field of Object.keys(complete.prospectiveScope).filter(k => k !== 'status')) {
+    const bad = historical(); bad.prospectiveScope[field] = sha('uncorrelated-' + field);
+    const rejected = validate(kind, bad);
+    assert.equal(rejected.validProposal, false);
+    assert.ok(rejected.blockers.includes('PROSPECTIVE_SCOPE_EVIDENCE_UNCORRELATED'));
+    noAuthority(rejected);
+  }
+  const schema = r7CustodyContractProposalSchemaV1(kind);
+  assert.ok(schema.allOf[0].if.properties.identityMode.enum.includes('AUTHENTICATED_HISTORICAL_ENROLLMENT'));
+  assert.equal(schema.allOf[0].then.properties.prospectiveScope.properties.status.const, 'CLAIMED_COMPLETE_UNVERIFIED');
+});
+
+test('read-only witness cannot be its commissioning executor; operator or admitted fixed route can', () => {
+  for (const kind of ['windows-commissioning-executor', 'independent-signing-custody']) {
+    const self = fixture(kind); self.executorSid = self.witnessSid;
+    const rejected = validate(kind, self);
+    assert.equal(rejected.validProposal, false);
+    assert.ok(rejected.blockers.includes('PRINCIPALS_NOT_INDEPENDENT')); noAuthority(rejected);
+    for (const executor of [operatorSid, 'S-1-5-80-66-77-88-99-11', 'S-1-5-18']) {
+      const allowed = fixture(kind); allowed.executorSid = executor;
+      const r = validate(kind, allowed); assert.equal(r.validProposal, true); noAuthority(r);
+    }
+  }
+});

@@ -140,6 +140,15 @@ export function r7CustodyContractProposalSchemaV1(kind) {
   return JSON.parse(JSON.stringify({
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     $id: 'urn:stephanos:r7-policy-proposal:' + kind + ':v1', ...schemas[kind],
+    $comment: 'Shape alone cannot establish correlated evidence or principal independence; the semantic validator is mandatory and never grants authority.',
+    ...(kind === 'exceptional-writer-enrollment' ? { allOf: [{
+      if: { properties: { identityMode: { enum: [
+        'AUTHENTICATED_HISTORICAL_ENROLLMENT', 'PROSPECTIVE_COMPLETE_ESTATE'
+      ] } }, required: ['identityMode'] },
+      then: { properties: { prospectiveScope: {
+        properties: { status: { const: 'CLAIMED_COMPLETE_UNVERIFIED' } }
+      } } }
+    }] } : {}),
   }));
 }
 
@@ -222,6 +231,11 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
   let policyDecisionRequired = false;
   if (kind === 'exceptional-writer-enrollment') {
     const known = value.identityMode === 'AUTHENTICATED_HISTORICAL_ENROLLMENT';
+    // Historical identity never completes prospective handle/mapping,
+    // detached-writer, re-entry or continuity coverage.
+    if (value.identityMode !== 'HISTORICAL_IDENTITY_UNKNOWN_SCOPE_INCOMPLETE'
+        && value.prospectiveScope.status !== 'CLAIMED_COMPLETE_UNVERIFIED')
+      errors.push('COMPLETE_CORRELATED_PROSPECTIVE_ESTATE_REQUIRED');
     if (known && (!value.enrolledPrincipalSids.length || !value.processBindings.length
         || value.unknownIdentityPolicy !== 'NO_UNKNOWN_IDENTITY'
         || value.processBindings.some(p => !value.enrolledPrincipalSids.includes(p.principalSid))
@@ -270,7 +284,7 @@ export function validateR7CustodyContractProposalV1(kind, wire, {
     if (!/^S-1-5-80-(?:[0-9]+-){4}[0-9]+$/.test(value.witnessSid)
         || !/^S-1-[1-9][0-9]*(?:-[0-9]+){2,15}$/.test(value.operatorSid))
       errors.push('FIXED_SERVICE_AND_LEGACY_OPERATOR_SID_REQUIRED');
-    if (value.witnessSid === value.operatorSid
+    if (value.witnessSid === value.operatorSid || value.executorSid === value.witnessSid
         || [value.witnessSid, value.operatorSid, value.executorSid]
           .some(p => value.originalPrincipalSids.includes(p)))
       errors.push('PRINCIPALS_NOT_INDEPENDENT');

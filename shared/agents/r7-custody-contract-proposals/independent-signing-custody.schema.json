@@ -373,5 +373,6 @@
     "operatorMayUseWitnessKey": {
       "const": false
     }
-  }
+  },
+  "$comment": "Shape alone cannot establish correlated evidence or principal independence; the semantic validator is mandatory and never grants authority."
 }

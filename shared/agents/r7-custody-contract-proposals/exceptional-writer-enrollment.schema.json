@@ -457,5 +457,34 @@
     "historicalIdentityAuthenticated": {
       "const": false
     }
-  }
+  },
+  "$comment": "Shape alone cannot establish correlated evidence or principal independence; the semantic validator is mandatory and never grants authority.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "identityMode": {
+            "enum": [
+              "AUTHENTICATED_HISTORICAL_ENROLLMENT",
+              "PROSPECTIVE_COMPLETE_ESTATE"
+            ]
+          }
+        },
+        "required": [
+          "identityMode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prospectiveScope": {
+            "properties": {
+              "status": {
+                "const": "CLAIMED_COMPLETE_UNVERIFIED"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -206,3 +206,16 @@ Regressions preserve canonical consumed r1 execution against r7 relabeling, allo
 the operator to be the admitted executor, allow fixed service executor SID shapes
 and allow the operator/root to serve the commissioning role while still requiring
 the witness key/SID to remain separate. None of these tests enrolls a principal.
+
+## Independent review corrections
+
+Authenticated historical enrollment never substitutes for complete correlated
+prospective estate evidence. Both complete enrollment modes require complete
+correlated handle/mapping, detached-writer, re-entry and continuity scope; an
+incomplete historical-mode proposal is rejected without authority. The JSON
+schema also requires claimed-complete scope for both complete modes.
+
+The read-only witness SID cannot be the commissioning executor SID. The executor
+may still be the operator SID or another actually admitted fixed route; this does
+not require a third account or third signing root. Schema shape alone is
+insufficient: the semantic principal/evidence checks remain mandatory.

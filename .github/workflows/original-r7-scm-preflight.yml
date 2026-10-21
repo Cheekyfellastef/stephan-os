@@ -162,9 +162,9 @@ jobs:
           @(
             'schemaVersion=stephanos.original-r7-source-only-package.v1',
             'repository=Cheekyfellastef/stephan-os',
-            'sourceHead=' + $head,
-            'imageFile=' + $name,
-            'imageSha256=' + $digest,
+            ('sourceHead=' + $head),
+            ('imageFile=' + $name),
+            ('imageSha256=' + $digest),
             'managedPayloadLayout=SINGLE_FILE_WIN_X64_SELF_CONTAINED',
             'binaryStatus=UNSIGNED_UNCOMMISSIONED',
             'protectedServiceSidQualified=false',
@@ -176,6 +176,25 @@ jobs:
             'originalLeaseReleased=false',
             'historicalOutcome=UNKNOWN'
           ) | Set-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt') -Encoding UTF8
+          # Read the retained file back: PowerShell array/comma precedence can
+          # silently split unparenthesized concatenations across separate lines.
+          $manifestFields = @{}
+          foreach ($line in @(Get-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt'))) {
+            if ($line -cnotmatch '^([A-Za-z][A-Za-z0-9]*)=(.*)$' -or $manifestFields.ContainsKey($Matches[1])) {
+              throw 'R7_PACKAGE_MANIFEST_RECORD_INVALID'
+            }
+            $manifestFields[$Matches[1]] = $Matches[2]
+          }
+          if ($manifestFields['schemaVersion'] -cne 'stephanos.original-r7-source-only-package.v1' -or
+              $manifestFields['repository'] -cne 'Cheekyfellastef/stephan-os' -or
+              $manifestFields['sourceHead'] -cne $head -or
+              $manifestFields['imageFile'] -cne $name -or
+              $manifestFields['imageSha256'] -cne $digest -or
+              $manifestFields['binaryStatus'] -cne 'UNSIGNED_UNCOMMISSIONED' -or
+              $manifestFields['physicalBattleBridgeCommissioned'] -cne 'false' -or
+              $manifestFields['originalLeaseReleased'] -cne 'false') {
+            throw 'R7_PACKAGE_MANIFEST_BINDING_INVALID'
+          }
           # SHA256 in an unsigned CI manifest is not trusted code identity.
           Write-Output 'R7_WINDOWS_BINARY_SOURCE_ONLY_STAGED=true'
           Write-Output 'R7_WINDOWS_BINARY_IS_TRUSTED_ATTESTER=false'
