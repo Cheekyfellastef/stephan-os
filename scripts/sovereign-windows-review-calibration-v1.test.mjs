@@ -33,6 +33,7 @@ const mockFetch = async (url, args) => {
   assert.equal(args.redirect, 'error');
   const parsed = JSON.parse(args.body);
   assert.equal(parsed.keep_alive, 0);
+  assert.equal(parsed.model, 'sha256:' + 'c'.repeat(64));
   const match = parsed.prompt.match(/Case: (win-[a-f0-9]{32})\nSHA256: ([a-f0-9]{64})/);
   assert.ok(match);
   const file = parsed.prompt.match(/\+\+\+ b\/(src\/windows\/Case[a-f0-9]{32}\.(?:cs|ps1))/)?.[1];
@@ -40,7 +41,7 @@ const mockFetch = async (url, args) => {
   const findings = code ? [{ code, path:file, severity:'P1',
     summary:'The changed source has this serious Windows security regression.' }] : [];
   return {ok:true, text:async()=>JSON.stringify({
-    model:'qwen:14b', done:true, done_reason:'stop',
+    model:'sha256:' + 'c'.repeat(64), done:true, done_reason:'stop',
     response:JSON.stringify({
       caseId:match[1],patchSha256:match[2],
       verdict:findings.length?'findings':'clean',findings,
@@ -68,6 +69,14 @@ test('Windows host model score remains candidate evidence with no privileges',as
   assert.equal(r.passedCases,13);
   assert.equal(r.modelDigestSha256,'c'.repeat(64));
   noAuthority(r);
+});
+test('native thirteen-case exam rejects a mutable-tag model completion',async()=>{
+  const r=await run(env,{...dependencies,fetchImpl:async(url,args)=>{
+    const response=await mockFetch(url,args);
+    const body=JSON.parse(await response.text());
+    return {ok:true,text:async()=>JSON.stringify({...body,model:'qwen:14b'})};
+  }});
+  assert.equal(r.status,'WINDOWS_CALIBRATION_HELD');noAuthority(r);
 });
 test('source unverified or gaming active blocks before any inference',async()=>{
   let invokes=0;
