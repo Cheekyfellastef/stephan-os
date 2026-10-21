@@ -4,6 +4,7 @@ import {
   captureHighRiskAdvisorySnapshotV1 as capture,
   localHighRiskModelV1,
   inspectHighRiskGamingPermissionV1,
+  HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS,
   observeHighRiskOllamaDigestV1,
   runSovereignHighRiskAdvisoryV1 as run,
 } from './sovereign-high-risk-advisory-v1.mjs';
@@ -68,30 +69,56 @@ test('invalid exact head and missing workspace cannot produce valid review or gr
   assert.equal(published[2].highRiskAdvisory.sourceHead,'');
   assert.equal(result.mergeAuthority,false);
 });
-test('trusted git reader checks head, branch, clean worktree, base and read-only diff',()=>{
-  let calls=0;
-  const outputs=[SHA+'\n',ENV.STEPHANOS_REVIEW_EXACT_BRANCH+'\n','',BASE+'\n','',
-    PATH+'\n',DIFF];
-  const snapshot=capture({...ENV,PATH:'/attacker',GIT_EXEC_PATH:'/attacker',GIT_CONFIG_COUNT:'3'},{
-    root:'/verified/repo',platform:'linux',
-    resolveGit:()=>({
-      executable:'/usr/bin/git',fixedConfigArgs:['-c','core.fsmonitor=false'],
-      environment:{PATH:'/usr/bin:/bin'},
-    }),
-    spawn:(executable,args,options)=>{
-      assert.equal(executable,'/usr/bin/git');
-      assert.equal(options.shell,false);
-      assert.equal(options.env.GIT_EXEC_PATH,undefined);
-      assert.ok(args.includes('--git-dir=/verified/repo/.git'));
-      assert.ok(args.includes('--work-tree=/verified/repo'));
-      calls++;
-      return {status:0,stdout:outputs.shift()};
-    },
-  });
-  assert.equal(calls,7);
-  assert.equal(snapshot.sourceHead,SHA);
-  assert.equal(snapshot.diff,DIFF);
-  assert.deepEqual(snapshot.changedFiles,[PATH]);
+test('exact-head Git snapshot pins actual executable and high-risk policy bytes',()=>{
+  assert.equal(HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS.length,5);
+  const snapshotOptions=(overrides={})=>{
+    let calls=0;
+    const captured={root:'/verified/repo',platform:'linux',
+      resolveGit:()=>({executable:'/usr/bin/git',
+        fixedConfigArgs:['-c','core.fsmonitor=false'],
+        environment:{PATH:'/usr/bin:/bin'}}),
+      spawn:(executable,args,options)=>{
+        assert.equal(executable,'/usr/bin/git');
+        assert.equal(options.shell,false);
+        assert.equal(options.env.GIT_EXEC_PATH,undefined);
+        assert.ok(args.includes('--git-dir=/verified/repo/.git'));
+        assert.ok(args.includes('--work-tree=/verified/repo'));
+        calls++;
+        const i=args.findIndex(x=>x==='--work-tree=/verified/repo');
+        const cmd=args.slice(i+1);
+        let stdout='';
+        if(cmd[0]==='rev-parse'&&cmd[1]==='HEAD')stdout=SHA;
+        else if(cmd[0]==='symbolic-ref')stdout=ENV.STEPHANOS_REVIEW_EXACT_BRANCH;
+        else if(cmd[0]==='status')stdout='';
+        else if(cmd[0]==='rev-parse'&&cmd[1]==='--verify')stdout=BASE;
+        else if(cmd[0]==='ls-files')stdout=(overrides.indexFlag||'H')+' '+cmd.at(-1);
+        else if(cmd[0]==='rev-parse'&&cmd[1].startsWith('HEAD:'))
+          stdout='d'.repeat(40);
+        else if(cmd[0]==='hash-object')
+          stdout=overrides.swappedPath===cmd.at(-1)?'e'.repeat(40):'d'.repeat(40);
+        else if(cmd[0]==='diff'&&cmd.includes('--name-only'))stdout=PATH;
+        else if(cmd[0]==='diff')stdout=DIFF;
+        return {status:0,stdout:stdout+'\n'};
+      },
+    };
+    return {captured,getCalls:()=>calls};
+  };
+  const safe=snapshotOptions();
+  const snap=capture({...ENV,GIT_EXEC_PATH:'/attacker',GIT_CONFIG_COUNT:'3'},safe.captured);
+  assert.equal(safe.getCalls(),22,'seven original git reads and three for each of five policy files');
+  assert.equal(snap.sourceHead,SHA);
+  assert.equal(snap.diff,DIFF+'\n');
+  assert.deepEqual(snap.changedFiles,[PATH]);
+  for(const indexFlag of ['s','h']) {
+    const bad=snapshotOptions({indexFlag});
+    assert.throws(()=>capture(ENV,bad.captured),/HIGH_RISK_REVIEWER_INDEX_FLAGS_UNSAFE/);
+    assert.equal(bad.getCalls()<22,true);
+  }
+  for(const swappedPath of HIGH_RISK_ADVISORY_CRITICAL_SOURCE_PATHS) {
+    const bad=snapshotOptions({swappedPath});
+    assert.throws(()=>capture(ENV,bad.captured),
+      /HIGH_RISK_REVIEWER_EXECUTABLE_BYTES_NOT_HEAD/);
+  }
 });
 test('reader does not call diff after source HEAD changes',()=>{
   let calls=0;
