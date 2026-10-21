@@ -3131,7 +3131,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const projection = safeMaintenanceProjection(rawMaintenance);
   if (shape.command.remoteAction === 'sovereign-windows-reviewer-calibration') {
     const calibration = parseWindowsCalibrationRemoteV1(
-      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead);
+      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead,
+      shape.command.reviewIdentity.baseSha);
     if (!calibration) return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
     });

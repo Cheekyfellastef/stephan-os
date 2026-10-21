@@ -3859,13 +3859,15 @@ test('fixed native Windows exam carries only a bounded candidate result through 
     modelDigestSha256:'d'.repeat(64),completedCases:13,passedCases:13,
     qualification:'PENDING_INDEPENDENT_WINDOWS_SPECIALIST_ATTESTATION',...denial});
   const action='sovereign-windows-reviewer-calibration';
-  for(const mode of ['pass','held','forged','wrong-head']) {
+  for(const mode of ['pass','held','forged','wrong-head','wrong-base','wrong-request-base']) {
     const held=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
     const payload=mode==='held'?held:mode==='forged'?{...candidate,leaseReleaseAuthority:true}
-      :mode==='wrong-head'?{...candidate,sourceHead:'f'.repeat(40)}:candidate;
+      :mode==='wrong-head'?{...candidate,sourceHead:'f'.repeat(40)}
+      :['wrong-base','wrong-request-base'].includes(mode)?{...candidate,baseSha:'f'.repeat(40)}:candidate;
     const native={ok:mode!=='held',
       finalVerdict:mode==='held'?'SOVEREIGN_COMMANDER_EXECUTION_FAILED':'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
-      proofHash:mode==='held'?undefined:'e'.repeat(64),command:{plan:{processId:action}},
+      proofHash:mode==='held'?undefined:'e'.repeat(64),command:{plan:{processId:action,
+        reviewIdentity:mode==='wrong-request-base'?{...reviewIdentity,baseSha:'f'.repeat(40)}:reviewIdentity}},
       contentText:'PRIVATE',structuredContent:{status:mode==='held'?2:0,
         stdout:marker+JSON.stringify(payload),stderr:'PRIVATE'}};
     const mcp=mcpFetch({maintenance:native});

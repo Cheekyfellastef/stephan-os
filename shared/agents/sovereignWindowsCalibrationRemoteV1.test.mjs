@@ -29,7 +29,7 @@ test('candidate success is bounded, exact-head and never specialist authority',(
   const output=project({...candidate(),reviewerPrincipal:'PRIVATE-SID',reviewerSessionId:'PRIVATE-SESSION',
     missed:['PRIVATE-CASE'],rawTranscript:'PRIVATE-TEXT'});
   assert.equal(validate(output),true);
-  assert.deepEqual(parse(envelope(output),head),output);
+  assert.deepEqual(parse(envelope(output),head,base),output);
   assert.doesNotMatch(JSON.stringify(output),/PRIVATE/);
   for(const key of Object.keys(denial)) assert.equal(output[key],false);
 });
@@ -39,33 +39,33 @@ test('forged success, authority flags and incomplete exams fail closed',()=>{
     ...Object.keys(denial).map(key=>({[key]:true}))]) {
     assert.equal(project(candidate(patch)).status,'WINDOWS_CALIBRATION_HELD');
   }
-  assert.equal(parse(envelope(),base),null);
-  assert.equal(parse(envelope(undefined,{proofHash:''}),head),null);
-  assert.equal(parse(envelope(undefined,{ok:false}),head),null);
-  assert.equal(parse(envelope(undefined,{command:{plan:{processId:'other'}}}),head),null);
-  assert.equal(parse(envelope(undefined,{structuredContent:{status:2,stdout:envelope().structuredContent.stdout}}),head),null);
+  assert.equal(parse(envelope(),base,base),null);
+  assert.equal(parse(envelope(undefined,{proofHash:''}),head,base),null);
+  assert.equal(parse(envelope(undefined,{ok:false}),head,base),null);
+  assert.equal(parse(envelope(undefined,{command:{plan:{processId:'other'}}}),head,base),null);
+  assert.equal(parse(envelope(undefined,{structuredContent:{status:2,stdout:envelope().structuredContent.stdout}}),head,base),null);
 });
 test('native PASS must bind the authenticated request base as well as its head',()=>{
   const good=envelope();
-  assert.equal(parse(good,head)?.baseSha,base);
+  assert.equal(parse(good,head,base)?.baseSha,base,base);
   for(const requested of [head,'c'.repeat(40),'',null,undefined,[base],{}]) {
     const changed=envelope(undefined,{command:{plan:{
       processId:action,reviewIdentity:{baseSha:requested},
     }}});
-    assert.equal(parse(changed,head),null,'unbound or different request base');
+    assert.equal(parse(changed,head,base),null,'unbound or different request base');
   }
   assert.equal(parse(envelope(undefined,{
     command:{plan:{processId:action}},
-  }),head),null,'missing review identity cannot supply expected base');
-  assert.equal(parse(envelope(project(candidate({baseSha:'c'.repeat(40)}))),head),null,
+  }),head,base),null,'missing review identity cannot supply expected base');
+  assert.equal(parse(envelope(project(candidate({baseSha:'c'.repeat(40)}))),head,base),null,
     'valid but substituted result base is not the requested source pair');
 });
 test('held native prerequisites retain their typed result without borrowing completion proof',()=>{
   const value=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
   const failed=envelope(value,{ok:false,finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
     proofHash:undefined,structuredContent:{status:2,stdout:marker+JSON.stringify(value)}});
-  assert.equal(parse(failed,head)?.reason,'EXACT_LOCAL_SOURCE_UNPROVEN');
-  assert.equal(parse(envelope(value),head),null);
+  assert.equal(parse(failed,head,base)?.reason,'EXACT_LOCAL_SOURCE_UNPROVEN');
+  assert.equal(parse(envelope(value),head,base),null);
 });
 test('private and unbounded transport payloads cannot enter public receipts',()=>{
   for(const patch of [{secret:'PRIVATE'},{reason:'C:\\PRIVATE\\key'},
@@ -75,7 +75,7 @@ test('private and unbounded transport payloads cannot enter public receipts',()=
   }
   for(const stdout of ['x\n'+envelope().structuredContent.stdout,
     envelope().structuredContent.stdout+marker+'{}', 'x'.repeat(4097),marker+'not-json']) {
-    assert.equal(parse(envelope(undefined,{structuredContent:{status:0,stdout}}),head),null);
+    assert.equal(parse(envelope(undefined,{structuredContent:{status:0,stdout}}),head,base),null);
   }
 });
 test('fixed action has no caller command and fits the existing transport timeout',()=>{

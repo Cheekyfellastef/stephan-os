@@ -58,7 +58,7 @@ export function projectWindowsCalibrationForRemoteV1(input = {}) {
   });
 }
 
-export function parseWindowsCalibrationRemoteV1(envelope = {}, expectedHead = '') {
+export function parseWindowsCalibrationRemoteV1(envelope = {}, expectedHead = '', expectedBase = '') {
   if (envelope.command?.plan?.processId !== WINDOWS_CALIBRATION_REMOTE_ACTION) return null;
   const raw = envelope.structuredContent?.stdout;
   if (typeof raw !== 'string' || Buffer.byteLength(raw) > 4096) return null;
@@ -69,9 +69,9 @@ export function parseWindowsCalibrationRemoteV1(envelope = {}, expectedHead = ''
   catch { return null; }
   if (!validateWindowsCalibrationRemoteProjectionV1(parsed)) return null;
   if (parsed.status === PASS) {
-    const expectedBase = envelope.command?.plan?.reviewIdentity?.baseSha;
+    const returnedBase = envelope.command?.plan?.reviewIdentity?.baseSha;
     if (typeof expectedBase !== 'string' || !SHA40.test(expectedBase)
-      || parsed.baseSha !== expectedBase
+      || returnedBase !== expectedBase || parsed.baseSha !== expectedBase
       || !SHA40.test(expectedHead) || parsed.sourceHead !== expectedHead
       || envelope.ok !== true || envelope.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
       || !SHA64.test(envelope.proofHash ?? '') || envelope.structuredContent.status !== 0) return null;
