@@ -206,3 +206,31 @@ test('canonical publisher rejects a detached worker signature bound to the wrong
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CONTROLLER_ACTIVITY_WORKER_ATTESTATION_BINDING_INVALID');
 });
+
+test('accepts an existing .json-suffixed terminal receipt proof reference without appending another extension', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const timestampUtc = '2026-10-21T16:00:00.000Z';
+  const runId = 'run-explicit-json-receipt-1';
+  const receiptId = 'controller-run-explicit-json-1';
+  const proofRef = `receipts/${receiptId}.json`;
+  const receipt = createSharedWorkspaceReceiptRecord({
+    receiptId, participantId: 'physical-receipt-provider', timestampUtc,
+    correlationId: runId, relatedIssue: '#3050', proofRefs: [proofRef],
+    receivedRecordId: 'verified-source-change', disposition: 'verified',
+    summary: 'Existing terminal receipt, with explicit JSON filename.',
+  });
+  assert.equal((await writeAtomicJson(root, ['receipts', `${receiptId}.json`],
+    receipt, { repoRoot: process.cwd() })).ok, true);
+
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING',
+    materialActionsSucceeded: 1, proofRefs: [proofRef],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+
+  assert.equal(result.ok, true, result.blocker);
+  assert.equal(result.proofWritten, true);
+  assert.deepEqual(result.statusRecord.controllerActivity.proofRefs, [proofRef]);
+  assert.ok(result.proofRecord.refs.includes(proofRef));
+});

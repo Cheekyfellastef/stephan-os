@@ -27,7 +27,9 @@ function list(value) {
 function proofRefSegments(ref) {
   const normalized = text(ref).replace(/\\/g, '/');
   const match = normalized.match(/^(proof|receipts)\/([A-Za-z0-9][A-Za-z0-9._-]{0,80})$/);
-  return match ? [match[1], `${match[2]}.json`] : null;
+  if (!match) return null;
+  const filename = match[2];
+  return [match[1], filename.endsWith('.json') ? filename : `${filename}.json`];
 }
 
 async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId, controllerId }) {
