@@ -1,30 +1,38 @@
 name: Battle Bridge Main Advance Express Sync V1
-run-name: Signal Battle Bridge main advance for PR ${{ github.event.pull_request.number }}
+run-name: Signal verified Battle Bridge main advance
 
 on:
-  pull_request:
-    types: [closed]
+  push:
+    branches: [main]
+  # GITHUB_TOKEN merges do not emit another push workflow. Completion of the
+  # existing protected merge run supplies a default-branch-associated carrier.
+  workflow_run:
+    workflows: [Protected Operator Merge Queue Boundary]
+    types: [completed]
 
 permissions: {}
 
 concurrency:
-  group: battle-bridge-main-advance-${{ github.event.pull_request.number }}-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
+  group: battle-bridge-main-advance-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   publish-main-advance:
     name: publish-main-advance
-    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main' }}
+    if: ${{ github.event_name == 'push' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       issues: write
+      pull-requests: read
     steps:
-      - name: Check out exact merged main head
+      - name: Check out exact trusted main event head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          # Neither admitted event is associated with a candidate PR head.
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@v4
@@ -33,7 +41,4 @@ jobs:
       - name: Publish bounded canonical-main signal
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          STEPHANOS_MAIN_ADVANCE_PR: ${{ github.event.pull_request.number }}
-          STEPHANOS_MAIN_ADVANCE_HEAD: ${{ github.event.pull_request.merge_commit_sha }}
-          STEPHANOS_MAIN_ADVANCE_MERGED_AT: ${{ github.event.pull_request.merged_at }}
         run: node scripts/publish-battle-bridge-main-advance-signal.mjs
