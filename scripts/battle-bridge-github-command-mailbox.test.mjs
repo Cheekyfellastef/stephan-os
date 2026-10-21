@@ -3477,6 +3477,69 @@ test('Island physical readback survives normal and core public mailbox projectio
   assert.equal(escalated.result.result.rescueIslandBoundary, null);
 });
 
+test('census redaction holds with a fixed reason when Windows process visibility is not safe to project', () => {
+  const head = 'a'.repeat(40);
+  const observation = {
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc: '2026-10-17T22:20:00.000Z',
+    checkoutPresent: true, aclReadable: true,
+    candidateProcessCount: 0, stephanosScheduledTaskCount: 6,
+    blockers: [
+      'CIM_PROCESS_COMMAND_LINE_UNOBSERVED',
+      'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+      'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+    ],
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false, independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false, sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  };
+  const inner = {
+    ok: true, remoteAction: 'original-source-custody-census',
+    finalVerdict: 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD',
+    sourceHead: head, proofHash: 'b'.repeat(64),
+    originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+    sourceMutationAllowed: false, arbitraryShellAllowed: false,
+    publicReceiptSafe: true, secretMaterialReturned: false,
+    inspection: observation,
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'census-diagnostic-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2808,
+    branch: 'main', state: 'DONE', expectedHead: head,
+    acceptedAt: '2026-10-17T22:20:00.000Z',
+    heartbeatAt: '2026-10-17T22:20:02.000Z',
+    completedAt: '2026-10-17T22:20:02.000Z',
+    result: { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'census-diagnostic-001', result: inner },
+  };
+  for (const limit of [65_536, 4_500]) {
+    const safe = JSON.parse(serializeBoundedReceiptJson(receipt, limit));
+    const projected = safe.result.result;
+    assert.equal(projected.originalSourceCustodyCensus.candidateProcessCount, 0);
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.status, 'SAFE_CENSUS_SUMMARY_VISIBLE');
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.leaseReleaseAuthorized, false);
+    assert.equal(projected.originalSourceCustodyProjectionDiagnostic.mergeAuthority, false);
+  }
+  inner.inspection = { ...observation, blockers: [...observation.blockers, 'PRIVATE-PID-1234'] };
+  let held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyCensus, null);
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_BLOCKERS_UNQUALIFIED');
+  assert.doesNotMatch(JSON.stringify(held), /PRIVATE-PID-1234/);
+  inner.inspection = { ...observation, candidateProcessCount: 'PID=1234' };
+  held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyCensus, null);
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_COUNTS_UNQUALIFIED');
+  assert.doesNotMatch(JSON.stringify(held), /PID=1234/);
+  delete inner.inspection;
+  held = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.status, 'CENSUS_DETAIL_MISSING');
+  assert.equal(held.result.result.originalSourceCustodyProjectionDiagnostic.safeCountSummaryAvailable, false);
+});
+
 test('mobile custody census survives normal and core public receipt projections without secrets', () => {
   const head = 'a'.repeat(40);
   const inspection = {

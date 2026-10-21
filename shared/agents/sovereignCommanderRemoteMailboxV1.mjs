@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
+import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
@@ -17,6 +18,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'battle-bridge-status',
   'battle-bridge-observe',
   'original-source-custody-census',
+  'original-r7-witness-readiness',
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
@@ -94,6 +96,7 @@ const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
 const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
+const ORIGINAL_R7_READINESS_SCRIPT = 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -2072,6 +2075,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'original-source-custody-census'
+      || actionId === 'original-r7-witness-readiness'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
@@ -2263,18 +2267,14 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
     return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
       || Object.keys(envelope).length === 0) {
-    // Do not silently flatten an MCP result that failed before a native
-    // process was launched. No private exception, argv, SID, path or stderr
-    // may enter public GitHub diagnostics. Always keep worker start denied.
+    // Classify only fixed native Commander runner denials. Raw process,
+    // path, task identity and untrusted exception data remain private.
     let observation = rawMaintenance;
     for (let depth = 0; depth < 5; depth += 1) {
       if (!observation || typeof observation !== 'object'
         || Array.isArray(observation)) break;
       if (observation.ok === false
         && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
-        // Only fixed known Commander command-planning blockers are eligible
-        // for projection. Never copy its raw blocker, plan, cwd or OS paths.
-        // No classification is evidence the running Commander was reloaded.
         const known = observation.command?.blockers;
         if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
           if (known.includes('trusted-repository-root-required'))
@@ -2469,6 +2469,71 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       inspection,
       proofHash: createHash('sha256')
         .update(JSON.stringify({ sourceHead: observedHead, inspection })).digest('hex'),
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+      originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+      sourceMutationAllowed: false, arbitraryShellAllowed: false,
+      mergeAuthority: false, vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result,
+    });
+  }
+
+  if (shape.command.remoteAction === 'original-r7-witness-readiness') {
+    // Only the exact committed sampler may run. No caller inputs, script paths,
+    // admin action or arbitrary shell is accepted by this route.
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_R7_READINESS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const sourceBytes = committed.stdout;
+    const rootBase64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const fixedPrelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("'
+      + rootBase64 + '"))) "scripts\\windows"\r\n';
+    const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
+      ? Buffer.from(fixedPrelude + sourceBytes, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) return fail(
+      'SOVEREIGN_R7_READINESS_COMMITTED_SOURCE_UNAVAILABLE',
+      { publicReceiptSafe: true, secretMaterialReturned: false },
+    );
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 16 * 1024 });
+    let raw = null;
+    try {
+      if (sampled.ok && sampled.stdout.length <= 8_000) raw = JSON.parse(sampled.stdout);
+    } catch {}
+    const readiness = projectOriginalR7WitnessCommissioningAuditV1(raw);
+    if (!sampled.ok || readiness.observable !== true
+      || readiness.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED') {
+      return fail('SOVEREIGN_R7_READINESS_UNTRUSTED_OR_STALE', {
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const observation = Object.freeze({
+      observedAtUtc: raw.observedAtUtc,
+      servicePresent: readiness.servicePresent,
+      serviceStatus: readiness.serviceStatus,
+      publisherTaskPresent: readiness.publisherTaskPresent,
+      publisherTaskState: readiness.publisherTaskState,
+      publisherLastResultClass: readiness.publisherLastResultClass,
+      publisherOriginalWriterAuthenticated: false,
+      blockers: readiness.blockers,
+      historicalOutcome: 'UNKNOWN',
+      authenticatedWitness: false,
+      physicalPickupProven: false,
+      leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      finalVerdict: readiness.finalVerdict,
+    });
+    const result = Object.freeze({
+      ok: true, remoteAction: 'original-r7-witness-readiness',
+      finalVerdict: 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD',
+      sourceHead: observedHead, witnessReadiness: observation,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, observation })).digest('hex'),
       readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
       originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
       sourceMutationAllowed: false, arbitraryShellAllowed: false,

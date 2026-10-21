@@ -9,5 +9,14 @@
   <ItemGroup>
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs"
              Link="OriginalR7ScmPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ImagePinPreflight.cs"
+             Link="OriginalR7ImagePinPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterAccessPreflight.cs"
+             Link="OriginalR7WriterAccessPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterScopePreflight.cs"
+             Link="OriginalR7WriterScopePreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7DirectoryRightsPreflight.cs"
+             Link="OriginalR7DirectoryRightsPreflight.cs" />
+    <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
   </ItemGroup>
 </Project>
