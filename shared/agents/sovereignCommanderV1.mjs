@@ -733,6 +733,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
       command,
       blocker: command.blockers[0] || 'sovereign-commander-command-blocked',
+      ...(envelope.payload?.actionId === 'repair-core-publication-directories'
+        ? { executionCustodyReleased: true } : {}), // rejected before any execution
       finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
     });
   }

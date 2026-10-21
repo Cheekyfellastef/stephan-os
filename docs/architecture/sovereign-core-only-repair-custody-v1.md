@@ -220,3 +220,20 @@ The native C# file has an explicit LF Git attribute because admission compares
 raw installed bytes to the authenticated Git blob. A real autocrlf Git fixture
 checks that ordinary Windows checkout preserves those bytes; normalization is
 not used to excuse executable source drift at runtime.
+
+## Affirmative custody contract for the unenrolled candidate
+
+The candidate does not infer release from the absence of a false flag. MCP
+retains its modeled lane unless at least one own, explicit release claim is
+true and every supplied outer/inner release claim is true. Missing, inherited,
+null, string and contradictory claims remain unproven. A native invocation
+rejection or missing terminal claim propagates false release and original
+mutation uncertainty; it cannot become a successful candidate or a new request.
+
+Only denials proved before any native parent launch receive affirmative
+no-execution release, including the real production registry rejection. Tests
+exercise callback rejection, ambiguous receipts, contradictory wrappers, cross-
+session attempts and the actual unenrolled command rejection. Candidate action/
+MCP composition tests inject only fixture executors; they do not enroll an action
+or prove OS custody. The top-level unenrollment decision and all three missing
+external trust roots remain binding. No clear/retry or activation path is added.

@@ -312,6 +312,19 @@ function payloadForTool(name, args = {}) {
 // different authenticated session cannot cancel or replace the original.
 const activeCoreRequests = new Map();
 
+function explicitCoreCustodyReleased(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  let witnesses = 0;
+  for (const container of [result, result.structuredContent]) {
+    if (container && Object.hasOwn(container, 'executionCustodyReleased')) {
+      if (typeof container !== 'object' || Array.isArray(container)
+        || container.executionCustodyReleased !== true) return false;
+      witnesses++;
+    }
+  }
+  return witnesses > 0;
+}
+
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
@@ -414,8 +427,7 @@ export function createSovereignCommanderMcpHandler({
       if (message.signal?.aborted) cancel();
       try {
         const result = await executor(envelope, { repoRoot, routeProof, signal: controller.signal });
-        retainCustody = result?.executionCustodyReleased === false
-          || result?.structuredContent?.executionCustodyReleased === false;
+        retainCustody = !explicitCoreCustodyReleased(result);
         return asTextResult(result, result?.ok !== true);
       } finally {
         message.signal?.removeEventListener('abort', cancel);

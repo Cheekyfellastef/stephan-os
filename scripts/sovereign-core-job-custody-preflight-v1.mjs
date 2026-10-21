@@ -10,6 +10,7 @@ const SOURCE = new URL('./windows/SovereignCoreJobCustodyV1.cs', import.meta.url
 const noAuthority = Object.freeze({ sourceMutationAllowed: false, originalR7Authority: false,
   specialistQualified: false, repairExecuted: false, dispatchAllowed: false });
 const held = reason => Object.freeze({ ok: false, reason, ...noAuthority });
+const heldBeforeLaunch = reason => Object.freeze({ ...held(reason), executionCustodyReleased: true });
 
 export function projectCoreJobCustodyCandidateV1(raw, { requestId, sourceHead, nativeSourceSha256 }) {
   if (!/^[a-z0-9-]{8,80}$/.test(requestId ?? '') || !/^[a-f0-9]{40}$/.test(sourceHead ?? '')
@@ -72,20 +73,20 @@ async function runCoreJobCandidate({ requestId, sourceHead, signal, expectedNati
   platform = process.platform, spawnFn = spawn, environment = process.env,
   setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout } = {}, repairDirectories) {
   if (!/^[a-z0-9-]{8,80}$/.test(requestId ?? '') || !/^[a-f0-9]{40}$/.test(sourceHead ?? ''))
-    return held('CORE_JOB_EXACT_REQUEST_REQUIRED');
-  if (platform !== 'win32') return held('CORE_JOB_NATIVE_WINDOWS_REQUIRED');
-  if (signal?.aborted) return held('CORE_JOB_CANCELLED_BEFORE_LAUNCH');
+    return heldBeforeLaunch('CORE_JOB_EXACT_REQUEST_REQUIRED');
+  if (platform !== 'win32') return heldBeforeLaunch('CORE_JOB_NATIVE_WINDOWS_REQUIRED');
+  if (signal?.aborted) return heldBeforeLaunch('CORE_JOB_CANCELLED_BEFORE_LAUNCH');
   if (repairDirectories && !/^[a-f0-9]{64}$/.test(expectedNativeSourceSha256 ?? ''))
-    return held('CORE_JOB_AUTHENTICATED_NATIVE_DIGEST_REQUIRED');
+    return heldBeforeLaunch('CORE_JOB_AUTHENTICATED_NATIVE_DIGEST_REQUIRED');
   // Capture installed-parent native dependency once, then compile THAT memory
   // over stdin. A between-read-and-Add-Type path swap cannot substitute bytes.
   // Protection/versioning of this installed parent closure is a separate gate.
   let bytes;
-  try { bytes = readFileSync(SOURCE); } catch { return held('CORE_JOB_INSTALLED_SOURCE_UNAVAILABLE'); }
-  if (bytes.length > 32768) return held('CORE_JOB_INSTALLED_SOURCE_UNBOUNDED');
+  try { bytes = readFileSync(SOURCE); } catch { return heldBeforeLaunch('CORE_JOB_INSTALLED_SOURCE_UNAVAILABLE'); }
+  if (bytes.length > 32768) return heldBeforeLaunch('CORE_JOB_INSTALLED_SOURCE_UNBOUNDED');
   const nativeSourceSha256 = createHash('sha256').update(bytes).digest('hex');
   if (repairDirectories && nativeSourceSha256 !== expectedNativeSourceSha256)
-    return held('CORE_JOB_INSTALLED_NATIVE_SOURCE_DRIFT');
+    return heldBeforeLaunch('CORE_JOB_INSTALLED_NATIVE_SOURCE_DRIFT');
   const script = `$ErrorActionPreference='Stop';
     $source=[Console]::ReadLine(); if($source.Length -gt 65536){exit 76};
     Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($source)));

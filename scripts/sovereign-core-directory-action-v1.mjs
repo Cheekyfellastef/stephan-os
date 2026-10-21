@@ -8,7 +8,7 @@ import { runCorePublicationDirectoryRepairCandidateV1 } from './sovereign-core-j
 const NATIVE_PATH = 'scripts/windows/SovereignCoreJobCustodyV1.cs';
 const hold = reason => Object.freeze({ ok: false, reason, repairExecuted: false,
   dispatchAllowed: false, sourceMutationAllowed: false, originalR7Authority: false,
-  specialistQualified: false });
+  specialistQualified: false, executionCustodyReleased: true }); // before native launch only
 
 export async function executeCorePublicationDirectoryActionV1(command, options = {}) {
   const route = options.routeProof;
@@ -20,6 +20,7 @@ export async function executeCorePublicationDirectoryActionV1(command, options =
   if ((options.platform ?? process.platform) !== 'win32') return hold('CORE_JOB_NATIVE_WINDOWS_REQUIRED');
   const requestId = 'core-dir-' + createHash('sha256')
     .update(JSON.stringify([command.commandId, command.missionId])).digest('hex');
+  let nativeAttempted = false;
   try {
     const git = resolveBattleBridgeGitExecution({ platform: options.platform ?? process.platform });
     const run = options.spawnSyncFn ?? spawnSync;
@@ -70,8 +71,14 @@ export async function executeCorePublicationDirectoryActionV1(command, options =
     current();
     // The wrapper compares this authenticated digest with its single captured
     // installed C# buffer BEFORE compilation; no mutable checkout bytes execute.
+    nativeAttempted = true;
     const result = await (options.runCoreDirectoryRepairFn ?? runCorePublicationDirectoryRepairCandidateV1)({
       requestId, sourceHead: head, expectedNativeSourceSha256, signal: options.signal,
+    });
+    if (!result || typeof result !== 'object' || Array.isArray(result)
+      || !Object.hasOwn(result, 'executionCustodyReleased') || result.executionCustodyReleased !== true) return Object.freeze({
+      ...hold('CORE_DIRECTORY_TERMINAL_CUSTODY_UNPROVEN'), executionCustodyReleased: false,
+      requestId, sourceHead: head, workspaceMutationState: 'UNPROVEN_RETAIN_ORIGINAL_REQUEST',
     });
     // Keep the narrow postcondition and original request visible. This action
     // never authorises R7, generic repairs, qualification or an automatic retry.
@@ -81,6 +88,7 @@ export async function executeCorePublicationDirectoryActionV1(command, options =
   } catch (error) {
     return Object.freeze({ ...hold(String(error.message).startsWith('CORE_DIRECTORY_')
       ? error.message : 'CORE_DIRECTORY_ADMISSION_FAILED'), requestId, sourceHead: head,
+      executionCustodyReleased: !nativeAttempted,
       workspaceMutationState: 'UNPROVEN_RETAIN_ORIGINAL_REQUEST' });
   }
 }

@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from './sovereign-core-directory-action-v1.mjs';
-import { buildSovereignCommanderCommandV1, SOVEREIGN_COMMANDER_OPERATION } from '../shared/agents/sovereignCommanderV1.mjs';
+import { buildSovereignCommanderCommandV1,
+  SOVEREIGN_COMMANDER_OPERATION } from '../shared/agents/sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1,
   STEPHANOS_EXECUTION_SURFACE } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
@@ -50,7 +51,7 @@ function fixture(patch = {}) {
     runCoreDirectoryRepairFn: async binding => {
       dispatches.push(binding);
       assert.equal(binding.expectedNativeSourceSha256, createHash('sha256').update(native).digest('hex'));
-      return { ok: true, repairExecuted: true, corePublicationDirectoriesReady: true };
+      return { ok: true, repairExecuted: true, corePublicationDirectoriesReady: true, executionCustodyReleased: true };
     },
   }, get calls() { return calls; } };
 }
@@ -75,6 +76,44 @@ test('unauthenticated route and missing identity never read Git or dispatch nati
       { ...f.options, routeProof: { ...routeProof, [key]: false } })).ok, false);
     assert.equal(f.calls, 0); assert.equal(f.dispatches.length, 0);
   }
+});
+
+test('action rejection or missing native custody cannot release attempted execution; pre-launch denial can', async () => {
+  for(const native of [async()=>{throw Error('rejected after parent launch')},
+    async()=>({ok:true,repairExecuted:true}),async()=>undefined,
+    async()=>({ok:false,executionCustodyReleased:false}),async()=>Object.create({executionCustodyReleased:true})]){
+    const f=fixture();
+    const r=await executeCorePublicationDirectoryActionV1(f.command,{...f.options,runCoreDirectoryRepairFn:native});
+    assert.equal(r.ok,false);assert.equal(r.executionCustodyReleased,false);
+    assert.equal(r.workspaceMutationState,'UNPROVEN_RETAIN_ORIGINAL_REQUEST');
+    assert.equal(r.requestId.startsWith('core-dir-'),true);assert.equal(r.repairExecuted,false);
+  }
+  const f=fixture({dirty:true});
+  assert.equal((await executeCorePublicationDirectoryActionV1(f.command,f.options)).executionCustodyReleased,true);
+});
+
+test('candidate native rejection retains modeled MCP custody without enrolling a production action',async()=>{
+  const f=fixture();let nativeCalls=0;
+  const {createSovereignCommanderMcpHandler:factory}=await import(
+    './sovereign-commander-mcp.mjs?actual-native-rejection');
+  const make=async()=>{
+    const handler=factory({repoRoot:root,executor:(envelope,options)=>executeCorePublicationDirectoryActionV1({
+      commandId:envelope.commandId,missionId:envelope.missionId,plan:{expectedMain:envelope.payload.expectedMain},
+    },{
+      ...f.options,...options,runCoreDirectoryRepairFn:async()=>{nativeCalls++;throw Error('after native parent launch')},
+    })});
+    const request={id:7,isRequest:true,isNotification:false,transportAuthenticated:true};
+    await handler('initialize',{},request);
+    await handler('notifications/initialized',{}, {isRequest:false,isNotification:true});
+    await handler('tools/list',{},request);return {handler,request};
+  };
+  const a=await make(),b=await make(),params={name:'maintenance_action',arguments:{
+    actionId:'repair-core-publication-directories',expectedMain:f.head}};
+  const first=await a.handler('tools/call',params,a.request);
+  assert.equal(first.structuredContent.executionCustodyReleased,false);
+  assert.equal(first.structuredContent.workspaceMutationState,'UNPROVEN_RETAIN_ORIGINAL_REQUEST');
+  const second=await b.handler('tools/call',params,b.request);
+  assert.equal(second.isError,true);assert.equal(nativeCalls,1);
 });
 
 test('dirty/stale/non-main/corrupt/missing/symlink Git evidence preserves checkout and refuses mutation', async () => {
@@ -143,7 +182,7 @@ test('real hostile Git checkout cannot substitute skip-worktree bytes or run its
       runCoreDirectoryRepairFn: async binding => {
         witnessed = true;
         assert.equal(binding.expectedNativeSourceSha256, createHash('sha256').update(safe).digest('hex'));
-        return { ok: false, reason: 'FIXTURE_ONLY_NO_MUTATION' };
+        return { ok: false, reason: 'FIXTURE_ONLY_NO_MUTATION', executionCustodyReleased: true };
       },
     });
     assert.equal(witnessed, true); assert.equal(result.reason, 'FIXTURE_ONLY_NO_MUTATION');
