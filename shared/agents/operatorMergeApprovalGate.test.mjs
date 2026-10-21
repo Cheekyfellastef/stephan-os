@@ -639,6 +639,7 @@ test('closed R7 owner profile cannot weaken either new role or the five legacy m
     original.replace('r7_native_challenge_expires_at_utc:', 'r7_unknown_dispatch_input:'),
     head + owner,
     head + peer,
+    head.replace(/      r7_owner_permit_json:[\s\S]*?(?=\r?\nconcurrency:)/, ''),
     original + '\n  unexpected-readonly-job:\n    runs-on: ubuntu-latest\n    steps: []\n',
     original + '\n  unexpected_readonly_job:\n    runs-on: ubuntu-latest\n    steps: []\n',
     original + '\n  "unexpected-readonly-job":\n    runs-on: ubuntu-latest\n    steps: []\n',

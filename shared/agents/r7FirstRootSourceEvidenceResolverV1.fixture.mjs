@@ -3,9 +3,14 @@ import { createHash } from 'node:crypto';
 import { crc32, deflateRawSync } from 'node:zlib';
 import { buildIndependentReviewArtifact, independentReviewArtifactName } from './operatorMergeReviewArtifactV1.mjs';
 import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
-import { recipientSpkiBase64 } from './r7FirstRootRecipientSpkiV1.fixture.mjs';
+
 import { R7_FIRST_ROOT_INTAKE_MODE as mode, R7_FIRST_ROOT_INTAKE_WORKFLOW as workflow,
   R7_FIRST_ROOT_INTAKE_PURPOSE as purpose,R7_FIRST_ROOT_INTAKE_AUDIENCE as prefix } from './r7FirstRootOwnerIntakeProposalV1.mjs';
+import { R7_OWNER_SOURCE_JOB,R7_OWNER_PEER_PREPARE_JOB } from './r7ProtectedOwnerSourceReadbackV1.mjs';
+// Offline public SPKI fixtures only; private keys are not retained.
+export const recipientSpkiBase64 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyd29/D1W60gkEmPf78KTDtd6j0F93Gos+AS2xtkR9yeWq1/G2JhWmAhHusKeOqPDRvigkUwpHvBI9vudmiIkbti5FbVV0pyLcGRinEoJ7QHMkZRrS4s0k0bR1t4osI4BzHp162JWaUpCYl0OErJ1dUK8En0kMHrM6A6Gx/8Z0izpVNREejoB8Aua/Rk7HcXGPz5cBUHdOpYymSI/+AlKIO9lCqUEcUnuwYi8xJt/B4eRU/3IswflyIEQo4i5PuQpR3FOU+DBpExD3Wh+FDgDxul+nLaH7156NVLV1j/COg8S9OD6D3XdjPsPxN4hb4gperuzmoKoOEJS/B3n3EiDXQIDAQAB";
+export const otherRecipientSpkiBase64 = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw1CJzsde0alKKX88FcVqkI2hKFgqzHv3+TcaEgcjcR3pQJiRanChQUkmBdwMsPCRWSN7oCSRoT0zOVKbiH/8b7OgFfoRLA2SCwdKitDjlTnV5gfpP8bIG3Zq8WzB3SZXYgWeaeMQWHmbnNKR9MHxR+uINB0oKNiSmIIYdfpQQkuivSpRBDrT7QXTPL4BYuNUXsaHnH0jQeUG2yysFAxJ10jXgJbRNGKtJLLKJSShq4u/P+8p0iFnvu/nSbrBeFFF55zU07a+z9KQyP9R+FrMcd4v8kMQBLX18wFzpQ3HM/Aj6zXrjVKacgFtSmZ9/ijw9peihu/93PEn54Y5zquijQIDAQAB";
+
 export const hash=x=>createHash('sha256').update(x).digest('hex');
 export const REPO='Cheekyfellastef/stephan-os',API='https://api.github.com/repos/'+REPO;
 export const STORAGE='https://productionresultssa17.blob.core.windows.net/actions-results/80c77559-8ff7-49a5-9d2f-08c5e8ff1b84/workflow-job-run-4d9be84b-e576-5bc3-a654-2085dc99aec3/artifacts/7fc179bd387fce1470d9f99f52fcca5a01ff1d1358562f69c71f5f1cf03b08f4.zip?rscd=attachment&rsct=application%2Fzip&se=2099-01-01T00%3A00%3A00Z&sig=FIXTURE_ONLY&ske=2099-01-01T00%3A00%3A00Z&skoid=00000000-0000-0000-0000-000000000000&sks=b&skt=2099-01-01T00%3A00%3A00Z&sktid=00000000-0000-0000-0000-000000000000&skv=2025-11-05&sp=r&spr=https&sr=b&st=2099-01-01T00%3A00%3A00Z&sv=2025-11-05';
@@ -131,7 +136,7 @@ export function fixture({moved=false,merged=true,bom=true,compressed=false,descr
 
 // Synthetic records and fake read-only credentials only. Never live proof.
 const R7_FIRST_ROOT_INTAKE_WORKFLOW = workflow;
-import { R7_OWNER_SOURCE_JOB,R7_OWNER_PEER_PREPARE_JOB } from './r7ProtectedOwnerSourceReadbackV1.mjs';
+
 export const READ_ONLY_FAKE='fixture-not-an-authentic-read-credential';
 export function currentFixture({stage='authorize',pendingIssuer=true}={}) {
   const f=fixture(),input=f.input(),now=Date.now(),preparing=stage==='prepare';

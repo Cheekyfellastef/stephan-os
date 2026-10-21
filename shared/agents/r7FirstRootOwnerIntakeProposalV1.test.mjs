@@ -5,7 +5,7 @@ import { prepareR7FirstRootOwnerIntakeProposal as prepare, R7_FIRST_ROOT_INTAKE_
   R7_FIRST_ROOT_INTAKE_WORKFLOW as workflow, R7_FIRST_ROOT_INTAKE_MISSING as missing,
   R7_FIRST_ROOT_INTAKE_PURPOSE as purpose, R7_FIRST_ROOT_INTAKE_AUDIENCE as prefix } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 import { validateOperatorEnvironmentApprovalV1 } from './operatorEnvironmentApprovalAdapterV1.mjs';
-import { recipientSpkiBase64, otherRecipientSpkiBase64 } from './r7FirstRootRecipientSpkiV1.fixture.mjs';
+import { recipientSpkiBase64, otherRecipientSpkiBase64 } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 
 const nowUtc = '2026-10-21T18:40:00.000Z';
 const hash = text => createHash('sha256').update(text).digest('hex');

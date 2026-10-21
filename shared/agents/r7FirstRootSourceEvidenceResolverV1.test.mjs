@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createR7FirstRootSourceEvidenceResolver as create } from './r7FirstRootSourceEvidenceResolverV1.mjs';
 import { inspectR7UntrustedSourcePackage as inspect } from './r7UntrustedSourcePackageV1.mjs';
 import { fixture,API,STORAGE,hash,zip } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
-import { otherRecipientSpkiBase64 } from './r7FirstRootRecipientSpkiV1.fixture.mjs';
+import { otherRecipientSpkiBase64 } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 const TOKEN='FIXTURE_TOKEN_NEVER_AUTHENTIC';
 async function run(f,mutateFetch=null,input=f.input()){
   const original=globalThis.fetch;

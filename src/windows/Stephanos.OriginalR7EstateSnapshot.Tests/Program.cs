@@ -59,10 +59,19 @@ internal static class Program
             Check(GetRetainedThreadTimes(retainedThread, out long retainedBirth, out _, out _, out _) && retainedBirth == ownedBirth,
                 "OWNED_RETAINED_THREAD_NATIVE_BIRTH");
 
-            var start = new ProcessStartInfo(Environment.ProcessPath ?? throw new InvalidOperationException("OWN_RUNTIME_REQUIRED"))
+            string runtime = Environment.ProcessPath ?? throw new InvalidOperationException("OWN_RUNTIME_REQUIRED");
+            string assembly = Assembly.GetExecutingAssembly().Location;
+            bool ownApphost = string.Equals(Path.GetFullPath(runtime),
+                Path.ChangeExtension(Path.GetFullPath(assembly), ".exe"), StringComparison.OrdinalIgnoreCase);
+            bool dotnetHost = string.Equals(Path.GetFileName(runtime), "dotnet.exe", StringComparison.OrdinalIgnoreCase);
+            if (!ownApphost && !dotnetHost) throw new InvalidOperationException("OWNED_HELPER_HOST_UNSUPPORTED");
+            var start = new ProcessStartInfo(runtime)
             { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-            start.ArgumentList.Add(Assembly.GetExecutingAssembly().Location); start.ArgumentList.Add("--owned-helper");
+            // dotnet needs the DLL argument; our own apphost already embeds it.
+            // Passing the DLL to an apphost creates an invalid extra argument.
+            if (!ownApphost) start.ArgumentList.Add(assembly);
+            start.ArgumentList.Add("--owned-helper");
             child = Process.Start(start) ?? throw new InvalidOperationException("OWNED_HELPER_REQUIRED");
             var readiness = child.StandardOutput.ReadLineAsync();
             Check(readiness.Wait(TimeSpan.FromSeconds(3)) && readiness.Result == "READY", "OWNED_HELPER_READY_DEADLINE");
@@ -109,6 +118,7 @@ internal static class Program
             // unrelated old writers, original enrollment or continuous custody.
             Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = "stephanos.r7-process-estate-native-fixture.v1",
                 result = "PASS", assertions, runtime = Environment.Version.ToString(), osVersion = Environment.OSVersion.Version.ToString(),
+                helperLaunchKind = ownApphost ? "OWN_APPHOST" : "DOTNET_HOST",
                 reportedProcesses = first.Processes.Count, reportedThreads = first.ThreadCount,
                 processBirthUnknown = first.ProcessBirthUnknownCount, threadBirthUnknown = first.ThreadBirthUnknownCount,
                 opaqueRowCount = first.OpaqueRowCount, opaqueByteCount = first.OpaqueByteCount,

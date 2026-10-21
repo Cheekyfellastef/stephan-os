@@ -16,11 +16,25 @@ const peerRole = 'r7-first-root-peer-evidence';
 const issuerRole = 'r7-first-root-owner-intake';
 
 function protectedJobs(source) {
-  const declarations = [...source.matchAll(/^  ([a-z0-9-]+):\r?\n/gm)];
+  const sections = [...source.matchAll(/^jobs:\s*$/gm)];
+  assert.equal(sections.length, 1);
+  const begin = sections[0].index + sections[0][0].length;
+  const body = source.slice(begin);
+  const declarations = [...body.matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)];
+  const direct = body.split(/\r?\n/).filter(line => /^ {2}\S/.test(line) && !line.trimStart().startsWith('#'));
+  assert.equal(direct.length, declarations.length);
   assert.deepEqual(declarations.map(match => match[1]), [...legacyRoles, peerRole, issuerRole]);
   return new Map(declarations.map((match, index) => [match[1],
-    source.slice(match.index, declarations[index + 1]?.index ?? source.length)]));
+    body.slice(match.index, declarations[index + 1]?.index ?? body.length)]));
 }
+
+test('protected role partition rejects unknown, quoted, inline and missing job declarations', async () => {
+  const source = await readFile(protectedWorkflow, 'utf8');
+  for (const suffix of ['  extra_job:\n    runs-on: ubuntu-latest\n',
+    '  "extra-job":\n    runs-on: ubuntu-latest\n', '  extra: {runs-on: ubuntu-latest}\n'])
+    assert.throws(() => protectedJobs(source + '\n' + suffix));
+  assert.throws(() => protectedJobs(source.slice(0, source.indexOf('  r7-first-root-peer-evidence:'))));
+});
 
 test('ordinary publication path cannot mark ready or merge', async () => {
   const source = await readFile(publishScript, 'utf8');

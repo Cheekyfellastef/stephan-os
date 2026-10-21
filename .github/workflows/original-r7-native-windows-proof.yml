@@ -95,6 +95,23 @@ jobs:
             dotnet run --project "src/windows/$project" --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:RestoreLockedMode=true
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Prove fixed native peer bindings in the exact single-file runtime
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          # .NET8 single-file probing differs from .NET10: attribute-only
+          # search restrictions are insufficient. The owned fixture places
+          # invalid public credui.dll shadows in appdir and a temporary CWD,
+          # verifies actual System32 module origins through the production
+          # absolute loader, and uses public dummy unpack data only.
+          $output = Join-Path $env:RUNNER_TEMP 'r7-peer-singlefile-proof'
+          dotnet publish src/windows/Stephanos.OriginalR7PeerPairing.Tests/Stephanos.OriginalR7PeerPairing.Tests.csproj --configuration Release --runtime win-x64 --self-contained true --disable-build-servers --warnaserror -m:1 -p:UseSharedCompilation=false -p:RestoreLockedMode=true -p:UseAppHost=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RuntimeFrameworkVersion=8.0.32 -p:TargetLatestRuntimePatch=false --output $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = Join-Path $env:RUNNER_TEMP 'r7-peer-singlefile-extract'
+          & (Join-Path $output 'Stephanos.OriginalR7PeerPairing.Tests.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test native witness source and workflow boundaries
         shell: pwsh
         run: |

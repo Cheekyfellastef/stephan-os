@@ -43,6 +43,7 @@ internal sealed class OriginalR7OperatingSystemPeerDecision : IDisposable
         {
             if (!OperatingSystem.IsWindows() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
                 throw Held();
+            if (!FixedNativeModulesObserved()) throw Held();
             retainedSession.ClaimOperatingSystemPairingAttempt();
             var pairing = OriginalR7OwnerPeerPairing.PrepareCurrent(retainedSession, expectedMain, runId, runAttempt);
             var before = OriginalR7CommissioningOwnerContext.ObserveCurrent();
@@ -200,7 +201,7 @@ internal sealed class OriginalR7OperatingSystemPeerDecision : IDisposable
     private static InvalidOperationException Held() => new("R7_REAL_OS_PEER_DECISION_UNAVAILABLE_OR_TERMINAL");
     public void Dispose() { Interlocked.Exchange(ref terminal, 2); authenticatedQuery.Dispose(); }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct CredentialUi
+    internal struct CredentialUi
     {
         internal int Size;
         internal IntPtr Parent;
@@ -208,22 +209,111 @@ internal sealed class OriginalR7OperatingSystemPeerDecision : IDisposable
         [MarshalAs(UnmanagedType.LPWStr)] internal string Caption;
         internal IntPtr Banner;
     }
-    [DllImport("credui.dll", CharSet = CharSet.Unicode)]
-    private static extern uint CredUIPromptForWindowsCredentialsW(ref CredentialUi ui, uint error, ref uint package,
-        IntPtr input, uint inputSize, out IntPtr output, out uint outputSize, IntPtr save, uint flags);
-    [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CredUnPackAuthenticationBufferW(uint flags, IntPtr auth, uint bytes,
-        IntPtr user, ref uint userChars, IntPtr domain, ref uint domainChars, IntPtr password, ref uint passwordChars);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CredIsMarshaledCredentialW(string userName);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool LogonUserW(string userName, string domain, IntPtr password, uint kind, uint provider, out SafeAccessTokenHandle token);
-    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DuplicateHandle(IntPtr sourceProcess, SafeAccessTokenHandle source, IntPtr targetProcess,
-        out SafeAccessTokenHandle target, uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+    // .NET 8 single-file probing can still prefer the application directory
+    // despite a System32 DllImportSearchPaths attribute (changed in .NET 10).
+    // https://learn.microsoft.com/dotnet/core/compatibility/interop/10.0/native-library-search
+    // Bind these credential APIs through exact absolute OS module handles,
+    // retaining the handles for the process lifetime. No assembly resolver,
+    // caller library/export/path or default-probing fallback is accepted.
+    internal static bool FixedNativeModulesObserved() => SystemApis.Verified && SystemApis.HandlesRetained;
+    private static uint CredUIPromptForWindowsCredentialsW(ref CredentialUi ui, uint error, ref uint package,
+        IntPtr input, uint inputSize, out IntPtr output, out uint outputSize, IntPtr save, uint flags)
+        => SystemApis.Prompt(ref ui, error, ref package, input, inputSize, out output, out outputSize, save, flags);
+    private static bool CredUnPackAuthenticationBufferW(uint flags, IntPtr auth, uint bytes,
+        IntPtr user, ref uint userChars, IntPtr domain, ref uint domainChars, IntPtr password, ref uint passwordChars)
+        => SystemApis.Unpack(flags, auth, bytes, user, ref userChars, domain, ref domainChars, password, ref passwordChars);
+    private static bool CredIsMarshaledCredentialW(string userName) => SystemApis.Marshaled(userName);
+    private static bool LogonUserW(string userName, string domain, IntPtr password, uint kind, uint provider, out SafeAccessTokenHandle token)
+        => SystemApis.Logon(userName, domain, password, kind, provider, out token);
+    private static IntPtr GetCurrentProcess() => SystemApis.CurrentProcess();
+    private static bool DuplicateHandle(IntPtr sourceProcess, SafeAccessTokenHandle source, IntPtr targetProcess,
+        out SafeAccessTokenHandle target, uint access, bool inherit, uint options)
+        => SystemApis.Duplicate(sourceProcess, source, targetProcess, out target, access, inherit, options);
+
+    private static class SystemApis
+    {
+        // Exactly three retained owned loader references, not caller handles.
+        private static readonly IntPtr kernel, credentials, security;
+        internal static readonly PromptApi Prompt;
+        internal static readonly UnpackApi Unpack;
+        internal static readonly MarshaledApi Marshaled;
+        internal static readonly LogonApi Logon;
+        internal static readonly CurrentProcessApi CurrentProcess;
+        internal static readonly DuplicateApi Duplicate;
+        internal static readonly bool Verified;
+        internal static bool HandlesRetained => kernel != IntPtr.Zero && credentials != IntPtr.Zero && security != IntPtr.Zero;
+
+        static SystemApis()
+        {
+            IntPtr k = IntPtr.Zero, c = IntPtr.Zero, a = IntPtr.Zero;
+            try
+            {
+                if (!OperatingSystem.IsWindows() || RuntimeInformation.ProcessArchitecture != Architecture.X64) throw Held();
+                string system = Environment.SystemDirectory;
+                if (!Path.IsPathFullyQualified(system) || system.Length > 512) throw Held();
+                string kernelPath = Path.Combine(system, "kernel32.dll");
+                // Absolute bootstrap of the OS KnownDLL; no bare-name P/Invoke.
+                k = NativeLibrary.Load(kernelPath);
+                var name = Marshal.GetDelegateForFunctionPointer<ModuleNameApi>(NativeLibrary.GetExport(k, "GetModuleFileNameW"));
+                RequireModulePath(k, kernelPath, name);
+                var load = Marshal.GetDelegateForFunctionPointer<LoadApi>(NativeLibrary.GetExport(k, "LoadLibraryExW"));
+                string credentialPath = Path.Combine(system, "credui.dll"), securityPath = Path.Combine(system, "advapi32.dll");
+                // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32:
+                // primary modules AND their dependencies stay in the OS dir.
+                c = load(credentialPath, IntPtr.Zero, 0x900);
+                if (c == IntPtr.Zero) throw Held();
+                RequireModulePath(c, credentialPath, name);
+                a = load(securityPath, IntPtr.Zero, 0x900);
+                if (a == IntPtr.Zero) throw Held();
+                RequireModulePath(a, securityPath, name);
+                Prompt = Marshal.GetDelegateForFunctionPointer<PromptApi>(NativeLibrary.GetExport(c, "CredUIPromptForWindowsCredentialsW"));
+                Unpack = Marshal.GetDelegateForFunctionPointer<UnpackApi>(NativeLibrary.GetExport(c, "CredUnPackAuthenticationBufferW"));
+                Marshaled = Marshal.GetDelegateForFunctionPointer<MarshaledApi>(NativeLibrary.GetExport(a, "CredIsMarshaledCredentialW"));
+                Logon = Marshal.GetDelegateForFunctionPointer<LogonApi>(NativeLibrary.GetExport(a, "LogonUserW"));
+                CurrentProcess = Marshal.GetDelegateForFunctionPointer<CurrentProcessApi>(NativeLibrary.GetExport(k, "GetCurrentProcess"));
+                Duplicate = Marshal.GetDelegateForFunctionPointer<DuplicateApi>(NativeLibrary.GetExport(k, "DuplicateHandle"));
+                kernel = k; credentials = c; security = a;
+                k = c = a = IntPtr.Zero;
+                Verified = true;
+            }
+            finally
+            {
+                if (a != IntPtr.Zero) NativeLibrary.Free(a);
+                if (c != IntPtr.Zero) NativeLibrary.Free(c);
+                if (k != IntPtr.Zero) NativeLibrary.Free(k);
+            }
+        }
+
+        private static void RequireModulePath(IntPtr module, string expected, ModuleNameApi query)
+        {
+            var value = new System.Text.StringBuilder(1024);
+            uint count = query(module, value, (uint)value.Capacity);
+            if (count == 0 || count >= value.Capacity || value.Length != count
+                || !string.Equals(value.ToString(), expected, StringComparison.OrdinalIgnoreCase)) throw Held();
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode, SetLastError = true)]
+        internal delegate IntPtr LoadApi(string path, IntPtr reserved, uint flags);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode, SetLastError = true)]
+        internal delegate uint ModuleNameApi(IntPtr module, System.Text.StringBuilder path, uint capacity);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+        internal delegate uint PromptApi(ref CredentialUi ui, uint error, ref uint package,
+            IntPtr input, uint inputSize, out IntPtr output, out uint outputSize, IntPtr save, uint flags);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal delegate bool UnpackApi(uint flags, IntPtr auth, uint bytes, IntPtr user, ref uint userChars,
+            IntPtr domain, ref uint domainChars, IntPtr password, ref uint passwordChars);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal delegate bool MarshaledApi(string user);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal delegate bool LogonApi(string user, string domain, IntPtr password, uint kind, uint provider, out SafeAccessTokenHandle token);
+        [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+        internal delegate IntPtr CurrentProcessApi();
+        [UnmanagedFunctionPointer(CallingConvention.Winapi, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal delegate bool DuplicateApi(IntPtr sourceProcess, SafeAccessTokenHandle source, IntPtr targetProcess,
+            out SafeAccessTokenHandle target, uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint options);
+    }
 }

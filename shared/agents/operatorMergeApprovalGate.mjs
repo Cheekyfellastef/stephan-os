@@ -422,7 +422,7 @@ function projectProtectedR7OwnerExtension(path, source) {
   const jobs = jobsAt < 0 ? [] : [...wire.slice(jobsAt).matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)]
     .map(match => ({ name: match[1], at: jobsAt + match.index }));
   const extension = jobs.filter(job => Object.hasOwn(R7_OWNER_EXTENSION_JOBS, job.name));
-  const expected = extension.length ? [...LEGACY_OPERATOR_JOBS, ...Object.keys(R7_OWNER_EXTENSION_JOBS)] : LEGACY_OPERATOR_JOBS;
+  const expected = [...LEGACY_OPERATOR_JOBS, ...Object.keys(R7_OWNER_EXTENSION_JOBS)];
   const blockers = [];
   const directKeys = jobsAt < 0 ? [] : wire.slice(jobsAt).split('\n')
     .filter(line => /^ {2}\S/.test(line) && !line.trimStart().startsWith('#'));
@@ -431,10 +431,10 @@ function projectProtectedR7OwnerExtension(path, source) {
   if (jobs.length !== expected.length || jobs.some((job, index) => job.name !== expected[index]))
     blockers.push('protected-workflow-job-estate-not-exact');
   const inputAt = wire.indexOf('      r7_owner_permit_json:');
-  if (!extension.length) {
-    if (inputAt >= 0) blockers.push('protected-workflow-r7-owner-extension-incomplete');
-    return { source: wire, blockers };
-  }
+  // The current policy requires this complete profile. Coordinated removal
+  // of both roles AND inputs must never select an older permissive profile.
+  if (extension.length !== Object.keys(R7_OWNER_EXTENSION_JOBS).length)
+    blockers.push('protected-workflow-r7-owner-extension-incomplete');
   const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
   for (const job of extension) {
     const next = jobs[jobs.indexOf(job) + 1];

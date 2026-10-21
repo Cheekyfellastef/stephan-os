@@ -109,6 +109,7 @@ try
         Check(changed.Fingerprint != pairing.Fingerprint, "EVERY_RUN_MAIN_NONCE_WINDOW_CHANGE_REQUIRES_NEW_PAIRING");
     // Prove that the real Windows bindings exist without displaying a prompt
     // or attempting any account logon. Symbol presence is not OS consent.
+    Check(NativePeerFixture.FixedBindingsIgnoreOwnedShadow(), "PRODUCTION_BINDINGS_IGNORE_APP_AND_CWD_SHADOW_SYSTEM32_MODULES_ACTUAL");
     foreach (var module in new[] {
         ("credui.dll", new[] { "CredUIPromptForWindowsCredentialsW", "CredUnPackAuthenticationBufferW", "CredPackAuthenticationBufferW" }),
         ("advapi32.dll", new[] { "LogonUserW", "CredIsMarshaledCredentialW" }),
@@ -119,6 +120,9 @@ try
         finally { NativeLibrary.Free(library); }
     }
     var decisionType = typeof(OriginalR7OperatingSystemPeerDecision);
+    var actualImports = decisionType.GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+        .Where(method => method.GetCustomAttribute<DllImportAttribute>() is not null).ToArray();
+    Check(actualImports.Length == 0, "OS_DECISION_HAS_NO_BARE_PINVOKE_PROBING_ON_DOTNET8_SINGLE_FILE");
     Check(decisionType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
         .All(c => c.IsPrivate), "NO_CALLER_CONSTRUCTED_OS_DECISION");
     const string publicUser = "r7-public-fixture-not-an-account", publicPassword = "PUBLIC fixture data, never an account credential";
@@ -153,6 +157,8 @@ try
         nodeDotNetGoldenBytesMatched = true, goldenFingerprint = pairing.Fingerprint,
         nativeOsPromptPerformed = false, realCredentialsRead = false, authenticatedEndpoint = false,
         actualWindowsCredentialApiExportsVerified = true, publicFixtureNativePackUnpackOnly = true,
+        nativeApiModulesObservedFromSystem32 = true, invalidOwnedAppAndCwdShadowsIgnored = true,
+        nativeApiBindingUsesBarePInvoke = false, framework = RuntimeInformation.FrameworkDescription,
         actualAccountLogonAttempted = false,
         policyAdopted = false, rootEnrollmentAuthorized = false, leaseReleaseAuthorized = false,
     }));
@@ -167,6 +173,40 @@ catch (Exception error)
 
 internal static class NativePeerFixture
 {
+    internal static bool FixedBindingsIgnoreOwnedShadow()
+    {
+        if (Assembly.GetEntryAssembly()?.GetName().Name != "Stephanos.OriginalR7PeerPairing.Tests")
+            throw new InvalidOperationException("OWNED_FIXTURE_ASSEMBLY_REQUIRED");
+        string adjacent = Path.Combine(AppContext.BaseDirectory, "credui.dll");
+        string directory = Path.Combine(Path.GetTempPath(), "r7-os-bindings-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        string cwdShadow = Path.Combine(directory, "credui.dll"), previous = Environment.CurrentDirectory;
+        bool appCreated = false, cwdCreated = false;
+        try
+        {
+            // PUBLIC invalid image bytes, never executable DLL code. CreateNew
+            // cannot overwrite a preexisting sidecar. Both files stay readable
+            // during resolution; the production loader checks actual module
+            // filenames and absolute OS paths, not fixture success booleans.
+            using var app = new FileStream(adjacent, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
+            appCreated = true;
+            using var cwd = new FileStream(cwdShadow, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
+            cwdCreated = true;
+            byte[] marker = Encoding.ASCII.GetBytes("R7 PUBLIC NON_EXECUTABLE SHADOW DLL FIXTURE");
+            app.Write(marker); app.Flush(true); cwd.Write(marker); cwd.Flush(true);
+            Environment.CurrentDirectory = directory;
+            return OriginalR7OperatingSystemPeerDecision.FixedNativeModulesObserved();
+        }
+        finally
+        {
+            Environment.CurrentDirectory = previous;
+            // Owned disposable fixture paths only; no hostile-parent cleanup
+            // or production disposition claim follows from these deletions.
+            if (appCreated) File.Delete(adjacent);
+            if (cwdCreated) File.Delete(cwdShadow);
+            Directory.Delete(directory, false);
+        }
+    }
     [DllImport("kernel32.dll")] internal static extern uint GetErrorMode();
     [DllImport("kernel32.dll")] internal static extern uint SetErrorMode(uint mode);
     [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
