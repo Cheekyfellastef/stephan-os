@@ -215,20 +215,15 @@ export function runSovereignCommanderStephanosRepair({
         const observed = guardedRunStep(observeStep);
         const core = parseJsonPayload(observed?.stdout);
         steps.push(compactStep(observeStep, observed, core));
-        const independentCoreFault = observed?.ok === true
-          && core?.ok === true
-          && core?.singleWriterProven === true
-          && core?.sourceHeadMatchesLive === true
-          && text(core?.sourceHead).toLowerCase() === expectedHead
-          && core?.gamingActive === false
-          && (core?.repairRequired === true || text(core?.readiness).toUpperCase() === 'DEGRADED');
-        if (independentCoreFault) {
-          const repairStep = boundedContinuousStep(
-            STEPS.controlPlane, CONTINUOUS_REPAIR_STEP_TIMEOUTS.controlPlane, true,
-          );
-          const independentRepair = guardedRunStep(repairStep);
-          steps.push(compactStep(repairStep, independentRepair, parseJsonPayload(independentRepair?.stdout)));
-        }
+        // A degraded Core observation is diagnostic ONLY while the original
+        // R7 writer/lease is held. The existing control-plane reconciler starts
+        // Windows services, tasks and PowerShell descendants. Without an
+        // independently proven disjoint action plus cancellable Windows Job
+        // custody and post-timeout exclusion proof, invoking it here would
+        // violate both gaming custody and the original-writer boundary.
+        // Preserve the read-only observation and original builder blocker.
+        void core;
+
       }
       // Independent Core maintenance, even if successful, is never proof
       // that the original R7 builder/lease has recovered.
