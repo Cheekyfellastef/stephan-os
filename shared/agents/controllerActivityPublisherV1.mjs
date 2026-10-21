@@ -45,7 +45,8 @@ async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId, cont
     if (!validation.valid) return fail('CONTROLLER_ACTIVITY_PROOF_REF_INVALID');
     if (text(record.correlationId) !== runId) return fail('CONTROLLER_ACTIVITY_PROOF_REF_RUN_MISMATCH');
     const pass = text(record.kind) === 'stephanos.shared_workspace.proof' && text(record.status).toUpperCase() === 'PASS';
-    const receipt = text(record.kind) === 'stephanos.shared_workspace.record.receipt' && ['accepted','complete','completed','success','succeeded','verified'].includes(text(record.disposition).toLowerCase());
+    // ACCEPTED is queue admission, never completed work. Only terminal receipts qualify.
+    const receipt = text(record.kind) === 'stephanos.shared_workspace.record.receipt' && ['complete','completed','success','succeeded','verified'].includes(text(record.disposition).toLowerCase());
     if (!pass && !receipt) return fail('CONTROLLER_ACTIVITY_PROOF_REF_NOT_TERMINAL_PASS');
     // Only a worker-origin already persisted terminal receipt can supply
     // detached worker signature bytes. Never accept a caller-controlled

@@ -234,3 +234,28 @@ test('accepts an existing .json-suffixed terminal receipt proof reference withou
   assert.deepEqual(result.statusRecord.controllerActivity.proofRefs, [proofRef]);
   assert.ok(result.proofRecord.refs.includes(proofRef));
 });
+
+test('an ACCEPTED command receipt never qualifies as completed controller construction', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const runId = 'run-admission-is-not-material-work';
+  const receiptId = 'controller-admission-only';
+  const ref = `receipts/${receiptId}.json`;
+  const timestampUtc = '2026-10-21T17:00:00.000Z';
+  const pending = createSharedWorkspaceReceiptRecord({
+    receiptId, participantId: 'test', timestampUtc,
+    correlationId: runId, relatedIssue: '#3050', proofRefs: [ref],
+    receivedRecordId: 'dispatch-accepted', disposition: 'accepted',
+    summary: 'The scheduler accepted a command; no worker edit or commit happened.',
+  });
+  assert.equal((await writeAtomicJson(root, ['receipts', `${receiptId}.json`],
+    pending, { repoRoot: process.cwd() })).ok, true);
+  const published = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId, timestampUtc,
+    observedEnabled: true, executionState: 'RUNNING',
+    materialActionsSucceeded: 1, proofRefs: [ref],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(published.ok, false);
+  assert.equal(published.blocker, 'CONTROLLER_ACTIVITY_PROOF_REF_NOT_TERMINAL_PASS');
+  assert.equal(published.proofRecord, undefined);
+});
