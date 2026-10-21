@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   captureHighRiskAdvisorySnapshotV1 as capture,
   localHighRiskModelV1,
+  inspectHighRiskGamingPermissionV1,
+  observeHighRiskOllamaDigestV1,
   runSovereignHighRiskAdvisoryV1 as run,
 } from './sovereign-high-risk-advisory-v1.mjs';
 
@@ -146,25 +148,108 @@ test('source readback failure after inference holds rather than publishing stale
   assert.equal(result.reason,'REVIEW_SOURCE_CHANGED_DURING_INFERENCE');
   assert.equal(result.mergeAuthority,false);
 });
-test('local model reply must be complete and from the explicitly requested model',async()=>{
-  const prompts=[];
-  const safeReply={model:'qwen:14b',done:true,done_reason:'stop',response:'{"verdict":"clean"}'};
-  const fetchImpl=async (url,opts)=>{
-    prompts.push({url,opts});
-    return {ok:true,text:async()=>JSON.stringify(safeReply)};
-  };
-  const out=await localHighRiskModelV1('read-only prompt',{}, {},{fetchImpl});
-  assert.equal(out,safeReply.response);
-  assert.equal(prompts[0].url,'http://127.0.0.1:11434/api/generate');
-  assert.equal(prompts[0].opts.redirect,'error');
-  assert.equal(JSON.parse(prompts[0].opts.body).model,'qwen:14b');
-  for (const change of [{model:'wrong-model'}, {done:false}, {done_reason:'length'},
-    {response:null}, {done_reason:undefined}]) {
-    await assert.rejects(
-      localHighRiskModelV1('safe prompt',{}, {},{fetchImpl:async()=>({
-        ok:true,text:async()=>JSON.stringify({...safeReply,...change}),
-      })}),
-      /LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/
-    );
+test('high-risk review uses immutable model digest, gaming guard and releases local GPU residency',async()=>{
+  const calls=[],pin='c'.repeat(64),clear=[],checks=[];
+  const out=await localHighRiskModelV1('private diff',{},ENV,{
+    platform:'linux',
+    gamingGuard:()=>{checks.push(true);return {ok:true}},
+    modelPin:async()=>({ok:true,digest:pin}),
+    startPolling:()=>19,stopPolling:x=>clear.push(x),
+    fetchImpl:async(url,opts)=>{calls.push({url,opts});return {ok:true,text:async()=>JSON.stringify({
+      model:'sha256:'+pin,done:true,done_reason:'stop',response:'{"verdict":"clean"}',
+    })}},
+  });
+  assert.equal(out,'{"verdict":"clean"}');
+  assert.equal(calls[0].url,'http://127.0.0.1:11434/api/generate');
+  assert.equal(calls[0].opts.redirect,'error');
+  assert.equal(JSON.parse(calls[0].opts.body).model,'sha256:'+pin);
+  assert.equal(JSON.parse(calls[0].opts.body).keep_alive,0);
+  assert.equal(JSON.parse(calls[0].opts.body).prompt,'private diff');
+  assert.deepEqual(clear,[19]);assert.equal(checks.length>=3,true);
+});
+test('model digest observation refuses missing or duplicated untrusted tags',async()=>{
+  const pin='b'.repeat(64),model='qwen:14b',calls=[];
+  const fetchImpl=async(url,opts)=>{calls.push({url,opts});return {ok:true,text:async()=>JSON.stringify({
+    models:[{name:model,digest:pin}],
+  })}};
+  assert.equal((await observeHighRiskOllamaDigestV1(model,{fetchImpl})).digest,pin);
+  assert.equal(calls[0].url,'http://127.0.0.1:11434/api/tags');
+  assert.equal(calls[0].opts.redirect,'error');
+  for(const models of [[],[{name:model,digest:'wrong'}],
+    [{name:model,digest:pin},{model,digest:pin}]]) {
+    assert.equal((await observeHighRiskOllamaDigestV1(model,{
+      fetchImpl:async()=>({ok:true,text:async()=>JSON.stringify({models})}),
+    })).ok,false);
   }
+});
+test('physical gaming-governor contract denies stale and gaming-active states',()=>{
+  const nowMs=Date.parse('2026-10-21T12:00:00Z');
+  const idle={schemaVersion:'stephanos.vr-resource-governor.v1',governorVersion:3,
+    updatedAtUtc:new Date(nowMs).toISOString(),active:false,flatGameActive:false,
+    airLinkActive:false,realAirLinkActive:false,virtualAirLinkTestActive:false,
+    prepareLeaseActive:false,localModelAllowed:true,heavyModelAllowed:true,
+    ollamaLoadMode:'balanced'};
+  const probe=state=>{const raw=JSON.stringify(state);let closed=false;
+    const result=inspectHighRiskGamingPermissionV1({
+      STEPHANOS_SHARED_AGENT_WORKSPACE:'/tmp/workspace-safe',
+    },{platform:'linux',nowMs,openFile:()=>11,readFile:()=>raw,
+      statFile:()=>({isFile:()=>true,size:Buffer.byteLength(raw)}),
+      closeFile:()=>{closed=true}});
+    assert.equal(closed,true);return result};
+  assert.equal(probe(idle).ok,true);
+  for(const v of [{active:true},{flatGameActive:true},{airLinkActive:true},
+    {realAirLinkActive:true},{prepareLeaseActive:true},{heavyModelAllowed:false},
+    {localModelAllowed:'true'},{ollamaLoadMode:'cool'},
+    {updatedAtUtc:new Date(nowMs-31000).toISOString()}]) {
+    assert.equal(probe({...idle,...v}).ok,false);
+  }
+  assert.equal(inspectHighRiskGamingPermissionV1({}, {platform:'linux'}).ok,false);
+});
+test('spoofed and truncated model completions never become high-risk review results',async()=>{
+  const pin='f'.repeat(64),baseReply={model:'sha256:'+pin,done:true,
+    done_reason:'stop',response:'{"verdict":"clean"}'};
+  const settings={platform:'linux',gamingGuard:()=>({ok:true}),
+    modelPin:async()=>({ok:true,digest:pin}),
+    startPolling:()=>12,stopPolling:()=>{}};
+  for(const patch of [{model:'qwen:14b'},{model:'sha256:'+'d'.repeat(64)},
+    {done:false},{done_reason:'length'},{response:null}]) {
+    await assert.rejects(localHighRiskModelV1('private',{},ENV,{
+      ...settings,fetchImpl:async()=>({ok:true,text:async()=>JSON.stringify({
+        ...baseReply,...patch,
+      })}),
+    }),/LOCAL_MODEL_COMPLETION_IDENTITY_UNPROVEN/);
+  }
+  await assert.rejects(localHighRiskModelV1('private',{},ENV,{
+    ...settings,fetchImpl:async()=>({ok:false,text:async()=>''}),
+  }),/LOCAL_MODEL_REQUEST_FAILED/);
+});
+test('in-flight VR activation aborts inference and clears polling state',async()=>{
+  let game=false,monitor,closed=0;const pin='a'.repeat(64);
+  await assert.rejects(localHighRiskModelV1('private',{},ENV,{
+    platform:'linux',gamingGuard:()=>({ok:!game}),
+    modelPin:async()=>({ok:true,digest:pin}),
+    startPolling:fn=>{monitor=fn;return 23},stopPolling:()=>{closed++},
+    fetchImpl:async()=>{game=true;monitor();return {ok:true,text:async()=>JSON.stringify({
+      model:'sha256:'+pin,done:true,done_reason:'stop',response:'{"verdict":"clean"}',
+    })}},
+  }),/HIGH_RISK_GAMING_RESOURCE_PROTECTED/);
+  assert.equal(closed,1);
+});
+test('digest changing before or after inference fails closed',async()=>{
+  const pin='a'.repeat(64),bad='b'.repeat(64),settings={
+    platform:'linux',gamingGuard:()=>({ok:true}),
+    startPolling:()=>12,stopPolling:()=>{}};
+  let reads=0,called=false;
+  await assert.rejects(localHighRiskModelV1('private',{},ENV,{
+    ...settings,modelPin:async()=>({ok:true,digest:++reads===2?bad:pin}),
+    fetchImpl:async()=>{called=true;throw Error('should not call')},
+  }),/HIGH_RISK_MODEL_DIGEST_CHANGED/);
+  assert.equal(called,false);
+  reads=0;
+  await assert.rejects(localHighRiskModelV1('private',{},ENV,{
+    ...settings,modelPin:async()=>({ok:true,digest:++reads===3?bad:pin}),
+    fetchImpl:async()=>({ok:true,text:async()=>JSON.stringify({
+      model:'sha256:'+pin,done:true,done_reason:'stop',response:'{"verdict":"clean"}',
+    })}),
+  }),/HIGH_RISK_MODEL_OR_GAMING_CHANGED_DURING_INFERENCE/);
 });
