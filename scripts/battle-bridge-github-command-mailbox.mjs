@@ -55,7 +55,10 @@ import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConve
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
-import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  safeCpuPressureSnapshotProjection,
+} from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1536,6 +1539,35 @@ function safeStarfieldVrTelemetryArchiveReceiptProjection(archive) {
   });
 }
 
+// Repeat the CPU sampler's fail-closed validator at the public receipt boundary.
+// The host already returns a bounded, allowlisted projection; never mirror raw
+// process command lines, Windows paths, full process inventories or untrusted fields.
+function safeCpuPressureReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'cpu-pressure-snapshot'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false
+    || !operationResult?.cpuPressure
+    || typeof operationResult.cpuPressure !== 'object'
+    || Array.isArray(operationResult.cpuPressure)) return null;
+  let sanitized = null;
+  try {
+    sanitized = safeCpuPressureSnapshotProjection({
+      structuredContent: { stdout: JSON.stringify(operationResult.cpuPressure) },
+    }, 'cpu-pressure-snapshot');
+  } catch { return null; }
+  if (!sanitized) return null;
+  // The public command transport has a strict 9 KiB receipt budget. Keep the
+  // hottest twelve allowlisted entries, never quietly claim the full census.
+  return Object.freeze({
+    ...sanitized,
+    rows: Object.freeze(sanitized.rows.slice(0, 12)),
+    rowsTruncated: sanitized.rows.length > 12,
+    observedRowCount: sanitized.rows.length,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1576,10 +1608,24 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     maintenanceStatus: Number.isInteger(status) ? status : null,
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    // Archive diagnostics only: expose a typed, minimal failure shape so an
+    // operator can distinguish a stale served MCP tool from a failed reader.
+    // Do not mirror raw structuredContent, stdout, stderr or host paths.
+    ...(remoteAction === 'starfield-vr-telemetry-archive' ? {
+      archiveDedicatedToolAdvertised: safeBoolean(operationResult?.dedicatedToolAdvertised),
+      archiveFixedFallbackSelected: safeBoolean(operationResult?.fixedMaintenanceFallbackSelected),
+      archiveRuntimeRefreshRequired: safeBoolean(operationResult?.runtimeRefreshRequired),
+      archiveMcpToolReturnedError: safeBoolean(operationResult?.mcpToolReturnedError),
+      archiveCommanderBlocker: safeTelemetryId(operationResult?.commanderBlocker),
+      archiveExecutionStatus: Number.isInteger(operationResult?.executionStatus)
+        ? operationResult.executionStatus : null,
+      archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
+    } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),
     visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
@@ -2456,6 +2502,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        cpuPressure: inner?.cpuPressure ?? null,
         starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
         // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
         rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
