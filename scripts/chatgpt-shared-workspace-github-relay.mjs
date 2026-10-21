@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { inspectR7CommissioningRequest, reconcileR7CommissioningInbox } from './r7-commissioning-inbox-reconciliation.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -305,6 +306,7 @@ function renderResponseWithDiagnostic(body, diagnostic) {
 export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
   let qaAnswerDiagnostic = null;
   let goalAdmission = null;
+  let commissioningReconciliation = null;
   const answerQuestionFn = typeof options.answerQuestionFn === 'function'
     ? options.answerQuestionFn
     : answerStephanosWorkspaceQuestionRecord;
@@ -317,6 +319,13 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
   const result = await runCoreRelay({
     ...options,
     reconcileInboxFn: async ({ root, segments, record, resumed, writeOptions }) => {
+      const r7 = inspectR7CommissioningRequest(record, { nowMs: writeOptions.nowMs });
+      if (r7.applicable) {
+        commissioningReconciliation = await reconcileR7CommissioningInbox({
+          root, segments, record, resumed, writeOptions, writeAtomicJsonFn, readFileFn,
+        });
+        return commissioningReconciliation;
+      }
       if (!parseGoalProposalBody(record).applicable) return { ok: true };
       let persisted = record;
       if (resumed) {
@@ -359,7 +368,29 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
     }),
   });
 
-  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission });
+  // A delivery completed before this consumer existed must still receive its
+  // diagnostic reconciliation. Never resubmit the request or rewrite delivery.
+  if (!commissioningReconciliation
+      && result.classification === 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED'
+      && /^[a-z0-9][a-z0-9._-]{7,59}$/.test(result.requestId || '')) {
+    const paths = options.paths || resolveChatGptSharedWorkspaceRelayPaths(options);
+    const segments = ['inbox', result.requestId + '.json'];
+    const inbox = resolveSharedWorkspacePath({ root: paths.workspaceRoot, repoRoot: paths.repoRoot, segments });
+    if (inbox.ok) {
+      try {
+        const persisted = JSON.parse(await readFileFn(inbox.path, 'utf8'));
+        if (inspectR7CommissioningRequest(persisted).applicable) {
+          commissioningReconciliation = await reconcileR7CommissioningInbox({
+            root: paths.workspaceRoot, segments, record: persisted, writeAtomicJsonFn, readFileFn,
+            writeOptions: { repoRoot: paths.repoRoot, nowMs: (options.now || new Date()).getTime() },
+          });
+        }
+      } catch {
+        commissioningReconciliation = { applicable: true, ok: false, reason: 'R7_ADMISSION_BACKFILL_READ_FAILED' };
+      }
+    }
+  }
+  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission, commissioningReconciliation });
 }
 
 export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = process.argv[1] } = {}) {
