@@ -294,6 +294,16 @@ namespace Stephanos.Sovereign {
             if(mode=="directories") {
               PinDirectory(Path.Combine(directoryRoot,"status"),scopePins);
               PinDirectory(Path.Combine(directoryRoot,"proof"),scopePins);
+              // A fast worker may drain before the monitoring loop runs. Its
+              // zero exit is not a final gaming/cancellation observation.
+              // Recheck after final scope pinning and before claiming success;
+              // retain attempted-mutation uncertainty on this original request.
+              bool finalGamingSafe=Safe(gamingSafe),finalCancelled=cancelled();
+              if(!finalGamingSafe || finalCancelled) {
+                r.CancellationRequested=true;
+                r.Reason=!finalGamingSafe ? "GAMING_CANCELLED" : "OPERATOR_CANCELLED";
+                return r;
+              }
               r.CorePublicationDirectoriesReady=true; r.RepairExecuted=true;
               r.Verdict="CORE_DIRECTORY_REPAIR_SATISFIED_UNQUALIFIED";
             } else r.Verdict="PROBE_PASSED_UNQUALIFIED";

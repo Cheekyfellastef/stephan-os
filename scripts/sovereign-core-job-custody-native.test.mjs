@@ -120,6 +120,33 @@ test('Core directory repair pins its root across launch and holds on gaming/canc
     }
   }));
 
+test('fast completed directory worker still requires final gaming/cancel acceptance after drain',
+  { skip: !windows, timeout: 30000 }, () => publicationFixture(async root => {
+    for (const mode of ['game','unknown','cancel']) {
+      const target = join(root, mode); mkdirSync(target);
+      const proof = join(target, 'proof').replaceAll("'", "''");
+      // Fourth governor read is the first post-resume loop check. Hold it
+      // until the real worker has made both directories and had time to exit.
+      // The old loop then observed an empty Job and accepted without read #5.
+      const wait = `$script:n++;if($script:n -eq 4){$until=[DateTime]::UtcNow.AddSeconds(6);`
+        + `while(-not [IO.Directory]::Exists('${proof}') -and [DateTime]::UtcNow -lt $until){[Threading.Thread]::Sleep(10)};`
+        + `[Threading.Thread]::Sleep(1500)};`;
+      const safe = wait + (mode === 'game' ? '$script:n -le 4'
+        : mode === 'unknown' ? "if($script:n -gt 4){throw 'unknown governor'};$true" : '$true');
+      const { receipt, stderr } = await runner({ directoryRoot: target, safe,
+        cancel: mode === 'cancel' ? '$script:n -gt 4' : '$false' }).done;
+      assert.ok(receipt, stderr);
+      assert.equal(receipt.ExitCode, 0, JSON.stringify(receipt));
+      assert.equal(receipt.WorkspaceMutationAttempted, true);
+      assert.equal(receipt.RepairExecuted, false); assert.equal(receipt.CorePublicationDirectoriesReady, false);
+      assert.equal(receipt.CancellationRequested, true);
+      assert.equal(receipt.Reason, mode === 'cancel' ? 'OPERATOR_CANCELLED' : 'GAMING_CANCELLED');
+      assert.equal(receipt.ZeroActiveProcessesObserved, true); assert.equal(receipt.CustodyReleased, true);
+      assert.equal(existsSync(join(target, 'status')), true); assert.equal(existsSync(join(target, 'proof')), true);
+      assert.equal(receipt.OriginalR7Authority, false);
+    }
+  }));
+
 test('native adapter uses atomic Job assignment and never enables breakaway or command input', () => {
   const code = readFileSync(source, 'utf8');
   assert.match(code, /new IntPtr\(0x2000D\)/);

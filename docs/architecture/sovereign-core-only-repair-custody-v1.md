@@ -154,3 +154,12 @@ Independent exact-head specialist review, operator merge, protected installation
 and physical acceptance remain required before commissioning. This action proves
 only directory restoration, not a healthy Core or recovered R7 builder. Other
 Core faults still require their own resource-disjoint operation design.
+
+Review follow-up: a fast directory worker can drain before the monitor polls.
+Acceptance now rechecks governor and original-request cancellation after final
+scope pinning and before setting any successful repair postcondition. Active,
+unknown/throwing governor or late cancellation keeps HOLD and attempted-mutation
+uncertainty even with exit zero and positively drained OS custody. A native
+regression pauses the first post-resume poll until the real worker finishes;
+the old implementation demonstrably reported success in the counterfactual
+fixture, while the fixed implementation holds for gaming, unknown and cancel.
