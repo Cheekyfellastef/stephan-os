@@ -176,9 +176,13 @@ The retained source-only Windows package uses the self-contained win-x64
 `WitnessSingleFile` profile, matching the SCM bundled-payload gate. Its EXE
 digest covers the bundled managed witness, access-probe and .NET assemblies.
 Packaging rejects adjacent DLLs and executes the exact delivered EXE with
-`--inspect-bundle-only`: exit 0 means this process passes the existing assembly
-layout predicate; exit 4 means it does not. This fixed diagnostic reads only
-its own assembly layout and never invokes SCM, registry, signing or custody.
+`--inspect-bundle-only`: exit 0 means this retained process passes the existing
+assembly-layout predicate AND the production image-length/digest evaluator
+with a self-computed, explicitly untrusted digest. Exit 4 denies an unbundled
+layout; exit 5 denies image readback/size/digest shape. The image remains bounded
+at 128 MiB, accommodating the self-contained untrimmed win-x64 runtime. Hosted
+Windows tests also reject an oversized image. This fixed diagnostic reads only
+its own layout/bytes and never invokes SCM, registry, signing or custody.
 The package also verifies that other unapproved CLI invocation fails closed.
 
 This does not establish independently protected digest provenance, extracted

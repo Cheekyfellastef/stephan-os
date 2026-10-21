@@ -23,6 +23,11 @@ string image = Environment.ProcessPath
 const string account = @"NT SERVICE\StephanosOriginalR7CustodyWitness";
 // Test an actual binary digest while never commissioning this runner.
 string observed = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();
+var actualImage = OriginalR7ImagePinPreflight.Evaluate(image, observed);
+Check(actualImage.ImageDigestMatchesConfiguredPin, "ACTUAL_EXECUTABLE_IMAGE_GATE");
+Check(!actualImage.IndependentlyProtectedPinProven && !actualImage.OriginalWriterExclusionProven
+    && !actualImage.SignedWitnessIssued && !actualImage.LeaseReleaseAuthorized,
+    "ACTUAL_EXECUTABLE_GATE_IS_NOT_AUTHORITY");
 OriginalR7ScmObservation Eval(
     string? who = account, int? type = 0x10, int? start = 2, int? sid = 3,
     string? path = null, string? actual = null,
@@ -106,6 +111,12 @@ try
 {
     Directory.CreateDirectory(scratchRoot);
     string fixture = Path.Combine(scratchRoot, "witness-fixture.exe");
+    string oversized = Path.Combine(scratchRoot, "oversized.exe");
+    using (FileStream tooLarge = new(oversized, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        tooLarge.SetLength(OriginalR7ImagePinPreflight.MaxImageBytes + 1);
+    var bounded = OriginalR7ImagePinPreflight.Evaluate(oversized, new string('0', 64));
+    Check(bounded.Classification == "R7_IMAGE_LENGTH_OUT_OF_BOUNDS", "IMAGE_OVER_LIMIT_DENIED");
+    ImageAlwaysHeld(bounded, "IMAGE_OVER_LIMIT");
     byte[] first = System.Security.Cryptography.RandomNumberGenerator.GetBytes(512);
     File.WriteAllBytes(fixture, first);
     string digest = Convert.ToHexString(

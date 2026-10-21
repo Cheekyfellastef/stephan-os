@@ -147,8 +147,8 @@ jobs:
           $binary = Join-Path $stage $name
           if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'R7_PUBLISH_BINARY_MISSING' }
           if (@(Get-ChildItem -LiteralPath $stage -File -Filter '*.dll').Count -ne 0) { throw 'R7_UNBUNDLED_EXECUTABLE_PAYLOAD' }
-          # Exercise the bundle predicate in THIS retained executable, rather
-          # than inferring it from the separately published test executable.
+          # Exercise bundle identity AND the production image-length/digest
+          # evaluator in THIS retained executable. Its self-pin is not trust.
           & $binary --inspect-bundle-only
           if ($LASTEXITCODE -ne 0) { throw 'R7_PUBLISHED_PACKAGE_BUNDLE_GATE_FAILED' }
           # Execute the delivered package, not only the earlier build output.

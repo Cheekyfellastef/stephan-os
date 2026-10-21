@@ -1,5 +1,7 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.ServiceProcess;
 
@@ -12,11 +14,27 @@ internal static class Program
     private static int Main(string[] args)
     {
         // Fixed read-only package diagnostic. It inspects this process's
-        // assembly layout only: no SCM, registry, identity, custody or signing.
+        // bundle layout and its own bytes only: no SCM, registry, identity,
+        // custody or signing. A self-computed digest is explicitly untrusted.
         if (args.Length == 1 && args[0] == "--inspect-bundle-only")
         {
             if (!OperatingSystem.IsWindows()) return 2;
-            return OriginalR7ScmPreflight.BundledPayloadObserved() ? 0 : 4;
+            if (!OriginalR7ScmPreflight.BundledPayloadObserved()) return 4;
+            try
+            {
+                string? image = Environment.ProcessPath;
+                if (image is null) return 5;
+                using FileStream stream = new(image, FileMode.Open, FileAccess.Read,
+                    FileShare.Read, 4096, FileOptions.SequentialScan);
+                if (stream.Length <= 0 || stream.Length > OriginalR7ImagePinPreflight.MaxImageBytes)
+                    return 5;
+                string untrustedDigest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+                OriginalR7ImagePinObservation report = OriginalR7ImagePinPreflight.Evaluate(image, untrustedDigest);
+                return report.ImageDigestMatchesConfiguredPin
+                    && !report.IndependentlyProtectedPinProven && !report.OriginalWriterExclusionProven
+                    && !report.SignedWitnessIssued && !report.LeaseReleaseAuthorized ? 0 : 5;
+            }
+            catch { return 5; }
         }
 
         if (args.Length != 0 || !OperatingSystem.IsWindows()

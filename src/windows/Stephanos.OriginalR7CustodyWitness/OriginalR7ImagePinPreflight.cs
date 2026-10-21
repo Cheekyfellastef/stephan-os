@@ -24,7 +24,9 @@ internal static class OriginalR7ImagePinPreflight
     private const string ParametersKey =
         @"SYSTEM\CurrentControlSet\Services\StephanosOriginalR7CustodyWitness\Parameters";
     private const string DigestName = "PinnedImageSha256";
-    private const long MaxImageBytes = 64L * 1024 * 1024;
+    // The self-contained, untrimmed win-x64 runtime exceeds 64 MiB. Keep a
+    // bounded 128 MiB ceiling and exercise the retained executable in CI.
+    internal const long MaxImageBytes = 128L * 1024 * 1024;
 
     private static OriginalR7ImagePinObservation Held(string code, bool digestMatches = false)
         => new(code, digestMatches, false, false, false, false);
