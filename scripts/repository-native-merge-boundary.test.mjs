@@ -10,6 +10,17 @@ const personalRepositoryMergeContract = new URL('../shared/agents/operatorPerson
 const protectedWorkflow = new URL('../.github/workflows/operator-merge-approval-gate.yml', import.meta.url);
 const independentWorkflow = new URL('../.github/workflows/independent-merge-security-review.yml', import.meta.url);
 const packageFile = new URL('../package.json', import.meta.url);
+const legacyRoles = Object.freeze(['merge-group-evidence', 'operator-merge-queue-boundary',
+  'personal-repository-evidence', 'operator-personal-repository-approval', 'operator-personal-repository-squash-merge']);
+const peerRole = 'r7-first-root-peer-evidence';
+const issuerRole = 'r7-first-root-owner-intake';
+
+function protectedJobs(source) {
+  const declarations = [...source.matchAll(/^  ([a-z0-9-]+):\r?\n/gm)];
+  assert.deepEqual(declarations.map(match => match[1]), [...legacyRoles, peerRole, issuerRole]);
+  return new Map(declarations.map((match, index) => [match[1],
+    source.slice(match.index, declarations[index + 1]?.index ?? source.length)]));
+}
 
 test('ordinary publication path cannot mark ready or merge', async () => {
   const source = await readFile(publishScript, 'utf8');
@@ -28,7 +39,13 @@ test('no local npm command exposes merge authority', async () => {
 });
 
 test('protected boundary keeps the native queue and adds only the exact mobile-safe user-owned dispatch fallback', async () => {
-  const protectedSource = await readFile(protectedWorkflow, 'utf8');
+  const completeProtectedSource = await readFile(protectedWorkflow, 'utf8');
+  const jobs = protectedJobs(completeProtectedSource);
+  // Existing exact counts describe the five established merge/lifecycle roles.
+  // New roles are independently constrained below, never admitted by widening
+  // these counts or letting the old final-job slice absorb appended jobs.
+  const protectedSource = completeProtectedSource.slice(0, completeProtectedSource.indexOf('  merge-group-evidence:'))
+    + legacyRoles.map(role => jobs.get(role)).join('');
   const independentSource = await readFile(independentWorkflow, 'utf8');
   assert.match(protectedSource, /^  merge_group:\s*$/m);
   assert.match(protectedSource, /^    types: \[checks_requested\]\s*$/m);
@@ -109,6 +126,49 @@ test('protected boundary keeps the native queue and adds only the exact mobile-s
   assert.match(independentSource, /ref: \$\{\{ github\.sha \}\}/);
   assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 2);
   assert.match(independentSource, /independent-merge-security-review-entry-v1\.mjs/);
+});
+
+test('R7 adds only a read-only peer stage and one exact protected endpoint issuer', async () => {
+  const source = await readFile(protectedWorkflow, 'utf8');
+  const jobs = protectedJobs(source), peer = jobs.get(peerRole), issuer = jobs.get(issuerRole);
+  const mode = "inputs.mode == 'user-owned-r7-first-root-policy-intake'";
+  for (const job of [peer, issuer]) {
+    assert.ok(job.includes(mode));
+    assert.match(job, /^    runs-on: ubuntu-latest\s*$/m);
+    assert.match(job, /^    timeout-minutes: 5\s*$/m);
+    assert.equal([...job.matchAll(/ref: \$\{\{ github\.sha \}\}/g)].length, 1);
+    assert.equal([...job.matchAll(/persist-credentials: false/g)].length, 1);
+    assert.match(job, /node-version: '24\.21\.0'/);
+    const actions = [...job.matchAll(/uses: ([^\s]+)@([^\s]+)/g)];
+    assert.deepEqual(actions.map(match => match[1]), ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact']);
+    for (const action of actions) assert.match(action[2], /^[a-f0-9]{40}$/);
+    assert.doesNotMatch(job, /STEPHANOS_RULESET_PROOF|permission-administration|create-github-app-token|contents: write|issues: write|pull-requests: write/);
+    assert.doesNotMatch(job, /operator-protected-(?:personal-repository-merge|merge-gate-v2)\.mjs|gh pr|repository_dispatch|workflow_call|continue-on-error/);
+  }
+  function permissions(job) {
+    const match = job.match(/^    permissions:\r?\n((?:      [a-z-]+: (?:read|write)\r?\n)+)/m);
+    assert.ok(match, 'explicit job permissions required');
+    return match[1].trim().split(/\r?\n/).map(line => line.trim());
+  }
+  const reads = ['actions: read', 'checks: read', 'contents: read', 'deployments: read', 'issues: read', 'pull-requests: read'];
+  assert.deepEqual(permissions(peer), reads);
+  assert.deepEqual(permissions(issuer), [...reads, 'id-token: write']);
+  assert.doesNotMatch(peer, /^    (?:environment|needs):|id-token:|issue-owner-envelope/m);
+  assert.match(peer, /operator-protected-r7-first-root\.mjs prepare-peer/);
+  assert.match(peer, /GITHUB_STEP_SUMMARY/);
+  assert.match(peer, /ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:/);
+  assert.match(issuer, /needs: \[r7-first-root-peer-evidence\]/);
+  assert.match(issuer, /needs\.r7-first-root-peer-evidence\.result == 'success'/);
+  assert.match(issuer, /environment:\s*\n      name: operator-merge-approval/);
+  assert.match(issuer, /url: https:\/\/github\.com\/Cheekyfellastef\/stephan-os\/actions\/runs\/\$\{\{ github\.run_id \}\}\/attempts\/1/);
+  assert.match(issuer, /operator-protected-r7-first-root\.mjs issue-owner-envelope/);
+  for (const role of legacyRoles.slice(2)) assert.ok(jobs.get(role)
+    .includes("inputs.mode != 'user-owned-r7-first-root-policy-intake'"));
+  assert.equal([...source.matchAll(/id-token: write/g)].length, 1);
+  assert.doesNotMatch(source, /\b(?:actions|deployments|statuses|checks): write\b/);
+  assert.doesNotMatch(source, /pull_request_target:|^\s+pull_request:\s*$/m);
+  assert.doesNotMatch(source, /recover|repository_dispatch|workflow_call|continue-on-error/);
+  assert.doesNotMatch(source, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
 });
 
 test('personal-repository executor is workflow-dispatch-only and performs one exact-head squash without branch deletion', async () => {

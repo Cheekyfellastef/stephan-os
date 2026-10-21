@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { constants,createDecipheriv,createHash,generateKeyPairSync,privateDecrypt } from 'node:crypto';
-import { currentFixture,READ_ONLY_FAKE } from './r7ProtectedOwnerSourceReadbackV1.fixture.mjs';
+import { currentFixture,READ_ONLY_FAKE } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { API } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { buildR7OwnerSourceReadbackInput,r7OwnerPeerFromSourceInput } from './r7ProtectedOwnerSourceReadbackV1.mjs';
 import { createR7ProtectedOwnerEnvelopeIssuer as create,r7OwnerBrokerRequestUrl as url } from './r7ProtectedOwnerEnvelopeIssuerV1.mjs';

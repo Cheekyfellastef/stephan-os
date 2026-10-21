@@ -76,7 +76,8 @@ internal static class ProcessBoundWriteDenialTests
             // Native TOKEN_STATISTICS must distinguish a different token
             // object even when it has the SAME user and authentication LUID.
             MethodInfo stamp = typeof(R7ProcessBoundWriteDenial).GetMethod("ReadStamp",
-                BindingFlags.Static | BindingFlags.NonPublic)!;
+                BindingFlags.Static | BindingFlags.NonPublic, binder: null,
+                types: new[] { typeof(SafeAccessTokenHandle) }, modifiers: null)!;
             object before = stamp.Invoke(null, new object[] { primaryToken })!;
             Check(before.Equals(stamp.Invoke(null, new object[] { primaryToken })),
                 "UNCHANGED_NATIVE_TOKEN_STAMP_MUST_MATCH");
@@ -160,7 +161,8 @@ internal static class ProcessBoundWriteDenialTests
             using (configurable)
             {
                 MethodInfo stamp = typeof(R7ProcessBoundWriteDenial).GetMethod("ReadStamp",
-                    BindingFlags.Static | BindingFlags.NonPublic)!;
+                    BindingFlags.Static | BindingFlags.NonPublic, binder: null,
+                    types: new[] { typeof(SafeAccessTokenHandle) }, modifiers: null)!;
                 Check(!stamp.Invoke(null, new object[] { configurable })!.Equals(
                     stamp.Invoke(null, new object[] { parentToken })),
                     "CHILD_TOKEN_MUST_BE_DISTINCT_BEFORE_TEST_DACL_CHANGE");

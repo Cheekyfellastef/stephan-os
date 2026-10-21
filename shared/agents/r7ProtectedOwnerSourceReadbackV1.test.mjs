@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { API } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
-import { currentFixture,READ_ONLY_FAKE } from './r7ProtectedOwnerSourceReadbackV1.fixture.mjs';
+import { currentFixture,READ_ONLY_FAKE } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { buildR7OwnerSourceReadbackInput as build, createR7ProtectedOwnerSourceReadback as create,
   r7OwnerPeerFromSourceInput } from './r7ProtectedOwnerSourceReadbackV1.mjs';
 
