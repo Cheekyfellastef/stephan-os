@@ -113,6 +113,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs'), '--snapshot-only']),
       timeoutMs: 20_000,
     }),
+    'rescue-island-readonly-boundary': frozen({
+      executable: node,
+      args: frozen([nodeFile('rescue-island-boundary-probe.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'visibility-snapshot': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
@@ -223,6 +228,11 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-starfield-vr-performance-diagnosis.ps1')]),
       timeoutMs: 20_000,
+    }),
+    'starfield-vr-telemetry-archive': frozen({
+      executable: node,
+      args: frozen([nodeFile('starfield-vr-telemetry-archive.mjs')]),
+      timeoutMs: 30_000,
     }),
     'report-starfield-vr-telemetry': frozen({
       executable: node,
@@ -465,7 +475,16 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'publish-controller-activity') {
+      if (processId === 'starfield-vr-telemetry-archive') {
+        const offset = payload.offset === undefined ? 0 : payload.offset;
+        const limit = payload.limit === undefined ? 12 : payload.limit;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000
+            || !Number.isSafeInteger(limit) || limit < 1 || limit > 12) {
+          blockers.push('sovereign-starfield-telemetry-archive-page-invalid');
+        } else {
+          args = [...args, '--offset', String(offset), '--limit', String(limit)];
+        }
+      } else if (processId === 'publish-controller-activity') {
         const encoded = text(payload.controllerActivityPayloadBase64);
         let decoded = null;
         try {

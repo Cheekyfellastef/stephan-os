@@ -1,6 +1,7 @@
 import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   MAILBOX_RECEIPT_INDEX_GITHUB_MARKER,
+  MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION,
   buildMailboxReceiptIndexGitHubBody,
   createMailboxReceiptIndexRecord,
   sanitizeMailboxReceiptForIndex,
@@ -57,9 +58,30 @@ export function extractTrustedMailboxReceiptComment(comment = {}, ownerLogin = '
   return sanitizeMailboxReceiptForIndex(receipt) ? receipt : null;
 }
 
+// The small public truth issue is the only carry-forward input. Never scan
+// all 2,500 retired mailbox comments on each successor receipt mirror refresh.
+// Preserve bounded terminal provenance, not unfinished retired commands.
+export function extractRetiredMailboxTerminalReceiptsFromTruthIssueBody(body) {
+  if (typeof body !== 'string' || Buffer.byteLength(body, 'utf8') > 16 * 1024
+    || !body.startsWith(`<!-- ${MAILBOX_RECEIPT_GITHUB_TRUTH_MARKER} -->`)) {
+    throw new Error('RETIRED_MAILBOX_RECEIPT_TRUTH_UNVERIFIED');
+  }
+  const match = body.match(/```json\s*([\s\S]*?)```/i);
+  const value = match ? parseJson(match[1]) : null;
+  if (value?.schemaVersion !== MAILBOX_RECEIPT_INDEX_SCHEMA_VERSION
+    || !Array.isArray(value.recentReceipts)
+    || value.recentReceipts.length > 20) {
+    throw new Error('RETIRED_MAILBOX_RECEIPT_TRUTH_UNVERIFIED');
+  }
+  return Object.freeze(value.recentReceipts
+    .map(sanitizeMailboxReceiptForIndex)
+    .filter((receipt) => receipt && ['DONE', 'BLOCKED'].includes(receipt.state)));
+}
+
 export function createTrustedMailboxReceiptIndexFromGitHubComments(comments = [], {
   ownerLogin,
   timestampUtc = new Date().toISOString(),
+  priorTruthIssueBody,
 } = {}) {
   const commandsByRequestId = new Map();
   for (const comment of comments) {
@@ -76,7 +98,12 @@ export function createTrustedMailboxReceiptIndexFromGitHubComments(comments = []
       expectedHead: String(receipt.expectedHead || command?.expectedHead || ''),
     });
   }
-  return createMailboxReceiptIndexRecord({ receipts, timestampUtc });
+  const previousTerminal = priorTruthIssueBody === undefined ? []
+    : extractRetiredMailboxTerminalReceiptsFromTruthIssueBody(priorTruthIssueBody);
+  return createMailboxReceiptIndexRecord({
+    receipts: [...receipts, ...previousTerminal],
+    timestampUtc,
+  });
 }
 
 export function findTrustedMailboxReceiptIndexComment(comments = []) {

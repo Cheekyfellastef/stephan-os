@@ -145,6 +145,20 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'starfield_vr_telemetry_archive',
+    title: 'Read Starfield VR playtest archive',
+    description: 'Read a bounded page of historical and current Starfield VR flight-recorder sessions; no raw CSV, host paths or game mutation. Read-only on each call, so newly recorded playtests appear automatically.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 12, default: 12 },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'maintenance_action',
     title: 'Run fixed Stephanos maintenance action',
     description: 'Run one source-controlled maintenance action from the Sovereign Commander fixed registry.',
@@ -160,6 +174,7 @@ const TOOLS = Object.freeze([
             'battle-bridge-observe',
             'meter-status',
             'controller-lane-status',
+            'rescue-island-readonly-boundary',
             'visibility-snapshot',
             'cpu-pressure-snapshot',
             'publish-controller-activity',
@@ -179,6 +194,7 @@ const TOOLS = Object.freeze([
             'gaming-resource-acceptance',
             'vr-virtual-airlink-acceptance',
             'starfield-vr-performance-diagnosis',
+            'starfield-vr-telemetry-archive',
             'report-starfield-vr-telemetry',
             'starfield-vr-telemetry-refresh',
             'ignite-stephanos',
@@ -245,6 +261,7 @@ function operationForTool(name) {
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
     search_project: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
+    starfield_vr_telemetry_archive: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
     maintenance_action: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
   })[name] || '';
 }
@@ -261,6 +278,9 @@ function payloadForTool(name, args = {}) {
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
+  if (name === 'starfield_vr_telemetry_archive') {
+    return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
+  }
   if (name === 'maintenance_action') {
     if (args.actionId === 'publish-controller-activity') {
       return {

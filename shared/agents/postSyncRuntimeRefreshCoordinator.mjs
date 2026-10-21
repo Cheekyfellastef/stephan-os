@@ -37,6 +37,11 @@ const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
 ]);
 
+const SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS = new Set([
+  'plugins/sovereign-commander/plugin.json',
+  'plugins/sovereign-commander/.codex-plugin/plugin.json',
+]);
+
 const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/windows/status-stephanos-core-daemon.ps1',
   'scripts/stephanos-core-daemon.mjs',
@@ -57,6 +62,8 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/windows/repair-openclaw-full-stack.ps1',
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+  'plugins/sovereign-commander/plugin.json',
+  'plugins/sovereign-commander/.codex-plugin/plugin.json',
 ]);
 
 const NATURAL_EXACT = new Set([
@@ -379,6 +386,10 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     unknownPathCount: unknownPaths.length,
     unsafePathCount: unsafePaths.length,
     openClawApprovalRequired: openClawPaths.length > 0,
+    // Restarting Commander HTTP proves neither the Codex nor ChatGPT desktop
+    // plugin host has loaded the new manifest/skills. Keep this a separate
+    // physical acceptance requirement when either manifest changed.
+    pluginHostActivationRequired: safePaths.some((path) => SOVEREIGN_COMMANDER_PLUGIN_MANIFESTS.has(path)),
     automaticExecutionAllowed: unsafePaths.length === 0 && unknownPaths.length === 0,
     internal: Object.freeze({
       safePaths: Object.freeze([...new Set(safePaths)]),
@@ -502,6 +513,38 @@ export async function executePostSyncRefreshPlan({
     });
   }
 
+  if (plan.pluginHostActivationRequired) {
+    // A service watchdog or a checkout SHA is not a desktop plugin-host
+    // handshake. The live runtime supplies no plugin-host verifier yet,
+    // therefore fail closed until an independently implemented adapter proves
+    // the exact loaded source, manifest and fresh host session.
+    let hostProof = null;
+    if (typeof adapters.verifySovereignPluginHost === 'function') {
+      try {
+        hostProof = await adapters.verifySovereignPluginHost({ beforeHead, afterHead, plan });
+      } catch {
+        hostProof = null;
+      }
+    }
+    const hostVerified = hostProof?.ok === true
+      && hostProof?.exactHeadProofOk === true
+      && hostProof?.desktopPluginHostHandshakeVerified === true
+      && hostProof?.loadedManifestVerified === true
+      && String(hostProof?.sourceHead || '').toLowerCase() === String(afterHead).toLowerCase();
+    if (!hostVerified) {
+      return Object.freeze({
+        ok: false,
+        classification: POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_REFRESH_FAILED,
+        blocker: 'SOVEREIGN_DESKTOP_PLUGIN_HOST_ACTIVATION_UNPROVEN',
+        plan,
+        exactHeadProofOk: false,
+        safeRefreshesCompleted: true,
+        pluginHostActivationRequired: true,
+        results: Object.freeze(results),
+      });
+    }
+  }
+
   return Object.freeze({
     ok: true,
     classification: plan.targetIds.length
@@ -528,6 +571,7 @@ export function buildPostSyncRefreshProjection(result = {}, { beforeHead = '', a
     changedPathCount: Number(plan.changedPathCount || 0),
     noRuntimePathCount: Number(plan.noRuntimePathCount || 0),
     openClawPathCount: Number(plan.openClawPathCount || 0),
+    pluginHostActivationRequired: plan.pluginHostActivationRequired === true,
     unknownPathCount: Number(plan.unknownPathCount || 0),
     unsafePathCount: Number(plan.unsafePathCount || 0),
     exactHeadProofOk: result.exactHeadProofOk === true,
