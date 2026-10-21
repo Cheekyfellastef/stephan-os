@@ -23,6 +23,7 @@ export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS = 15 * 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
 const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
+const REPAIR_TIMEOUT_CUSTODY_BLOCKER = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -101,12 +102,14 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     lastReportOutcome: '',
     lastReportStatus: '',
     lastReportBlocker: '',
+    // Node child kill is not proof that spawned Windows descendants have exited.
+    timeoutCustodyHeld: false,
   };
 
   const status = () => Object.freeze({ ...state });
 
   const schedule = (delayMs) => {
-    if (stopped) return;
+    if (stopped || state.timeoutCustodyHeld) return;
     state.scheduled = true;
     state.nextDelayMs = delayMs;
     scheduledTimer = setTimeoutImpl(() => {
@@ -119,7 +122,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   };
 
   const runNow = () => {
-    if (stopped || child) return false;
+    if (stopped || child || state.timeoutCustodyHeld) return false;
     if (scheduledTimer) {
       clearTimeoutImpl(scheduledTimer);
       scheduledTimer = null;
@@ -149,7 +152,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         ? receipt.reporting
         : {};
       const reportOk = reporting?.ok === true;
-      const ok = code === 0 && receipt?.ok === true && reportOk;
+      const ok = !state.timeoutCustodyHeld && code === 0 && receipt?.ok === true && reportOk;
       state.running = false;
       state.lastCycleId = state.currentCycleId;
       state.currentCycleId = '';
@@ -164,7 +167,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       state.lastReportBlocker = reportOk ? '' : text(reporting?.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING').slice(0, 160);
       state.lastBlocker = ok
         ? ''
-        : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
+        : state.timeoutCustodyHeld ? REPAIR_TIMEOUT_CUSTODY_BLOCKER
+          : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
       if (ok) {
         state.successCount += 1;
         state.consecutiveFailureCount = 0;
@@ -179,8 +183,11 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
           ? Math.min(1_000_000, state.consecutiveFailureCount + 1) : 1;
         lastFailureKey = failureKey;
       }
-      child = null;
-      schedule(ok ? intervalMs : Math.min(
+      // A timed-out direct child may have live descendants. Retain its handle
+      // until close, and NEVER schedule another cycle without separate custody
+      // qualification (including when a user explicitly wakes the guardian).
+      child = state.timeoutCustodyHeld ? currentChild : null;
+      if (!state.timeoutCustodyHeld) schedule(ok ? intervalMs : Math.min(
         Math.max(intervalMs, SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS),
         intervalMs * 2 ** Math.min(20, state.consecutiveFailureCount - 1),
       ));
@@ -208,10 +215,16 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       currentChild.once?.('error', (error) => {
         finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
       });
-      currentChild.once?.('close', (code) => finish(code));
+      currentChild.once?.('close', (code) => {
+        if (state.timeoutCustodyHeld) child = null;
+        finish(code);
+      });
       killTimer = setTimeoutImpl(() => {
+        if (settled) return;
+        state.timeoutCustodyHeld = true;
         try { currentChild.kill?.(); } catch {}
-        finish(null, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
+        // A termination request cannot attest Windows descendant exclusion.
+        finish(null, REPAIR_TIMEOUT_CUSTODY_BLOCKER);
       }, maxRuntimeMs);
       killTimer?.unref?.();
     } catch (error) {
