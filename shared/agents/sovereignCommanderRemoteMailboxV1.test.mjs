@@ -3930,6 +3930,6 @@ test('native calibration pre-execution failures expose only a bounded denial, ne
   const malformed=await attempt('C:\\\\PRIVATE\\\\secret-token');
   assert.equal(malformed.ok,false);
   assert.equal(malformed.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
-  assert.equal(malformed.errorCode,'');
+  assert.equal(malformed.errorCode ?? '', '');
   assert.doesNotMatch(JSON.stringify(malformed),/PRIVATE|secret-token/);
 });
