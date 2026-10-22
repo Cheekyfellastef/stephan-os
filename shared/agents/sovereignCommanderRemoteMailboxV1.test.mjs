@@ -3892,3 +3892,44 @@ test('fixed native Windows exam carries only a bounded candidate result through 
   const plan=validateSovereignCommanderRemoteCommandShape(command({remoteAction:'',remotePlan:[action]}));
   assert.equal(plan.ok,false); // No inference-bearing compound plan/replay.
 });
+
+test('native calibration pre-execution failures expose only a bounded denial, never a pass',async()=>{
+  const reviewIdentity={
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3191,branch:'main',
+    sourceHead:HEAD,baseSha:'b'.repeat(40),
+    implementerProvider:'canonical-programme-builder',
+    implementerSessionId:'builder-3191',reviewerSessionId:'reviewer-3191',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  const action='sovereign-windows-reviewer-calibration';
+  const attempt=async(errorCode,stderr='PRIVATE_NATIVE_STDERR')=>{
+    const native={
+      ok:false,finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:action,reviewIdentity}},
+      structuredContent:{status:null,stdout:'',stderr,errorCode},
+    };
+    const {fetchFn}=mcpFetch({maintenance:native});
+    return executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action,reviewIdentity}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn,
+      env:{USERPROFILE:'C:\\\\Users\\\\Operator'},
+    });
+  };
+  const denied=await attempt('SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
+  assert.equal(denied.ok,false);
+  assert.equal(denied.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(denied.errorCode,'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
+  assert.equal(denied.maintenanceStatus,null);
+  assert.equal(denied.executionBlocker,'');
+  assert.equal(denied.publicReceiptSafe,true);
+  assert.equal(denied.secretMaterialReturned,false);
+  assert.doesNotMatch(JSON.stringify(denied),/PRIVATE_NATIVE_STDERR/);
+  assert.notEqual(denied.verdict,'COMMAND_EXECUTION_COMPLETE');
+  // Never forward arbitrary native error text, injected paths or credentials.
+  const malformed=await attempt('C:\\\\PRIVATE\\\\secret-token');
+  assert.equal(malformed.ok,false);
+  assert.equal(malformed.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(malformed.errorCode,'');
+  assert.doesNotMatch(JSON.stringify(malformed),/PRIVATE|secret-token/);
+});
