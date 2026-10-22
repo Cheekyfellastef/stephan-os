@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -11,7 +11,7 @@ import {
 } from './rescue-island-boundary-probe.mjs';
 
 async function fixture(t) {
-  const outer = await mkdtemp(join(tmpdir(), 'rescue-island-fixed-probe-'));
+  const outer = await realpath(await mkdtemp(join(tmpdir(), 'rescue-island-fixed-probe-')));
   t.after(() => rm(outer, { recursive: true, force: true }));
   const root = join(outer, 'canonical');
   await mkdir(join(root, '.git'), { recursive: true });
@@ -38,10 +38,10 @@ test('fixed native readback is a useful physical check without any writer author
 test('malicious redirected canonical ancestor must fail without a mutable child', async t => {
   const { outer, root } = await fixture(t);
   await rm(join(root, 'docs', 'architecture'), { recursive: true });
-  await symlink(outer, join(root, 'docs', 'architecture'), 'dir');
+  await symlink(outer, join(root, 'docs', 'architecture'), process.platform === 'win32' ? 'junction' : 'dir');
   const result = await probe(root);
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'OS_SCOPE_OBSERVATION_HELD');
+  assert.equal(result.blocker, 'RESCUE_ISLAND_SCOPE_REDIRECTED');
   assert.equal(result.workerStartAllowed, false);
 });
 
