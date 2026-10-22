@@ -129,6 +129,7 @@ test('stateful suites remain serial only inside their isolated parallel job', as
 const seedNativeActions = Object.freeze([
   'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
   'actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9',
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
 ]);
 
 function assertSeedNativeActionIdentity(workflow) {
@@ -136,11 +137,13 @@ function assertSeedNativeActionIdentity(workflow) {
   assert.deepEqual(actions, seedNativeActions);
 }
 
-test('Seed native proof admits only both immutable verified action identities', async () => {
+test('Seed native proof admits only all three immutable verified action identities', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/seed-parallel-native-custody-proof.yml', import.meta.url), 'utf8');
   assertSeedNativeActionIdentity(workflow);
   for (const action of seedNativeActions) {
     const [name] = action.split('@');
+    assert.throws(() => assertSeedNativeActionIdentity(workflow.replace(action, '')),
+      `reject missing required ${name}`);
     for (const ref of ['v4', 'main', '11d5960', '0'.repeat(40)]) {
       assert.throws(() => assertSeedNativeActionIdentity(workflow.replace(action, `${name}@${ref}`)),
         `reject ${name} at mutable, short or wrong ref`);
