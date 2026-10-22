@@ -22,8 +22,63 @@ public sealed class SeedInventoryCustodySession : IDisposable
     public bool CompleteOperationCustodyProven => false;
     public bool LeaseReleaseAuthorized => false;
     public bool ProductionWorkerCommissioned => false;
+    public bool OutputDerivedFromPinnedInputs { get; private set; }
 
     private SeedInventoryCustodySession() { }
+
+    // Fixed CANONICAL_INVENTORY_V1 transformation. The existing authenticated
+    // owner/base boundary must supply these expectations from one approved
+    // manifest and protected base. This library does not authenticate a caller,
+    // grant, Git estate or projection provenance from its hashes alone.
+    // No caller payload, digest, render callback or executable is accepted.
+    public static SeedInventoryCustodySession AcquireCanonicalInventory(
+        SeedInventoryInput manifestInput,
+        SeedInventoryInput canonicalProjectionInput,
+        string workspaceRoot,
+        string expectedRelativeTarget,
+        string expectedBaseSha,
+        string expectedProjectionGitBlobSha)
+    {
+        if (!OperatingSystem.IsWindows()) throw Held("SEED_NATIVE_WINDOWS_REQUIRED");
+        var manifest = Freeze(manifestInput);
+        manifest = manifest with { MaximumBytes = Math.Min(manifest.MaximumBytes,
+            CanonicalInventoryDerivation.MaximumManifestBytes) };
+        var projection = Freeze(canonicalProjectionInput);
+        string outputPath = CanonicalInventoryDerivation.TargetPath(workspaceRoot, expectedRelativeTarget);
+        string targetIdentity = Identity(outputPath);
+        if (string.Equals(Identity(manifest.Path), Identity(projection.Path), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Identity(manifest.Path), targetIdentity, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Identity(projection.Path), targetIdentity, StringComparison.OrdinalIgnoreCase))
+            throw Held("SEED_INVENTORY_INPUT_OUTPUT_COLLISION");
+        var session = new SeedInventoryCustodySession();
+        try
+        {
+            // The target expectation is available before reading either input.
+            // Parse the pinned manifest later and require that exact same target.
+            session.output = PinnedNewFile.PrepareParents(outputPath);
+            session.manifest = PinnedFileSnapshot.Acquire(manifest.Path, manifest.Sha256, manifest.MaximumBytes);
+            session.canonicalSeedContract = PinnedFileSnapshot.Acquire(projection.Path,
+                projection.Sha256, projection.MaximumBytes);
+            byte[] bytes = CanonicalInventoryDerivation.Render(SnapshotBytes(session.manifest),
+                SnapshotBytes(session.canonicalSeedContract), expectedBaseSha, expectedRelativeTarget,
+                expectedProjectionGitBlobSha);
+            session.output.BindDerivedContent(bytes);
+            session.OutputDerivedFromPinnedInputs = true;
+            return session;
+        }
+        catch (CustodyException error)
+        {
+            session.Dispose();
+            var held = Held("SEED_INVENTORY_INPUT_CUSTODY_DENIED");
+            held.Data["InputBlocker"] = error.Blocker;
+            throw held;
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+    }
 
     public static SeedInventoryCustodySession Acquire(
         SeedInventoryInput manifestInput,
@@ -131,6 +186,19 @@ public sealed class SeedInventoryCustodySession : IDisposable
         SeedInventoryInputKind.CanonicalSeedContract => canonicalSeedContract!,
         _ => throw Held("SEED_INVENTORY_INPUT_KIND_INVALID"),
     };
+
+    private static byte[] SnapshotBytes(PinnedFileSnapshot snapshot)
+    {
+        byte[] bytes = new byte[checked((int)snapshot.Length)];
+        int offset = 0;
+        while (offset < bytes.Length)
+        {
+            int count = snapshot.Read(offset, bytes.AsSpan(offset));
+            if (count <= 0) throw Held("SEED_INVENTORY_SNAPSHOT_INCOMPLETE");
+            offset += count;
+        }
+        return bytes;
+    }
 
     private void EnsureOpen()
     {

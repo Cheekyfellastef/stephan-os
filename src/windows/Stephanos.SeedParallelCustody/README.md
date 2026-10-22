@@ -38,8 +38,66 @@ not reopen source paths or accept replacement output bytes. Input and output
 handles remain private until session disposal. Create, read, verify and dispose
 are serialized; failed creation closes the session, and duplicate creation is
 refused. The input digests and proposed bytes are caller expectations. This
-component does not parse or authenticate the manifest, prove the output was
-derived from it, or supply the complete execution dependency closure.
+compatibility entry point does not parse or authenticate the manifest, prove
+the output was derived from it, or supply the complete execution dependency
+closure. Its callers and original byte/digest contract remain supported.
+
+## Fixed canonical inventory derivation
+
+`SeedInventoryCustodySession.AcquireCanonicalInventory` completes one fixed
+data-to-output operation. It accepts the manifest and closed canonical projection
+input descriptors, an exact configured workspace root, the expected relative
+target, the expected protected base SHA, and the expected projection Git blob
+identity. It accepts no caller output bytes, output digest, renderer callback or
+executable. An internal parent-only preparation retains the target ancestry
+before either input is read. The factory then reads only the two private
+snapshots, validates their closed schemas and bindings, renders
+`CANONICAL_INVENTORY_V1` in process, and binds one private output payload. The
+same retained parents and input snapshots remain alive through `CreateOutput`,
+same-handle verification and disposal. The internal preparation cannot create
+an unbound output; a create attempt before binding is terminal.
+
+The manifest's SHA256, base and target must come from the existing exact owner
+approval boundary. The expected projection blob must be resolved from that same
+independently qualified protected base and source estate. This library checks
+those expectations; it cannot authenticate their caller or establish provenance
+from a caller-supplied hash. The Git blob identity includes the actual UTF-8 byte
+length and is not a signature. `OutputDerivedFromPinnedInputs` describes only
+the fixed transformation. All ownership, whole-operation, lease-release and
+commissioning properties remain false.
+
+The closed file `shared/project/seedCanopyCanonicalInventoryV1.json` is derived
+from the existing `HIGH_LEVEL_FLYWHEEL_SEEDS_V1` contracts. It is not a second
+canonical seed registry. Its versioned rows contain only `seedId`, `title`,
+`issue`, `source` and the renderer's selected `firstRung`, in canonical order.
+No containing commit SHA, timestamp or self-authentication field is embedded.
+The source parity test regenerates all bytes from the real canonical import
+closure; the checked-in reference vectors are generated with the existing
+JavaScript renderer. The native workflow runs that parity test before the
+Windows suite and triggers for `shared/**`, including transitive agents imports.
+The reference data lives at
+`shared/project/fixtures/seedCanopyCanonicalInventoryV1.vectors.json`.
+
+The fixed parser deliberately accepts a strict subset of the broad JavaScript
+request profile: known properties only, no duplicates or type coercion, strict
+UTF-8 and paired Unicode escapes, depth at most eight, a manifest at most 16 KiB,
+a projection at most 1 MiB, and one to 64 unique canonical rows. Strings and
+paths have explicit bounds. Optional authority flags must be absent or JSON
+`false`; null, strings and numbers are refused. Generation mode, owner, contract,
+base and target must match. Only a new approved architecture document with
+`expectedTargetSha256: null` is supported; test paths are validated data and
+are never executed. Unknown overrides, padded identifiers/paths and NUL text
+are refused. Valid rendering preserves ECMAScript trim (including U+FEFF and
+excluding U+0085), UTF-16 length, one-for-one scalar sanitization, BOM-free UTF-8,
+LF and the final newline. The sixteen reference cases cover all nine canonical
+seeds and the relevant whitespace, escaping and 2400-unit Unicode boundaries.
+
+When canonical contracts change, regenerate the derived data through
+`serializeSeedCanopyCanonicalInventoryV1(HIGH_LEVEL_FLYWHEEL_SEEDS_V1)` and
+`serializeSeedCanopyInventoryGoldenVectorsV1(HIGH_LEVEL_FLYWHEEL_SEEDS_V1)` from
+their modules, writing UTF-8 only to the two fixed JSON paths. Do not hand-edit
+the data or expected outputs to make parity pass. Regeneration and parity are
+source checks, not a production Node invocation or runtime admission.
 
 The input component is the existing `PinnedFileSnapshot` from the
 `Stephanos.RescueIslandCustody` assembly at the same source tree. That assembly
@@ -57,7 +115,7 @@ calls fail. Parent-directory writes are still shared; sibling files are not
 contained. A same-principal process capable of tampering with the host or
 duplicating its handles is not excluded by this library.
 
-The digest is a caller expectation, not authenticated source ownership. All
+Input digests are caller expectations, not authenticated source ownership. All
 authority properties remain false. The production worker still refuses
 `SEED_TARGET_WRITE_CUSTODY_UNIMPLEMENTED` before claims/worktrees/inference or
 writes. Do not flip the capability constant or use this component as a receipt
@@ -84,7 +142,17 @@ hosted Windows component scenarios, not proof of Battle Bridge pickup or
 commissioning. A source edit or successful compilation alone is not a native
 test result.
 
+The fixed-derivation suite reports twelve scenarios separately from its sixteen
+golden output cases. It exercises strict parsing and authority/path negatives,
+canonical drift and duplicate identities, exact base/target/blob bindings,
+immutable retained inputs and parents, raced leaves, disposal, and one-shot
+payload binding. Existing new-file assertions and compatibility-session
+scenarios remain separate counters. A passing fixture does not authenticate an
+owner, run the declared tests, protect the executable/Git/claim/receipt estate,
+contain a principal or prove a live Seed build.
+
 ```
+node --test-reporter=tap shared/project/seedCanopyCanonicalInventoryV1.test.mjs
 dotnet run --project src/windows/Stephanos.SeedParallelCustody.Tests --configuration Release
 ```
 

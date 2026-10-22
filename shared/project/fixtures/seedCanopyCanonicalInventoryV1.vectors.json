@@ -1,0 +1,389 @@
+{
+  "schemaVersion": "stephanos.seed-canopy-canonical-inventory-vectors.v1",
+  "cases": [
+    {
+      "name": "canonical:starfield-vr-outcome-ownership",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-01",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-01.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-01.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:stephanos-whole-system-capability-closure",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "stephanos-whole-system-capability-closure",
+        "ownerIssue": "#2670",
+        "contractSource": "shared/runtime/upliftWorkspaceProjectionV1.mjs",
+        "taskId": "native-inventory-02",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-02.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Stephanos Whole-System Capability Closure: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `stephanos-whole-system-capability-closure`\n- Owner: #2670\n- Contract source: `shared/runtime/upliftWorkspaceProjectionV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-02.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:stephanos-runs-the-project",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "stephanos-runs-the-project",
+        "ownerIssue": "#2796",
+        "contractSource": "shared/runtime/autonomousProjectStewardshipSeedV1.mjs",
+        "taskId": "native-inventory-03",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-03.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Stephanos Runs the Project: SEE_REALITY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `stephanos-runs-the-project`\n- Owner: #2796\n- Contract source: `shared/runtime/autonomousProjectStewardshipSeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-03.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:stephanos-flywheel-conversational-intelligence",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "stephanos-flywheel-conversational-intelligence",
+        "ownerIssue": "#2798",
+        "contractSource": "shared/runtime/conversationalIntelligenceSeedV1.mjs",
+        "taskId": "native-inventory-04",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-04.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Stephanos + Flywheel Conversational Intelligence: HEAR_INTENT source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `stephanos-flywheel-conversational-intelligence`\n- Owner: #2798\n- Contract source: `shared/runtime/conversationalIntelligenceSeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-04.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:sovereign-commander-safe-parity",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "sovereign-commander-safe-parity",
+        "ownerIssue": "#2519",
+        "contractSource": "shared/runtime/sovereignCommanderParitySeedV1.mjs",
+        "taskId": "native-inventory-05",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-05.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely: SEE_REMOTE_CAPABILITY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `sovereign-commander-safe-parity`\n- Owner: #2519\n- Contract source: `shared/runtime/sovereignCommanderParitySeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-05.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:stephanos-sovereign-meter-independence",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "stephanos-sovereign-meter-independence",
+        "ownerIssue": "#2968",
+        "contractSource": "shared/runtime/sovereignMeterIndependenceSeedV1.mjs",
+        "taskId": "native-inventory-06",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-06.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Stephanos Sovereign Meter Independence: INVENTORY_METERS source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `stephanos-sovereign-meter-independence`\n- Owner: #2968\n- Contract source: `shared/runtime/sovereignMeterIndependenceSeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-06.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:stephanos-full-sovereignty-every-function",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "stephanos-full-sovereignty-every-function",
+        "ownerIssue": "#3026",
+        "contractSource": "shared/runtime/fullSovereigntySeedV1.mjs",
+        "taskId": "native-inventory-07",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-07.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Stephanos Full Sovereignty: Every Function, Zero External Critical Dependencies: INVENTORY_ALL_FUNCTIONS_AND_EXTERNAL_EDGES source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `stephanos-full-sovereignty-every-function`\n- Owner: #3026\n- Contract source: `shared/runtime/fullSovereigntySeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-07.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:workspace-integrity-provenance",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "workspace-integrity-provenance",
+        "ownerIssue": "#2898",
+        "contractSource": "shared/runtime/workspaceIntegritySeedV1.mjs",
+        "taskId": "native-inventory-08",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-08.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Every Workspace, Card and Visualiser Has Verified End-to-End Provenance: INVENTORY_VISIBLE_COMPONENTS source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `workspace-integrity-provenance`\n- Owner: #2898\n- Contract source: `shared/runtime/workspaceIntegritySeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-08.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "canonical:goal-conveyor-fleet-care",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "goal-conveyor-fleet-care",
+        "ownerIssue": "#2972",
+        "contractSource": "shared/runtime/goalConveyorFleetCareSeedV1.mjs",
+        "taskId": "native-inventory-09",
+        "intent": "Produce a source-only inventory draft from this declared canonical seed.",
+        "targetPath": "docs/architecture/native-seed-inventory-09.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Continuous Goal Conveyor and Fleet Care: SEED_PLANTED source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `goal-conveyor-fleet-care`\n- Owner: #2972\n- Contract source: `shared/runtime/goalConveyorFleetCareSeedV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-09.md`\n\n## Requested outcome\n\nProduce a source-only inventory draft from this declared canonical seed.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "unicode-and-markdown-literals",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-10",
+        "intent": "Inventory café, 日本語 and 🛰️; preserve \"quotes\", \\backslash and `code`.",
+        "targetPath": "docs/architecture/native-seed-inventory-10.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-10.md`\n\n## Requested outcome\n\nInventory café, 日本語 and 🛰️; preserve \"quotes\", \\backslash and `code`.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "replace-cr-lf-tab-and-angle-brackets",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-11",
+        "intent": "First\r\nsecond\t<third>\nfourth",
+        "targetPath": "docs/architecture/native-seed-inventory-11.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-11.md`\n\n## Requested outcome\n\nFirst  second  third  fourth\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "ecmascript-trim-includes-bom",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-12",
+        "intent": "﻿  \tInventory with ECMAScript whitespace.  ﻿",
+        "targetPath": "docs/architecture/native-seed-inventory-12.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-12.md`\n\n## Requested outcome\n\nInventory with ECMAScript whitespace.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "ecmascript-trim-preserves-nel",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-13",
+        "intent": "Inventory preserves NEXT LINE as text.",
+        "targetPath": "docs/architecture/native-seed-inventory-13.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-13.md`\n\n## Requested outcome\n\nInventory preserves NEXT LINE as text.\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "maximum-intent-ascii",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-14",
+        "intent": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "targetPath": "docs/architecture/native-seed-inventory-14.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-14.md`\n\n## Requested outcome\n\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "maximum-intent-astral-pair-at-boundary",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-15",
+        "intent": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx🛰",
+        "targetPath": "docs/architecture/native-seed-inventory-15.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-15.md`\n\n## Requested outcome\n\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx🛰\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    },
+    {
+      "name": "maximum-intent-astral-pairs",
+      "manifest": {
+        "schemaVersion": "stephanos.seed-parallel-build-request.v1",
+        "seedId": "starfield-vr-outcome-ownership",
+        "ownerIssue": "#2655",
+        "contractSource": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+        "taskId": "native-inventory-16",
+        "intent": "🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰",
+        "targetPath": "docs/architecture/native-seed-inventory-16.md",
+        "expectedTargetSha256": null,
+        "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "testPaths": [
+          "shared/runtime/seedCanopyParallelForgeV1.test.mjs"
+        ],
+        "reviewAuthority": "PROTECTED_REVIEW_REQUIRED",
+        "sourceScopeApproval": "EXACT_TARGET_ONLY",
+        "mergeAllowed": false,
+        "deployAllowed": false,
+        "runtimeMutationAllowed": false,
+        "generationMode": "CANONICAL_INVENTORY_V1"
+      },
+      "expectedContent": "# Starfield VR Excellence: INVENTORY source inventory\n\n> SOURCE PROPOSAL ONLY. No Battle Bridge observation, live builder pickup,\n> source merge, runtime deployment or seed completion is claimed.\n\n## Canonical ownership\n\n- Seed: `starfield-vr-outcome-ownership`\n- Owner: #2655\n- Contract source: `shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs`\n- Exact request base: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n- Approved target (proposal): `docs/architecture/native-seed-inventory-16.md`\n\n## Requested outcome\n\n🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰🛰\n\n## Evidence to collect before implementation\n\n- [ ] Confirm the current source and running host match this base.\n- [ ] Verify the owner and check competing canonical, Island and Seed claims.\n- [ ] Record independent, current physical evidence for any claimed gap.\n- [ ] Identify the smallest disjoint implementation scope and test.\n- [ ] Obtain exact-head independent review and protected merge approval.\n- [ ] Prove post-merge runtime outcome before marking this seed grown.\n\n## Unverified observations\n\nNo physical observations were supplied by this deterministic renderer.\nTreat every proposed acceptance check as pending real evidence.\n"
+    }
+  ]
+}

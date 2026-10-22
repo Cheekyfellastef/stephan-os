@@ -19,20 +19,21 @@ public sealed class PinnedNewFile : IDisposable
     private readonly List<SafeFileHandle> ancestors = new();
     private readonly List<string> ancestorPaths = new();
     private FileStream? stream;
-    private readonly byte[] expected;
-    private readonly byte[] content;
+    private byte[] expected = [];
+    private byte[] content = [];
     private readonly string path;
     private readonly string leafName;
     private uint volume;
     private readonly object gate = new();
     private bool disposed;
     private bool creationAttempted;
+    private bool payloadBound;
     public bool SourceOwnershipAuthenticated => false;
     public bool CompleteOperationCustodyProven => false;
     public bool LeaseReleaseAuthorized => false;
 
-    private PinnedNewFile(byte[] digest, byte[] bytes, string target, string leaf)
-        => (expected, content, path, leafName) = (digest, bytes, target, leaf);
+    private PinnedNewFile(string target, string leaf)
+        => (path, leafName) = (target, leaf);
 
     // All parent directories must already exist. No overwrite, mkdir, delete,
     // path reopen for I/O, executable launch, ACL, claim or signer operation.
@@ -57,11 +58,21 @@ public sealed class PinnedNewFile : IDisposable
         byte[] digest = SHA256.HashData(privateBytes);
         if (!CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString(digestHex)))
             throw Held("SEED_NATIVE_CONTENT_DIGEST_MISMATCH");
+        var lease = PrepareParents(path);
+        try { lease.BindPayload(privateBytes, digest); return lease; }
+        catch { lease.Dispose(); throw; }
+    }
+
+    // Internal operation phase: retain the approved parent estate before any
+    // dependency read. This unbound object is never returned by a public API.
+    internal static PinnedNewFile PrepareParents(string path)
+    {
+        if (!OperatingSystem.IsWindows()) throw Held("SEED_NATIVE_WINDOWS_REQUIRED");
         string[] parts;
         try { parts = ValidatePath(path); }
         catch (SeedWriterHeldException) { throw; }
         catch { throw Held("SEED_NATIVE_PATH_INVALID"); }
-        var lease = new PinnedNewFile(digest, privateBytes, path, parts[^1]);
+        var lease = new PinnedNewFile(path, parts[^1]);
         try
         {
             string cursor = path[..3];
@@ -87,6 +98,29 @@ public sealed class PinnedNewFile : IDisposable
         catch { lease.Dispose(); throw Held("SEED_NATIVE_CREATE_OR_IO_DENIED"); }
     }
 
+    // Only a fixed in-assembly derivation may complete an unbound preparation.
+    // It supplies no digest or callback; the exact private payload is hashed
+    // here once. Public Prepare continues freezing its caller bytes first.
+    internal void BindDerivedContent(byte[] bytes)
+    {
+        if (bytes is null || bytes.Length == 0 || bytes.Length > MaximumBytes)
+            throw Held("SEED_NATIVE_INPUT_INVALID");
+        byte[] privateBytes = (byte[])bytes.Clone();
+        BindPayload(privateBytes, SHA256.HashData(privateBytes));
+    }
+
+    private void BindPayload(byte[] bytes, byte[] digest)
+    {
+        lock (gate)
+        {
+            if (disposed || creationAttempted || payloadBound)
+                throw Held("SEED_NATIVE_PAYLOAD_BINDING_CLOSED");
+            content = bytes;
+            expected = digest;
+            payloadBound = true;
+        }
+    }
+
     // One create attempt for this frozen proposal. A failed create cannot be
     // retried against a later namespace state, even if another process removes
     // the conflicting leaf. Disposal is the only transition after failure.
@@ -99,6 +133,7 @@ public sealed class PinnedNewFile : IDisposable
             creationAttempted = true;
             try
             {
+                if (!payloadBound) throw Held("SEED_NATIVE_PAYLOAD_UNBOUND");
                 for (int i = 0; i < ancestors.Count; i++)
                     if (Check(ancestors[i], ancestorPaths[i], true) != volume)
                         throw Held("SEED_NATIVE_VOLUME_CHANGED");
