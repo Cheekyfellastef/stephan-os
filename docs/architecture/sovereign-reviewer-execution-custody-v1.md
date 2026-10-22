@@ -53,3 +53,45 @@ a reviewed non-executable blob only during Git read and restore it afterward;
 the hash mismatch still prevents candidate evidence. Worktree substitution has
 no effect on the captured committed diff. This is source correctness evidence,
 not installation protection, a qualified specialist, or live model acceptance.
+
+## Integrated escalation adapter and physical qualification gates (22 October 2026)
+
+The protected #3091 escalation adapter was admitted to `main` by qualified
+review evidence and the protected owner workflow, merge commit
+`3fd5beeb0cc7b91604e3740633793213692eb12f`. The existing #3191 source
+branch reconciles against that exact main in merge commit
+`7ae19341c683e0395f65ab325137e849129c6da9`. Its package scripts
+must retain **both** the independent P2 escalation/terminal-findings tests
+and the Sovereign local Windows/WSL/model calibration tests. This is a
+source-integration fact, not a clean approval of the combined reviewer.
+
+Require these separate, proof-bearing acceptance steps in order:
+
+1. GitHub PR metadata must report the *actual* branch HEAD and new current-main
+   base, and new hosted Linux/Windows and security checks must bind that exact
+   pair. Old-head review summaries and green checks are never transferable.
+2. Close the historical pre-import verifier and direct diff-import review
+   findings only with evidence from an independently protected installed parent
+   and independently qualified specialist review. Source-only hostile Git
+   fixtures cannot themselves attest a protected physical installation.
+3. Obtain clean/qualified independent review of the exact new source, preserve
+   the mandatory escalation path for authority-bearing workflows, and use the
+   existing operator-protected merge workflow. No direct merge or self-review.
+4. On Battle Bridge, install/version the executable parent, OS Node/Git and
+   verified module closure in an administrator-protected location distinct from
+   the ordinary writable project checkout and Shared Workspace. Collect
+   independent readbacks of effective reviewer/implementer identities and
+   *negative* write/reentry tests. Keep signing roots outside all workers.
+5. Run the native 13-challenge Windows exam and 10-question baseline against
+   the real pinned installed Ollama model digest in a clean exact-source
+   checkout, while the independent VR resource governor permits inference.
+   Preserve typed HOLD for missing Ollama digest addressing or gaming activity.
+6. A separate authenticated auditor must attest provenance, signer protection,
+   revocation/replay controls and genuine principal separation. Only after an
+   independent specialist-policy change is protected-merged may local reviewer
+   receipts be admitted as a qualified alternative to Codex.
+
+An approved source PR, an apparent owner identity in a text field, and a
+synthetic 13/13 regression are not physical host or independent-signer proof.
+Do not release the historic R7 lease, install the custody witness or claim
+live building merely from successful reviewer source integration.
