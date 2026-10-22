@@ -9,6 +9,8 @@ namespace Stephanos.RescueIslandCustody;
 /// <summary>
 /// Actual TOKEN_QUERY observations, never an enrollment or exclusion grant.
 /// No caller identity, token, clock or eligibility flags are accepted.
+/// AssignedSensitivePrivileges conservatively reports every assigned privilege
+/// except the two ordinary diagnostic exclusions; it is not an isolation verdict.
 /// </summary>
 public sealed record WindowsProcessPrincipalObservation(
     string ProcessUserSid, bool ThreadImpersonating, bool Elevated,
@@ -80,13 +82,10 @@ public sealed record WindowsProcessPrincipalObservation(
     {
         // Presence includes disabled privileges: they may be enabled later.
         // This deliberately makes no assertion about complete OS isolation.
-        // Identity/delegation rights follow Microsoft's privilege contract:
+        // Only the two reviewed ordinary diagnostic exclusions are omitted.
+        // Every other OS-resolved name is reported, including names unknown to
+        // this build. An unresolvable LUID still fails closed below.
         // https://learn.microsoft.com/windows/win32/secauthz/privilege-constants
-        string[] sensitive = ["SeTcbPrivilege", "SeCreateTokenPrivilege", "SeAssignPrimaryTokenPrivilege",
-            "SeDebugPrivilege", "SeImpersonatePrivilege", "SeDelegateSessionUserImpersonatePrivilege",
-            "SeEnableDelegationPrivilege", "SeMachineAccountPrivilege", "SeBackupPrivilege", "SeRestorePrivilege",
-            "SeTakeOwnershipPrivilege", "SeLoadDriverPrivilege", "SeSecurityPrivilege",
-            "SeManageVolumePrivilege", "SeRelabelPrivilege", "SeTrustedCredManAccessPrivilege"];
         if (size < 4) throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
         uint count = unchecked((uint)Marshal.ReadInt32(data));
         if (count > 128 || 4L + count * 12L > size)
@@ -102,10 +101,15 @@ public sealed record WindowsProcessPrincipalObservation(
             if (!LookupPrivilegeNameW(null, ref luid, name, ref length))
                 throw new CustodyException("ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE", Marshal.GetLastWin32Error());
             string value = name.ToString();
-            if (sensitive.Contains(value, StringComparer.Ordinal)) result.Add(value);
+            if (!IsOrdinaryAssignedPrivilegeName(value)) result.Add(value);
         }
         return result.ToImmutable().Sort(StringComparer.Ordinal);
     }
+
+    // Exact ordinal names only: neither prefixes, case variants nor a future
+    // OS privilege may inherit an exclusion. These omissions grant no authority.
+    private static bool IsOrdinaryAssignedPrivilegeName(string name)
+        => name is "SeChangeNotifyPrivilege" or "SeTimeZonePrivilege";
 
     private static IntPtr ReadInformation(SafeAccessTokenHandle token, int informationClass, out int size)
     {

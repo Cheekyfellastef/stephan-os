@@ -35,6 +35,64 @@ Run("synthetic privilege classification ignores enablement and excludes ordinary
             throw new Exception("PRIVILEGE_CLASSIFICATION_DEPENDS_ON_ENABLEMENT_OR_ORDINARY_RIGHTS");
     }
 });
+Run("native decoder conservatively reports directory sync and other non-exempt privilege families", () =>
+{
+    string[] names = ["SeSyncAgentPrivilege", "SeSystemtimePrivilege", "SeAuditPrivilege",
+        "SeCreateGlobalPrivilege", "SeCreateSymbolicLinkPrivilege", "SeIncreaseWorkingSetPrivilege",
+        "SeLockMemoryPrivilege", "SeShutdownPrivilege", "SeSystemEnvironmentPrivilege"];
+    foreach (uint attributes in new[] { 0u, 2u })
+    {
+        var assigned = names.Reverse().Select(name => (Name: name, Attributes: attributes))
+            .Append(("SeChangeNotifyPrivilege", attributes)).Append(("SeTimeZonePrivilege", attributes)).ToArray();
+        if (!NativePrivilegeFixture.Classify(assigned).SequenceEqual(names.OrderBy(name => name, StringComparer.Ordinal)))
+            throw new Exception("NON_EXEMPT_ASSIGNED_PRIVILEGE_SILENTLY_OMITTED");
+    }
+});
+Run("conservative rule covers the complete documented privilege inventory", () =>
+{
+    // Independent Microsoft inventory, not a copy of a production sensitive list.
+    // Pure name classification also covers documented names that this OS may
+    // not resolve, without pretending they are assigned to the hosted account.
+    // https://learn.microsoft.com/windows/win32/secauthz/privilege-constants
+    string[] inventory = ["SeAssignPrimaryTokenPrivilege", "SeAuditPrivilege", "SeBackupPrivilege",
+        "SeChangeNotifyPrivilege", "SeCreateGlobalPrivilege", "SeCreatePagefilePrivilege",
+        "SeCreatePermanentPrivilege", "SeCreateSymbolicLinkPrivilege", "SeCreateTokenPrivilege",
+        "SeDebugPrivilege", "SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege",
+        "SeImpersonatePrivilege", "SeIncreaseBasePriorityPrivilege", "SeIncreaseQuotaPrivilege",
+        "SeIncreaseWorkingSetPrivilege", "SeLoadDriverPrivilege", "SeLockMemoryPrivilege",
+        "SeMachineAccountPrivilege", "SeManageVolumePrivilege", "SeProfileSingleProcessPrivilege",
+        "SeRelabelPrivilege", "SeRemoteShutdownPrivilege", "SeRestorePrivilege", "SeSecurityPrivilege",
+        "SeShutdownPrivilege", "SeSyncAgentPrivilege", "SeSystemEnvironmentPrivilege", "SeSystemProfilePrivilege",
+        "SeSystemtimePrivilege", "SeTakeOwnershipPrivilege", "SeTcbPrivilege", "SeTimeZonePrivilege",
+        "SeTrustedCredManAccessPrivilege", "SeUndockPrivilege", "SeUnsolicitedInputPrivilege"];
+    var omitted = inventory.Where(name => !NativePrivilegeFixture.ReportsResolvedName(name)).ToArray();
+    if (inventory.Length != 36 || inventory.Distinct(StringComparer.Ordinal).Count() != inventory.Length
+        || !omitted.SequenceEqual(new[] { "SeChangeNotifyPrivilege", "SeTimeZonePrivilege" }))
+        throw new Exception("DOCUMENTED_PRIVILEGE_CLASSIFICATION_INVARIANT_BROKEN");
+});
+Run("future and near-match names cannot inherit ordinary privilege exclusions", () =>
+{
+    var names = Enumerable.Range(0, 128).Select(i => "SeFutureFixture" + i + "Privilege").ToList();
+    foreach (string ordinary in new[] { "SeChangeNotifyPrivilege", "SeTimeZonePrivilege" })
+    {
+        if (NativePrivilegeFixture.ReportsResolvedName(ordinary))
+            throw new Exception("EXACT_ORDINARY_EXCLUSION_LOST");
+        names.AddRange([ordinary.ToLowerInvariant(), ordinary.ToUpperInvariant(),
+            "Future" + ordinary, ordinary + "Future", " " + ordinary, ordinary + " "]);
+    }
+    if (names.Any(name => !NativePrivilegeFixture.ReportsResolvedName(name)))
+        throw new Exception("NON_EXACT_NAME_INHERITED_ORDINARY_EXCLUSION");
+});
+Run("unresolvable native privilege LUID fails observation instead of disappearing", () =>
+{
+    try
+    {
+        _ = NativePrivilegeFixture.ClassifyUnresolvableLuid();
+        throw new Exception("UNRESOLVABLE_PRIVILEGE_WAS_SILENTLY_ACCEPTED");
+    }
+    catch (TargetInvocationException e) when (e.InnerException is CustodyException c
+        && c.Blocker == "ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE" && c.NativeError != 0) { }
+});
 Run("primary token SID matches actual process; observations do not grant authority", () =>
 {
     var facts = WindowsProcessPrincipalObservation.ObserveCurrentProcess();
@@ -161,13 +219,41 @@ internal static class NativePrivilegeFixture
                 Marshal.WriteInt32(data, offset + 4, luid.HighPart);
                 Marshal.WriteInt32(data, offset + 8, unchecked((int)entries[i].Attributes));
             }
-            var decoder = typeof(WindowsProcessPrincipalObservation).GetMethod("ClassifySensitivePrivileges",
-                BindingFlags.NonPublic | BindingFlags.Static)
-                ?? throw new Exception("PRODUCTION_PRIVILEGE_DECODER_UNAVAILABLE");
-            return decoder.Invoke(null, new object[] { data, size }) is ImmutableArray<string> result
-                ? result : throw new Exception("PRODUCTION_PRIVILEGE_DECODER_RESULT_INVALID");
+            return Decode(data, size);
         }
         finally { Marshal.FreeHGlobal(data); }
+    }
+
+    internal static bool ReportsResolvedName(string name)
+    {
+        var predicate = typeof(WindowsProcessPrincipalObservation).GetMethod("IsOrdinaryAssignedPrivilegeName",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new Exception("PRODUCTION_ORDINARY_PRIVILEGE_PREDICATE_UNAVAILABLE");
+        return predicate.Invoke(null, new object[] { name }) is bool ordinary
+            ? !ordinary : throw new Exception("PRODUCTION_ORDINARY_PRIVILEGE_PREDICATE_RESULT_INVALID");
+    }
+
+    internal static ImmutableArray<string> ClassifyUnresolvableLuid()
+    {
+        IntPtr data = Marshal.AllocHGlobal(16);
+        try
+        {
+            Marshal.WriteInt32(data, 0, 1);
+            Marshal.WriteInt32(data, 4, -1);
+            Marshal.WriteInt32(data, 8, -1);
+            Marshal.WriteInt32(data, 12, 0);
+            return Decode(data, 16);
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+
+    private static ImmutableArray<string> Decode(IntPtr data, int size)
+    {
+        var decoder = typeof(WindowsProcessPrincipalObservation).GetMethod("ClassifySensitivePrivileges",
+            BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new Exception("PRODUCTION_PRIVILEGE_DECODER_UNAVAILABLE");
+        return decoder.Invoke(null, new object[] { data, size }) is ImmutableArray<string> result
+            ? result : throw new Exception("PRODUCTION_PRIVILEGE_DECODER_RESULT_INVALID");
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -6,8 +6,14 @@ This builds the Island's own native executable entry point. Its only admitted
 operation, `--inspect-principal`, reads the actual primary process token with
 `TOKEN_QUERY`, checks for a separate impersonating thread, and emits its own
 PID/start time, SID, elevation type, administrators-group presence and assigned
-sensitive privileges. Disabled sensitive privileges are included because they
-can be enabled later. It never accepts an identity/token from the caller.
+privileges. `assignedSensitivePrivileges` conservatively reports every assigned,
+OS-resolved privilege except the two ordinary diagnostic exclusions,
+`SeChangeNotifyPrivilege` and `SeTimeZonePrivilege`. Disabled privileges are
+included because they can be enabled later; new OS-resolved names are reported
+without a source-list update. A privilege-name lookup failure holds the whole
+observation instead of silently omitting an entry. This reporting rule and its
+two exclusions are not a complete isolation or admission decision. The host
+never accepts an identity/token from the caller.
 
 Every invocation remains **HELD**, with exit code 3 for an observation and 64
 for an unregistered operation. `--run`, recovery, task/path arguments, stdin and
@@ -38,8 +44,12 @@ Build and run its actual Windows child-process tests:
 dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release
 ```
 
-The tests observe a real process token and real thread impersonation, then
-launch the built native host and bind its JSON PID to the actual child handle.
+Synthetic native privilege buffers exercise the production decoder without
+assigning rare privileges to the test account. Separate pure-name fixtures
+cover the documented inventory and future names without asserting that those
+names exist on the hosted OS. The tests also observe a real process token and
+real thread impersonation, then launch the built native host and bind its JSON
+PID to the actual child handle.
 Forged authority environment variables and unregistered commands remain held;
 the empty disposable working directory stays unchanged. This is host-bootstrap
 test proof, **not physical Island builder pickup or a non-R7 build receipt**.
