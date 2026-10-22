@@ -200,6 +200,7 @@ try
         if (first.Result + second.Result != 1 || File.ReadAllText(path) != (first.Result == 1 ? "first" : "second"))
             throw new Exception("CONCURRENT_CREATE_WRITER_EXCLUSION_FAILED");
     });
+    ProposalCustodyTests.Run(root, Run);
     Console.WriteLine($"ISLAND_NATIVE_CUSTODY_TESTS_PASSED={passed}");
     Console.WriteLine("ISLAND_HOST_COMMISSIONED=false;ISLAND_EXECUTION_ALLOWED=false;R7_LEASE_ACCESSED=false");
 }
