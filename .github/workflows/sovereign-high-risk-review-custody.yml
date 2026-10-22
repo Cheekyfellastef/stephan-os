@@ -1,0 +1,32 @@
+name: Sovereign High-Risk Review Custody
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'shared/agents/**'
+      - '.github/workflows/sovereign-high-risk-review-custody.yml'
+permissions:
+  contents: read
+jobs:
+  custody:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Actual hostile pre-execution and reviewed-object fixtures; digest and coverage contracts
+        run: node --test scripts/sovereign-high-risk-advisory-launcher-v1.test.mjs scripts/sovereign-windows-review-calibration-v1.test.mjs scripts/sovereign-review-coverage-v1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs shared/agents/sovereignReviewCoverageV1.test.mjs
+      - name: Complete advisory suite with real POSIX path/governor semantics
+        if: runner.os == 'Linux'
+        run: node --test scripts/sovereign-high-risk-advisory-v1.test.mjs
+      - name: Portable advisory contracts on Windows
+        if: runner.os == 'Windows'
+        run: node --test --test-skip-pattern="exact-head Git snapshot|physical gaming-governor" scripts/sovereign-high-risk-advisory-v1.test.mjs
