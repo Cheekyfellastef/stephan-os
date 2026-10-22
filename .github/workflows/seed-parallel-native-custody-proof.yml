@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/windows/Stephanos.SeedParallelCustody/**'
       - 'src/windows/Stephanos.SeedParallelCustody.Tests/**'
+      - 'src/windows/Stephanos.RescueIslandCustody/**'
       - 'scripts/seed-canopy-parallel-builder.mjs'
       - 'shared/runtime/seedCanopyParallelResourceV1.mjs'
       - 'docs/architecture/seed-parallel-target-write-custody.md'
@@ -43,3 +44,4 @@ jobs:
           Write-Output 'SEED_PHYSICAL_BUILD_PICKUP_PROVEN=false'
           Write-Output 'SEED_PRODUCTION_WORKER_COMMISSIONED=false'
           Write-Output 'R7_ORIGINAL_LEASE_RELEASED=false'
+

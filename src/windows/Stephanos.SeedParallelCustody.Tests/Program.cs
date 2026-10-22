@@ -104,7 +104,9 @@ try
         Check(!File.Exists(Path.Combine(parent, "alias.md")), "NO_REPARSE_WRITE");
     }
     finally { Directory.Delete(linked); }
+    int inventoryCount = InventoryCustodyTests.Run(root);
     Console.WriteLine("SEED_NATIVE_NEW_FILE_ASSERTIONS=" + count);
+    Console.WriteLine("SEED_NATIVE_INVENTORY_SESSION_TESTS=" + inventoryCount);
     Console.WriteLine("SEED_PRODUCTION_WORKER_COMMISSIONED=false");
     return 0;
 }
@@ -140,3 +142,4 @@ internal static class TestErrorMode
     [DllImport("kernel32.dll")] private static extern uint GetErrorMode();
     [DllImport("kernel32.dll")] private static extern uint SetErrorMode(uint mode);
 }
+

@@ -47,6 +47,34 @@ This removes the reachable executable-read path rather than adding a racy
 config check before Git status. Physical candidate proof requires a separately
 qualified reader bound to the complete operation.
 
+## Deterministic inventory input and output lifetime
+
+The next component slice is `SeedInventoryCustodySession`: two immutable,
+digest-checked private input snapshots (manifest and canonical seed contract)
+and one new output, retained for a single lifetime. It reuses the stateless
+`PinnedFileSnapshot` primitive already present in the Rescue custody assembly;
+this is a code dependency only, with no Island worker, host or ownership state.
+The Seed test workflow now runs when that dependency changes as well.
+
+The existing Seed new-file primitive has a prepare/create lifecycle. Preparation
+freezes proposal bytes and retains existing output-parent handles without
+creating an artifact. Those handles remain held while the input snapshots are
+acquired, including when the output is outside the input parents. Creation is
+one-shot and relative to the retained parent. A leaf installed by another
+writer is preserved; a failure closes the session, rather than silently trying
+again against a different namespace state. Input readers consume only verified
+cached bytes; no path, native handle or mutable internal buffer is reopened or
+exported. Locks serialize creation, reads and disposal.
+
+This completes only that component lifetime. Caller-supplied hashes do not
+authenticate the manifest or candidate provenance, and the two declared inputs
+do not represent all executable/import, Git/index/object, test, claim/receipt
+or principal dependencies. No existing production caller uses the component.
+Both worker capability constants remain false; original R7 custody, qualified
+host commissioning, independent review, protected merge and physical pickup
+remain separate requirements. Do not turn component fixture success into a
+live building claim or use it to skip the remaining host containment work.
+
 
 ## Bounded approval verification fairness
 
@@ -55,3 +83,4 @@ The supervisor collects valid unclaimed inbox entries before choosing up to four
 The cursor is untrusted availability state, contains no approval, and cannot authorize execution. A corrupt or absent cursor resets ordering; an absent prior filename resumes at its sorted successor, wrapping when necessary. A finite unchanged queue receives bounded round-robin coverage across sequential foreground invocations. Concurrent invocations may overlap and are not serialized by this cursor. No claim, source ownership, daemon or scheduler lock is introduced. Every selected reference still receives fresh independent GitHub verification, and both production execution holds remain in force.
 
 The real subprocess/HTTP regression places four schema-valid rejected references before a valid owner-approved task, verifies the first process makes exactly four lookups with no eligible task, then verifies a new process reaches the valid task without exceeding four lookups. It preserves the production no-claim/no-inference assertions. This is fixture proof, not host commissioning or live pickup.
+

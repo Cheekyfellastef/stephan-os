@@ -17,19 +17,36 @@ public sealed class PinnedNewFile : IDisposable
 {
     public const int MaximumBytes = 128 * 1024;
     private readonly List<SafeFileHandle> ancestors = new();
+    private readonly List<string> ancestorPaths = new();
     private FileStream? stream;
     private readonly byte[] expected;
+    private readonly byte[] content;
+    private readonly string path;
+    private readonly string leafName;
+    private uint volume;
     private readonly object gate = new();
     private bool disposed;
+    private bool creationAttempted;
     public bool SourceOwnershipAuthenticated => false;
     public bool CompleteOperationCustodyProven => false;
     public bool LeaseReleaseAuthorized => false;
 
-    private PinnedNewFile(byte[] digest) { expected = digest; }
+    private PinnedNewFile(byte[] digest, byte[] bytes, string target, string leaf)
+        => (expected, content, path, leafName) = (digest, bytes, target, leaf);
 
     // All parent directories must already exist. No overwrite, mkdir, delete,
     // path reopen for I/O, executable launch, ACL, claim or signer operation.
     public static PinnedNewFile Create(string path, byte[] content, string digestHex)
+    {
+        var lease = Prepare(path, content, digestHex);
+        try { lease.Create(); return lease; }
+        catch { lease.Dispose(); throw; }
+    }
+
+    // Freeze the proposal and retain the complete existing output ancestry
+    // without creating a leaf. A containing operation can acquire its exact
+    // immutable inputs while these same parent handles remain retained.
+    public static PinnedNewFile Prepare(string path, byte[] content, string digestHex)
     {
         if (!OperatingSystem.IsWindows()) throw Held("SEED_NATIVE_WINDOWS_REQUIRED");
         if (content is null || content.Length == 0 || content.Length > MaximumBytes
@@ -44,7 +61,7 @@ public sealed class PinnedNewFile : IDisposable
         try { parts = ValidatePath(path); }
         catch (SeedWriterHeldException) { throw; }
         catch { throw Held("SEED_NATIVE_PATH_INVALID"); }
-        var lease = new PinnedNewFile(digest);
+        var lease = new PinnedNewFile(digest, privateBytes, path, parts[^1]);
         try
         {
             string cursor = path[..3];
@@ -52,31 +69,55 @@ public sealed class PinnedNewFile : IDisposable
                 0x02200000, IntPtr.Zero);
             if (root.IsInvalid) { root.Dispose(); throw Held("SEED_NATIVE_ROOT_OPEN_DENIED"); }
             lease.ancestors.Add(root);
+            lease.ancestorPaths.Add(cursor);
             uint volume = Check(root, cursor, true);
+            lease.volume = volume;
             for (int i = 0; i < parts.Length - 1; i++)
             {
                 var directory = OpenRelative(lease.ancestors[^1], parts[i], true);
                 lease.ancestors.Add(directory);
                 cursor += parts[i] + "\\";
+                lease.ancestorPaths.Add(cursor.TrimEnd('\\'));
                 if (Check(directory, cursor.TrimEnd('\\'), true) != volume)
                     throw Held("SEED_NATIVE_VOLUME_CHANGED");
             }
-            SafeFileHandle file = OpenRelative(lease.ancestors[^1], parts[^1], false);
-            try
-            {
-                if (Check(file, path, false) != volume) throw Held("SEED_NATIVE_VOLUME_CHANGED");
-                lease.stream = new FileStream(file, FileAccess.ReadWrite, 4096, false);
-            }
-            catch { file.Dispose(); throw; }
-            lease.stream.Write(privateBytes);
-            lease.stream.Flush(true);
-            lease.Verify();
             return lease;
         }
         catch (SeedWriterHeldException) { lease.Dispose(); throw; }
         catch { lease.Dispose(); throw Held("SEED_NATIVE_CREATE_OR_IO_DENIED"); }
-        // Failed writes may leave a partial new artifact. Preserve it for owner
-        // reconciliation; never delete a path by lookup or claim successful rollback.
+    }
+
+    // One create attempt for this frozen proposal. A failed create cannot be
+    // retried against a later namespace state, even if another process removes
+    // the conflicting leaf. Disposal is the only transition after failure.
+    public void Create()
+    {
+        lock (gate)
+        {
+            if (disposed) throw Held("SEED_NATIVE_LEASE_CLOSED");
+            if (creationAttempted) throw Held("SEED_NATIVE_CREATE_ALREADY_ATTEMPTED");
+            creationAttempted = true;
+            try
+            {
+                for (int i = 0; i < ancestors.Count; i++)
+                    if (Check(ancestors[i], ancestorPaths[i], true) != volume)
+                        throw Held("SEED_NATIVE_VOLUME_CHANGED");
+                SafeFileHandle file = OpenRelative(ancestors[^1], leafName, false);
+                try
+                {
+                    if (Check(file, path, false) != volume) throw Held("SEED_NATIVE_VOLUME_CHANGED");
+                    stream = new FileStream(file, FileAccess.ReadWrite, 4096, false);
+                }
+                catch { file.Dispose(); throw; }
+                stream.Write(content);
+                stream.Flush(true);
+                Verify();
+            }
+            catch (SeedWriterHeldException) { Dispose(); throw; }
+            catch { Dispose(); throw Held("SEED_NATIVE_CREATE_OR_IO_DENIED"); }
+            // Failed writes may leave a partial new artifact. Preserve it for
+            // owner reconciliation; never delete by path or assert rollback.
+        }
     }
 
     public void Verify()
@@ -103,6 +144,8 @@ public sealed class PinnedNewFile : IDisposable
             {
                 for (int i = ancestors.Count - 1; i >= 0; i--) ancestors[i].Dispose();
                 ancestors.Clear();
+                ancestorPaths.Clear();
+                CryptographicOperations.ZeroMemory(content);
             }
         }
     }
@@ -203,3 +246,4 @@ public sealed class PinnedNewFile : IDisposable
     private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,
         StringBuilder path, uint length, uint flags);
 }
+
