@@ -333,9 +333,14 @@ async function publishControllerLaneTruth() {
         const keyFile = resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-private.pem');
         const meta = await lstat(keyFile);
         if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) throw new Error('UNCOMMISSIONED_CORE_KEY');
+        const signingPrivateKeyPem = await readFile(keyFile, 'utf8');
+        const finalCanonicalTree = verifyCleanCanonicalTrackedMainV1(repoRoot);
+        if (!finalCanonicalTree.ok || finalCanonicalTree.sourceHead !== sourceHead) {
+          throw new Error(finalCanonicalTree.blocker || 'LOGICAL_GOAL_SOURCE_CHANGED_DURING_OBSERVATION');
+        }
         const signed = signLogicalGoalBuildTruthV1({
           buildTruth, sourceHead, proofRecords: observed.records,
-          signingPrivateKeyPem: await readFile(keyFile, 'utf8'),
+          signingPrivateKeyPem,
           trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
           trustedWorkerPublicKeySha256: workerTrust.workerPublicKeySha256,
           corePublicKeySha256: workerTrust.corePublicKeySha256,

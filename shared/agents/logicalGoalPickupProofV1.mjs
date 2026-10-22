@@ -1,10 +1,12 @@
-import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, randomUUID, sign, verify } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { lstat, open, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { resolveBattleBridgeGitExecutable, createBattleBridgeMinimalChildEnvironment,
   validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
 
 // Use the EXISTING independently commissioned Core Ed25519 key; this
 // observation is diagnostic only and never grants source/lease/merge powers.
@@ -21,6 +23,59 @@ const digest = value => createHash('sha256').update(JSON.stringify(value)).diges
 const text = v => String(v ?? '').trim();
 const millis = v => Date.parse(text(v));
 
+// Core and monitor are independent readers. A shared payload cache cannot
+// authenticate either one and must not starve the second reader every cycle.
+// This stable private reader key retains the broker's repository-wide backoff.
+const canonicalMainReaderKey = `logical-goal-pickup:authenticated-main:${process.pid}:${randomUUID()}`;
+let authenticatedMainObservation = null;
+function readAuthenticatedCanonicalMainV1(root) {
+  // Use the existing repository-wide broker's single-reader and rate-limit
+  // custody. A writable Shared Workspace cache is discovery, never authority:
+  // only this call's successful upstream observation may qualify the source.
+  // Neither a caller-supplied SHA nor the checkout's origin/main is trusted.
+  const monotonicNow = process.hrtime.bigint();
+  // Reuse only our own live transport result for one second. Never import a
+  // persisted broker payload into this private observation. Each reuse still
+  // performs both local tracked-tree checks below.
+  if (authenticatedMainObservation?.root === root
+    && monotonicNow >= authenticatedMainObservation.at
+    && monotonicNow - authenticatedMainObservation.at < 1_000_000_000n) {
+    return authenticatedMainObservation.result;
+  }
+  const gh = process.platform === 'win32'
+    ? BATTLE_BRIDGE_WINDOWS_HOST.githubCli : '/usr/bin/gh';
+  const childEnv = createBattleBridgeMinimalChildEnvironment(process.env);
+  try {
+    const observed = readBrokeredGithubJson({
+      key: canonicalMainReaderKey,
+      endpoint: 'repos/Cheekyfellastef/stephan-os/git/ref/heads/main',
+      args: ['--hostname', 'github.com', '--jq', '{ref,url,object:{sha:.object.sha,type:.object.type}}'],
+      ttlMs: 1000, maxStaleMs: 1000, timeoutMs: 10000,
+      ghCommand: gh,
+      // Bind the existing CLI to its installed executable and fixed host,
+      // without inherited PATH, GH_HOST, proxy, TLS or command overrides.
+      spawnSyncFn: (_command, args, options) => spawnSync(gh, args, {
+        ...options, env: childEnv,
+      }),
+    });
+    if (observed?.rateLimitHold || observed?.reason === 'GITHUB_RATE_LIMIT_BACKOFF') {
+      return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_GITHUB_RATE_LIMIT_HOLD' });
+    }
+    const response = observed?.payload;
+    if (observed?.ok !== true || observed.source !== 'UPSTREAM_REFRESH'
+      || observed.ageMs !== 0 || response?.ref !== 'refs/heads/main'
+      || response.url !== 'https://api.github.com/repos/Cheekyfellastef/stephan-os/git/refs/heads/main'
+      || response.object?.type !== 'commit' || !SHA40.test(response.object?.sha || '')) {
+      return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_AUTHENTICATED_MAIN_UNAVAILABLE' });
+    }
+    const result = Object.freeze({ ok: true, sourceHead: response.object.sha, blocker: '' });
+    authenticatedMainObservation = { root, at: process.hrtime.bigint(), result };
+    return result;
+  } catch {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_AUTHENTICATED_MAIN_UNAVAILABLE' });
+  }
+}
+
 
 /**
  * A Git HEAD label is not evidence that the code evaluating physical pickup
@@ -28,8 +83,7 @@ const millis = v => Date.parse(text(v));
  * from canonical main, including staged edits. Untracked user files are left
  * untouched; never reset or clean the operator's checkout.
  */
-export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
-  const root = resolve(repoRoot);
+function inspectLocalCanonicalTrackedMainV1(root) {
   // Never inherit Git's environment-controlled worktree/config overrides.
   // The shared fixed boundary also disables executable Git monitors/hooks,
   // external transports and dynamic credential helpers in every child call.
@@ -73,6 +127,28 @@ export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
     return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_TRACKED_INDEX_FLAGS_UNSAFE' });
   }
   return Object.freeze({ ok: true, sourceHead: head, blocker: '' });
+}
+
+export function verifyCleanCanonicalTrackedMainV1(repoRoot = process.cwd()) {
+  const root = resolve(repoRoot);
+  const initial = inspectLocalCanonicalTrackedMainV1(root);
+  if (!initial.ok) return initial;
+  // A source writer can move both local refs after committing altered code.
+  // The final source decision must bind to GitHub's authenticated current main,
+  // not merely to two matching values controlled by that same checkout.
+  const authenticatedMain = readAuthenticatedCanonicalMainV1(root);
+  if (!authenticatedMain.ok) return authenticatedMain;
+  // The bounded upstream read may take seconds. Re-observe tracked source and
+  // refs after it; a concurrent edit cannot borrow the earlier clean result.
+  const final = inspectLocalCanonicalTrackedMainV1(root);
+  if (!final.ok) return final;
+  if (final.sourceHead !== initial.sourceHead) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_SOURCE_CHANGED_DURING_OBSERVATION' });
+  }
+  if (authenticatedMain.sourceHead !== final.sourceHead) {
+    return Object.freeze({ ok: false, blocker: 'LOGICAL_GOAL_AUTHENTICATED_MAIN_MISMATCH' });
+  }
+  return final;
 }
 
 // Public-key identities are cryptographic keys, not PEM byte strings. Different

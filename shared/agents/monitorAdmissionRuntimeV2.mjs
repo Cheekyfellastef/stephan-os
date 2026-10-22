@@ -438,6 +438,11 @@ export async function loadLogicalGoalProofTrustV2(input = {}) {
   const localStateRoot = resolve(text(env.LOCALAPPDATA) || resolve(text(env.USERPROFILE) || homedir(), 'AppData', 'Local'), 'Stephanos');
   const workerTrust = await loadPinnedWorkerPickupVerifierV1({ localStateRoot, env });
   if (!workerTrust.ok) return Object.freeze({ blocker: workerTrust.blocker });
+  const finalCanonicalTree = verifyCleanCanonicalTrackedMainV1(input.repoRoot || process.cwd());
+  if (!finalCanonicalTree.ok || finalCanonicalTree.sourceHead !== expectedSourceHead) {
+    return Object.freeze({ blocker: finalCanonicalTree.blocker
+      || 'LOGICAL_GOAL_SOURCE_CHANGED_DURING_OBSERVATION' });
+  }
   return Object.freeze({
     trustedPublicKeyPem, trustedPublicKeySha256: sha, expectedSourceHead,
     trustedWorkerPublicKeyPem: workerTrust.workerPublicKeyPem,
