@@ -605,6 +605,86 @@ test('Windows calibration requires exact bounded identity and authenticated rout
   assert.equal(passed.command.arbitraryUnboundedCommandAllowed, false);
 });
 
+
+test('native reviewer setup exception retains only fixed typed preexecution denial', async () => {
+  const identity = {
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3199,branch:'main',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+    implementerProvider:'github-builder',
+    implementerSessionId:'builder-3199',reviewerSessionId:'reviewer-3199',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  let called=0;
+  const result=await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    {payload:{actionId:'sovereign-windows-reviewer-calibration',reviewIdentity:identity}},
+  ),{repoRoot:REPO,routeProof:{commandPathProven:true,authenticatedMcp:true,mcpSessionReady:true},
+    spawnSyncFn(){called++;throw Error('PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET');}});
+  assert.equal(called,1);
+  assert.equal(result.ok,false);
+  assert.equal(result.finalVerdict,'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+  assert.equal(result.command.plan.processId,'sovereign-windows-reviewer-calibration');
+  assert.equal(result.blocker,'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+  assert.deepEqual(result.structuredContent,{ok:false,status:null,stdout:'',stderr:'',
+    errorCode:'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'});
+  assert.equal(result.contentText,'');
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET/);
+  assert.equal(result.command.mergeAuthority,false);
+});
+
+test('async reviewer spawn failures retain fixed private denial through both owner aliases', async () => {
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 1574, prNumber: 3189,
+    branch: 'main', sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder', implementerSessionId: 'builder-3189',
+    reviewerSessionId: 'reviewer-3189', implementerPrincipal: 'builder-principal',
+    reviewerPrincipal: 'reviewer-principal',
+  };
+  for (const operation of [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    SOVEREIGN_COMMANDER_OPERATION.START_PROCESS]) {
+    for (const mode of ['throw', 'error-event']) {
+      let calls = 0;
+      const result = await executeActualCommand(envelope(operation, { payload: {
+        [operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS ? 'processId' : 'actionId']:
+          'sovereign-windows-reviewer-calibration', reviewIdentity: identity,
+      } }), {
+        repoRoot: REPO,
+        routeProof: { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: true },
+        withMaintenanceOwner: (_command, execute) => execute(),
+        spawnFn() {
+          calls++;
+          const error = Object.assign(new Error('PRIVATE_SPAWN_MESSAGE'), { code: 'PRIVATE_SPAWN_CODE' });
+          if (mode === 'throw') throw error;
+          const child = new EventEmitter();
+          child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => false;
+          queueMicrotask(() => {
+            child.stdout.emit('data', 'PRIVATE_SPAWN_STDOUT');
+            child.stderr.emit('data', 'PRIVATE_SPAWN_STDERR');
+            child.emit('error', error);
+            child.emit('close', 0, null);
+          });
+          return child;
+        },
+      });
+      assert.equal(calls, 1, operation + ':' + mode);
+      assert.equal(result.ok, false);
+      assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+      assert.equal(result.blocker, 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+      assert.equal(result.structuredContent.status, null);
+      assert.equal(result.structuredContent.errorCode, result.blocker);
+      assert.equal(result.structuredContent.stdout, '');
+      assert.equal(result.structuredContent.stderr, '');
+      assert.equal(result.contentText, '');
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_SPAWN_/);
+      assert.equal(result.command.mergeAuthority, false);
+      assert.equal(result.command.leaseSeizureAllowed, false);
+    }
+  }
+});
+
 test('Windows calibration preserves authenticated exact-source launch in both async owner aliases', async t => {
   const hostileEnvironment = {
     NODE_OPTIONS: '--import=attacker.mjs', NODE_PATH: 'attacker',

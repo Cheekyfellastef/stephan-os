@@ -193,3 +193,19 @@ builder-root, builder-env, process-env and fallback precedence. The custody
 gate cannot consult an unrelated legacy OpenClaw/default tree. Regression
 checks precedence and the actual repair admission with stale/fresh configured
 evidence, including a fresh default tree that must not authorize that target.
+
+## Composition with the protected reviewer denial repair
+
+The protected merge of PR #3200 supplies a closed, redacted pre-execution
+failure for the Windows reviewer. The asynchronous owner introduced here
+consumes both synchronous spawn throws and child `error` events before that
+outer exception boundary. Without an explicit common failure path, it could
+return a raw error code or partial output instead of the fixed denial.
+
+Both async aliases now return the same typed reviewer HOLD with unknown exit
+status and empty output. The first terminal result remains authoritative;
+a later `close(0)` cannot turn a failed launch green. Other fixed processes
+retain their existing error classification. Regression tests exercise actual
+async dispatch through both aliases, hostile error fields/partial output and
+late close, without a real reviewer/model/process launch. This changes neither
+specialist qualification nor source-writer, signing or lease authority.

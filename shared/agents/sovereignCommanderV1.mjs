@@ -841,6 +841,19 @@ function runOwnedFixedProcess(plan, options = {}) {
       resolveResult(frozen({ ok: status === 0 && !signal && !errorCode, status,
         signal, errorCode, stdout, stderr }));
     };
+    const failSpawn = error => {
+      if (settled) return;
+      if (plan.processId === 'sovereign-windows-reviewer-calibration') {
+        // The async owner consumes spawn failures here, before the outer
+        // exception boundary can redact them. Preserve the same fixed HOLD
+        // as synchronous setup; neither event payload nor partial output is
+        // a calibration receipt. Late close(0) must not change this failure.
+        stdout = ''; stderr = '';
+        finish(null, '', 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+      } else {
+        finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED'));
+      }
+    };
     try {
       child = (options.spawnFn || spawn)(plan.executable, launch.args, {
         cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
@@ -849,7 +862,7 @@ function runOwnedFixedProcess(plan, options = {}) {
       });
       child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
       child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
-      child.once('error', error => finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED')));
+      child.once('error', failSpawn);
       child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
       timer = (options.setTimeoutFn || setTimeout)(() => {
         if (settled) return;
@@ -858,7 +871,7 @@ function runOwnedFixedProcess(plan, options = {}) {
         try { child.kill(); } catch {}
       }, safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS));
       timer?.unref?.();
-    } catch (error) { finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED')); }
+    } catch (error) { failSpawn(error); }
   });
 }
 
@@ -1123,6 +1136,23 @@ async function executeAdmittedSovereignCommandV1(command, options) {
       finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    // Fixed high-risk reviewer failure may happen before child spawn or before
+    // a terminal calibration marker exists. Never expose the raw thrown value,
+    // executable paths, Git arguments, model output, or loader implementation.
+    // Retain only one closed-world denial for the existing authenticated MCP
+    // mailbox, preserving explicit status:null and no authority on exceptions.
+    if (command.plan?.kind === 'fixed-process'
+      && command.plan.processId === 'sovereign-windows-reviewer-calibration') {
+      const errorCode = 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+      return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        contentText: '',
+        structuredContent: frozen({ ok: false, status: null,
+          stdout: '', stderr: '', errorCode }),
+        blocker: errorCode,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      });
+    }
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
