@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
+import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -30,6 +32,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-recovery-mesh',
   'status-worker-watchdog',
   'status-stephanos-core-daemon',
+  'sovereign-windows-reviewer-calibration',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -91,6 +94,7 @@ const ALLOWED_FIELDS = new Set([
   'targetBranch',
   'targetHead',
   'controllerActivity',
+  'reviewIdentity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -2072,6 +2076,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'original-source-custody-census'
@@ -2108,6 +2113,26 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
       remoteAction,
+    });
+  }
+  // Only the fixed reviewed calibration may accept per-review identity.
+  // The outer authenticated mailbox HEAD and repository must agree; a
+  // caller-supplied identity cannot create high-risk reviewer authority.
+  if (remoteAction === 'sovereign-windows-reviewer-calibration'
+    || Object.hasOwn(command, 'reviewIdentity')) {
+    if (remoteAction !== 'sovereign-windows-reviewer-calibration') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_ACTION_MISMATCH', { requested: true });
+    }
+    const identity = validateSovereignWindowsReviewIdentityV1(command.reviewIdentity);
+    if (!identity || identity.sourceHead !== expectedHead
+      || identity.repository !== text(command.repository)
+      || identity.branch !== text(command.branch)) {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_UNBOUND', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction,
+        reviewIdentity: identity }),
     });
   }
   if (remoteAction === 'starfield-vr-telemetry-archive') {
@@ -3138,7 +3163,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
               'utf8',
             ).toString('base64url'),
           }
-          : { actionId: shape.command.remoteAction },
+          : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
+            ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
@@ -3147,7 +3174,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
-  const boundedFailure = dedicatedBoundedFailureAction
+  const boundedFailure = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
   if (boundedFailure) {
@@ -3161,10 +3189,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       secretMaterialReturned: false,
     });
   }
-  const rawMaintenance = dedicatedBoundedFailureAction
+  const rawMaintenance = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
+  if (shape.command.remoteAction === 'sovereign-windows-reviewer-calibration') {
+    const calibration = parseWindowsCalibrationRemoteV1(
+      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead,
+      shape.command.reviewIdentity.baseSha);
+    if (!calibration) {
+      // The calibration may fail before it can emit a typed, signed-source
+      // candidate/HOLD projection. Keep receipt admission fail-closed while
+      // exposing only the pre-existing strict token-filtered native failure.
+      // Never echo native stdout, stderr, command arguments, identities or paths.
+      const nativeFailure = safeMaintenanceFailureProjection(
+        rawMaintenance, shape.command.remoteAction);
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        ...(nativeFailure ? {
+          // The canonical public mailbox reads operationResult.status.
+          // Missing native exit status remains absent, never coerced to zero.
+          ...(Number.isInteger(nativeFailure.status)
+            ? { status: nativeFailure.status } : {}),
+          errorCode: nativeFailure.errorCode,
+          executionBlocker: nativeFailure.executionBlocker,
+        } : {}),
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    // DONE means candidate exam completed, not that a specialist was admitted.
+    if (calibration.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_HELD', {
+        remoteAction: shape.command.remoteAction, calibration,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true, finalVerdict: 'SOVEREIGN_WINDOWS_CALIBRATION_CANDIDATE_OBSERVED',
+      remoteAction: shape.command.remoteAction, sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash, calibration,
+      qualifiedWindowsSpecialist: false, mergeAuthority: false, leaseReleaseAuthority: false,
+      vendorMeterRequired: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({ ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result });
+  }
+
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;

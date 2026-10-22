@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const workflowUrl = new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url);
 
-test('Build Stephanos UI fans independent proof families into five parallel jobs', async () => {
+test('Build Stephanos UI fans independent proof families into five parallel jobs with reviewer suites in separate custody lanes', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
   for (const job of ['scheduler-tests','runtime-guardrail-tests','surface-ignition-tests','vr-research-tests','build']) {
     assert.match(workflow, new RegExp(`^  ${job}:$`, 'm'));
@@ -21,13 +21,10 @@ test('Build Stephanos UI fans independent proof families into five parallel jobs
 
 test('stateful suites remain serial only inside their isolated parallel job', async () => {
   const workflow = await readFile(workflowUrl, 'utf8');
-  // Keep all five parallel job boundaries and the protected workflow byte-identical
-  // to main. The existing upliftWorkspaceProjection test entrypoint imports
-  // the disposable real-Git Seed Forge integration test without granting a
-  // PR authority to modify workflow execution.
-  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
+  // Preserve main's Seed Forge read-only integration expectations alongside reviewer jobs.
   assert.doesNotMatch(workflow, /Run Seed Forge physical Git fixture integration/);
   assert.match(workflow, /shared\/runtime\/upliftWorkspaceProjectionV1\.test\.mjs/);
+  assert.equal((workflow.match(/node --test --test-concurrency=1/g) || []).length, 5);
   assert.doesNotMatch(workflow, /# These stateful routing suites share process-global fixtures/);
 });
 
@@ -53,4 +50,26 @@ test('Seed native proof admits only both immutable verified action identities', 
   }
   assert.throws(() => assertSeedNativeActionIdentity(`${workflow}\n      - uses: actions/checkout@${'0'.repeat(40)}\n`));
   assert.throws(() => assertSeedNativeActionIdentity(workflow.replace('actions/checkout@', 'other/checkout@')));
+});
+
+// Source candidates must never grant themselves protected CI authority.
+// The new, read-only custody workflows independently run the reviewer suites
+// on both GitHub-hosted operating systems and have separate exact-head checks.
+test('Sovereign reviewer qualification suites remain in exact-head custody jobs', async () => {
+  const highRisk = await readFile(new URL('../../.github/workflows/sovereign-high-risk-review-custody.yml', import.meta.url), 'utf8');
+  const execution = await readFile(new URL('../../.github/workflows/sovereign-reviewer-execution-custody.yml', import.meta.url), 'utf8');
+  for (const source of [highRisk, execution]) {
+    assert.match(source, /os: \[ubuntu-latest, windows-latest\]/);
+    assert.match(source, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+    assert.match(source, /persist-credentials: false/);
+    assert.match(source, /'scripts\/\*\*'/);
+    assert.match(source, /'shared\/agents\/\*\*'/);
+  }
+  assert.match(highRisk, /shared\/agents\/sovereignHighRiskReviewCandidateV1\.test\.mjs/);
+  assert.match(highRisk, /scripts\/sovereign-high-risk-advisory-v1\.test\.mjs/);
+  assert.match(execution, /scripts\/sovereign-reviewer-wsl-bridge-v1\.test\.mjs/);
+  assert.match(execution, /scripts\/sovereign-reviewer-ollama-calibration-v1\.test\.mjs/);
+  assert.match(execution, /shared\/agents\/sovereignCalibrationV1\.test\.mjs/);
+  assert.match(execution, /shared\/agents\/localReviewCapabilityExamV1\.test\.mjs/);
+  assert.match(execution, /scripts\/sovereign-windows-review-calibration-v1\.test\.mjs/);
 });
