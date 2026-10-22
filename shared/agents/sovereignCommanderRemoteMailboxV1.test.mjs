@@ -3920,12 +3920,30 @@ test('native calibration pre-execution failures expose only a bounded denial, ne
   assert.equal(denied.ok,false);
   assert.equal(denied.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
   assert.equal(denied.errorCode,'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
-  assert.equal(denied.maintenanceStatus,null);
+  assert.equal(denied.status,undefined);
   assert.equal(denied.executionBlocker,'');
   assert.equal(denied.publicReceiptSafe,true);
   assert.equal(denied.secretMaterialReturned,false);
   assert.doesNotMatch(JSON.stringify(denied),/PRIVATE_NATIVE_STDERR/);
   assert.notEqual(denied.verdict,'COMMAND_EXECUTION_COMPLETE');
+  const nonzero=await (async()=>{
+    const native={
+      ok:false,finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:action,reviewIdentity}},
+      structuredContent:{status:2,stdout:'',stderr:'PRIVATE_FAILURE_LOG',errorCode:'REVIEWER_RUNNER_EXIT_2'},
+    };
+    const {fetchFn}=mcpFetch({maintenance:native});
+    return executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action,reviewIdentity}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn,
+      env:{USERPROFILE:'C:\\\\Users\\\\Operator'},
+    });
+  })();
+  assert.equal(nonzero.ok,false);
+  assert.equal(nonzero.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(nonzero.status,2);
+  assert.equal(nonzero.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.doesNotMatch(JSON.stringify(nonzero),/PRIVATE_FAILURE_LOG/);
+
   // Never forward arbitrary native error text, injected paths or credentials.
   const malformed=await attempt('C:\\\\PRIVATE\\\\secret-token');
   assert.equal(malformed.ok,false);

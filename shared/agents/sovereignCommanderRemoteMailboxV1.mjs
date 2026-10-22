@@ -3208,7 +3208,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
         ...(nativeFailure ? {
-          maintenanceStatus: nativeFailure.status,
+          // The canonical public mailbox reads operationResult.status.
+          // Missing native exit status remains absent, never coerced to zero.
+          ...(Number.isInteger(nativeFailure.status)
+            ? { status: nativeFailure.status } : {}),
           errorCode: nativeFailure.errorCode,
           executionBlocker: nativeFailure.executionBlocker,
         } : {}),
