@@ -31,7 +31,8 @@ function readBoundedJson(path) {
   const bytes = readFileSync(path);
   if (bytes.length === 0 || bytes.length > MAX_JSON_BYTES) return { present: true, record: null };
   try {
-    return { present: true, record: plainRecord(JSON.parse(bytes.toString('utf8'))) };
+    const jsonText = bytes.toString('utf8').replace(/^\uFEFF/, '');
+    return { present: true, record: plainRecord(JSON.parse(jsonText)) };
   } catch {
     return { present: true, record: null };
   }

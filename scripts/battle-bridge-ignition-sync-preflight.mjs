@@ -48,6 +48,13 @@ function projectSyncAndRefreshResult(result = {}) {
   });
 }
 
+function canDegradeAuxiliaryControlPlane(result = {}, projection = {}) {
+  return result?.ok !== true
+    && result?.finalVerdict === 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED'
+    && projection?.syncClassification === 'SYNC_NO_CHANGE'
+    && SHA40.test(String(projection?.sourceHead || ''));
+}
+
 export async function runBattleBridgeIgnitionSyncPreflight({
   platform = process.platform,
   repoRoot = CURRENT_REPO_ROOT,
@@ -82,6 +89,20 @@ export async function runBattleBridgeIgnitionSyncPreflight({
   const projection = projectSyncAndRefreshResult(result);
 
   if (result?.ok !== true) {
+    if (canDegradeAuxiliaryControlPlane(result, projection)) {
+      return Object.freeze({
+        schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
+        ok: true,
+        skipped: false,
+        classification: 'IGNITION_SYNC_PREFLIGHT_PASS_CONTROL_PLANE_DEGRADED',
+        ...projection,
+        controlPlaneDegraded: true,
+        controlPlaneBlocker: safeBlocker(result?.blocker, 'CONTROL_PLANE_REPAIR_BLOCKED'),
+        blocker: '',
+        finalVerdict: 'IGNITION_SYNC_PREFLIGHT_PASS',
+      });
+    }
+
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_IGNITION_SYNC_PREFLIGHT_SCHEMA,
       ok: false,

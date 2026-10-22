@@ -37,6 +37,84 @@ function providerHealthStateToState(value) {
   return 'unknown';
 }
 
+
+function isHostedObserver(runtimeStatus = {}) {
+  const sessionKind = String(
+    runtimeStatus?.runtimeContext?.sessionKind
+      || runtimeStatus?.canonicalRouteRuntimeTruth?.sessionKind
+      || runtimeStatus?.sessionKind
+      || '',
+  ).trim().toLowerCase();
+  return sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
+}
+
+function isFreshBackendHealthProof(routeTruthView = {}) {
+  const freshness = String(routeTruthView.currentBackendHealthFresh || '').trim().toLowerCase();
+  return ['yes', 'true', 'fresh', 'current'].includes(freshness);
+}
+
+export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView = {}, apiStatus = {} } = {}) {
+  const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
+  const hostedObserver = isHostedObserver(runtimeStatus);
+  const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
+
+  if (backendReachableState === 'yes') {
+    return 'alive';
+  }
+
+  if (backendReachableState === 'no') {
+    if (freshBackendHealthProof) {
+      return 'dead';
+    }
+    if (hostedObserver) {
+      return 'unknown';
+    }
+  }
+
+  if (apiStatus.backendReachable === true) {
+    return 'alive';
+  }
+
+  if (apiStatus.backendReachable === false && !hostedObserver) {
+    return 'dead';
+  }
+
+  return 'unknown';
+}
+
+export function deriveCockpitBackendHealthDiagnostics({
+  apiStatus = {},
+  routeTruthView = {},
+  runtimeStatus = {},
+  nowMs = Date.now(),
+} = {}) {
+  const probe = apiStatus?.runtimeContext?.healthProbeTruth || {};
+  const probedAtMs = Date.parse(String(probe.lastBackendHealthProbeAt || ''));
+  const checkedAtMs = Date.parse(String(apiStatus.lastCheckedAt || ''));
+  const validatedBackendIdentity = apiStatus.backendReachable === true
+    && apiStatus.meta?.ok === true
+    && apiStatus.meta?.service === 'stephanos-server'
+    && apiStatus.meta?.schemaVersion === 'stephanos.backend-health.v1'
+    && apiStatus.meta?.backendIdentity?.runtimeId === 'stephanos-battle-bridge-backend';
+  const recentVerifiedProbe = validatedBackendIdentity
+    && probe.lastBackendHealthProbeResult === 'ok:true'
+    && Number.isFinite(probedAtMs)
+    && Number.isFinite(checkedAtMs)
+    && probedAtMs <= nowMs + 5000
+    && checkedAtMs <= nowMs + 5000
+    && nowMs - probedAtMs >= 0
+    && nowMs - probedAtMs <= 120000
+    && Math.abs(checkedAtMs - probedAtMs) <= 30000;
+
+  return {
+    fresh: recentVerifiedProbe ? 'yes' : (routeTruthView.currentBackendHealthFresh || 'no'),
+    source: recentVerifiedProbe
+      ? (probe.currentBackendHealthSource || 'verified-backend-health')
+      : (routeTruthView.routeTruthHealthSource || 'unknown'),
+    checkedAt: String(apiStatus.lastCheckedAt || runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'),
+  };
+}
+
 export function isExecutionActive(runtimeStatus, continuitySnapshot, finalAgentView = null) {
   const executionTruth = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
   const executionStatus = String(runtimeStatus?.executionStatus || '').trim().toLowerCase();
@@ -60,13 +138,11 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
 
   const localSurfaceBase = toStateFromBoolean(runtimeStatus.localAvailable ?? reachability.localAvailable);
   const hostedSurfaceBase = toStateFromBoolean(runtimeStatus.cloudAvailable ?? reachability.cloudAvailable);
-  const backendBase = toStateFromBoolean(
-    routeTruthView.backendReachableState === 'yes'
-      ? true
-      : routeTruthView.backendReachableState === 'no'
-        ? false
-        : apiStatus.backendReachable,
-  );
+  const backendBase = deriveBackendServiceState({
+    runtimeStatus,
+    routeTruthView,
+    apiStatus,
+  });
 
   const providerClusterBase = providerHealthStateToState(
     providerTruth.providerHealthState || routeTruthView.providerHealthState || providerHealth?.state,
@@ -115,7 +191,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates[selectedSurface] = routeUsable === 'no' ? 'degraded' : 'alive';
   }
 
-  if (nodeStates.backend !== 'dead') {
+  if (nodeStates.backend === 'alive') {
     nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : (executionActive ? 'active' : 'alive');
   }
 
@@ -166,9 +242,8 @@ export function deriveConnectionState({
 
   if (routeReachableState === 'no' || uiReachableState === 'no') {
     if (
-      connection.id === 'localSurface-backend'
-      || connection.id === 'hostedSurface-backend'
-      || connection.id.startsWith('operator-')
+      connection.id === selectedSurfaceBackendLink
+      || connection.id === selectedOperatorLink
     ) {
       return 'broken';
     }

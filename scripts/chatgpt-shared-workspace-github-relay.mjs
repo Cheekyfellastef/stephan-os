@@ -352,6 +352,9 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
     },
     adapter: Object.freeze({
       readRequest: (...args) => adapter.readRequest(...args),
+      ...(typeof adapter.readRequestFresh === 'function'
+        ? { readRequestFresh: (...args) => adapter.readRequestFresh(...args) }
+        : {}),
       writeResponse: (body) => adapter.writeResponse(renderResponseWithDiagnostic(body, qaAnswerDiagnostic)),
     }),
   });

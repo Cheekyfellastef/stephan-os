@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stephanos source mutation lease guard.
+exec node scripts/source-mutation-commit-guard.mjs

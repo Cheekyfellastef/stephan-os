@@ -6,9 +6,12 @@ on:
     paths:
       - 'shared/agents/guardedGoalRunnerV1.mjs'
       - 'shared/agents/guardedGoalRunnerV1.test.mjs'
+      - 'shared/agents/directOperatorIntentGithubProvenanceV1.mjs'
+      - 'shared/agents/directOperatorIntentGithubProvenanceV1.test.mjs'
       - 'scripts/guarded-goal-runner-current.mjs'
       - 'scripts/guarded-goal-runner-current.test.mjs'
       - 'scripts/guarded-goal-runner-pr-proof-current.test.mjs'
+      - 'scripts/direct-operator-intent-guarded-goal-runner-current-v1.test.mjs'
       - '.github/workflows/guarded-goal-runner-proof.yml'
 
 permissions:
@@ -34,14 +37,17 @@ jobs:
       - name: Parse guarded runner sources
         run: |
           node --check shared/agents/guardedGoalRunnerV1.mjs
+          node --check shared/agents/directOperatorIntentGithubProvenanceV1.mjs
           node --check scripts/guarded-goal-runner-current.mjs
 
       - name: Run focused guarded runner proof
         run: >-
           node --test
           shared/agents/guardedGoalRunnerV1.test.mjs
+          shared/agents/directOperatorIntentGithubProvenanceV1.test.mjs
           scripts/guarded-goal-runner-current.test.mjs
           scripts/guarded-goal-runner-pr-proof-current.test.mjs
+          scripts/direct-operator-intent-guarded-goal-runner-current-v1.test.mjs
 
       - name: Run strict PR clean guard
         run: npm run stephanos:guard:pr-clean

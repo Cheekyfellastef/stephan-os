@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { resolveSharedWorkspacePath } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
 export * from './battle-bridge-outbound-health-beacon-core.mjs';
@@ -25,6 +28,15 @@ const WORKER_WATCHDOG_SPEC = Object.freeze({
   path: 'status/battle-bridge-worker-watchdog-current.json',
   staleAfterMs: 180_000,
 });
+const SOVEREIGN_REPAIR_SPEC = Object.freeze({
+  path: 'status/sovereign-commander-repair-current.json',
+  staleAfterMs: 180_000,
+});
+const CONTROLLER_LANE_STATUS_SPEC = Object.freeze({
+  path: 'status/controller-lane-status-current.json',
+  staleAfterMs: 180_000,
+});
+const SOVEREIGN_REPAIR_OUTCOMES = new Set(['HEALTHY', 'REPAIRED', 'NEEDS_REPAIR', 'BLOCKED']);
 const WORKER_WATCHDOG_CLASSIFICATIONS = new Set([
   'WORKER_WATCHDOG_HEALTHY',
   'WORKER_WATCHDOG_RECOVERED',
@@ -156,7 +168,347 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
   });
 }
 
-function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualifiedRepairPolicies = []) {
+export function projectSovereignRepairBeaconFacts(record = null, expectedHead = '', nowMs = Date.now()) {
+  const expected = validHead(expectedHead);
+  const empty = (state, blocker, trafficLight = 'GREY') => Object.freeze({
+    available: false,
+    state,
+    trafficLight,
+    observedAtUtc: '',
+    ageMs: null,
+    sourceHead: '',
+    expectedHead: expected,
+    exactHeadMatch: false,
+    status: '',
+    outcome: '',
+    cycleId: '',
+    detectedFaults: Object.freeze([]),
+    actions: Object.freeze([]),
+    verification: Object.freeze({
+      readiness: '',
+      wakeState: '',
+      awake: false,
+      repairRequired: false,
+      heartbeatFresh: false,
+      busyGraceActive: false,
+      heartbeatAgeSeconds: null,
+    }),
+    blocker,
+    readOnly: true,
+    rawPathsReturned: false,
+    rawLogsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_REPAIR_PROOF_UNPROVEN',
+  });
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_MISSING');
+  }
+  if (record.reportSchema !== 'stephanos.sovereign-commander-repair-report.v1'
+    || record.statusId !== 'sovereign-commander-repair-current') {
+    return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_SCHEMA_INVALID');
+  }
+
+  const observedAtUtc = (() => {
+    const value = text(record.timestampUtc, 40);
+    return Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)).toISOString() : '';
+  })();
+  const observedMs = Date.parse(observedAtUtc);
+  const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
+  const sourceHead = validHead(record.sourceHead);
+  const exactHeadMatch = Boolean(expected && sourceHead && expected === sourceHead);
+  const outcome = text(record.outcome, 40).toUpperCase();
+  const status = text(record.status, 40).toUpperCase();
+  const cycleIdCandidate = text(record.cycleId, 80);
+  const cycleId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(cycleIdCandidate) ? cycleIdCandidate : '';
+  const safeToken = (value, limit = 160) => {
+    const candidate = text(value, limit);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(candidate) ? candidate : '';
+  };
+  const detectedFaults = Object.freeze((Array.isArray(record.detectedFaults) ? record.detectedFaults : [])
+    .slice(0, 8)
+    .map((value) => safeToken(value))
+    .filter(Boolean));
+  const actions = Object.freeze((Array.isArray(record.actions) ? record.actions : [])
+    .slice(0, 12)
+    .flatMap((action) => {
+      if (!action || typeof action !== 'object' || Array.isArray(action)) return [];
+      const actionId = safeToken(action.actionId, 96);
+      if (!actionId) return [];
+      return [Object.freeze({
+        actionId,
+        ok: action.ok === true,
+        finalVerdict: safeToken(action.finalVerdict),
+        blocker: safeToken(action.blocker),
+      })];
+    }));
+  const rawVerification = record.verification && typeof record.verification === 'object' && !Array.isArray(record.verification)
+    ? record.verification
+    : {};
+  const heartbeatAgeSeconds = Number(rawVerification.heartbeatAgeSeconds);
+  const verification = Object.freeze({
+    readiness: safeToken(rawVerification.readiness, 64),
+    wakeState: safeToken(rawVerification.wakeState, 64),
+    awake: rawVerification.awake === true,
+    repairRequired: rawVerification.repairRequired === true,
+    heartbeatFresh: rawVerification.heartbeatFresh === true,
+    busyGraceActive: rawVerification.busyGraceActive === true,
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0
+      ? Math.min(heartbeatAgeSeconds, 31_536_000)
+      : null,
+  });
+
+  const stale = ageMs === null || ageMs > SOVEREIGN_REPAIR_SPEC.staleAfterMs;
+  const structurallyValid = Boolean(
+    observedAtUtc
+    && sourceHead
+    && SOVEREIGN_REPAIR_OUTCOMES.has(outcome)
+    && ['READY', 'ATTENTION_REQUIRED'].includes(status)
+    && cycleId,
+  );
+  if (!structurallyValid) return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_INVALID');
+  const state = stale
+    ? 'STALE'
+    : !exactHeadMatch
+      ? 'HEAD_MISMATCH'
+      : outcome;
+  const trafficLight = stale || !exactHeadMatch
+    ? 'AMBER'
+    : ['HEALTHY', 'REPAIRED'].includes(outcome) && status === 'READY'
+      ? 'GREEN'
+      : 'RED';
+  const blocker = trafficLight === 'GREEN'
+    ? ''
+    : detectedFaults[0]
+      || (stale ? 'SOVEREIGN_REPAIR_REPORT_STALE' : !exactHeadMatch ? 'SOVEREIGN_REPAIR_REPORT_HEAD_MISMATCH' : 'SOVEREIGN_REPAIR_ATTENTION_REQUIRED');
+
+  return Object.freeze({
+    available: true,
+    state,
+    trafficLight,
+    observedAtUtc,
+    ageMs,
+    sourceHead,
+    expectedHead: expected,
+    exactHeadMatch,
+    status,
+    outcome,
+    cycleId,
+    detectedFaults,
+    actions,
+    verification,
+    blocker,
+    readOnly: true,
+    rawPathsReturned: false,
+    rawLogsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: trafficLight === 'GREEN'
+      ? 'SOVEREIGN_REPAIR_PROOF_GREEN'
+      : trafficLight === 'RED'
+        ? 'SOVEREIGN_REPAIR_PROOF_ATTENTION_REQUIRED'
+        : 'SOVEREIGN_REPAIR_PROOF_UNPROVEN',
+  });
+}
+
+
+function safeBeaconToken(value, limit = 160) {
+  const candidate = text(value, limit);
+  return /^[A-Za-z0-9][A-Za-z0-9._:#-]{0,159}$/.test(candidate) ? candidate : '';
+}
+
+export function projectControllerLaneBeaconFacts(record = null, nowMs = Date.now()) {
+  const empty = (state, blocker, trafficLight = 'GREY') => Object.freeze({
+    available: false,
+    state,
+    trafficLight,
+    observedAtUtc: '',
+    ageMs: null,
+    sourceHeadBound: false,
+    exactHeadMatch: null,
+    physical: Object.freeze({
+      expected: null,
+      building: null,
+      amber: null,
+      red: null,
+      unknown: null,
+      allCurrent: false,
+      allObservedEnabled: false,
+      finalVerdict: '',
+      controllers: Object.freeze([]),
+    }),
+    logical: Object.freeze({
+      current: false,
+      valid: false,
+      physicalControllerCount: null,
+      total: null,
+      active: null,
+      tracking: null,
+      parked: null,
+      retired: null,
+      selectedForAdmission: null,
+      finalVerdict: '',
+      blockers: Object.freeze([]),
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: null,
+      activeMaterialLaneCount: null,
+      activeLaneClaimCount: null,
+      freeTargetLaneSlots: null,
+      runnableBacklogCount: null,
+      parkedPhysicalLaneCount: null,
+      refillHealth: '',
+      refillState: '',
+    }),
+    attentionBlockers: Object.freeze(blocker ? [blocker] : []),
+    blocker,
+    readOnly: true,
+    rawPathsReturned: false,
+    rawLogsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'CONTROLLER_LANE_PROOF_UNPROVEN',
+  });
+
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_MISSING');
+  }
+  if (record.statusId !== 'controller-lane-status-current'
+      || record.controllerLaneStatusSchemaVersion !== 'stephanos.sovereign-controller-lane-status.v1') {
+    return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_SCHEMA_INVALID');
+  }
+  const laneStatus = record.controllerLaneStatus;
+  if (!laneStatus || typeof laneStatus !== 'object' || Array.isArray(laneStatus)) {
+    return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_PAYLOAD_INVALID');
+  }
+  if (
+    laneStatus.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || laneStatus.ok !== true
+    || laneStatus.readOnly !== true
+    || laneStatus.arbitraryShellAllowed !== false
+    || laneStatus.sourceMutationAllowed !== false
+    || laneStatus.mergeAuthority !== false
+    || laneStatus.secretMaterialIncluded !== false
+    || laneStatus.unknownMeansGreen !== false
+  ) {
+    return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_CONTRACT_INVALID');
+  }
+
+  const observedCandidate = text(laneStatus.capturedAtUtc || record.timestampUtc, 40);
+  const observedMs = Date.parse(observedCandidate);
+  if (!Number.isFinite(observedMs)) return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_TIMESTAMP_INVALID');
+  const observedAtUtc = new Date(observedMs).toISOString();
+  const ageMs = Math.max(0, nowMs - observedMs);
+  const stale = ageMs > CONTROLLER_LANE_STATUS_SPEC.staleAfterMs;
+
+  const rawPhysical = laneStatus.physical && typeof laneStatus.physical === 'object' ? laneStatus.physical : {};
+  const controllers = Object.freeze((Array.isArray(rawPhysical.controllers) ? rawPhysical.controllers : [])
+    .slice(0, 5)
+    .map((controller) => Object.freeze({
+      controllerId: safeBeaconToken(controller?.controllerId, 80),
+      freshness: safeBeaconToken(controller?.freshness, 40),
+      activityState: safeBeaconToken(controller?.activityState, 80),
+      trafficLight: safeBeaconToken(controller?.trafficLight, 20),
+      materialLaneCount: numericCount(controller?.materialLaneCount),
+      activeLaneCount: numericCount(controller?.activeLaneCount),
+      parkedLaneCount: numericCount(controller?.parkedLaneCount),
+      safeEligibleWorkRemaining: numericCount(controller?.safeEligibleWorkRemaining),
+      blocker: safeBeaconToken(controller?.blocker, 160),
+    })));
+  const physical = Object.freeze({
+    expected: numericCount(rawPhysical.expected),
+    building: numericCount(rawPhysical.building),
+    amber: numericCount(rawPhysical.amber),
+    red: numericCount(rawPhysical.red),
+    unknown: numericCount(rawPhysical.unknown),
+    allCurrent: rawPhysical.allCurrent === true,
+    allObservedEnabled: rawPhysical.allObservedEnabled === true,
+    finalVerdict: safeBeaconToken(rawPhysical.finalVerdict, 100),
+    controllers,
+  });
+
+  const rawLogical = laneStatus.logical && typeof laneStatus.logical === 'object' ? laneStatus.logical : {};
+  const logicalBlockers = Object.freeze((Array.isArray(rawLogical.blockers) ? rawLogical.blockers : [])
+    .slice(0, 12)
+    .map((value) => safeBeaconToken(value, 160))
+    .filter(Boolean));
+  const logical = Object.freeze({
+    current: rawLogical.current === true,
+    valid: rawLogical.valid === true,
+    physicalControllerCount: numericCount(rawLogical.physicalControllerCount),
+    total: numericCount(rawLogical.total),
+    active: numericCount(rawLogical.active),
+    tracking: numericCount(rawLogical.tracking),
+    parked: numericCount(rawLogical.parked),
+    retired: numericCount(rawLogical.retired),
+    selectedForAdmission: numericCount(rawLogical.selectedForAdmission),
+    finalVerdict: safeBeaconToken(rawLogical.finalVerdict, 100),
+    blockers: logicalBlockers,
+  });
+
+  const rawLanes = laneStatus.lanes && typeof laneStatus.lanes === 'object' ? laneStatus.lanes : {};
+  const refillHealth = safeBeaconToken(rawLanes.refillHealth, 20);
+  const refillState = safeBeaconToken(rawLanes.refillState, 120);
+  const lanes = Object.freeze({
+    targetMaterialLanes: numericCount(rawLanes.targetMaterialLanes),
+    activeMaterialLaneCount: numericCount(rawLanes.activeMaterialLaneCount),
+    activeLaneClaimCount: numericCount(rawLanes.activeLaneClaimCount),
+    freeTargetLaneSlots: numericCount(rawLanes.freeTargetLaneSlots),
+    runnableBacklogCount: numericCount(rawLanes.runnableBacklogCount),
+    parkedPhysicalLaneCount: numericCount(rawLanes.parkedPhysicalLaneCount),
+    refillHealth,
+    refillState,
+  });
+
+  const attentionBlockers = Object.freeze([...new Set([
+    ...controllers
+      .filter((controller) => controller.trafficLight === 'RED')
+      .map((controller) => controller.blocker || controller.controllerId)
+      .filter(Boolean),
+    ...logicalBlockers,
+    ...(logical.valid === false ? [logical.finalVerdict] : []),
+    ...(refillHealth === 'RED' ? [refillState] : []),
+  ].filter(Boolean))].slice(0, 16));
+
+  const red = !stale && (
+    Number(physical.red) > 0
+    || logical.valid === false
+    || refillHealth === 'RED'
+  );
+  const trafficLight = stale ? 'AMBER' : red ? 'RED' : 'AMBER';
+  const state = stale
+    ? 'STALE'
+    : red
+      ? 'ATTENTION_REQUIRED'
+      : refillHealth || 'CURRENT_UNBOUND';
+  const blocker = attentionBlockers[0]
+    || (stale ? 'CONTROLLER_LANE_STATUS_STALE' : 'CONTROLLER_LANE_STATUS_HEAD_BINDING_UNAVAILABLE');
+
+  return Object.freeze({
+    available: true,
+    state,
+    trafficLight,
+    observedAtUtc,
+    ageMs,
+    sourceHeadBound: false,
+    exactHeadMatch: null,
+    physical,
+    logical,
+    lanes,
+    attentionBlockers,
+    blocker: trafficLight === 'RED' || stale ? blocker : '',
+    readOnly: true,
+    rawPathsReturned: false,
+    rawLogsReturned: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: trafficLight === 'RED'
+      ? 'CONTROLLER_LANE_PROOF_ATTENTION_REQUIRED'
+      : 'CONTROLLER_LANE_PROOF_UNPROVEN',
+  });
+}
+
+function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualifiedRepairPolicies = [], sovereignRepairRecord = null, controllerLaneStatusRecord = null) {
   const nowMs = Date.parse(String(record?.observedAtUtc || ''));
   const workerSurface = projectBeaconStatus(
     workerWatchdogRecord,
@@ -179,13 +531,34 @@ function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualified
   const blockers = telemetry.repairCandidates
     .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
+  const sovereignRepair = projectSovereignRepairBeaconFacts(
+    sovereignRepairRecord,
+    record?.sourceHead || '',
+    Number.isFinite(nowMs) ? nowMs : Date.now(),
+  );
+  const controllerLaneStatus = projectControllerLaneBeaconFacts(
+    controllerLaneStatusRecord,
+    Number.isFinite(nowMs) ? nowMs : Date.now(),
+  );
+  const controllerLaneSummaryBlockers = (
+    controllerLaneStatus.trafficLight === 'RED'
+    || controllerLaneStatus.state === 'STALE'
+  )
+    ? [...new Set([
+        ...(Array.isArray(controllerLaneStatus.attentionBlockers) ? controllerLaneStatus.attentionBlockers : []),
+        controllerLaneStatus.blocker,
+      ].filter(Boolean))]
+    : [];
+  const summaryBlockers = [...blockers, ...controllerLaneSummaryBlockers].slice(0, 12);
   return Object.freeze({
     ...record,
+    sovereignRepair,
+    controllerLaneStatus,
     surfaces: Object.freeze(surfaces),
-    blockerCount: blockers.length,
-    blockers: Object.freeze(blockers),
-    freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
-    completeStateAnswerable: telemetry.completeStateAnswerable,
+    blockerCount: summaryBlockers.length,
+    blockers: Object.freeze(summaryBlockers),
+    freshness: summaryBlockers.length > 0 ? 'DEGRADED' : 'FRESH',
+    completeStateAnswerable: telemetry.completeStateAnswerable && controllerLaneSummaryBlockers.length === 0,
     telemetryCompleteness: telemetry.telemetryCompleteness,
     operatorNeeded: telemetry.operatorNeededNow,
     operatorAuthorizationState: telemetry.operatorAuthorizationState,
@@ -194,13 +567,49 @@ function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualified
   });
 }
 
+// The public beacon gets only an independently VERIFIED, strictly pinned
+// local signed ledger. Unsigned Core heartbeat facts are never green by proxy.
+function readCommissionedGateLedger(workspaceRoot, sourceHead, observedAtUtc, env = process.env) {
+  const pin = String(env.STEPHANOS_GATE_OBSERVATORY_PUBLIC_KEY_SHA256 || '').trim().toLowerCase();
+  const localAppData = String(env.LOCALAPPDATA || '');
+  if (!/^[a-f0-9]{64}$/.test(pin) || !localAppData) return null;
+  try {
+    const pemPath = resolve(localAppData, 'Stephanos', 'keys', 'stephanos-goal-build-gates-public.pem');
+    const metadata = lstatSync(pemPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 8192) return null;
+    const key = readFileSync(pemPath, 'utf8');
+    const status = readJsonBounded(join(workspaceRoot, 'status', 'goal-build-gates-current.json'));
+    if (!status) return null;
+    const proofs = [];
+    for (let id = 1; id <= 23; id += 1) {
+      const proof = readJsonBounded(join(workspaceRoot, 'proof', 'goal-gate-' + id + '.json'));
+      if (proof) proofs.push(proof);
+    }
+    return projectGoalBuildGateObservatoryV1({
+      statusRecords: [status], proofRecords: proofs,
+      expectedSourceHead: sourceHead,
+      trustedPublicKeyPem: key, trustedPublicKeySha256: pin,
+      nowMs: Date.parse(observedAtUtc), staleAfterMs: 3 * 60_000,
+    });
+  } catch { return null; }
+}
+
 export function buildBattleBridgeOutboundBeacon(args = {}) {
   const base = core.buildBattleBridgeOutboundBeacon(args);
-  return augmentRecordWithWorkerWatchdog(
+  const augmented = augmentRecordWithWorkerWatchdog(
     base,
     args.statusRecords?.workerWatchdog || null,
     args.qualifiedRepairPolicies || [],
+    args.statusRecords?.sovereignRepair || null,
+    args.statusRecords?.controllerLaneStatus || null,
   );
+  return Object.freeze({
+    ...augmented,
+    goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(
+      args.statusRecords?.coreGateStatus || null,
+      { sourceHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
+    ),
+  });
 }
 
 function digestRecord(record) {
@@ -329,15 +738,18 @@ function runFixed(executable, args, options = {}) {
 }
 
 function existingBeaconCommentId(repoRoot) {
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_GITHUB_JSON_INVALID'); }
+  const endpoint = `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`;
+  const observed = readBrokeredGithubJson({
+    key: `health-beacon-thread:${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    endpoint,
+    args: ['--paginate', '--slurp'],
+    ttlMs: 6 * 60 * 60_000,
+    maxStaleMs: 24 * 60 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!observed.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
+  const pages = observed.payload;
   const comments = Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
   const matches = comments.filter((comment) => String(comment.body || '').includes(core.BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER));
   const id = Number(matches.at(-1)?.id || 0);
@@ -346,12 +758,24 @@ function existingBeaconCommentId(repoRoot) {
 
 function publishBeacon(repoRoot, body) {
   const existingId = existingBeaconCommentId(repoRoot);
-  const args = existingId
-    ? ['api', '-X', 'PATCH', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${body}`]
-    : ['api', '-X', 'POST', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${body}`];
-  const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
-  if (!result.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
-  return existingId ? 'UPDATED' : 'CREATED';
+  const publication = publishBrokeredGithubMutation({
+    key: `health-beacon-publication:${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    body,
+    material: core.buildBattleBridgeOutboundBeaconMaterialBody(body),
+    heartbeatMs: 5 * 60_000,
+    publish: (nextBody) => {
+      const args = existingId
+        ? ['api', '-X', 'PATCH', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
+        : ['api', '-X', 'POST', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+      if (result.ok && !existingId) {
+        invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
+      }
+      return Object.freeze({ ok: result.ok, reason: result.ok ? (existingId ? 'UPDATED' : 'CREATED') : 'OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED' });
+    },
+  });
+  if (!publication.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
+  return publication.published === false ? publication.reason : (existingId ? 'UPDATED' : 'CREATED');
 }
 
 export function runBattleBridgeOutboundHealthBeacon(options = {}) {
@@ -364,7 +788,18 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
   const repoRoot = resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
   const workspaceRoot = resolve(env.STEPHANOS_SHARED_AGENT_WORKSPACE || join(env.USERPROFILE || homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
   const workerWatchdogRecord = readJsonBounded(join(workspaceRoot, ...WORKER_WATCHDOG_SPEC.path.split('/')));
-  const record = augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord);
+  const sovereignRepairRecord = readJsonBounded(join(workspaceRoot, ...SOVEREIGN_REPAIR_SPEC.path.split('/')));
+  const controllerLaneStatusRecord = readJsonBounded(join(workspaceRoot, ...CONTROLLER_LANE_STATUS_SPEC.path.split('/')));
+  const coreGateStatus = readJsonBounded(join(workspaceRoot, 'status', 'stephanos-core-daemon-current.json'));
+  const record = Object.freeze({
+    ...augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord, [], sovereignRepairRecord, controllerLaneStatusRecord),
+    goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(coreGateStatus, {
+      sourceHead: coreResult.record.sourceHead, nowMs: Date.parse(coreResult.record.observedAtUtc),
+      verifiedObservatory: readCommissionedGateLedger(
+        workspaceRoot, coreResult.record.sourceHead, coreResult.record.observedAtUtc, env,
+      ),
+    }),
+  });
   const publication = requestedPublish(repoRoot, core.buildBattleBridgeOutboundBeaconBody(record));
   const mirror = typeof options.mirror === 'function' ? options.mirror : mirrorBattleBridgeCompleteStateToSharedWorkspace;
   const workspaceMirror = mirror({ workspaceRoot, repoRoot, record });

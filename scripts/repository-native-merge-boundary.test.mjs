@@ -54,6 +54,7 @@ test('protected boundary keeps the native queue and adds only the exact mobile-s
   assert.match(protectedSource, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
   assert.equal([...protectedSource.matchAll(/contents: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/issues: write/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/issues: read/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/pull-requests: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/actions\/create-github-app-token@v2/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 3);
@@ -85,6 +86,7 @@ test('protected boundary keeps the native queue and adds only the exact mobile-s
   assert.match(evidenceJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.doesNotMatch(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.match(evidenceJob, /Collect exact personal-repository evidence after protected admission/);
+  assert.match(evidenceJob, /issues: read/);
   assert.doesNotMatch(evidenceJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(approvalJob, /actions\/create-github-app-token@v2/);
   assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);

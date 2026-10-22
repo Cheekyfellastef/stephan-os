@@ -23,6 +23,7 @@ test('protects the complete source-controlled Windows specialist boundary', () =
     'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
     'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
     'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+    'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
     'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
   ]);
 

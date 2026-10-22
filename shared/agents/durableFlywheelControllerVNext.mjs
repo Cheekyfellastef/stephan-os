@@ -2,19 +2,42 @@ import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceReceiptRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
+  ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1,
+  buildEngineeringCodingMemoryPackV1,
+} from './engineeringIncidentMethodMemoryV1.mjs';
+import {
+  promoteSharedWorkspaceLearningCandidatesV1,
+} from './flywheelLearningFabricV1.mjs';
+import {
+  publishStarfieldVrOutcomeOwnershipSeedV1,
+} from './starfieldVrOutcomeOwnershipSeedV1.mjs';
+import {
+  publishWorkspaceIntegritySeedPressureEventV1,
+} from './workspaceIntegritySeedPressureV1.mjs';
+import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
+import {
+  closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
-  readMissionControllerCapacityRoutingInput,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
+  recoverOrphanedLegacyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import {
+  reconcileFlywheelLearningGoalsV1,
+} from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
 import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
@@ -22,6 +45,7 @@ import {
 
 export const DURABLE_FLYWHEEL_CONTROLLER_SCHEMA = 'stephanos.durable-flywheel-controller.vnext';
 export const DURABLE_FLYWHEEL_CYCLE_RECEIPT_SCHEMA = 'stephanos.durable-flywheel-cycle-receipt.vnext';
+export const DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA = 'stephanos.flywheel-action-journal.v1';
 export const DURABLE_FLYWHEEL_CONTROLLER_ID = 'durable-flywheel-controller';
 export const DURABLE_FLYWHEEL_CONTROLLER_ISSUE = 1497;
 
@@ -35,6 +59,11 @@ const KNOWN_PROJECTION_STATES = new Set([
   'ACTIVE',
   'READY',
   'IDLE',
+]);
+const ORPHAN_DEADLOCK_BLOCKERS = new Set([
+  'critical-backlog-idle-selection-identity-mismatch',
+  'critical-backlog-idle-selection-mission-mismatch',
+  'critical-backlog-did-not-authorize-idle-selection',
 ]);
 
 function text(value, fallback = '') {
@@ -149,6 +178,7 @@ export function resolveMissionWorkerGrantIdentity(state = {}, fallback = {}) {
 
 function workerAdapter(action = {}) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
   if (action.actionKind === 'agent-handoff') return text(action.adapter);
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
@@ -156,7 +186,123 @@ function workerAdapter(action = {}) {
   return '';
 }
 
-function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capacityRouting = null) {
+function elasticCandidateReceiptId(candidate = {}) {
+  return text(candidate.receiptId || candidate.capacityReceiptId || candidate.selectedCapacityReceiptId);
+}
+
+function missionSpecificCapacityRouting(
+  mission,
+  capacityRouting,
+  sourceRevision,
+  nowUtc,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) {
+    return capacityRouting;
+  }
+  const candidates = resolveCapacityCandidates(
+    mission,
+    capacityRouting,
+    sourceRevision,
+    nowUtc,
+  );
+  if (!Array.isArray(candidates) || candidates.length === 0) return capacityRouting;
+
+  let nativeRoutingCandidate = capacityRouting.nativeRoutingCandidate ?? null;
+  let forgeLaneReceipt = capacityRouting.forgeLaneReceipt ?? null;
+
+  const nativeCandidates = capacityRouting.nativeRoutingCandidatesByTaskClass
+    && typeof capacityRouting.nativeRoutingCandidatesByTaskClass === 'object'
+    && !Array.isArray(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      ? Object.values(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      : [];
+  const forgeReceipts = Array.isArray(capacityRouting.forgeLaneReceipts)
+    ? capacityRouting.forgeLaneReceipts
+    : [];
+
+  for (const candidate of candidates) {
+    const adapter = text(candidate?.adapter).toLowerCase();
+    const workerId = text(candidate?.workerId);
+    const receiptId = elasticCandidateReceiptId(candidate);
+    if (!nativeRoutingCandidate && adapter === 'stephanos-native') {
+      nativeRoutingCandidate = nativeCandidates.find((value) => (
+        text(value?.adapter).toLowerCase() === adapter
+        && text(value?.workerId) === workerId
+        && text(value?.capacityReceiptId) === receiptId
+      )) ?? null;
+    }
+    if (!forgeLaneReceipt && adapter === 'foundry-forge') {
+      forgeLaneReceipt = forgeReceipts.find((value) => (
+        text(value?.workerId) === workerId
+        && text(value?.receiptId) === receiptId
+      )) ?? null;
+    }
+  }
+
+  const routedSourceHead = sha(sourceRevision) || sha(capacityRouting.sourceHead);
+  if (
+    nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
+    && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
+    && (!routedSourceHead || routedSourceHead === sha(capacityRouting.sourceHead))
+  ) return capacityRouting;
+
+  return freeze({
+    ...capacityRouting,
+    ...(routedSourceHead ? { sourceHead: routedSourceHead } : {}),
+    ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
+    ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
+  });
+}
+
+function missionEngineeringProblemClass(mission = {}) {
+  const source = text(mission?.problemClass)
+    || text(mission?.title)
+    || text(mission?.operatorIntent)
+    || text(mission?.missionId)
+    || 'repository-engineering';
+  const normalized = source
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return normalized || 'repository-engineering';
+}
+
+function missionEngineeringComponentRefs(mission = {}) {
+  const refs = [...new Set([
+    ...list(mission?.allowedFiles),
+    ...list(mission?.targetFiles),
+  ].map((value) => text(value).replace(/\\/g, '/')).filter(Boolean))];
+  return refs.slice(0, 24);
+}
+
+function buildMissionEngineeringMemoryPack(projection = {}, mission = {}) {
+  const records = list(projection?.engineeringLessonRecords)
+    .filter((lesson) => lesson?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON)
+    .map((lesson) => lesson?.engineeringRecord)
+    .filter((record) => record?.schemaVersion === ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1);
+  const componentRefs = missionEngineeringComponentRefs(mission);
+  if (!records.length || !componentRefs.length) return null;
+  try {
+    return buildEngineeringCodingMemoryPackV1({
+      problemClass: missionEngineeringProblemClass(mission),
+      componentRefs,
+      createdAtUtc: safeNow(projection?.observedAtUtc) || new Date().toISOString(),
+      records,
+      maxRecords: 8,
+      maxBytes: 24 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function createExactWorkerActionGrant(
+  projection = {},
+  sourceRevision = '',
+  capacityRouting = null,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
   const activeMission = projection?.criticalBacklog?.activeMission;
   const actionState = projectMissionWorkerActionState(activeMission, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
@@ -172,15 +318,26 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   ) {
     return null;
   }
+  const actionNow = new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString());
+  const routedCapacity = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)
+    ? missionSpecificCapacityRouting(
+        actionState,
+        capacityRouting,
+        sourceRevision,
+        actionNow.toISOString(),
+        resolveCapacityCandidates,
+      )
+    : capacityRouting;
   const action = buildMissionWorkerAction(actionState, {
-    now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
-    capacityRouting,
+    now: actionNow,
+    capacityRouting: routedCapacity,
   });
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
+  const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -203,9 +360,100 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     prNumber: identity.prNumber,
     branch: identity.branch,
     headSha: identity.headSha || null,
+    engineeringMemoryPack,
+    engineeringMemoryPackId: engineeringMemoryPack?.packId || null,
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+  });
+}
+
+export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';
+
+export function evaluateControllerLivenessDecision(input = {}) {
+  const safeEligibleWorkRemaining = input?.safeEligibleWorkRemaining === true;
+  const operatorDisableRequested = input?.operatorDisableRequested === true;
+  const terminalCompletion = input?.terminalCompletion === true && !safeEligibleWorkRemaining;
+  const scopedActions = [...new Set(list(input?.scopedActions).map(text).filter(Boolean))].sort();
+  const unsafeScopedActions = [...new Set(list(input?.unsafeScopedActions).map(text).filter(Boolean))].sort();
+  const controllerLevelUnsafe = input?.controllerLevelUnsafe === true
+    && scopedActions.length > 0
+    && scopedActions.length === unsafeScopedActions.length
+    && scopedActions.every((action, index) => action === unsafeScopedActions[index]);
+
+  const failureCounts = new Map();
+  for (const failure of list(input?.surfaceFailures)) {
+    const surfaceId = text(failure?.surfaceId);
+    const failureClass = text(failure?.failureClass);
+    if (!surfaceId || !failureClass) continue;
+    failureCounts.set(surfaceId, (failureCounts.get(surfaceId) ?? 0) + 1);
+  }
+  const blockedSurfaceIds = [...failureCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([surfaceId]) => surfaceId)
+    .sort();
+  const qualifiedSurfaces = [...new Set(list(input?.qualifiedSurfaces).map(text).filter(Boolean))];
+  const alternateQualifiedSurfaces = qualifiedSurfaces.filter(
+    (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
+  );
+
+  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  const reason = operatorDisableRequested
+    ? 'EXPLICIT_OPERATOR_DISABLE'
+    : terminalCompletion
+      ? 'TERMINAL_SCOPE_COMPLETE'
+      : controllerLevelUnsafe
+        ? 'CONTROLLER_LEVEL_UNSAFE'
+        : blockedSurfaceIds.length
+          ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
+          : 'CONTROLLER_LIVE';
+
+  return freeze({
+    schemaVersion: CONTROLLER_LIVENESS_DECISION_SCHEMA,
+    decision: disableAllowed ? 'DISABLE_ALLOWED' : 'REMAIN_ENABLED',
+    reason,
+    disableAllowed,
+    controllerShouldRemainEnabled: !disableAllowed,
+    blockedSurfaceIds: freeze(blockedSurfaceIds),
+    qualifiedSurfaces: freeze(qualifiedSurfaces),
+    alternateQualifiedSurfaces: freeze(alternateQualifiedSurfaces),
+    selectedAlternateSurface: alternateQualifiedSurfaces[0] ?? null,
+    retryNextScheduledRun: !disableAllowed && alternateQualifiedSurfaces.length === 0,
+    safeEligibleWorkRemaining,
+    controllerLevelUnsafeProven: controllerLevelUnsafe,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+  });
+}
+
+function controllerLivenessBlockDecision(options = {}) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: [],
+  });
+}
+
+function controllerLivenessDecisionForAdjudicatedGrant(options = {}, blockDecision = null, workerActionGrant = null) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  const blockedSurfaceIds = list(blockDecision?.blockedSurfaceIds);
+  const admittedAdapter = text(workerActionGrant?.adapter);
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: blockedSurfaceIds.length && admittedAdapter
+      ? [admittedAdapter]
+      : [],
+  });
+}
+
+function capacityRoutingWithLiveness(capacityRouting, decision) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) return capacityRouting;
+  return freeze({
+    ...capacityRouting,
+    blockedAdapters: freeze([...list(decision?.blockedSurfaceIds)]),
   });
 }
 
@@ -230,7 +478,10 @@ function holdResult(reason, additions = {}) {
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-    nextAction: 'Publish the exact blocker and stop without mutation.',
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+    nextAction: 'Publish the exact blocker, park only that surface or lane, and keep the controller live.',
   });
 }
 
@@ -282,6 +533,9 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
   };
   if (status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     return freeze({
@@ -313,6 +567,136 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
     allowWorkerTick: false,
     boundedMutationSteps: 0,
     nextAction: 'Remain idle until canonical durable sources expose buildable work.',
+  });
+}
+
+export function buildFlywheelActionJournalV1({
+  nowUtc,
+  sourceRevision,
+  result = {},
+  actionResult = null,
+  outcomeOwnershipSeedPublication = null,
+  recurringCalibrationReadiness = null,
+  learningPromotion = null,
+  workspaceIntegritySeedPressurePublication = null,
+  learningGoalReconciliation = null,
+} = {}) {
+  const learning = learningGoalReconciliation && typeof learningGoalReconciliation === 'object'
+    ? learningGoalReconciliation
+    : {};
+  const diagnoses = list(learning.brainDiagnoses).map((entry) => freeze({
+    eventId: text(entry?.eventId),
+    capabilityId: text(entry?.capabilityId),
+    attempted: entry?.attempted === true,
+    ok: entry?.ok === true,
+    reason: text(entry?.reason, 'UNKNOWN'),
+    provider: text(entry?.provider),
+    model: text(entry?.model),
+    fallbackUsed: entry?.fallbackUsed === true,
+  }));
+  const attachments = list(learning.attachments).map((entry) => freeze({
+    eventId: text(entry?.eventId),
+    capabilityId: text(entry?.capabilityId),
+    disposition: text(entry?.disposition, 'UNKNOWN'),
+    ownerGoals: freeze(list(entry?.ownerGoals).map((value) => text(value)).filter(Boolean)),
+    candidateId: text(entry?.candidateId),
+    schedulerGoalId: text(entry?.schedulerGoalId),
+  }));
+  const promotedLessonIds = freeze(list(learningPromotion?.promotedLessonIds)
+    .map((value) => text(value))
+    .filter(Boolean));
+  const createdCanonicalGoalIssueNumbers = freeze(list(learning.createdCanonicalGoalIssueNumbers)
+    .map(positiveInteger)
+    .filter(Boolean));
+  const dedupedCanonicalGoalIssueNumbers = freeze(list(learning.dedupedCanonicalGoalIssueNumbers)
+    .map(positiveInteger)
+    .filter(Boolean));
+  const actions = [
+    outcomeOwnershipSeedPublication && freeze({
+      actionKind: 'OUTCOME_OWNERSHIP_SEED_PUBLICATION',
+      ok: outcomeOwnershipSeedPublication?.ok === true,
+      reason: text(outcomeOwnershipSeedPublication?.reason || outcomeOwnershipSeedPublication?.finalVerdict, 'UNKNOWN'),
+      missionId: text(outcomeOwnershipSeedPublication?.missionId),
+    }),
+    recurringCalibrationReadiness && freeze({
+      actionKind: 'RECURRING_CALIBRATION',
+      ok: recurringCalibrationReadiness?.ok === true,
+      reason: text(recurringCalibrationReadiness?.reason || recurringCalibrationReadiness?.finalVerdict, 'UNKNOWN'),
+    }),
+    learningPromotion && freeze({
+      actionKind: 'LEARNING_PROMOTION',
+      ok: learningPromotion?.ok === true,
+      reason: text(learningPromotion?.reason || learningPromotion?.finalVerdict, 'UNKNOWN'),
+      promotedLessonCount: promotedLessonIds.length,
+    }),
+    workspaceIntegritySeedPressurePublication && freeze({
+      actionKind: 'WORKSPACE_INTEGRITY_SEED_PRESSURE',
+      ok: workspaceIntegritySeedPressurePublication?.ok === true,
+      reason: text(workspaceIntegritySeedPressurePublication?.reason || workspaceIntegritySeedPressurePublication?.finalVerdict, 'UNKNOWN'),
+      published: workspaceIntegritySeedPressurePublication?.published === true,
+      deduped: workspaceIntegritySeedPressurePublication?.deduped === true,
+      capabilityId: text(workspaceIntegritySeedPressurePublication?.capabilityId),
+      targetRung: text(workspaceIntegritySeedPressurePublication?.targetRung),
+      eventId: text(workspaceIntegritySeedPressurePublication?.eventId),
+    }),
+    learningGoalReconciliation && freeze({
+      actionKind: 'LEARNING_GOAL_RECONCILIATION',
+      ok: learning.ok === true,
+      reason: text(learning.reason || learning.finalVerdict, 'UNKNOWN'),
+      observedActionableEventCount: Number(learning.observedActionableEventCount || 0),
+      attachedExistingOwnerCount: Number(learning.attachedExistingOwnerCount || 0),
+      createdCanonicalGoalCount: Number(learning.createdCanonicalGoalCount || 0),
+      dedupedCanonicalGoalCount: Number(learning.dedupedCanonicalGoalCount || 0),
+      createdGoalCandidateCount: Number(learning.createdGoalCandidateCount || 0),
+      brainDiagnosisAttemptCount: Number(learning.brainDiagnosisAttemptCount || 0),
+      brainDiagnosisSuccessCount: Number(learning.brainDiagnosisSuccessCount || 0),
+    }),
+    freeze({
+      actionKind: 'CONTROLLER_CYCLE_ACTION',
+      ok: text(result?.status).toUpperCase() !== 'HOLD',
+      status: text(result?.status, 'UNKNOWN'),
+      action: text(result?.action, 'HOLD'),
+      workerMissionId: text(result?.workerActionGrant?.missionId),
+      workerActionId: text(result?.workerActionGrant?.actionId),
+      actionResultOk: actionResult?.ok === true,
+      blockers: freeze(list(result?.blockers).map((value) => text(value)).filter(Boolean)),
+    }),
+  ].filter(Boolean);
+
+  return freeze({
+    schemaVersion: DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA,
+    participantId: DURABLE_FLYWHEEL_CONTROLLER_ID,
+    observedAtUtc: text(nowUtc),
+    sourceRevision: sha(sourceRevision),
+    actions: freeze(actions),
+    learning: freeze({
+      promotedLessonIds,
+      diagnoses: freeze(diagnoses),
+      attachments: freeze(attachments),
+      createdCanonicalGoalIssueNumbers,
+      dedupedCanonicalGoalIssueNumbers,
+      canonicalGoalAdmissionBlockers: freeze(list(learning.canonicalGoalAdmissionBlockers)
+        .map((value) => text(value))
+        .filter(Boolean)),
+      createdGoalCandidateIds: freeze(list(learning.createdGoalCandidateIds)
+        .map((value) => text(value))
+        .filter(Boolean)),
+      dedupedGoalCandidateIds: freeze(list(learning.dedupedGoalCandidateIds)
+        .map((value) => text(value))
+        .filter(Boolean)),
+    }),
+    provenance: freeze({
+      source: 'durable-flywheel-controller',
+      sharedWorkspacePublished: true,
+      chatMemoryAuthoritative: false,
+    }),
+    authority: freeze({
+      sourceMutationAuthorityAdded: false,
+      runtimeMutationAuthorityAdded: false,
+      mergeAuthorityAdded: false,
+      deploymentAuthorityAdded: false,
+      approvalBypassAuthorityAdded: false,
+    }),
   });
 }
 
@@ -350,6 +734,21 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     workerActionGrantId: text(result.workerActionGrant?.grantId) || null,
     workerMissionId: text(result.workerActionGrant?.missionId) || null,
     workerActionId: text(result.workerActionGrant?.actionId) || null,
+    goalClosureState: text(result.goalClosureResult?.state) || null,
+    goalClosureStateReason: text(result.goalClosureResult?.stateReason) || null,
+    goalClosureRepository: text(result.goalClosureResult?.repository) || null,
+    goalClosureIssueNumber: positiveInteger(result.goalClosureResult?.issueNumber),
+    goalClosureResultProofRefs: freeze(list(result.goalClosureResult?.resultProofRefs)),
+    goalClosureReusableCapabilityId: text(result.goalClosureResult?.reusableCapabilityId) || null,
+    goalClosureSharedLessonId: text(result.goalClosureResult?.sharedLessonId) || null,
+    controllerDisableAllowed: result.controllerLivenessDecision?.disableAllowed === true,
+    controllerShouldRemainEnabled: result.controllerLivenessDecision
+      ? result.controllerLivenessDecision.controllerShouldRemainEnabled === true
+      : result.controllerShouldRemainEnabled !== false,
+    blockedSurfaceIds: freeze(list(result.controllerLivenessDecision?.blockedSurfaceIds)),
+    selectedAlternateSurface: text(result.controllerLivenessDecision?.selectedAlternateSurface) || null,
+    retryNextScheduledRun: result.controllerLivenessDecision?.retryNextScheduledRun === true,
+    flywheelActionJournal: options.actionJournal || null,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -391,6 +790,46 @@ function hasOnlyTransitionAuthorityBlocker(projection, transitionState) {
   return projection?.status === 'HOLD'
     && list(projection?.blockers).length === 1
     && projection.blockers[0] === expected;
+}
+
+function hasExactTerminalLaneIdentity(projection) {
+  const identity = projectionIdentity(projection);
+  return Boolean(
+    projection?.lane?.valid === true
+    && projection?.lane?.terminal === true
+    && projection?.lane?.mergeEvidence?.affirmativelyMerged === true
+    && projection?.mutationLease
+    && identity.laneId
+    && identity.repository
+    && identity.issueNumber
+    && identity.prNumber
+    && identity.branch
+    && identity.headSha
+    && identity.leaseId
+    && identity.ownerId
+  );
+}
+
+function canBootstrapExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return projection?.status === 'HOLD'
+    && list(projection?.blockers).includes('controller-heartbeat-terminal-lane-authority-unproven')
+    && heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId;
+}
+
+function hasExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId
+    && heartbeat?.reconciliationSucceeded === true
+    && heartbeat?.boundedMutationSteps === 1;
 }
 
 export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {
@@ -436,14 +875,67 @@ function heartbeatInput({
 }
 
 function productionMachinery(overrides = {}) {
+  const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
+    productionMode,
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
+    promoteIncidentLessons: overrides.promoteIncidentLessons
+      ?? (productionMode
+        ? promoteSharedWorkspaceLearningCandidatesV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_NOOP',
+          promotedLessonIds: freeze([]),
+          skippedLessonIds: freeze([]),
+          errors: freeze([]),
+          finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_TEST_SEAM',
+        })),
+    publishOutcomeOwnershipSeed: overrides.publishOutcomeOwnershipSeed
+      ?? (productionMode
+        ? publishStarfieldVrOutcomeOwnershipSeedV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_OUTCOME_OWNERSHIP_SEED_NOOP',
+          missionId: 'starfield-vr-outcome-ownership',
+          growthStage: 'SEEDED',
+          finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_TEST_SEAM',
+        })),
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
+    closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
+    recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
-    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
+    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
+    resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+    runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
+    publishWorkspaceIntegritySeedPressure: overrides.publishWorkspaceIntegritySeedPressure
+      ?? (productionMode
+        ? publishWorkspaceIntegritySeedPressureEventV1
+        : async () => null),
+    reconcileLearningGoals: overrides.reconcileLearningGoals
+      ?? (productionMode
+        ? reconcileFlywheelLearningGoalsV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_GOAL_NOOP',
+          observedActionableEventCount: 0,
+          attachedExistingOwnerCount: 0,
+          createdGoalCandidateCount: 0,
+          dedupedGoalCandidateCount: 0,
+          finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_TEST_SEAM',
+        })),
   });
+}
+
+function shouldAttemptOrphanRecovery(projection = {}) {
+  const blockers = list(projection?.blockers).map((blocker) => text(blocker));
+  return projection?.status === 'HOLD'
+    && !projection?.lane
+    && Boolean(projection?.scheduler?.selectedGoal)
+    && projection?.criticalBacklog?.decision === 'WAIT_ACTIVE_MISSION'
+    && text(projection?.criticalBacklog?.activeMission?.currentPhase).toUpperCase() === 'CREATE_WORKTREE'
+    && blockers.some((blocker) => ORPHAN_DEADLOCK_BLOCKERS.has(blocker));
 }
 
 export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
@@ -452,11 +944,13 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   const env = options.env ?? process.env;
   const sourceRevision = sha(options.sourceRevision ?? env.STEPHANOS_MISSION_WORKER_HEAD_SHA);
   const cycleReceiptId = receiptId(nowUtc);
+  let controllerLivenessDecision = controllerLivenessBlockDecision(options);
   const serviceOptions = {
     ...options,
     env,
     nowUtc,
     sourceRevision,
+    blockedAdapters: freeze([...list(controllerLivenessDecision?.blockedSurfaceIds)]),
   };
   if (!sourceRevision) {
     const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
@@ -466,8 +960,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   }
 
   const publishHeartbeat = requiredFunction(deps.publishControllerHeartbeat, 'publishControllerHeartbeat');
+  // RECONCILING permits observation of an idle scheduler during a bounded cycle,
+  // but carries zero mutation steps and no success receipt. STARTING is reserved
+  // for boot before the controller has entered its reconciliation loop.
   const initialHeartbeat = await publishHeartbeat(heartbeatInput({
-    state: 'STARTING',
+    state: 'RECONCILING',
     sourceRevision,
     nowUtc,
   }), serviceOptions);
@@ -479,6 +976,109 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  let outcomeOwnershipSeedPublication = null;
+  try {
+    outcomeOwnershipSeedPublication = await requiredFunction(
+      deps.publishOutcomeOwnershipSeed,
+      'publishOutcomeOwnershipSeed',
+    )({
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    outcomeOwnershipSeedPublication = freeze({
+      ok: false,
+      reason: 'OUTCOME_OWNERSHIP_SEED_PUBLICATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      missionId: 'starfield-vr-outcome-ownership',
+      finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_DEGRADED',
+    });
+  }
+
+  let recurringCalibrationReadiness = null;
+  try {
+    recurringCalibrationReadiness = await requiredFunction(
+      deps.runRecurringCalibrationReadiness,
+      'runRecurringCalibrationReadiness',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      workspaceRoot: serviceOptions.workspaceRoot || serviceOptions.root,
+      trigger: text(options.calibrationTrigger, 'SCHEDULED').toUpperCase(),
+    });
+  } catch (error) {
+    recurringCalibrationReadiness = freeze({
+      ok: false,
+      reason: 'RECURRING_CALIBRATION_READINESS_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+    });
+  }
+
+  let learningPromotion = null;
+  try {
+    learningPromotion = await requiredFunction(
+      deps.promoteIncidentLessons,
+      'promoteIncidentLessons',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+    });
+  } catch (error) {
+    learningPromotion = freeze({
+      ok: false,
+      reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
+  }
+
+  let workspaceIntegritySeedPressurePublication = null;
+  try {
+    workspaceIntegritySeedPressurePublication = await requiredFunction(
+      deps.publishWorkspaceIntegritySeedPressure,
+      'publishWorkspaceIntegritySeedPressure',
+    )({
+      ...serviceOptions,
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    workspaceIntegritySeedPressurePublication = freeze({
+      ok: false,
+      published: false,
+      deduped: false,
+      reason: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_PUBLICATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_DEGRADED',
+    });
+  }
+
+  let learningGoalReconciliation = null;
+  try {
+    learningGoalReconciliation = await requiredFunction(
+      deps.reconcileLearningGoals,
+      'reconcileLearningGoals',
+    )({
+      ...serviceOptions,
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      nowMs: Date.parse(nowUtc),
+      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
+      brainDiagnosisAuthorized: deps.productionMode === true,
+    });
+  } catch (error) {
+    learningGoalReconciliation = freeze({
+      ok: false,
+      reason: 'LEARNING_GOAL_RECONCILIATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_DEGRADED',
+    });
   }
 
   const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
@@ -529,7 +1129,10 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     projection = await loadProjection(serviceOptions);
     if (
       ['ACTIVE_LANE', 'FINALIZING'].includes(transitionState)
-      && hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+      && (
+        hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+        || (transitionState === 'FINALIZING' && canBootstrapExactTerminalCleanupAuthority(projection))
+      )
     ) {
       const authorityResult = transitionAuthorityResult(
         projection,
@@ -588,7 +1191,100 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     }
   }
 
-  let result = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  let orphanRecovery = null;
+  let orphanRecoveryRefresh = null;
+  if (shouldAttemptOrphanRecovery(projection)) {
+    orphanRecovery = await requiredFunction(
+      deps.recoverOrphanedBacklogMission,
+      'recoverOrphanedBacklogMission',
+    )({
+      env,
+      now: new Date(nowUtc),
+    });
+    if (orphanRecovery?.ok === false) {
+      projection = {
+        ...projection,
+        status: 'HOLD',
+        blockers: [
+          ...list(projection.blockers),
+          `orphan-recovery:${text(orphanRecovery?.classification || orphanRecovery?.reason, 'failed')}`,
+        ],
+      };
+    } else if (orphanRecovery?.recovered === true) {
+      orphanRecoveryRefresh = await requiredFunction(
+        deps.ensureBacklogMission,
+        'ensureBacklogMission',
+      )({
+        env,
+        now: new Date(nowUtc),
+        blockedAdapters: serviceOptions.blockedAdapters,
+        allowLegacyMissionCreation: false,
+        admissionOwner: 'durable-flywheel-controller-orphan-recovery',
+      });
+      if (orphanRecoveryRefresh?.ok !== true) {
+        projection = {
+          ...projection,
+          status: 'HOLD',
+          blockers: [
+            ...list(projection.blockers),
+            `orphan-recovery-refresh:${text(orphanRecoveryRefresh?.classification || orphanRecoveryRefresh?.reason, 'failed')}`,
+          ],
+        };
+      } else {
+        projection = await loadProjection(serviceOptions);
+      }
+    }
+  }
+
+  const terminalCleanupAuthorized = transitionState === 'FINALIZING'
+    && hasExactTerminalCleanupAuthority(projection);
+  let result = terminalCleanupAuthorized
+    ? freeze({
+      ...transitionAuthorityResult(projection, sourceRevision, nowUtc, 'FINALIZING'),
+      action: 'FINALIZE_EXACT_TERMINAL_LANE',
+      boundedMutationSteps: 1,
+      nextAction: 'Publish exact terminal evidence, release only the matching merged lease, then reconcile unrelated programme blockers independently.',
+    })
+    : reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  let goalClosureResult = null;
+  const closurePlanReady = projection?.goalClosurePlan?.state === 'READY';
+  if (closurePlanReady && ['ACTIVE', 'IDLE'].includes(result.status)) {
+    goalClosureResult = await requiredFunction(deps.closeReadyGoal, 'closeReadyGoal')(
+      projection,
+      serviceOptions,
+    );
+    if (['CLOSED_COMPLETED', 'ALREADY_CLOSED'].includes(text(goalClosureResult?.state))) {
+      const closureMutated = goalClosureResult.state === 'CLOSED_COMPLETED';
+      projection = await loadProjection(serviceOptions);
+      const refreshed = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+      if (closureMutated && refreshed.status !== 'ACTIVE') {
+        result = freeze({
+          ...refreshed,
+          status: 'IDLE',
+          action: 'CLOSE_CANONICAL_GOAL',
+          allowWorkerTick: false,
+          boundedMutationSteps: 1,
+          goalClosureResult,
+          nextAction: 'Refresh canonical goal truth and immediately continue the work-conserving controller cycle.',
+        });
+      } else {
+        result = freeze({
+          ...refreshed,
+          goalClosureResult,
+          ...(closureMutated && refreshed.status === 'ACTIVE'
+            ? {
+                action: 'ADVANCE_ACTIVE_LANE_AND_CLOSE_COMPLETED_GOAL',
+                boundedMutationSteps: 1,
+                nextAction: 'Keep the active worker moving while the retired goal releases capacity for the next scheduler refill.',
+              }
+            : {}),
+        });
+      }
+    } else {
+      result = freeze({ ...result, goalClosureResult });
+    }
+  }
+
   let actionResult = null;
   if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     const identity = result.laneIdentity;
@@ -615,15 +1311,30 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       deps.loadCapacityRoutingInput,
       'loadCapacityRoutingInput',
     )(serviceOptions);
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, capacityRouting);
+    const blockDecision = controllerLivenessBlockDecision(options);
+    const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
+    const workerActionGrant = createExactWorkerActionGrant(
+      projection,
+      sourceRevision,
+      routedCapacity,
+      deps.resolveCapacityCandidates,
+    );
+    controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+      options,
+      blockDecision,
+      workerActionGrant,
+    );
     if (!workerActionGrant) {
-      result = holdResult('mission-worker:exact-action-grant-unavailable', {
-        observedAtUtc: nowUtc,
-        sourceRevision,
-        activeLane: projection.lane,
+      result = freeze({
+        ...holdResult('mission-worker:exact-action-grant-unavailable', {
+          observedAtUtc: nowUtc,
+          sourceRevision,
+          activeLane: projection.lane,
+        }),
+        controllerLivenessDecision,
       });
     } else {
-      result = freeze({ ...result, workerActionGrant });
+      result = freeze({ ...result, workerActionGrant, controllerLivenessDecision });
     }
   } else if (result.status === 'READY') {
     missionAdmissionReceipt = createCycleReceipt(
@@ -648,6 +1359,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
         env,
         now: new Date(nowUtc),
+        blockedAdapters: serviceOptions.blockedAdapters,
       });
       if (actionResult?.ok !== true) {
         result = holdResult(`critical-backlog:${text(actionResult?.classification ?? actionResult?.reason, 'mission-create-failed')}`, {
@@ -655,24 +1367,69 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           sourceRevision,
         });
       } else {
+        // Elastic missions live outside the parked legacy critical backlog.
+        // Admit only the exact, current-head, already completed Forge source
+        // artifact for draft publication. Never synthesize a legacy lane,
+        // grant an arbitrary elastic action or override an active owner.
+        const elasticPublication = actionResult?.elasticAdmission?.selectedMission;
+        const eligibleElasticMission = !projection?.lane
+          && projection?.status === 'READY'
+          && !actionResult?.projection?.activeMission
+          && /^critical-[1-9][0-9]*-elastic-goal$/.test(text(elasticPublication?.missionId))
+          && text(elasticPublication?.repository) === 'Cheekyfellastef/stephan-os'
+          && text(elasticPublication?.git?.branch) === 'openclaw/elastic-goal-' + text(elasticPublication?.missionId).split('-')[1]
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE';
+        // Use the existing exact-action validator for ordinary stages. Never
+        // revive parked work, invent writer authority or bypass source fencing.
+        const eligibleReadOnlyOrSignedStep = eligibleElasticMission
+          && ['CREATE_WORKTREE', 'VERIFYING', 'CHECK_PULL_REQUEST'].includes(text(elasticPublication?.currentPhase))
+          && elasticPublication?.dispatch?.status !== 'running';
+        const eligibleElasticPublication = eligibleElasticMission
+          && elasticPublication?.currentPhase === 'GITHUB_COMMIT'
+          && elasticPublication?.dispatch?.adapter === 'foundry-forge'
+          && elasticPublication?.dispatch?.status === 'complete'
+          && elasticPublication?.continuity?.parkingStatus === 'ACTIVE'
+          && elasticPublication?.sourcePublication?.exactParentHead === sourceRevision
+          && /^[a-f0-9]{64}$/.test(text(elasticPublication?.sourcePublication?.artifactSha256))
+          && /^[a-f0-9]{40}$/.test(text(elasticPublication?.sourcePublication?.exactResultTree))
+          && text(elasticPublication?.git?.branch) === text(elasticPublication?.sourcePublication?.canonicalBranch);
         const grantProjection = {
           ...projection,
-          criticalBacklog: actionResult.projection,
+          criticalBacklog: {
+            ...actionResult.projection,
+            ...((eligibleElasticPublication || eligibleReadOnlyOrSignedStep) ? { activeMission: elasticPublication } : {}),
+          },
         };
         const capacityRouting = await requiredFunction(
           deps.loadCapacityRoutingInput,
           'loadCapacityRoutingInput',
         )(serviceOptions);
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, capacityRouting);
+        const blockDecision = controllerLivenessBlockDecision(options);
+        const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
+        const workerActionGrant = createExactWorkerActionGrant(
+          grantProjection,
+          sourceRevision,
+          routedCapacity,
+          deps.resolveCapacityCandidates,
+        );
+        controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+          options,
+          blockDecision,
+          workerActionGrant,
+        );
         if (!workerActionGrant) {
-          result = holdResult('mission-worker:exact-action-grant-unavailable', {
-            observedAtUtc: nowUtc,
-            sourceRevision,
+          result = freeze({
+            ...holdResult('mission-worker:exact-action-grant-unavailable', {
+              observedAtUtc: nowUtc,
+              sourceRevision,
+            }),
+            controllerLivenessDecision,
           });
         } else {
           result = freeze({
             ...result,
             workerActionGrant,
+            controllerLivenessDecision,
             allowWorkerTick: true,
             nextAction: actionResult.createdMission
               ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
@@ -683,7 +1440,20 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     }
   }
 
-  const receipt = createCycleReceipt(result, projection, nowUtc);
+  const flywheelActionJournal = buildFlywheelActionJournalV1({
+    nowUtc,
+    sourceRevision,
+    result,
+    actionResult,
+    outcomeOwnershipSeedPublication,
+    recurringCalibrationReadiness,
+    learningPromotion,
+    workspaceIntegritySeedPressurePublication,
+    learningGoalReconciliation,
+  });
+  const receipt = createCycleReceipt(result, projection, nowUtc, {
+    actionJournal: flywheelActionJournal,
+  });
   const receiptPublication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
   if (receiptPublication?.ok !== true) {
     result = holdResult(`cycle-receipt:${text(receiptPublication?.reason, 'publication-failed')}`, {
@@ -693,7 +1463,16 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       blockers: result.blockers,
     });
   }
-  const finalState = result.status === 'HOLD'
+  // A missing exact worker grant with no active lane is an idle admission wait,
+  // not programme-wide mutation unsafety. Keep the heartbeat in zero-authority
+  // reconciliation so independent eligible goals can still be admitted.
+  const idleGrantWait = result.status === 'HOLD'
+    && !projection?.lane
+    && result.allowWorkerTick === false
+    && result.boundedMutationSteps === 0
+    && list(result.blockers).length === 1
+    && result.blockers[0] === 'mission-worker:exact-action-grant-unavailable';
+  const finalState = idleGrantWait ? 'RECONCILING' : result.status === 'HOLD'
     ? 'HOLD'
     : result.status === 'ACTIVE'
       ? 'ACTIVE_LANE'
@@ -703,9 +1482,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     sourceRevision,
     activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
     nowUtc,
-    cycleReceiptId: receipt.receiptId,
+    cycleReceiptId: idleGrantWait ? '' : receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
-    successful: receiptPublication?.ok === true,
+    successful: !idleGrantWait && receiptPublication?.ok === true,
   }), serviceOptions);
   if (finalHeartbeat?.ok !== true) {
     result = holdResult(`controller-heartbeat:${text(finalHeartbeat?.reason, 'final-publication-failed')}`, {
@@ -723,9 +1502,18 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityHeartbeatPublication,
     missionAdmissionReceipt,
     missionAdmissionReceiptPublication,
+    orphanRecovery,
+    orphanRecoveryRefresh,
+    outcomeOwnershipSeedPublication,
+    recurringCalibrationReadiness,
+    learningPromotion,
+    workspaceIntegritySeedPressurePublication,
+    learningGoalReconciliation,
+    flywheelActionJournal,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
+    controllerLivenessDecision,
   });
 }
 

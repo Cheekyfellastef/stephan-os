@@ -1,6 +1,9 @@
 export const ELASTIC_BUILD_CAPACITY_SCHEMA = 'stephanos.elastic-build-capacity.v1';
 export const MINIMUM_BUILD_LANES = 5;
-export const MAXIMUM_BUILD_LANES = 16;
+// Compatibility bound for JavaScript integer representation only. This is not an
+// operational lane ceiling: useful width remains constrained by proven executor
+// capacity, resource-disjoint work, policy inputs, leases, and runtime budgets.
+export const MAXIMUM_BUILD_LANES = Number.MAX_SAFE_INTEGER;
 
 const SAFE_RESOURCE_ID = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
 const SAFE_REPOSITORY_PATH_SEGMENT = /^[a-z0-9._-]+$/i;
@@ -34,6 +37,17 @@ function repositoryPathResource(value) {
   return { repository:match[1], path:segments.join('/') };
 }
 
+function repositoryRootResource(value) {
+  const match = value.match(/^repo:([^:]+\/[^:]+)$/);
+  if (!match) return null;
+  const segments = match[1].split('/');
+  if (
+    segments.length !== 2
+    || segments.some((segment) => !SAFE_REPOSITORY_PATH_SEGMENT.test(segment))
+  ) return null;
+  return { repository:match[1] };
+}
+
 function canonicalResourceId(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (!SAFE_RESOURCE_ID.test(normalized)) return null;
@@ -52,8 +66,14 @@ function resourceIds(value) {
 function resourceConflictIndex(initial = []) {
   const exact = new Set();
   const roots = new Map();
+  const repositoryWide = new Set();
   const add = (resourceId) => {
     exact.add(resourceId);
+    const repositoryRoot = repositoryRootResource(resourceId);
+    if (repositoryRoot) {
+      repositoryWide.add(repositoryRoot.repository);
+      return;
+    }
     const parsed = repositoryPathResource(resourceId);
     if (!parsed) return;
     let node = roots.get(parsed.repository);
@@ -69,8 +89,13 @@ function resourceConflictIndex(initial = []) {
   };
   const conflicts = (resourceId) => {
     if (exact.has(resourceId)) return true;
+    const repositoryRoot = repositoryRootResource(resourceId);
+    if (repositoryRoot) {
+      return repositoryWide.has(repositoryRoot.repository) || roots.has(repositoryRoot.repository);
+    }
     const parsed = repositoryPathResource(resourceId);
     if (!parsed) return false;
+    if (repositoryWide.has(parsed.repository)) return true;
     let node = roots.get(parsed.repository);
     if (!node) return false;
     if (node.terminal) return true;

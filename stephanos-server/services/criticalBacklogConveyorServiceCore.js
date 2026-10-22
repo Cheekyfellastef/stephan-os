@@ -38,6 +38,7 @@ import {
   readMissionControllerCapacityRoutingInput,
 } from './programmeAuthorityService.js';
 import { ensureElasticGoalMissions } from './elasticGoalMissionAdmissionService.js';
+import { reconcileExpiredElasticReviewLeaseV1 } from './elasticPrHeadLeaseService.js';
 import { publishNextMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 
 export const CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA = 'stephanos.critical-backlog-conveyor-service.v1';
@@ -50,11 +51,13 @@ const BLOCKED_DECISIONS = new Set([
 ]);
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
-const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-local']);
+const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone', 'openclaw-local', 'sovereign-commander']);
 const EXTERNAL_ELASTIC_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
+  MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
 ]);
 
 function text(value, fallback = '') {
@@ -62,12 +65,47 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
+  return [...new Set(
+    (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  )];
+}
+
+function qualifiedStandaloneCandidate(routed = {}) {
+  if (routed?.dispatchAllowed !== true) return null;
+  const adapter = text(routed.adapter).toLowerCase();
+  const route = text(routed.route).toUpperCase();
+  const provider = text(
+    routed?.openClawQualification?.receipt?.provider
+      || routed?.openClawCapacity?.receipt?.provider,
+  ).toLowerCase();
+  const directStandalone = adapter === 'openclaw-standalone'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
+  const directLocal = adapter === 'openclaw-local'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+    && provider === 'openclaw-standalone';
+  if (!directStandalone && !directLocal) return null;
+  return Object.freeze({
+    route: directLocal
+      ? MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+      : MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: directLocal ? 'openclaw-local' : 'openclaw-standalone',
+    workerId: routed.workerId,
+    receiptId: routed.selectedCapacityReceiptId,
+    proofRefs: routed.proofRefs,
+    queueDepth: routed.openClawCapacity?.receipt?.queueDepth,
+    p95StartLatencySeconds: routed.openClawCapacity?.receipt?.p95StartLatencySeconds,
+  });
+}
+
 function eventId(value) {
   return `critical-backlog-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
 }
 
 function elasticIssueNumber(mission = {}) {
-  const match = text(mission.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
+  const match = text(mission?.missionId).toLowerCase().match(ELASTIC_MISSION_ID);
   const parsed = Number(match?.[1]);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
@@ -169,22 +207,13 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
     .filter(Boolean);
   const openClaw = routeWithQualifiedOpenClawProvider({
     ...baseInput,
+    blockedAdapters: standaloneCompatibilityBlockedAdapters(baseInput.blockedAdapters),
     mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
   }, capacityRouting.openClawHostContext);
-  if (openClaw?.dispatchAllowed === true && text(openClaw.adapter).toLowerCase() === 'openclaw-local') {
-    const receipt = openClaw.openClawCapacity?.receipt;
-    const candidate = normalizedExternalCandidate({
-      route: openClaw.route,
-      adapter: openClaw.adapter,
-      workerId: openClaw.workerId,
-      receiptId: openClaw.selectedCapacityReceiptId,
-      proofRefs: openClaw.proofRefs,
-      queueDepth: receipt?.queueDepth,
-      p95StartLatencySeconds: receipt?.p95StartLatencySeconds,
-    });
-    if (candidate) candidates.push(candidate);
-  }
+  const standalone = qualifiedStandaloneCandidate(openClaw);
+  const candidate = standalone ? normalizedExternalCandidate(standalone) : null;
+  if (candidate) candidates.push(candidate);
   const unique = new Map();
   for (const candidate of candidates) {
     const key = externalCandidateKey(candidate);
@@ -377,6 +406,10 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
         actionId: grant.actionId,
         grantId: grant.grantId,
         resourceScopes: Object.freeze([...scopes]),
+        handoffState: text(publication?.handoffResponsibility?.state, 'PICKUP_PENDING'),
+        pickupProven: false,
+        responsibilityRetained: publication?.handoffResponsibility?.responsibilityRetained !== false,
+        publicationIsTerminal: false,
       });
       dispatched.push(dispatchedMission);
       occupiedScopes.push(...scopes);
@@ -408,6 +441,10 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     dispatchCount: dispatched.length,
     dispatched: Object.freeze(dispatched),
     held: Object.freeze(held),
+    pickupPendingCount: dispatched.filter((item) => item.pickupProven !== true).length,
+    handoffPublicationIsTerminal: false,
+    responsibilityRetainedUntilPickup: dispatched.length > 0,
+
     resourceDisjointOneWriterProven: dispatched.every((item, index) => dispatched
       .slice(index + 1)
       .every((other) => !scopeSetConflicts(item.resourceScopes, other.resourceScopes))),
@@ -548,6 +585,47 @@ export async function publishCriticalBacklogProjection(projection, {
   });
 }
 
+
+export function projectElasticAdmissionGateV1({
+  programmeStatus = 'UNKNOWN', programmeBlockers = [], sourceRevision = '',
+  scheduler = null,
+} = {}) {
+  const status = text(programmeStatus, 'UNKNOWN').toUpperCase();
+  const blocked = (Array.isArray(programmeBlockers) ? programmeBlockers : [])
+    .map((value) => text(value).slice(0, 160)).filter(Boolean).slice(0, 20);
+  const workerOnlyHold = status === 'HOLD' && blocked.length > 0
+    && blocked.every((value) => [
+      'worker-heartbeat-stale', 'worker-heartbeat-invalid-or-missing',
+      'source:mission-worker-heartbeat-unavailable',
+    ].includes(value));
+  const gateReasons = [];
+  if (status !== 'READY' && !workerOnlyHold) {
+    gateReasons.push(status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_HOLD'
+      : 'AUTHORITATIVE_PROGRAMME_NOT_READY');
+  }
+  if (!SHA_40.test(text(sourceRevision).toLowerCase())) {
+    gateReasons.push('ELASTIC_ADMISSION_SOURCE_HEAD_INVALID');
+  }
+  if (scheduler?.failClosed !== false) gateReasons.push('PROGRAMME_SCHEDULER_FAIL_CLOSED');
+  if (text(scheduler?.elasticCapacity?.status).toUpperCase() !== 'RUNNING') {
+    gateReasons.push('ELASTIC_SCHEDULER_CAPACITY_NOT_RUNNING');
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.elastic-admission-gate-observation.v1',
+    admissionPreflightEligible: gateReasons.length === 0,
+    workerRuntimeHold: workerOnlyHold,
+    blocker: gateReasons[0] || '',
+    gateReasons: Object.freeze(gateReasons),
+    programmeStatus: status,
+    programmeBlockers: Object.freeze(blocked),
+    canonicalOwner: '#2961',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    leaseOverrideAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
 export async function ensureCriticalBacklogMission({
   backlog = DEFAULT_CRITICAL_BACKLOG,
   env = process.env,
@@ -555,17 +633,23 @@ export async function ensureCriticalBacklogMission({
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   listMissions = listMissionRecords,
   createMission = createMissionRecord,
+  allowLegacyMissionCreation = true,
   publishProjection = publishCriticalBacklogProjection,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
   ensureElasticMissions = ensureElasticGoalMissions,
   readCapacityRouting = readMissionControllerCapacityRoutingInput,
   dispatchElasticBuilds = dispatchElasticGoalBuilds,
+  reconcileExpiredReviewLease = reconcileExpiredElasticReviewLeaseV1,
 } = {}) {
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
   let elasticAdmission = null;
   let elasticIgnition = null;
+  let programmeStatus = 'UNKNOWN';
+  let programmeBlockers = [];
+  let elasticAdmissionGate = projectElasticAdmissionGateV1();
+  let elasticReviewLeaseRecovery = null;
   try {
-    const authoritative = await readProgrammeProjection({
+    let authoritative = await readProgrammeProjection({
       env,
       nowUtc,
       root: paths.workspaceRoot,
@@ -573,11 +657,40 @@ export async function ensureCriticalBacklogMission({
       orchestratorRoot: paths.orchestratorRoot,
       snapshotRoot: paths.snapshotRoot,
     });
-    if (
-      authoritative?.status === 'READY'
-      && authoritative?.scheduler?.failClosed === false
-      && authoritative?.scheduler?.elasticCapacity?.status === 'RUNNING'
-    ) {
+    const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+    // A verified expired review-only lease is no longer a source writer,
+    // but the persisted stale file still prevents other eligible goals from
+    // entering canonical Programme Authority. Reconcile it exactly once via
+    // the existing guarded lease release, only after persisted mission,
+    // current PR head, canonical queue and execution history all disprove
+    // in-flight work. Never remove a lease based on timeout alone.
+    if (text(authoritative?.status).toUpperCase() === 'HOLD'
+        && Array.isArray(authoritative?.blockers)
+        && authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+        && SHA_40.test(sourceRevision)) {
+      const originalMissions = await listMissions({
+        root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env,
+      });
+      elasticReviewLeaseRecovery = await reconcileExpiredReviewLease({
+        missionRecords: originalMissions,
+        now, env, paths, sourceRevision,
+      });
+      if (elasticReviewLeaseRecovery?.released === true) {
+        authoritative = await readProgrammeProjection({
+          env, nowUtc, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+          orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot,
+        });
+      }
+    }
+    programmeStatus = text(authoritative?.status, 'UNKNOWN').toUpperCase();
+    programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
+      .map((blocker) => text(blocker))
+      .filter(Boolean);
+    elasticAdmissionGate = projectElasticAdmissionGateV1({
+      programmeStatus, programmeBlockers, sourceRevision, scheduler: authoritative?.scheduler,
+    });
+    const workerRuntimeHold = elasticAdmissionGate.workerRuntimeHold;
+    if (elasticAdmissionGate.admissionPreflightEligible) {
       elasticAdmission = await ensureElasticMissions({
         scheduler: authoritative.scheduler,
         env,
@@ -592,23 +705,45 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
-        const capacityRouting = SHA_40.test(sourceRevision)
-          ? await readCapacityRouting({
-              root: paths.workspaceRoot,
-              repoRoot: paths.repoRoot,
-              nowUtc,
-              sourceRevision,
-              env,
-            })
-          : null;
-        elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
-          env,
-          now,
-          paths,
-          sourceRevision,
-          capacityRouting,
-        });
+        if (workerRuntimeHold) {
+          const desiredWidth = Math.max(0, Math.min(MAXIMUM_BUILD_LANES, Number(elasticAdmission.desiredWidth) || 0));
+          const runningCount = (Array.isArray(elasticAdmission.activeMissions) ? elasticAdmission.activeMissions : [])
+            .filter((mission) => text(mission?.dispatch?.status).toLowerCase() === 'running').length;
+          elasticIgnition = Object.freeze({
+            schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+            ok: true,
+            classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+            sourceRevision,
+            desiredWidth,
+            availableSlots: Math.max(0, desiredWidth - runningCount),
+            dispatchCount: 0,
+            dispatched: Object.freeze([]),
+            held: Object.freeze([Object.freeze({
+              missionId: text(elasticAdmission.selectedMission?.missionId).toLowerCase(),
+              reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
+            })]),
+            runtimeBlockers: Object.freeze([...programmeBlockers]),
+            resourceDisjointOneWriterProven: true,
+            blockedLaneDoesNotStallFleet: false,
+            mergeAuthority: false,
+            runtimeMutationAuthority: false,
+          });
+        } else {
+          const capacityRouting = await readCapacityRouting({
+            root: paths.workspaceRoot,
+            repoRoot: paths.repoRoot,
+            nowUtc,
+            sourceRevision,
+            env,
+          });
+          elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
+            env,
+            now,
+            paths,
+            sourceRevision,
+            capacityRouting,
+          });
+        }
         return Object.freeze({
           schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
           ok: true,
@@ -624,6 +759,11 @@ export async function ensureCriticalBacklogMission({
           publication: null,
           elasticAdmission,
           elasticIgnition,
+          elasticAdmissionGate,
+          elasticReviewLeaseRecovery,
+          programmeStatus: text(authoritative?.status).toUpperCase(),
+          programmeBlockers: Object.freeze([...programmeBlockers]),
+          workerRuntimeHold,
           arbitraryShellAllowed: false,
           destructiveGitAllowed: false,
           duplicateActiveMissionAllowed: false,
@@ -649,7 +789,7 @@ export async function ensureCriticalBacklogMission({
   let missionRecord = null;
   let preflightPublication = null;
 
-  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
+  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation !== false) {
     preflightPublication = await publishProjection(projection, { paths, now });
     if (!preflightPublication.ok) {
       return Object.freeze({
@@ -664,6 +804,8 @@ export async function ensureCriticalBacklogMission({
         publication: preflightPublication,
         elasticAdmission,
         elasticIgnition,
+        elasticAdmissionGate,
+        elasticReviewLeaseRecovery,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         duplicateActiveMissionAllowed: false,
@@ -703,9 +845,12 @@ export async function ensureCriticalBacklogMission({
   return Object.freeze({
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
     ok,
-    classification: projection.decision,
+    classification: projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation === false
+      ? 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER'
+      : projection.decision,
     projection,
     createdMission,
+    legacyMissionCreationAllowed: allowLegacyMissionCreation !== false,
     duplicateCreateObserved,
     missionRecord: missionRecord?.state
       ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })
@@ -714,6 +859,10 @@ export async function ensureCriticalBacklogMission({
     publication,
     elasticAdmission,
     elasticIgnition,
+    elasticAdmissionGate,
+    elasticReviewLeaseRecovery,
+    programmeStatus,
+    programmeBlockers: Object.freeze([...programmeBlockers]),
     arbitraryShellAllowed: false,
     destructiveGitAllowed: false,
     duplicateActiveMissionAllowed: false,

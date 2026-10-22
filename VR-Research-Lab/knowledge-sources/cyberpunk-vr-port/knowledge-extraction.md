@@ -58,3 +58,11 @@ Published evidence mentions PICO 4 through VDXR. It does not prove Meta Quest 3,
 ## Starfield relevance
 
 The strongest transferable ideas are the second-engine-view method, modular capability boundaries, physical weapon alignment, world-space HUD policy and diagnostic instrumentation. Creation Engine attachment points must be discovered independently through Starfield and Creation Kit evidence.
+
+## 2026-10-03 exact source pin
+
+The repository is now pinned at `a0c23fe110530bb74a73b3adf1ffa7d83050c43d` under MIT.
+
+The current source has converged further toward a single native RED4ext/OpenXR plugin that owns stereo, OpenXR tracking, the in-headset overlay and full-body VR avatar. Public source also exposes frame-generation/pacing work, independent HUD channels, controller-driven aiming, physical reload/melee/holster systems, ladder/swimming/driving adapters and a deliberately verbose diagnostic mode.
+
+For Stephanos, the most valuable comparison is no longer only “second eye rendering.” It is the way one conversion keeps render ownership, embodiment, gameplay adapters and diagnostics separable while still presenting one coherent headset experience.

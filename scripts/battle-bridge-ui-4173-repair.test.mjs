@@ -47,6 +47,15 @@ test('fixture READY does not start or plan start', () => {
   assert.match(result.blockers.map((b) => b.id).join(','), /stephanos-ui-already-ready/);
 });
 
+test('fixture READY with stale exact-head proof plans bounded 4173 restart', () => {
+  const servedRuntimeProof = { ready: false, expectedHead: EXACT_HEAD, gitCommit: 'b'.repeat(40) };
+  const result = evaluateUi4173Repair({ readinessReport: report({ ui: true, verdict: 'ready' }), dryRun: true, servedRuntimeProof });
+  assert.equal(result.allowedToStart, true);
+  assert.equal(result.staleServedRuntime, true);
+  assert.equal(result.action, 'dry-run-plan-stale-ui-4173-restart');
+  assert.equal(result.authority.killsProcesses, false);
+});
+
 test('fixture STALE_WORKSPACE blocks start', () => {
   const result = evaluateUi4173Repair({ readinessReport: report({ workspace: false, stale: ['proof stale'] }), dryRun: true });
   assert.equal(result.allowedToStart, false);

@@ -1,0 +1,259 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  CHATGPT_SHARED_WORKSPACE_OWNER,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
+  runChatGptSharedWorkspaceGitHubRelay,
+} from './chatgpt-shared-workspace-github-relay.mjs';
+import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
+
+function envelope(request) {
+  return `${CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER}\n## Request\n\`\`\`json\n${JSON.stringify({
+    schemaVersion: 'chatgpt-participant-bridge.v1',
+    state: 'REQUEST_READY',
+    request,
+  })}\n\`\`\``;
+}
+
+function request() {
+  return {
+    schemaVersion: 'chatgpt-participant-bridge.v1',
+    requestId: 'bootstrap-wiring-proof',
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+    participantId: 'chatgpt-bridge',
+    operation: 'READ_CURRENT_STATUS',
+    recordKind: 'current-status-projection',
+    relatedGoal: '#1418',
+    relatedPr: '',
+    correlationId: 'goal-1418-bootstrap-proof',
+    boundedPayload: {},
+    approvalRef: '',
+    expiryUtc: '2026-09-20T12:00:00.000Z',
+    redactionPolicy: 'sanitize-secrets-and-runtime-paths',
+  };
+}
+
+function syncRecord(head) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'battle-bridge-github-sync-current',
+    participantId: 'codex',
+    timestampUtc: '2026-09-20T10:59:00.000Z',
+    classification: 'SYNC_NO_CHANGE',
+    status: 'SYNC_NO_CHANGE',
+    localHeadBefore: head,
+    remoteHeadObserved: head,
+    repositoryIdentity: 'Cheekyfellastef/stephan-os',
+    branch: 'main',
+    remote: 'origin',
+    taskName: 'Stephanos Battle Bridge GitHub Sync',
+    syncRecordKind: 'battle-bridge-github-sync-receipt',
+    proofRefs: ['receipts/battle-bridge-github-sync/current.json'],
+    authority: {
+      canonicalRepositoryOnly: true,
+      fastForwardOnly: true,
+      arbitraryShellAllowed: false,
+      pushAllowed: false,
+      mergeToGitHubAllowed: false,
+    },
+  };
+}
+
+function memoryWorkspace() {
+  const records = new Map();
+  return {
+    receiptExistsFn: async ({ receiptId }) => records.has(`receipts/${receiptId}.json`),
+    recordExistsFn: async ({ segments }) => records.has(segments.join('/')),
+    writeAtomicJsonFn: async (_root, segments, record) => {
+      records.set(segments.join('/'), record);
+      return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', bytes: 100 };
+    },
+  };
+}
+
+test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from production relay wiring', async () => {
+  const main = '8'.repeat(40);
+  const workspace = memoryWorkspace();
+  let responseBody = '';
+  let bootstrapCalls = 0;
+
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    now: new Date('2026-09-20T11:00:00.000Z'),
+    paths: { repoRoot: '/repo', workspaceRoot: '/shared' },
+    adapter: {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request()),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => {
+        responseBody = body;
+        return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+      },
+    },
+    receiptExistsFn: workspace.receiptExistsFn,
+    recordExistsFn: workspace.recordExistsFn,
+    writeAtomicJsonFn: workspace.writeAtomicJsonFn,
+    projectionBuilder: async () => ({
+      aggregationOk: true,
+      aggregationReason: 'LATEST_STATUS_AGGREGATED',
+      currentGoal: { kind: 'goal', title: 'Operator Attention & Completion Loop V1' },
+      currentStatus: { kind: 'status', status: 'RUNNING', summary: 'Bootstrap repair active' },
+      latestProof: { kind: 'proof', status: 'PASS', summary: 'Shared truth available' },
+      controllerFleet: {
+        schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+        expectedControllerCount: 5,
+        counts: { building: 2, amber: 2, red: 0, unknown: 1 },
+        allCurrent: false,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+        controllers: [{
+          controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          title: 'Stephanos Autonomous Goal Builder',
+          freshness: 'CURRENT',
+          activityState: 'BUILDING',
+          trafficLight: 'GREEN',
+          observedEnabled: true,
+          materialActionsSucceeded: 2,
+          activeLaneCount: 2,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 1,
+          blocker: '',
+          lastMaterialActionAtUtc: '2026-09-20T10:59:30.000Z',
+          exactNextAction: 'Continue.',
+          proofRefs: ['proof/controller-action'],
+        }],
+      },
+      freshnessUtc: '2026-09-20T11:00:00.000Z',
+    }),
+    headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord(main) } }),
+    projectChatBootstrapBuilder: ({ headTruth, workspaceProjection, timestampUtc }) => {
+      bootstrapCalls += 1;
+      assert.equal(headTruth.githubMainHead, main);
+      assert.equal(headTruth.windowsCheckoutHead, main);
+      assert.equal(workspaceProjection.aggregationOk, true);
+      assert.equal(timestampUtc, '2026-09-20T11:00:00.000Z');
+      return Object.freeze({
+        schemaVersion: 'stephanos.universal-project-chat-bootstrap.v1',
+        ready: true,
+        finalVerdict: 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY',
+        sourceHead: main,
+        requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
+        runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'Operating doctrine' }],
+        capabilityRegistry: {
+          schemaVersion: 'stephanos.capability-registry.v1',
+          registryVersion: 'v1',
+          sourceHead: main,
+          capabilityCount: 1,
+          finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS',
+          capabilities: [{ capabilityId: 'shared-workspace', category: 'coordination', ownerIssue: 1418, discoveryRoute: 'shared-agent-workspace', requiresOperatorApproval: false, runtimeMutationAllowed: false }],
+        },
+      });
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(bootstrapCalls, 1);
+  assert.match(responseBody, /"projectChatBootstrap"/);
+  assert.match(responseBody, /"UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY"/);
+  assert.match(responseBody, /"controllerFleet"/);
+  assert.match(responseBody, /"CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING"/);
+  assert.match(responseBody, /"Stephanos Autonomous Goal Builder"/);
+  assert.match(responseBody, new RegExp(`"sourceHead": "${main}"`));
+});
+
+test('bootstrap is ready only when canonical main, Windows checkout and Shared Workspace truth agree', () => {
+  const main = 'a'.repeat(40);
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: {
+      githubMainHead: main,
+      windowsCheckoutHead: main,
+      sourceHeadsAgree: true,
+      freshness: 'CURRENT',
+    },
+    workspaceProjection: {
+      aggregationOk: true,
+      aggregationReason: 'LATEST_STATUS_AGGREGATED',
+      currentGoal: { kind: 'goal', title: 'Goal #1418' },
+      currentStatus: { kind: 'status', status: 'RUNNING' },
+      latestProof: { kind: 'proof', status: 'PASS' },
+      controllerFleet: {
+        schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+        expectedControllerCount: 5,
+        counts: { building: 1, amber: 4, red: 0, unknown: 0 },
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+        controllers: [{
+          controllerId: 'controller-1',
+          title: 'Controller One',
+          freshness: 'CURRENT',
+          activityState: 'BUILDING',
+          trafficLight: 'GREEN',
+          observedEnabled: true,
+          materialActionsSucceeded: 1,
+          activeLaneCount: 1,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 0,
+          blocker: '',
+          lastMaterialActionAtUtc: '2026-09-20T10:59:00.000Z',
+          exactNextAction: 'Continue.',
+          proofRefs: ['proof/controller-1'],
+        }],
+      },
+    },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+
+  assert.equal(bootstrap.ready, true);
+  assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY');
+  assert.equal(bootstrap.sourceHead, main);
+  assert.equal(bootstrap.capabilityRegistry.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(bootstrap.currentState.controllerFleet.expectedControllerCount, 5);
+  assert.equal(bootstrap.currentState.controllerFleet.controllers[0].activityState, 'BUILDING');
+  assert.equal(bootstrap.operatingRules.chatLocalMemoryIsSystemOfRecord, false);
+  assert.equal(bootstrap.operatingRules.createDuplicateLaneBeforeDiscoveryAllowed, false);
+  assert.equal(bootstrap.operatingRules.alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker, true);
+  assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
+  assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
+  assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
+});
+
+test('bootstrap fails closed when canonical head truth is stale even if observed heads still agree', () => {
+  const main = 'd'.repeat(40);
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: { githubMainHead: main, windowsCheckoutHead: main, sourceHeadsAgree: true, freshness: 'STALE' },
+    workspaceProjection: { aggregationOk: true },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+  assert.equal(bootstrap.ready, false);
+  assert.equal(bootstrap.blockers.includes('CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT'), true);
+});
+
+test('bootstrap fails closed instead of letting a new chat operate from stale or broken shared truth', () => {
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: {
+      githubMainHead: 'b'.repeat(40),
+      windowsCheckoutHead: 'c'.repeat(40),
+      sourceHeadsAgree: false,
+    },
+    workspaceProjection: {
+      aggregationOk: false,
+      aggregationReason: 'SHARED_WORKSPACE_AGGREGATION_FAILED',
+    },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+
+  assert.equal(bootstrap.ready, false);
+  assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_BLOCKED');
+  assert.deepEqual(bootstrap.blockers, [
+    'CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT',
+    'CANONICAL_SOURCE_HEADS_NOT_CONVERGED',
+    'SHARED_WORKSPACE_AGGREGATION_BLOCKED',
+  ]);
+  assert.equal(bootstrap.operatingRules.denyCapabilityBeforeDiscoveryAllowed, false);
+  assert.equal(bootstrap.operatingRules.operatorApprovalMayBeInferred, false);
+});

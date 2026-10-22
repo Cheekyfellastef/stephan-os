@@ -96,6 +96,41 @@ function adjudicate(comments, analysisInput = analysis()) {
   });
 }
 
+test('authenticated canonical Codex v1 marker is accepted while hashing the unchanged raw comment', () => {
+  const actualBotBody = '<!-- codex-review-receipt:v1 -->\n\n'
+    + "Codex Review: Didn't find any major issues. Already looking forward to the next diff.\n\n"
+    + '**Reviewed commit:** \`' + sourceHead.slice(0, 10) + '\`';
+  const result = adjudicate([request(), response({
+    body: actualBotBody,
+    resolved_commit_id: undefined,
+  })]);
+  assert.equal(result.valid, true, result.blockers.join(', '));
+  assert.equal(result.analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+  assert.equal(result.artifact.response.body, actualBotBody);
+  const validation = validateQualifiedSpecialistReviewArtifact(result.artifact, {
+    repository, prNumber, branch, sourceHead, baseSha, paths,
+  });
+  assert.equal(validation.valid, true, validation.blockers.join(', '));
+});
+
+test('Codex marker matching remains fail closed for forged actors and noncanonical wrappers', () => {
+  const clean = "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`"
+    + sourceHead.slice(0, 10) + '\`';
+  const cases = [
+    response({ body: '<!-- codex-review-receipt:v1 -->\n' + clean }),
+    response({ body: '<!-- untrusted -->\n\n' + clean }),
+    response({ body: '<!-- codex-review-receipt:v1 -->\n\n<!-- codex-review-receipt:v1 -->\n\n' + clean }),
+    response({ body: '<!-- codex-review-receipt:v1 -->\n\nCodex Review: Found major issues.\n\n**Reviewed commit:** \`' + sourceHead.slice(0, 10) + '\`' }),
+    response({ body: '<!-- codex-review-receipt:v1 -->\n\n' + clean, performed_via_github_app: null }),
+    response({ body: '<!-- codex-review-receipt:v1 -->\n\n' + clean, updated_at: '2026-08-20T18:50:15Z' }),
+  ];
+  for (const suspect of cases) {
+    const result = adjudicate([request(), suspect]);
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.blockers, ['qualified-specialist-review-missing']);
+  }
+});
+
 test('authenticated scoped request and app response mint one provider-neutral specialist artifact', () => {
   const result = adjudicate([request(), response()]);
   assert.equal(result.required, true);

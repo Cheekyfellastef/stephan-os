@@ -1,3 +1,5 @@
+import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
+import { validateProtectedReadyReviewLifecycleEvidence } from './protectedReadyReviewLifecycleV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
   OPERATOR_MERGE_ENVIRONMENT,
@@ -985,6 +987,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
   const expectedMailboxAuthorizationKeys = [
     'authorizedAtUtc',
     'commentId',
+    'commentSha256',
     'operatorAuthor',
     'requestId',
     'transportActor',
@@ -998,13 +1001,14 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     && strictPositiveInteger(mailboxAuthorization.commentId)
     && text(mailboxAuthorization.requestId)
     && text(mailboxAuthorization.operatorAuthor).toLowerCase() === nativeOwnerActor
-    && text(mailboxAuthorization.transportActor).toLowerCase() === 'github-actions[bot]'
+    && SHA256_PATTERN.test(text(mailboxAuthorization.commentSha256))
+    && [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR].includes(text(mailboxAuthorization.transportActor).toLowerCase())
     && EXPLICIT_TIMEZONE.test(text(mailboxAuthorization.authorizedAtUtc))
     && Number.isFinite(new Date(mailboxAuthorization.authorizedAtUtc).getTime())
   );
-  const expectedActor = mailboxAuthorizationValid
-    ? 'github-actions[bot]'
-    : nativeOwnerActor;
+  const expectedActor = mailboxAuthorizationValid ? text(mailboxAuthorization.transportActor).toLowerCase() : nativeOwnerActor;
+  // A transport switch must not hide a prior source-matching authority attempt.
+  const replayActors = [nativeOwnerActor, PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR];
   const currentMismatches = [
     ['run-id', strictPositiveInteger(run?.id) === workflowRunId],
     ['run-attempt', strictPositiveInteger(run?.run_attempt) === workflowRunAttempt],
@@ -1039,7 +1043,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
     const candidateActor = personalRepositoryDispatchActor(candidate);
     const sourceMatching = text(candidate?.name) === expectedTitle
       || text(candidate?.display_title) === expectedTitle;
-    if (!sourceMatching || (candidateActor && candidateActor !== expectedActor)) continue;
+    if (!sourceMatching || (candidateActor && !replayActors.includes(candidateActor))) continue;
     const candidateBase = text(candidate?.head_sha).toLowerCase();
     const exactIdentity = Boolean(
       candidateId
@@ -1053,7 +1057,7 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       && SHA_PATTERN.test(candidateBase)
       && text(candidate?.head_branch) === 'main'
       && canonicalPersonalRepositoryDispatchWorkflowPath(candidate, repository) === PERSONAL_REPOSITORY_WORKFLOW_PATH
-      && candidateActor === expectedActor
+      && replayActors.includes(candidateActor)
     );
     if (!exactIdentity) {
       malformedPriorRunIds.push(candidateId || 0);
@@ -1328,7 +1332,7 @@ export function buildPersonalRepositoryCheckExpectation({
   if (!SHA_PATTERN.test(expected.baseSha)) {
     blockers.push('personal-repository-check-expectation-base-invalid');
   }
-  if (!['CLEAN', 'UNSTABLE'].includes(expected.mergeStateStatus)) {
+  if (!['CLEAN', 'UNSTABLE', 'BLOCKED'].includes(expected.mergeStateStatus)) {
     blockers.push('personal-repository-check-expectation-merge-state-invalid');
   }
   return Object.freeze({
@@ -1387,7 +1391,7 @@ export function validatePersonalRepositoryCheckRuns(
       && text(binding?.base?.sha).toLowerCase() === baseSha
       && text(binding?.base?.ref) === 'main'
       && text(check?.details_url) === detailsUrl;
-    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, exactRun });
+    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, bindings, exactRun });
   });
 
   for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
@@ -1398,12 +1402,31 @@ export function validatePersonalRepositoryCheckRuns(
   }
 
   for (const checkBinding of exactCheckBindings) {
-    const { check, checkId, checkSuiteId, matchingRuns, run, exactRun } = checkBinding;
+    const { check, checkId, checkSuiteId, matchingRuns, run, bindings, exactRun } = checkBinding;
     const name = text(check?.name);
     const status = text(check?.status).toLowerCase();
     const conclusion = text(check?.conclusion).toLowerCase();
     const workflow = text(run?.name);
     const path = canonicalWorkflowPath(run, repository);
+    const unboundPushDuplicate = matchingRuns.length === 1
+      && strictPositiveInteger(run?.id)
+      && strictPositiveInteger(run?.run_attempt)
+      && workflowRepository(run) === repository
+      && bindings.length === 0
+      && text(run?.event) === 'push'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && status === 'completed'
+      && conclusion === 'success'
+      && text(check?.details_url) === `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.name) === name
+        && text(candidate.run?.name) === workflow
+        && canonicalWorkflowPath(candidate.run, repository) === path
+      ));
 
     if (!checkId || !checkSuiteId || !name
       || text(check?.head_sha).toLowerCase() !== sourceHead
@@ -1417,22 +1440,47 @@ export function validatePersonalRepositoryCheckRuns(
       continue;
     }
     if (!exactRun) {
+      if (unboundPushDuplicate) {
+        evidence.push(Object.freeze({
+          checkId,
+          checkSuiteId,
+          name,
+          workflow,
+          path,
+          workflowRunId: run.id,
+          workflowRunAttempt: run.run_attempt,
+          status,
+          conclusion,
+          disposition: 'unbound-push-duplicate',
+        }));
+        continue;
+      }
       blockers.push('personal-repository-check-run-identity-invalid');
       continue;
     }
 
-    const supersededDraftSkip = conclusion === 'skipped'
+    const canonicalDraftSkip = conclusion === 'skipped'
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
-      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
-      && exactCheckBindings.some((candidate) => (
+      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check;
+    const readyReviewLifecycle = canonicalDraftSkip && options.readyReviewLifecycleEvidence
+      && run.status === 'completed'
+      && Date.parse(options.readyReviewLifecycleEvidence.review?.run?.created_at) >= Date.parse(run.created_at)
+      ? validateProtectedReadyReviewLifecycleEvidence(options.readyReviewLifecycleEvidence, expected, run.id)
+      : null;
+    const supersededDraftSkip = canonicalDraftSkip && exactCheckBindings.some((candidate) => (
         candidate !== checkBinding
         && candidate.exactRun
         && strictPositiveInteger(candidate.run?.id) > strictPositiveInteger(run?.id)
         && text(candidate.check?.head_sha).toLowerCase() === sourceHead
         && text(candidate.check?.status).toLowerCase() === 'completed'
-        && text(candidate.check?.conclusion).toLowerCase() === 'success'
+        && (
+          text(candidate.check?.conclusion).toLowerCase() === 'success'
+          || (cleanIndependentReviewProved
+            && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
+            && text(candidate.check?.conclusion).toLowerCase() === 'failure')
+        )
         && text(candidate.check?.name) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check
         && text(candidate.check?.app?.slug) === 'github-actions'
         && strictPositiveInteger(candidate.check?.app?.id) === 15368
@@ -1440,6 +1488,19 @@ export function validatePersonalRepositoryCheckRuns(
         && canonicalWorkflowPath(candidate.run, repository) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
         && text(candidate.run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
       ));
+
+    // The canonical Build workflow deliberately excludes Pages deployment on
+    // pull_request. A bound successful PR build does not require a live-main
+    // deployment; no push, dispatch, unknown path or failed run inherits this.
+    const prPagesDeploymentNotRequested = conclusion === 'skipped'
+      && workflow === 'Build Stephanos UI'
+      && path === '.github/workflows/build-stephanos-ui.yml'
+      && name === 'pages-deploy'
+      && text(run?.event) === 'pull_request'
+      && text(run?.head_branch) === branch
+      && branch !== 'main'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success';
 
     let disposition = 'green';
     if (status !== 'completed') {
@@ -1452,15 +1513,14 @@ export function validatePersonalRepositoryCheckRuns(
       disposition = 'neutral-skip';
     } else if (supersededDraftSkip) {
       disposition = 'superseded-draft-skip';
+    } else if (readyReviewLifecycle?.valid === true) {
+      // Preserve the original skipped check as observed. The separate proof is
+      // a real main-headed workflow_dispatch review, never a synthetic PR check.
+      disposition = 'reviewed-ready-lifecycle';
+    } else if (prPagesDeploymentNotRequested) {
+      disposition = 'pr-pages-deployment-not-requested';
     } else if (cleanIndependentReviewProved
-      && conclusion === 'skipped'
-      && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
-      && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
-      && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
-      && name === PERSONAL_REPOSITORY_REVIEW_ESCALATION.check) {
-      disposition = 'clean-independent-review-superseded-draft-skip';
-    } else if (cleanIndependentReviewProved
-      && mergeStateStatus === 'UNSTABLE'
+      && ['UNSTABLE', 'BLOCKED'].includes(mergeStateStatus)
       && workflow === PERSONAL_REPOSITORY_REVIEW_ESCALATION.workflow
       && path === PERSONAL_REPOSITORY_REVIEW_ESCALATION.path
       && text(run?.event) === PERSONAL_REPOSITORY_REVIEW_ESCALATION.event
@@ -1484,6 +1544,7 @@ export function validatePersonalRepositoryCheckRuns(
       status,
       conclusion,
       disposition,
+      ...(disposition === 'reviewed-ready-lifecycle' ? { readyReviewLifecycle } : {}),
     }));
   }
 
@@ -1661,18 +1722,32 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   if (mergeStateStatus !== 'CLEAN'
     && !(mergeStateStatus === 'UNSTABLE'
       && cleanIndependentReviewProved
+      && reviewEscalationChecksProved)
+    && !(mergeStateStatus === 'BLOCKED'
+      && cleanIndependentReviewProved
       && reviewEscalationChecksProved)) {
     blockers.push('personal-repository-pr-not-clean');
   }
   if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
     blockers.push('personal-repository-conversations-not-resolved');
   }
-  if (text(comparison.status).toLowerCase() !== 'ahead'
-    || !Number.isSafeInteger(comparison.ahead_by)
-    || comparison.ahead_by < 1
-    || comparison.behind_by !== 0
-    || text(comparison?.base_commit?.sha).toLowerCase() !== baseSha
-    || text(comparison?.merge_base_commit?.sha).toLowerCase() !== baseSha) {
+  const exactForwardComparison = text(comparison.status).toLowerCase() === 'ahead'
+    && Number.isSafeInteger(comparison.ahead_by)
+    && comparison.ahead_by >= 1
+    && comparison.behind_by === 0
+    && text(comparison?.base_commit?.sha).toLowerCase() === baseSha
+    && text(comparison?.merge_base_commit?.sha).toLowerCase() === baseSha;
+  const compatibilityProvenMovedBase = options.mainMovementCompatibilityProven === true
+    && text(expected.sourceHead).toLowerCase() === sourceHead
+    && text(expected.baseSha).toLowerCase() === baseSha
+    && text(comparison.status).toLowerCase() === 'diverged'
+    && Number.isSafeInteger(comparison.ahead_by)
+    && comparison.ahead_by >= 1
+    && Number.isSafeInteger(comparison.behind_by)
+    && comparison.behind_by >= 1
+    && text(comparison?.base_commit?.sha).toLowerCase() === baseSha
+    && text(comparison?.merge_base_commit?.sha).toLowerCase() !== baseSha;
+  if (!exactForwardComparison && !compatibilityProvenMovedBase) {
     blockers.push('personal-repository-comparison-not-exact-forward');
   }
 
@@ -1703,7 +1778,9 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
       mergeStateStatus,
       reviewAdjudication: mergeStateStatus === 'UNSTABLE'
         ? 'clean-independent-review'
-        : 'native-clean',
+        : mergeStateStatus === 'BLOCKED'
+          ? 'protected-policy-blocked-with-clean-proof'
+          : 'native-clean',
     }),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length

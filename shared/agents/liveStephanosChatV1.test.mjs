@@ -78,6 +78,23 @@ test('next action message returns deterministic next action', () => {
   assert.match(response.answer, /Next action/);
 });
 
+test('live chat response preserves Project Intelligence proven facts', () => {
+  const context = createLiveChatContext({
+    goalId: '#1308',
+    idea: 'Ground the live Stephanos chat in Project Intelligence.',
+  });
+  context.projectIntelligence = {
+    ...context.projectIntelligence,
+    provenFacts: ['Project Intelligence is wired to live goal truth.'],
+    hypotheses: ['A future richer knowledge source may add more context.'],
+  };
+  const response = createLiveStephanosChatResponse({
+    message: 'What is the current status?',
+    context,
+  });
+  assert.deepEqual(response.facts, ['Project Intelligence is wired to live goal truth.']);
+  assert.deepEqual(response.hypotheses, ['A future richer knowledge source may add more context.']);
+});
 test('validator blocks malformed responses', () => {
   const result = validateLiveStephanosChatResponse({
     schemaVersion: 'live-stephanos-chat.v1',

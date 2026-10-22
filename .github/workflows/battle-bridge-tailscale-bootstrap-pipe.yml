@@ -61,7 +61,7 @@ jobs:
   bootstrap-canonical-github-sync:
     if: >-
       github.event_name == 'issue_comment' &&
-      github.event.issue.number == 2158 &&
+      github.event.issue.number > 0 &&
       github.actor == 'Cheekyfellastef' &&
       contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap') &&
       !contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap-prerequisites')
@@ -85,6 +85,8 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Recheck canonical bootstrap mailbox event
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs bootstrap
       - name: Validate exact owner-authored bootstrap request
         id: request
         shell: bash
@@ -164,7 +166,7 @@ jobs:
   prerequisite-proof:
     if: >-
       github.event_name == 'issue_comment' &&
-      github.event.issue.number == 2158 &&
+      github.event.issue.number > 0 &&
       github.actor == 'Cheekyfellastef' &&
       contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap-prerequisites')
     runs-on: ubuntu-latest
@@ -187,6 +189,8 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Recheck canonical prerequisite mailbox event
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs prerequisite
       - name: Validate exact owner-authored read-only prerequisite request
         id: request
         shell: bash

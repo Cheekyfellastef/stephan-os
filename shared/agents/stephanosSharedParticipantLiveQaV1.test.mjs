@@ -84,6 +84,9 @@ test('valid Shared Workspace question is answered through existing Stephanos que
       assert.equal(request.routeMode, 'auto');
       assert.equal(request.fallbackEnabled, true);
       assert.equal(request.messages[0].content.includes('current Stephanos programme state'), true);
+      assert.equal(request.messages[0].content.includes('Current programme truth evidence rule:'), true);
+      assert.equal(request.messages[0].content.includes('live Mission Control / Goal Projection context'), true);
+      assert.equal(request.messages[0].content.includes('durable memory only as secondary historical context'), true);
       assert.equal(request.context.surface, 'shared-participant-qa');
       return groundedResponse();
     },
@@ -119,6 +122,32 @@ test('valid Shared Workspace question is answered through existing Stephanos que
     workspaceValidationOptions: { nowMs: NOW.getTime() },
   });
   assert.equal(decoded.valid, true, decoded.errors?.join(','));
+});
+
+test('non-current questions preserve the operator question without the current-truth evidence wrapper', async () => {
+  const record = questionRecord({
+    questionClass: 'MEMORY_AND_CONTINUITY',
+    expectedEvidenceClass: 'MEMORY_CONTINUITY_EVIDENCE',
+    questionText: 'What continuity do you remember from our earlier work?',
+  });
+  let observedPrompt = '';
+  const result = await answerStephanosWorkspaceQuestionRecord(record, {
+    now: NOW,
+    queryFn: async (request) => {
+      observedPrompt = request.messages[0].content;
+      return {
+        success: true,
+        output_text: 'I remember the bounded continuity evidence.',
+        data: { execution_metadata: { freshness_integrity_preserved: false } },
+        memory_hits: [{ id: 'memory-1' }],
+        debug: { request_id: 'req-memory-001' },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(observedPrompt, 'What continuity do you remember from our earlier work?');
+  assert.equal(observedPrompt.includes('Current programme truth evidence rule:'), false);
 });
 
 test('successful AI text without evidence remains partial rather than being painted grounded', async () => {

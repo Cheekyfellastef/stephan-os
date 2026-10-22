@@ -29,6 +29,7 @@ import {
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
@@ -54,19 +55,18 @@ import {
   validatePersonalRepositoryWorkflowRunHydration,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 import {
-  PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
-  PROTECTED_WORKFLOW_DISPATCH_ISSUE,
-  PROTECTED_WORKFLOW_DISPATCH_OPERATION,
-  PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
-  validateProtectedWorkflowAuthorizationComment,
-} from '../shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
+  evaluateMainMovementTolerantBaseBinding,
+} from '../shared/agents/operatorMergeBaseBindingV1.mjs';
+
+import { proveProtectedWorkflowActorHandoff } from './prove-protected-workflow-actor-handoff.mjs';
+import { loadProtectedReadyReviewLifecycle } from './protected-ready-review-lifecycle-v1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
-const MAILBOX_TRANSPORT_ACTOR = 'github-actions[bot]';
+
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
 class GateError extends Error {
@@ -262,56 +262,12 @@ function mailboxTransportActor(run = {}) {
 }
 
 async function proveMailboxAuthorization(context, run) {
-  const transportActor = mailboxTransportActor(run);
-  if (transportActor !== MAILBOX_TRANSPORT_ACTOR) {
-    fail('Protected merge workflow transport actor is not the canonical GitHub Actions mailbox transport.', {
-      blockers: ['personal-repository-mailbox-transport-actor-mismatch'],
-      transportActor,
-    });
-  }
-  const runStartedAt = new Date(run?.created_at || 0);
-  if (!Number.isFinite(runStartedAt.getTime())) {
-    fail('Protected merge workflow start time is invalid.', {
-      blockers: ['personal-repository-mailbox-run-time-invalid'],
-    });
-  }
-  const comment = await apiJson(
-    `/repos/${context.owner}/${context.repo}/issues/comments/${context.authorizationCommentId}`,
-  );
-  const identity = context.dispatch.identity;
-  const validation = validateProtectedWorkflowAuthorizationComment(comment, {
-    operation: PROTECTED_WORKFLOW_DISPATCH_OPERATION,
-    repository: PROTECTED_WORKFLOW_DISPATCH_REPOSITORY,
-    issueNumber: PROTECTED_WORKFLOW_DISPATCH_ISSUE,
-    operatorApproval: 'operator-approved',
-    mode: identity.mode,
-    prNumber: identity.prNumber,
-    expectedBranch: identity.branch,
-    expectedHead: identity.sourceHead,
-    expectedHeadTree: identity.sourceTree,
-    expectedBase: identity.baseSha,
-    independentReviewRunId: identity.independentReviewWorkflowRunId,
-    independentReviewRunAttempt: identity.independentReviewWorkflowRunAttempt,
-    independentReviewArtifactId: identity.independentReviewArtifactId,
-    independentReviewArtifactDigest: identity.independentReviewArtifactDigest,
-    independentReviewPayloadSha256: identity.independentReviewPayloadSha256,
-  }, {
-    now: runStartedAt,
-    expectedCommentId: context.authorizationCommentId,
+  const proof = await proveProtectedWorkflowActorHandoff({
+    event: context.event, run,
+    readComment: (id) => apiJson(`/repos/${context.owner}/${context.repo}/issues/comments/${id}`),
+    expectedCommentSha256: context.authorizationCommentSha256,
   });
-  if (!validation.ok) {
-    fail('Owner-authored protected merge authorization provenance is missing, stale or mismatched.', {
-      blockers: [validation.blocker],
-      details: validation.details || {},
-    });
-  }
-  return Object.freeze({
-    commentId: validation.commentId,
-    requestId: validation.command.requestId,
-    operatorAuthor: PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
-    transportActor,
-    authorizedAtUtc: validation.authoredAtUtc,
-  });
+  return proof.authorization;
 }
 
 async function currentWorkflowExecution(context) {
@@ -385,7 +341,7 @@ async function currentWorkflowExecution(context) {
     ...execution.currentMismatches,
     ...(text(run?.name) === expectedDisplayTitle ? [] : ['run-name']),
     ...(text(run?.display_title) === expectedDisplayTitle ? [] : ['display-title']),
-    ...(transportActor === MAILBOX_TRANSPORT_ACTOR ? [] : ['transport-actor']),
+    ...(transportActor === authorization.transportActor.toLowerCase() ? [] : ['transport-actor']),
   ])];
   if (runIdentityMismatches.length !== 0) {
     fail('Current workflow run is not the exact mailbox-transported trusted-main execution.', {
@@ -740,6 +696,141 @@ async function readPersonalRepositoryAuthoritySnapshot(context, identity) {
   });
 }
 
+async function proveMainMovementCompatibilityForEvidence(context, identity, authority, proof = {}) {
+  const authorizationHead = text(process.env.STEPHANOS_AUTHORIZATION_HEAD).toLowerCase();
+  const authorizationTree = text(process.env.STEPHANOS_AUTHORIZATION_HEAD_TREE).toLowerCase();
+  const authorizationBase = text(process.env.STEPHANOS_AUTHORIZATION_BASE).toLowerCase();
+  const currentHead = text(identity?.sourceHead).toLowerCase();
+  const currentTree = text(authority?.headCommit?.tree?.sha ?? authority?.headCommit?.tree).toLowerCase();
+  const currentBase = text(authority?.pullRequest?.base?.sha).toLowerCase();
+  const liveMain = text(authority?.liveMainRef?.object?.sha ?? authority?.liveMainRef?.sha).toLowerCase();
+  const SHA40 = /^[a-f0-9]{40}$/;
+
+  if (![authorizationHead, authorizationTree, authorizationBase, currentHead, currentTree, currentBase, liveMain]
+    .every((value) => SHA40.test(value))) return Object.freeze({ proven: false, blocker: 'main-movement-proof-identity-missing' });
+  if (currentBase !== liveMain || currentBase !== text(identity?.baseSha).toLowerCase()) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-current-base-mismatch' });
+  }
+  if (currentBase === authorizationBase && currentHead === authorizationHead && currentTree === authorizationTree) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-proof-not-required' });
+  }
+
+  const boundedComparison = async (base, head, label) => {
+    const comparison = await apiJson(`/repos/${context.owner}/${context.repo}/compare/${base}...${head}`);
+    if (!Array.isArray(comparison?.files) || comparison.files.length >= 300) {
+      fail(`${label} file evidence is missing or reached the GitHub comparison ceiling.`);
+    }
+    return comparison;
+  };
+  const afterBlobEstate = async (comparison, treeSha, label) => {
+    const tree = await apiJson(`/repos/${context.owner}/${context.repo}/git/trees/${treeSha}?recursive=1`);
+    if (!Array.isArray(tree?.tree) || tree.truncated === true) {
+      fail(`${label} Git tree evidence is missing or truncated.`);
+    }
+    const entries = new Map(tree.tree.map((entry) => [
+      text(entry?.path),
+      Object.freeze({
+        sha: text(entry?.sha).toLowerCase(),
+        mode: text(entry?.mode),
+        type: text(entry?.type).toLowerCase(),
+      }),
+    ]));
+    return Object.freeze(comparison.files.map((file) => {
+      const path = text(file?.filename);
+      const afterBlobSha = text(file?.sha).toLowerCase();
+      const entry = entries.get(path);
+      const entryMode = text(entry?.mode);
+      const entryType = text(entry?.type).toLowerCase();
+      if (!path || !SHA40.test(afterBlobSha)
+        || ['removed', 'renamed'].includes(text(file?.status).toLowerCase())
+        || entry?.sha !== afterBlobSha
+        || !['100644', '100755', '120000', '160000'].includes(entryMode)
+        || !['blob', 'commit'].includes(entryType)) {
+        fail(`${label} contains an unsupported or unprovable file identity.`, { path });
+      }
+      return Object.freeze({ path, afterBlobSha, entryMode, entryType });
+    }));
+  };
+
+  const [authorizationCommit, currentCommit, approvedComparison, mainMovementComparison] = await Promise.all([
+    apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${authorizationHead}`),
+    apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${currentHead}`),
+    boundedComparison(authorizationBase, authorizationHead, 'operator-authorized material comparison'),
+    boundedComparison(authorizationBase, currentBase, 'authorization-base to current-main comparison'),
+  ]);
+  if (text(authorizationCommit?.tree?.sha).toLowerCase() !== authorizationTree
+    || text(currentCommit?.tree?.sha).toLowerCase() !== currentTree) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-commit-tree-mismatch' });
+  }
+  const approvedChangedFiles = await afterBlobEstate(
+    approvedComparison,
+    authorizationTree,
+    'operator-authorized material comparison',
+  );
+  let preservationConvergence;
+  if (currentHead !== authorizationHead || currentTree !== authorizationTree) {
+    const currentEstateComparison = await boundedComparison(
+      currentBase,
+      currentHead,
+      'preservation-converged execution comparison',
+    );
+    preservationConvergence = Object.freeze({
+      proven: true,
+      branch: text(identity?.branch),
+      priorHead: authorizationHead,
+      priorTree: authorizationTree,
+      newHead: currentHead,
+      newTree: currentTree,
+      parents: Object.freeze((Array.isArray(currentCommit?.parents) ? currentCommit.parents : [])
+        .map((parent) => Object.freeze({ sha: text(parent?.sha).toLowerCase() }))),
+      currentChangedFiles: await afterBlobEstate(
+        currentEstateComparison,
+        currentTree,
+        'preservation-converged execution comparison',
+      ),
+      force: false,
+      rebase: false,
+      reset: false,
+    });
+  }
+  const binding = evaluateMainMovementTolerantBaseBinding({
+    authorization: Object.freeze({
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      sourceHead: authorizationHead,
+      sourceTree: authorizationTree,
+      authorizationBase,
+      changedFiles: approvedChangedFiles,
+      authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+    }),
+    observed: Object.freeze({
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      sourceHead: currentHead,
+      sourceTree: currentTree,
+      authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+      currentBase,
+      authorizationBaseToApprovedSourceComparison: approvedComparison,
+      authorizationBaseToCurrentBaseComparison: mainMovementComparison,
+      ...(preservationConvergence ? { preservationConvergence } : {}),
+      currentHeadBaseRequiredChecksGreen: proof.requiredChecksGreen === true,
+      currentHeadBaseIndependentReviewClean: proof.independentReviewClean === true,
+      unresolvedReviewThreads: Number(proof.unresolvedReviewThreads),
+      mergeable: proof.mergeable === true,
+    }),
+    expectedBase: currentBase,
+  });
+  return Object.freeze({
+    proven: binding.authorizationReusable === true
+      && binding.protectedExecutionReady === true
+      && binding.finalVerdict === 'MAIN_MOVEMENT_TOLERANT_BASE_BINDING_READY',
+    blocker: binding.blockers?.[0] || '',
+    binding,
+  });
+}
+
 async function collectEvidence(context, expected = {}) {
   const identity = context.dispatch.identity;
   const [initialAuthority, workflowRuns, checkRuns, commitStatuses] = await Promise.all([
@@ -769,6 +860,27 @@ async function collectEvidence(context, expected = {}) {
       blockers: checkExpectation.blockers,
     });
   }
+  const loadReadyReviewForSnapshot = async (snapshot, mergeStateStatus, cleanIndependentReviewProved) => {
+    const expectation = { ...checkExpectation.expected, sourceTree: identity.sourceTree, mergeStateStatus };
+    // Existing successful PR-target supersession remains sufficient. The new
+    // route is read only when an observed exact-head draft skip still blocks.
+    if (validatePersonalRepositoryCheckRuns(snapshot.checkRuns, snapshot.workflowRuns,
+      snapshot.commitStatuses, expectation, { cleanIndependentReviewProved }).valid) return null;
+    const skippedRunIds = snapshot.workflowRuns.filter(run => run.event === 'pull_request_target'
+      && run.path === '.github/workflows/stephanos-exact-head-review.yml'
+      && run.name === 'Stephanos Exact-Head Review' && run.head_sha === identity.sourceHead
+      && snapshot.checkRuns.some(check => check.name === 'exact-head-review' && check.conclusion === 'skipped'
+        && check.head_sha === identity.sourceHead && check.check_suite?.id === run.check_suite_id))
+      .map(run => run.id);
+    if (!skippedRunIds.length) return null;
+    return loadProtectedReadyReviewLifecycle({ identity: { ...identity, repository: context.repository },
+      skippedRunIds, selectedReview: context.dispatch.identity,
+      api: path => apiJson(`/repos/${context.owner}/${context.repo}${path}`),
+      download: id => apiArtifactArchive(`/repos/${context.owner}/${context.repo}/actions/artifacts/${id}/zip`,
+        context.repository, INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES) });
+  };
+  const initialReadyReview = await loadReadyReviewForSnapshot(initialCheckSnapshot,
+    review.mergeStateStatus, independentReview.reviewMode === 'clean-independent');
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
@@ -788,8 +900,9 @@ async function collectEvidence(context, expected = {}) {
         commitStatuses: freshCommitStatuses.items,
       });
     },
-    expected: checkExpectation.expected,
-    options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
+    expected: { ...checkExpectation.expected, sourceTree: identity.sourceTree },
+    options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
+      readyReviewLifecycleEvidence: initialReadyReview },
   });
   if (!checks.valid) {
     fail('One or more exact-head checks are pending, failed, stale or outside the reviewed escalation.', {
@@ -808,12 +921,15 @@ async function collectEvidence(context, expected = {}) {
       blockers: refreshedCheckExpectation.blockers,
     });
   }
+  const refreshedReadyReview = await loadReadyReviewForSnapshot(checks.selectedSnapshot,
+    refreshedAuthority.review.mergeStateStatus, refreshedAuthority.independentReview.reviewMode === 'clean-independent');
   const finalChecks = validatePersonalRepositoryCheckRuns(
     checks.selectedSnapshot.checkRuns,
     checks.selectedSnapshot.workflowRuns,
     checks.selectedSnapshot.commitStatuses,
-    refreshedCheckExpectation.expected,
-    { cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent' },
+    { ...refreshedCheckExpectation.expected, sourceTree: identity.sourceTree },
+    { cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent',
+      readyReviewLifecycleEvidence: refreshedReadyReview },
   );
   if (!finalChecks.valid) {
     fail('Authority changed after exact-head check convergence.', {
@@ -832,6 +948,17 @@ async function collectEvidence(context, expected = {}) {
     independentReview: refreshedIndependentReview,
   } = refreshedAuthority;
   const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;
+  const mainMovementCompatibility = await proveMainMovementCompatibilityForEvidence(
+    context,
+    identity,
+    refreshedAuthority,
+    {
+      requiredChecksGreen: finalChecks.valid,
+      independentReviewClean: refreshedIndependentReview.reviewMode === 'clean-independent',
+      unresolvedReviewThreads: refreshedReview.unresolvedThreadCount,
+      mergeable: text(refreshedReview.mergeable).toUpperCase() === 'MERGEABLE',
+    },
+  );
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
     repositoryOwnerType: repository?.owner?.type,
@@ -852,6 +979,7 @@ async function collectEvidence(context, expected = {}) {
   }, {
     cleanIndependentReviewProved: refreshedIndependentReview.reviewMode === 'clean-independent',
     reviewEscalationChecksProved: finalChecks.valid,
+    mainMovementCompatibilityProven: mainMovementCompatibility.proven === true,
   });
   if (!evidence.valid) {
     fail('Personal-repository PR, exact head/tree/base or review state is stale.', {
@@ -887,6 +1015,7 @@ async function collectEvidence(context, expected = {}) {
     schemaVersion: 'stephanos.personal-repository-evidence.v1',
     ...evidence.identity,
     workflowDefinitionId: execution.definition.id,
+    mailboxAuthorization: execution.authorization,
     requiredCheck: PERSONAL_REPOSITORY_REQUIRED_CHECK,
     requiredCheckIntegrationId: integrationId,
     activeRulesetIds: configuration.activeRulesetIds,
@@ -952,6 +1081,8 @@ async function postCompletionComment(context, completion, receipt) {
     mainTree: completion.treeSha,
     workflowRunId: context.runId,
     workflowRunAttempt: context.runAttempt,
+    authorizationCommentId: context.authorizationCommentId,
+    authorizationCommentSha256: context.authorizationCommentSha256,
     environment: receipt.environment,
     independentReviewWorkflowRunId: receipt.independentReviewWorkflowRunId,
     independentReviewWorkflowRunAttempt: receipt.independentReviewWorkflowRunAttempt,
@@ -995,7 +1126,11 @@ async function main() {
   const runId = positiveInteger(process.env.GITHUB_RUN_ID);
   const runAttempt = positiveInteger(process.env.GITHUB_RUN_ATTEMPT);
   if (!owner || !repo || !runId || !runAttempt) fail('GitHub workflow run identity is incomplete or unsafe.');
-  const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId };
+  const authorizationCommentSha256 = text(process.env.STEPHANOS_AUTHORIZATION_COMMENT_SHA256);
+  if (!/^[a-f0-9]{64}$/.test(authorizationCommentSha256)) {
+    fail('Immutable mailbox authorization comment digest is required.');
+  }
+  const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId, authorizationCommentSha256 };
 
   if (mode === 'evidence') {
     const collected = await collectEvidence(context);

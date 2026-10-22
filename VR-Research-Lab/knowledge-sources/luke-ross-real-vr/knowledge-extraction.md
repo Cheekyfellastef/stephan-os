@@ -58,3 +58,24 @@ The reusable ideas are common-core modularity, configuration, compatibility repa
 ## Evidence boundary
 
 Current framework artefacts remain proprietary or access-controlled. Stephanos stores public metadata, lawful operator observations and independently authored abstractions only. Unauthorised mirrors are excluded.
+
+## 2026-10-03 public repository refresh
+
+Two creator-owned public repositories are now pinned as documentation evidence:
+
+- `LukeRoss00/gta5-real-mod` @ `00749fc5824e619a54d1ab0a45d9c60160c96f93`
+- `LukeRoss00/nolf2-real-mod` @ `b05774555af804749e9c913df262ec7e084ad1da`
+
+Neither repository establishes a reusable root source licence, so Stephanos does not copy their artefacts into the project.
+
+Additional method candidates extracted from the public documentation:
+
+- dynamic stereo that reacts to camera-FOV changes;
+- dominant-eye alignment for weapon sighting;
+- camera/FOV correction as a universal gameplay-and-cutscene problem rather than a one-off tweak;
+- recentering as an always-available recovery path;
+- seated controller-first VR for long AAA sessions;
+- explicit separation of eye-buffer resolution/supersampling from flat-window resolution;
+- transport/runtime adaptation without rewriting the original game interaction model.
+
+For Starfield, these concepts feed the AER/temporal-artifact investigation as hypotheses and acceptance tests only. They never authorise copying the current R.E.A.L. framework.

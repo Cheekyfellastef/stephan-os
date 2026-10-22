@@ -71,6 +71,10 @@ export const DEFAULT_RUNTIME_ONLY_EXACT_STATUS = Object.freeze([
     path: 'stephanos-server/data/memory/durable-memory.json',
     status: ' M',
   }),
+  Object.freeze({
+    path: '.openclaw/workspace-state.json',
+    status: '??',
+  }),
 ]);
 
 export const POST_SYNC_REFRESH_REGISTRY = Object.freeze({

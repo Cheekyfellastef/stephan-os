@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stephanos VR Link | Holodeck Baseline</title><style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif;background:#081321;color:#e9f3ff}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 10%,#153658 0%,#081321 65%);display:grid;place-items:center}
+main{width:min(740px,calc(100% - 32px));box-sizing:border-box;padding:30px;border:1px solid #31536c;border-radius:22px;background:#0a1b2bdd}
+h1{font-size:clamp(1.8rem,4vw,2.8rem);margin:0 0 6px}p{color:#b9cedf}small{color:#acc9da}
+section{border:1px solid #31536c;border-radius:12px;margin:20px 0;padding:18px}
+dl{display:grid;grid-template-columns:1fr auto;gap:13px}dt{color:#b9cedf}dd{margin:0;font-weight:650}
+nav{display:flex;flex-wrap:wrap;gap:10px}button,a.button{display:inline-flex;align-items:center;justify-content:center;border:1px solid #4d83ab;background:#123651;color:#e9f3ff;text-decoration:none;border-radius:9px;padding:12px 16px;font:inherit;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}button:focus-visible,a:focus-visible{outline:3px solid #75ccff}
+#notice{min-height:3em;white-space:pre-wrap}canvas{display:block;width:100%;height:230px;border-radius:10px;background:#050d17}
+</style></head><body><main>
+<h1>Stephanos VR Link</h1><p>Holodeck Baseline · Local connection airlock</p>
+<section><dl>
+<dt>Surface</dt><dd>VR Link</dd><dt>Mode</dt><dd>Holodeck Baseline</dd>
+<dt>WebXR available</dt><dd id="xr">Checking…</dd>
+<dt>Session</dt><dd id="session">Fallback</dd>
+<dt>Backend route</dt><dd id="backend">Checking…</dd>
+<dt>Device</dt><dd id="device">Browser</dd>
+<dt>VR Lab</dt><dd id="lab">Available via link</dd>
+<dt>Command Deck</dt><dd>Return available</dd>
+</dl><canvas id="chamber" width="700" height="230" aria-label="Desktop preview of an empty holodeck chamber"></canvas></section>
+<nav>
+<button id="enter" disabled>Enter Holodeck Baseline</button>
+<button id="ping">Ping Stephanos</button>
+<a class="button" href="../vr-research-lab/index.html">Open VR Research Lab</a>
+<a class="button" href="../cockpit/index.html">Return to Command Deck</a>
+</nav><p id="notice" role="status" aria-live="polite">Desktop fallback ready. No headset session started.</p>
+<small>Read-only V0. No game injection, second VR Lab or autonomous source mutation.</small>
+<script type="module" src="./vr-link.js"></script>
+</main></body></html>

@@ -1,0 +1,17 @@
+{
+  "name": "Stephanos VR Link",
+  "icon": "🥽",
+  "entry": "index.html",
+  "type": "command-surface",
+  "packaging": "classic-static",
+  "capabilities": [
+    "webxr-availability",
+    "holodeck-baseline",
+    "desktop-fallback",
+    "local-backend-ping"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "version": "0.1.0",
+  "description": "Read-only WebXR connection proof"
+}

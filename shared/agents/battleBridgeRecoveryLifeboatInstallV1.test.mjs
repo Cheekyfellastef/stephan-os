@@ -41,10 +41,42 @@ test('known-good active A stages only distinct candidate into inactive B', () =>
   assert.equal(plan.installPlan.productionRedundancyReadyAfter, true);
 });
 
-test('unhealthy active bank and fake-identical candidate fail closed', () => {
+test('stale active bank recovers only through inactive bank and does not claim rollback redundancy', () => {
+  const sameManifest = planBattleBridgeRecoveryLifeboatInstall({
+    candidateVersion: '1.1.0',
+    candidateManifestSha256: ACTIVE,
+    activeBank: 'A',
+    activeManifestSha256: ACTIVE,
+    activeSelfTestVerdict: 'PASS',
+    activeHeartbeatFresh: false,
+  });
+  assert.equal(sameManifest.ok, true);
+  assert.equal(sameManifest.installPlan.mode, 'RECOVER_STALE_ACTIVE_THROUGH_INACTIVE_BANK');
+  assert.equal(sameManifest.installPlan.targetBank, 'B');
+  assert.equal(sameManifest.installPlan.rollbackBank, 'A');
+  assert.equal(sameManifest.installPlan.requireCandidateSelfTestPass, true);
+  assert.equal(sameManifest.installPlan.requireCandidateHeartbeatFresh, true);
+  assert.equal(sameManifest.installPlan.productionRedundancyReadyAfter, false);
+  assert.equal(sameManifest.activeBankOverwriteAllowed, false);
+  assert.equal(sameManifest.dualBankOverwriteAllowed, false);
+
+  const distinctManifest = planBattleBridgeRecoveryLifeboatInstall({
+    candidateVersion: '1.1.0',
+    candidateManifestSha256: CANDIDATE,
+    activeBank: 'B',
+    activeManifestSha256: ACTIVE,
+    activeSelfTestVerdict: 'PASS',
+    activeHeartbeatFresh: false,
+  });
+  assert.equal(distinctManifest.ok, true);
+  assert.equal(distinctManifest.installPlan.targetBank, 'A');
+  assert.equal(distinctManifest.installPlan.productionRedundancyReadyAfter, false);
+});
+
+test('failed active self-test still fails closed and healthy identical candidate remains rejected', () => {
   assert.equal(planBattleBridgeRecoveryLifeboatInstall({
     candidateVersion: '1.1.0', candidateManifestSha256: CANDIDATE,
-    activeBank: 'A', activeManifestSha256: ACTIVE, activeSelfTestVerdict: 'FAIL', activeHeartbeatFresh: true,
+    activeBank: 'A', activeManifestSha256: ACTIVE, activeSelfTestVerdict: 'FAIL', activeHeartbeatFresh: false,
   }).blocker, 'LIFEBOAT_ACTIVE_BANK_NOT_KNOWN_GOOD');
   assert.equal(planBattleBridgeRecoveryLifeboatInstall({
     candidateVersion: '1.1.0', candidateManifestSha256: ACTIVE,
@@ -58,7 +90,10 @@ test('installer has one fixed limited-user task and fixed local recovery root', 
   assert.match(source, /LOCALAPPDATA/);
   assert.match(source, /Stephanos\\BattleBridgeRecoveryLifeboat/);
   assert.match(source, /RunLevel Limited/);
+  assert.match(source, /\$candidateVersion = '1\.3\.0'/);
   assert.match(source, /RepetitionInterval \(New-TimeSpan -Minutes 2\)/);
+  assert.match(source, /WakeToRun/);
+  assert.match(source, /wakeToRun = \$true/);
   assert.match(source, /MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /Param\([^)]*Path/i);
   assert.doesNotMatch(source, /Invoke-Expression/i);
@@ -85,6 +120,10 @@ test('bank runner verifies its own payload manifest and has no repo dependency',
   assert.match(source, /payloadVerified = \$true/);
   assert.match(source, /repoCheckoutRequired = \$false/);
   assert.match(source, /openClawGatewayRequired = \$false/);
+  assert.match(source, /-Action RECOVER_REMOTE_ACCESS_STACK/);
+  assert.match(source, /remoteAccessAutoHealVerdict/);
+  assert.match(source, /remoteChatTransportReauthenticationClaimed = \$false/);
+  assert.match(source, /physicalPowerRecoveryClaimed = \$false/);
   assert.doesNotMatch(source, /Documents\\GitHub\\stephan-os/i);
   assert.doesNotMatch(source, /git\.exe/i);
 });

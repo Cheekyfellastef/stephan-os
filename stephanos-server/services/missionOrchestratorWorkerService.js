@@ -16,6 +16,11 @@ import {
   createSharedWorkspaceHandoffRecord,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  STEPHANOS_EXECUTION_SURFACE,
+  buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1,
+} from '../../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -47,8 +52,9 @@ async function createImmutableJson(path, value) {
 
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
+  if (action.actionKind === 'forge-escrow-publication' && action.adapter === 'forge-publication') return 'forge-publication';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -99,17 +105,102 @@ function durableQueueExecutionBinding(grant) {
   });
 }
 
+function pendingHandoffResponsibility(state, action, adapter) {
+  return Object.freeze({
+    schemaVersion: 'stephanos.handoff-responsibility.v1',
+    missionId: text(state?.missionId).toLowerCase(),
+    actionId: text(action?.actionId).toLowerCase(),
+    adapter: text(adapter).toLowerCase(),
+    state: 'PICKUP_PENDING',
+    pickupProofRequired: true,
+    responsibilityRetained: true,
+    publicationIsTerminal: false,
+    retryOrEscalateUntilPickup: true,
+    terminalOnlyOn: Object.freeze([
+      'PROCESSING_CLAIM_PROVEN',
+      'RESULT_RECEIPT_PROVEN',
+      'OPERATOR_GATE',
+      'NO_SAFE_ROUTE_PROVEN',
+    ]),
+  });
+}
+
+function executionSurfaceForAdapter(adapter = '') {
+  const normalized = text(adapter).toLowerCase();
+  if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
+  if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
+  if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  // Builder 8 source work is confined to the exact mission worktree, even
+  // though Sovereign Commander's separate maintenance surface can inspect the host.
+  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
+  return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
+}
+
+function localExecutionRoots(state, options = {}) {
+  const env = options.env || process.env;
+  const configured = text(env.STEPHANOS_EXECUTION_LOCAL_ROOTS)
+    .split(';')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const userProfile = text(env.USERPROFILE);
+  return [
+    ...(userProfile ? [join(userProfile, 'Stephanos')] : []),
+    ...configured,
+  ];
+}
+
 async function publishExternalLaneHandoff(state, action, options = {}) {
   const root = options.sharedWorkspaceRoot
     || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
     || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE;
+  const targetPath = text(action.worktreePath || state.git?.worktreePath || state.repositoryRoot);
+  const surface = executionSurfaceForAdapter(action.adapter);
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: state.repositoryRoot || options.repoRoot,
+    sharedWorkspaceRoot: root,
+    runtimeRoots: localExecutionRoots(state, options),
+    buildLaneRoots: targetPath ? [targetPath] : [],
+  });
+  const executionCommand = buildStephanosExecutionCommandEnvelopeV1({
+    catalog,
+    surface,
+    actionId: action.actionId,
+    missionId: state.missionId,
+    operation: 'source-construction',
+    targetPaths: targetPath ? [targetPath] : [],
+    proofRefs: Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [],
+    payload: {
+      repository: state.repository,
+      branch: state.git?.branch || '',
+      allowedFiles: action.allowedFiles || [],
+      requiredTests: action.requiredTests || [],
+      requiredEvidence: action.requiredEvidence || [],
+    },
+  });
+  if (executionCommand.dispatchAllowed !== true) {
+    return {
+      ok: false,
+      reason: 'EXECUTION_COMMAND_SCOPE_BLOCKED',
+      executionCommand,
+    };
+  }
   const identity = encodedMissionIdentity(state.missionId);
   const proofRefs = Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [];
   const handoff = createSharedWorkspaceHandoffRecord({
     handoffId: action.actionId,
     participantId: 'mission-orchestrator',
     fromParticipantId: 'mission-orchestrator',
-    toParticipantId: action.adapter === 'chatgpt-github' ? 'chatgpt' : 'future-agent',
+    toParticipantId: action.adapter === 'chatgpt-github'
+      ? 'chatgpt'
+      : action.adapter === 'desktop-commander'
+        ? 'desktop-commander'
+        : action.adapter === 'sovereign-commander'
+          ? 'sovereign-commander'
+        : action.adapter === 'openclaw-standalone'
+          ? 'openclaw-standalone'
+          : action.adapter === 'openclaw-local'
+            ? 'stephanos-scout-coder'
+            : 'future-agent',
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,
     relatedIssue: `#${identity.issueNumber || 1292}`,
@@ -128,6 +219,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       allowedFiles: action.allowedFiles || [],
       requiredTests: action.requiredTests || [],
       requiredEvidence: action.requiredEvidence || [],
+      executionCommand,
       mergeAuthority: false,
       leaseSeizureAllowed: false,
     }),
@@ -267,7 +359,7 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['chatgpt-github', 'foundry-forge'].includes(action?.adapter);
+  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -331,6 +423,19 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       };
     }
   }
+  // The signed Forge draft publisher cannot publish a source tree built from
+  // an older main. Refuse stale exact-head work before writing a queue item.
+  if (action.actionKind === 'forge-escrow-publication'
+      && (!options.actionGrant
+        || options.actionGrant.adapter !== 'forge-publication'
+        || action.exactParentHead !== options.actionGrant.sourceRevision
+        || state.sourcePublication?.exactParentHead !== action.exactParentHead)) {
+    return {
+      published: false, reason: 'forge-publication-parent-head-drift',
+      blockers: ['FORGE_PUBLICATION_REQUIRES_FRESH_SOURCE_ARTIFACT'],
+      action, path: '',
+    };
+  }
   const adapter = adapterForAction(action);
   if (!adapter) {
     return {
@@ -372,6 +477,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       path: '',
     };
   }
+  const handoffResponsibility = pendingHandoffResponsibility(state, action, adapter);
   const path = resolve(paths.pending, `${action.actionId}.json`);
   const published = await createImmutableJson(path, {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
@@ -381,10 +487,11 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     actionGrant,
     executionBinding,
+    handoffResponsibility,
     payload,
   });
   if (!published) {
-    if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
         await unlink(path).catch(() => {});
@@ -405,6 +512,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         path,
         adapter,
         fabricPublication,
+        handoffResponsibility,
         queueItemReused: true,
       };
     }
@@ -416,7 +524,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     };
   }
   let fabricPublication = null;
-  if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
       await unlink(path).catch(() => {});
@@ -438,10 +546,27 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     path,
     adapter,
     fabricPublication,
+    handoffResponsibility,
   };
 }
 
+export function replacementSourceForgePublicationBlocked(state = {}) {
+  return state.missionId === 'critical-1717-elastic-goal'
+    && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
+    && state.dispatch?.adapter === 'foundry-forge'
+    && state.continuity?.history?.some(entry =>
+      entry.eventType === 'MISSION_REPAIR_PROVEN'
+      && String(entry.receiptId || '').startsWith('verified-replacement-repair-')) === true;
+}
+
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
+  if (replacementSourceForgePublicationBlocked(inputState)) return {
+    published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
+    action:null,path:'',
+  };
   if (inputState.dispatch?.status === 'running' && ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION'].includes(inputState.currentPhase)) return { published: false, reason: 'agent-already-running', action: null, path: '' };
   const prepared = await beginRepairIfRequired(inputState, options);
   if (prepared.preconditionFailed) {
@@ -478,16 +603,10 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
     ...locked.result,
     repairStarted: prepared.repairStarted,
   };
-  if (result.published && result.action.actionKind === 'agent-handoff') {
-    const action = result.action;
-    await appendMissionEvent(state.missionId, {
-      eventId: `dispatch-${action.actionId}`.slice(0, 128),
-      eventType: 'AGENT_DISPATCHED',
-      agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
-      adapter: action.adapter,
-      summary: `${action.adapter} handoff published to the durable worker queue.`,
-    }, options);
-  }
+  // Queue publication is not execution. Keep the mission dispatch pending until
+  // claimNextMissionWorkerItem atomically moves this exact action into processing.
+  // That processing claim is the first point at which AGENT_DISPATCHED/running is
+  // truthful, so an unclaimed queue item cannot consume a build lane indefinitely.
   return result;
 }
 
@@ -571,7 +690,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'chatgpt-github', 'foundry-forge', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'forge-publication', 'desktop-commander', 'sovereign-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -590,11 +709,41 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
-  if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
+  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
-  let collected = await appendMissionEvent(missionId, { eventId: `result-${actionId}`.slice(0, 128), eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId: text(result.resultId, actionId), changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+  const eventId = `result-${actionId}`.slice(0, 128);
+  const resultId = text(result.resultId, actionId);
+  const previous = current.state;
+  const normalizedFiles = (files) => (Array.isArray(files) ? files : [])
+    .map((file) => text(file).replace(/\\\\/g, '/')).sort();
+  // A crash between AGENT_RESULT_RECEIVED and EVIDENCE_RECORDED leaves the
+  // exact original result persisted, but a replay used to fail merely because
+  // dispatch is no longer running. Resume only the missing evidence step.
+  // Never reexecute a provider or accept a different result under this action.
+  const exactSuccessfulReplay = result.success === true
+    && ['VERIFYING', 'GITHUB_COMMIT'].includes(previous.currentPhase)
+    && previous.dispatch?.status === 'complete'
+    && previous.dispatch?.resultId === resultId
+    && previous.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && Boolean(text(result.receipt?.receiptId || result.receipt?.id))
+    && previous.evidenceReceipts?.some((receipt) =>
+      receipt.receiptId === text(result.receipt?.receiptId || result.receipt?.id)) === true
+    && JSON.stringify(normalizedFiles(previous.git?.changedFiles))
+      === JSON.stringify(normalizedFiles(result.changedFiles))
+    && (adapter !== 'foundry-forge'
+      || (Boolean(text(result.sourceArtifactEscrow?.completeArtifactSha256))
+        && previous.sourcePublication?.artifactSha256
+          === text(result.sourceArtifactEscrow?.completeArtifactSha256)));
+  if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
+    throw new Error('Mission has no active agent dispatch.');
+  }
+  let collected = exactSuccessfulReplay
+    ? { state: previous, duplicate: true, eventId }
+    : await appendMissionEvent(missionId, { eventId, eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId, changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     collected = await appendMissionEvent(missionId, {

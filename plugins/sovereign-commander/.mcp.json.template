@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sovereign-commander": {
+      "command": "node",
+      "args": ["__MCP_SERVER_PATH__"],
+      "env": {
+        "STEPHANOS_REPO_ROOT": "__REPO_ROOT__"
+      }
+    }
+  }
+}
