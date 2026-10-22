@@ -38,7 +38,7 @@ test('original R7 lease with native service requires specialist, custody and phy
   assert.ok(r.domains.includes('original-source-lease'));
   const win=r.reviewPackets.find(x=>x.domain==='windows-os-and-services');
   assert.equal(win.riskTier,'high');
-  assert.equal(win.localCandidateRunner,'scripts/sovereign-high-risk-advisory-v1.mjs');
+  assert.equal(win.localCandidateRunner,'scripts/sovereign-high-risk-advisory-launcher-v1.mjs');
   assert.equal(win.supplementalWindowsExam,'scripts/sovereign-windows-review-calibration-v1.mjs');
   assert.ok(win.requiredEvidence.includes('NATIVE_WINDOWS_TOKEN_ACL_REENTRY_AND_HANDLE_EVIDENCE'));
   assert.ok(r.reviewPackets.some(p=>p.requiredEvidence
