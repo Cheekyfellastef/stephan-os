@@ -1269,6 +1269,8 @@ test('current protected dispatch binds every exact dynamic run identity field', 
     ['workflow-path', { path: `${repository}/${PERSONAL_REPOSITORY_WORKFLOW_PATH}@feature` }],
     ['triggering-actor', { triggering_actor: { login: 'lookalike-operator' } }],
     ['run-status', { status: 'completed' }],
+    ['run-status', { status: 'completed', conclusion: 'success' }],
+    ['run-status', { status: 'cancelled' }],
   ];
   for (const [field, mutation] of mutations) {
     const blocked = validatePersonalRepositoryDispatchExecution(
@@ -2620,5 +2622,40 @@ test('BLOCKED exact-head escalation requires clean independent review of only th
     assert.equal(validatePersonalRepositoryCheckRuns(
       [checks[0], badReview], runs, [], expected, { cleanIndependentReviewProved: true },
     ).valid, false);
+  }
+});
+
+// The same owner-authorised protected merge job can observe a still-waiting
+// top-level run immediately after GitHub has approved the environment and
+// released the job. Status is informational here; this validator must not
+// confer approval, admission or merge authority from the status alone.
+test('protected GitHub run state may remain waiting without waiving identity or replay protection', () => {
+  const waiting = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run: dispatchRun({status:'waiting'})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(waiting.valid,true);
+  assert.deepEqual(waiting.currentMismatches,[]);
+
+  const wrongActor = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({
+      status:'waiting',triggering_actor:{login:'untrusted-bot'},
+    })}),expectedDispatchExecution,
+  );
+  assert.equal(wrongActor.valid,false);
+  assert.ok(wrongActor.currentMismatches.includes('triggering-actor'));
+
+  const wrongHead = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({run:dispatchRun({status:'waiting',head_sha:'f'.repeat(40)})}),
+    expectedDispatchExecution,
+  );
+  assert.equal(wrongHead.valid,false);
+  assert.ok(wrongHead.currentMismatches.includes('base-head'));
+
+  for(const status of ['completed','cancelled','failure','success']){
+    const terminal=validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput({run:dispatchRun({status})}),expectedDispatchExecution);
+    assert.equal(terminal.valid,false,status);
+    assert.ok(terminal.currentMismatches.includes('run-status'),status);
   }
 });
