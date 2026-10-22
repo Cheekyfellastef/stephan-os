@@ -102,6 +102,10 @@ function verifyWorkerReceipt(record, ref, goal, sourceHead, trust = {}) {
     || evidence.proofRef !== ref
     || evidence.observedAtUtc !== goal.lastMaterialProgressAtUtc
     || !text(evidence.workerId)
+    // A signed pickup for worker A cannot authenticate a Build Truth lane
+    // attributed to worker B. Missing builder identity also fails closed.
+    || !text(goal.builder)
+    || text(evidence.workerId) !== text(goal.builder)
     || !SHA64.test(text(trust.workerPublicKeySha256))
     || !distinctPhysicalWorkerSigningIdentityV1(trust.corePublicKeyPem, trust.workerPublicKeyPem)
     || createHash('sha256').update(String(trust.workerPublicKeyPem || '')).digest('hex') !== trust.workerPublicKeySha256) {

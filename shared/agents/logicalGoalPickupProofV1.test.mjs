@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   verifyLogicalGoalBuildTruthV1,
+  signLogicalGoalBuildTruthV1,
   loadControllerActivityProofRecordsV1,
   loadPinnedWorkerPickupVerifierV1,
   distinctPhysicalWorkerSigningIdentityV1,
@@ -11,6 +12,7 @@ import { mkdir, mkdtemp, writeFile, utimes } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 
 const nowMs = Date.parse('2026-10-18T17:00:00.000Z');
 const head = 'a'.repeat(40);
@@ -217,4 +219,63 @@ test('canonical pickup proof rejects dirty tracked files, staged edits and stale
   git('-c', 'user.name=Stephanos Test', '-c', 'user.email=ci@example.invalid',
     'commit', '-m', 'unfetched change');
   assert.equal(verifyCleanCanonicalTrackedMainV1(root).blocker, 'LOGICAL_GOAL_CANONICAL_MAIN_UNVERIFIED');
+});
+
+test('signed physical worker identity must match Build Truth builder', () => {
+  const core = generateKeyPairSync('ed25519');
+  const worker = generateKeyPairSync('ed25519');
+  const corePublicKeyPem = core.publicKey.export({ format: 'pem', type: 'spki' });
+  const workerPublicKeyPem = worker.publicKey.export({ format: 'pem', type: 'spki' });
+  const workerPublicKeySha256 = createHash('sha256').update(workerPublicKeyPem).digest('hex');
+  const sourceHead = 'a'.repeat(40);
+  const observedAtUtc = new Date(nowMs).toISOString();
+  const runId = 'worker-identity-regression';
+  const proofId = 'controller-worker-identity-run-regression';
+  const proofRef = 'receipts/work-3050-material.json';
+  const goodGoal = {
+    issue: '#3050',
+    logicalLaneId: 'logical-goal-3050',
+    controllerId: 'controller-zero',
+    builder: 'worker-A',
+    selectedForAdmission: true,
+    state: 'BUILDING',
+    lastMaterialProgressAtUtc: observedAtUtc,
+    proofRefs: [proofRef],
+  };
+  const physicalBody = {
+    schemaVersion: 'stephanos.physical-worker-goal-pickup.v1',
+    publisherId: 'stephanos-physical-worker',
+    sourceHead, goalIssue: goodGoal.issue,
+    logicalLaneId: goodGoal.logicalLaneId, controllerId: goodGoal.controllerId,
+    runId, proofId, proofRef, observedAtUtc, workerId: 'worker-A',
+  };
+  const workerSignature = sign(null,
+    Buffer.from('stephanos.physical-worker-goal-pickup.v1\\0' + JSON.stringify(physicalBody)),
+    worker.privateKey).toString('base64');
+  const record = {
+    kind: 'stephanos.shared_workspace.proof',
+    status: 'PASS', proofId, refs: [proofRef],
+    timestampUtc: observedAtUtc, correlationId: runId,
+    controllerActivityProof: {
+      schemaVersion: 'stephanos.controller-activity-proof.v1',
+      controllerId: goodGoal.controllerId, runId, materialActionsSucceeded: 1,
+    },
+    workerPickupAttestation: { ...physicalBody, signatureBase64: workerSignature },
+  };
+  const signTruth = builder => signLogicalGoalBuildTruthV1({
+    buildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc, goals: [{ ...goodGoal, builder }],
+    },
+    sourceHead, proofRecords: [record], nowMs,
+    signingPrivateKeyPem: core.privateKey.export({ format: 'pem', type: 'pkcs8' }),
+    trustedWorkerPublicKeyPem: workerPublicKeyPem, trustedWorkerPublicKeySha256: workerPublicKeySha256,
+    corePublicKeyPem,
+    corePublicKeySha256: createHash('sha256').update(corePublicKeyPem).digest('hex'),
+  });
+  assert.equal(signTruth('worker-A').ok, true, 'matching signed worker must remain admissible');
+  const mismatched = signTruth('worker-B');
+  assert.equal(mismatched.ok, false);
+  assert.equal(mismatched.blocker, 'LOGICAL_GOAL_SIGNING_SOURCE_OR_PROOF_UNVERIFIED');
+  assert.equal(signTruth('').ok, false, 'an unnamed builder cannot inherit a signed pickup');
 });
