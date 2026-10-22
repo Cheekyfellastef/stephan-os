@@ -1,14 +1,33 @@
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import {
-  constructIsolatedRescueIslandPilotV1 as build,
+  constructIsolatedRescueIslandPilotV1 as productionBuild,
   validateRescueIslandPilotTaskV1 as validate,
 } from './rescueIslandFirstCommitV1.mjs';
+
+// The installed export is ALWAYS held. Construction regressions exercise only
+// an in-memory test copy with the single missing-custody guard removed. There
+// is no production option/export/environment flag to activate that copy.
+const sourceUrl = new URL('./rescueIslandFirstCommitV1.mjs', import.meta.url);
+const guard = "  fail('RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED');";
+const installedSource = await readFile(sourceUrl, 'utf8');
+assert.equal(installedSource.split(guard).length, 2);
+let fixtureSource = installedSource.replace(guard,
+  '// UNCOMMISSIONED DISPOSABLE FIXTURE ONLY: native custody is not provided.');
+for (const dependency of ['./rescueIslandPreflightV1.mjs', './battleBridgeExecutionBoundaryV1.mjs']) {
+  fixtureSource = fixtureSource.replace("from '" + dependency + "'",
+    "from '" + new URL(dependency, sourceUrl).href + "'");
+}
+fixtureSource = fixtureSource.replace('sourceBuildProposalOnly: true,',
+  'sourceBuildProposalOnly: true, fixtureOnly: true,');
+const { constructIsolatedRescueIslandPilotV1: build } = await import(
+  'data:text/javascript;base64,' + Buffer.from(fixtureSource).toString('base64'));
+const test = (name, fn) => nodeTest('uncommissioned disposable fixture: ' + name, fn);
 
 const NOW = '2026-10-13T23:10:00.000Z';
 const ISSUE_TITLE = 'Rescue Island: two independent proof-gated builders outside Goal Conveyor';
@@ -81,6 +100,7 @@ test('isolated real Git source build proves physical pickup, actual Node tests, 
   const ctx = await fixture();
   const result = await build(ctx);
   assert.equal(result.ok, true);
+  assert.ok(result.receipts.every(receipt => receipt.fixtureOnly === true));
   assert.equal(result.workerId, 'rescue-island-01');
   assert.equal(result.reviewRequired, true);
   assert.equal(result.merged, false);
@@ -178,6 +198,7 @@ test('same-task transient test failure is recoverable by explicitly authorised s
   await assert.rejects(() => build(ctx), /RESCUE_ISLAND_DUPLICATE_CLAIM/);
   const result = await build({ ...ctx, sameOwnerRecoveryAuthenticated: true });
   assert.equal(result.ok, true);
+  assert.ok(result.receipts.every(receipt => receipt.fixtureOnly === true));
   assert.deepEqual(result.receipts.map(r => r.stage), [
     'SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP', 'EDITED', 'TESTED', 'ISOLATED_COMMIT',
   ]);
@@ -233,6 +254,7 @@ test('branch retained after interrupted Git worktree add can resume under same i
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'refs/heads/' + branch), ctx.task.baseHead);
   const result = await build({ ...ctx, sameOwnerRecoveryAuthenticated: true });
   assert.equal(result.ok, true);
+  assert.ok(result.receipts.every(receipt => receipt.fixtureOnly === true));
   assert.equal(result.parent, ctx.task.baseHead);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
   assert.equal(git(join(ctx.worktreeRoot, ctx.task.taskId), 'rev-parse', 'HEAD'), result.head);
@@ -397,6 +419,7 @@ test('selected child issue #3109 physically constructs one scoped isolated sourc
   assert.equal(validate(ctx.task, ctx.nowUtc), true);
   const result = await build(ctx);
   assert.equal(result.ok, true);
+  assert.ok(result.receipts.every(receipt => receipt.fixtureOnly === true));
   assert.equal(result.reviewRequired, true);
   assert.equal(result.merged, false);
   assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
@@ -412,4 +435,62 @@ test('pilot issue expansion remains exact-id-and-title and rejects unrelated iss
     ...ctx.task, issueNumber: 3110,
     issueTitle: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
   }, ctx.nowUtc), false);
+});
+
+
+nodeTest('installed admission denies forged custody and recovery before claims, Git or Node on a real checkout', async () => {
+  const ctx = await fixture();
+  const before = git(ctx.repoRoot, 'status', '--porcelain');
+  const branches = git(ctx.repoRoot, 'for-each-ref', '--format=%(refname):%(objectname)');
+  let gitCalls = 0, testCalls = 0;
+  for (const variant of [
+    {},
+    { sameOwnerRecoveryAuthenticated: true },
+    { executionCustodyAuthenticated: true, originalWriterExcluded: true,
+      targetWriteCustodyAuthenticated: true, nativeCustodyQualified: true },
+  ]) {
+    await assert.rejects(() => productionBuild({ ...ctx, ...variant,
+      runGit: () => { gitCalls++; throw new Error('GIT_MUST_NOT_RUN'); },
+      runTest: () => { testCalls++; throw new Error('NODE_MUST_NOT_RUN'); },
+    }), { code: 'RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED' });
+  }
+  assert.equal(gitCalls, 0);
+  assert.equal(testCalls, 0);
+  assert.equal(git(ctx.repoRoot, 'rev-parse', 'HEAD'), ctx.task.baseHead);
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), before);
+  assert.equal(git(ctx.repoRoot, 'for-each-ref', '--format=%(refname):%(objectname)'), branches);
+  for (const path of [ctx.receiptRoot, ctx.worktreeRoot]) {
+    await assert.rejects(access(path), { code: 'ENOENT' });
+  }
+});
+
+nodeTest('installed custody hold cannot be bypassed by omitted or redirected roots', async () => {
+  const ctx = await fixture();
+  for (const roots of [
+    { repoRoot: undefined, worktreeRoot: undefined, receiptRoot: undefined },
+    { worktreeRoot: ctx.repoRoot, receiptRoot: ctx.repoRoot },
+  ]) await assert.rejects(() => productionBuild({ ...ctx, ...roots }),
+    { code: 'RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED' });
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+nodeTest('installed same-owner recovery preserves previous claims and blocked evidence without executing', async () => {
+  const ctx = await fixture();
+  const claims = join(ctx.receiptRoot, 'claims');
+  await mkdir(claims, { recursive: true });
+  const claim = join(claims, ctx.task.taskId + '.json');
+  const blocked = join(claims, ctx.task.taskId + '.BLOCKED.json');
+  const bytes = '{"historicalOwner":"preserve-exactly"}\n';
+  await writeFile(claim, bytes);
+  await writeFile(blocked, bytes);
+  await assert.rejects(() => productionBuild({ ...ctx,
+    sameOwnerRecoveryAuthenticated: true,
+    runGit: () => { throw new Error('RECOVERY_GIT_MUST_NOT_RUN'); },
+    runTest: () => { throw new Error('RECOVERY_NODE_MUST_NOT_RUN'); },
+  }), { code: 'RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED' });
+  assert.equal(await readFile(claim, 'utf8'), bytes);
+  assert.equal(await readFile(blocked, 'utf8'), bytes);
+  await assert.rejects(access(join(claims, ctx.task.taskId + '.recovery.lock')), { code: 'ENOENT' });
+  await assert.rejects(access(ctx.worktreeRoot), { code: 'ENOENT' });
+  assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
 });

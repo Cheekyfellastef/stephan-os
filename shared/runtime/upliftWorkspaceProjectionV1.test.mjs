@@ -1,5 +1,11 @@
 import test from 'node:test';
 import '../../tests/conversational-intelligence-experience-seed.test.mjs';
+// Integrate independent seed-lane tests without changing protected CI workflow.
+import './seedCanopyParallelForgeV1.test.mjs';
+import './seedCanopyParallelResourceV1.test.mjs';
+import './seedCanopyParallelGitHubApprovalV1.test.mjs';
+import './seedCanopyParallelSupervisorV1.test.mjs';
+import '../../tests/seed-canopy-parallel-forge-integration.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
 
