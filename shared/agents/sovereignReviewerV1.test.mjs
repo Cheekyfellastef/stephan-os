@@ -35,6 +35,8 @@ test('local sovereign reviewer emits a valid exact-head candidate but grants no 
   assert.equal(result.specialistAuthority, false);
   assert.equal(result.runtimeDeploymentProven, false);
   assert.equal(result.candidateEvidence.sourceHead, sample.sourceHead);
+  assert.equal(result.candidateEvidence.baseSha, sample.baseSha,
+    'review candidate must retain the exact base commit for external attestation');
   assert.equal(result.candidateEvidence.producerClass, 'openclaw-local-readonly');
   assert.equal(result.candidateEvidence.verdict, 'clean');
   assert.equal(result.reviewReceipt, undefined);
