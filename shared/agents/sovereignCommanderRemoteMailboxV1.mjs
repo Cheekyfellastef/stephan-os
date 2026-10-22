@@ -3198,9 +3198,26 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const calibration = parseWindowsCalibrationRemoteV1(
       findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead,
       shape.command.reviewIdentity.baseSha);
-    if (!calibration) return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
-      remoteAction: shape.command.remoteAction, publicReceiptSafe: true, secretMaterialReturned: false,
-    });
+    if (!calibration) {
+      // The calibration may fail before it can emit a typed, signed-source
+      // candidate/HOLD projection. Keep receipt admission fail-closed while
+      // exposing only the pre-existing strict token-filtered native failure.
+      // Never echo native stdout, stderr, command arguments, identities or paths.
+      const nativeFailure = safeMaintenanceFailureProjection(
+        rawMaintenance, shape.command.remoteAction);
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        ...(nativeFailure ? {
+          // The canonical public mailbox reads operationResult.status.
+          // Missing native exit status remains absent, never coerced to zero.
+          ...(Number.isInteger(nativeFailure.status)
+            ? { status: nativeFailure.status } : {}),
+          errorCode: nativeFailure.errorCode,
+          executionBlocker: nativeFailure.executionBlocker,
+        } : {}),
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
     // DONE means candidate exam completed, not that a specialist was admitted.
     if (calibration.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
       return fail('SOVEREIGN_WINDOWS_CALIBRATION_HELD', {

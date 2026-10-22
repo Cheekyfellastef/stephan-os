@@ -728,6 +728,35 @@ test('Sovereign Commander blocked receipts preserve only bounded failure diagnos
   assert.doesNotMatch(JSON.stringify(serialized), /PRIVATE RAW|secret-path/i);
 });
 
+test('native Windows calibration denial preserves the exact bounded exit status in the public mailbox', () => {
+  const head='a'.repeat(40);
+  const receipt={
+    schemaVersion:'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId:'sovereign-reviewer-denial-3199',
+    operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:3149,branch:'main',expectedHead:head,state:'BLOCKED',
+    blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+    result:{
+      ok:false,verdict:'BLOCKED',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId:'sovereign-reviewer-denial-3199',
+      blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+      remoteAction:'sovereign-windows-reviewer-calibration',
+      status:2,errorCode:'REVIEWER_RUNNER_EXIT_2',executionBlocker:'',
+      publicReceiptSafe:true,secretMaterialReturned:false,
+      stdout:'PRIVATE_NATIVE_OUTPUT',stderr:'PRIVATE_NATIVE_STDERR',
+    },
+  };
+  const result=createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(result.operationResult.maintenanceStatus,2);
+  assert.equal(result.operationResult.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.equal(result.operationResult.remoteAction,'sovereign-windows-reviewer-calibration');
+  const publicReceipt=JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(publicReceipt.result.result.maintenanceStatus,2);
+  assert.equal(publicReceipt.result.result.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.doesNotMatch(JSON.stringify(publicReceipt),/PRIVATE_NATIVE_OUTPUT|PRIVATE_NATIVE_STDERR/);
+});
+
 test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
   const head = 'c'.repeat(40);
   const query = 'Remote Commander';
