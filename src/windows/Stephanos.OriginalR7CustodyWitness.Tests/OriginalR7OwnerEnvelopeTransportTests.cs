@@ -136,6 +136,38 @@ internal static class OriginalR7OwnerEnvelopeTransportTests
                 && !observation.RootProvisioningAuthorized && !observation.LeaseReleaseAuthorized,
                 "FIXTURE_CANNOT_ENTER_NATIVE_ISSUER_ROUTE");
         }
+        // Purpose separation is inside the authenticated JWE header/audience,
+        // not a caller Boolean. Even keeping the SAME recipient and nonce while
+        // switching purpose cannot turn a peer token into provisioning consent.
+        foreach (var purpose in Enum.GetValues<OriginalR7OwnerOperationPurpose>())
+        {
+            using var session = OriginalR7OwnerEnvelopeTransport.CreateUntrustedFixture(new string('a', 64),
+                new string('b', 64), purpose);
+            var challenge = session.PublicChallenge();
+            string expected = OriginalR7OwnerPeerPairing.AudiencePrefix(purpose);
+            Check(challenge.Audience.StartsWith(expected, StringComparison.Ordinal), "FIXED_PURPOSE_NATIVE_AUDIENCE");
+            string other = OriginalR7OwnerPeerPairing.AudiencePrefix(purpose == OriginalR7OwnerOperationPurpose.AuthenticatePeer
+                ? OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots : OriginalR7OwnerOperationPurpose.AuthenticatePeer);
+            var substituted = challenge with { Audience = other + challenge.Audience[expected.Length..] };
+            Reject(() => session.ConsumeUntrustedFixture(Encrypt(substituted)), "SAME_KEY_NONCE_CROSS_PURPOSE_ENVELOPE_REFUSED");
+        }
+        using (var session = OriginalR7OwnerEnvelopeTransport.CreateUntrustedFixture(new string('a', 64),
+            new string('b', 64), OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots))
+        {
+            EqualAndClear(session.ConsumeUntrustedFixture(Encrypt(session.PublicChallenge())), Token,
+                "INACTIVE_PURPOSE_DISPOSABLE_CRYPTO_ROUNDTRIP_HAS_NO_GRANT");
+        }
+        foreach (var purpose in Enum.GetValues<OriginalR7OwnerOperationPurpose>())
+        {
+            using var session = OriginalR7OwnerEnvelopeTransport.CreateUntrustedFixture(new string('a', 64),
+                new string('b', 64), purpose);
+            using var forged = new OriginalR7OwnerEnvelopeTransport.InactiveRootProvisioningGrant(session);
+            Reject(() => forged.RequireCurrent(), "CALLER_CONSTRUCTED_GRANT_NOT_REGISTERED_BY_AUTHENTICATED_NATIVE_SESSION");
+            Reject(() => forged.ClaimTransaction(), "CALLER_GRANT_CANNOT_START_SEED_TRANSACTION");
+            string envelope = Encrypt(session.PublicChallenge());
+            Check(session.ConsumeInactiveRootProvisioningAsync(envelope, null).GetAwaiter().GetResult() is null,
+                "FIXTURE_OR_PEER_CANNOT_MINT_INACTIVE_PROVISIONING_GRANT");
+        }
         NodeInterop();
         using (var session = Session())
         {

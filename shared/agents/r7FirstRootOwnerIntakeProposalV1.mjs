@@ -6,6 +6,9 @@ import { createHash, createPublicKey } from 'node:crypto';
 export const R7_FIRST_ROOT_INTAKE_MODE = 'user-owned-r7-first-root-policy-intake';
 export const R7_FIRST_ROOT_INTAKE_PURPOSE = 'R7_FIRST_ROOT_OWNER_POLICY_INTAKE';
 export const R7_FIRST_ROOT_INTAKE_AUDIENCE = 'stephanos:r7:first-root-owner-permit:v1:';
+export const R7_FIRST_ROOT_PEER_PURPOSE = 'ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY';
+export const R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE = 'stephanos:r7:inactive-first-root-provisioning:v1:';
+export const R7_INACTIVE_ROOT_PROVISIONING_PURPOSE = 'PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY';
 export const R7_FIRST_ROOT_INTAKE_WORKFLOW = 'Cheekyfellastef/stephan-os/.github/workflows/operator-merge-approval-gate.yml@refs/heads/main';
 export const R7_FIRST_ROOT_INTAKE_MISSING = Object.freeze([
   'R7_FIRST_ROOT_POLICY_ADOPTION_NOT_PROVEN',
@@ -36,6 +39,22 @@ const result = (classification, blockers, extra = {}) => Object.freeze({
   schemaVersion: 'stephanos.r7-first-root-owner-intake-proposal-result.v1',
   classification, blockers: Object.freeze([...new Set(blockers)]), ...extra, ...NO_AUTHORITY,
 });
+
+// Two fixed native operations, selected only by their complete audience prefix.
+// A caller purpose/boolean cannot upgrade the old peer-only challenge. This
+// parser describes untrusted bindings; it grants neither operation by itself.
+export function parseR7NativeOwnerAudience(value) {
+  if (typeof value !== 'string') return null;
+  const profile = [
+    [R7_FIRST_ROOT_INTAKE_AUDIENCE, R7_FIRST_ROOT_PEER_PURPOSE],
+    [R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE, R7_INACTIVE_ROOT_PROVISIONING_PURPOSE],
+  ].find(([prefix]) => value.startsWith(prefix));
+  if (!profile) return null;
+  const [prefix, purpose] = profile, binding = value.slice(prefix.length).split(':');
+  if (binding.length !== 3 || binding.some(part => !hex(part, 64))) return null;
+  return Object.freeze({ prefix, purpose, permitSha256: binding[0], nonce: binding[1],
+    recipientSpkiSha256: binding[2] });
+}
 
 // One canonical Node recipient profile shared by intake, peer binding and JWE.
 // This is public-key shape validation, never native authentication or adoption.
@@ -130,11 +149,10 @@ export function prepareR7FirstRootOwnerIntakeProposal({
       || Date.parse(p.expiresAtUtc) - Date.parse(p.issuedAtUtc) > 300000
       || Date.parse(p.expiresAtUtc) <= Date.parse(p.issuedAtUtc))
     return rejected('INTAKE_VALIDITY_INVALID');
-  const binding = typeof nativeAudience === 'string' && nativeAudience.startsWith(R7_FIRST_ROOT_INTAKE_AUDIENCE)
-    ? nativeAudience.slice(R7_FIRST_ROOT_INTAKE_AUDIENCE.length).split(':') : [];
+  const binding = parseR7NativeOwnerAudience(nativeAudience);
   const recipientDigest = r7FirstRootRecipientSpkiDigest(nativeRecipientSpkiBase64);
-  if (binding.length !== 3 || binding.some(value => !hex(value, 64))
-      || binding[0] !== permitSha256 || !recipientDigest || binding[2] !== recipientDigest)
+  if (!binding || binding.permitSha256 !== permitSha256
+      || !recipientDigest || binding.recipientSpkiSha256 !== recipientDigest)
     return rejected('NATIVE_PURPOSE_AND_NONCE_BINDING_INVALID');
   // Supplied context is a fixture/preflight input, never native authentication.
   if (!keys(context, ['eventName', 'mode', 'repository', 'repositoryId', 'ownerId', 'actor',
@@ -150,6 +168,7 @@ export function prepareR7FirstRootOwnerIntakeProposal({
   return result('R7_FIRST_ROOT_INTAKE_PREPARED_HELD', R7_FIRST_ROOT_INTAKE_MISSING, {
     permitDigest: permitSha256, sourceHead: c.sourceHead, sourceTree: c.sourceTree,
     expectedMain: c.expectedMain, runId: context.runId, runAttempt: context.runAttempt,
+    nativeOperationPurpose: binding.purpose,
     proposedReferencesConsistent: true,
     // This must remain false until actual artifact/run/merge/protection checks
     // exist. Shape checks and caller references are not authentic evidence.

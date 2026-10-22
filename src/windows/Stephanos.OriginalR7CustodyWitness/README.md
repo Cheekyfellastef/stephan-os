@@ -13,6 +13,56 @@ encrypted owner credential's signature and exact first run attempt. This source
 has not been admitted or invoked against real credentials. It cannot provision
 roots or authorize custody/release; the SCM startup refusal remains intact.
 
+### Separate inactive-root purpose and the creation boundary
+
+The source now distinguishes the existing peer-only purpose from
+`PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY`. The latter uses the separate fixed
+audience prefix `stephanos:r7:inactive-first-root-provisioning:v1:` throughout
+native pairing, the protected workflow summary, owner approval, signed issuer
+audience and encrypted delivery. A peer-only approval cannot be relabeled as
+permission to provision roots. Both purposes retain the same permit schema;
+the complete validated audience determines the operation, not a caller flag.
+
+The new internal authentication adapter additionally parses the complete exact
+permit and retains the fixed installed executable and its directory ancestry.
+It rechecks canonical identity, image bytes and the original validity window
+before joining actual issuer authentication with the live native OS decision.
+The parsed permit and matching image are not independent source provenance,
+protected loaded-module evidence or source-writer exclusion. The in-process
+grant cannot be serialized, reconstructed from public data or used twice.
+
+This adapter is deliberately **not registered as a production CLI command**.
+Its only terminal result after successful authentication is
+`R7_INACTIVE_ROOT_PURPOSE_AUTHENTICATED_CREATION_CUSTODY_REQUIRED`; no seed,
+durable provisioning attempt, ACL, service or lease is changed. It must not be
+invoked merely to ask for credentials while the necessary enforcement is absent.
+The existing peer-only CLI and the unconditional SCM refusal remain unchanged.
+
+Permanent inactive seeds must not be created first and promoted after a later
+fence. If a source-capable administrator or process could read the new seed or
+its creator's memory at creation, later protection cannot establish that the
+key was never copied. The fixed storage policy currently permits SYSTEM and
+Administrators full control; that policy alone does not isolate keys from a
+source actor with those capabilities. Fresh files and exclusive file handles
+do not dispose of another process's privilege, injection or relaunch routes.
+
+The substantive missing implementation is a native maintenance transaction
+that establishes and retains the actual source-role/commissioner separation,
+disposes of old capabilities and prevents re-entry **before** usable signing
+material exists. Its scope must come from the authentic source estate. A
+controlled, independently authenticated maintenance boot can supply destruction
+of pre-boot kernel objects only when relaunch denial and complete current
+post-boot exclusion are also established. No automatic reboot, account change,
+process termination or inferred historical identity is provided here.
+
+Portable verification now includes the exact new cross-language pairing vector
+(899 bytes, SHA-256 `4bb41bf002c2631316e413587d60ed20cf8e99d42d027610479961c5983587ba`),
+cross-purpose substitution and caller-constructed grant refusal, and
+`--provisioning-source-schema-only` in the **test executable**. That test mode
+checks closed-world canonical permit bytes, exact original/review bindings,
+nonzero hashes and expiry while preserving consumed r1 identity against held
+lease revision7. It supplies no native Windows proof.
+
 The credential API binding uses fixed absolute OS modules and verifies actual
 mapped module names before calling their retained exports. A System32 search
 attribute alone is insufficient in the pinned .NET8 single-file runtime; see

@@ -19,6 +19,7 @@ internal sealed record OriginalR7OwnerPeerTranscript(string Wire, string Fingerp
     internal bool HostPolicyAdopted => false;
     internal bool RootEnrollmentAuthorized => false;
     internal bool CanonicalLeaseReleaseAuthorized => false;
+    internal string Purpose { get; init; } = OriginalR7OwnerPeerPairing.Purpose;
 }
 
 internal static class OriginalR7OwnerPeerPairing
@@ -26,6 +27,9 @@ internal static class OriginalR7OwnerPeerPairing
     internal const string Schema = "stephanos.r7-native-owner-peer-pairing.v1";
     internal const string Domain = "stephanos.r7.native-owner-peer-pairing.v1\0";
     internal const string Purpose = "ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY";
+    internal const string InactiveRootPurpose = "PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY";
+    internal const string PeerAudiencePrefix = "stephanos:r7:first-root-owner-permit:v1:";
+    internal const string InactiveRootAudiencePrefix = "stephanos:r7:inactive-first-root-provisioning:v1:";
     internal const string Repository = "Cheekyfellastef/stephan-os";
     internal const string Workflow = Repository + "/.github/workflows/operator-merge-approval-gate.yml@refs/heads/main";
 
@@ -46,7 +50,9 @@ internal static class OriginalR7OwnerPeerPairing
     {
         if (!Hex(expectedMain, 40) || !DecimalId(runId) || runAttempt != "1") throw Invalid();
         using RSA publicRecipient = OriginalR7OwnerEnvelopeTransport.ImportChallengeRecipient(challenge, now);
-        const string prefix = "stephanos:r7:first-root-owner-permit:v1:";
+        string prefix = AudiencePrefix(OperationPurpose(challenge.Audience));
+        string purpose = OperationPurpose(challenge.Audience) == OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots
+            ? InactiveRootPurpose : Purpose;
         string permit = challenge.Audience[prefix.Length..].Split(':')[0];
         if (expectedPermit is not null && (!Hex(expectedPermit, 64) || permit != expectedPermit)) throw Invalid();
         using MemoryStream bytes = new();
@@ -54,7 +60,7 @@ internal static class OriginalR7OwnerPeerPairing
         {
             writer.WriteStartObject();
             writer.WriteString("schemaVersion", Schema);
-            writer.WriteString("purpose", Purpose);
+            writer.WriteString("purpose", purpose);
             writer.WriteString("repository", Repository);
             writer.WriteString("workflowRef", Workflow);
             writer.WriteString("expectedMain", expectedMain);
@@ -73,11 +79,23 @@ internal static class OriginalR7OwnerPeerPairing
         digest.AppendData(Encoding.ASCII.GetBytes(Domain));
         digest.AppendData(wire);
         string fingerprint = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant();
-        return new(Encoding.UTF8.GetString(wire), fingerprint, Purpose + ":" + fingerprint,
+        return new(Encoding.UTF8.GetString(wire), fingerprint, purpose + ":" + fingerprint,
             "https://github.com/" + Repository + "/actions/runs/" + runId + "/attempts/1",
             expectedMain, runId, runAttempt, permit, challenge.Audience,
-            challenge.IssuedAtUtc, challenge.ExpiresAtUtc);
+            challenge.IssuedAtUtc, challenge.ExpiresAtUtc) { Purpose = purpose };
     }
+
+    internal static string AudiencePrefix(OriginalR7OwnerOperationPurpose purpose) => purpose switch {
+        OriginalR7OwnerOperationPurpose.AuthenticatePeer => PeerAudiencePrefix,
+        OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots => InactiveRootAudiencePrefix,
+        _ => throw Invalid()
+    };
+
+    internal static OriginalR7OwnerOperationPurpose OperationPurpose(string audience)
+        => audience.StartsWith(PeerAudiencePrefix, StringComparison.Ordinal)
+            ? OriginalR7OwnerOperationPurpose.AuthenticatePeer
+            : audience.StartsWith(InactiveRootAudiencePrefix, StringComparison.Ordinal)
+                ? OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots : throw Invalid();
 
     private static bool Hex(string value, int bytes) => value is not null && value.Length == bytes
         && value.Any(c => c != '0') && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');

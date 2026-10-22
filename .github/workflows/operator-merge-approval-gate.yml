@@ -966,13 +966,20 @@ jobs:
           import {readFileSync,appendFileSync} from 'node:fs';
           import {join} from 'node:path';
           const proof=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'r7-first-root-peer-evidence.json'),'utf8'));
+          const descriptions=Object.freeze({
+            ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:'Enroll one ephemeral endpoint for owner-policy authentication only.',
+            PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY:'Authenticate the intended purpose of creating the two fixed inactive R7 signing roots. This candidate creates no keys; actual native creation custody remains required.',
+          });
           if(proof.classification!=='R7_OWNER_PEER_PREPARED_EXPLICIT_ENROLLMENT_REQUIRED'
             ||!/^[a-f0-9]{64}$/.test(proof.peerBindingFingerprint)
-            ||proof.peerApprovalComment!=='ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:'+proof.peerBindingFingerprint)
+            ||!Object.hasOwn(descriptions,proof.nativeOperationPurpose)
+            ||proof.peerApprovalComment!==proof.nativeOperationPurpose+':'+proof.peerBindingFingerprint)
             throw new Error('R7_PAIRING_SUMMARY_INVALID');
           appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-            '## R7 ephemeral endpoint enrollment\n\nCompare this full fingerprint with the independently displayed Windows fingerprint. '
-            +'Approve only if they match and the Windows decision is genuine. This enrolls one endpoint; it does not assert custody or release r7.\n\n'
+            '## R7 purpose-bound owner decision\n\n'+descriptions[proof.nativeOperationPurpose]+'\n\n'
+            +'Compare this full fingerprint and exact purpose with the independently displayed Windows decision before approval. '
+            +'This source evidence cannot activate signing services, prove custody, or release r7.\n\n'
+            +'Exact purpose: `'+proof.nativeOperationPurpose+'`\n\n'
             +'Fingerprint: `'+proof.peerBindingFingerprint+'`\n\nRequired approval comment: `'+proof.peerApprovalComment+'`\n\n'
             +'Original expiry: `'+proof.nativeChallengeExpiresAtUtc+'`\n');
           NODE

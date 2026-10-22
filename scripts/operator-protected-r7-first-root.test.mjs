@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildR7NativeOwnerPeerPairing } from '../shared/agents/r7NativeOwnerPeerPairingV1.mjs';
+import { R7_FIRST_ROOT_INTAKE_AUDIENCE, R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE } from '../shared/agents/r7FirstRootOwnerIntakeProposalV1.mjs';
 const workflow=readFileSync(new URL('../.github/workflows/operator-merge-approval-gate.yml',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const script=readFileSync(new URL('./operator-protected-r7-first-root.mjs',import.meta.url),'utf8');
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -44,6 +49,41 @@ test('separates read-only pairing from the exact purpose protected producer with
   const pins=[...((preparation+issuer).matchAll(/uses: ([^\s]+)@([^\s]+)/g))];
   assert.equal(pins.length,6);for(const [,action,ref] of pins){assert.match(action,/^actions\//);assert.match(ref,/^[a-f0-9]{40}$/);}
   assert.equal((preparation+issuer).match(/node-version: '24\.21\.0'/g).length,2);
+});
+
+test('the actual owner summary names the exact native operation and rejects aliased approval purposes',()=>{
+  const source=job('r7-first-root-peer-evidence').match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n          NODE/)[1]
+    .split('\n').map(line=>line.replace(/^          /,'')).join('\n');
+  const f=JSON.parse(readFileSync(new URL('../shared/agents/r7NativeOwnerPeerPairingV1.fixture.json',import.meta.url),'utf8'));
+  const pairs=[buildR7NativeOwnerPeerPairing(f.challenge,f.context),
+    buildR7NativeOwnerPeerPairing({...f.challenge,Audience:f.challenge.Audience.replace(R7_FIRST_ROOT_INTAKE_AUDIENCE,
+      R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE)},f.context)];
+  const dir=mkdtempSync(join(tmpdir(),'r7-owner-summary-'));
+  try {
+    const output=join(dir,'summary.md');
+    for(const p of pairs){
+      const valid={classification:'R7_OWNER_PEER_PREPARED_EXPLICIT_ENROLLMENT_REQUIRED',
+        nativeOperationPurpose:p.values.purpose,peerBindingFingerprint:p.fingerprint,
+        peerApprovalComment:p.approvalComment,nativeChallengeExpiresAtUtc:p.values.nativeExpiresAtUtc};
+      for(const [changes,accepted] of [[{},true],[{nativeOperationPurpose:'PROVISION_ALL_ROOTS'},false],
+        [{peerApprovalComment:'approved'},false],[{peerApprovalComment:p.approvalComment+' '},false],
+        [{nativeOperationPurpose:pairs.find(other=>other!==p).values.purpose},false]]){
+        rmSync(output,{force:true});
+        writeFileSync(join(dir,'r7-first-root-peer-evidence.json'),JSON.stringify({...valid,...changes}));
+        const child=spawnSync(process.execPath,['--input-type=module','-e',source],{encoding:'utf8',timeout:10000,
+          env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,RUNNER_TEMP:dir,GITHUB_STEP_SUMMARY:output}});
+        if(!accepted){assert.notEqual(child.status,0);assert.equal(existsSync(output),false);continue;}
+        assert.equal(child.status,0,child.stderr);
+        const summary=readFileSync(output,'utf8');
+        assert.ok(summary.includes('Exact purpose: `'+p.values.purpose+'`'));
+        assert.ok(summary.includes('Required approval comment: `'+p.approvalComment+'`'));
+        assert.match(summary,/cannot activate signing services, prove custody, or release r7/);
+        if(p.values.purpose===R7_INACTIVE_ROOT_PROVISIONING_PURPOSE)
+          assert.match(summary,/two fixed inactive R7 signing roots\. This candidate creates no keys; actual native creation custody remains required/);
+        else assert.match(summary,/one ephemeral endpoint for owner-policy authentication only/);
+      }
+    }
+  } finally {rmSync(dir,{recursive:true,force:true});}
 });
 
 test('wrapper holds before reading events or making network requests outside its fixed hosted job',()=>{

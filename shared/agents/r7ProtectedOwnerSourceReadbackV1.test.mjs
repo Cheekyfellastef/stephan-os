@@ -4,6 +4,9 @@ import { API } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { currentFixture,READ_ONLY_FAKE } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { buildR7OwnerSourceReadbackInput as build, createR7ProtectedOwnerSourceReadback as create,
   r7OwnerPeerFromSourceInput } from './r7ProtectedOwnerSourceReadbackV1.mjs';
+import { R7_FIRST_ROOT_INTAKE_AUDIENCE as peerPrefix, R7_FIRST_ROOT_PEER_PURPOSE as peerPurpose,
+  R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE as provisioningPrefix,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE as provisioningPurpose } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 
 async function resolve(f, transport=f.fetch, operation='resolve') {
   const prior=globalThis.fetch;
@@ -160,6 +163,46 @@ test('enrollment requires the actual owner decision to match the computed comple
     assert.equal(out.nativeEndpointAuthenticated,false);assert.equal(out.humanOsConsentProven,false);
     assert.equal(out.tokenIssuanceAuthorized,false);assert.equal(out.canonicalLeaseReleaseAuthorized,false);
   }
+});
+
+test('inactive-root preparation and owner readback require the exact new purpose without granting native authority',async()=>{
+  const preparation=currentFixture({stage:'prepare'});
+  preparation.event.inputs.r7_native_challenge_audience=preparation.event.inputs.r7_native_challenge_audience.replace(peerPrefix,provisioningPrefix);
+  preparation.set('/actions/runs/789/approvals',[]);
+  const prepared=await resolve(preparation,preparation.fetch,'preparePeer');
+  assert.equal(prepared.classification,'R7_OWNER_PEER_PREPARED_EXPLICIT_ENROLLMENT_REQUIRED',JSON.stringify(prepared));
+  assert.equal(prepared.nativeOperationPurpose,provisioningPurpose);
+  assert.equal(prepared.peerApprovalComment,provisioningPurpose+':'+prepared.peerBindingFingerprint);
+  assert.equal(prepared.ownerPeerEnrollmentAuthenticated,false);
+  assert.equal(preparation.calls.some(call=>call.url===API+'/actions/runs/789/approvals'),false);
+  for(const [prefix,wrongPurpose] of [[provisioningPrefix,peerPurpose],[peerPrefix,provisioningPurpose]]){
+    for(const exact of [false,true]){
+      const f=currentFixture();
+      f.event.inputs.r7_native_challenge_audience=f.event.inputs.r7_native_challenge_audience.replace(peerPrefix,prefix);
+      const peer=r7OwnerPeerFromSourceInput(JSON.parse(build(f.event,f.runtime)),f.nativeWindowWire);
+      f.resources.get(API+'/actions/runs/789/approvals')[0].comment=exact?peer.pairing.approvalComment:wrongPurpose+':'+peer.pairing.fingerprint;
+      const out=await resolve(f,f.fetch,'authorizePeer');
+      if(!exact){held(out);assert.equal(out.ownerPeerEnrollmentAuthenticated,false);continue;}
+      assert.equal(out.ownerPeerEnrollmentAuthenticated,true);
+      assert.equal(out.nativeOperationPurpose,peer.pairing.values.purpose);
+      for(const flag of ['nativeEndpointAuthenticated','humanOsConsentProven','hostExecutionAuthorized',
+        'rootEnrollmentAuthorized','tokenIssuanceAuthorized','canonicalLeaseReleaseAuthorized'])assert.equal(out[flag],false);
+    }
+  }
+});
+
+test('purpose-changing owner approval during authoritative readback invalidates provisioning',async()=>{
+  const f=currentFixture();
+  f.event.inputs.r7_native_challenge_audience=f.event.inputs.r7_native_challenge_audience.replace(peerPrefix,provisioningPrefix);
+  const peer=r7OwnerPeerFromSourceInput(JSON.parse(build(f.event,f.runtime)),f.nativeWindowWire);
+  f.resources.get(API+'/actions/runs/789/approvals')[0].comment=peer.pairing.approvalComment;
+  let reads=0;
+  const out=await resolve(f,async(url,options)=>{
+    if(url===API+'/actions/runs/789/approvals'&&++reads===2)
+      f.resources.get(url)[0].comment=peerPurpose+':'+peer.pairing.fingerprint;
+    return f.fetch(url,options);
+  },'authorizePeer');
+  held(out);assert.equal(reads,2);
 });
 
 test('changing the original native window invalidates an otherwise exact enrollment decision',async()=>{

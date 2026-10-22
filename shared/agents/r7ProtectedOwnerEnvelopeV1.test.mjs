@@ -4,6 +4,8 @@ import { constants, createDecipheriv, createHash, generateKeyPairSync, privateDe
 import { R7_OWNER_ENVELOPE_AUDIENCE, R7_OWNER_ENVELOPE_TYPE,
   encryptR7OwnerEnvelopeForUntrustedChallenge as encrypt,
   inspectR7UntrustedOwnerEnvelopeChallenge as inspect } from './r7ProtectedOwnerEnvelopeV1.mjs';
+import { R7_FIRST_ROOT_PEER_PURPOSE, R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const permit = sha('disposable-fixture-permit-only'), nonce = sha('disposable-fixture-nonce-only');
@@ -39,7 +41,26 @@ test('purpose/recipient-bound compact JWE round trips a disposable credential, w
   assert.equal(facts.hostAdopted, false);
   assert.equal(facts.rootEnrollmentAuthorized, false);
   assert.equal(facts.canonicalLeaseReleaseAuthorized, false);
+  assert.equal(facts.nativeOperationPurpose, R7_FIRST_ROOT_PEER_PURPOSE);
   assert.deepEqual(Object.keys(JSON.parse(Buffer.from(packet.split('.')[0], 'base64url'))), ['alg','enc','kid','typ','aud']);
+});
+
+test('provisioning envelope authenticates its distinct audience; an old envelope cannot be relabeled', () => {
+  const provision={...challenge,Audience:challenge.Audience.replace(R7_OWNER_ENVELOPE_AUDIENCE,R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE)};
+  const packet=encrypt(provision,permit,credential), facts=inspect(provision,permit);
+  assert.equal(facts.nativeOperationPurpose,R7_INACTIVE_ROOT_PROVISIONING_PURPOSE);
+  assert.equal(decrypt(packet,pair.privateKey,provision),credential);
+  assert.throws(()=>decrypt(packet,pair.privateKey,challenge));
+  const oldPacket=encrypt(challenge,permit,credential);
+  assert.throws(()=>decrypt(oldPacket,pair.privateKey,provision));
+  const altered=oldPacket.split('.');
+  altered[0]=packet.split('.')[0];
+  assert.throws(()=>decrypt(altered.join('.'),pair.privateKey,provision));
+  for(const flag of ['nativeEndpointAuthenticated','hostAdopted','rootEnrollmentAuthorized','canonicalLeaseReleaseAuthorized'])
+    assert.equal(facts[flag],false);
+  for(const Audience of [provision.Audience+'\n',provision.Audience+':extra',
+    provision.Audience.replace(R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE,R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE+R7_OWNER_ENVELOPE_AUDIENCE)])
+    assert.throws(()=>encrypt({...provision,Audience},permit,credential));
 });
 
 test('each envelope uses independent AEAD key and IV material', () => {

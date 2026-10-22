@@ -5,6 +5,9 @@ import { createHash,generateKeyPairSync } from 'node:crypto';
 import { buildR7NativeOwnerPeerPairing as build, matchesR7OwnerPeerEnrollmentComment as matches,
   R7_NATIVE_OWNER_PAIRING_FIELDS } from './r7NativeOwnerPeerPairingV1.mjs';
 import { inspectR7UntrustedOwnerEnvelopeChallenge } from './r7ProtectedOwnerEnvelopeV1.mjs';
+import { R7_FIRST_ROOT_INTAKE_AUDIENCE as peerPrefix, R7_FIRST_ROOT_PEER_PURPOSE as peerPurpose,
+  R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE as provisioningPrefix,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE as provisioningPurpose } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 const f=JSON.parse(readFileSync(new URL('./r7NativeOwnerPeerPairingV1.fixture.json',import.meta.url)));
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 
@@ -18,6 +21,41 @@ test('exact twelve-field UTF8 wire and domain-separated golden fingerprint match
   assert.equal(p.nativeEndpointAuthenticated,false);assert.equal(p.ownerEnrollmentAuthenticated,false);
   assert.equal(p.osConsentProven,false);assert.equal(p.hostPolicyAdopted,false);
   assert.equal(p.rootEnrollmentAuthorized,false);assert.equal(p.canonicalLeaseReleaseAuthorized,false);
+});
+
+test('inactive-root provisioning has a separate native golden and cannot inherit peer-only approval',()=>{
+  const peer=build(f.challenge,f.context);
+  const challenge={...f.challenge,Audience:f.challenge.Audience.replace(peerPrefix,provisioningPrefix)};
+  const provision=build(challenge,f.context);
+  assert.equal(provision.values.purpose,provisioningPurpose);
+  assert.equal(provision.wire,f.expectedWire.replace(peerPurpose,provisioningPurpose).replace(peerPrefix,provisioningPrefix));
+  assert.equal(Buffer.byteLength(provision.wire),899);
+  assert.equal(provision.fingerprint,'4bb41bf002c2631316e413587d60ed20cf8e99d42d027610479961c5983587ba');
+  assert.equal(provision.approvalComment,provisioningPurpose+':'+provision.fingerprint);
+  assert.equal(matches(provision.approvalComment,provision),true);
+  assert.notEqual(provision.fingerprint,peer.fingerprint);
+  for(const [text,proposal] of [[peer.approvalComment,provision],[provision.approvalComment,peer],
+    [peerPurpose+':'+provision.fingerprint,provision],[provisioningPurpose+':'+peer.fingerprint,peer]])
+    assert.equal(matches(text,proposal),false);
+  for(const flag of ['nativeEndpointAuthenticated','ownerEnrollmentAuthenticated','osConsentProven',
+    'hostPolicyAdopted','rootEnrollmentAuthorized','canonicalLeaseReleaseAuthorized'])assert.equal(provision[flag],false);
+});
+
+test('purpose aliases and caller-made transcripts cannot select the inactive-root operation',()=>{
+  const p=build(f.challenge,f.context);
+  for(const audience of [
+    f.challenge.Audience.replace(peerPrefix,provisioningPrefix.toUpperCase()),
+    f.challenge.Audience.replace(peerPrefix,peerPrefix+provisioningPrefix),
+    f.challenge.Audience.replace(peerPrefix,provisioningPrefix+'peer:'),
+    f.challenge.Audience.replace(peerPrefix,provisioningPrefix.replace(':v1:',':v10:')),
+  ])assert.throws(()=>build({...f.challenge,Audience:audience},f.context));
+  assert.throws(()=>build({...f.challenge,purpose:provisioningPurpose},f.context));
+  assert.throws(()=>build(f.challenge,{...f.context,purpose:provisioningPurpose}));
+  assert.equal(matches(p.approvalComment,{...p}),false);
+  assert.equal(matches(provisioningPurpose+':'+p.fingerprint,{...p,
+    values:{...p.values,purpose:provisioningPurpose},approvalComment:provisioningPurpose+':'+p.fingerprint}),false);
+  assert.equal(matches(p.approvalComment,{fingerprint:p.fingerprint}),false);
+  assert.equal(matches(p.approvalComment,null),false);
 });
 
 test('source/run/permit/nonce/key/time changes alter the enrolled peer rather than inheriting its decision',()=>{

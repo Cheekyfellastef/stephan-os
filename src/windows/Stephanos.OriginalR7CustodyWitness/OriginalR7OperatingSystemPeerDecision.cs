@@ -8,9 +8,10 @@ using System.Security.Principal;
 namespace Stephanos.OriginalR7CustodyWitness;
 
 // A real, local OS authentication transaction for ONE displayed peer/run.
-// It is neither a serialized receipt nor first-root/custody/lease authority.
-// No CLI/SCM endpoint currently invokes this class. Calling it on the actual
-// host requires the separately reviewed/adopted native owner ceremony.
+// It is neither a serialized receipt nor custody/lease authority. The distinct
+// inactive-first-root decision authenticates only the displayed purpose; its
+// in-process consumer still needs the exact protected signed source permit and
+// continuous native creation custody before any key storage operation.
 // SOURCE PREPARATION DOES NOT DISPLAY THIS DIALOG OR READ REAL CREDENTIALS.
 internal sealed class OriginalR7OperatingSystemPeerDecision : IDisposable
 {
@@ -53,13 +54,21 @@ internal sealed class OriginalR7OperatingSystemPeerDecision : IDisposable
             if (account.Length != 2 || !string.Equals(account[0], Environment.MachineName, StringComparison.OrdinalIgnoreCase)
                 || account[1].Length is < 1 or > 256 || current.User?.Value != before.CurrentSid)
                 throw Held();
-            string message = "Enroll this endpoint for the protected run only.\n\nRun: " + pairing.RunUrl
+            bool inactiveRoots = retainedSession.OperationPurpose == OriginalR7OwnerOperationPurpose.ProvisionInactiveRoots;
+            string scope = inactiveRoots
+                ? "Authenticate this intended purpose: two NEW INACTIVE R7 signing seeds in the fixed witness and operator stores. "
+                  + "This endpoint authenticates purpose only and creates NO keys or durable transaction. "
+                  + "Real storage still requires continuous native creation custody. No signing, service start, or R7 release."
+                : "Enroll this endpoint for the protected run only. This does not enroll signing keys or release R7.";
+            string message = scope + "\n\nRun: " + pairing.RunUrl
                 + "\nFingerprint: " + pairing.Fingerprint + "\nExpires: " + pairing.NativeExpiresAtUtc
+                + (inactiveRoots ? "\nPermit: " + pairing.PermitSha256 + "\nSource: " + pairing.ExpectedMain : "")
                 + "\n\nCompare the full fingerprint with the GitHub preparation result. "
-                + "Windows will authenticate the current local operator. This does not enroll signing keys or release R7.";
+                + "Windows will authenticate the current local operator.";
             if (message.Length > 1000) throw Held();
             var ui = new CredentialUi { Size = Marshal.SizeOf<CredentialUi>(), Message = message,
-                Caption = "Stephanos R7: enroll this endpoint only" };
+                Caption = inactiveRoots ? "Stephanos R7: authenticate INACTIVE-root purpose"
+                    : "Stephanos R7: enroll this endpoint only" };
             uint package = 0;
             // SECURE_PROMPT only: no GENERIC, credential-save checkbox, caller
             // provider, input credential, remote destination or admin-enumeration

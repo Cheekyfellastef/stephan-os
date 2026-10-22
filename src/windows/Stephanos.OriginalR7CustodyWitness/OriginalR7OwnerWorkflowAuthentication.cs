@@ -35,13 +35,16 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
     private const string Subject = "repo:" + Repository + ":environment:operator-merge-approval";
     private const string ImmutableSubject = "repo:Cheekyfellastef@267490109/stephan-os@1179385578:environment:operator-merge-approval";
     private readonly OriginalR7CommissioningOwnerObservation actor;
+    private readonly OriginalR7OwnerOperationPurpose purpose;
     private readonly long opened = Stopwatch.GetTimestamp();
     private readonly DateTimeOffset issued = DateTimeOffset.UtcNow;
     private readonly string nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
     private int terminal;
+    private int issuerAuthenticated;
 
-    private OriginalR7OwnerWorkflowAuthentication(OriginalR7CommissioningOwnerObservation actualActor)
-    { actor = actualActor; }
+    private OriginalR7OwnerWorkflowAuthentication(OriginalR7CommissioningOwnerObservation actualActor,
+        OriginalR7OwnerOperationPurpose operationPurpose)
+    { actor = actualActor; purpose = operationPurpose; }
 
     internal DateTimeOffset SessionIssuedAtUtc => issued;
 
@@ -54,12 +57,27 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
         catch { return false; }
     }
 
-    internal static OriginalR7OwnerWorkflowAuthentication BeginCurrentNativeOwner()
+    internal static OriginalR7OwnerWorkflowAuthentication BeginCurrentNativeOwner(
+        OriginalR7OwnerOperationPurpose purpose = OriginalR7OwnerOperationPurpose.AuthenticatePeer)
     {
+        _ = OriginalR7OwnerPeerPairing.AudiencePrefix(purpose);
         var actual = OriginalR7CommissioningOwnerContext.ObserveCurrent();
         if (!actual.NativeElevatedInteractiveContextObserved)
             throw new InvalidOperationException("R7_OWNER_WORKFLOW_NATIVE_OWNER_CONTEXT_REQUIRED");
-        return new(actual);
+        return new(actual, purpose);
+    }
+
+    // Only the retained session whose actual fixed-issuer verification completed
+    // can remain current for its narrow in-process transaction. This accessor
+    // neither consumes a caller observation nor adopts policy from a Boolean.
+    internal OriginalR7CommissioningOwnerObservation RequireAuthenticatedCurrentActor()
+    {
+        if (Volatile.Read(ref terminal) != 1 || Volatile.Read(ref issuerAuthenticated) != 1 || DateTimeOffset.UtcNow < issued
+            || DateTimeOffset.UtcNow - issued > TimeSpan.FromMinutes(5)
+            || Stopwatch.GetElapsedTime(opened) > TimeSpan.FromMinutes(5)
+            || !SameNativeActor(OriginalR7CommissioningOwnerContext.ObserveCurrent()))
+            throw new InvalidOperationException("R7_AUTHENTICATED_OWNER_NATIVE_CONTINUITY_REQUIRED");
+        return actor;
     }
 
     // The purpose-bound challenge contains no key material. The native nonce
@@ -122,6 +140,7 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
                 || Stopwatch.GetElapsedTime(opened) > TimeSpan.FromMinutes(5)
                 || !SameNativeActor(OriginalR7CommissioningOwnerContext.ObserveCurrent()))
                 return Held("NATIVE_SESSION_CONTINUITY_LOST");
+            if (verified.IssuerSignatureAuthenticated) Volatile.Write(ref issuerAuthenticated, 1);
             return verified with { CurrentNativeActorBound = verified.IssuerSignatureAuthenticated };
         }
         catch { return Held("ISSUER_OR_NATIVE_OBSERVATION_FAILED_CLOSED"); }
@@ -229,8 +248,8 @@ internal sealed class OriginalR7OwnerWorkflowAuthentication : IDisposable
             System.Globalization.CultureInfo.InvariantCulture, out ulong number) && number > 0;
     private static bool Hex(string value, int length) => value is not null && value.Length == length && value.Any(c => c != '0')
         && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
-    private static string Audience(string digest, string challenge, string recipientSpkiSha256)
-        => "stephanos:r7:first-root-owner-permit:v1:" + digest + ":" + challenge + ":" + recipientSpkiSha256;
+    private string Audience(string digest, string challenge, string recipientSpkiSha256)
+        => OriginalR7OwnerPeerPairing.AudiencePrefix(purpose) + digest + ":" + challenge + ":" + recipientSpkiSha256;
     private static byte[] Decode(string value)
     {
         if (value.Length is < 1 or > 24576 || value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')))

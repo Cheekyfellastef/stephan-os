@@ -1,5 +1,6 @@
 import { constants, createCipheriv, createPublicKey, publicEncrypt, randomBytes } from 'node:crypto';
-import { r7FirstRootRecipientSpkiDigest, R7_FIRST_ROOT_INTAKE_AUDIENCE } from './r7FirstRootOwnerIntakeProposalV1.mjs';
+import { r7FirstRootRecipientSpkiDigest, R7_FIRST_ROOT_INTAKE_AUDIENCE,
+  parseR7NativeOwnerAudience } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 
 // Encryption mechanics only. This neither authenticates a native challenge nor
 // obtains an OIDC credential. The protected producer must authenticate the native
@@ -30,10 +31,9 @@ export function describeR7UntrustedOwnerEnvelopeChallenge(challenge, expectedPer
   if (!dataRecord(challenge, ['Audience', 'PublicSpkiBase64', 'PublicSpkiSha256', 'IssuedAtUtc', 'ExpiresAtUtc'])
       || !hex(expectedPermitSha256) || !hex(challenge.PublicSpkiSha256)) fail('CHALLENGE_SHAPE');
   const audience = challenge.Audience;
-  const binding = typeof audience === 'string' && audience.startsWith(R7_OWNER_ENVELOPE_AUDIENCE)
-    ? audience.slice(R7_OWNER_ENVELOPE_AUDIENCE.length).split(':') : [];
-  if (binding.length !== 3 || binding.some(value => !hex(value))
-      || binding[0] !== expectedPermitSha256 || binding[2] !== challenge.PublicSpkiSha256) fail('CHALLENGE_BINDING');
+  const binding = parseR7NativeOwnerAudience(audience);
+  if (!binding || binding.permitSha256 !== expectedPermitSha256
+      || binding.recipientSpkiSha256 !== challenge.PublicSpkiSha256) fail('CHALLENGE_BINDING');
   if (!stamp(challenge.IssuedAtUtc) || !stamp(challenge.ExpiresAtUtc)
       || Date.parse(challenge.ExpiresAtUtc) <= Date.parse(challenge.IssuedAtUtc)
       || Date.parse(challenge.ExpiresAtUtc) - Date.parse(challenge.IssuedAtUtc) > 300000) fail('CHALLENGE_VALIDITY');
@@ -48,7 +48,7 @@ export function describeR7UntrustedOwnerEnvelopeChallenge(challenge, expectedPer
     // predicate above. Instantiate the same public key for encryption only.
   } catch { fail('RECIPIENT_PROFILE'); }
   return Object.freeze({
-    audience, recipientSpkiSha256: challenge.PublicSpkiSha256,
+    audience, nativeOperationPurpose: binding.purpose, recipientSpkiSha256: challenge.PublicSpkiSha256,
     expiresAtUtc: challenge.ExpiresAtUtc, key,
     nativeEndpointAuthenticated: false, hostAdopted: false,
     rootEnrollmentAuthorized: false, canonicalLeaseReleaseAuthorized: false,

@@ -50,7 +50,8 @@ export function createR7ProtectedOwnerEnvelopeIssuer(options={}) {
       const before=await source.authorizePeer(wire,nativeWindowWire);
       need(before.ownerPeerEnrollmentAuthenticated===true
         &&before.classification==='R7_OWNER_EPHEMERAL_PEER_ENROLLMENT_AUTHENTICATED_NATIVE_DECISION_REQUIRED'
-        &&before.inputSha256===digest(wire)&&before.peerBindingFingerprint===peer.pairing.fingerprint,
+        &&before.inputSha256===digest(wire)&&before.peerBindingFingerprint===peer.pairing.fingerprint
+        &&before.nativeOperationPurpose===peer.pairing.values.purpose,
       'R7_OWNER_ACTUAL_PEER_ENROLLMENT_REQUIRED');
       inspectR7UntrustedOwnerEnvelopeChallenge(peer.challenge,input.permitSha256);
       // This callback is the trusted wrapper's explicit runner mapping. It is
@@ -78,12 +79,14 @@ export function createR7ProtectedOwnerEnvelopeIssuer(options={}) {
         const after=await source.authorizePeer(wire,nativeWindowWire);
         need(after.ownerPeerEnrollmentAuthenticated===true&&after.inputSha256===before.inputSha256
           &&after.peerBindingFingerprint===before.peerBindingFingerprint
+          &&after.nativeOperationPurpose===before.nativeOperationPurpose
           &&after.protectedOwnerBindingSha256===before.protectedOwnerBindingSha256,
         'R7_OWNER_ENROLLMENT_CHANGED_AFTER_REQUEST');
         const envelope=encryptR7OwnerEnvelopeForUntrustedChallenge(peer.challenge,input.permitSha256,object.value);
         return response('R7_OWNER_ENCRYPTED_ENVELOPE_PREPARED_NATIVE_VERIFICATION_REQUIRED',
           'R7_NATIVE_SIGNATURE_OS_DECISION_AND_CUSTODY_REQUIRED',{
             ownerPeerEnrollmentAuthenticated:true,providerBrokerResponseObserved:true,
+            nativeOperationPurpose:peer.pairing.values.purpose,
             peerBindingFingerprint:peer.pairing.fingerprint,peerApprovalComment:peer.pairing.approvalComment,
             peerRunUrl:peer.pairing.runUrl,inputSha256:before.inputSha256,
             protectedOwnerBindingSha256:before.protectedOwnerBindingSha256,

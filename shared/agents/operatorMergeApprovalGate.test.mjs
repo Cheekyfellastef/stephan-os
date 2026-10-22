@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistEscalationPaths,
+} from './qualifiedSpecialistReviewV1.mjs';
+import {
   INDEPENDENT_REVIEW_JOB,
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -635,6 +639,9 @@ test('closed R7 owner profile cannot weaken either new role or the five legacy m
     head + peer + owner.replace('id-token: write', 'id-token: read'),
     head + peer + owner.replace('name: operator-merge-approval', 'name: arbitrary-environment'),
     head + peer + owner.replace('issue-owner-envelope', 'prepare-peer'),
+    head + peer.replace('PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY:', 'PROVISION_ALL_SIGNING_ROOTS:') + owner,
+    head + peer.replace('!Object.hasOwn(descriptions,proof.nativeOperationPurpose)', 'false') + owner,
+    head + peer.replace("proof.peerApprovalComment!==proof.nativeOperationPurpose+':'+proof.peerBindingFingerprint", 'false') + owner,
     head + peer.replace('11d5960a326750d5838078e36cf38b85af677262', 'v4') + owner,
     original.replace('r7_native_challenge_expires_at_utc:', 'r7_unknown_dispatch_input:'),
     head + owner,
@@ -679,6 +686,66 @@ test('independent reviewer rejects untrusted write-authority workflow and unsupp
   assert.equal(bad.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
   assert.ok(bad.findings.some((item) => item.code === 'independent-review-workflow-not-trusted'));
   assert.ok(bad.findings.some((item) => item.code === 'unsupported-high-risk-surface'));
+});
+
+test('native Windows source and build inputs require qualified review independent of extension', () => {
+  const paths = [
+    'src/windows/Stephanos.RescueIslandCustody/PinnedFileCreation.cs',
+    'src/windows/Stephanos.SeedParallelCustody/Stephanos.SeedParallelCustody.csproj',
+    'src/windows/Directory.Build.props',
+    'src/windows/Directory.Build.targets',
+    'src/windows/native/CMakeLists.txt',
+    'SRC/WINDOWS/NativeHost/Program.cs',
+  ];
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: paths,
+    diff: paths.map((path) => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`).join('\n'),
+  });
+  assert.equal(analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.deepEqual(analysis.counts, { P0: paths.length, P1: 0, P2: 0 });
+  assert.deepEqual(analysis.findings.map(({ severity, code, path }) => ({ severity, code, path })),
+    paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })));
+});
+
+test('native Windows coverage preserves directory boundaries for unrelated source and documentation', () => {
+  const paths = ['src/windows-utils/format.cs', 'src/linux/Program.cs', 'docs/windows-native-custody.md'];
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: paths,
+    diff: paths.map((path) => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`).join('\n'),
+  });
+  assert.equal(analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+  assert.deepEqual(analysis.findings, []);
+});
+
+test('renaming native Windows source out of its directory preserves specialist escalation', () => {
+  const previousPath = 'src/windows/NativeHost/Program.cs';
+  const path = 'shared/retired-native-host.txt';
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: [{ filename: path, previous_filename: previousPath, status: 'renamed' }],
+    diff: `diff --git a/${previousPath} b/${path}\nsimilarity index 100%\nrename from ${previousPath}\nrename to ${path}`,
+  });
+  assert.deepEqual(analysis.counts, { P0: 1, P1: 0, P2: 0 });
+  assert.equal(analysis.findings[0].path, previousPath);
+  assert.equal(analysis.findings[0].code, 'unsupported-high-risk-surface');
+});
+
+test('genuine native Windows findings reach the existing qualified consumer and stay held without review', () => {
+  const path = 'src/windows/Stephanos.RescueIslandCustody/PinnedFileCreation.cs';
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: [path],
+    diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`,
+  });
+  assert.deepEqual(qualifiedSpecialistEscalationPaths(analysis), [path]);
+  const specialist = adjudicateQualifiedSpecialistReview({
+    repository, prNumber, branch, sourceHead, baseSha, analysis, reviews: [], comments: [],
+  });
+  assert.equal(specialist.required, true);
+  assert.equal(specialist.valid, false);
+  assert.deepEqual(specialist.blockers, ['qualified-specialist-review-missing']);
+  assert.equal(specialist.analysis, analysis);
+  assert.equal(specialist.artifact, null);
+  assert.equal(specialist.receipt, null);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), false);
 });
 
 test('builds a clean high-risk receipt only from clean independent analysis', () => {

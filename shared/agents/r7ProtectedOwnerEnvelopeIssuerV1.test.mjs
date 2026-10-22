@@ -5,12 +5,16 @@ import { currentFixture,READ_ONLY_FAKE } from './r7FirstRootSourceEvidenceResolv
 import { API } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 import { buildR7OwnerSourceReadbackInput,r7OwnerPeerFromSourceInput } from './r7ProtectedOwnerSourceReadbackV1.mjs';
 import { createR7ProtectedOwnerEnvelopeIssuer as create,r7OwnerBrokerRequestUrl as url } from './r7ProtectedOwnerEnvelopeIssuerV1.mjs';
+import { R7_FIRST_ROOT_INTAKE_AUDIENCE as peerPrefix, R7_FIRST_ROOT_PEER_PURPOSE as peerPurpose,
+  R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE as provisioningPrefix,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE as provisioningPurpose } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 
 const BROKER='https://vstoken.actions.githubusercontent.com/test/idtoken?api-version=2.0';
 const FAKE='fixture-not-a-real-provider-credential';
 const JWT='Zml4dHVyZS1ub3QtYW4taXNzdWVy.c3ludGhldGljLW5vbi1wcm9kdWN0aW9u.c2lnbmF0dXJl';
-function setup(keyPair) {
+function setup(keyPair,prefix=peerPrefix) {
   const f=currentFixture();
+  f.event.inputs.r7_native_challenge_audience=f.event.inputs.r7_native_challenge_audience.replace(peerPrefix,prefix);
   if(keyPair){const der=keyPair.publicKey.export({format:'der',type:'spki'});
     const digest=createHash('sha256').update(der).digest('hex');
     f.event.inputs.r7_native_recipient_spki_base64=der.toString('base64');
@@ -48,22 +52,43 @@ function held(out){assert.equal(out.result.classification,'R7_OWNER_ENVELOPE_ISS
   assert.equal(Object.hasOwn(out.result,'envelope'),false);
   assert.equal(JSON.stringify(out).includes(FAKE),false);assert.equal(JSON.stringify(out).includes(JWT),false);}
 
-test('actual enrollment readback gates one broker request and encrypts without claiming native adoption',async()=>{
-  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicExponent:65537}),f=setup(pair);
+for(const [prefix,purpose] of [[peerPrefix,peerPurpose],[provisioningPrefix,provisioningPurpose]])
+test('actual '+purpose+' readback gates one bound broker request without claiming native adoption',async()=>{
+  const pair=generateKeyPairSync('rsa',{modulusLength:2048,publicExponent:65537}),f=setup(pair,prefix);
   const out=await run(f);
   assert.equal(out.result.classification,'R7_OWNER_ENCRYPTED_ENVELOPE_PREPARED_NATIVE_VERIFICATION_REQUIRED',JSON.stringify(out));
   assert.equal(out.supplied,1);assert.equal(out.requested,1);
   assert.equal(out.result.ownerPeerEnrollmentAuthenticated,true);assert.equal(out.result.providerBrokerResponseObserved,true);
+  assert.equal(out.result.nativeOperationPurpose,purpose);
+  assert.equal(out.result.peerApprovalComment,purpose+':'+out.result.peerBindingFingerprint);
   for(const flag of ['nativeOsDecisionAuthenticated','hostCustodyAuthenticated','ownerWorkflowSignatureVerified',
     'hostAdopted','rootEnrollmentAuthorized','serviceInstallationAuthorized','canonicalLeaseReleaseAuthorized'])assert.equal(out.result[flag],false);
   const parts=out.result.envelope.split('.');assert.equal(parts.length,5);
   assert.equal(JSON.stringify(out).includes(JWT),false);
   const [header,wrapped,iv,ciphertext,tag]=parts;
+  assert.equal(JSON.parse(Buffer.from(header,'base64url')).aud,f.peer.challenge.Audience);
   const key=privateDecrypt({key:pair.privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(wrapped,'base64url'));
   try{const decipher=createDecipheriv('aes-256-gcm',key,Buffer.from(iv,'base64url'),{authTagLength:16});
     decipher.setAAD(Buffer.from(header,'ascii'));decipher.setAuthTag(Buffer.from(tag,'base64url'));
     assert.equal(Buffer.concat([decipher.update(Buffer.from(ciphertext,'base64url')),decipher.final()]).toString('ascii'),JWT);
   }finally{key.fill(0);}
+});
+
+test('cross-purpose approvals never request broker context even with the matching challenge fingerprint',async()=>{
+  for(const [prefix,wrongPurpose] of [[provisioningPrefix,peerPurpose],[peerPrefix,provisioningPurpose]]){
+    const f=setup(undefined,prefix);
+    const out=await run(f,state=>{
+      state.resources.get(API+'/actions/runs/789/approvals')[0].comment=wrongPurpose+':'+state.peer.pairing.fingerprint;
+    });
+    held(out);assert.equal(out.supplied,0);assert.equal(out.requested,0);
+  }
+});
+
+test('a provision request discards its credential if the owner purpose changes after mint',async()=>{
+  const out=await run(setup(undefined,provisioningPrefix),()=>{},f=>{
+    f.resources.get(API+'/actions/runs/789/approvals')[0].comment=peerPurpose+':'+f.peer.pairing.fingerprint;
+  });
+  held(out);assert.equal(out.supplied,1);assert.equal(out.requested,1);
 });
 
 test('unapproved/ordinary-approved/wrong-run endpoints never map or request provider context',async()=>{

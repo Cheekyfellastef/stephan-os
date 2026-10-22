@@ -8,7 +8,8 @@ using Stephanos.OriginalR7CustodyWitness;
 
 try
 {
-    NativePeerFixture.SetErrorMode(NativePeerFixture.GetErrorMode() | 3);
+    bool portableProtocolOnly = args.SequenceEqual(new[] { "--portable-protocol-only" });
+    if (!portableProtocolOnly) NativePeerFixture.SetErrorMode(NativePeerFixture.GetErrorMode() | 3);
     if (args.SequenceEqual(new[] { "--owned-system32-attribute-control" }))
     {
         uint size = 0;
@@ -22,7 +23,7 @@ try
             ? NativePeerFixture.LoadedCredentialOrigin() : "UNPROVEN");
         return 0;
     }
-    if (args.Length != 0) return 2;
+    if (!portableProtocolOnly && args.Length != 0) return 2;
     int assertions = 0;
     void Check(bool value, string code) { assertions++; if (!value) throw new InvalidOperationException(code); }
     void Reject(Action action, string code)
@@ -64,6 +65,22 @@ try
         Check(failure.RootElement.GetProperty("classification").GetString() == "R7_OWNER_PEER_AUTHENTICATION_HELD"
             && !output.ToString().Contains("permitSha256", StringComparison.Ordinal), "FIXED_FAILURE_DOES_NOT_ECHO_PUBLIC_INPUT");
     }
+    foreach (string invalidStart in new[] {
+        "{\"operation\":\"begin-inactive-roots\",\"permitWire\":\"public-invalid-permit\"}",
+        "{\"operation\":\"begin-inactive-roots\",\"permitWire\":\"public-invalid-permit\",\"osConsent\":\"true\"}",
+        "{\"operation\":\"begin-owner-peer\",\"permitWire\":\"public-invalid-permit\"}" })
+    using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(invalidStart + "\n")))
+    using (var output = new StringWriter(CultureInfo.InvariantCulture))
+    {
+        Check(await OriginalR7OwnerPeerOperation.RunInactiveRootPurposeAuthenticationAsync(stream, output) == 7,
+            "INVALID_PROVISIONING_SOURCE_OR_CALLER_CONSENT_REJECTED_BEFORE_PROMPT_OR_WRITES");
+        using JsonDocument failure = JsonDocument.Parse(output.ToString());
+        Check(!failure.RootElement.GetProperty("rootEnrollmentAuthorized").GetBoolean()
+            && !failure.RootElement.GetProperty("signingAuthorized").GetBoolean()
+            && !failure.RootElement.GetProperty("leaseReleaseAuthorized").GetBoolean()
+            && !output.ToString().Contains("public-invalid-permit", StringComparison.Ordinal),
+            "PROVISIONING_FAILURE_IS_BOUNDED_AND_GRANTS_NO_AUTHORITY");
+    }
     string path = Path.Combine(AppContext.BaseDirectory, "PeerPairingGolden.fixture.json");
     byte[] bytes = File.ReadAllBytes(path);
     Check(bytes.Length <= 12288, "PUBLIC_GOLDEN_BOUND");
@@ -92,6 +109,23 @@ try
         && pairing.Fingerprint == root.GetProperty("expectedFingerprint").GetString(), "NODE_DOTNET_DOMAIN_SEPARATED_DIGEST");
     Check(pairing.ApprovalComment == root.GetProperty("expectedComment").GetString(), "EXACT_OWNER_ENDPOINT_ENROLLMENT_COMMENT");
     Check(pairing.RunUrl == root.GetProperty("expectedRunUrl").GetString(), "FIXED_OWNER_RUN_LINK");
+    var inactiveChallenge = challenge with { Audience = OriginalR7OwnerPeerPairing.InactiveRootAudiencePrefix
+        + challenge.Audience[OriginalR7OwnerPeerPairing.PeerAudiencePrefix.Length..] };
+    var inactivePairing = Build(c: inactiveChallenge);
+    Check(inactivePairing.Purpose == OriginalR7OwnerPeerPairing.InactiveRootPurpose
+        && inactivePairing.ApprovalComment == OriginalR7OwnerPeerPairing.InactiveRootPurpose + ":" + inactivePairing.Fingerprint
+        && inactivePairing.Fingerprint != pairing.Fingerprint, "PROVISIONING_REQUIRES_DISTINCT_FULL_PURPOSE_APPROVAL");
+    Check(Encoding.UTF8.GetByteCount(inactivePairing.Wire) == 899
+        && inactivePairing.Fingerprint == "4bb41bf002c2631316e413587d60ed20cf8e99d42d027610479961c5983587ba",
+        "NODE_DOTNET_DISTINCT_PROVISIONING_PURPOSE_GOLDEN_BYTES");
+    Check(!inactivePairing.OsConsentProven && !inactivePairing.RootEnrollmentAuthorized
+        && !inactivePairing.HostPolicyAdopted && !inactivePairing.CanonicalLeaseReleaseAuthorized,
+        "FULL_PURPOSE_TRANSCRIPT_IS_STILL_NOT_A_NATIVE_GRANT");
+    foreach (string invalidPrefix in new[] { "stephanos:r7:inactive-first-root-provisioning:v2:",
+        "stephanos:r7:inactive-first-root-provisioning:v1", "stephanos:r7:inactive-first-root-provisioning:v1::",
+        "stephanos:r7:first-root-owner-permit:v1:PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY:" })
+        Reject(() => Build(c: challenge with { Audience = invalidPrefix
+            + challenge.Audience[OriginalR7OwnerPeerPairing.PeerAudiencePrefix.Length..] }), "PURPOSE_PREFIX_ALIASES_REJECTED");
     using (JsonDocument transcript = JsonDocument.Parse(pairing.Wire))
     {
         string[] expected = ["schemaVersion", "purpose", "repository", "workflowRef", "expectedMain", "runId", "runAttempt",
@@ -122,6 +156,27 @@ try
         Build(c: challenge with { Audience = challenge.Audience.Replace(new string('c', 64), new string('d', 64)) }),
         Build(c: challenge with { ExpiresAtUtc = "2026-10-21T21:34:59.999Z" }) })
         Check(changed.Fingerprint != pairing.Fingerprint, "EVERY_RUN_MAIN_NONCE_WINDOW_CHANGE_REQUIRES_NEW_PAIRING");
+    foreach (var purpose in Enum.GetValues<OriginalR7OwnerOperationPurpose>())
+    {
+        using var untrusted = OriginalR7OwnerEnvelopeTransport.CreateUntrustedFixture(new string('a', 64),
+            new string('b', 64), purpose);
+        using var constructed = new OriginalR7OwnerEnvelopeTransport.InactiveRootProvisioningGrant(untrusted);
+        Reject(() => constructed.RequireCurrent(), "FIXTURE_SESSION_CANNOT_REGISTER_CALLER_AUTHORITY_OBJECT");
+        Reject(() => constructed.ClaimTransaction(), "CALLER_OBJECT_CANNOT_CLAIM_NATIVE_PROVISIONING");
+        Check(await untrusted.ConsumeInactiveRootProvisioningAsync("not-an-envelope", null) is null,
+            "NO_NATIVE_ISSUER_OR_OS_CONSENT_FROM_FIXTURE_OR_PEER_PURPOSE");
+    }
+    if (portableProtocolOnly)
+    {
+        Console.WriteLine(JsonSerializer.Serialize(new {
+            schemaVersion = "stephanos.r7-owner-peer-protocol-fixture.v1", result = "PASS", assertions,
+            nodeDotNetGoldenBytesMatched = true, goldenFingerprint = pairing.Fingerprint,
+            inactivePurposeFingerprint = inactivePairing.Fingerprint,
+            nativeOsPromptPerformed = false, realCredentialsRead = false, productionKeyCreated = false,
+            nativeWindowsBindingsTested = false, physicalCustodyProven = false, leaseReleaseAuthorized = false
+        }));
+        return 0;
+    }
     // Prove that the real Windows bindings exist without displaying a prompt
     // or attempting any account logon. Symbol presence is not OS consent.
     Check(NativePeerFixture.FixedBindingsIgnoreOwnedShadow(), "PRODUCTION_BINDINGS_IGNORE_APP_AND_CWD_SHADOW_SYSTEM32_MODULES_ACTUAL");

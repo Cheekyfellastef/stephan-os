@@ -175,6 +175,29 @@ publish/recheck revocation and stop issuance through both old and new paths on
 uncertainty. No key is generated or provisioned by this production module.
 Tests generate ephemeral in-memory keys only.
 
+### Creation precedes enrollment and requires actual custody
+
+The fixed inactive-root owner purpose is now bound end to end through the
+existing protected issuer and native OS authentication. It is separate from
+peer-only enrollment and is not a native custody producer. The source-only
+internal adapter is not a registered CLI or remote commissioning operation.
+
+Creating final-path seeds while a source-capable administrative actor still
+has access is not a safe preparatory step. A later access fence cannot undo a
+possible copy of the seed or creator memory. The current seed DACL retains
+SYSTEM/Administrators control, so an old writer in that estate must first be
+actually excluded or transitioned through an admitted maintenance procedure.
+No fixed seed write is connected to the new purpose and no durable provisioning
+attempt is claimed. Authentication alone remains insufficient to create or
+promote usable roots.
+
+The remaining physical producer must join actual maintained creation custody
+with the one-use, exact-purpose owner/native-OS grant. It must keep source
+dispatch held, dispose of existing source capabilities, prevent privileged or
+alternate-token re-entry, maintain the audit and create independently controlled
+keys within that same protected interval. A proposed type, a complete-looking
+inventory, a boolean or an always-held command does not implement that producer.
+
 ## Precise remaining principal/interface boundary
 
 The three definitions now exist as source with schemas, semantic checks and tests.

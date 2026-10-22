@@ -17,5 +17,10 @@
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerEnvelopeTransport.cs" Link="OriginalR7OwnerEnvelopeTransport.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerWorkflowAuthentication.cs" Link="OriginalR7OwnerWorkflowAuthentication.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7CommissioningOwnerContext.cs" Link="OriginalR7CommissioningOwnerContext.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ImagePinPreflight.cs" Link="OriginalR7ImagePinPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs" Link="OriginalR7ScmPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7RegistryProtection.cs" Link="OriginalR7RegistryProtection.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7AuditStorage.cs" Link="OriginalR7AuditStorage.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7AuditJournal.cs" Link="OriginalR7AuditJournal.cs" />
   </ItemGroup>
 </Project>

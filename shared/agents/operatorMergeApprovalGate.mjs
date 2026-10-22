@@ -62,6 +62,7 @@ const APPROVAL_BOUNDARY_PATHS = Object.freeze([
 
 const UNSUPPORTED_HIGH_RISK_PATH_PATTERNS = Object.freeze([
   /(^|\/)scripts\/windows\//i,
+  /(^|\/)src\/windows\//i,
   /(^|\/)openclaw/i,
   /credential|secret|token|billing|payment/i,
   /(^|\/)deployment/i,
@@ -408,7 +409,7 @@ function permissionSignatures(source) {
 // input declarations, then apply the unchanged legacy contract to the rest.
 // This validates source shape only; it adopts no endpoint/Windows/root policy.
 const R7_OWNER_EXTENSION_JOBS = Object.freeze({
-  'r7-first-root-peer-evidence': '33372eba84d63d226ce959801f663000804958b2524552a8846c2fc219533a54',
+  'r7-first-root-peer-evidence': 'f97a85e37835a05c413ec5b11e8b7985cbf4bbf750003934ceb37aaabd8c12f1',
   'r7-first-root-owner-intake': '7aa01699552810d9e2491622397e9a9415ba929d66e7c2b9e8586b847088a75e',
 });
 const R7_OWNER_EXTENSION_INPUTS_SHA256 = 'a781dc689f087ad83c6ca04a2e95cef59a22024b824b39e5ecd157365d4a882d';

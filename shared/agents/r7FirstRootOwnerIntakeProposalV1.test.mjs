@@ -3,7 +3,10 @@ import test from 'node:test';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { prepareR7FirstRootOwnerIntakeProposal as prepare, R7_FIRST_ROOT_INTAKE_MODE as mode,
   R7_FIRST_ROOT_INTAKE_WORKFLOW as workflow, R7_FIRST_ROOT_INTAKE_MISSING as missing,
-  R7_FIRST_ROOT_INTAKE_PURPOSE as purpose, R7_FIRST_ROOT_INTAKE_AUDIENCE as prefix } from './r7FirstRootOwnerIntakeProposalV1.mjs';
+  R7_FIRST_ROOT_INTAKE_PURPOSE as purpose, R7_FIRST_ROOT_INTAKE_AUDIENCE as prefix,
+  R7_FIRST_ROOT_PEER_PURPOSE as peerPurpose, R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE as provisioningPrefix,
+  R7_INACTIVE_ROOT_PROVISIONING_PURPOSE as provisioningPurpose,
+  parseR7NativeOwnerAudience as parseAudience } from './r7FirstRootOwnerIntakeProposalV1.mjs';
 import { validateOperatorEnvironmentApprovalV1 } from './operatorEnvironmentApprovalAdapterV1.mjs';
 import { recipientSpkiBase64, otherRecipientSpkiBase64 } from './r7FirstRootSourceEvidenceResolverV1.fixture.mjs';
 
@@ -60,6 +63,31 @@ test('complete proposed intake remains HELD, unauthenticated and non-issuing', (
   assert.equal(r.sourceAdoptionAuthenticated, false);
   assert.equal(r.nativeChallengeFreshnessAuthenticated, false);
   const incomplete = prepare(); noAuthority(incomplete);
+});
+test('native operation is derived only from one of two complete prefixes and grants no root or host authority', () => {
+  const old = fixture(), next = fixture();
+  next.nativeAudience = next.nativeAudience.replace(prefix, provisioningPrefix);
+  next.dispatch.r7_native_challenge_audience = next.nativeAudience;
+  assert.equal(prepare(old).nativeOperationPurpose, peerPurpose);
+  const result = prepare(next);
+  assert.equal(result.classification, 'R7_FIRST_ROOT_INTAKE_PREPARED_HELD');
+  assert.equal(result.nativeOperationPurpose, provisioningPurpose); noAuthority(result);
+  assert.equal(JSON.parse(next.permitWire).purpose, purpose);
+  // No operation supplied as a separate field can broaden a peer-only request.
+  assert.equal(prepare({...old, nativeOperationPurpose: provisioningPurpose}).nativeOperationPurpose, peerPurpose);
+  const changed = permit(); changed.purpose = provisioningPurpose; rejected(fixture(changed));
+  const extra = fixture(); extra.dispatch.native_operation_purpose = provisioningPurpose; rejected(extra);
+  for (const nativeAudience of [
+    next.nativeAudience + ':extra', next.nativeAudience + '\n', ' ' + next.nativeAudience,
+    next.nativeAudience.replace(provisioningPrefix, provisioningPrefix.toUpperCase()),
+    next.nativeAudience.replace(provisioningPrefix, provisioningPrefix + prefix),
+    next.nativeAudience.replace(provisioningPrefix, provisioningPrefix.replace(':v1:', ':v10:')),
+    next.nativeAudience.replace(provisioningPrefix, provisioningPrefix.slice(0, -1)),
+    next.nativeAudience.replace('f'.repeat(64), '0'.repeat(64)),
+  ]) {
+    assert.equal(parseAudience(nativeAudience), null);
+    rejected({...next, nativeAudience, dispatch:{...next.dispatch, r7_native_challenge_audience:nativeAudience}});
+  }
 });
 test('every unknown or authority-bearing property is refused at every packet level', () => {
   for (const segment of ['', 'original', 'candidate', 'review']) {
