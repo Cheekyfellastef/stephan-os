@@ -142,4 +142,3 @@ internal static class TestErrorMode
     [DllImport("kernel32.dll")] private static extern uint GetErrorMode();
     [DllImport("kernel32.dll")] private static extern uint SetErrorMode(uint mode);
 }
-

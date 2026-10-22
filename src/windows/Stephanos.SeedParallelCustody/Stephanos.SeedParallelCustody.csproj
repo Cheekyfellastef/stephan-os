@@ -11,4 +11,3 @@
     <ProjectReference Include="../Stephanos.RescueIslandCustody/Stephanos.RescueIslandCustody.csproj" />
   </ItemGroup>
 </Project>
-

@@ -246,4 +246,3 @@ public sealed class PinnedNewFile : IDisposable
     private static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle,
         StringBuilder path, uint length, uint flags);
 }
-

@@ -92,4 +92,3 @@ Native API basis: Microsoft Windows `NtCreateFile` root-directory-relative
 object attributes and create disposition, `CreateFile` sharing semantics,
 `GetFileInformationByHandle` and `GetFinalPathNameByHandle`. Full writer custody
 remains the acceptance contract in `docs/architecture/seed-parallel-target-write-custody.md`.
-
