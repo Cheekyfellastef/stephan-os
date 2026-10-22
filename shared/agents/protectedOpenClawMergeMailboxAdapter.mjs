@@ -474,7 +474,7 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
 
     const checksResult = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
       'pr', 'checks', String(plan.normalized.prNumber), '--repo', 'Cheekyfellastef/stephan-os',
-      '--json', 'name,state,workflow',
+      '--json', 'name,state,workflow,event',
     ], { cwd: plan.repositoryRoot });
     const checksStatus = Number.isInteger(checksResult?.status) ? checksResult.status : -1;
     if (checksResult?.error || ![0, 1].includes(checksStatus)) {
