@@ -38,6 +38,7 @@ const safeIdentity = input => Boolean(
   && Number.isSafeInteger(input.issueNumber) && input.issueNumber > 0
   && BRANCH.test(text(input.branch)) && !text(input.branch).includes('..')
   && SHA.test(text(input.sourceHead)) && SHA.test(text(input.baseSha))
+  && typeof input.reviewedObjectClosureSha256==='string' && /^[a-f0-9]{64}$/.test(input.reviewedObjectClosureSha256)
   && input.sourceHead !== input.baseSha
   && ID.test(text(input.reviewerSessionId))
   && ID.test(text(input.implementerSessionId))
@@ -123,9 +124,10 @@ export function prepareSovereignHighRiskCandidateV1(input = {}) {
     repository: input.repository, issueNumber: input.issueNumber, prNumber: input.prNumber,
     branch: input.branch, sourceHead: input.sourceHead, baseSha: input.baseSha,
     fullDiffSha256: hash(diff),
+    reviewedObjectClosureSha256: input.reviewedObjectClosureSha256,
     reviewPacketSha256: hash(JSON.stringify([
       input.repository, input.prNumber, input.branch, input.baseSha,
-      input.sourceHead, hash(diff), sections.map(x => x.path), chunks.map(x => x.contentSha256),
+      input.sourceHead, hash(diff), input.reviewedObjectClosureSha256, sections.map(x => x.path), chunks.map(x => x.contentSha256),
     ])),
     changedFiles: Object.freeze([...paths].sort()),
     chunks: Object.freeze(chunks),
@@ -168,9 +170,11 @@ function parseChunkVerdict(raw, chunk) {
   return { findings, verdict: obj.verdict };
 }
 
-export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeModel } = {}) {
+export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeModel, modelDigestSha256 } = {}) {
   const packet = prepareSovereignHighRiskCandidateV1(input);
   if (packet.status !== 'HIGH_RISK_CANDIDATE_PREPARED') return packet;
+  if (typeof modelDigestSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(modelDigestSha256))
+    return held('REVIEW_MODEL_DIGEST_UNVERIFIED');
   if (typeof invokeModel !== 'function') return held('LOCAL_MODEL_UNAVAILABLE', {
     reviewPacketSha256: packet.reviewPacketSha256,
   });
@@ -210,12 +214,16 @@ export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeM
     try { raw = await invokeModel(prompt, Object.freeze({
       chunkId: chunk.chunkId, path: chunk.path, contentSha256: chunk.contentSha256,
       sourceHead: packet.sourceHead, baseSha: packet.baseSha,
+      modelDigestSha256,
     })); } catch {
       return held('LOCAL_MODEL_UNAVAILABLE', {
         reviewPacketSha256: packet.reviewPacketSha256, reviewedChunkCount: reviewedChunks.length,
       });
     }
-    const check = parseChunkVerdict(raw, chunk);
+    if (!raw || typeof raw !== 'object' || raw.modelDigestSha256 !== modelDigestSha256
+      || raw.chunkId !== chunk.chunkId || raw.contentSha256 !== chunk.contentSha256)
+      return held('REVIEW_MODEL_OR_CHUNK_IDENTITY_CHANGED', { reviewedChunkCount: reviewedChunks.length });
+    const check = parseChunkVerdict(raw.response, chunk);
     if (check.error) return held(check.error, {
       reviewPacketSha256: packet.reviewPacketSha256, failedChunkId: chunk.chunkId,
       reviewedChunkCount: reviewedChunks.length,
@@ -223,6 +231,7 @@ export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeM
     reviewedChunks.push(Object.freeze({
       chunkId: chunk.chunkId, path: chunk.path, contentSha256: chunk.contentSha256,
       verdict: check.verdict, findingCount: check.findings.length,
+      modelDigestSha256,
     }));
     allFindings.push(...check.findings);
   }
@@ -232,7 +241,10 @@ export async function evaluateSovereignHighRiskCandidateV1(input = {}, { invokeM
     repository: packet.repository, issueNumber: packet.issueNumber, prNumber: packet.prNumber,
     branch: packet.branch, sourceHead: packet.sourceHead, baseSha: packet.baseSha,
     fullDiffSha256: packet.fullDiffSha256,
-    reviewPacketSha256: packet.reviewPacketSha256,
+    reviewedObjectClosureSha256: packet.reviewedObjectClosureSha256,
+    sourcePacketSha256: packet.reviewPacketSha256,
+    modelDigestSha256,
+    reviewPacketSha256: hash(JSON.stringify([packet.reviewPacketSha256, modelDigestSha256, reviewedChunks, allFindings])),
     changedFiles: packet.changedFiles, chunkCount: packet.chunkCount,
     reviewedChunks: Object.freeze(reviewedChunks),
     findings: Object.freeze(allFindings),

@@ -39,6 +39,22 @@ test('process candidates and unavailable observations remain visible', () => {
   assert.ok(result.blockers.includes('TASK_INVENTORY_UNAVAILABLE'));
   assert.equal(result.leaseReleaseAuthorized, false);
 });
+test('unreadable Windows process command lines cannot become false zero-writer confidence', async () => {
+  const result = inspect({ ...good(),
+    candidateProcessCount: 0,
+    unknownObservations: ['CIM_PROCESS_COMMAND_LINE_UNOBSERVED'],
+  }, { nowUtc: now });
+  assert.equal(result.observable, true);
+  assert.equal(result.finalVerdict, 'ORIGINAL_SOURCE_CUSTODY_HOLD');
+  assert.equal(result.safeToCancelOriginal, false);
+  assert.ok(result.blockers.includes('CIM_PROCESS_COMMAND_LINE_UNOBSERVED'));
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(new URL('../../scripts/windows/inspect-original-source-custody-readonly.ps1', import.meta.url), 'utf8');
+  assert.match(source, /Get-CimInstance -ClassName Win32_Process/);
+  assert.match(source, /IsNullOrWhiteSpace\(\[string\]\$_\.CommandLine\)/);
+  assert.match(source, /CIM_PROCESS_COMMAND_LINE_UNOBSERVED/);
+  assert.doesNotMatch(source, /Stop-Process|Set-Acl|Start-Process|Remove-Item/);
+});
 test('forged proof flags, wrong identities, stale and missing telemetry HOLD', () => {
   const attempts = [
     { leaseReleaseAuthorized: true }, { independentWindowsExclusionProven: true },

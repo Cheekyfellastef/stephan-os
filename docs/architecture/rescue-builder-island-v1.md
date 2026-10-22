@@ -2,6 +2,16 @@
 
 Owner: #3103 — Rescue Island: two independent proof-gated builders outside Goal Conveyor
 
+## Current execution admission
+
+The first-commit export is held with
+`RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED` before claims or execution.
+A disposable source-swap reproduction demonstrated that final tree checks
+cannot contain code executed after a same-principal writer changes a verified
+test. See [execution custody requirements](rescue-island-execution-custody.md)
+for the full estate and original-writer exclusion needed before activation.
+Construction tests are uncommissioned fixtures; they do not authorize pickup.
+
 ## What this is and is not
 
 This is the **third** construction system. It is deliberately different from:
