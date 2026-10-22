@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_SCHEMA = 'stephanos.battle-bridge-tailscale-bootstrap.v1';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_MARKER = 'stephanos-battle-bridge-tailscale-bootstrap';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION = 'BOOTSTRAP_CANONICAL_GITHUB_SYNC';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = 1507;
+export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG = 'tag:stephanos-github-recovery';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_VERDICT = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY';
@@ -128,7 +129,7 @@ export function buildFixedBattleBridgeBootstrapPowerShell(expectedHead) {
     "if (-not (Test-Path -LiteralPath $statusScript -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_SCRIPT_MISSING' }",
     "try { $installerOutput = @(& $installer -StartNow) } catch { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' }",
     "$installerReceipt = (($installerOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
-    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 15 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
+    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 1 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
     "$observedHead = ''",
     "for ($attempt = 0; $attempt -lt 24; $attempt += 1) {",
     "  $headLine = @(& $git -C $repo rev-parse HEAD 2>$null | Select-Object -First 1)",

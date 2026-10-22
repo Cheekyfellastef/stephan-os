@@ -1,6 +1,7 @@
 import express from 'express';
 import { getSpotifyConfigDiagnostics, searchSpotifyCatalog } from '../services/spotifyClient.js';
 import { MAX_CATALOG_QUERY_LENGTH, searchProviderNeutralCatalog } from '../services/musicCatalogSearch.js';
+import { resolveYouTubePublicTrack } from '../services/youtubePublicTrackResolver.js';
 import { readMusicSpotifyLinkCandidates } from '../../shared/agents/musicSpotifyLinkBridge.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +23,22 @@ router.get('/catalog/search', async (req, res) => {
   }
   const result = await searchProviderNeutralCatalog({ query, limit });
   res.status(result.ok ? 200 : 503).json(result);
+});
+
+router.get('/youtube/resolve-track', async (req, res) => {
+  const artist = String(req.query.artist || '').replace(/\s+/g, ' ').trim();
+  const title = String(req.query.title || '').replace(/\s+/g, ' ').trim();
+  res.set('Cache-Control', 'no-store');
+  if (!artist || !title) {
+    res.status(400).json({ ok: false, reason: 'youtube-track-identity-required', result: null });
+    return;
+  }
+  if (artist.length > MAX_CATALOG_QUERY_LENGTH || title.length > MAX_CATALOG_QUERY_LENGTH) {
+    res.status(400).json({ ok: false, reason: 'youtube-track-identity-too-long', result: null });
+    return;
+  }
+  const result = await resolveYouTubePublicTrack({ artist, title });
+  res.status(200).json(result);
 });
 
 router.get('/spotify/verified-links', async (_req, res) => {

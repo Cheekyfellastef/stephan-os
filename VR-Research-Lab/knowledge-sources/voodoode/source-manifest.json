@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "source_id": "creator-voodoode-vr",
   "title": "VoodooDE VR Field Evidence",
   "priority": "P1",
@@ -8,9 +8,9 @@
     "https://www.youtube.com/@VoodooDE_VR_english",
     "https://voodoode-vr.com/"
   ],
-  "snapshot_date": "2026-07-31",
-  "rights": "Creator-controlled videos, captions, descriptions and screenshots. Store metadata, links and independently written summaries only.",
-  "evidence_role": "Hands-on evaluation and tutorial evidence for PCVR utilities, headsets, UEVR workflows and flat-to-VR installation tools.",
+  "snapshot_date": "2026-08-05",
+  "rights": "Creator-controlled videos, captions, descriptions and screenshots. Store metadata, links, timestamps and independently written summaries only.",
+  "evidence_role": "Hands-on evaluation and tutorial evidence for PCVR utilities, headsets, UEVR workflows, flat-to-VR installation tools and title-specific conversion routes.",
   "seed_items": [
     {
       "title": "Flat Games in VR: The 1-Click Trick Nobody Tells You!",
@@ -23,10 +23,18 @@
       "published": "2026-03-29",
       "tool": "Unreal Easy Injector / UEVR Deluxe",
       "evidence": "Simplified UEVR setup, profile installation, runtime configuration, DLSS tooling and beginner-facing operational workflow."
+    },
+    {
+      "title": "The Witcher 3 in VR showcase",
+      "observed_by_operator": "2026-08-05",
+      "video_id": "pending-exact-permalink-verification",
+      "route_family": "The Witcher 3 + Gervant First Person + vorpX",
+      "evidence_status": "operator-reported-current-showcase-pending-metadata-pin",
+      "evidence": "Current creator field evidence for a composed third-person-to-first-person VR route. Extract exact title, date, game/mod versions, headset, runtime, settings, comfort and caveats before promoting any claim."
     }
   ],
   "transcript_policy": "Use public captions, transcripts, descriptions and chapter markers when available. Store derived claims with timestamps, not full transcripts.",
-  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1611, 1643],
   "refresh_owner": 1596,
-  "promotion_rule": "Treat demonstrations and tutorials as operational evidence. Verify tool behaviour against canonical repositories and local proof before acceptance."
+  "promotion_rule": "Treat demonstrations and tutorials as operational evidence. Verify tool behaviour against canonical repositories, exact title-route sources and local proof before acceptance."
 }

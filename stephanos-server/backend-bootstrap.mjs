@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const bootstrapDataUrlPrefix = 'data:text/javascript;base64,';
@@ -19,9 +19,20 @@ if (bootstrapIsProcessBound && !String(process.env.STEPHANOS_BACKEND_REPO_ROOT |
 }
 const canonicalGitDirectory = resolve(canonicalRepoRoot, '.git');
 const expectedHead = String(process.env.STEPHANOS_BACKEND_SOURCE_HEAD || '').trim().toLowerCase();
+const canonicalGithubRepository = 'Cheekyfellastef/stephan-os';
 const gitExecutable = process.platform === 'win32'
   ? 'C:\\Program Files\\Git\\cmd\\git.exe'
   : '/usr/bin/git';
+
+function configureCanonicalRuntimeReadModels() {
+  const userHome = String(process.env.USERPROFILE || process.env.HOME || '').trim();
+  if (!String(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE || '').trim() && userHome) {
+    process.env.STEPHANOS_SHARED_AGENT_WORKSPACE = resolve(join(userHome, 'Documents', 'Stephanos-openclaw-workspace'));
+  }
+  if (!String(process.env.STEPHANOS_GITHUB_REPOSITORY || '').trim()) {
+    process.env.STEPHANOS_GITHUB_REPOSITORY = canonicalGithubRepository;
+  }
+}
 
 function minimalBackendChildGitEnvironment() {
   const allowedNames = new Set([
@@ -136,5 +147,7 @@ if (expectedHead) {
   });
   globalThis[Symbol.for('stephanos.backend.exact-head-bootstrap')] = expectedHead;
 }
+
+if (bootstrapIsProcessBound) configureCanonicalRuntimeReadModels();
 
 await import(pathToFileURL(resolve(canonicalRepoRoot, 'stephanos-server', 'server.js')).href);

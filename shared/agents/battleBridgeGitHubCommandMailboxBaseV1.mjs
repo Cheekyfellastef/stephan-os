@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   CODEX_BANKED_RESET_EXECUTION_SURFACE,
   CODEX_BANKED_RESET_OPERATION,
@@ -33,7 +34,7 @@ import {
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA = 'stephanos.battle-bridge-github-command.v1';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = 1507;
+export const BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_GITHUB_COMMAND_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_MARKER = 'stephanos-battle-bridge-command';
 export const MISSION_ORCHESTRATOR_CANCEL_OPERATION = 'CANCEL_MISSION_ORCHESTRATOR_MISSION';
@@ -46,9 +47,12 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_CAPABILITY_REGISTRY',
   'READ_SHARED_WORKSPACE_STATUS',
   'READ_CRITICAL_BACKLOG_STATUS',
+  'READ_PROGRAMME_AUTHORITY_STATUS',
   'READ_MAILBOX_RECEIPT',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -73,6 +77,7 @@ const OBSERVATION_OPERATIONS = new Set([
   'READ_CAPABILITY_REGISTRY',
   'READ_SHARED_WORKSPACE_STATUS',
   'READ_CRITICAL_BACKLOG_STATUS',
+  'READ_PROGRAMME_AUTHORITY_STATUS',
   'READ_MAILBOX_RECEIPT',
   CODEX_BANKED_RESET_STATUS_OPERATION,
 ]);
@@ -106,8 +111,12 @@ const MISSION_CANCEL_ALLOWED_FIELDS = new Set([
   'commandId',
   'reason',
   'expiresAt',
+  'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
+  'legacyOrphanQuarantineRequested',
 ]);
-const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason']);
+const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason',
+  'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
+  'legacyOrphanQuarantineRequested']);
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
   'resetExpiresAtUtc',
@@ -136,6 +145,7 @@ const SCOPED_DELIVERY_FEATURE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,120}$/;
 const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'COMMAND_BRANCH_NOT_ALLOWED',
   'COMMAND_EXPECTED_HEAD_INVALID',
+  'COMMAND_EXPECTED_HEAD_SUPERSEDED',
   'COMMAND_EXPIRED',
   'COMMAND_EXPIRY_INVALID',
   'COMMAND_EXPIRY_TOO_FAR_AHEAD',
@@ -147,6 +157,8 @@ const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'COMMAND_SCHEMA_MISMATCH',
   'COMMAND_TARGET_REQUEST_ID_INVALID',
   'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED',
+  'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED',
+  'REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED',
   'FORGE_SHADOW_COMMAND_EXPECTED_HEAD_INVALID',
   'FORGE_SHADOW_COMMAND_IMAGE_DIGEST_INVALID',
   'FORGE_SHADOW_COMMAND_M2_ONLY_REQUIRED',
@@ -241,12 +253,32 @@ function validateMissionCancellation(command = {}) {
   const commandId = String(command.commandId || '').trim().toLowerCase();
   if (!MISSION_COMMAND_ID_PATTERN.test(commandId)) return fail('MISSION_CANCEL_COMMAND_ID_INVALID');
   const reason = String(command.reason || '').trim();
+  if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
+      && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
+        || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
+        || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
+        || command.originalLeaseId !== `${missionId}-r${command.expectedMissionRevision}-lease`)) {
+    return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
+  }
+  if (command.legacyOrphanQuarantineRequested !== undefined
+      && (command.legacyOrphanQuarantineRequested !== true
+        || missionId !== 'critical-2962-elastic-goal'
+        || command.expectedMissionRevision !== 7
+        || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
+    return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+  }
   if (!reason || reason.length > MISSION_CANCEL_REASON_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(reason)) {
     return fail('MISSION_CANCEL_REASON_INVALID');
   }
   return Object.freeze({
     ok: true,
-    cancellation: Object.freeze({ missionId, commandId, reason }),
+    cancellation: Object.freeze({ missionId, commandId, reason,
+      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+        originalLeaseDigest: command.originalLeaseDigest,
+        expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}) } : {}),
+    }),
   });
 }
 
@@ -387,6 +419,14 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     if (unexpectedMissionCancelField) return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED', { field: unexpectedMissionCancelField });
   }
 
+  if (command.operation === 'START_REMOTE_COMMANDER'
+    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED');
+  }
+  if (command.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
+  }
   if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
@@ -589,10 +629,15 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   consumedRequestIds = new Set(),
   now = new Date(),
   maxBatch = BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+  currentHead = '',
 } = {}) {
   const boundedMaxBatch = Number(maxBatch);
   if (!Number.isSafeInteger(boundedMaxBatch) || boundedMaxBatch < 1 || boundedMaxBatch > BATTLE_BRIDGE_MAILBOX_MAX_BATCH) {
     return fail('MAILBOX_BATCH_SIZE_INVALID', { maxBatch });
+  }
+  const normalizedCurrentHead = String(currentHead || '').trim().toLowerCase();
+  if (normalizedCurrentHead && !SHA_PATTERN.test(normalizedCurrentHead)) {
+    return fail('MAILBOX_CURRENT_HEAD_INVALID', { currentHead: normalizedCurrentHead });
   }
   const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
   const rejected = [];
@@ -619,12 +664,40 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     }
     if (consumedRequestIds.has(validated.command.requestId)) continue;
     if (seenRequestIds.has(validated.command.requestId)) continue;
+    const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
+    const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
+    // Protected merges bind the PR source head separately from the base on main.
+    // Keep the usual strict head check for every other CONTROL operation.
+    // The bounded merge executor must still verify source/base/review/approval.
+    const expectedMainHead = validated.command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION
+      ? String(validated.command.expectedBase || '').trim().toLowerCase()
+      : expectedHead;
+    if (normalizedCurrentHead
+      && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
+      && SHA_PATTERN.test(expectedHead)
+      && (!SHA_PATTERN.test(expectedMainHead) || expectedMainHead !== normalizedCurrentHead)) {
+      seenRequestIds.add(validated.command.requestId);
+      const superseded = Object.freeze({
+        ok: false,
+        blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
+        expectedHead,
+        // For protected merges expose the rejected main-base SHA separately
+        // from the reviewed PR source SHA. Never conflate the two identities.
+        expectedMainHead,
+        githubMainHead: normalizedCurrentHead,
+        finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
+      });
+      rejected.push(Object.freeze({ commentId: comment?.id || null, ...superseded }));
+      const terminal = projectTerminalMailboxRejection(comment, validated.command, superseded);
+      if (terminal) terminalRejections.push(terminal);
+      continue;
+    }
     seenRequestIds.add(validated.command.requestId);
     ready.push(Object.freeze({
       commentId: comment?.id || null,
       commentUrl: comment?.html_url || comment?.url || '',
       command: validated.command,
-      partition: classifyBattleBridgeMailboxOperation(validated.command.operation),
+      partition,
     }));
   }
   if (ready.length === 0) return Object.freeze({
@@ -700,6 +773,8 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   beforeExecute,
   executeCommand,
   onTerminal,
+  shouldYieldBeforeExecute,
+  shouldYieldAfterTerminal,
 } = {}) {
   const entries = Array.isArray(batch?.commands) ? batch.commands : [];
   if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
@@ -707,13 +782,17 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     || typeof executeCommand !== 'function'
     || (preflightCommand !== undefined && typeof preflightCommand !== 'function')
     || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
-    || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
+    || (onTerminal !== undefined && typeof onTerminal !== 'function')
+    || (shouldYieldBeforeExecute !== undefined && typeof shouldYieldBeforeExecute !== 'function')
+    || (shouldYieldAfterTerminal !== undefined && typeof shouldYieldAfterTerminal !== 'function')) {
     return fail('MAILBOX_BATCH_EXECUTION_INVALID');
   }
   const results = new Array(entries.length);
   let activeExecutions = 0;
+  let handlerExecutionCount = 0;
   let maxConcurrencyObserved = 0;
   let terminalCheckpoint = Promise.resolve();
+  let processGenerationBoundary = null;
   const checkpointTerminal = (entry, result) => {
     if (!onTerminal) return Promise.resolve(result);
     terminalCheckpoint = terminalCheckpoint
@@ -744,35 +823,126 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     }
     activeExecutions += 1;
     maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
+    let phase = 'ACCEPTANCE';
     try {
       if (beforeExecute) await beforeExecute(entry);
+      handlerExecutionCount += 1;
+      phase = 'EXECUTION';
       const execution = await executeCommand(entry);
+      phase = 'TERMINAL_CHECKPOINT';
       results[index] = Object.freeze({
         entry,
         result: await checkpointTerminal(entry, execution),
       });
+    } catch {
+      // If ACCEPTED was durably published but its follow-up callback failed,
+      // never leave ownership pending until the 16-minute lease expiry.
+      // Terminalize without retrying the handler, repeating source mutation,
+      // or leaking callback exception text into GitHub receipts.
+      //
+      // An exception *during* terminal checkpoint is different: it may already
+      // have written a durable DONE/BLOCKED receipt. Never overwrite uncertain
+      // successful execution with a fabricated failure; the existing receipt
+      // reconciliation owns publication/recovery of that terminal.
+      if (phase === 'TERMINAL_CHECKPOINT') throw new Error('MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      const blocker = phase === 'ACCEPTANCE'
+        ? 'MAILBOX_ACCEPTANCE_CALLBACK_FAILED'
+        : 'MAILBOX_EXECUTION_CALLBACK_FAILED';
+      try {
+        results[index] = Object.freeze({
+          entry,
+          result: await checkpointTerminal(entry, fail(blocker)),
+        });
+      } catch {
+        // This fallback checkpoint may already have written a terminal
+        // receipt before failing. Preserve that durable truth for reconciliation
+        // and never leak potentially sensitive downstream exception messages.
+        throw new Error('MAILBOX_TERMINAL_CHECKPOINT_UNVERIFIED');
+      }
     } finally {
       activeExecutions -= 1;
     }
   };
 
+  const inspectPreExecutionGenerationBoundary = async (entry, entryIndex) => {
+    if (!shouldYieldBeforeExecute) return false;
+    const decision = await shouldYieldBeforeExecute(entry);
+    const yieldRequested = decision === true || decision?.yield === true;
+    if (!yieldRequested) return false;
+    processGenerationBoundary = Object.freeze({
+      beforeIndex: entryIndex,
+      afterIndex: null,
+      requestId: String(entry?.command?.requestId || ''),
+      operation: String(entry?.command?.operation || ''),
+      reason: String(decision?.reason || 'PROCESS_GENERATION_BOUNDARY'),
+      processSourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.processSourceHead || ''))
+        ? String(decision.processSourceHead).toLowerCase()
+        : '',
+      sourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.sourceHead || ''))
+        ? String(decision.sourceHead).toLowerCase()
+        : '',
+    });
+    return true;
+  };
+
+  const inspectGenerationBoundary = async (entry, entryIndex) => {
+    if (!shouldYieldAfterTerminal || !results[entryIndex]) return false;
+    const decision = await shouldYieldAfterTerminal(entry, results[entryIndex].result);
+    const yieldRequested = decision === true || decision?.yield === true;
+    if (!yieldRequested) return false;
+    processGenerationBoundary = Object.freeze({
+      beforeIndex: null,
+      afterIndex: entryIndex,
+      requestId: String(entry?.command?.requestId || ''),
+      operation: String(entry?.command?.operation || ''),
+      reason: String(decision?.reason || 'PROCESS_GENERATION_BOUNDARY'),
+      processSourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.processSourceHead || ''))
+        ? String(decision.processSourceHead).toLowerCase()
+        : '',
+      sourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.sourceHead || ''))
+        ? String(decision.sourceHead).toLowerCase()
+        : '',
+    });
+    return true;
+  };
+
   let index = 0;
   while (index < entries.length) {
     if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
-      await executeEntry(entries[index], index);
+      const controlIndex = index;
+      if (await inspectPreExecutionGenerationBoundary(entries[controlIndex], controlIndex)) break;
+      await executeEntry(entries[controlIndex], controlIndex);
       index += 1;
+      if (await inspectGenerationBoundary(entries[controlIndex], controlIndex)) break;
       continue;
     }
     const observationStart = index;
+    if (await inspectPreExecutionGenerationBoundary(entries[observationStart], observationStart)) break;
     while (index < entries.length && entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) index += 1;
     await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
+    for (let offset = 0; offset < index - observationStart; offset += 1) {
+      const observationIndex = observationStart + offset;
+      if (await inspectGenerationBoundary(entries[observationIndex], observationIndex)) {
+        index = observationIndex + 1;
+        break;
+      }
+    }
+    if (processGenerationBoundary) break;
   }
 
+  const completedResults = results.filter(Boolean);
+  const generationBoundaryDeferredCount = Math.max(0, entries.length - completedResults.length);
   return Object.freeze({
     ok: true,
-    verdict: 'COMMAND_BATCH_EXECUTION_COMPLETE',
-    results: Object.freeze(results),
+    verdict: processGenerationBoundary
+      ? 'COMMAND_BATCH_GENERATION_ROLLOVER'
+      : 'COMMAND_BATCH_EXECUTION_COMPLETE',
+    results: Object.freeze(completedResults),
     selectedCount: entries.length,
+    executedCount: handlerExecutionCount,
+    terminalizedCount: completedResults.length,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary,
     maxConcurrencyObserved,
     controlSerialized: true,
     observationParallelismBounded: true,
@@ -815,9 +985,12 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readCapabilityRegistry,
   readSharedWorkspaceStatus,
   readCriticalBacklogStatus,
+  readProgrammeAuthorityStatus,
   readMailboxReceipt,
   cancelMissionOrchestratorMission,
   runWorkerWatchdogAcceptance,
+  startRemoteCommander,
+  repairControlPlane,
   installRecoveryMesh,
   wakeRecoveryMesh,
   runMonitorMultiplexerAcceptance,
@@ -842,9 +1015,12 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_CAPABILITY_REGISTRY: readCapabilityRegistry,
     READ_SHARED_WORKSPACE_STATUS: readSharedWorkspaceStatus,
     READ_CRITICAL_BACKLOG_STATUS: readCriticalBacklogStatus,
+    READ_PROGRAMME_AUTHORITY_STATUS: readProgrammeAuthorityStatus,
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     [MISSION_ORCHESTRATOR_CANCEL_OPERATION]: cancelMissionOrchestratorMission,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    START_REMOTE_COMMANDER: startRemoteCommander,
+    REPAIR_BATTLE_BRIDGE_CONTROL_PLANE: repairControlPlane,
     INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,
@@ -932,6 +1108,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
   result = null,
   blocker = '',
   proofRefs = [],
+  processSourceHead = '',
 } = {}) {
   const scopedDelivery = command?.scopedDelivery || null;
   return Object.freeze({
@@ -942,6 +1119,9 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    processSourceHead: SHA_PATTERN.test(String(processSourceHead || '').trim())
+      ? String(processSourceHead).trim().toLowerCase()
+      : '',
     missionId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.missionId || '') : '',
     commandId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.commandId || '') : '',
     expectedTree: FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command?.operation)

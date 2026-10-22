@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   OPENCLAW_BUILDER_PROVIDER_SPECIALIST_PATHS_V1,
   OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1,
+  OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1,
   analyzeOpenClawBuilderProviderSpecialistReviewV1,
 } from './openClawBuilderProviderSpecialistReviewV1.mjs';
 
@@ -13,6 +14,8 @@ const OC1_HEAD = '46abde391adf7dd138d0f70f63c284133baaa3d4';
 const OC1_BASE = 'a564e318541d75854ed7bf675baf9b4dc52fedaf';
 const POOL_HEAD = '341c4e4e1b4a2d02438149940f70275848c6ac74';
 const POOL_BASE = '74bf1e3ae769f0fc3c0ed9e4eeee61b408788b16';
+const PR1999_HEAD = 'bcdd92c388e36c785adeabeb533e79a751637758';
+const PR1999_BASE = '7e8e20a036b5ae114670c9346dcab9594958cc9a';
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -183,6 +186,62 @@ assert.equal(candidate.providerQualificationAuthority, false)
   throw new Error(`unexpected provider-pool path ${path}`);
 }
 
+function pr1999ContentFor(path) {
+  if (path.endsWith('/openClawProviderPoolQualificationV1.mjs')) return `
+${'import'} { routeMissionControllerCapacity } from './missionControllerCapacityRouterV1.mjs';
+acquireSharedWorkspaceOperationLock
+validateExecutionReceipt
+validateSharedWorkspaceRecord
+export const OPENCLAW_PROVIDER_POOL_PUBLISHER_ID = 'stephanos-openclaw-provider-pool-publisher-v1';
+export const OPENCLAW_PROVIDER_POOL_COMPONENT_FILES = Object.freeze({
+export const OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS = Object.freeze([
+'openclaw-provider-pool'
+'publication.lock'
+const OPENCLAW_QUALIFICATION_ISSUE = 1725;
+'SOURCE_CONSTRUCTION'
+'FOCUSED_TESTS'
+export function validateOpenClawQualificationAuthorityChain
+execution.workerType !== 'openclaw'
+execution.state !== 'completed'
+authority.participantId !== 'stephanos'
+candidate.qualificationAuthorityReceiptId === expected.authorityReceiptId
+sameStrings(operations, OPENCLAW_CAPACITY_OPERATIONS)
+export function validateOpenClawProviderPoolStatusRecord
+validatePublisherAttestation(status, expected.publisherPublicKeyPem)
+component.componentDigest !== payloadDigest(component.payload)
+component.componentDigest !== status.hostContextDigests[componentKey]
+status.sourceMutationAllowed !== false
+status.mergeAuthority !== false
+status.leaseSeizureAllowed !== false
+status.duplicateDispatchAllowed !== false
+export async function publishOpenClawProviderPoolToSharedWorkspace
+OPENCLAW_PROVIDER_POOL_PUBLICATION_LOCK_SEGMENTS
+verifyOwnership()
+await operationLock.release()
+mergeAuthority: false
+leaseSeizureAllowed: false
+duplicateDispatchAllowed: false
+algorithm: 'Ed25519'
+signPayload(null, Buffer.from(canonical, 'utf8'), privateKeyPem)
+verifyPayload(null, Buffer.from(canonicalJson(unsignedStatus), 'utf8'), publicKeyPem, Buffer.from(attestation.signature, 'base64'))
+writeAtomicJson(root, ['receipts', OPENCLAW_PROVIDER_POOL_COMPONENT_FILES[componentKey]
+writeAtomicJson(root, ['status', 'openclaw-provider-pool-current.json']
+`;
+  if (path.endsWith('/openClawProviderPoolQualificationV1.test.mjs')) return `
+requires canonical completed OpenClaw execution, exact Shared Workspace projection, and Stephanos promotion receipt
+capacity is unusable without the exact validated qualification authority, worker and task class
+supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS', 'MERGE_PULL_REQUEST']
+publishes only the complete trusted OpenClaw qualification chain to the canonical status path
+publisherId: 'forged-publisher'
+ARBITRARY_SHELL
+Tampered after publication.
+serializes concurrent OpenClaw provider-pool generations behind one fixed operation lock
+SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT
+assert.deepEqual(finalValidation.hostContext, secondHost)
+`;
+  throw new Error(`unexpected #1999 provider-pool path ${path}`);
+}
+
 function sources(paths, head, contentFor, overrides = {}) {
   return paths.map((path) => {
     const content = overrides[path] ?? contentFor(path);
@@ -223,6 +282,16 @@ function poolInput(overrides = {}) {
     sourceHead: POOL_HEAD, baseSha: POOL_BASE, lineageEvidence: lineage(POOL_HEAD, POOL_BASE),
     analysis: analysis(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1),
     sources: sources(OPENCLAW_PROVIDER_POOL_SPECIALIST_PATHS_V1, POOL_HEAD, providerPoolContentFor),
+    ...overrides,
+  };
+}
+
+function pr1999Input(overrides = {}) {
+  return {
+    repository: REPOSITORY, prNumber: 1999, branch: 'codex/five-builder-flywheel-repair',
+    sourceHead: PR1999_HEAD, baseSha: PR1999_BASE, lineageEvidence: lineage(PR1999_HEAD, PR1999_BASE),
+    analysis: analysis(OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1),
+    sources: sources(OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1, PR1999_HEAD, pr1999ContentFor),
     ...overrides,
   };
 }
@@ -282,4 +351,50 @@ test('#1905 specialist fails closed when trusted-host authority binding or denia
   assert.equal(result.eligible, true); assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'openclaw-provider-pool-stephanos-authority-gate-missing'));
   assert.ok(result.findings.some((item) => item.code === 'openclaw-promotion-qualification-authority-denial-test-missing'));
+});
+
+test('exact #1999 two-file provider-pool escalation routes through the existing protected specialist', () => {
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input());
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true);
+  assert.deepEqual(result.reviewedPaths, OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1);
+  assert.equal(result.proofRefs.length, 2);
+  assert.equal(result.finalVerdict, 'OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_CLEAN');
+});
+
+test('#1999 specialist rejects wrong identity, incomplete escalation and current-main drift', () => {
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ prNumber: 1905 })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ branch: 'agent/openclaw-provider-pool-qualification-v1' })).eligible, false);
+  assert.equal(analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ analysis: { findings: analysis(OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1).findings.slice(0, 1) } })).eligible, false);
+  const drift = analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ lineageEvidence: lineage(PR1999_HEAD, PR1999_BASE, { liveMainAfterSha: '3333333333333333333333333333333333333333' }) }));
+  assert.equal(drift.eligible, true);
+  assert.equal(drift.clean, false);
+  assert.equal(drift.findings[0].code, 'pr1999-provider-pool-reconciliation-lineage-invalid');
+});
+
+test('#1999 specialist rejects removed publication locking and exact-operation gating', () => {
+  const path = OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1[0];
+  const alteredSources = sources(OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1, PR1999_HEAD, pr1999ContentFor, {
+    [path]: pr1999ContentFor(path)
+      .replace('acquireSharedWorkspaceOperationLock', 'operation-lock-removed')
+      .replace('sameStrings(operations, OPENCLAW_CAPACITY_OPERATIONS)', 'operations.includes(\'SOURCE_CONSTRUCTION\')'),
+  });
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ sources: alteredSources }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'pr1999-provider-pool-operation-lock-missing'));
+  assert.ok(result.findings.some((item) => item.code === 'pr1999-provider-pool-exact-operations-gate-missing'));
+});
+
+test('#1999 specialist rejects widened source evidence and dynamic execution', () => {
+  const path = OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1[0];
+  const alteredSources = sources(OPENCLAW_PROVIDER_POOL_PR1999_SPECIALIST_PATHS_V1, PR1999_HEAD, pr1999ContentFor, {
+    [path]: `${pr1999ContentFor(path)}\nspawnSync('powershell.exe', [], { shell: true })`,
+  });
+  alteredSources.push({ ...alteredSources[0] });
+  const result = analyzeOpenClawBuilderProviderSpecialistReviewV1(pr1999Input({ sources: alteredSources }));
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'pr1999-provider-pool-source-evidence-estate-mismatch'));
+  assert.ok(result.findings.some((item) => item.code === 'pr1999-provider-pool-dynamic-execution-forbidden'));
 });

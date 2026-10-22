@@ -9,6 +9,7 @@ on:
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
       - 'scripts/battle-bridge-worker-watchdog-runner.mjs'
       - 'scripts/battle-bridge-worker-watchdog-runner.test.mjs'
+      - 'scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs'
       - '.github/workflows/critical-backlog-conveyor-proof.yml'
 
 permissions:
@@ -40,6 +41,7 @@ jobs:
           shared/agents/criticalBacklogConveyor.test.mjs
           stephanos-server/services/criticalBacklogConveyorService.test.js
           scripts/battle-bridge-worker-watchdog-runner.test.mjs
+          scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
 
       - name: Mission orchestrator compatibility proof
         run: >-
@@ -53,6 +55,7 @@ jobs:
           node --check shared/agents/criticalBacklogConveyor.mjs
           && node --check stephanos-server/services/criticalBacklogConveyorService.js
           && node --check scripts/battle-bridge-worker-watchdog-runner.mjs
+          && node --check scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
 
       - name: Diff check
         if: always()

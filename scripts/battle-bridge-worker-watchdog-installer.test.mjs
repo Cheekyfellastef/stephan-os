@@ -133,6 +133,43 @@ function strictRestartInvocationBoundary({ probe, restart, launcher }) {
     && !launcher.includes('$processStartInfo.Arguments +=');
 }
 
+function typedRestartFailureBoundary({ probe, restart }) {
+  const propertyEstate = probe.match(/\$missionWorkerRestartFailureProperties = @\(([\s\S]*?)\n\)/)?.[1] || '';
+  const blockerEstate = probe.match(/\$missionWorkerRestartFailureBlockers = @\(([\s\S]*?)\n\)/)?.[1] || '';
+  const probeBlockers = new Set([...blockerEstate.matchAll(/'(MISSION_WORKER_[A-Z0-9_:-]+)'/g)].map((match) => match[1]));
+  const adapterBlockers = new Set([...restart.matchAll(/'(MISSION_WORKER_[A-Z0-9_:-]+)'/g)].map((match) => match[1]));
+  const nonZero = probe.indexOf('if ($LASTEXITCODE -ne 0) {');
+  const typedRead = probe.indexOf('Read-ValidatedMissionWorkerRestartFailureBlocker `', nonZero);
+  const typedThrow = probe.indexOf('if ($typedRestartBlocker) { throw $typedRestartBlocker }', typedRead);
+  const genericThrow = probe.indexOf("throw 'The approved runtime restart adapter failed.'", typedThrow);
+  return propertyEstate.includes("'schemaVersion', 'target', 'expectedHead', 'exactHeadProofOk', 'postStartSourceProofOk'")
+    && propertyEstate.includes("'liveOpenClawUpdatePerformed', 'ok', 'blocker', 'finalVerdict'")
+    && probe.includes('Test-ExactJsonPropertyEstate -Record $receipt -ExpectedProperties $missionWorkerRestartFailureProperties')
+    && probe.includes("[string]$receipt.schemaVersion -ne 'stephanos.approved-runtime-restart.v1'")
+    && probe.includes("[string]$receipt.target -ne 'mission-worker'")
+    && probe.includes('[string]$receipt.expectedHead -ne $ExpectedHead')
+    && probe.includes('[string]$receipt.deadlineUtc -ne $ExpectedDeadlineUtc')
+    && probe.includes('$receipt.exactHeadProofOk -ne $false')
+    && probe.includes('$receipt.postStartSourceProofOk -ne $false')
+    && probe.includes('$receipt.unrelatedTasksChanged -ne $false')
+    && probe.includes('$receipt.arbitraryTaskTargetAllowed -ne $false')
+    && probe.includes('$receipt.arbitraryProcessKillAllowed -ne $false')
+    && probe.includes('$receipt.verifiedOwnedProcessTerminationOnly -ne $true')
+    && probe.includes('$receipt.liveOpenClawUpdatePerformed -ne $false')
+    && probe.includes('$receipt.ok -ne $false')
+    && probe.includes("[string]$receipt.finalVerdict -ne 'APPROVED_RUNTIME_RESTART_BLOCKED'")
+    && probe.includes('if ($missionWorkerRestartFailureBlockers -notcontains $blocker) { return \'\' }')
+    && probe.includes('$restartBytes -le 0 -or $restartBytes -gt 8192')
+    && probeBlockers.size > 0
+    && [...probeBlockers].every((blocker) => adapterBlockers.has(blocker))
+    && [...adapterBlockers].every((blocker) => probeBlockers.has(blocker))
+    && nonZero >= 0
+    && typedRead > nonZero
+    && typedThrow > typedRead
+    && genericThrow > typedThrow
+    && !/Write-Output\s+\$restartOutput|throw\s+\$restartJson|throw\s+\$restartOutput/.test(probe);
+}
+
 test('installer exposes only StartNow and registers hidden limited fixed watchdog plus visibility reconciler', async () => {
   const source = await readFile(installPath, 'utf8');
   assert.deepEqual([...parameterBlock(source).matchAll(/\[switch\]\s*\$(\w+)/g)].map((match) => match[1]), ['StartNow']);
@@ -232,6 +269,62 @@ test('internal probe permits only inspect or exact-head canonical worker restart
   assert.doesNotMatch(source, /\[string\]\$TaskName|Stop-ScheduledTask|Stop-Process|Invoke-Expression|Restart-Computer|shutdown\.exe/i);
 });
 
+test('stale canonical worker reclaim is unique, task-quiescent and process-capability bound', async () => {
+  const source = await readFile(restartPath, 'utf8');
+  const helperStart = source.indexOf('function Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat');
+  const freshWorkerStart = source.indexOf('function Get-VerifiedFreshWorkerInstance', helperStart);
+  const missionWorkerBranch = source.indexOf("$heartbeatPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\mission-orchestrator-worker-heartbeat.json'");
+  const taskStop = source.indexOf("Stop-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", missionWorkerBranch);
+  const reclaim = source.indexOf('$orphanWorker = Get-UniquelyVerifiedCanonicalWorkerProcessWithoutHeartbeat -ExpectedRepoRoot $repoRoot', missionWorkerBranch);
+  const guardedStart = source.indexOf("Start-ScheduledTask -TaskName $plan.TaskName -TaskPath '\\'", reclaim);
+  const helperSource = source.slice(helperStart, freshWorkerStart);
+
+  assert.ok(helperStart >= 0);
+  assert.ok(freshWorkerStart > helperStart);
+  assert.ok(taskStop > missionWorkerBranch);
+  assert.ok(reclaim > taskStop);
+  assert.ok(guardedStart > reclaim);
+  assert.match(helperSource, /Get-CimInstance Win32_Process -Filter "Name = 'node\.exe'"/);
+  assert.match(helperSource, /Test-ExactCanonicalWorkerProcess -Process \$process -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(helperSource, /\$canonicalWorkers\.Count -gt 1/);
+  assert.match(helperSource, /MISSION_WORKER_CANONICAL_PROCESS_IDENTITY_AMBIGUOUS/);
+  assert.match(helperSource, /\[System\.Diagnostics\.Process\]::GetProcessById\(\$processId\)/);
+  assert.match(helperSource, /\$processCapability\.StartTime\.ToUniversalTime\(\)/);
+  assert.match(helperSource, /Get-CimInstance Win32_Process -Filter "ProcessId = \$processId"/);
+  assert.match(helperSource, /Test-ExactCanonicalWorkerProcess -Process \$candidateReRead -ExpectedRepoRoot \$ExpectedRepoRoot/);
+  assert.match(helperSource, /\$candidateReReadStartedAtUtc\.Ticks -ne \$candidateStartedAtUtc\.Ticks/);
+  assert.match(helperSource, /ProcessStartedAtUtc = \$capabilityProcessStartedAtUtc/);
+  assert.doesNotMatch(helperSource, /\$capabilityProcessStartedAtUtc\.Ticks -ne \$candidateStartedAtUtc\.Ticks/);
+  assert.match(source, /\$orphanWorkerRecheck\.ProcessStartedAtUtc\.Ticks -ne \$orphanWorker\.ProcessStartedAtUtc\.Ticks/);
+  assert.match(source, /\$reverifiedOrphanProcessCapability\.Kill\(\)/);
+  assert.match(source, /\$reverifiedOrphanProcessCapability\.WaitForExit\(10000\)/);
+  assert.doesNotMatch(helperSource, /Stop-Process|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
+test('typed mission-worker restart failures are bounded to the exact blocked adapter contract', async () => {
+  const [probe, restart] = await Promise.all([
+    readFile(probePath, 'utf8'),
+    readFile(restartPath, 'utf8'),
+  ]);
+  assert.equal(typedRestartFailureBoundary({ probe, restart }), true);
+
+  const attacks = [
+    { probe: probe.replace("[string]$receipt.target -ne 'mission-worker'", '$false'), restart },
+    { probe: probe.replace('[string]$receipt.expectedHead -ne $ExpectedHead', '$false'), restart },
+    { probe: probe.replace('[string]$receipt.deadlineUtc -ne $ExpectedDeadlineUtc', '$false'), restart },
+    { probe: probe.replace('$receipt.arbitraryTaskTargetAllowed -ne $false', '$false'), restart },
+    { probe: probe.replace('$receipt.arbitraryProcessKillAllowed -ne $false', '$false'), restart },
+    { probe: probe.replace('$receipt.liveOpenClawUpdatePerformed -ne $false', '$false'), restart },
+    { probe: probe.replace("[string]$receipt.finalVerdict -ne 'APPROVED_RUNTIME_RESTART_BLOCKED'", '$false'), restart },
+    { probe: probe.replace("'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT',", "'MISSION_WORKER_ATTACKER_SELECTED',"), restart },
+    { probe: probe.replace('if ($typedRestartBlocker) { throw $typedRestartBlocker }', '# typed blocker suppressed'), restart },
+    { probe: probe.replace("throw 'The approved runtime restart adapter failed.'", 'Write-Output $restartOutput'), restart },
+  ];
+  for (const [index, attack] of attacks.entries()) {
+    assert.equal(typedRestartFailureBoundary(attack), false, `typed failure attack ${index} must fail closed`);
+  }
+});
+
 test('worker launcher is pinned to canonical main and supervised heartbeat loop', async () => {
   const source = await readFile(workerStartPath, 'utf8');
   assert.match(source, /mission-orchestrator-worker-supervised\.mjs/);
@@ -301,9 +394,9 @@ test('restart invocation binds exact command, heartbeat, deadline and process cr
     { ...canonical, restart: restart.replace('$liveProcessStartedAtUtc.Ticks -ne $heartbeatProcessStartedAtUtc.Ticks', '$false') },
     { ...canonical, restart: restart.replace('$heartbeatTimestampUtc -gt $observedAtUtc', '$false') },
     { ...canonical, restart: restart.replace('($observedAtUtc - $heartbeatTimestampUtc).TotalSeconds -gt 120', '$false') },
-    { ...canonical, restart: restart.replace('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId') },
-    { ...canonical, restart: restart.replace('$null = $processCapability.Handle', '$null = $processId') },
-    { ...canonical, restart: restart.replace('ProcessCapability = $processCapability', 'ProcessCapability = $processId') },
+    { ...canonical, restart: restart.replaceAll('[System.Diagnostics.Process]::GetProcessById($processId)', 'Get-Process -Id $processId') },
+    { ...canonical, restart: restart.replaceAll('$null = $processCapability.Handle', '$null = $processId') },
+    { ...canonical, restart: restart.replaceAll('ProcessCapability = $processCapability', 'ProcessCapability = $processId') },
     { ...canonical, restart: restart.replace('$reverifiedProcessCapability.StartTime.ToUniversalTime()', '$oldWorker.ProcessStartedAtUtc') },
     { ...canonical, restart: restart.replace('$reverifiedProcessCapability.Kill()', 'Stop-Process -Id $oldWorker.ProcessId -Force') },
     { ...canonical, restart: restart.replace('$reverifiedProcessCapability.WaitForExit(10000)', '$true') },

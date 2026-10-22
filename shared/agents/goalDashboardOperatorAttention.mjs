@@ -4,6 +4,10 @@ import {
   createOperatorDecision,
   validateOperatorDecision,
 } from './operatorAutomationLayer.mjs';
+import {
+  OPERATOR_REVIEW_PARKING_STATE,
+  buildOperatorReviewReadyBatchV1,
+} from './operatorReviewParkingRefillV1.mjs';
 
 const CURRENT = 'CURRENT';
 const SHA40 = /^[a-f0-9]{40}$/i;
@@ -83,24 +87,48 @@ export function buildGoalDashboardMaintenanceActions(goals = []) {
   }));
 }
 
+function mergeDecisionFromParkedReview(item) {
+  if (item.requiredAuthorityClass !== 'PROTECTED_MERGE') return null;
+  return createOperatorDecision({
+    decisionId: `merge-pr-${item.prNumber}-${item.exactHead.slice(0, 12)}`,
+    decisionKind: OPERATOR_DECISION_KIND.MERGE_APPROVAL,
+    status: OPERATOR_DECISION_STATUS.WAITING_FOR_OPERATOR_APPROVAL,
+    relatedGoal: `#${item.issueNumber}`,
+    relatedPr: `#${item.prNumber}`,
+    expectedHeadSha: item.exactHead,
+    summary: `Review protected merge for PR #${item.prNumber}.`,
+  });
+}
+
 export function buildGoalDashboardOperatorAttention(input = {}) {
   const goals = list(input.goals);
-  const blockers = Object.freeze([...new Set(list(input.blockers).map((item) => text(item)).filter(Boolean))]);
-  const approvals = buildGoalDashboardApprovalDecisions(goals, input.explicitDecisions);
+  const blockers = [...new Set(list(input.blockers).map((item) => text(item)).filter(Boolean))];
+  const parkedReviewBatch = buildOperatorReviewReadyBatchV1(input.parkedReviewEntries);
+  const parkedDecisions = parkedReviewBatch.state === OPERATOR_REVIEW_PARKING_STATE.SAFE_HOLD
+    ? []
+    : parkedReviewBatch.ready.map(mergeDecisionFromParkedReview).filter(Boolean);
+  const explicitDecisions = [...list(input.explicitDecisions), ...parkedDecisions];
+  const approvals = buildGoalDashboardApprovalDecisions(goals, explicitDecisions);
   const maintenanceActions = buildGoalDashboardMaintenanceActions(goals);
+  if (parkedReviewBatch.state === OPERATOR_REVIEW_PARKING_STATE.SAFE_HOLD) {
+    blockers.push('OPERATOR_REVIEW_READY_BATCH_SAFE_HOLD');
+  }
   const exactNextAction = text(
     input.exactNextAction,
-    approvals.length
-      ? 'Review the genuine operator decisions; protected actions retain their separate exact approval gate.'
-      : (maintenanceActions.length
-        ? 'Codex and Housekeeper should refresh the stale or missing project records without asking the operator to approve routine maintenance.'
-        : 'No operator decision or maintenance action is currently published.'),
+    parkedReviewBatch.readyCount
+      ? `Review ${parkedReviewBatch.readyCount} current parked goal${parkedReviewBatch.readyCount === 1 ? '' : 's'}; construction capacity remains released while they wait.`
+      : (approvals.length
+        ? 'Review the genuine operator decisions; protected actions retain their separate exact approval gate.'
+        : (maintenanceActions.length
+          ? 'Codex and Housekeeper should refresh the stale or missing project records without asking the operator to approve routine maintenance.'
+          : 'No operator decision or maintenance action is currently published.')),
   );
   return Object.freeze({
     approvals,
+    parkedReviewBatch,
     maintenanceActions,
     localProofNeeded: Object.freeze(goals.filter((goal) => !isCurrent(goal.proofTruth)).map((goal) => text(goal.issue || goal.goalId, 'GOAL'))),
-    blockers,
+    blockers: Object.freeze([...new Set(blockers)]),
     exactNextAction,
   });
 }

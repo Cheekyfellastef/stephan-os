@@ -31,7 +31,7 @@ function installReceipt(overrides = {}) {
   return {
     taskName: BATTLE_BRIDGE_GITHUB_SYNC_TASK,
     installed: true,
-    intervalMinutes: 15,
+    intervalMinutes: 1,
     atLogon: true,
     hidden: true,
     runLevel: 'Limited',

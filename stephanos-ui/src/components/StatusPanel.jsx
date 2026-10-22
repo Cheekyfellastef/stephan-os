@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { buildProviderStatusSummary, resolveProviderEndpointForDisplay } from '../ai/providerConfig';
 import { useAIStore } from '../state/aiStore';
 import { ensureRuntimeStatusModel } from '../state/runtimeStatusDefaults';
@@ -33,6 +33,7 @@ import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButton
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import UIRealityStatusPanel from './UIRealityStatusPanel';
+import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
 
 function nodeVisibleInDom(node) {
   if (!node || typeof window === 'undefined') return false;
@@ -91,6 +92,12 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
   const { copyState: supportSnapshotCopyState, setCopyState: setSupportSnapshotCopyState } = useClipboardButtonState();
   const { copyState: codexHandoffCopyState, setCopyState: setCodexHandoffCopyState } = useClipboardButtonState();
   const [frictionText, setFrictionText] = useState('');
+  const [sharedWorkspaceLearning, setSharedWorkspaceLearning] = useState({
+    state: 'unknown',
+    lessonCount: 0,
+    latestLessonId: 'none',
+    latestLessonSummary: 'No Shared Lesson loaded.',
+  });
   const {
     status,
     isBusy,
@@ -249,6 +256,102 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
     runtimeContext,
     sessionRestoreDiagnostics,
   });
+  const workspaceBackendReachability = String(routeTruthView.backendReachableState || '').toLowerCase();
+  const workspaceBackendState = ['yes', 'true', 'online', 'reachable', 'ready'].includes(workspaceBackendReachability)
+    ? 'online'
+    : ['no', 'false', 'offline', 'unreachable', 'failed'].includes(workspaceBackendReachability)
+      ? 'offline'
+      : 'unknown';
+  const workspaceRenderState = Number(runtimeDiagnostics.eventRatePerSecond || 0) > 100
+    ? 'looping'
+    : isBusy
+      ? 'busy'
+      : 'stable';
+  const workspaceBackendRuntimeContext = {
+    frontendOrigin: browserWindow?.location?.origin || '',
+    baseUrl: safeApiStatus.baseUrl || '',
+    hostedExecutionBridgeUrl: runtimeContext?.bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || runtimeContext?.bridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    bridgeUrl: runtimeContext?.homeNodeBridge?.backendUrl
+      || runtimeContext?.bridgeTransportTruth?.bridgeOperatorTransportUrl
+      || '',
+    homeNodeBridge: runtimeContext?.homeNodeBridge || null,
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+
+    const refreshSharedWorkspaceBridge = async () => {
+      try {
+        const feedResult = await requestStephanosBackend({
+          path: '/api/shared-workspace/dashboard-feed',
+          runtimeContext: workspaceBackendRuntimeContext,
+          timeoutMs: 10000,
+        });
+        if (cancelled) return;
+        const lessons = Array.isArray(feedResult.json?.records?.lessonRecords)
+          ? feedResult.json.records.lessonRecords
+          : [];
+        const latestLesson = lessons[0] || null;
+        const learning = {
+          state: String(feedResult.json?.state || 'unknown'),
+          lessonCount: lessons.length,
+          latestLessonId: latestLesson?.lessonId || 'none',
+          latestLessonSummary: latestLesson?.summary || 'No Shared Lesson loaded.',
+        };
+        setSharedWorkspaceLearning(learning);
+
+        try {
+          await requestStephanosBackend({
+            path: '/api/shared-workspace/support-observation',
+            method: 'POST',
+            runtimeContext: workspaceBackendRuntimeContext,
+            timeoutMs: 10000,
+            body: {
+              backendState: workspaceBackendState,
+              routeMode: routeTruthView.requestedMode || routeMode || 'auto',
+              flywheelState: learning.state,
+              lessonCount: learning.lessonCount,
+              latestLessonId: learning.latestLessonId,
+              renderState: workspaceRenderState,
+            },
+          });
+        } catch {
+          // Outbound Support Snapshot observation is advisory only.
+          // Preserve the successfully read Shared Workspace learning truth.
+        }
+      } catch {
+        if (!cancelled) {
+          setSharedWorkspaceLearning((previous) => ({
+            ...previous,
+            state: 'unreachable',
+          }));
+        }
+      } finally {
+        if (!cancelled && typeof window !== 'undefined') {
+          timer = window.setTimeout(refreshSharedWorkspaceBridge, 30000);
+        }
+      }
+    };
+
+    void refreshSharedWorkspaceBridge();
+    return () => {
+      cancelled = true;
+      if (timer !== null && typeof window !== 'undefined') window.clearTimeout(timer);
+    };
+  }, [
+    workspaceBackendRuntimeContext.frontendOrigin,
+    workspaceBackendRuntimeContext.baseUrl,
+    workspaceBackendRuntimeContext.hostedExecutionBridgeUrl,
+    workspaceBackendRuntimeContext.bridgeUrl,
+    workspaceBackendState,
+    workspaceRenderState,
+    routeTruthView.requestedMode,
+    routeMode,
+  ]);
+
   const notifyCopyResult = (message, tone) => {
     setCopyNotice({ message, tone });
     globalThis.setTimeout(() => {
@@ -319,6 +422,7 @@ export default function StatusPanel({ finalAgentView = null, intentToBuildTruth 
   const buildSnapshotText = (uiRealityInput, uiRealitySampling = {}) => buildSupportSnapshot({
     runtimeStatus: {
       ...runtimeStatus,
+      sharedWorkspaceLearning,
       lastExecutionMetadata: lastExecutionMetadata && typeof lastExecutionMetadata === 'object' ? lastExecutionMetadata : {},
       operatorReliefProjectionBridge,
       providerSelectionSource,

@@ -187,20 +187,20 @@ test('runOllamaProvider cool mode avoids heavy model unless explicitly forced', 
   }
 });
 
-test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async () => {
+test('runOllamaProvider escalates to qwen3.5:27b for deep reasoning prompts', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {
       return {
         ok: true,
         status: 200,
-        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen3.5:27b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
       };
     }
 
     return {
       ok: true,
       status: 200,
-      json: async () => ({ model: 'qwen:32b', message: { content: 'deep ok' } }),
+      json: async () => ({ model: 'qwen3.5:27b', message: { content: 'deep ok' } }),
     };
   };
 
@@ -209,7 +209,98 @@ test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async
       messages: [{ role: 'user', content: 'Please do a deep architecture root cause analysis and multi-step debug plan.' }],
     }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
     assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.escalationActive, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider selects deep sovereign reasoning for natural Stephanos repair requests', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen3.5:27b' }] }),
+      };
+    }
+    const requested = JSON.parse(String(options.body || '{}')).model;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: requested, message: { content: 'repair diagnosis prepared' } }),
+    };
+  };
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Can we get Stephanos AI to repair Stephanos now?' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider uses Flywheel evidence pressure to wake qwen3.5:27b without prompt magic words', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen3.5:27b' }, { name: 'qwen:32b' }] }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen3.5:27b', message: { content: 'uplift diagnosis ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Diagnose the current agent gap.' }],
+      routeDecision: {
+        reasoningPressure: 'uplift',
+        recurringFailureCount: 3,
+        capabilityGapCount: 2,
+        rootCauseState: 'UNKNOWN',
+        upliftRequired: true,
+      },
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.escalationActive, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider uses qwen:32b as the deep compatibility fallback when 27B is unavailable', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:32b', message: { content: 'deep compatibility ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Do a deep architecture root cause analysis.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
+    assert.equal(result.diagnostics.ollama.deepFallbackModelUsed, true);
     assert.equal(result.diagnostics.ollama.escalationActive, true);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
@@ -755,4 +846,24 @@ test('getProviderHealthSnapshot marks Ollama unusable for non-local localhost-on
   assert.equal(snapshot.ollama.state, 'LOCALHOST_MISMATCH');
   assert.equal(snapshot.ollama.routeUsable, false);
   assert.equal(snapshot.routing.runtimeContext.sessionKind, 'hosted-web');
+});
+
+test('getProviderHealthSnapshot does not echo runtimeContext inside provider configs', async () => {
+  const snapshot = await getProviderHealthSnapshot({
+    provider: 'ollama',
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      frontendOrigin: 'http://127.0.0.1:4173',
+      recursionSentinel: { nested: 'must-not-return-in-provider-config' },
+    },
+    providerConfigs: {
+      ollama: { baseURL: '://bad-url' },
+    },
+  });
+
+  for (const providerKey of ['mock', 'groq', 'gemini', 'ollama', 'openrouter']) {
+    assert.equal(snapshot[providerKey]?.config?.runtimeContext, undefined);
+    assert.equal(snapshot[providerKey]?.config?.abortSignal, undefined);
+  }
+  assert.equal(snapshot.routing.runtimeContext.sessionKind, 'local-desktop');
 });

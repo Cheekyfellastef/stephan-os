@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  createFixedSyncAndRefreshAdapter,
+  projectSyncAndRefreshStatus,
   runBattleBridgeSyncAndRefresh,
 } from './battle-bridge-github-sync-and-refresh.mjs';
+import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -31,8 +34,16 @@ function blocked(classification = 'BLOCKED_DIRTY_SOURCE', head = A) {
   };
 }
 
+function safeGoalDiscoveryArgs() {
+  return { goalDiscoveryHeartbeat: async () => ({ ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' }) };
+}
+
 function nonWindowsRepairArgs() {
-  return { platform: 'linux', controlPlaneReconciler() { throw new Error('must not run on non-Windows'); } };
+  return {
+    platform: 'linux',
+    controlPlaneReconciler() { throw new Error('must not run on non-Windows'); },
+    ...safeGoalDiscoveryArgs(),
+  };
 }
 
 test('pending old-executor refresh is paid after a safe source observation and then reconverges', async () => {
@@ -54,6 +65,7 @@ test('pending old-executor refresh is paid after a safe source observation and t
   assert.equal(result.refreshDebtCoalesced, false);
   assert.equal(result.freshCoordinatorProcessUsed, true);
   assert.equal(result.controlPlaneRepair.classification, 'CONTROL_PLANE_REPAIR_SKIPPED_NON_WINDOWS');
+  assert.equal(result.goalDiscoveryObserved, true);
 });
 
 test('stale refresh debt cannot strand delivery of its own repair and is coalesced to newest exact head', async () => {
@@ -101,8 +113,10 @@ test('new source update without old debt refreshes and then runs a second sync f
   assert.equal(result.refreshDebtCoalesced, false);
 });
 
-test('converged Windows sync reconciles the fixed recovery mesh and mailbox control plane', async () => {
+test('converged Windows sync wakes goal discovery and reconciles the fixed recovery mesh', async () => {
   const repairs = [];
+  const wakeups = [];
+  const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
@@ -113,6 +127,7 @@ test('converged Windows sync reconciles the fixed recovery mesh and mailbox cont
       runRefresh() { throw new Error('refresh should not run'); },
     },
     controlPlaneReconciler(input) {
+      calls.push('repair');
       repairs.push(input);
       return {
         ok: true,
@@ -124,14 +139,136 @@ test('converged Windows sync reconciles the fixed recovery mesh and mailbox cont
         pcRestartAllowed: false,
       };
     },
+    goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
+      wakeups.push('goal-discovery');
+      return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
+    },
   });
   assert.equal(result.ok, true);
   assert.equal(result.controlPlaneRepair.classification, 'CONTROL_PLANE_RECONCILED');
   assert.equal(result.controlPlaneRepair.repairAttempted, true);
   assert.deepEqual(repairs, [{ repoRoot: paths.repoRoot, expectedHead: B, platform: 'win32' }]);
+  assert.deepEqual(wakeups, ['goal-discovery']);
+  assert.deepEqual(calls, ['goal-discovery', 'repair']);
+  assert.equal(result.goalDiscoveryObserved, true);
+  assert.equal(result.workConservingGoalDiscoveryPreserved, true);
 });
 
-test('control-plane repair failure blocks sync completion instead of masking a detached mailbox', async () => {
+test('converged Windows sync pulses the bounded mailbox even when Recovery Mesh repair remains blocked', async () => {
+  const calls = [];
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    platform: 'win32',
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runRefresh() { throw new Error('refresh should not run'); },
+      runMailboxPulse() {
+        calls.push('mailbox-pulse');
+        return {
+          ok: true,
+          blocker: '',
+          result: {
+            ok: true,
+            finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_READY',
+          },
+        };
+      },
+    },
+    controlPlaneReconciler() {
+      calls.push('repair');
+      return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' };
+    },
+    goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
+      return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.deepEqual(calls, ['goal-discovery', 'mailbox-pulse', 'repair']);
+  assert.equal(result.mailboxPulseObserved, true);
+  assert.equal(result.mailboxPulse.ok, true);
+  assert.equal(result.mailboxPulse.classification, 'MAILBOX_PULSE_READY');
+  assert.equal(result.workConservingMailboxPulsePreserved, true);
+});
+
+test('mailbox pulse preserves the child guard blocker even when the child exits nonzero', () => {
+  const adapter = createFixedSyncAndRefreshAdapter({
+    spawnSyncFn: () => ({
+      status: 1,
+      stdout: JSON.stringify({
+        ok: false,
+        blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+        error: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+        finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      }),
+      stderr: '',
+    }),
+  });
+  const pulse = adapter.runMailboxPulse({ repoRoot: '/canonical/repo', mailboxRunner: '/canonical/repo/mailbox.mjs' });
+  assert.equal(pulse.ok, false);
+  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(pulse.result.error, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(pulse.result.finalVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
+});
+
+test('sync status projection exposes bounded mailbox pulse truth without secrets or arbitrary authority', () => {
+  const record = projectSyncAndRefreshStatus({
+    ok: false,
+    sourceHead: B,
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh',
+    finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+      detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      secret: 'must-not-leak',
+    },
+    controlPlaneRepair: {
+      ok: false,
+      classification: 'CONTROL_PLANE_REPAIR_BLOCKED',
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh',
+      repairAttempted: true,
+      privatePath: 'C:/private',
+    },
+  }, { observedAtUtc: '2026-10-02T17:40:00.000Z' });
+
+  assert.equal(record.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(record.kind, 'stephanos.shared_workspace.status');
+  assert.equal(record.statusId, 'battle-bridge-sync-and-refresh-current');
+  assert.equal(record.schema, 'stephanos.battle-bridge-sync-and-refresh-status.v1');
+  assert.equal(record.sourceHead, B);
+  assert.equal(record.mailboxPulseObserved, true);
+  assert.deepEqual(record.mailboxPulse, {
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+  assert.equal(record.controlPlaneRepair.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+  assert.equal(record.arbitraryShellAllowed, false);
+  assert.equal(record.sourceMutationAllowed, false);
+  assert.equal(Object.hasOwn(record, 'secretValuesPublished'), false);
+  const validation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse('2026-10-02T17:40:00.000Z'),
+  });
+  assert.equal(validation.valid, true, validation.errors.join(','));
+  assert.doesNotMatch(JSON.stringify(record), /must-not-leak|C:\/private/);
+});
+
+test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {
+  let wakeups = 0;
+  const calls = [];
   const result = await runBattleBridgeSyncAndRefresh({
     paths,
     expectedPaths: paths,
@@ -142,13 +279,40 @@ test('control-plane repair failure blocks sync completion instead of masking a d
       runRefresh() { throw new Error('refresh should not run'); },
     },
     controlPlaneReconciler() {
+      calls.push('repair');
       return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' };
+    },
+    goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
+      wakeups += 1;
+      return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
     },
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
   assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED');
   assert.equal(result.controlPlaneRepair.repairAttempted, true);
+  assert.equal(wakeups, 1);
+  assert.deepEqual(calls, ['goal-discovery', 'repair']);
+  assert.equal(result.goalDiscoveryObserved, true);
+  assert.equal(result.workConservingGoalDiscoveryPreserved, true);
+});
+
+test('goal discovery failure blocks otherwise converged completion', async () => {
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    ...nonWindowsRepairArgs(),
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runRefresh() { throw new Error('refresh should not run'); },
+    },
+    goalDiscoveryHeartbeat: async () => ({ ok: false, blocker: 'NO_QUALIFIED_CAPACITY', finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'NO_QUALIFIED_CAPACITY');
+  assert.equal(result.finalVerdict, 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED');
 });
 
 test('refresh blocker stops without starting another sync cycle', async () => {
@@ -205,13 +369,18 @@ test('unsafe source state still fails closed before any pending refresh executio
   assert.equal(refreshCalls, 0);
 });
 
-test('default transport launches only fixed Node scripts without a shell and uses fixed control-plane reconciler', async () => {
+test('default transport launches only fixed Node scripts without a shell and uses fixed control-plane and goal-discovery owners', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
   assert.match(source, /battle-bridge-post-sync-refresh\.mjs/);
+  assert.match(source, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.doesNotMatch(source, /mailboxRunner: path\.resolve\(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-with-receipt-index\.mjs'\)/);
+  assert.match(source, /runMailboxPulse/);
   assert.match(source, /battleBridgeControlPlaneSelfRepairV1\.mjs/);
+  assert.match(source, /battle-bridge-goal-discovery-heartbeat\.mjs/);
   assert.match(source, /reconcileBattleBridgeControlPlane/);
+  assert.match(source, /runBattleBridgeGoalDiscoveryHeartbeat/);
   assert.match(source, /platform !== 'win32'/);
   assert.match(source, /shell: false/);
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression|cmd\.exe/i);

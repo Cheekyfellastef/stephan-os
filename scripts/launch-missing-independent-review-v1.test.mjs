@@ -15,6 +15,9 @@ import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
   renderIndependentReviewWorkflowDispatchLaunchReceiptCommentV1,
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
+import {
+  INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT,
+} from '../shared/agents/independentReviewRetryPlanner.mjs';
 
 const HEAD = '1'.repeat(40);
 const BASE = '2'.repeat(40);
@@ -226,7 +229,7 @@ test('workflow-dispatch retry remains bounded and non-failure conclusions fail c
   const receipt = launchReceipt();
   const exhausted = reconcileExistingLaunchReceiptV1({
     launchReceipt: receipt,
-    runs: [dispatchRun(receipt, { run_attempt: 2 })],
+    runs: [dispatchRun(receipt, { run_attempt: INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT })],
   });
   assert.equal(exhausted.reconciliation, 'RETRY_BUDGET_EXHAUSTED');
   assert.equal(exhausted.mutationAllowed, false);

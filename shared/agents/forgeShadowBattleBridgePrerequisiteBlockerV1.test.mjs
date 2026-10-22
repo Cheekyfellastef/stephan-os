@@ -15,6 +15,7 @@ const HEAD = 'a'.repeat(40);
 const TREE = 'b'.repeat(40);
 const INSTALLER_BLOB = 'c'.repeat(40);
 const INSTALLER_SHA256 = 'c094059880f033656092f5fb4306457e42aa068ee32137162299817c5f79396f';
+const WINDOWS_HOST_ADAPTER = 'podman-desktop-windows10-wsl2-v1';
 const PREREQUISITE_PATH = 'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1';
 
 function command() {
@@ -44,6 +45,15 @@ function blockedReceipt(blocker, extras = {}) {
     repository: 'Cheekyfellastef/stephan-os',
     expectedHead: HEAD,
     podmanVersion: '6.0.2',
+    windowsHostAdapter: WINDOWS_HOST_ADAPTER,
+    minimumWindowsBuild: 19043,
+    observedWindowsBuild: 19045,
+    observedWindowsProductName: 'Windows 10 Pro',
+    observedWindowsInstallationType: 'Client',
+    compatibilityAuthority: 'podman-desktop-v1.29.1-win32-x64-podman-v6.0.2',
+    podmanDesktopVersion: '1.29.1',
+    podmanDesktopSourceCommit: 'a969ee0e0b07285122dd4988a58edb0a1a25d5fc',
+    podmanDesktopPodmanManifestBlob: '5acfedd1c3171414aa218a1d5d95ea7529687809',
     installerSha256: INSTALLER_SHA256,
     userScope: true,
     adminRequired: false,
@@ -105,6 +115,24 @@ test('known structured prerequisite blocker is surfaced without raw detail leaka
     exitCode: 2,
   });
   assert.doesNotMatch(JSON.stringify(result), /Sensitive|secret-value|host-only stderr/i);
+});
+
+test('Windows Server product identity blocker is structured and bounded', async () => {
+  const result = await executeWithInstallerResult({
+    status: 2,
+    stdout: JSON.stringify(blockedReceipt('WINDOWS_10_CLIENT_REQUIRED', {
+      observedWindowsProductName: 'Windows Server 2022 Standard',
+      observedWindowsInstallationType: 'Server',
+    })),
+    stderr: '',
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'WINDOWS_10_CLIENT_REQUIRED');
+  assert.deepEqual(result.details, {
+    stage: 'FORGE_SHADOW_PODMAN_PREREQUISITE',
+    exitCode: 2,
+  });
 });
 
 test('unknown structured prerequisite blocker stays behind the generic fail-closed boundary', async () => {

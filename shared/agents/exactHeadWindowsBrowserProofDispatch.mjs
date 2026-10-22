@@ -1,12 +1,25 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from './automatedCodexDispatcher.mjs';
-import { createLocalCodexExecIntegration } from './localCodexExecIntegration.mjs';
+import { classifyCodexCapacityOutageV1 } from './codexCapacityContinuityV1.mjs';
+import {
+  computeStephanosSourceFingerprint,
+  createStephanosDistManifest,
+} from '../../scripts/stephanos-build-utils.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
+const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
 const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
+const DEFAULT_REPOSITORY_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const DEFAULT_BROWSER_PROOF_RUNNER = resolve(DEFAULT_REPOSITORY_ROOT, 'scripts/browser-proof-runner.mjs');
+
 export const WINDOWS_BROWSER_PROOF_TARGETS = Object.freeze({
   PULL_REQUEST_HEAD: 'PULL_REQUEST_HEAD',
   MERGED_MAIN: 'MERGED_MAIN',
@@ -40,7 +53,7 @@ export function buildExactHeadWindowsBrowserProofPacket(command = {}, timestampU
     : `pull-request head ${expectedHead}`;
   const created = createCodexQueueRecord({
     jobId: createWindowsSafeBrowserProofJobId(command.requestId),
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     prompt: `PR #${command.prNumber}; ${targetDescription}. ${prompt}`,
     requestedProofCommands: [
@@ -161,7 +174,8 @@ export function readMergeCommitAncestry(repoRoot, ancestorHead, descendantHead, 
     || !EXACT_GIT_HEAD.test(String(descendantHead || ''))) {
     return { ok: false, blocker: 'MERGE_ANCESTRY_LOOKUP_FAILED' };
   }
-  const result = spawnSyncFn('git.exe', ['merge-base', '--is-ancestor', ancestorHead, descendantHead], {
+  const executable = platform === 'win32' ? 'git.exe' : 'git';
+  const result = spawnSyncFn(executable, ['merge-base', '--is-ancestor', ancestorHead, descendantHead], {
     cwd: repoRoot,
     encoding: 'utf8',
     shell: false,
@@ -221,19 +235,9 @@ function validateProofTarget(command, pullRequest) {
   if (pullRequest.merged !== true || pullRequest.state !== 'closed') return { ok: false, blocker: 'PR_NOT_MERGED', pullRequestHead: pullRequest.head };
   if (pullRequest.baseBranch !== 'main') return { ok: false, blocker: 'PR_BASE_BRANCH_MISMATCH', pullRequestHead: pullRequest.head };
   if (!EXACT_GIT_HEAD.test(pullRequest.mergeCommitHead)) {
-    return {
-      ok: false,
-      blocker: 'PR_MERGE_COMMIT_INVALID',
-      pullRequestHead: pullRequest.head,
-      mergeCommitHead: pullRequest.mergeCommitHead,
-    };
+    return { ok: false, blocker: 'PR_MERGE_COMMIT_INVALID', pullRequestHead: pullRequest.head, mergeCommitHead: pullRequest.mergeCommitHead };
   }
-  return {
-    ok: true,
-    proofTarget,
-    pullRequestHead: pullRequest.head,
-    mergeCommitHead: pullRequest.mergeCommitHead,
-  };
+  return { ok: true, proofTarget, pullRequestHead: pullRequest.head, mergeCommitHead: pullRequest.mergeCommitHead };
 }
 
 function blocked(command, blocker, details = {}) {
@@ -253,69 +257,188 @@ function blocked(command, blocker, details = {}) {
   };
 }
 
+function parseMachineProof(stdout = '') {
+  const lines = String(stdout || '').trim().split(/\r?\n/).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const parsed = JSON.parse(lines[index]);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {}
+  }
+  return null;
+}
+
+export function runNativeExactHeadWindowsBrowserProof(command, context = {}, {
+  repoRoot = DEFAULT_REPOSITORY_ROOT,
+  runnerPath = DEFAULT_BROWSER_PROOF_RUNNER,
+  spawnSyncFn = spawnSync,
+  nodeExecutable = process.execPath,
+  computeSourceFingerprint = computeStephanosSourceFingerprint,
+  createDistManifest = createStephanosDistManifest,
+  createTempDir = () => mkdtempSync(join(tmpdir(), 'stephanos-native-browser-proof-')),
+  writeManifest = writeFileSync,
+  cleanupTempDir = (directory) => rmSync(directory, { recursive: true, force: true }),
+} = {}) {
+  const expectedHead = String(command.expectedHead || '').trim().toLowerCase();
+  const proofTarget = String(context.proofTarget || command.proofTarget || WINDOWS_BROWSER_PROOF_TARGETS.PULL_REQUEST_HEAD);
+  const proofScenario = String(command.proofScenario || '');
+  let temporaryDirectory = '';
+  try {
+    // Fingerprints are authority-bearing proof inputs. Derive them only from the
+    // exact approved clean checkout, never from caller-shaped or dirty bytes.
+    const gitExecutable = process.platform === 'win32' ? 'git.exe' : 'git';
+    const proofGitEnv = createProofGitEnvironment(process.env, process.platform);
+    const headResult = spawnSyncFn(gitExecutable, ['rev-parse', 'HEAD'], {
+      cwd: repoRoot, encoding: 'utf8', shell: false, timeout: 120000, windowsHide: true, env: proofGitEnv,
+    });
+    const checkoutHead = String(headResult?.stdout || '').trim().toLowerCase();
+    if (headResult?.error || headResult?.status !== 0 || checkoutHead !== expectedHead) {
+      return Object.freeze({ ok: false, blocker: 'BROWSER_PROOF_APPROVED_CHECKOUT_HEAD_MISMATCH', proof: null, runnerStatus: null, stderr: '' });
+    }
+    const statusResult = spawnSyncFn(gitExecutable, ['status', '--porcelain'], {
+      cwd: repoRoot, encoding: 'utf8', shell: false, timeout: 120000, windowsHide: true, env: proofGitEnv,
+    });
+    if (statusResult?.error || statusResult?.status !== 0 || String(statusResult?.stdout || '').trim()) {
+      return Object.freeze({ ok: false, blocker: 'BROWSER_PROOF_APPROVED_CHECKOUT_DIRTY', proof: null, runnerStatus: null, stderr: '' });
+    }
+
+    const expectedSourceFingerprint = String(computeSourceFingerprint({ rootDir: repoRoot }) || '').trim().toLowerCase();
+    const distManifest = createDistManifest({ rootDir: repoRoot });
+    const expectedDistFingerprint = String(distManifest?.fingerprint || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedSourceFingerprint) || !/^[0-9a-f]{64}$/.test(expectedDistFingerprint)) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'BROWSER_PROOF_CANONICAL_FINGERPRINT_INVALID',
+        proof: null,
+        runnerStatus: null,
+        stderr: '',
+      });
+    }
+
+    temporaryDirectory = createTempDir();
+    const expectedDistManifestPath = join(temporaryDirectory, 'stephanos-dist-manifest.json');
+    writeManifest(
+      expectedDistManifestPath,
+      `${JSON.stringify(distManifest, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600, flag: 'wx' },
+    );
+
+    const args = [
+      runnerPath,
+      '--url', CANONICAL_BROWSER_PROOF_URL,
+      '--expected-head', expectedHead,
+      '--expected-source-fingerprint', expectedSourceFingerprint,
+      '--expected-dist-fingerprint', expectedDistFingerprint,
+      '--expected-dist-manifest', expectedDistManifestPath,
+      '--proof-target', proofTarget,
+      '--proof-scenario', proofScenario,
+      '--no-artifacts',
+      '--machine-json',
+    ];
+    const result = spawnSyncFn(nodeExecutable, args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      shell: false,
+      timeout: 180000,
+      windowsHide: true,
+      env: createProofGitEnvironment(process.env, 'win32'),
+    });
+    const proof = parseMachineProof(result.stdout);
+    const accepted = !result.error
+      && result.status === 0
+      && proof?.schemaVersion === BROWSER_RUNTIME_PROOF_SCHEMA
+      && proof?.mergeReady === true
+      && Array.isArray(proof?.blocking)
+      && proof.blocking.length === 0
+      && String(proof?.runtimeSourceHead || '').trim().toLowerCase() === expectedHead
+      && String(proof?.proofTarget || '') === proofTarget
+      && String(proof?.proofScenario || '') === proofScenario
+      && proof?.scenarioEvidenceAccepted === true
+      && String(proof?.expectedSourceFingerprint || '').trim().toLowerCase() === expectedSourceFingerprint
+      && String(proof?.runtimeSourceFingerprint || '').trim().toLowerCase() === expectedSourceFingerprint
+      && proof?.expectedSourceFingerprintMatch === true
+      && String(proof?.expectedDistFingerprint || '').trim().toLowerCase() === expectedDistFingerprint
+      && String(proof?.runtimeDistFingerprint || '').trim().toLowerCase() === expectedDistFingerprint
+      && proof?.expectedDistFingerprintMatch === true;
+    return Object.freeze({
+      ok: accepted,
+      blocker: accepted ? '' : (
+        proof?.blocking?.[0]
+        || (String(proof?.runtimeSourceHead || '').trim().toLowerCase() !== expectedHead ? 'BROWSER_RUNTIME_SOURCE_HEAD_MISMATCH' : '')
+        || (String(proof?.proofTarget || '') !== proofTarget ? 'BROWSER_PROOF_TARGET_MISMATCH' : '')
+        || (proof?.expectedSourceFingerprintMatch !== true || String(proof?.runtimeSourceFingerprint || '').trim().toLowerCase() !== expectedSourceFingerprint ? 'BROWSER_RUNTIME_SOURCE_FINGERPRINT_MISMATCH' : '')
+        || (proof?.expectedDistFingerprintMatch !== true || String(proof?.runtimeDistFingerprint || '').trim().toLowerCase() !== expectedDistFingerprint ? 'BROWSER_RUNTIME_DIST_FINGERPRINT_MISMATCH' : '')
+        || (result.error ? 'BROWSER_PROOF_RUNNER_EXECUTION_FAILED' : '')
+        || (result.status !== 0 ? 'BROWSER_PROOF_RUNNER_REJECTED' : '')
+        || 'BROWSER_PROOF_MACHINE_RESULT_INVALID'
+      ),
+      proof,
+      runnerStatus: Number.isInteger(result.status) ? result.status : null,
+      stderr: String(result.stderr || '').trim().slice(0, 1000),
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BROWSER_PROOF_CANONICAL_EVIDENCE_FAILED',
+      proof: null,
+      runnerStatus: null,
+      stderr: String(error?.message || error || '').trim().slice(0, 1000),
+    });
+  } finally {
+    if (temporaryDirectory) {
+      try { cleanupTempDir(temporaryDirectory); } catch {}
+    }
+  }
+}
+
+function legacyCodexDispatch(packet, integration, timestampUtc) {
+  try {
+    const dispatcher = dispatchQueuedCodexJob({ queueRecord: packet, integration, now: timestampUtc });
+    return { dispatcher, error: null };
+  } catch (error) {
+    return { dispatcher: null, error };
+  }
+}
+
 export async function dispatchExactHeadWindowsBrowserProof(command, {
   platform = process.platform,
   integration = null,
+  repositoryRoot = '',
   now = () => new Date().toISOString(),
   readPullRequestHead = readGitHubPullRequestIdentity,
   readMainHead = readGitHubMainHead,
   readLocalHead = readWindowsCheckoutHead,
   readMergeAncestry = readMergeCommitAncestry,
+  runNativeProof = runNativeExactHeadWindowsBrowserProof,
 } = {}) {
   if (platform !== 'win32') return { ok: false, blocker: 'WINDOWS_EXECUTION_SURFACE_REQUIRED' };
   const expectedHead = String(command.expectedHead || '').trim().toLowerCase();
   if (!EXACT_GIT_HEAD.test(expectedHead)) return blocked(command, 'EXPECTED_HEAD_INVALID');
+  const repoRoot = String(repositoryRoot || integration?.paths?.repoRoot || DEFAULT_REPOSITORY_ROOT).trim();
 
-  const pullRequest = normalizePullRequestIdentity(
-    await readPullRequestHead(Number(command.prNumber)),
-    'PR_IDENTITY_LOOKUP_FAILED',
-  );
+  const pullRequest = normalizePullRequestIdentity(await readPullRequestHead(Number(command.prNumber)), 'PR_IDENTITY_LOOKUP_FAILED');
   if (!pullRequest.ok) return blocked(command, pullRequest.blocker);
   const target = validateProofTarget(command, pullRequest);
   if (!target.ok) return blocked(command, target.blocker, target);
 
-  const activeIntegration = integration || createLocalCodexExecIntegration();
   let githubMainHead = '';
   let mergeCommitIncluded = false;
   if (target.proofTarget === WINDOWS_BROWSER_PROOF_TARGETS.MERGED_MAIN) {
     const main = normalizeHeadResult(await readMainHead(), 'GITHUB_MAIN_HEAD_LOOKUP_FAILED');
     if (!main.ok) return blocked(command, main.blocker, target);
     githubMainHead = main.head;
-    if (githubMainHead !== expectedHead) {
-      return blocked(command, 'GITHUB_MAIN_HEAD_MISMATCH', { ...target, githubMainHead });
-    }
-    const ancestry = await readMergeAncestry(
-      activeIntegration?.paths?.repoRoot,
-      target.mergeCommitHead,
-      expectedHead,
-    );
-    if (ancestry?.ok !== true) {
-      return blocked(command, String(ancestry?.blocker || 'MERGE_ANCESTRY_LOOKUP_FAILED'), {
-        ...target,
-        githubMainHead,
-      });
-    }
-    if (ancestry.included !== true) {
-      return blocked(command, 'PR_MERGE_NOT_IN_EXPECTED_MAIN', { ...target, githubMainHead });
-    }
+    if (githubMainHead !== expectedHead) return blocked(command, 'GITHUB_MAIN_HEAD_MISMATCH', { ...target, githubMainHead });
+    const ancestry = await readMergeAncestry(repoRoot, target.mergeCommitHead, expectedHead);
+    if (ancestry?.ok !== true) return blocked(command, String(ancestry?.blocker || 'MERGE_ANCESTRY_LOOKUP_FAILED'), { ...target, githubMainHead });
+    if (ancestry.included !== true) return blocked(command, 'PR_MERGE_NOT_IN_EXPECTED_MAIN', { ...target, githubMainHead });
     mergeCommitIncluded = true;
   }
-  const proofContext = {
-    ...target,
-    githubMainHead,
-    mergeCommitIncluded,
-  };
-  const checkout = normalizeHeadResult(
-    await readLocalHead(activeIntegration?.paths?.repoRoot),
-    'LOCAL_HEAD_LOOKUP_FAILED',
-  );
+  const proofContext = { ...target, githubMainHead, mergeCommitIncluded };
+  const checkout = normalizeHeadResult(await readLocalHead(repoRoot), 'LOCAL_HEAD_LOOKUP_FAILED');
   if (!checkout.ok) return blocked(command, checkout.blocker, proofContext);
-  if (checkout.head !== expectedHead) {
-    return blocked(command, 'EXPECTED_HEAD_MISMATCH', {
-      ...proofContext,
-      localHead: checkout.head,
-    });
-  }
+  if (checkout.head !== expectedHead) return blocked(command, 'EXPECTED_HEAD_MISMATCH', { ...proofContext, localHead: checkout.head });
 
   const timestampUtc = now();
   const packet = buildExactHeadWindowsBrowserProofPacket({
@@ -324,72 +447,106 @@ export async function dispatchExactHeadWindowsBrowserProof(command, {
     githubMainHead,
     mergeCommitIncluded,
   }, timestampUtc);
-  const pullRequestRecheck = normalizePullRequestIdentity(
-    await readPullRequestHead(Number(command.prNumber)),
-    'PR_IDENTITY_RECHECK_FAILED',
-  );
+
+  const pullRequestRecheck = normalizePullRequestIdentity(await readPullRequestHead(Number(command.prNumber)), 'PR_IDENTITY_RECHECK_FAILED');
   if (!pullRequestRecheck.ok) return blocked(command, pullRequestRecheck.blocker, { ...proofContext, localHead: checkout.head });
   const targetRecheck = validateProofTarget(command, pullRequestRecheck);
   if (!targetRecheck.ok) return blocked(command, targetRecheck.blocker, { ...targetRecheck, localHead: checkout.head });
-  if (JSON.stringify(targetRecheck) !== JSON.stringify(target)) {
-    return blocked(command, 'PR_IDENTITY_CHANGED_DURING_DISPATCH', { ...targetRecheck, localHead: checkout.head });
-  }
+  if (JSON.stringify(targetRecheck) !== JSON.stringify(target)) return blocked(command, 'PR_IDENTITY_CHANGED_DURING_DISPATCH', { ...targetRecheck, localHead: checkout.head });
+
   if (target.proofTarget === WINDOWS_BROWSER_PROOF_TARGETS.MERGED_MAIN) {
     const mainRecheck = normalizeHeadResult(await readMainHead(), 'GITHUB_MAIN_HEAD_RECHECK_FAILED');
     if (!mainRecheck.ok) return blocked(command, mainRecheck.blocker, { ...proofContext, localHead: checkout.head });
     if (mainRecheck.head !== githubMainHead || mainRecheck.head !== expectedHead) {
-      return blocked(command, 'GITHUB_MAIN_HEAD_CHANGED_DURING_DISPATCH', {
-        ...proofContext,
-        githubMainHead: mainRecheck.head,
-        localHead: checkout.head,
-      });
+      return blocked(command, 'GITHUB_MAIN_HEAD_CHANGED_DURING_DISPATCH', { ...proofContext, githubMainHead: mainRecheck.head, localHead: checkout.head });
     }
-    const ancestryRecheck = await readMergeAncestry(
-      activeIntegration?.paths?.repoRoot,
-      target.mergeCommitHead,
-      expectedHead,
-    );
+    const ancestryRecheck = await readMergeAncestry(repoRoot, target.mergeCommitHead, expectedHead);
     if (ancestryRecheck?.ok !== true || ancestryRecheck.included !== true) {
-      return blocked(command, ancestryRecheck?.ok === true
-        ? 'PR_MERGE_NOT_IN_EXPECTED_MAIN'
-        : String(ancestryRecheck?.blocker || 'MERGE_ANCESTRY_RECHECK_FAILED'), {
-        ...proofContext,
-        localHead: checkout.head,
-      });
+      return blocked(command, ancestryRecheck?.ok === true ? 'PR_MERGE_NOT_IN_EXPECTED_MAIN' : String(ancestryRecheck?.blocker || 'MERGE_ANCESTRY_RECHECK_FAILED'), { ...proofContext, localHead: checkout.head });
     }
   }
-  const checkoutRecheck = normalizeHeadResult(
-    await readLocalHead(activeIntegration?.paths?.repoRoot),
-    'LOCAL_HEAD_RECHECK_FAILED',
-  );
+
+  const checkoutRecheck = normalizeHeadResult(await readLocalHead(repoRoot), 'LOCAL_HEAD_RECHECK_FAILED');
   if (!checkoutRecheck.ok) return blocked(command, checkoutRecheck.blocker, { ...proofContext, localHead: checkout.head });
   if (checkoutRecheck.head !== checkout.head || checkoutRecheck.head !== expectedHead) {
-    return blocked(command, 'LOCAL_HEAD_CHANGED_DURING_DISPATCH', {
+    return blocked(command, 'LOCAL_HEAD_CHANGED_DURING_DISPATCH', { ...proofContext, localHead: checkoutRecheck.head });
+  }
+
+  // Production is deterministic-native first. An explicitly injected Codex integration is retained
+  // only for backwards-compatible callers/tests, and quota/capacity failure immediately reroutes
+  // to the same local proof without retrying Codex.
+  if (integration) {
+    const legacy = legacyCodexDispatch(packet, integration, timestampUtc);
+    const dispatchReceipt = legacy.dispatcher?.dispatchReceipt || null;
+    const codexOk = legacy.dispatcher?.finalVerdict === 'CODEX_JOB_DISPATCHED';
+    if (codexOk) {
+      return {
+        ok: true,
+        finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED',
+        blocker: '',
+        dispatchAccepted: dispatchReceipt?.accepted === true,
+        workerSpawned: dispatchReceipt?.workerSpawned === true,
+        lockReleased: dispatchReceipt?.lockReleased ?? null,
+        lockRelease: dispatchReceipt?.lockRelease || null,
+        taskId: legacy.dispatcher?.record?.jobId || packet.jobId,
+        prNumber: Number(command.prNumber),
+        expectedHead,
+        proofTarget: target.proofTarget,
+        pullRequestHead: target.pullRequestHead,
+        mergeCommitHead: target.mergeCommitHead,
+        githubMainHead,
+        mergeCommitIncluded,
+        localHead: checkoutRecheck.head,
+        proofScenario: String(command.proofScenario),
+        executionSurface: 'WINDOWS_BATTLE_BRIDGE_EDGE',
+        executionProvider: 'CODEX',
+        proofCompleted: false,
+        mergeAuthority: false,
+        sourceMutationAuthority: false,
+      };
+    }
+    const capacity = classifyCodexCapacityOutageV1({
+      blocker: legacy.dispatcher?.blocker || dispatchReceipt?.blocker || legacy.dispatcher?.reason || '',
+      error: legacy.error?.message || '',
+      receipt: dispatchReceipt,
+    });
+    if (!capacity.outage) {
+      return {
+        ...blocked(command, legacy.dispatcher?.blocker || dispatchReceipt?.blocker || legacy.dispatcher?.reason || legacy.error?.message || 'WINDOWS_BROWSER_PROOF_DISPATCH_FAILED', {
+          ...proofContext,
+          localHead: checkoutRecheck.head,
+        }),
+        dispatchAccepted: dispatchReceipt?.accepted === true,
+        workerSpawned: dispatchReceipt?.workerSpawned === true,
+        lockReleased: dispatchReceipt?.lockReleased ?? null,
+        lockRelease: dispatchReceipt?.lockRelease || null,
+        taskId: legacy.dispatcher?.record?.jobId || packet.jobId,
+      };
+    }
+  }
+
+  const native = await runNativeProof(command, {
+    ...proofContext,
+    localHead: checkoutRecheck.head,
+    repoRoot,
+  }, { repoRoot });
+  if (!native?.ok) {
+    return blocked(command, native?.blocker || 'WINDOWS_BROWSER_PROOF_NATIVE_FAILED', {
       ...proofContext,
       localHead: checkoutRecheck.head,
+      executionProvider: 'STEPHANOS_NATIVE',
+      codexRerouted: Boolean(integration),
+      proofCompleted: false,
+      nativeProof: native?.proof || null,
     });
   }
-  const dispatcher = dispatchQueuedCodexJob({
-    queueRecord: packet,
-    integration: activeIntegration,
-    now: timestampUtc,
-  });
-  const dispatchReceipt = dispatcher.dispatchReceipt || null;
-  const ok = dispatcher.finalVerdict === 'CODEX_JOB_DISPATCHED';
   return {
-    ok,
-    finalVerdict: ok ? 'WINDOWS_BROWSER_PROOF_DISPATCHED' : 'WINDOWS_BROWSER_PROOF_DISPATCH_BLOCKED',
-    blocker: ok ? '' : (
-      dispatcher.blocker
-      || dispatchReceipt?.blocker
-      || dispatcher.reason
-      || 'WINDOWS_BROWSER_PROOF_DISPATCH_FAILED'
-    ),
-    dispatchAccepted: dispatchReceipt?.accepted === true,
-    workerSpawned: dispatchReceipt?.workerSpawned === true,
-    lockReleased: dispatchReceipt?.lockReleased ?? null,
-    lockRelease: dispatchReceipt?.lockRelease || null,
-    taskId: dispatcher.record?.jobId || packet.jobId,
+    ok: true,
+    finalVerdict: 'WINDOWS_BROWSER_PROOF_DISPATCHED',
+    blocker: '',
+    dispatchAccepted: true,
+    workerSpawned: false,
+    taskId: createWindowsSafeBrowserProofJobId(command.requestId),
     prNumber: Number(command.prNumber),
     expectedHead,
     proofTarget: target.proofTarget,
@@ -400,6 +557,10 @@ export async function dispatchExactHeadWindowsBrowserProof(command, {
     localHead: checkoutRecheck.head,
     proofScenario: String(command.proofScenario),
     executionSurface: 'WINDOWS_BATTLE_BRIDGE_EDGE',
+    executionProvider: 'STEPHANOS_NATIVE',
+    codexRerouted: Boolean(integration),
+    proofCompleted: true,
+    nativeProof: native.proof || null,
     mergeAuthority: false,
     sourceMutationAuthority: false,
   };

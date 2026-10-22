@@ -28,6 +28,8 @@ import { refreshStephanosUi4173 } from './refresh-stephanos-ui-4173.mjs';
 export const POST_SYNC_REFRESH_RUNTIME_SCHEMA = 'stephanos.post-sync-runtime-refresh-runtime.v1';
 export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
+export const MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS = 90_000;
+export const MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_PATHS = 4000;
 const CONTROL_PLANE_TASK_IDS = new Set(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.id));
@@ -69,6 +71,8 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
+    vrAtlasProofScript: path.resolve(repoRoot, 'scripts', 'sovereign-commander-ui-runtime-proof.mjs'),
+    mailboxInstaller: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-command-mailbox.ps1'),
     receiptRelative: '',
   });
 }
@@ -92,6 +96,13 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
 }
 
 function parseJsonOutput(stdout) {
+  const full = String(stdout ?? '').trim();
+  if (full) {
+    try {
+      const value = JSON.parse(full);
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
+  }
   const lines = splitLines(stdout);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
@@ -136,17 +147,54 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         exactHeadProofOk,
       };
     },
+    proveVrAtlas({ afterHead, paths }) {
+      const result = fixedRun(process.execPath, [
+        paths.vrAtlasProofScript,
+        '--profile', 'vr-atlas-status-pills',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      if (!payload) {
+        return { ok: false, blocker: 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
+      const sourceHead = text(payload.sourceHead).toLowerCase();
+      const exactHeadProofOk = payload.exactHeadProofOk === true && sourceHead === text(afterHead).toLowerCase();
+      return {
+        ok: result.ok && payload.ok === true && exactHeadProofOk,
+        blocker: text(payload.blocker || (payload.ok === true ? '' : 'VR_ATLAS_BROWSER_PROOF_BLOCKED')),
+        sourceHead,
+        exactHeadProofOk,
+        profile: text(payload.profile),
+        evidenceHash: text(payload.evidenceHash),
+        screenshotCaptured: Boolean(payload.screenshotPath),
+        receiptCaptured: Boolean(payload.receiptPath),
+      };
+    },
     restartApprovedTarget({ target, afterHead, paths }) {
       if (!['backend', 'mission-worker'].includes(target)) return { ok: false, blocker: 'RUNTIME_TARGET_NOT_ALLOWLISTED', exactHeadProofOk: false, sourceHead: '' };
-      const result = fixedRun('powershell.exe', [
+      const restartArguments = [
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', paths.restartScript,
         '-Target', target,
         '-ExpectedHead', afterHead,
-      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 240_000 });
+      ];
+      let runtimeTimeoutMs = 240_000;
+      if (target === 'mission-worker') {
+        const restartDeadlineMs = Date.now() + MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS;
+        restartArguments.push('-DeadlineUtc', new Date(restartDeadlineMs).toISOString());
+        runtimeTimeoutMs = Math.max(
+          1,
+          restartDeadlineMs - Date.now() + MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS,
+        );
+      }
+      const result = fixedRun('powershell.exe', restartArguments, { cwd: paths.repoRoot, spawnSyncFn, timeout: runtimeTimeoutMs });
       const payload = parseJsonOutput(result.stdout);
-      if (!payload) return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      if (!payload) {
+        if (result.errorCode === 'ETIMEDOUT') {
+          return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT', exactHeadProofOk: false, sourceHead: '' };
+        }
+        return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
       return {
         ok: result.ok && payload.ok === true,
         blocker: text(payload.blocker),
@@ -164,6 +212,86 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         platform: process.platform,
         spawnSyncFn,
       });
+    },
+    refreshSovereignCommander({ afterHead, paths }) {
+      const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', runnerPath,
+        '-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const requiredCapabilityVersion = text(payload?.requiredCapabilityVersion);
+      const capabilityVersionAfter = text(payload?.capabilityVersionAfter);
+      const receiptValid = Boolean(
+        payload
+        && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+        && payload.taskName === 'Stephanos Sovereign Commander'
+        && payload.daemonHealthy === true
+        && payload.healthyAfter === true
+        && requiredCapabilityVersion
+        && capabilityVersionAfter === requiredCapabilityVersion
+        && payload.vendorMeterRequired === false
+        && payload.externalSaasRelayRequired === false
+        && payload.arbitraryShellAllowed === false
+        && payload.pcRestartAllowed === false
+        && payload.visiblePowerShellRequired === false
+      );
+      return {
+        ok: receiptValid && exactHeadProofOk,
+        blocker: !payload
+          ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
+          : !receiptValid
+            ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: receiptValid,
+        capabilityVersion: capabilityVersionAfter,
+        requiredCapabilityVersion,
+        watchdogExitStatus: result.status,
+        staleCapabilityRecycleRequested: payload?.staleCapabilityRecycleRequested === true,
+      };
+    },
+    restartGitHubMailbox({ afterHead, paths }) {
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', paths.mailboxInstaller,
+        '-StartNow',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const quiesceProofOk = payload?.quiesceAttempted === true
+        ? payload?.staleRunningInstanceQuiesced === true
+        : payload?.quiesceAttempted === false && payload?.staleRunningInstanceQuiesced === false;
+      const taskHealthy = payload?.installed === true
+        && payload?.startedNow === true
+        && quiesceProofOk;
+      return {
+        ok: result.ok && taskHealthy && exactHeadProofOk,
+        blocker: !result.ok
+          ? 'GITHUB_MAILBOX_RESTART_FAILED'
+          : !taskHealthy
+            ? 'GITHUB_MAILBOX_RESTART_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: result.ok && taskHealthy,
+        staleRunningInstanceQuiesced: payload?.staleRunningInstanceQuiesced === true,
+      };
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
@@ -317,8 +445,11 @@ export async function runBattleBridgePostSyncRefresh({
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
+        proveVrAtlas: ({ afterHead: head }) => adapter.proveVrAtlas({ afterHead: head, paths }),
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
+        restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {

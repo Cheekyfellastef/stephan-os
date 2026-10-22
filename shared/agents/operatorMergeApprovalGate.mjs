@@ -277,7 +277,7 @@ const PROTECTED_WORKFLOW_FINAL_POLICIES = Object.freeze({
     permissionSignatures: Object.freeze([
       'actions:read,checks:read,contents:read,pull-requests:read',
       'actions:read,checks:read,contents:read,pull-requests:read',
-      'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+      'actions:read,checks:read,contents:read,deployments:read,issues:read,pull-requests:read',
       'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
       'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
     ]),
@@ -429,6 +429,7 @@ function validateProtectedWorkflowYaml(path, source) {
       'independent_review_artifact_id',
       'independent_review_artifact_digest',
       'independent_review_payload_sha256',
+      'authorization_comment_id',
     ];
     const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
     if (dispatchInputs.length !== requiredInputs.length

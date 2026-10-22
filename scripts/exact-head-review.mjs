@@ -6,6 +6,47 @@ import path from 'node:path';
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const MAX_PATCH_BYTES = 2_000_000;
 
+
+function addedPatchCode(patch) {
+  return String(patch ?? '')
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+    .map((line) => line.slice(1))
+    .join('\n');
+}
+
+function maskQuotedLiterals(source) {
+  let output = '';
+  let quote = '';
+  let escaped = false;
+  for (const char of String(source ?? '')) {
+    if (quote) {
+      output += char === '\n' ? '\n' : ' ';
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === quote) {
+        quote = '';
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      output += ' ';
+      continue;
+    }
+    output += char;
+  }
+  return output;
+}
+
+function dynamicExecutionEvidence(patch) {
+  const added = addedPatchCode(patch)
+    .replace(/(^|[=(:,\[]\s*)\/(?:\\.|[^/\n])+\/[dgimsuvy]*\.exec\s*\(/gm, '$1REGEXP_EXEC(');
+  return maskQuotedLiterals(added);
+}
+
 export function reviewExactHead({ repository, prNumber, baseSha, headSha, changedFiles, patch }) {
   const findings = [];
 
@@ -51,7 +92,8 @@ export function reviewExactHead({ repository, prNumber, baseSha, headSha, change
     if (/^\+\s*(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})\s*$/m.test(patch)) {
       add('P0', 'SECRET_PATTERN', 'Potential credential or private key added.');
     }
-    if (/^\+.*(?:\beval\s*\(|\bnew\s+Function\s*\(|\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|shell:\s*true)/m.test(patch)) {
+    const executableEvidence = dynamicExecutionEvidence(patch);
+    if (/(?:\beval\s*\(|\bnew\s+Function\s*\(|\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|child_process\.(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(|shell:\s*true)/m.test(executableEvidence)) {
       add('P2', 'DYNAMIC_EXECUTION', 'New dynamic or shell execution requires escalated review.');
     }
   }

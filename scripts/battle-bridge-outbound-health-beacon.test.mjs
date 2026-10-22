@@ -6,10 +6,16 @@ import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER,
   BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
   MAILBOX_INGRESS_LOOKBACK_MS,
+  MAILBOX_INGRESS_MAX_PAGES,
+  MAILBOX_INGRESS_PAGE_SIZE,
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
+  projectControllerLaneBeaconFacts,
   projectMailboxIngressLiveness,
+  readRecentMailboxComments,
+  projectMailboxPulseFacts,
+  projectSovereignRepairBeaconFacts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -41,7 +47,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 1507,
+      issueNumber: 3149,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -65,7 +71,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 1507,
+      issueNumber: 3149,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
@@ -201,6 +207,56 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   assert.equal(record.freshness, 'DEGRADED');
 });
 
+test('mailbox surface publishes bounded Sync pulse telemetry without exposing private fields', () => {
+  const pulseRecord = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    statusId: 'battle-bridge-sync-and-refresh-current',
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+      detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      privatePath: 'C:/private',
+    },
+  };
+  assert.equal(projectMailboxPulseFacts({
+    ...pulseRecord,
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    schema: undefined,
+    statusId: undefined,
+  }).observed, true);
+  assert.deepEqual(projectMailboxPulseFacts(pulseRecord), {
+    observed: true,
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-02T17:40:05.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-10-02T17:40:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: { state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF', pendingRequestCount: 0 },
+    syncAndRefreshRecord: pulseRecord,
+  });
+  const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(mailbox.mailboxPulseFacts.observed, true);
+  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(mailbox.mailboxPulseFacts.detailCode, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.doesNotMatch(JSON.stringify(mailbox.mailboxPulseFacts), /C:\/private/);
+});
+
 test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
   const ingress = projectMailboxIngressLiveness([commandComment(), receiptComment()], {
     sourceHead: HEAD,
@@ -209,7 +265,7 @@ test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () 
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
 
-test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+test('expired unaccepted exact-head command no longer blocks the live bounded lookback', () => {
   assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
   const ingress = projectMailboxIngressLiveness([
     commandComment({
@@ -222,9 +278,9 @@ test('expired unaccepted exact-head command remains blocked across the live boun
     now: new Date('2026-08-21T02:03:50.405Z'),
   });
   assert.deepEqual(ingress, {
-    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-    pendingRequestCount: 1,
+    state: 'UNPROVEN',
+    blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
+    pendingRequestCount: 0,
   });
 });
 
@@ -376,6 +432,81 @@ test('qualified fixed self-heal can be identified but never authorized by the be
   assert.equal(record.processRestartAllowed, false);
 });
 
+
+test('outbound beacon exposes controller lane proof without changing telemetry surface count', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T16:00:30.000Z'),
+    statusRecords: {
+      controllerLaneStatus: {
+        statusId: 'controller-lane-status-current',
+        controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+        timestampUtc: '2026-10-06T16:00:00.000Z',
+        controllerLaneStatus: {
+          schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+          ok: true,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          sourceMutationAllowed: false,
+          mergeAuthority: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
+          capturedAtUtc: '2026-10-06T16:00:00.000Z',
+          physical: {
+            expected: 5,
+            building: 0,
+            amber: 0,
+            red: 1,
+            unknown: 0,
+            allCurrent: true,
+            allObservedEnabled: true,
+            finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+            controllers: [{
+              controllerId: 'octopus-controller',
+              freshness: 'CURRENT',
+              activityState: 'IDLE',
+              trafficLight: 'RED',
+              materialLaneCount: 0,
+              activeLaneCount: 0,
+              parkedLaneCount: 0,
+              safeEligibleWorkRemaining: 2,
+              blocker: 'CONTROLLER_NO_MATERIAL_PROGRESS',
+            }],
+          },
+          logical: {
+            current: true,
+            valid: true,
+            physicalControllerCount: 5,
+            total: 4,
+            active: 0,
+            tracking: 4,
+            parked: 0,
+            retired: 0,
+            selectedForAdmission: 1,
+            finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+            blockers: [],
+          },
+          lanes: {
+            targetMaterialLanes: 15,
+            activeMaterialLaneCount: 0,
+            activeLaneClaimCount: 0,
+            freeTargetLaneSlots: 15,
+            runnableBacklogCount: 2,
+            parkedPhysicalLaneCount: 0,
+            refillHealth: 'RED',
+            refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+          },
+        },
+      },
+    },
+  });
+  assert.equal(record.controllerLaneStatus.trafficLight, 'RED');
+  assert.equal(record.controllerLaneStatus.physical.controllers[0].controllerId, 'octopus-controller');
+  assert.equal(record.controllerLaneStatus.lanes.runnableBacklogCount, 2);
+  assert.equal(record.surfaces.some((surface) => surface.id === 'controllerLaneStatus'), false);
+  assert.equal(record.telemetry.requiredSurfaceCount, 7);
+});
+
 test('beacon body is one bounded marker plus json record without secret-bearing material', () => {
   const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
   const body = buildBattleBridgeOutboundBeaconBody(record);
@@ -386,4 +517,593 @@ test('beacon body is one bounded marker plus json record without secret-bearing 
 
 test('invalid source head fails closed', () => {
   assert.throws(() => buildBattleBridgeOutboundBeacon({ sourceHead: 'not-a-head' }), /OUTBOUND_BEACON_SOURCE_HEAD_INVALID/);
+});
+
+test('mailbox ingress observation walks bounded newest pages instead of buffering the whole issue', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const comments = Array.from({ length: 75 }, (_, index) => ({
+    id: index + 1,
+    created_at: new Date(Date.parse('2026-08-20T22:30:00.000Z') + index * 5 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: index === 74 ? commandComment({ requestId: 'bounded-page-probe-0001' }).body : 'noise',
+  }));
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: comments.length }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(comments.slice(start, start + perPage)) };
+  };
+
+  const result = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize: 25,
+    maxPages: 4,
+  });
+
+  assert.ok(result.length > 0);
+  assert.ok(result.every((comment) => Date.parse(comment.created_at) >= Date.parse('2026-08-21T00:00:00.000Z')));
+  assert.equal(calls.some((args) => args.includes('--paginate')), false);
+  assert.equal(calls.some((args) => args.includes('--slurp')), false);
+  assert.ok(calls.length <= 7);
+});
+
+test('mailbox ingress observation fails closed when the four-hour window exceeds bounded page coverage', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const total = MAILBOX_INGRESS_PAGE_SIZE * (MAILBOX_INGRESS_MAX_PAGES + 2);
+  const recent = Array.from({ length: total }, (_, index) => ({
+    id: index + 1,
+    created_at: new Date(Date.parse('2026-08-21T03:00:00.000Z') + index * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const runCommand = (_exe, args) => {
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) return { ok: true, stdout: JSON.stringify({ comments: total }) };
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(recent.slice(start, start + perPage)) };
+  };
+
+  assert.throws(
+    () => readRecentMailboxComments('C:/repo', observedAt, { runCommand }),
+    /OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW/,
+  );
+});
+
+test('mailbox ingress tail probe includes a receipt posted after an exact-multiple comment count snapshot', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const pageSize = 25;
+  const command = commandComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:20:00.000Z',
+    expiresAt: '2026-08-21T05:00:00.000Z',
+  });
+  const receipt = receiptComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:21:00.000Z',
+  });
+  const filler = Array.from({ length: 49 }, (_, index) => ({
+    id: index + 10,
+    created_at: new Date(Date.parse('2026-08-20T23:30:00.000Z') + index * 4 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const snapshotComments = [...filler, { ...command, id: 1000 }];
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: 50 }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    if (page === 3) {
+      const pageThreeReads = calls.filter((call) => String(call[1] || '').includes('page=3')).length;
+      return { ok: true, stdout: JSON.stringify(pageThreeReads >= 2 ? [{ ...receipt, id: 2000 }] : []) };
+    }
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
+  };
+
+  const comments = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize,
+    maxPages: 4,
+  });
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: observedAt,
+    graceMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(comments.some((comment) => comment.id === 2000), true);
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+test('mailbox ingress tail reprobe includes a receipt appended to the metadata-derived last page', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const pageSize = 25;
+  const command = commandComment({
+    requestId: 'tail-fill-probe-0001',
+    createdAt: '2026-08-21T03:20:00.000Z',
+    expiresAt: '2026-08-21T05:00:00.000Z',
+  });
+  const receipt = receiptComment({
+    requestId: 'tail-fill-probe-0001',
+    createdAt: '2026-08-21T03:21:00.000Z',
+  });
+  const filler = Array.from({ length: 48 }, (_, index) => ({
+    id: index + 10,
+    created_at: new Date(Date.parse('2026-08-20T23:30:00.000Z') + index * 4 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const snapshotComments = [...filler, { ...command, id: 1000 }];
+  let pageTwoReads = 0;
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: 49 }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    if (page === 2) {
+      pageTwoReads += 1;
+      const nextComments = pageTwoReads >= 2
+        ? [...snapshotComments, { ...receipt, id: 2000 }]
+        : snapshotComments;
+      return { ok: true, stdout: JSON.stringify(nextComments.slice(start, start + perPage)) };
+    }
+    return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
+  };
+
+  const comments = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize,
+    maxPages: 4,
+  });
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: observedAt,
+    graceMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(pageTwoReads >= 2, true);
+  assert.equal(comments.some((comment) => comment.id === 2000), true);
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+
+test('fresh exact-head Sovereign repair report projects GREEN proof', () => {
+  const report = {
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'READY',
+    outcome: 'HEALTHY',
+    cycleId: 'cycle-proof-001',
+    sourceHead: HEAD,
+    detectedFaults: [],
+    actions: [
+      { actionId: 'status-stephanos-core-daemon', ok: true, finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS', blocker: '' },
+    ],
+    verification: {
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      heartbeatFresh: true,
+      busyGraceActive: false,
+      heartbeatAgeSeconds: 2,
+    },
+  };
+  const projected = projectSovereignRepairBeaconFacts(
+    report,
+    HEAD,
+    Date.parse('2026-10-05T22:30:30.000Z'),
+  );
+  assert.equal(projected.trafficLight, 'GREEN');
+  assert.equal(projected.state, 'HEALTHY');
+  assert.equal(projected.exactHeadMatch, true);
+  assert.equal(projected.verification.awake, true);
+  assert.equal(projected.finalVerdict, 'SOVEREIGN_REPAIR_PROOF_GREEN');
+});
+
+test('Sovereign repair proof never paints missing stale wrong-head or blocked truth green', () => {
+  const nowMs = Date.parse('2026-10-05T22:30:30.000Z');
+  const base = {
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'READY',
+    outcome: 'HEALTHY',
+    cycleId: 'cycle-proof-002',
+    sourceHead: HEAD,
+    detectedFaults: [],
+    actions: [],
+    verification: {},
+  };
+  assert.equal(projectSovereignRepairBeaconFacts(null, HEAD, nowMs).trafficLight, 'GREY');
+  assert.equal(projectSovereignRepairBeaconFacts(
+    { ...base, timestampUtc: '2026-10-05T22:20:00.000Z' },
+    HEAD,
+    nowMs,
+  ).trafficLight, 'AMBER');
+  assert.equal(projectSovereignRepairBeaconFacts(
+    { ...base, sourceHead: 'b'.repeat(40) },
+    HEAD,
+    nowMs,
+  ).trafficLight, 'AMBER');
+  const blocked = projectSovereignRepairBeaconFacts({
+    ...base,
+    status: 'ATTENTION_REQUIRED',
+    outcome: 'BLOCKED',
+    detectedFaults: ['BACKEND_8787_UNHEALTHY_AFTER_REPAIR'],
+  }, HEAD, nowMs);
+  assert.equal(blocked.trafficLight, 'RED');
+  assert.equal(blocked.blocker, 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR');
+});
+
+test('Sovereign repair proof is bounded and strips unsafe path-like material', () => {
+  const projected = projectSovereignRepairBeaconFacts({
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'ATTENTION_REQUIRED',
+    outcome: 'BLOCKED',
+    cycleId: 'cycle-proof-003',
+    sourceHead: HEAD,
+    detectedFaults: ['C:/Users/private/token.txt', 'SAFE_BLOCKER'],
+    actions: [{
+      actionId: 'repair-step',
+      ok: false,
+      finalVerdict: 'BLOCKED',
+      blocker: 'C:/private/path',
+    }],
+    verification: {},
+  }, HEAD, Date.parse('2026-10-05T22:30:30.000Z'));
+  const serialized = JSON.stringify(projected);
+  assert.deepEqual(projected.detectedFaults, ['SAFE_BLOCKER']);
+  assert.equal(projected.actions[0].blocker, '');
+  assert.doesNotMatch(serialized, /C:\/|C:\\\\|private\/path|token\.txt/i);
+  assert.equal(projected.rawPathsReturned, false);
+  assert.equal(projected.secretMaterialIncluded, false);
+});
+
+
+test('controller lane proof exposes bounded red physical and logical blockers without paths', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      secretMaterialIncluded: false,
+      unknownMeansGreen: false,
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+      physical: {
+        expected: 5,
+        building: 0,
+        amber: 0,
+        red: 1,
+        unknown: 0,
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+        controllers: [
+          {
+            controllerId: 'controller-1',
+            freshness: 'CURRENT',
+            activityState: 'IDLE',
+            trafficLight: 'RED',
+            materialLaneCount: 0,
+            activeLaneCount: 0,
+            parkedLaneCount: 0,
+            safeEligibleWorkRemaining: 3,
+            blocker: 'CONTROLLER_HEARTBEAT_STALE',
+          },
+          {
+            controllerId: 'controller-2',
+            freshness: 'CURRENT',
+            activityState: 'IDLE',
+            trafficLight: 'AMBER',
+            materialLaneCount: 0,
+            activeLaneCount: 0,
+            parkedLaneCount: 0,
+            safeEligibleWorkRemaining: 0,
+            blocker: 'C:/private/path',
+          },
+        ],
+      },
+      logical: {
+        current: true,
+        valid: false,
+        physicalControllerCount: 5,
+        total: 12,
+        active: 0,
+        tracking: 12,
+        parked: 0,
+        retired: 0,
+        selectedForAdmission: 1,
+        finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_HOLD',
+        blockers: ['MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING'],
+      },
+      lanes: {
+        targetMaterialLanes: 15,
+        activeMaterialLaneCount: 0,
+        activeLaneClaimCount: 0,
+        freeTargetLaneSlots: 15,
+        runnableBacklogCount: 3,
+        parkedPhysicalLaneCount: 0,
+        refillHealth: 'RED',
+        refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+      },
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+
+  assert.equal(projected.available, true);
+  assert.equal(projected.trafficLight, 'RED');
+  assert.equal(projected.physical.red, 1);
+  assert.equal(projected.physical.controllers[0].controllerId, 'controller-1');
+  assert.equal(projected.physical.controllers[0].blocker, 'CONTROLLER_HEARTBEAT_STALE');
+  assert.equal(projected.physical.controllers[1].blocker, '');
+  assert.equal(projected.logical.valid, false);
+  assert.deepEqual(projected.logical.blockers, ['MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING']);
+  assert.equal(projected.lanes.runnableBacklogCount, 3);
+  assert.equal(projected.lanes.freeTargetLaneSlots, 15);
+  assert.ok(projected.attentionBlockers.includes('CONTROLLER_HEARTBEAT_STALE'));
+  assert.ok(projected.attentionBlockers.includes('MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING'));
+  assert.equal(projected.sourceHeadBound, false);
+  assert.equal(projected.exactHeadMatch, null);
+  assert.equal(projected.unknownMeansGreen, false);
+  assert.doesNotMatch(JSON.stringify(projected), /C:\/private|private\/path/i);
+});
+
+test('controller lane proof fails closed when nested authority contract is incomplete', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+  assert.equal(projected.available, false);
+  assert.equal(projected.state, 'UNPROVEN');
+  assert.equal(projected.blocker, 'CONTROLLER_LANE_STATUS_CONTRACT_INVALID');
+});
+
+test('red controller lane proof degrades canonical beacon summary and answerability', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T16:00:30.000Z'),
+    statusRecords: {
+      controllerLaneStatus: {
+        statusId: 'controller-lane-status-current',
+        controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+        timestampUtc: '2026-10-06T16:00:00.000Z',
+        controllerLaneStatus: {
+          schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+          ok: true,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          sourceMutationAllowed: false,
+          mergeAuthority: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
+          capturedAtUtc: '2026-10-06T16:00:00.000Z',
+          physical: { expected: 5, building: 0, amber: 0, red: 1, unknown: 0, allCurrent: true, allObservedEnabled: true, finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED', controllers: [{ controllerId: 'octopus-controller', freshness: 'CURRENT', activityState: 'IDLE', trafficLight: 'RED', materialLaneCount: 0, activeLaneCount: 0, parkedLaneCount: 0, safeEligibleWorkRemaining: 1, blocker: 'CONTROLLER_NO_MATERIAL_PROGRESS' }] },
+          logical: { current: true, valid: true, physicalControllerCount: 5, total: 1, active: 0, tracking: 1, parked: 0, retired: 0, selectedForAdmission: 1, finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', blockers: [] },
+          lanes: { targetMaterialLanes: 15, activeMaterialLaneCount: 0, activeLaneClaimCount: 0, freeTargetLaneSlots: 15, runnableBacklogCount: 1, parkedPhysicalLaneCount: 0, refillHealth: 'RED', refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED' },
+        },
+      },
+    },
+  });
+  assert.equal(record.freshness, 'DEGRADED');
+  assert.equal(record.completeStateAnswerable, false);
+  assert.ok(record.blockers.includes('CONTROLLER_NO_MATERIAL_PROGRESS'));
+  assert.ok(record.blockerCount > 0);
+});
+
+test('controller lane proof never paints fresh but unbound green status green', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      secretMaterialIncluded: false,
+      unknownMeansGreen: false,
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+      physical: {
+        expected: 5,
+        building: 0,
+        amber: 0,
+        red: 0,
+        unknown: 0,
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_READY',
+        controllers: [],
+      },
+      logical: {
+        current: true,
+        valid: true,
+        physicalControllerCount: 5,
+        total: 0,
+        active: 0,
+        tracking: 0,
+        parked: 0,
+        retired: 0,
+        selectedForAdmission: 0,
+        finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+        blockers: [],
+      },
+      lanes: {
+        targetMaterialLanes: 15,
+        activeMaterialLaneCount: 0,
+        activeLaneClaimCount: 0,
+        freeTargetLaneSlots: 15,
+        runnableBacklogCount: 0,
+        parkedPhysicalLaneCount: 0,
+        refillHealth: 'GREEN',
+        refillState: 'NO_SAFE_ELIGIBLE_WORK_REPORTED',
+      },
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+  assert.equal(projected.trafficLight, 'AMBER');
+  assert.equal(projected.finalVerdict, 'CONTROLLER_LANE_PROOF_UNPROVEN');
+  assert.equal(projected.sourceHeadBound, false);
+});
+
+
+test('outbound beacon exposes Sovereign repair proof without changing telemetry surface count', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-05T22:30:30.000Z'),
+    statusRecords: {
+      sovereignRepair: {
+        reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+        statusId: 'sovereign-commander-repair-current',
+        timestampUtc: '2026-10-05T22:30:00.000Z',
+        status: 'READY',
+        outcome: 'HEALTHY',
+        cycleId: 'cycle-proof-004',
+        sourceHead: HEAD,
+        detectedFaults: [],
+        actions: [],
+        verification: { readiness: 'READY', wakeState: 'AWAKE', awake: true, heartbeatFresh: true },
+      },
+    },
+  });
+  assert.equal(record.sovereignRepair.trafficLight, 'GREEN');
+  assert.equal(record.sovereignRepair.outcome, 'HEALTHY');
+  assert.equal(record.surfaces.some((surface) => surface.id === 'sovereignRepair'), false);
+  assert.equal(record.telemetry.requiredSurfaceCount, 7);
+});
+
+
+test('beacon projects bounded current-head autonomy and Octopus grant truth without raw internals', () => {
+  const now = new Date('2026-10-06T12:10:00.000Z');
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now,
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:09:55.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+      flywheelCycleRunning: false,
+      flywheelLastStatus: 'READY',
+      flywheelLastAction: 'REFILL',
+      flywheelLastBlockerCount: 1,
+      octopusBuildVerdict: 'STALLED_WITH_CAPACITY',
+      octopusNeedsRepair: true,
+      octopusMaterialActionsLastCycle: 0,
+      octopusEligibleWorkRemaining: 4,
+      octopusProvenSafeFreeLanes: 11,
+      octopusSelfHealAttemptCount: 3,
+      octopusSelfHealLastVerdict: 'OCTOPUS_SELF_HEAL_ACTION_BLOCKED',
+      octopusSelfHealLastBlocker: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+      octopusSelfHealControlPlaneEscalationCount: 1,
+      refillFinalVerdict: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+      refillSafeEligibleWorkRemaining: 4,
+      refillMaterialActionsSucceeded: 0,
+      logicalLaneTruth: 'CURRENT',
+      logicalActiveLaneCount: 0,
+      logicalSelectedForAdmissionCount: 4,
+      secret: 'MUST_NOT_ESCAPE',
+      arbitraryPath: 'C:\\secret\\path',
+    },
+  });
+  assert.equal(record.autonomy.state, 'CURRENT');
+  assert.equal(record.autonomy.exactHeadMatch, true);
+  assert.equal(record.autonomy.daemonHealthy, true);
+  assert.equal(record.autonomy.octopusBuildVerdict, 'STALLED_WITH_CAPACITY');
+  assert.equal(record.autonomy.octopusEligibleWorkRemaining, 4);
+  assert.equal(record.autonomy.octopusProvenSafeFreeLanes, 11);
+  assert.equal(record.autonomy.octopusSelfHealLastBlocker, 'CONTROLLER_FLEET_ATTENTION_REQUIRED');
+  assert.equal(record.autonomy.refillMaterialActionsSucceeded, 0);
+  assert.equal(record.autonomy.logicalSelectedForAdmissionCount, 4);
+  const body = buildBattleBridgeOutboundBeaconBody(record);
+  assert.doesNotMatch(body, /MUST_NOT_ESCAPE/);
+  assert.doesNotMatch(body, /secret\\\\path/);
+});
+
+test('beacon marks autonomy stale or head-mismatched instead of painting it green', () => {
+  const stale = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:00:00.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(stale.autonomy.state, 'STALE');
+
+  const mismatch = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:09:59.000Z',
+      sourceHead: 'b'.repeat(40),
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(mismatch.autonomy.state, 'HEAD_MISMATCH');
+  assert.equal(mismatch.autonomy.exactHeadMatch, false);
+});
+
+test('beacon keeps missing core autonomy evidence explicitly unproven', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: null,
+  });
+  assert.equal(record.autonomy.observed, false);
+  assert.equal(record.autonomy.state, 'UNPROVEN');
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_MISSING');
+});
+
+test('beacon fails closed on materially future-dated core heartbeat', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:20:01.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(record.autonomy.observed, true);
+  assert.equal(record.autonomy.state, 'STALE');
+  assert.equal(record.autonomy.ageMs, null);
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_FUTURE_DATED');
 });

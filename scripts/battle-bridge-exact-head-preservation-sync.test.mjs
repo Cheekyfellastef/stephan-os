@@ -21,6 +21,7 @@ function successfulSync(afterHead = HEAD) {
       afterHead,
       preservation: {
         ok: true,
+        fileMovePerformed: true,
         receipt: {
           itemCount: 6,
           allHashesVerified: true,
@@ -45,6 +46,7 @@ test('exact-head adapter binds canonical preservation command before execution',
   assert.equal(result.afterHead, HEAD);
   assert.equal(result.expectedHead, HEAD);
   assert.equal(result.exactHeadBound, true);
+  assert.equal(result.fileMovePerformed, true);
   assert.deepEqual(observed, {
     operation: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_OPERATION,
     requestId: `tailscale-bootstrap-${HEAD.slice(0, 12)}`,
@@ -75,7 +77,7 @@ test('mismatched post-sync head cannot produce an accepted bootstrap proof', asy
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'EXACT_HEAD_PRESERVATION_SYNC_INVALID');
-  assert.equal(result.fileMovePerformed, false);
+  assert.equal(result.fileMovePerformed, true);
   assert.equal(result.destructiveCleanupPerformed, false);
 });
 

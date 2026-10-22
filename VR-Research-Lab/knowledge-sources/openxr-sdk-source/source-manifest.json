@@ -19,5 +19,16 @@
     "isolated_ephemeral_clone_for_analysis": true,
     "selected_source_copy_with_notices": true,
     "binary_execution": false
+  },
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "3ed64d0f9bb680f24b80a085091e5c8fab38f7b7",
+    "commits_ahead_of_registered_snapshot": 5,
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "khronos-openxr-sdk-source-current",
+    "local_cache_allowed": true
   }
 }

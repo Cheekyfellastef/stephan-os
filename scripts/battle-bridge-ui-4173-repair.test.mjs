@@ -47,6 +47,15 @@ test('fixture READY does not start or plan start', () => {
   assert.match(result.blockers.map((b) => b.id).join(','), /stephanos-ui-already-ready/);
 });
 
+test('fixture READY with stale exact-head proof plans bounded 4173 restart', () => {
+  const servedRuntimeProof = { ready: false, expectedHead: EXACT_HEAD, gitCommit: 'b'.repeat(40) };
+  const result = evaluateUi4173Repair({ readinessReport: report({ ui: true, verdict: 'ready' }), dryRun: true, servedRuntimeProof });
+  assert.equal(result.allowedToStart, true);
+  assert.equal(result.staleServedRuntime, true);
+  assert.equal(result.action, 'dry-run-plan-stale-ui-4173-restart');
+  assert.equal(result.authority.killsProcesses, false);
+});
+
 test('fixture STALE_WORKSPACE blocks start', () => {
   const result = evaluateUi4173Repair({ readinessReport: report({ workspace: false, stale: ['proof stale'] }), dryRun: true });
   assert.equal(result.allowedToStart, false);
@@ -239,6 +248,12 @@ test('Windows start uses controlled cmd.exe wrapper with fixed args for the cano
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.cwd, process.cwd());
   assert.equal(calls[0].options.env.STEPHANOS_EXPECTED_HEAD, EXACT_HEAD);
+  assert.equal(calls[0].options.detached, true);
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.stdio[0], 'ignore');
+  assert.equal(Number.isInteger(calls[0].options.stdio[1]), true);
+  assert.equal(Number.isInteger(calls[0].options.stdio[2]), true);
+  assert.notEqual(calls[0].options.stdio[1], calls[0].options.stdio[2]);
   const output = json();
   assert.equal(output.invocation.kind, 'CONTROLLED_WINDOWS_NPM_WRAPPER');
   assert.equal(output.invocation.command, 'cmd.exe');

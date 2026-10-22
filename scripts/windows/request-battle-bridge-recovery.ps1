@@ -37,6 +37,29 @@ $wscriptPath = 'C:\Windows\System32\wscript.exe'
 $authorityHead = ''
 $hostProofConsumed = $false
 
+function Resolve-TaskPrincipalSid {
+    param([string]$PrincipalUserId)
+
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return '' }
+    try {
+        if ($PrincipalUserId -match '^S-\d-\d+(?:-\d+)+$') {
+            return ([System.Security.Principal.SecurityIdentifier]::new($PrincipalUserId)).Value
+        }
+        return ([System.Security.Principal.NTAccount]::new($PrincipalUserId)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        return ''
+    }
+}
+
+function Test-TaskPrincipalMatchesCurrentUser {
+    param([string]$PrincipalUserId)
+
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentSid = if ($identity -and $identity.User) { [string]$identity.User.Value } else { '' }
+    $principalSid = Resolve-TaskPrincipalSid -PrincipalUserId $PrincipalUserId
+    return (-not [string]::IsNullOrWhiteSpace($currentSid) -and -not [string]::IsNullOrWhiteSpace($principalSid) -and [string]::Equals($principalSid, $currentSid, [System.StringComparison]::Ordinal))
+}
+
 function Assert-NoReparseAncestor {
     param([string]$TargetPath)
     $cursor = [System.IO.Path]::GetFullPath($TargetPath)
@@ -125,6 +148,22 @@ function Get-CanonicalMailboxReceiptFilename {
     $hasher = [System.Security.Cryptography.SHA256]::Create()
     try { $digest = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-','').ToLowerInvariant().Substring(0,32) } finally { $hasher.Dispose() }
     return "_request-$digest.json"
+}
+
+function Get-CanonicalMailboxIssue {
+    $authorityPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'shared\agents\canonicalMailboxAuthorityV1.mjs'))
+    Assert-NoReparseAncestor -TargetPath $authorityPath
+    if (-not (Test-Path -LiteralPath $authorityPath -PathType Leaf)) { throw 'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID' }
+    $authorityBaseline = Get-PathIdentityBaseline -TargetPaths @($authorityPath)
+    $authoritySource = Get-Content -LiteralPath $authorityPath -Raw
+    Assert-StablePathBaseline -Baseline $authorityBaseline
+    $declarations = [regex]::Matches($authoritySource, '(?m)^\s*export\s+const\s+CANONICAL_MAILBOX_ISSUE\b')
+    $assignments = [regex]::Matches($authoritySource, '(?m)^\s*export\s+const\s+CANONICAL_MAILBOX_ISSUE\s*=\s*([0-9]+)\s*;\s*$')
+    $canonicalIssue = 0
+    if ($declarations.Count -ne 1 -or $assignments.Count -ne 1
+        -or -not [int]::TryParse($assignments[0].Groups[1].Value, [ref]$canonicalIssue)
+        -or $canonicalIssue -le 0) { throw 'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID' }
+    return $canonicalIssue
 }
 
 Assert-NoReparseAncestor -TargetPath $workspaceRoot
@@ -261,12 +300,13 @@ if ($Route -eq 'AUTHENTICATED_BREAK_GLASS') {
     $authorityTimeText = if ([string]$mailboxReceipt.state -eq 'DONE') { [string]$mailboxReceipt.completedAt } else { [string]$mailboxReceipt.acceptedAt }
     $authorityTime = [DateTimeOffset]::Parse($authorityTimeText)
     $canonicalReceiptFilename = Get-CanonicalMailboxReceiptFilename -RequestId ([string]$mailboxReceipt.requestId)
+    $canonicalMailboxIssue = Get-CanonicalMailboxIssue
     $sourceControlExecutable = 'C:\Program Files\Git\cmd\git.exe'
     if (-not (Test-Path -LiteralPath $sourceControlExecutable -PathType Leaf)) { throw 'RECOVERY_CANONICAL_GIT_EXECUTABLE_MISSING' }
     $currentSourceHead = [string](& $sourceControlExecutable -C $repoRoot rev-parse HEAD)
     if ([string]$mailboxReceipt.schemaVersion -ne 'stephanos.battle-bridge-github-command-receipt.v1'
         -or [string]$mailboxReceipt.requestId -ne $EvidenceSubject -or [string]$mailboxReceipt.operation -ne 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'
-        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne 1507
+        -or [string]$mailboxReceipt.repository -ne 'Cheekyfellastef/stephan-os' -or [int]$mailboxReceipt.issueNumber -ne $canonicalMailboxIssue
         -or [string]$mailboxReceipt.state -notin @('ACCEPTED','DONE') -or $authorityTime -lt [DateTimeOffset]::UtcNow.AddMinutes(-5)
         -or $authorityTime -gt [DateTimeOffset]::UtcNow.AddSeconds(30) -or [string]$mailboxReceipt.expectedHead -notmatch '^[0-9a-f]{40}$'
         -or -not [string]::Equals((Split-Path -Leaf $mailboxReceiptPath), $canonicalReceiptFilename, [System.StringComparison]::Ordinal)
@@ -286,9 +326,8 @@ if (-not [string]::Equals($taskExecute, $wscriptPath, [System.StringComparison]:
     -or -not [string]::Equals(([string]$taskAction.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'RECOVERY_MESH_TASK_ACTION_INVALID'
 }
-$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-if (-not [string]::Equals([string]$task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase)
-    -or [string]$task.Principal.LogonType -ne 'Interactive'
+if (-not (Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId ([string]$task.Principal.UserId))
+    -or [string]$task.Principal.LogonType -ne 'S4U'
     -or [string]$task.Principal.RunLevel -ne 'Limited') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }
 if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew'
     -or $task.Settings.Hidden -ne $true

@@ -27,6 +27,20 @@ function fail(blocker, details = {}) {
   });
 }
 
+function observedPreservationEffects(result) {
+  const records = [result, result?.result, result?.preservationSync]
+    .flatMap((record) => [record, record?.preservation, record?.preservation?.receipt]);
+  const observed = (field) => {
+    if (records.some((record) => record?.[field] === true)) return true;
+    if (records.some((record) => record?.[field] === false)) return false;
+    return null;
+  };
+  return Object.freeze({
+    fileMovePerformed: observed('fileMovePerformed'),
+    destructiveCleanupPerformed: observed('destructiveCleanupPerformed'),
+  });
+}
+
 export async function executeExactHeadBattleBridgePreservationSync(expectedHead = '', {
   executeCommand = executeBattleBridgeGitHubCommand,
 } = {}) {
@@ -42,15 +56,11 @@ export async function executeExactHeadBattleBridgePreservationSync(expectedHead 
     preservationProfile: BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE,
     preservationApproval: 'operator-approved',
   });
+  const effects = observedPreservationEffects(result);
   if (!result?.ok) {
-    return Object.freeze({
-      ok: false,
-      status: 'BLOCKED',
-      verdict: 'FAIL',
-      blocker: String(result?.blocker || 'EXACT_HEAD_PRESERVATION_SYNC_BLOCKED'),
+    return fail(String(result?.blocker || 'EXACT_HEAD_PRESERVATION_SYNC_BLOCKED'), {
       expectedHead: head,
-      fileMovePerformed: result?.result?.fileMovePerformed === true,
-      destructiveCleanupPerformed: result?.result?.destructiveCleanupPerformed === true,
+      ...effects,
     });
   }
 
@@ -60,12 +70,14 @@ export async function executeExactHeadBattleBridgePreservationSync(expectedHead 
       || sync?.preservation?.ok !== true
       || Number(sync?.preservation?.receipt?.itemCount) !== 6
       || sync?.preservation?.receipt?.allHashesVerified !== true
-      || sync?.preservation?.destructiveCleanupPerformed !== false) {
-    return fail('EXACT_HEAD_PRESERVATION_SYNC_INVALID', { expectedHead: head });
+      || sync?.preservation?.destructiveCleanupPerformed !== false
+      || effects.destructiveCleanupPerformed !== false) {
+    return fail('EXACT_HEAD_PRESERVATION_SYNC_INVALID', { expectedHead: head, ...effects });
   }
 
   return Object.freeze({
     ...sync,
+    ...effects,
     expectedHead: head,
     exactHeadBound: true,
   });

@@ -14,7 +14,8 @@ function failure(route, url, error, status = null) {
 }
 
 async function probeIdentityRoute({ fetchImpl, route, expectedSourceHead, timeoutMs }) {
-  const url = `${BATTLE_BRIDGE_BACKEND_BASE_URL}${route}`;
+  const requestRoute = route === '/api/mission-operations' ? `${route}?identityOnly=1` : route;
+  const url = `${BATTLE_BRIDGE_BACKEND_BASE_URL}${requestRoute}`;
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {

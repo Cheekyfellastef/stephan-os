@@ -72,10 +72,12 @@ export function planBattleBridgeRecoveryLifeboatInstall({
   }
 
   if (!SHA256.test(activeManifestSha256)) return blocked('LIFEBOAT_ACTIVE_MANIFEST_INVALID');
-  if (activeSelfTestVerdict !== 'PASS' || activeHeartbeatFresh !== true) {
+  if (activeSelfTestVerdict !== 'PASS') {
     return blocked('LIFEBOAT_ACTIVE_BANK_NOT_KNOWN_GOOD', { activeBank: normalizedActiveBank });
   }
-  if (candidateManifestSha256 === activeManifestSha256) {
+
+  const activeBankFreshHealthy = activeHeartbeatFresh === true;
+  if (activeBankFreshHealthy && candidateManifestSha256 === activeManifestSha256) {
     return blocked('LIFEBOAT_CANDIDATE_NOT_DISTINCT', { activeBank: normalizedActiveBank });
   }
 
@@ -85,7 +87,7 @@ export function planBattleBridgeRecoveryLifeboatInstall({
     schemaVersion: BATTLE_BRIDGE_LIFEBOAT_INSTALL_SCHEMA,
     blocker: '',
     installPlan: Object.freeze({
-      mode: 'STAGE_INACTIVE_BANK',
+      mode: activeBankFreshHealthy ? 'STAGE_INACTIVE_BANK' : 'RECOVER_STALE_ACTIVE_THROUGH_INACTIVE_BANK',
       targetBank,
       rollbackBank: normalizedActiveBank,
       candidateVersion,
@@ -94,7 +96,10 @@ export function planBattleBridgeRecoveryLifeboatInstall({
       requireCandidateHeartbeatFresh: true,
       atomicActiveBankSwitchRequired: true,
       retainRollbackBankRequired: true,
-      productionRedundancyReadyAfter: true,
+      productionRedundancyReadyAfter: activeBankFreshHealthy,
+      reason: activeBankFreshHealthy
+        ? 'A fresh known-good active bank remains the rollback bank after candidate promotion.'
+        : 'The stale active bank may be retained for evidence but is not counted as production-ready rollback redundancy.',
     }),
     activeBankOverwriteAllowed: false,
     dualBankOverwriteAllowed: false,

@@ -261,6 +261,13 @@ test('status page shows OpenClaw startup state from ignition child logs', async 
   assert.match(script, /openClawStartupState/, 'status payload must include OpenClaw startup state');
 });
 
+test('launcher final readiness does not require OpenClaw and presents it as optional degradation', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.doesNotMatch(script, /\$SupervisorRecord\.services\.openClaw18789\.ready -eq \$true -and/m, 'OpenClaw readiness must not gate the final Stephanos supervisor contract');
+  assert.match(script, /openClawStartupState = if \(\$SupervisorRecord\.services\.openClaw18789\.ready\) \{ 'ready' \} else \{ 'degraded' \}/m, 'missing OpenClaw must be projected as degraded rather than pending\/blocked');
+  assert.match(script, /OpenClaw startup \(optional\):/m, 'ignition UI must make the optional contract explicit');
+});
+
 
 test('visual ignition cockpit contains traffic lights progress proof cards and no script injection', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
@@ -286,4 +293,24 @@ test('Windows launcher splash/status handoff reads Battle Bridge supervisor curr
   assert.match(script, /\$battleBridgeSupervisorCurrentPath = Join-Path \$canonicalSharedWorkspaceRoot 'status\/battle-bridge-ignition-supervisor-current\.json'[\s\S]*Get-BattleBridgeSupervisorCurrentRecord/m, 'launcher must read supervisor current record from canonical workspace');
   assert.match(script, /Convert-SupervisorRecordToIgnitionStatus[\s\S]*battleBridgeSupervisor = \$SupervisorRecord/m, 'splash payload must project supervisor truth instead of a second independent splash truth');
   assert.match(script, /if \(\$supervisorStatus -and \(\$supervisorStatus\.trafficLight -eq 'green' -or \$supervisorStatus\.phase -eq 'blocked'\)\)/m, 'green or blocked supervisor truth must override pending splash cards');
+});
+
+test('desktop ignition gives eligible control-plane failure one Sovereign Commander repair and one retry', async () => {
+  const helper = await readFile(WINDOWS_IGNITE_APPROVAL_PS1, 'utf8');
+  const launcher = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(helper, /Test-SovereignCommanderControlPlaneAutohealEligible/);
+  assert.match(helper, /CONTROL_PLANE_FIXED_INSTALLER_FAILED/);
+  assert.match(helper, /sovereign-commander-ignition-autoheal\.mjs/);
+  assert.match(helper, /retrying safe default ignition once after Sovereign Commander repair/);
+  assert.doesNotMatch(helper, /while\s*\([^)]*SovereignCommander/i);
+  assert.match(launcher, /ignitionHelperProcess.*Start-DevWindow[\s\S]*?-ReturnProcess/);
+  assert.match(launcher, /ignitionHelperProcess\.HasExited[\s\S]*?ExitCode -ne 0/);
+});
+
+
+test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launcher environments', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /foreach \(\$programRoot in @\(\$\{env:ProgramFiles\(x86\)\}, \$env:ProgramFiles, \$env:LOCALAPPDATA\)\)/);
+  assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
+  assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
 });

@@ -12,6 +12,9 @@ import {
   buildProtectedWorkflowDispatchRequest,
   extractProtectedWorkflowDispatch,
   validateProtectedWorkflowDispatch,
+  inspectProtectedWorkflowDuplicateDispatchRuns,
+  validateProtectedWorkflowActorHandoff,
+  protectedWorkflowAuthorizationCommentSha256,
 } from '../shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
 
 const API = 'https://api.github.com';
@@ -21,6 +24,12 @@ const USER_AGENT = 'stephanos-protected-workflow-dispatch-mailbox-v1';
 const READY_MUTATION = 'mutation($pullRequestId:ID!){markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId}){pullRequest{id number isDraft headRefOid}}}';
 
 function text(value) { return String(value ?? '').trim(); }
+function positiveInteger(value) {
+  const raw = text(value);
+  if (!/^[1-9][0-9]*$/.test(raw)) return 0;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : 0;
+}
 function fail(message, details = {}) {
   const error = new Error(message);
   error.details = details;
@@ -101,6 +110,48 @@ async function readExactState(command, { allowDraft }) {
   return { pull, branch, headCommit };
 }
 
+
+const DUPLICATE_PROBE_PAGE_SIZE = 100;
+const DUPLICATE_PROBE_MAX_PAGES = 6;
+
+// The dedicated protected workflow endpoint plus an exact main/base SHA
+// narrows the read to a bounded, independently fetched replay inventory.
+async function rejectPriorProtectedDispatch(command) {
+  let expectedTotal = null;
+  const seen = new Set();
+  const runs = [];
+  for (let page = 1; page <= DUPLICATE_PROBE_MAX_PAGES; page += 1) {
+    const result = await github(
+      `/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/actions/workflows/operator-merge-approval-gate.yml/runs`
+      + `?event=workflow_dispatch&head_sha=${command.expectedBase}&per_page=${DUPLICATE_PROBE_PAGE_SIZE}&page=${page}`,
+    );
+    if (!result || !Number.isSafeInteger(result.total_count)
+        || result.total_count < 0
+        || result.total_count > DUPLICATE_PROBE_PAGE_SIZE * DUPLICATE_PROBE_MAX_PAGES
+        || !Array.isArray(result.workflow_runs)
+        || result.workflow_runs.length > DUPLICATE_PROBE_PAGE_SIZE
+        || (expectedTotal !== null && result.total_count !== expectedTotal))
+      fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+    expectedTotal = result.total_count;
+    for (const run of result.workflow_runs) {
+      if (!Number.isSafeInteger(run?.id) || run.id <= 0 || seen.has(run.id))
+        fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+      seen.add(run.id);
+      runs.push(run);
+    }
+    // Never decide from a truncated first page; complete all exact-base runs.
+    if (runs.length === expectedTotal) {
+      const classification = inspectProtectedWorkflowDuplicateDispatchRuns(runs, command);
+      if (!classification.ok) fail(classification.blocker);
+      return;
+    }
+    if (result.workflow_runs.length !== DUPLICATE_PROBE_PAGE_SIZE
+        || runs.length > expectedTotal)
+      fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+  }
+  fail('PROTECTED_WORKFLOW_DISPATCH_RUN_INVENTORY_UNVERIFIABLE');
+}
+
 async function postReceipt(command, lifecycleResult) {
   const receipt = buildProtectedWorkflowDispatchReceipt(command, new Date(), lifecycleResult);
   await github(`/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}/comments`, {
@@ -119,6 +170,7 @@ async function main() {
   const event = JSON.parse(readFileSync(eventPath, 'utf8'));
   const issueNumber = Number(event?.issue?.number || 0);
   const authorLogin = text(event?.comment?.user?.login);
+  const authorizationCommentId = positiveInteger(event?.comment?.id);
   const body = text(event?.comment?.body);
   const authoredAt = new Date(event?.comment?.created_at || 0);
   const now = new Date();
@@ -129,6 +181,8 @@ async function main() {
     console.log(JSON.stringify({ ok: true, verdict: 'PROTECTED_WORKFLOW_DISPATCH_IGNORED' }));
     return;
   }
+  if (!authorizationCommentId) fail('PROTECTED_WORKFLOW_DISPATCH_AUTHORIZATION_COMMENT_ID_INVALID');
+  if (process.env.GITHUB_RUN_ATTEMPT !== '1') fail('PROTECTED_WORKFLOW_DISPATCH_REPLAY_BLOCKED');
 
   const extracted = extractProtectedWorkflowDispatch(body);
   if (!extracted.ok) fail(extracted.blocker, extracted.details);
@@ -163,7 +217,14 @@ async function main() {
 
   if (command.operation === PROTECTED_WORKFLOW_DISPATCH_OPERATION) {
     await readExactState(command, { allowDraft: false });
-    const dispatch = buildProtectedWorkflowDispatchRequest(command);
+    const liveComment = await github(`/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/comments/${authorizationCommentId}`);
+    const proof = validateProtectedWorkflowActorHandoff(liveComment, command, {
+      transportActor: authorLogin, transportActorId: event.comment.user.id, expectedCommentId: authorizationCommentId,
+      expectedCommentSha256: protectedWorkflowAuthorizationCommentSha256(event.comment), now: new Date(),
+    });
+    if (!proof.ok) fail(proof.blocker, proof.details);
+    await rejectPriorProtectedDispatch(command);
+    const dispatch = buildProtectedWorkflowDispatchRequest(command, { authorizationCommentId });
     if (!dispatch.ok) fail(dispatch.blocker, dispatch.details);
     await github(dispatch.path, { method: dispatch.method, body: dispatch.body, expectedStatus: 204 });
     const receipt = await postReceipt(command, 'PROTECTED_MERGE_WORKFLOW_DISPATCHED');

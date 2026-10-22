@@ -18,6 +18,7 @@ on:
       - 'scripts/battle-bridge-recovery-mesh.mjs'
       - 'scripts/battle-bridge-recovery-mesh.test.mjs'
       - 'scripts/battle-bridge-recovery-mesh-installer.test.mjs'
+      - 'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.mjs'
       - 'scripts/battle-bridge-backend-freshness-probe.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -25,7 +26,11 @@ on:
       - 'scripts/battle-bridge-outbound-health-beacon.mjs'
       - 'scripts/battle-bridge-outbound-health-beacon.test.mjs'
       - 'scripts/battle-bridge-control-plane-self-repair.test.mjs'
+      - 'scripts/battle-bridge-monitor-multiplexer-control-plane.test.mjs'
+      - 'scripts/desktop-commander-watchdog.test.mjs'
+      - 'scripts/windows/*desktop-commander*.ps1'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
+      - 'scripts/windows/*battle-bridge-recovery-lifeboat-v1.ps1'
       - 'scripts/windows/*battle-bridge-outbound-health-beacon.ps1'
       - 'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
       - 'scripts/windows/request-battle-bridge-recovery.ps1'
@@ -41,6 +46,7 @@ on:
       - 'shared/agents/backendExpectedHeadHandoffV1.mjs'
       - 'shared/agents/backendExpectedHeadHandoffV1.test.mjs'
       - 'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs'
+      - 'shared/agents/battleBridgeControlPlaneSelfRepairCoreV1.mjs'
       - 'scripts/windows-launcher-supervisor-freshness.test.mjs'
       - 'scripts/windows-launcher-defaults.test.mjs'
       - 'tests/windows-launcher-ignition.test.mjs'
@@ -88,9 +94,13 @@ jobs:
           scripts/battle-bridge-backend-freshness-probe.test.mjs
           scripts/battle-bridge-recovery-mesh.test.mjs
           scripts/battle-bridge-recovery-mesh-installer.test.mjs
+          scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs
           scripts/battle-bridge-github-command-mailbox.test.mjs
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs
+          scripts/battle-bridge-monitor-multiplexer-control-plane.test.mjs
+          scripts/desktop-commander-watchdog.test.mjs
+          shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs
           scripts/post-sync-runtime-refresh-windows.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs

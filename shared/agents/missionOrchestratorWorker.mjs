@@ -4,8 +4,8 @@ import { buildOpenClawGitHubOperation } from './openClawGitHubOperator.mjs';
 import { applyMissionOrchestratorEvent } from './missionOrchestrator.mjs';
 import {
   MISSION_CONTROLLER_ROUTE,
-  routeMissionControllerCapacity,
 } from './missionControllerCapacityRouterV1.mjs';
+import { routeProviderIndependentMissionCapacityV1 } from './providerIndependentMissionCapacityRouteV1.mjs';
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -69,7 +69,10 @@ function operationClaims(state, operation, options = {}) {
 }
 
 function blocked(state, reason) {
-  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers: [reason], finalVerdict: 'BLOCKED' };
+  const blockers = (Array.isArray(reason) ? reason : [reason])
+    .map((item) => text(item))
+    .filter(Boolean);
+  return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
 }
 
 function capacityRouteForMission(state, options = {}) {
@@ -89,11 +92,20 @@ function capacityRouteForMission(state, options = {}) {
       blockers: [],
     };
   }
-  if (!options.capacityRouting) return null;
-  return routeMissionControllerCapacity({
+  if (!options.capacityRouting) {
+    return {
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: ['provider-independent-capacity-routing-unavailable'],
+    };
+  }
+  return routeProviderIndependentMissionCapacityV1({
     ...options.capacityRouting,
     nowUtc: options.capacityRouting.nowUtc || nowIso(options),
     mission: state,
+    preferNonOpenAi: options.capacityRouting.preferNonOpenAi !== false,
+    openAiBlackout: options.capacityRouting.openAiBlackout === true,
   });
 }
 
@@ -123,6 +135,28 @@ export function buildMissionWorkerAction(state, options = {}) {
     };
   }
 
+  if (state.currentPhase === 'GITHUB_COMMIT' && state.dispatch?.adapter === 'foundry-forge') {
+    const source = state.sourcePublication || {};
+    if (!/^[a-f0-9]{64}$/.test(text(source.artifactSha256))
+        || !text(source.outboxId).startsWith('offline-publication-')
+        || source.canonicalBranch !== state.git?.branch
+        || !SHA40_PATTERN.test(text(source.exactParentHead))
+        || !SHA40_PATTERN.test(text(source.exactResultTree))) {
+      return blocked(state, 'Verified Forge source escrow and publication outbox identity required.');
+    }
+    return {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionId: actionId(state, 'forge-publish'), missionId: state.missionId,
+      actionKind: 'forge-escrow-publication', adapter: 'forge-publication',
+      operation: 'publish-forge-escrow', owner: 'github-first', activeWriter: 'none',
+      repository: state.repository, branch: state.git.branch,
+      artifactSha256: source.artifactSha256, outboxId: source.outboxId,
+      exactParentHead: source.exactParentHead, exactResultTree: source.exactResultTree,
+      receiptRequirement: 'signed exact-tree Forge draft PR publication',
+      executable: true, blockers: [], finalVerdict: 'READY_TO_PUBLISH_SIGNED_FORGE_DRAFT',
+    };
+  }
+
   if (SIGNED_OPERATION_PHASES.has(state.currentPhase)) {
     const operation = SIGNED_OPERATION_PHASES.get(state.currentPhase);
     if (!OPENCLAW_BRANCH_PATTERN.test(text(state.git?.branch))) return blocked(state, 'Signed OpenClaw mutations require an openclaw/* mission branch.');
@@ -144,7 +178,9 @@ export function buildMissionWorkerAction(state, options = {}) {
   if (['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)) {
     const capacity = capacityRouteForMission(state, options);
     if (capacity && (capacity.dispatchAllowed !== true || !text(capacity.adapter))) {
-      return blocked(state, (capacity.blockers || []).join(' ') || 'No freshly proven build lane can accept this mission.');
+      return blocked(state, (capacity.blockers || []).length > 0
+        ? capacity.blockers
+        : 'No freshly proven build lane can accept this mission.');
     }
     const adapter = text(capacity?.adapter, 'codex');
     const route = text(capacity?.route, MISSION_CONTROLLER_ROUTE.CODEX).toUpperCase();

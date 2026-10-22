@@ -14,10 +14,10 @@ const ESCALATED_PATHS = Object.freeze([
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md': 'e826ff8ee5821ded73f2e08f24f03e4c2d9c40ef',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '0203869947447f0ae7b60814c1056e81b4139334',
-  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': '1189bba73607a1d802f2594c16431febdc3a8719',
-  'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': '3ee321a023ac85bc0c71750228bae4da40bbb58b',
-  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': 'aebec71e5e0333fbf7a4b44521c8e5822f8544d0',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '6cc2e3bbdff606e71e7f25ed596f789b22d6ee07',
+  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': '29a9e8eab116bfdccce4ed756c87a386b96a01dc',
+  'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': '4f8cfc56fb4f0a48f742cfbe437851b55a987131',
+  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': 'f2f48badb69f2fb741cbb2f9d5c6402893f8e6e9',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -59,7 +59,8 @@ function forbid(findings, source, path, pattern, code) {
 
 function reviewInstaller(source, path, findings) {
   for (const [literal, code] of [
-    ["$candidateVersion = '1.1.0'", 'm6-installer-version-not-fixed'],
+    ["$candidateVersion = '1.3.0'", 'm6-installer-version-not-fixed'],
+    ["-WakeToRun", 'm6-installer-wake-to-run-missing'],
     ["Join-Path $env:LOCALAPPDATA 'Stephanos\\BattleBridgeRecoveryLifeboat'", 'm6-installer-root-not-fixed'],
     ["$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'm6-installer-powershell-not-fixed'],
     ["invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1", 'm6-installer-claim-payload-missing'],
@@ -83,9 +84,12 @@ function reviewConsumer(source, path, findings) {
     ["$repository = 'Cheekyfellastef/stephan-os'", 'm6-consumer-repository-not-fixed'],
     ["$issueNumber = 1814", 'm6-consumer-issue-not-fixed'],
     ["$ownerLogin = 'Cheekyfellastef'", 'm6-consumer-owner-not-fixed'],
-    ["$apiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page=1'", 'm6-consumer-api-not-fixed'],
+    ["$issueApiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814'", 'm6-consumer-issue-api-not-fixed'],
+    ["$commentsApiBase = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page='", 'm6-consumer-comments-api-not-fixed'],
+    ["$latestPage = [Math]::Max(1, [int][Math]::Ceiling($commentCount / 100.0))", 'm6-consumer-bounded-tail-missing'],
     ["$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'm6-consumer-powershell-not-fixed'],
-    ["$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')", 'm6-consumer-action-set-not-fixed'],
+    ["$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')", 'm6-consumer-action-set-not-fixed'],
+    ["'REMOTE_ACCESS_CRITICAL_STACK_VERIFIED'", 'm6-consumer-remote-access-proof-missing'],
     ['[System.IO.FileMode]::CreateNew', 'm6-consumer-exclusive-claim-missing'],
     ['GITHUB_RECOVERY_RESPONSE_NOT_JSON', 'm6-consumer-media-type-fail-closed-missing'],
     ['GITHUB_RECOVERY_JSON_INVALID', 'm6-consumer-json-fail-closed-missing'],
@@ -111,6 +115,10 @@ function reviewBank(source, path, findings) {
     ['invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1', 'm6-bank-fixed-consumer-missing'],
     ['repoCheckoutRequired = $false', 'm6-bank-checkout-independence-missing'],
     ['openClawGatewayRequired = $false', 'm6-bank-openclaw-independence-missing'],
+    ['-Action RECOVER_REMOTE_ACCESS_STACK', 'm6-bank-auto-heal-action-missing'],
+    ['remoteAccessAutoHealVerdict', 'm6-bank-auto-heal-proof-missing'],
+    ['remoteChatTransportReauthenticationClaimed = $false', 'm6-bank-remote-chat-claim-denial-missing'],
+    ['physicalPowerRecoveryClaimed = $false', 'm6-bank-physical-power-claim-denial-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   for (const [pattern, code] of [
     [/Invoke-Expression|\biex\b|cmd\.exe|powershell(?:\.exe)?\s+-Command/i, 'm6-bank-dynamic-shell-forbidden'],
@@ -135,6 +143,7 @@ function reviewTest(source, path, findings) {
     'PROBE_BATTLE_BRIDGE',
     'WAKE_CANONICAL_MAILBOX',
     'WAKE_CANONICAL_RECOVERY_MESH',
+    'RECOVER_REMOTE_ACCESS_STACK',
     'GITHUB_RECOVERY_RESPONSE_NOT_JSON',
     'GITHUB_RECOVERY_JSON_INVALID',
     'SelfTestOnly',

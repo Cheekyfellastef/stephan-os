@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { win32 } from 'node:path';
+import { classifyLatestBackendStartupFailure } from './backendColdStartFailureClassifierV1.mjs';
 
 export const BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION = 'RESTART_APPROVED_STEPHANOS_BACKEND';
 export const BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_SCHEMA = 'stephanos.battle-bridge-approved-backend-restart-mailbox.v1';
@@ -39,6 +40,17 @@ function parseLastJsonObject(stdout = '') {
     } catch {}
   }
   return null;
+}
+
+function classifyRestartBlocker(blocker, repoRoot, attemptStartedAtMs, classifier) {
+  const normalized = safeBlocker(blocker);
+  if (normalized !== 'BACKEND_HEALTH_TIMEOUT') return normalized;
+  try {
+    const classified = classifier(repoRoot, { attemptStartedAtMs });
+    return safeBlocker(classified?.blocker, normalized);
+  } catch {
+    return normalized;
+  }
 }
 
 export function validateApprovedBackendRestartCommandShape(command = {}) {
@@ -148,6 +160,8 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
   home = homedir(),
   spawnSyncFn = spawnSync,
   existsSyncFn = existsSync,
+  startupFailureClassifier = classifyLatestBackendStartupFailure,
+  nowMsFn = Date.now,
 } = {}) {
   const shape = validateApprovedBackendRestartCommandShape(command);
   if (!shape.ok) return shape;
@@ -169,13 +183,14 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
     '-ExpectedHead', shape.expectedHead,
     '-TimeoutSeconds', '90',
   ];
+  let attemptStartedAtMs = nowMsFn();
   let invocation = runPowerShell(spawnSyncFn, powershellExe, restartScript, restartArgs, repoRoot);
   let payload = parseLastJsonObject(invocation?.stdout);
   let legacyMigrationPerformed = false;
   let legacyReplacedSourceHead = '';
 
   if (invocation?.error || invocation?.status !== 0 || payload?.ok !== true) {
-    const initialBlocker = safeBlocker(payload?.blocker);
+    const initialBlocker = classifyRestartBlocker(payload?.blocker, repoRoot, attemptStartedAtMs, startupFailureClassifier);
     if (initialBlocker !== 'BACKEND_LISTENER_COMMAND_NOT_ALLOWLISTED') {
       return fail(initialBlocker, {
         finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
@@ -208,10 +223,17 @@ export async function executeApprovedBackendRestartOnBattleBridge(command = {}, 
     legacyMigrationPerformed = true;
     legacyReplacedSourceHead = migrationProof.replacedSourceHead;
 
+    attemptStartedAtMs = nowMsFn();
     invocation = runPowerShell(spawnSyncFn, powershellExe, restartScript, restartArgs, repoRoot);
     payload = parseLastJsonObject(invocation?.stdout);
     if (invocation?.error || invocation?.status !== 0 || payload?.ok !== true) {
-      return fail(safeBlocker(payload?.blocker, 'APPROVED_BACKEND_RESTART_AFTER_LEGACY_MIGRATION_FAILED'), {
+      const retryBlocker = classifyRestartBlocker(
+        payload?.blocker || 'APPROVED_BACKEND_RESTART_AFTER_LEGACY_MIGRATION_FAILED',
+        repoRoot,
+        attemptStartedAtMs,
+        startupFailureClassifier,
+      );
+      return fail(retryBlocker, {
         finalVerdict: 'APPROVED_BACKEND_RESTART_BLOCKED',
         expectedHead: shape.expectedHead,
       });
