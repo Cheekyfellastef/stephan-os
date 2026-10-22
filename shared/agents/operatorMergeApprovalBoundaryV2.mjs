@@ -115,6 +115,7 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate.yml',
   '.github/workflows/independent-merge-security-review.yml',
   '.github/workflows/build-stephanos-ui.yml',
+  '.github/workflows/deploy-stephanos-pages.yml',
   '.github/workflows/pr-clean.yml',
   '.github/workflows/exact-head-review-dispatch.yml',
   '.github/workflows/battle-bridge-publisher-proof.yml',
