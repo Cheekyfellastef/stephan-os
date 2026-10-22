@@ -81,6 +81,23 @@ function launch(env) {
   });
 }
 
+// GitHub pull_request_target payload is hosted runner-owned. Reject drafts
+// before invoking the authenticated specialist (no PR/file/commit API reads).
+// Unknown or inconsistent event identity also fails closed without a read.
+function draftReviewHeld() {
+  const eventPath = text(process.env.GITHUB_EVENT_PATH);
+  if (!eventPath) throw new Error('INDEPENDENT_REVIEW_EVENT_PATH_REQUIRED');
+  const event = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+  const repository = text(process.env.GITHUB_REPOSITORY);
+  if (!repository
+      || text(event?.repository?.full_name).toLowerCase() !== repository.toLowerCase()
+      || text(event?.pull_request?.base?.ref) !== 'main'
+      || typeof event?.pull_request?.draft !== 'boolean') {
+    throw new Error('INDEPENDENT_REVIEW_DRAFT_IDENTITY_UNVERIFIED');
+  }
+  return event.pull_request.draft;
+}
+
 function main() {
   if (process.env.GITHUB_ACTIONS !== 'true') {
     throw new Error('Independent review entry may run only inside GitHub Actions.');
@@ -90,6 +107,11 @@ function main() {
   }
   const eventName = text(process.env.GITHUB_EVENT_NAME);
   if (eventName === 'pull_request_target') {
+    if (draftReviewHeld()) {
+      console.error('INDEPENDENT_REVIEW_DRAFT_HELD_NO_API_READS');
+      process.exitCode = 2;
+      return;
+    }
     const child = launch(process.env);
     process.exitCode = Number.isInteger(child.status) ? child.status : 1;
     return;
