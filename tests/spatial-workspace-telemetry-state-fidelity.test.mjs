@@ -63,3 +63,22 @@ test('unknown input is never treated as fresh telemetry', () => {
   assert.equal(projection.state, 'waiting');
   assert.equal(projection.operatorAcceptance, false);
 });
+
+test('invalid canonical feed state fails closed with cached evidence', () => {
+  const result = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('rogue-state'));
+  assert.equal(result.state, 'waiting');
+  assert.equal(result.available, true);
+  assert.equal(result.runId, 'spatial-state-regression');
+  assert.equal(result.operatorAcceptance, false);
+});
+
+test('invalid consumer projection state fails closed on reprojection', () => {
+  const valid = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready'));
+  const once = projectSpatialWorkspaceTelemetryForConsumersV1({ ...valid, state: 'rogue-state' });
+  const twice = projectSpatialWorkspaceTelemetryForConsumersV1(once);
+  assert.equal(once.state, 'waiting');
+  assert.equal(twice.state, 'waiting');
+  assert.equal(twice.available, true);
+  assert.equal(twice.runId, 'spatial-state-regression');
+  assert.equal(twice.operatorAcceptance, false);
+});

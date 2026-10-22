@@ -46,7 +46,7 @@ function sourceRecord(input = {}) {
     return {
       kind: 'canonical-feed',
       evidence: canonicalEvidence,
-      feedState: state(input.state, 'ready'),
+      feedState: state(input.state, 'waiting'),
       learningCandidate: input?.latest?.learningCandidate === true,
       sourceSchemaVersion: input.schemaVersion,
     };
@@ -58,7 +58,7 @@ function sourceRecord(input = {}) {
     return {
       kind: 'consumer-projection',
       evidence: input,
-      feedState: state(input.state, 'ready'),
+      feedState: state(input.state, 'waiting'),
       learningCandidate: input?.learningCandidate === true,
       sourceSchemaVersion: text(input.sourceSchemaVersion),
     };
