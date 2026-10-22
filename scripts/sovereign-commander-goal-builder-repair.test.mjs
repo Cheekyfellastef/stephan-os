@@ -48,6 +48,8 @@ function supervisorStatus({
   finalVerdict = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN',
   daemonMayReportGreen = true,
   dispatchCount = 0,
+  pickupPendingCount = 0,
+  provenPickupCount = 0,
   runningMissionCount = 0,
   heldGoalCount = 0,
   capabilityCompilerWorkCount = 0,
@@ -64,6 +66,8 @@ function supervisorStatus({
       blocker,
       daemonMayReportGreen,
       dispatchCount,
+      pickupPendingCount,
+      provenPickupCount,
       runningMissionCount,
       heldGoalCount,
       capabilityCompilerWorkCount,
@@ -103,6 +107,26 @@ test('goal builder repair is a no-op only when supervisor and real lane health a
   assert.equal(result.repairApplied, false);
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
+});
+
+test('dispatch without physical pickup cannot short-circuit repair as green', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PICKUP_PENDING',
+        daemonMayReportGreen: false, dispatchCount: 1, pickupPendingCount: 1,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'GOAL_DISPATCH_PICKUP_UNPROVEN');
+  assert.ok(calls.includes('start-mission-orchestrator-worker'));
+  assert.ok(calls.includes('goal-discovery-heartbeat'));
 });
 
 test('goal builder stays green when only continuity-host telemetry is stale', () => {
@@ -410,25 +434,46 @@ test('degraded native skill intake remains blocked despite unrelated dispatch', 
   assert.equal(result.arbitraryShellAllowed, false);
 });
 
-test('goal builder flow stays healthy while autonomous parity work is actively dispatched', () => {
+test('legacy parity dispatch with no proven pickup cannot suppress repair', () => {
   const calls = [];
   const result = runSovereignCommanderGoalBuilderRepair({
     runStep(step) {
       calls.push(step.id);
-      if (step.id === 'fleet-goal-supervisor') {
-        return supervisorStatus({
-          finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE',
-          daemonMayReportGreen: false,
-          dispatchCount: 1,
-        });
-      }
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE',
+        daemonMayReportGreen: false,
+        dispatchCount: 1,
+        pickupPendingCount: 0,
+        provenPickupCount: 0,
+      });
       if (step.id === 'controller-lane-status') return laneStatus();
       return { ok: true, status: 0 };
     },
   });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'GOAL_DISPATCH_PICKUP_UNPROVEN');
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor', 'controller-lane-status',
+    'start-mission-orchestrator-worker', 'goal-discovery-heartbeat',
+    'fleet-goal-supervisor', 'controller-lane-status',
+  ]);
+});
+
+test('a physically proven pickup can justify active parity progress', () => {
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus({
+        finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE',
+        daemonMayReportGreen: false, dispatchCount: 1,
+        pickupPendingCount: 0, provenPickupCount: 1,
+      });
+      if (step.id === 'controller-lane-status') return laneStatus();
+      throw new Error('No repair needed after verified physical pickup');
+    },
+  });
   assert.equal(result.ok, true);
   assert.equal(result.repairApplied, false);
-  assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
 });
 

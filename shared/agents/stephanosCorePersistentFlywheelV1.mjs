@@ -350,6 +350,13 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   // separately, but do not let it short-circuit repair of the blocked conveyor.
   if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (degraded) verdict = 'DEGRADED';
+  // A full bounded sweep that built something but leaves free safe capacity
+  // must continue through the existing Sovereign self-repair path, rather
+  // than declaring BUILDING and waiting for an operator to notice the gap.
+  else if (materialActions > 0 && sweepExhausted
+    && eligibleWorkRemaining > 0 && provenSafeFreeLanes > 0) {
+    verdict = 'BUILDING_WITH_STRANDED_CAPACITY';
+  }
   else if (materialActions > 0) verdict = 'BUILDING';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
   else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
@@ -358,8 +365,8 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
 
   return Object.freeze({
     octopusBuildVerdict: verdict,
-    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
-    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
+    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
+    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
     octopusProgrammeHeld: programmeHeld,
     octopusUnresolvedOwnedGapCount: unresolvedOwnedGaps,
     octopusMaterialActionsLastCycle: materialActions,

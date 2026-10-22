@@ -7,6 +7,7 @@ import {
   SOVEREIGN_COMMANDER_OPERATION,
   buildSovereignCommanderCommandV1,
   executeSovereignCommanderCommandV1,
+  validateSovereignWindowsReviewIdentityV1,
 } from './sovereignCommanderV1.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 import {
@@ -536,4 +537,92 @@ test('registered Rescue Island source-only probe exercises a real physical path 
   } finally {
     await rm(parent, { recursive: true, force: true });
   }
+});
+
+test('Windows calibration requires exact bounded identity and authenticated route before any process', async t => {
+  for (const [key, value] of Object.entries({ NODE_OPTIONS: '--import=attacker.mjs', NODE_PATH: 'attacker' })) {
+    const before = process.env[key];
+    process.env[key] = value;
+    t.after(() => { if (before === undefined) delete process.env[key]; else process.env[key] = before; });
+  }
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1574, prNumber: 3090, branch: 'main',
+    sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder',
+    implementerSessionId: 'builder-3090', reviewerSessionId: 'reviewer-3090',
+    implementerPrincipal: 'builder-principal', reviewerPrincipal: 'reviewer-principal',
+  };
+  const build = (reviewIdentity) => buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'sovereign-windows-reviewer-calibration', reviewIdentity } },
+  ), { repoRoot: REPO });
+  assert.equal(build().dispatchAllowed, false, 'daemon ambient env is never sufficient');
+  assert.equal(build({ ...identity, baseSha: 'x'.repeat(40) }).dispatchAllowed, false);
+  assert.equal(build({ ...identity, extra: 'powershell' }).dispatchAllowed, false);
+  assert.equal(build({ ...identity, reviewerPrincipal: identity.implementerPrincipal }).dispatchAllowed, false);
+  const valid = build(identity);
+  assert.equal(valid.dispatchAllowed, true);
+  assert.equal(valid.plan.processId, 'sovereign-windows-reviewer-calibration');
+  assert.deepEqual(valid.plan.reviewIdentity, identity);
+  assert.equal(validateSovereignWindowsReviewIdentityV1(identity).sourceHead, identity.sourceHead);
+  let calls = 0;
+  const run = async routeProof => executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'sovereign-windows-reviewer-calibration', reviewIdentity: identity } },
+  ), { repoRoot: REPO, routeProof, spawnSyncFn(_exe, _args, options) {
+    calls++;
+    assert.equal(options.shell, false);
+    assert.equal(_args[0], '--experimental-loader');
+    assert.match(_args[1], /^data:text\/javascript;base64,/);
+    assert.match(_args[2], /sovereign-windows-review-calibration-v1\.mjs$/);
+    assert.equal(_args[3], '--commander-once');
+    assert.equal(_args.length, 4);
+    assert.equal(options.env.NODE_OPTIONS, undefined);
+    assert.equal(options.env.NODE_PATH, undefined);
+    assert.equal(options.env.STEPHANOS_REVIEW_EXACT_HEAD, identity.sourceHead);
+    assert.equal(options.env.STEPHANOS_REVIEW_EXACT_BASE, identity.baseSha);
+    assert.equal(options.env.STEPHANOS_REVIEW_PR, '3090');
+    assert.equal(options.env.STEPHANOS_REVIEW_REVIEWER_PRINCIPAL, identity.reviewerPrincipal);
+    assert.equal(options.env.STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL, identity.implementerPrincipal);
+    return { status: 0, stdout: '{"candidate":true}', stderr: '' };
+  } });
+  const denied = await run({ commandPathProven: true, authenticatedMcp: false, mcpSessionReady: true });
+  assert.equal(denied.ok, false);
+  assert.equal(calls, 0, 'unqualified transport must not launch Ollama calibration');
+  const passed = await run({ commandPathProven: true, authenticatedMcp: true,
+    mcpSessionReady: true, transport: 'authenticated-http-jsonrpc' });
+  assert.equal(passed.ok, true);
+  assert.equal(calls, 1);
+  assert.equal(passed.command.mergeAuthority, false);
+  assert.equal(passed.command.arbitraryUnboundedCommandAllowed, false);
+});
+
+test('native reviewer setup exception retains only fixed typed preexecution denial', async () => {
+  const identity = {
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3199,branch:'main',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+    implementerProvider:'github-builder',
+    implementerSessionId:'builder-3199',reviewerSessionId:'reviewer-3199',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  let called=0;
+  const result=await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    {payload:{actionId:'sovereign-windows-reviewer-calibration',reviewIdentity:identity}},
+  ),{repoRoot:REPO,routeProof:{commandPathProven:true,authenticatedMcp:true,mcpSessionReady:true},
+    spawnSyncFn(){called++;throw Error('PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET');}});
+  assert.equal(called,1);
+  assert.equal(result.ok,false);
+  assert.equal(result.finalVerdict,'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+  assert.equal(result.command.plan.processId,'sovereign-windows-reviewer-calibration');
+  assert.equal(result.blocker,'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+  assert.deepEqual(result.structuredContent,{ok:false,status:null,stdout:'',stderr:'',
+    errorCode:'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'});
+  assert.equal(result.contentText,'');
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET/);
+  assert.equal(result.command.mergeAuthority,false);
 });

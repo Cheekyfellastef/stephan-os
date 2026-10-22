@@ -104,7 +104,7 @@ export function assessSovereignReviewCoverageV1(input = {}) {
     return Object.freeze({
       domain, changedPathCount:domains.get(domain), riskTier,
       localCandidateRunner:riskTier === 'high'
-        ? 'scripts/sovereign-high-risk-advisory-v1.mjs'
+        ? 'scripts/sovereign-high-risk-advisory-launcher-v1.mjs'
         : 'scripts/sovereign-reviewer-v1.mjs',
       supplementalWindowsExam:domain === 'windows-os-and-services'
         ? 'scripts/sovereign-windows-review-calibration-v1.mjs' : '',

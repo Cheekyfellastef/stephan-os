@@ -35,7 +35,10 @@ function overlaps(left, right) {
 function validPaths(value) {
   return Array.isArray(value) && value.length > 0 && value.length <= 3
     && value.every(validPath)
-    && new Set(value.map(normalizedPath)).size === value.length;
+    && new Set(value.map(normalizedPath)).size === value.length
+    // Reject a directory and any descendant in one task, including case aliases.
+    // Independently checked source ownership must have a disjoint exact scope.
+    && !value.some((path, i) => value.slice(i + 1).some(other => overlaps(path, other)));
 }
 function validClaims(value) {
   return Array.isArray(value) && value.length <= 512
@@ -124,7 +127,9 @@ export function inspectRescueIslandCandidateV1({ task, observations, nowUtc } = 
           && claim.worktreeIdentity.toLowerCase() === candidateWorktreeIdentity)))
       blockers.push('BRANCH_OR_WORKTREE_ALREADY_OWNED');
     const scopes = canonicalScopes(p, [...t.targetPaths, ...claims.flatMap(c => c.targetPaths)]);
-    if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path)))))
+    if (!scopes || t.targetPaths.some(path => !validPath(scopes.get(normalizedPath(path))))
+        || t.targetPaths.some((path, i) => t.targetPaths.slice(i + 1).some(other =>
+          overlaps(scopes.get(normalizedPath(path)), scopes.get(normalizedPath(other))))))
       blockers.push('CANONICAL_SOURCE_SCOPE_UNPROVEN');
     if (claims.some((claim) => claim.taskId === t.taskId
       || claim.ownerIssueNumber === t.ownerIssueNumber

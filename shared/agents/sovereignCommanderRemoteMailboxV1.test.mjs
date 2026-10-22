@@ -52,7 +52,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null, configReceipt = null, configIsError = false } = {}) {
+function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null, configReceipt = null, configIsError = false, archiveDedicatedAdvertised = true } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -73,7 +73,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
       return response({
         jsonrpc: '2.0',
         id: 2,
-        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, { name: 'starfield_vr_telemetry_archive' }, { name: 'search_project' }] },
+        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, ...(archiveDedicatedAdvertised ? [{ name: 'starfield_vr_telemetry_archive' }] : []), { name: 'search_project' }] },
       }, { sessionId: 'session-1' });
     }
     if (message.method === 'tools/call' && message.params?.name === 'get_config') {
@@ -3760,6 +3760,52 @@ test('VR archive remote accepts wrapped Windows execution envelope and returns o
   }), true);
 });
 
+test('VR archive detects stale served MCP capability and requests governed runtime refresh', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const { fetchFn, calls } = mcpFetch({ archiveDedicatedAdvertised: false });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 1 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_SERVED_TOOL_MISSING');
+  assert.equal(result.runtimeRefreshRequired, true);
+  assert.equal(result.dedicatedToolAdvertised, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  const archiveCalls = calls.map(({ options }) => {
+    try { return JSON.parse(options?.body || '{}'); } catch { return {}; }
+  }).filter((message) => message.method === 'tools/call'
+    && (message.params?.name === 'starfield_vr_telemetry_archive'
+      || message.params?.arguments?.actionId === processId));
+  assert.equal(archiveCalls.length, 0, 'must not fake an unreachable legacy fallback');
+});
+
+test('VR archive failure exports only a typed local Commander blocker, not private payload', async () => {
+  const processId = 'starfield-vr-telemetry-archive';
+  const { fetchFn } = mcpFetch({
+    maintenance: {
+      ok: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      blocker: 'SOVEREIGN_ARCHIVE_READER_FAILED',
+      command: { plan: { processId } },
+      structuredContent: { status: 1, stdout: 'PRIVATE_RAW_SESSION_CONTENT',
+        stderr: 'C:\\Users\\Private\\secrets.txt', errorCode: 'ENOENT' },
+    },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: processId, telemetryOffset: 0, telemetryLimit: 1 }),
+    { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' } },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.blocker, /STARFIELD_VR_ARCHIVE_EXECUTION_ENVELOPE_INVALID/);
+  assert.equal(result.mcpToolReturnedError, true);
+  assert.equal(result.commanderBlocker, 'SOVEREIGN_ARCHIVE_READER_FAILED');
+  assert.equal(result.executionStatus, 1);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE_RAW_SESSION_CONTENT|secrets\\.txt/);
+});
+
 test('VR archive failure distinguishes a missing marker with no private output', async () => {
   const processId = 'starfield-vr-telemetry-archive';
   const inner = {
@@ -3781,4 +3827,127 @@ test('VR archive failure distinguishes a missing marker with no private output',
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_ARCHIVE_MARKER_MISSING');
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTERNAL_STDOUT|PRIVATE_INTERNAL_STDERR/);
+});
+
+test('fixed native Windows exam carries only a bounded candidate result through MCP',async()=>{
+  const reviewIdentity = {
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3090,branch:'main',
+    sourceHead:HEAD,baseSha:'b'.repeat(40),
+    implementerProvider:'github-builder',
+    implementerSessionId:'builder-3090',reviewerSessionId:'reviewer-3090',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  const missing=validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction:'sovereign-windows-reviewer-calibration',
+  }));
+  assert.equal(missing.ok,false,'unbound remote action must not run on daemon defaults');
+  assert.equal(missing.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_UNBOUND');
+  assert.equal(validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction:'sovereign-windows-reviewer-calibration',
+    reviewIdentity:{...reviewIdentity,sourceHead:'f'.repeat(40)},
+  })).ok,false,'different source must fail before MCP call');
+
+  const { projectWindowsCalibrationForRemoteV1:project,
+    WINDOWS_CALIBRATION_REMOTE_MARKER:marker } = await import('./sovereignWindowsCalibrationRemoteV1.mjs');
+  const { sovereignWindowsCalibrationManifestV1:manifest }=await import('./sovereignWindowsCalibrationV1.mjs');
+  const denial=Object.fromEntries(Object.entries(project()).filter(([,v])=>v===false));
+  const candidate=project({status:'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED',reason:'',
+    repository:'Cheekyfellastef/stephan-os',sourceHead:HEAD,baseSha:'b'.repeat(40),
+    manifestSha256:manifest().manifestSha256,observationsSha256:'c'.repeat(64),
+    modelDigestSha256:'d'.repeat(64),completedCases:13,passedCases:13,
+    qualification:'PENDING_INDEPENDENT_WINDOWS_SPECIALIST_ATTESTATION',...denial});
+  const action='sovereign-windows-reviewer-calibration';
+  for(const mode of ['pass','held','forged','wrong-head','wrong-base','wrong-request-base']) {
+    const held=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
+    const payload=mode==='held'?held:mode==='forged'?{...candidate,leaseReleaseAuthority:true}
+      :mode==='wrong-head'?{...candidate,sourceHead:'f'.repeat(40)}
+      :['wrong-base','wrong-request-base'].includes(mode)?{...candidate,baseSha:'f'.repeat(40)}:candidate;
+    const native={ok:mode!=='held',
+      finalVerdict:mode==='held'?'SOVEREIGN_COMMANDER_EXECUTION_FAILED':'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash:mode==='held'?undefined:'e'.repeat(64),command:{plan:{processId:action,
+        reviewIdentity:mode==='wrong-request-base'?{...reviewIdentity,baseSha:'f'.repeat(40)}:reviewIdentity}},
+      contentText:'PRIVATE',structuredContent:{status:mode==='held'?2:0,
+        stdout:marker+JSON.stringify(payload),stderr:'PRIVATE'}};
+    const mcp=mcpFetch({maintenance:native});
+    const result=await executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action,reviewIdentity}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn:mcp.fetchFn,
+      env:{USERPROFILE:'C:\\Users\\Operator'},
+    });
+    assert.equal(result.ok,mode==='pass',mode);
+    assert.equal(mcp.calls.some(call=>{
+      try {
+        const body=JSON.parse(call.options?.body||'{}');
+        return body.method==='tools/call' && body.params?.name==='maintenance_action'
+          && body.params?.arguments?.actionId===action
+          && JSON.stringify(body.params.arguments.reviewIdentity)===JSON.stringify(reviewIdentity);
+      } catch { return false; }
+    }),true,'exact identity is forwarded through the authenticated MCP action');
+
+    if(mode==='pass')assert.equal(result.calibration.qualifiedWindowsSpecialist,false);
+    if(mode==='held')assert.equal(result.calibration.reason,'EXACT_LOCAL_SOURCE_UNPROVEN');
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE/);
+  }
+  const plan=validateSovereignCommanderRemoteCommandShape(command({remoteAction:'',remotePlan:[action]}));
+  assert.equal(plan.ok,false); // No inference-bearing compound plan/replay.
+});
+
+test('native calibration pre-execution failures expose only a bounded denial, never a pass',async()=>{
+  const reviewIdentity={
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3191,branch:'main',
+    sourceHead:HEAD,baseSha:'b'.repeat(40),
+    implementerProvider:'canonical-programme-builder',
+    implementerSessionId:'builder-3191',reviewerSessionId:'reviewer-3191',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  const action='sovereign-windows-reviewer-calibration';
+  const attempt=async(errorCode,stderr='PRIVATE_NATIVE_STDERR')=>{
+    const native={
+      ok:false,finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:action,reviewIdentity}},
+      structuredContent:{status:null,stdout:'',stderr,errorCode},
+    };
+    const {fetchFn}=mcpFetch({maintenance:native});
+    return executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action,reviewIdentity}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn,
+      env:{USERPROFILE:'C:\\\\Users\\\\Operator'},
+    });
+  };
+  const denied=await attempt('SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
+  assert.equal(denied.ok,false);
+  assert.equal(denied.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(denied.errorCode,'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN');
+  assert.equal(denied.status,undefined);
+  assert.equal(denied.executionBlocker,'');
+  assert.equal(denied.publicReceiptSafe,true);
+  assert.equal(denied.secretMaterialReturned,false);
+  assert.doesNotMatch(JSON.stringify(denied),/PRIVATE_NATIVE_STDERR/);
+  assert.notEqual(denied.verdict,'COMMAND_EXECUTION_COMPLETE');
+  const nonzero=await (async()=>{
+    const native={
+      ok:false,finalVerdict:'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      command:{plan:{processId:action,reviewIdentity}},
+      structuredContent:{status:2,stdout:'',stderr:'PRIVATE_FAILURE_LOG',errorCode:'REVIEWER_RUNNER_EXIT_2'},
+    };
+    const {fetchFn}=mcpFetch({maintenance:native});
+    return executeSovereignCommanderRemoteOnBattleBridge(command({remoteAction:action,reviewIdentity}),{
+      spawnSyncFn:spawnForHead(),readFileFn:readToken,fetchFn,
+      env:{USERPROFILE:'C:\\\\Users\\\\Operator'},
+    });
+  })();
+  assert.equal(nonzero.ok,false);
+  assert.equal(nonzero.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(nonzero.status,2);
+  assert.equal(nonzero.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.doesNotMatch(JSON.stringify(nonzero),/PRIVATE_FAILURE_LOG/);
+
+  // Never forward arbitrary native error text, injected paths or credentials.
+  const malformed=await attempt('C:\\\\PRIVATE\\\\secret-token');
+  assert.equal(malformed.ok,false);
+  assert.equal(malformed.blocker,'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID');
+  assert.equal(malformed.errorCode ?? '', '');
+  assert.doesNotMatch(JSON.stringify(malformed),/PRIVATE|secret-token/);
 });

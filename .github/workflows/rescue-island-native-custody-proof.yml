@@ -1,0 +1,46 @@
+name: Rescue Island Native Custody Proof
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/windows/Stephanos.RescueIslandCustody/**'
+      - 'src/windows/Stephanos.RescueIslandCustody.Tests/**'
+      - '.github/workflows/rescue-island-native-custody-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: island-native-snapshot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native-snapshot:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Run actual Windows adversarial native custody tests
+        shell: pwsh
+        env:
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: |
+          dotnet run --project src/windows/Stephanos.RescueIslandCustody.Tests --configuration Release -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain execution admission boundary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Output 'NATIVE_CUSTODY_TESTS_ONLY=true'
+          Write-Output 'ISLAND_HOST_COMMISSIONED=false'
+          Write-Output 'ISLAND_EXECUTION_ALLOWED=false'
+          Write-Output 'R7_LEASE_ACCESSED=false'
