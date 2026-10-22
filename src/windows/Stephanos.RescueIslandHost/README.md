@@ -5,15 +5,24 @@ Owner: #3109 — Rescue Island 01: authenticated one-shot intake and first physi
 This builds the Island's own native executable entry point. Its only admitted
 operation, `--inspect-principal`, reads the actual primary process token with
 `TOKEN_QUERY`, checks for a separate impersonating thread, and emits its own
-PID/start time, SID, elevation type, administrators-group presence and assigned
-privileges. `assignedSensitivePrivileges` conservatively reports every assigned,
-OS-resolved privilege except the two ordinary diagnostic exclusions,
-`SeChangeNotifyPrivilege` and `SeTimeZonePrivilege`. Disabled privileges are
-included because they can be enabled later; new OS-resolved names are reported
-without a source-list update. A privilege-name lookup failure holds the whole
-observation instead of silently omitting an entry. This reporting rule and its
-two exclusions are not a complete isolation or admission decision. The host
-never accepts an identity/token from the caller.
+PID/start time, SID, elevation type, administrators-group presence and the complete
+assigned privilege inventory. Group presence comes from bounded native `TokenGroups`,
+including disabled and deny-only SIDs; `administratorsGroupAttributes` retains
+the raw attributes and is null only when that SID is absent. `assignedPrivileges`
+retains every entry from one bounded `TokenPrivileges` snapshot: name, LUID low/high
+parts and raw attributes, including disabled entries and unknown attribute bits.
+Malformed, duplicate or unresolvable entries fail observation; they cannot become
+an empty successful inventory. It never accepts an identity/token from the caller.
+
+The compatibility `assignedSensitivePrivileges` field is derived from that same
+inventory. It conservatively includes every name except the existing ordinary
+diagnostics `SeChangeNotifyPrivilege` and `SeTimeZonePrivilege`; unfamiliar names
+therefore require further review automatically, including disabled rights.
+This is a review-required diagnostic projection, not a claim that every listed
+right is intrinsically dangerous or either exemption is safe in every context.
+The complete inventory retains both exemptions. Any future admission policy must
+inspect that full inventory; an empty compatibility projection proves no eligibility
+or isolation. A default/unobserved inventory is not evidence of absent privileges.
 
 Every invocation remains **HELD**, with exit code 3 for an observation and 64
 for an unregistered operation. `--run`, recovery, task/path arguments, stdin and
@@ -44,16 +53,26 @@ Build and run its actual Windows child-process tests:
 dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release
 ```
 
-Synthetic native privilege buffers exercise the production decoder without
-assigning rare privileges to the test account. Separate pure-name fixtures
-cover the documented inventory and future names without asserting that those
-names exist on the hosted OS. The tests also observe a real process token and
-real thread impersonation, then launch the built native host and bind its JSON
-PID to the actual child handle.
+The tests observe a real process token and real thread impersonation, create a
+restricted copy with an actual deny-only group, then launch the built native
+host and bind its JSON PID to the actual child handle. The group regression
+selects an enabled SID from its own token, so it requires no administrator
+account; the restricted copy is only queried and disposed. It proves the native
+observation retains the SID and attributes that `WindowsIdentity.Groups` hides.
+Synthetic buffers also exercise the production privilege decoder with real Windows
+LUID/name resolution, disabled identity and directory-sync rights, raw attribute
+bits, ordinary entries, duplicate/truncated/over-limit buffers and an unresolvable
+LUID. Separate pure-name fixtures cover all 36 documented names plus future and
+near-match names; the two exclusions match exact ordinal names only. A pure
+projection fixture also checks unfamiliar names and missing inventory. These
+fixtures do not assert that every documented name resolves on the hosted OS,
+claim that the account possesses these rights, or alter account policy.
 Forged authority environment variables and unregistered commands remain held;
 the empty disposable working directory stays unchanged. This is host-bootstrap
 test proof, **not physical Island builder pickup or a non-R7 build receipt**.
 
 API contracts: Microsoft's [OpenProcessToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken),
 [token information classes](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
-and [access-token rights](https://learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects).
+and [access-token rights](https://learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects),
+[TOKEN_PRIVILEGES](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_privileges)
+and [privilege names](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).

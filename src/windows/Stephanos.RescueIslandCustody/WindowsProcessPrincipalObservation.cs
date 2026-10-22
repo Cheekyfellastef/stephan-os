@@ -1,10 +1,17 @@
 using System.Collections.Immutable;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
+[assembly: InternalsVisibleTo("Stephanos.RescueIslandHost.Tests")]
+
 namespace Stephanos.RescueIslandCustody;
+
+/// <summary>A complete assigned entry from one native TOKEN_PRIVILEGES snapshot.</summary>
+public sealed record WindowsAssignedPrivilegeObservation(
+    string Name, uint LuidLowPart, int LuidHighPart, uint Attributes);
 
 /// <summary>
 /// Actual TOKEN_QUERY observations, never an enrollment or exclusion grant.
@@ -17,6 +24,16 @@ public sealed record WindowsProcessPrincipalObservation(
     string ElevationType, bool AdministratorsGroupPresent,
     ImmutableArray<string> AssignedSensitivePrivileges)
 {
+    // Null means the SID was absent, not that a disabled/deny-only SID was
+    // filtered out. These are raw TokenGroups attributes, never a grant.
+    public uint? AdministratorsGroupAttributes { get; init; }
+
+    // Complete native inventory, including disabled and ordinary privileges.
+    // A default array means it was not observed; it must never mean no rights.
+    // AssignedSensitivePrivileges is only the conservative compatibility view
+    // of names requiring further review, never an eligibility verdict.
+    public ImmutableArray<WindowsAssignedPrivilegeObservation> AssignedPrivileges { get; init; }
+
     // Inspect the primary process token explicitly: WindowsIdentity.GetCurrent
     // alone could silently observe a different, impersonated thread identity.
     public static WindowsProcessPrincipalObservation ObserveCurrentProcess()
@@ -45,12 +62,55 @@ public sealed record WindowsProcessPrincipalObservation(
             if (!impersonating && threadError != 1008) // ERROR_NO_TOKEN is the only negative proof.
                 throw new CustodyException("ISLAND_HOST_THREAD_TOKEN_UNAVAILABLE", threadError);
             var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-            bool adminPresent = identity.Groups?.Contains(admin)
-                ?? throw new CustodyException("ISLAND_HOST_TOKEN_GROUPS_UNAVAILABLE");
+            var adminGroup = ObserveTokenGroup(processToken, admin);
+            var privileges = ReadAssignedPrivileges(processToken);
             return new(sid, impersonating, elevation == 1,
                 type switch { 1 => "Default", 2 => "Full", _ => "Limited" },
-                adminPresent, ReadSensitivePrivileges(processToken));
+                adminGroup.Present, ClassifySensitivePrivileges(privileges))
+                { AdministratorsGroupAttributes = adminGroup.Attributes, AssignedPrivileges = privileges };
         }
+    }
+
+    // Query-only helper for the actual restricted-token regression. The public
+    // observation path still obtains its own primary token; no caller token is
+    // admitted by the host. WindowsIdentity.Groups hides disabled/deny-only SIDs.
+    internal static (bool Present, uint? Attributes) ObserveTokenGroup(
+        SafeAccessTokenHandle token, SecurityIdentifier expectedSid)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        ArgumentNullException.ThrowIfNull(expectedSid);
+        IntPtr data = ReadInformation(token, 2, out int size); // TokenGroups
+        try
+        {
+            uint count = unchecked((uint)Marshal.ReadInt32(data));
+            if (count == 0) return (false, null);
+            int first = checked((int)Marshal.OffsetOf<TokenGroupsLayout>(nameof(TokenGroupsLayout.Groups)));
+            int stride = Marshal.SizeOf<SidAndAttributes>();
+            if (count > 4096 || first + (long)count * stride > size)
+                throw new CustodyException("ISLAND_HOST_TOKEN_GROUPS_INVALID");
+            uint? attributes = null;
+            for (int i = 0; i < count; i++)
+            {
+                var group = Marshal.PtrToStructure<SidAndAttributes>(IntPtr.Add(data, checked(first + i * stride)));
+                // TOKEN_GROUPS owns the pointed-to SIDs in this returned buffer.
+                // Bound the SID header and subauthorities before any dereference.
+                nuint start = (nuint)data, address = (nuint)group.Sid;
+                if (address < start || address - start > (nuint)(size - 8))
+                    throw new CustodyException("ISLAND_HOST_TOKEN_GROUPS_INVALID");
+                int remaining = size - checked((int)(address - start));
+                int subAuthorities = Marshal.ReadByte(group.Sid, 1);
+                int sidLength = 8 + 4 * subAuthorities;
+                if (Marshal.ReadByte(group.Sid) != 1 || subAuthorities > 15 || sidLength > remaining)
+                    throw new CustodyException("ISLAND_HOST_TOKEN_GROUPS_INVALID");
+                byte[] sidBytes = new byte[sidLength];
+                Marshal.Copy(group.Sid, sidBytes, 0, sidLength);
+                if (!new SecurityIdentifier(sidBytes, 0).Equals(expectedSid)) continue;
+                if (attributes.HasValue) throw new CustodyException("ISLAND_HOST_TOKEN_GROUPS_INVALID");
+                attributes = group.Attributes;
+            }
+            return (attributes.HasValue, attributes);
+        }
+        finally { Marshal.FreeHGlobal(data); }
     }
 
     private static uint ReadUInt32(SafeAccessTokenHandle token, int informationClass)
@@ -69,41 +129,56 @@ public sealed record WindowsProcessPrincipalObservation(
         finally { Marshal.FreeHGlobal(data); }
     }
 
-    private static ImmutableArray<string> ReadSensitivePrivileges(SafeAccessTokenHandle token)
+    private static ImmutableArray<WindowsAssignedPrivilegeObservation> ReadAssignedPrivileges(SafeAccessTokenHandle token)
     {
         IntPtr data = ReadInformation(token, 3, out int size);
-        try { return ClassifySensitivePrivileges(data, size); }
+        try { return DecodeAssignedPrivileges(data, size); }
         finally { Marshal.FreeHGlobal(data); }
     }
 
     // The native query and untrusted fixture buffers use this same decoder.
-    // This private classifier cannot observe a token or grant host authority.
-    private static ImmutableArray<string> ClassifySensitivePrivileges(IntPtr data, int size)
+    // Preserve every assigned entry and raw attribute bit. No policy list can
+    // remove evidence before future admission policy inspects this inventory.
+    private static ImmutableArray<WindowsAssignedPrivilegeObservation> DecodeAssignedPrivileges(IntPtr data, int size)
     {
-        // Presence includes disabled privileges: they may be enabled later.
-        // This deliberately makes no assertion about complete OS isolation.
-        // Only the two reviewed ordinary diagnostic exclusions are omitted.
-        // Every other OS-resolved name is reported, including names unknown to
-        // this build. An unresolvable LUID still fails closed below.
-        // https://learn.microsoft.com/windows/win32/secauthz/privilege-constants
-        if (size < 4) throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+        if (data == IntPtr.Zero || size is < 4 or > 65536)
+            throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
         uint count = unchecked((uint)Marshal.ReadInt32(data));
         if (count > 128 || 4L + count * 12L > size)
             throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
-        var result = ImmutableArray.CreateBuilder<string>();
+        var result = ImmutableArray.CreateBuilder<WindowsAssignedPrivilegeObservation>();
+        var identifiers = new HashSet<(uint, int)>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < count; i++)
         {
             int offset = checked(4 + i * 12);
             var luid = new Luid { LowPart = unchecked((uint)Marshal.ReadInt32(data, offset)),
                 HighPart = Marshal.ReadInt32(data, offset + 4) };
+            if (!identifiers.Add((luid.LowPart, luid.HighPart)))
+                throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
             var name = new StringBuilder(128);
             uint length = (uint)name.Capacity;
             if (!LookupPrivilegeNameW(null, ref luid, name, ref length))
                 throw new CustodyException("ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE", Marshal.GetLastWin32Error());
             string value = name.ToString();
-            if (!IsOrdinaryAssignedPrivilegeName(value)) result.Add(value);
+            if (value.Length == 0 || length != value.Length || !names.Add(value))
+                throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+            uint attributes = unchecked((uint)Marshal.ReadInt32(data, offset + 8));
+            result.Add(new(value, luid.LowPart, luid.HighPart, attributes));
         }
-        return result.ToImmutable().Sort(StringComparer.Ordinal);
+        return result.ToImmutable();
+    }
+
+    private static ImmutableArray<string> ClassifySensitivePrivileges(
+        ImmutableArray<WindowsAssignedPrivilegeObservation> assigned)
+    {
+        if (assigned.IsDefault) throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+        // Compatibility diagnostic: every name requires further review except
+        // these two ordinary observations. New names default to review-required.
+        // Neither this exemption nor an empty result proves isolation/admission;
+        // future admission must inspect AssignedPrivileges and its raw evidence.
+        return assigned.Where(entry => !IsOrdinaryAssignedPrivilegeName(entry.Name))
+            .Select(entry => entry.Name).OrderBy(name => name, StringComparer.Ordinal).ToImmutableArray();
     }
 
     // Exact ordinal names only: neither prefixes, case variants nor a future
@@ -129,6 +204,10 @@ public sealed record WindowsProcessPrincipalObservation(
         catch { Marshal.FreeHGlobal(data); throw; }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TokenGroupsLayout { public uint GroupCount; public SidAndAttributes Groups; }
     [StructLayout(LayoutKind.Sequential)]
     private struct Luid { public uint LowPart; public int HighPart; }
     [DllImport("kernel32.dll")]

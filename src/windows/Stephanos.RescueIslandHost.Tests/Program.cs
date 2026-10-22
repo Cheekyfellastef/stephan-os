@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using Stephanos.RescueIslandCustody;
 
 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("REAL_WINDOWS_TESTS_REQUIRED");
@@ -93,14 +94,80 @@ Run("unresolvable native privilege LUID fails observation instead of disappearin
     catch (TargetInvocationException e) when (e.InnerException is CustodyException c
         && c.Blocker == "ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE" && c.NativeError != 0) { }
 });
+Run("complete synthetic privilege inventory retains LUIDs, disabled rights and raw attributes", () =>
+{
+    (string Name, uint Attributes)[] entries = [("SeSyncAgentPrivilege", 0u),
+        ("SeChangeNotifyPrivilege", 2u), ("SeTimeZonePrivilege", 0x80000000u),
+        ("SeShutdownPrivilege", 0x40000002u), ("SeDebugPrivilege", 0u)];
+    var inventory = NativePrivilegeFixture.Decode(entries);
+    if (inventory.Length != entries.Length) throw new Exception("ASSIGNED_PRIVILEGE_INVENTORY_INCOMPLETE");
+    for (int i = 0; i < entries.Length; i++)
+    {
+        var expectedLuid = NativePrivilegeFixture.Resolve(entries[i].Name);
+        if (inventory[i].Name != entries[i].Name || inventory[i].Attributes != entries[i].Attributes
+            || (inventory[i].LuidLowPart, inventory[i].LuidHighPart) != expectedLuid)
+            throw new Exception("ASSIGNED_PRIVILEGE_NATIVE_EVIDENCE_LOST");
+    }
+    if (!NativePrivilegeFixture.Project(inventory).SequenceEqual(
+        new[] { "SeDebugPrivilege", "SeShutdownPrivilege", "SeSyncAgentPrivilege" }))
+        throw new Exception("UNLISTED_OR_DISABLED_PRIVILEGE_NOT_REVIEW_REQUIRED");
+});
+Run("compatibility projection retains unfamiliar names and cannot accept missing inventory", () =>
+{
+    ImmutableArray<WindowsAssignedPrivilegeObservation> inventory =
+        [new("FuturePrivilegeFixture", 123u, 456, 0u), new("SeChangeNotifyPrivilege", 789u, 0, 2u)];
+    if (!NativePrivilegeFixture.Project(inventory).SequenceEqual(new[] { "FuturePrivilegeFixture" }))
+        throw new Exception("UNFAMILIAR_PRIVILEGE_OMITTED");
+    NativePrivilegeFixture.ExpectProjectionRejected();
+});
+Run("production privilege decoder rejects malformed, duplicate and unresolvable native entries", () =>
+{
+    NativePrivilegeFixture.ExpectRejected(3, 0, [], "ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+    NativePrivilegeFixture.ExpectRejected(4, 1, [], "ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+    NativePrivilegeFixture.ExpectRejected(4, 129, [], "ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+    var luid = NativePrivilegeFixture.Resolve("SeSyncAgentPrivilege");
+    NativePrivilegeFixture.ExpectRejected(28, 2,
+        [(luid.LowPart, luid.HighPart, 0u), (luid.LowPart, luid.HighPart, 2u)],
+        "ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+    NativePrivilegeFixture.ExpectRejected(16, 1, [(uint.MaxValue, int.MaxValue, 0u)],
+        "ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE");
+});
 Run("primary token SID matches actual process; observations do not grant authority", () =>
 {
     var facts = WindowsProcessPrincipalObservation.ObserveCurrentProcess();
     using var identity = WindowsIdentity.GetCurrent();
     if (facts.ProcessUserSid != identity.User!.Value || facts.ThreadImpersonating
         || facts.ElevationType is not ("Default" or "Full" or "Limited")
-        || facts.AssignedSensitivePrivileges.IsDefault)
+        || facts.AssignedSensitivePrivileges.IsDefault
+        || facts.AssignedPrivileges.IsDefault
+        || !facts.AssignedSensitivePrivileges.SequenceEqual(NativePrivilegeFixture.Project(facts.AssignedPrivileges))
+        || facts.AdministratorsGroupPresent != facts.AdministratorsGroupAttributes.HasValue)
         throw new Exception("PRIMARY_TOKEN_OBSERVATION_INVALID");
+});
+Run("native group observation retains a real deny-only SID and its raw attributes", () =>
+{
+    using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query | TokenAccessLevels.Duplicate);
+    var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+    var enabled = identity.Groups?.OfType<SecurityIdentifier>().ToArray()
+        ?? throw new Exception("RESTRICTED_TOKEN_GROUP_FIXTURE_UNAVAILABLE");
+    // Prefer the Administrators SID when enabled, but the same native parser
+    // must work on an ordinary non-administrator runner without provisioning.
+    var group = enabled.FirstOrDefault(sid => sid.Equals(admin)) ?? enabled.FirstOrDefault()
+        ?? throw new Exception("RESTRICTED_TOKEN_ENABLED_GROUP_REQUIRED");
+    var original = WindowsProcessPrincipalObservation.ObserveTokenGroup(identity.AccessToken, group);
+    if (!original.Present || (original.Attributes.GetValueOrDefault() & 4) == 0)
+        throw new Exception("RESTRICTED_TOKEN_GROUP_FIXTURE_INVALID");
+    using var restricted = TokenFixture.DenyOnly(identity.AccessToken, group);
+    using var filtered = new WindowsIdentity(restricted.DangerousGetHandle());
+    if (filtered.Groups is null || filtered.Groups.Contains(group))
+        throw new Exception("RESTRICTED_TOKEN_DID_NOT_ESTABLISH_MANAGED_FILTER");
+    var observed = WindowsProcessPrincipalObservation.ObserveTokenGroup(restricted, group);
+    if (!observed.Present || !observed.Attributes.HasValue
+        || (observed.Attributes.Value & 0x10) == 0 || (observed.Attributes.Value & 4) != 0)
+        throw new Exception("DENY_ONLY_GROUP_PRESENCE_OR_ATTRIBUTES_LOST");
+    if (WindowsProcessPrincipalObservation.ObserveTokenGroup(identity.AccessToken, group) != original)
+        throw new Exception("ORIGINAL_TOKEN_GROUP_WAS_CHANGED");
+    Console.WriteLine("ISLAND_DENY_ONLY_GROUP_OBSERVATION=VERIFIED");
 });
 Run("thread impersonation is independently detected without substituting process identity", () =>
 {
@@ -122,6 +189,7 @@ Run("real one-shot host identifies its child PID and remains held under forged f
     if (result.ExitCode != 3 || facts.GetProperty("processId").GetInt32() != result.Pid
         || facts.GetProperty("principal").GetProperty("processUserSid").GetString()
             != WindowsProcessPrincipalObservation.ObserveCurrentProcess().ProcessUserSid
+        || facts.GetProperty("principal").GetProperty("assignedPrivileges").ValueKind != JsonValueKind.Array
         || facts.GetProperty("blocker").GetString() != "RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED")
         throw new Exception("REAL_HOST_IDENTITY_OR_HOLD_INVALID");
     foreach (string field in new[] { "installedIdentityAuthenticated", "principalEnrollmentAuthenticated",
@@ -204,6 +272,10 @@ void Run(string name, Action action)
 internal static class NativePrivilegeFixture
 {
     internal static ImmutableArray<string> Classify(params (string Name, uint Attributes)[] entries)
+        => Project(Decode(entries));
+
+    internal static ImmutableArray<WindowsAssignedPrivilegeObservation> Decode(
+        params (string Name, uint Attributes)[] entries)
     {
         int size = checked(4 + entries.Length * 12);
         IntPtr data = Marshal.AllocHGlobal(size);
@@ -212,14 +284,56 @@ internal static class NativePrivilegeFixture
             Marshal.WriteInt32(data, entries.Length);
             for (int i = 0; i < entries.Length; i++)
             {
-                if (!LookupPrivilegeValueW(null, entries[i].Name, out var luid))
-                    throw new Exception("FIXTURE_PRIVILEGE_LUID_UNAVAILABLE:" + Marshal.GetLastWin32Error());
+                var luid = Resolve(entries[i].Name);
                 int offset = checked(4 + i * 12);
                 Marshal.WriteInt32(data, offset, unchecked((int)luid.LowPart));
                 Marshal.WriteInt32(data, offset + 4, luid.HighPart);
                 Marshal.WriteInt32(data, offset + 8, unchecked((int)entries[i].Attributes));
             }
-            return Decode(data, size);
+            return DecodeBuffer(data, size);
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+
+    internal static ImmutableArray<string> Project(ImmutableArray<WindowsAssignedPrivilegeObservation> entries)
+        => Invoke("ClassifySensitivePrivileges", entries) is ImmutableArray<string> result
+            ? result : throw new Exception("PRODUCTION_PRIVILEGE_PROJECTION_RESULT_INVALID");
+
+    internal static (uint LowPart, int HighPart) Resolve(string name)
+    {
+        if (!LookupPrivilegeValueW(null, name, out var luid))
+            throw new Exception("FIXTURE_PRIVILEGE_LUID_UNAVAILABLE:" + Marshal.GetLastWin32Error());
+        return (luid.LowPart, luid.HighPart);
+    }
+
+    internal static void ExpectProjectionRejected()
+    {
+        try { Project(default); }
+        catch (TargetInvocationException e) when (e.InnerException is CustodyException c
+            && c.Message == "ISLAND_HOST_TOKEN_PRIVILEGES_INVALID") { return; }
+        throw new Exception("MISSING_PRIVILEGE_INVENTORY_ACCEPTED");
+    }
+
+    internal static void ExpectRejected(int size, int count,
+        (uint LowPart, int HighPart, uint Attributes)[] entries, string expectedCode)
+    {
+        int allocation = Math.Max(4, checked(4 + entries.Length * 12));
+        if (size > allocation) throw new Exception("FIXTURE_BUFFER_TOO_SMALL");
+        IntPtr data = Marshal.AllocHGlobal(allocation);
+        try
+        {
+            Marshal.WriteInt32(data, count);
+            for (int i = 0; i < entries.Length; i++)
+            {
+                int offset = checked(4 + i * 12);
+                Marshal.WriteInt32(data, offset, unchecked((int)entries[i].LowPart));
+                Marshal.WriteInt32(data, offset + 4, entries[i].HighPart);
+                Marshal.WriteInt32(data, offset + 8, unchecked((int)entries[i].Attributes));
+            }
+            try { DecodeBuffer(data, size); }
+            catch (TargetInvocationException e) when (e.InnerException is CustodyException c
+                && c.Message == expectedCode) { return; }
+            throw new Exception("MALFORMED_PRIVILEGE_INVENTORY_ACCEPTED");
         }
         finally { Marshal.FreeHGlobal(data); }
     }
@@ -248,12 +362,17 @@ internal static class NativePrivilegeFixture
     }
 
     private static ImmutableArray<string> Decode(IntPtr data, int size)
-    {
-        var decoder = typeof(WindowsProcessPrincipalObservation).GetMethod("ClassifySensitivePrivileges",
-            BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new Exception("PRODUCTION_PRIVILEGE_DECODER_UNAVAILABLE");
-        return decoder.Invoke(null, new object[] { data, size }) is ImmutableArray<string> result
+        => Project(DecodeBuffer(data, size));
+
+    private static ImmutableArray<WindowsAssignedPrivilegeObservation> DecodeBuffer(IntPtr data, int size)
+        => Invoke("DecodeAssignedPrivileges", data, size) is ImmutableArray<WindowsAssignedPrivilegeObservation> result
             ? result : throw new Exception("PRODUCTION_PRIVILEGE_DECODER_RESULT_INVALID");
+
+    private static object? Invoke(string method, params object[] args)
+    {
+        var decoder = typeof(WindowsProcessPrincipalObservation).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new Exception("PRODUCTION_PRIVILEGE_DECODER_UNAVAILABLE");
+        return decoder.Invoke(null, args);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -261,4 +380,38 @@ internal static class NativePrivilegeFixture
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
+}
+
+static class TokenFixture
+{
+    internal static SafeAccessTokenHandle DenyOnly(SafeAccessTokenHandle token, SecurityIdentifier group)
+    {
+        byte[] bytes = new byte[group.BinaryLength];
+        group.GetBinaryForm(bytes, 0);
+        IntPtr sid = Marshal.AllocHGlobal(bytes.Length);
+        try
+        {
+            Marshal.Copy(bytes, 0, sid, bytes.Length);
+            SidAndAttributes[] disabled = [new() { Sid = sid, Attributes = 0 }];
+            // Creates only a restricted copy of this test's token. It is never
+            // installed, impersonated or used to launch a process.
+            if (!CreateRestrictedToken(token, 0, 1, disabled, 0, IntPtr.Zero, 0, IntPtr.Zero, out var restricted))
+            {
+                int error = Marshal.GetLastWin32Error();
+                restricted?.Dispose();
+                throw new Exception("RESTRICTED_TOKEN_CREATION_FAILED:" + error);
+            }
+            return restricted;
+        }
+        finally { Marshal.FreeHGlobal(sid); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateRestrictedToken(SafeAccessTokenHandle existingToken, uint flags,
+        uint disableSidCount, [In] SidAndAttributes[] sidsToDisable, uint deletePrivilegeCount,
+        IntPtr privilegesToDelete, uint restrictedSidCount, IntPtr sidsToRestrict,
+        out SafeAccessTokenHandle newToken);
 }
