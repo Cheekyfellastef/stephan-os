@@ -7,6 +7,13 @@ on:
     paths:
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/**'
+      - 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
+      - 'shared/agents/originalR7WitnessReadinessRemote.test.mjs'
+      - 'shared/agents/originalR7WitnessCommissioningAuditV1.mjs'
+      - 'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs'
+      - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - '.github/workflows/original-r7-scm-preflight.yml'
 
 permissions:
@@ -59,6 +66,127 @@ jobs:
           $witnessExe = Join-Path $bundle 'Stephanos.OriginalR7CustodyWitness.exe'
           $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -WindowStyle Hidden -Wait -PassThru
           if ($child.ExitCode -ne 2) { throw 'R7_BUNDLED_WITNESS_CLI_DENIAL_UNPROVEN' }
+      - name: Execute pinned read-only R7 commissioning census on actual hosted Windows
+        shell: pwsh
+        run: |
+          # This is a disposable GitHub Actions Windows runner, not Battle Bridge.
+          # No SCM registration, service start, ACL mutation, signing or lease release.
+          $script = Join-Path $PWD 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
+          if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw 'R7_READINESS_SCRIPT_NOT_FOUND' }
+          $lines = @(& $script)
+          if ($lines.Count -ne 1) { throw 'R7_READINESS_OUTPUT_COUNT_INVALID' }
+          $report = $lines[0] | ConvertFrom-Json -ErrorAction Stop
+          if ($report.schemaVersion -ne 'stephanos.original-r7-witness-commissioning-audit.v1') { throw 'R7_READINESS_SCHEMA_INVALID' }
+          if ($report.inspectionMode -ne 'UNPRIVILEGED_READ_ONLY') { throw 'R7_READINESS_MODE_INVALID' }
+          if ($report.originalLeaseId -ne 'critical-2962-elastic-goal-r7-lease') { throw 'R7_READINESS_LEASE_ID_INVALID' }
+          if ($report.serviceName -ne 'StephanosOriginalR7CustodyWitness') { throw 'R7_READINESS_SERVICE_ID_INVALID' }
+          if ($report.finalVerdict -ne 'COMMISSIONING_NOT_PROVEN') { throw 'R7_READINESS_NOT_HELD' }
+          $neverAuthorize = @(
+            'privilegedServiceSidVerified',
+            'sourceAclDenialEnforced', 'outOfJobWritersExcluded',
+            'wmiComRelaunchDenied', 'scheduledTaskRelaunchDenied',
+            'trustRootsVerified', 'independentOperatorSignatureVerified',
+            'leaseReleaseAuthorized', 'sourceMutationAuthorized'
+          )
+          foreach ($flag in $neverAuthorize) {
+            if ($report.$flag -ne $false) { throw 'R7_READINESS_AUTHORITY_INFLATION' }
+          }
+          if ($report.serviceStatus -notin @('RUNNING','STOPPED','NOT_INSTALLED','UNKNOWN')) { throw 'R7_READINESS_SERVICE_STATUS_INVALID' }
+          # Never display raw process, service user, path, task or SID information.
+          Write-Output 'R7_READONLY_WINDOWS_RUNNER_PROBE_PASSED=true'
+          Write-Output 'R7_READONLY_WINDOWS_RUNNER_IS_BATTLE_BRIDGE=false'
+          Write-Output 'R7_PHYSICAL_EXCLUSION_PROVEN=false'
+      - name: Exercise pinned source through actual Sovereign EncodedCommand transport
+        shell: pwsh
+        run: |
+          # Disposable GitHub Windows runner, NOT original writer or Battle Bridge.
+          $relative = 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
+          $scriptPath = Join-Path $PWD $relative
+          $git = 'C:\Program Files\Git\cmd\git.exe'
+          $powershell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+          if (!(Test-Path -LiteralPath $git -PathType Leaf) -or !(Test-Path -LiteralPath $powershell -PathType Leaf)) { throw 'R7_PINNED_NATIVE_EXECUTABLE_NOT_FOUND' }
+          $head = (& $git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw 'R7_HEAD_UNVERIFIED' }
+          $blobSpec = $head + ':' + $relative
+          $expectedBlob = (& $git rev-parse $blobSpec).Trim()
+          $actualBlob = (& $git hash-object -- $scriptPath).Trim()
+          if ($LASTEXITCODE -ne 0 -or $expectedBlob -ne $actualBlob -or $expectedBlob -notmatch '^[a-f0-9]{40}$') { throw 'R7_IMMUTABLE_SCRIPT_BLOB_MISMATCH' }
+          $rootB64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes([string]$PWD))
+          $prelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("' + $rootB64 + '"))) "scripts\windows"' + [Environment]::NewLine
+          $scriptBody = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($scriptPath))
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($prelude + $scriptBody))
+          if ($encoded.Length -gt 32000) { throw 'R7_FIXED_SCRIPT_TOO_LARGE' }
+          $response = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded)
+          if ($LASTEXITCODE -ne 0 -or $response.Count -ne 1) { throw 'R7_ENCODED_PROBE_EXECUTION_FAILED' }
+          $observed = $response[0] | ConvertFrom-Json -ErrorAction Stop
+          if ($observed.finalVerdict -ne 'COMMISSIONING_NOT_PROVEN' -or $observed.leaseReleaseAuthorized -ne $false -or $observed.sourceMutationAuthorized -ne $false -or $observed.trustRootsVerified -ne $false) {
+            throw 'R7_ENCODED_PROBE_CLAIMED_UNTRUSTED_AUTHORITY'
+          }
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_EXECUTED_ON_WINDOWS=true'
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_IS_BATTLE_BRIDGE=false'
+          Write-Output 'R7_ENCODED_SOVEREIGN_TRANSPORT_ISSUED_CUSTODY=false'
+      - name: Test bounded Sovereign receipt against forged authority
+        shell: pwsh
+        run: |
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package source-only Windows witness binary with exact source checksum
+        shell: pwsh
+        env:
+          EXPECTED_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Distribution staging only. NOT installer, signer or custody proof.
+          $stage = Join-Path $PWD 'r7-witness-ci-staging'
+          New-Item -Path $stage -ItemType Directory -Force | Out-Null
+          # Bundle all managed service/probe code into the pinned apphost.
+          # Match the self-contained profile exercised above; protected host custody
+          # and extracted native-library integrity remain separate gates.
+          dotnet publish src/windows/Stephanos.OriginalR7CustodyWitness/Stephanos.OriginalR7CustodyWitness.csproj --configuration Release -p:PublishProfile=WitnessSingleFile -p:DebugType=None -p:DebugSymbols=false --output $stage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $name = 'Stephanos.OriginalR7CustodyWitness.exe'
+          $binary = Join-Path $stage $name
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'R7_PUBLISH_BINARY_MISSING' }
+          if (@(Get-ChildItem -LiteralPath $stage -File -Filter '*.dll').Count -ne 0) { throw 'R7_UNBUNDLED_EXECUTABLE_PAYLOAD' }
+          # Exercise bundle identity AND the production image-length/digest
+          # evaluator in THIS retained executable. Its self-pin is not trust.
+          & $binary --inspect-bundle-only
+          if ($LASTEXITCODE -ne 0) { throw 'R7_PUBLISHED_PACKAGE_BUNDLE_GATE_FAILED' }
+          # Execute the delivered package, not only the earlier build output.
+          & $binary --unapproved-ci-invocation
+          if ($LASTEXITCODE -ne 2) { throw 'R7_PUBLISHED_PACKAGE_CLI_DENIAL_FAILED' }
+          $head = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw 'R7_PACKAGE_SOURCE_HEAD_INVALID' }
+          if ($head -ne $env:EXPECTED_PR_HEAD) { throw 'R7_PACKAGE_HEAD_MISMATCH' }
+          $digest = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -notmatch '^[a-f0-9]{64}$') { throw 'R7_PACKAGE_IMAGE_DIGEST_INVALID' }
+          @(
+            'schemaVersion=stephanos.original-r7-source-only-package.v1',
+            'repository=Cheekyfellastef/stephan-os',
+            'sourceHead=' + $head,
+            'imageFile=' + $name,
+            'imageSha256=' + $digest,
+            'managedPayloadLayout=SINGLE_FILE_WIN_X64_SELF_CONTAINED',
+            'binaryStatus=UNSIGNED_UNCOMMISSIONED',
+            'protectedServiceSidQualified=false',
+            'originalWriterProvenanceAuthenticated=false',
+            'wholeSourceWriterExclusionProven=false',
+            'signingAuthorityProven=false',
+            'operatorApprovalProven=false',
+            'physicalBattleBridgeCommissioned=false',
+            'originalLeaseReleased=false',
+            'historicalOutcome=UNKNOWN'
+          ) | Set-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt') -Encoding UTF8
+          # SHA256 in an unsigned CI manifest is not trusted code identity.
+          Write-Output 'R7_WINDOWS_BINARY_SOURCE_ONLY_STAGED=true'
+          Write-Output 'R7_WINDOWS_BINARY_IS_TRUSTED_ATTESTER=false'
+          Write-Output 'R7_WINDOWS_BINARY_INSTALLED_ON_BATTLE_BRIDGE=false'
+      - name: Retain uncommissioned Windows binary for independent audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: r7-witness-uncommissioned-source-only
+          path: r7-witness-ci-staging/
+          if-no-files-found: error
+          retention-days: 7
       - name: Record custody authority boundary
         if: always()
         shell: pwsh
