@@ -10,7 +10,8 @@ public sealed record ProposalDependency(string Path, string ExpectedSha256, long
 
 /// <summary>
 /// Owns the native snapshots of every declared input and one create-only
-/// proposal output for a single lifetime. All inputs must be acquired before
+/// proposal output for a single lifetime. The target parent chain is retained
+/// during acquisition, before inputs are read; all inputs must be acquired before
 /// output creation is possible. Consumers read verified private snapshot bytes;
 /// no input/output handle or mutable internal buffer escapes this scope.
 ///
@@ -25,9 +26,6 @@ public sealed class PinnedProposalCustody : IDisposable
     private const long MaximumInputBytes = 64 * 1024 * 1024;
     private readonly object gate = new();
     private readonly List<PinnedFileSnapshot> inputs = new(MaximumDependencies);
-    private readonly string outputPath;
-    private readonly byte[] outputBytes;
-    private readonly string outputDigest;
     private PinnedFileCreation? output;
     private bool outputAttempted;
     private bool disposed;
@@ -35,11 +33,9 @@ public sealed class PinnedProposalCustody : IDisposable
     private PinnedProposalCustody(ProposalDependency[] dependencies,
         string targetPath, byte[] approvedBytes, string expectedSha256)
     {
-        outputPath = targetPath;
-        outputBytes = approvedBytes;
-        outputDigest = expectedSha256;
         try
         {
+            output = PinnedFileCreation.PrepareApproved(targetPath, approvedBytes, expectedSha256);
             foreach (var dependency in dependencies)
                 inputs.Add(PinnedFileSnapshot.Acquire(dependency.Path,
                     dependency.ExpectedSha256, dependency.MaxBytes));
@@ -47,7 +43,7 @@ public sealed class PinnedProposalCustody : IDisposable
         catch
         {
             // A bad later input must release every already-acquired native
-            // handle. No output is created during construction or cleanup.
+            // input and output-parent handle. No leaf is created here or on cleanup.
             Dispose();
             throw;
         }
@@ -86,7 +82,7 @@ public sealed class PinnedProposalCustody : IDisposable
     }
 
     public int DependencyCount { get { lock (gate) { ThrowIfDisposed(); return inputs.Count; } } }
-    public bool OutputCreated { get { lock (gate) { ThrowIfDisposed(); return output is not null; } } }
+    public bool OutputCreated { get { lock (gate) { ThrowIfDisposed(); return output?.Created == true; } } }
 
     public long GetDependencyLength(int index)
     {
@@ -110,7 +106,7 @@ public sealed class PinnedProposalCustody : IDisposable
             ThrowIfDisposed();
             if (outputAttempted) throw new CustodyException("ISLAND_PROPOSAL_OUTPUT_ALREADY_ATTEMPTED");
             outputAttempted = true;
-            output = PinnedFileCreation.CreateApproved(outputPath, outputBytes, outputDigest);
+            output!.CreatePrepared();
         }
     }
 
@@ -119,7 +115,7 @@ public sealed class PinnedProposalCustody : IDisposable
         lock (gate)
         {
             ThrowIfDisposed();
-            if (output is null) throw new CustodyException("ISLAND_PROPOSAL_OUTPUT_NOT_CREATED");
+            if (output is null || !output.Created) throw new CustodyException("ISLAND_PROPOSAL_OUTPUT_NOT_CREATED");
             return output.Read(offset, destination);
         }
     }

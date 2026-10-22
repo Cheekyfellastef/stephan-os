@@ -11,26 +11,35 @@ namespace Stephanos.RescueIslandCustody;
 /// </summary>
 public sealed class PinnedFileCreation : IDisposable
 {
+    private readonly object gate = new();
     private readonly List<SafeFileHandle> handles = new();
+    private readonly List<(SafeFileHandle Handle, string Path)> parents = new();
+    private SafeFileHandle? parentHandle;
     private SafeFileHandle? leaf;
+    private readonly string fullPath;
+    private readonly string leafName;
+    private uint volume;
+    private bool creationAttempted;
+    private bool created;
     private bool disposed;
     private readonly byte[] approvedBytes;
     private readonly string digest;
-    public string Sha256 { get { ThrowIfDisposed(); return digest; } }
-    public int Length { get { ThrowIfDisposed(); return approvedBytes.Length; } }
+    public string Sha256 { get { lock (gate) { ThrowIfDisposed(); return digest; } } }
+    public int Length { get { lock (gate) { ThrowIfDisposed(); return approvedBytes.Length; } } }
+    internal bool Created { get { lock (gate) { ThrowIfDisposed(); return created; } } }
 
     private PinnedFileCreation(string path, byte[] bytes, string sha256)
     {
         approvedBytes = bytes;
         digest = sha256;
+        fullPath = PinnedFileSnapshot.ValidatePath(path);
+        string root = Path.GetPathRoot(fullPath)!;
+        var pieces = fullPath[root.Length..].Split('\\');
+        leafName = pieces[^1];
         try
         {
-            string full = PinnedFileSnapshot.ValidatePath(path);
-            string root = Path.GetPathRoot(full)!;
             string parent = root;
-            uint? volume = null;
-            SafeFileHandle? parentHandle = null;
-            var pieces = full[root.Length..].Split('\\');
+            uint? observedVolume = null;
             for (int i = -1; i < pieces.Length - 1; i++)
             {
                 if (i >= 0) parent = Path.Combine(parent, pieces[i]);
@@ -41,47 +50,44 @@ public sealed class PinnedFileCreation : IDisposable
                     : OpenRelative(parentHandle, pieces[i], directory: true);
                 handles.Add(handle);
                 var info = PinnedFileSnapshot.Inspect(handle, parent, directory: true);
-                volume ??= info.VolumeSerialNumber;
-                if (info.VolumeSerialNumber != volume)
+                observedVolume ??= info.VolumeSerialNumber;
+                if (info.VolumeSerialNumber != observedVolume)
                     throw new CustodyException("ISLAND_CUSTODY_VOLUME_CHANGED");
+                parents.Add((handle, parent));
                 parentHandle = handle;
             }
-            // FILE_CREATE cannot truncate a raced-in leaf. The name is one
-            // component relative to the held parent, never the full pathname.
-            leaf = OpenRelative(parentHandle!, pieces[^1], directory: false);
-            handles.Add(leaf);
-            var before = PinnedFileSnapshot.Inspect(leaf, full, directory: false);
-            if (before.VolumeSerialNumber != volume || before.NumberOfLinks != 1)
-                throw new CustodyException("ISLAND_CUSTODY_VOLUME_OR_LINK_COUNT_INVALID");
-            RandomAccess.Write(leaf, approvedBytes, 0);
-            if (!FlushFileBuffers(leaf))
-                throw new CustodyException("ISLAND_CUSTODY_FLUSH_FAILED", Marshal.GetLastWin32Error());
-            var after = PinnedFileSnapshot.Inspect(leaf, full, directory: false);
-            if (after.VolumeSerialNumber != before.VolumeSerialNumber
-                || after.FileIndexHigh != before.FileIndexHigh || after.FileIndexLow != before.FileIndexLow
-                || after.NumberOfLinks != 1 || after.FileSizeHigh != 0 || after.FileSizeLow != bytes.Length)
-                throw new CustodyException("ISLAND_CUSTODY_OUTPUT_IDENTITY_CHANGED");
-            byte[] readback = new byte[bytes.Length];
-            int offset = 0;
-            while (offset < readback.Length)
-            {
-                int count = RandomAccess.Read(leaf, readback.AsSpan(offset), offset);
-                if (count == 0) throw new CustodyException("ISLAND_CUSTODY_SHORT_READ");
-                offset += count;
-            }
-            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(readback), Convert.FromHexString(digest)))
-                throw new CustodyException("ISLAND_CUSTODY_OUTPUT_DIGEST_CHANGED");
+            volume = observedVolume ?? throw new CustodyException("ISLAND_CUSTODY_IDENTITY_UNAVAILABLE");
+            // Preparation retains the complete parent chain without creating
+            // a leaf. A proposal can now acquire inputs while its target's
+            // existing directory objects are already held against replacement.
         }
         catch
         {
-            // Never delete by pathname on failure: leave any created partial
-            // file for authenticated recovery of the isolated estate to inspect.
             Dispose();
             throw;
         }
     }
 
     public static PinnedFileCreation CreateApproved(string path, byte[] bytes, string expectedSha256)
+    {
+        var output = PrepareApproved(path, bytes, expectedSha256);
+        try
+        {
+            output.CreatePrepared();
+            return output;
+        }
+        catch
+        {
+            // Never delete by pathname on failure: leave any created partial
+            // file for authenticated recovery of the isolated estate to inspect.
+            output.Dispose();
+            throw;
+        }
+    }
+
+    // Internal composition only: no handle, mutable buffer or new host action
+    // is exposed. Preparing parents supplies no source-write authority.
+    internal static PinnedFileCreation PrepareApproved(string path, byte[] bytes, string expectedSha256)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
         if (bytes is null || bytes.Length > 8192 || expectedSha256 is null || expectedSha256.Length != 64
@@ -93,23 +99,77 @@ public sealed class PinnedFileCreation : IDisposable
         return new PinnedFileCreation(path, copy, expectedSha256);
     }
 
+    internal void CreatePrepared()
+    {
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            if (creationAttempted) throw new CustodyException("ISLAND_CUSTODY_OUTPUT_ALREADY_ATTEMPTED");
+            creationAttempted = true;
+            // Directory write sharing does not exclude an in-place reparse
+            // change. Reinspect the retained objects, then create relative to
+            // the same held parent; never resolve the target pathname again.
+            foreach (var parent in parents)
+            {
+                var info = PinnedFileSnapshot.Inspect(parent.Handle, parent.Path, directory: true);
+                if (info.VolumeSerialNumber != volume)
+                    throw new CustodyException("ISLAND_CUSTODY_VOLUME_CHANGED");
+            }
+            // FILE_CREATE cannot truncate a raced-in leaf. The name is one
+            // component relative to the held parent, never the full pathname.
+            leaf = OpenRelative(parentHandle!, leafName, directory: false);
+            handles.Add(leaf);
+            var before = PinnedFileSnapshot.Inspect(leaf, fullPath, directory: false);
+            if (before.VolumeSerialNumber != volume || before.NumberOfLinks != 1)
+                throw new CustodyException("ISLAND_CUSTODY_VOLUME_OR_LINK_COUNT_INVALID");
+            RandomAccess.Write(leaf, approvedBytes, 0);
+            if (!FlushFileBuffers(leaf))
+                throw new CustodyException("ISLAND_CUSTODY_FLUSH_FAILED", Marshal.GetLastWin32Error());
+            var after = PinnedFileSnapshot.Inspect(leaf, fullPath, directory: false);
+            if (after.VolumeSerialNumber != before.VolumeSerialNumber
+                || after.FileIndexHigh != before.FileIndexHigh || after.FileIndexLow != before.FileIndexLow
+                || after.NumberOfLinks != 1 || after.FileSizeHigh != 0 || after.FileSizeLow != approvedBytes.Length)
+                throw new CustodyException("ISLAND_CUSTODY_OUTPUT_IDENTITY_CHANGED");
+            byte[] readback = new byte[approvedBytes.Length];
+            int offset = 0;
+            while (offset < readback.Length)
+            {
+                int count = RandomAccess.Read(leaf, readback.AsSpan(offset), offset);
+                if (count == 0) throw new CustodyException("ISLAND_CUSTODY_SHORT_READ");
+                offset += count;
+            }
+            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(readback), Convert.FromHexString(digest)))
+                throw new CustodyException("ISLAND_CUSTODY_OUTPUT_DIGEST_CHANGED");
+            created = true;
+        }
+    }
+
     public int Read(long offset, Span<byte> destination)
     {
-        ThrowIfDisposed();
-        if (offset < 0 || offset > approvedBytes.Length) throw new ArgumentOutOfRangeException(nameof(offset));
-        int count = (int)Math.Min(destination.Length, approvedBytes.Length - offset);
-        approvedBytes.AsSpan((int)offset, count).CopyTo(destination);
-        return count;
+        lock (gate)
+        {
+            ThrowIfDisposed();
+            if (!created) throw new CustodyException("ISLAND_CUSTODY_OUTPUT_NOT_CREATED");
+            if (offset < 0 || offset > approvedBytes.Length) throw new ArgumentOutOfRangeException(nameof(offset));
+            int count = (int)Math.Min(destination.Length, approvedBytes.Length - offset);
+            approvedBytes.AsSpan((int)offset, count).CopyTo(destination);
+            return count;
+        }
     }
 
     public void Dispose()
     {
-        if (disposed) return;
-        disposed = true;
-        for (int i = handles.Count - 1; i >= 0; i--) handles[i].Dispose();
-        handles.Clear();
-        leaf?.Dispose(); // Also covers an invalid CreateFile result.
-        leaf = null;
+        lock (gate)
+        {
+            if (disposed) return;
+            disposed = true;
+            for (int i = handles.Count - 1; i >= 0; i--) handles[i].Dispose();
+            handles.Clear();
+            parents.Clear();
+            leaf?.Dispose(); // Also covers an invalid CreateFile result.
+            leaf = null;
+            parentHandle = null;
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(disposed, this);

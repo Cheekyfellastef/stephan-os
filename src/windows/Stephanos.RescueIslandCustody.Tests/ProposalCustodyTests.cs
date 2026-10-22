@@ -43,6 +43,59 @@ internal static class ProposalCustodyTests
             File.WriteAllText(first, "released"); File.Delete(first); File.Delete(second);
         });
 
+        run("a separate output parent and ancestor are retained before any proposal leaf exists", () =>
+        {
+            string source = NewFile("prepared-parent-source.txt", "source");
+            string estate = Path.Combine(root, "prepared-output-estate");
+            string parent = Path.Combine(estate, "parent");
+            Directory.CreateDirectory(parent);
+            string target = Path.Combine(parent, "proposal.md");
+            using (var scope = Acquire(target, Input(source, "source")))
+            {
+                if (scope.OutputCreated || File.Exists(target)) Fail("PREPARATION_CREATED_OUTPUT");
+                // The source is outside both output directories: its snapshot
+                // cannot accidentally supply the parent custody under test.
+                Denied(() => Directory.Move(parent, parent + "-replaced"));
+                Denied(() => Directory.Delete(parent));
+                Denied(() => Directory.Move(estate, estate + "-replaced"));
+                scope.CreateOutput();
+                Equal("approved", ReadOutput(scope));
+            }
+            Equal("approved", File.ReadAllText(target));
+            Directory.Move(parent, parent + "-released");
+            Directory.Move(estate, estate + "-released");
+        });
+
+        run("failed input acquisition releases the independently prepared output parent estate", () =>
+        {
+            string first = NewFile("prepared-rollback-a.txt", "first");
+            string second = NewFile("prepared-rollback-b.txt", "wrong");
+            string estate = Path.Combine(root, "prepared-rollback-estate");
+            string parent = Path.Combine(estate, "parent");
+            Directory.CreateDirectory(parent);
+            string target = Path.Combine(parent, "proposal.md");
+            Blocked(() => { using var scope = Acquire(target, Input(first, "first"), Input(second, "expected")); },
+                "ISLAND_CUSTODY_DIGEST_MISMATCH");
+            if (File.Exists(target)) Fail("FAILED_PREPARATION_CREATED_OUTPUT");
+            File.WriteAllText(first, "released"); File.Delete(first); File.Delete(second);
+            Directory.Delete(parent);
+            Directory.Move(estate, estate + "-released");
+        });
+
+        run("disposal before output creation releases parent custody without creating a leaf", () =>
+        {
+            string source = NewFile("prepared-dispose-source.txt", "source");
+            string parent = Path.Combine(root, "prepared-dispose-parent");
+            Directory.CreateDirectory(parent);
+            string target = Path.Combine(parent, "proposal.md");
+            var scope = Acquire(target, Input(source, "source"));
+            scope.Dispose(); scope.Dispose();
+            Disposed(scope.CreateOutput);
+            if (File.Exists(target)) Fail("DISPOSED_PREPARATION_CREATED_OUTPUT");
+            File.WriteAllText(source, "released");
+            Directory.Delete(parent);
+        });
+
         run("duplicate inputs, input-output aliases and over-budget manifests fail before acquisition", () =>
         {
             string source = NewFile("collision.txt", "source");
@@ -156,6 +209,36 @@ internal static class ProposalCustodyTests
                 Blocked(scope.CreateOutput, "ISLAND_PROPOSAL_OUTPUT_ALREADY_ATTEMPTED");
             }
             finally { Native.RemoveJunction(setter); }
+        });
+
+        run("racing output creation and disposal cannot release parents during a native write", () =>
+        {
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
+                string source = NewFile($"prepared-race-source-{attempt}.txt", "source");
+                string parent = Path.Combine(root, $"prepared-race-parent-{attempt}");
+                Directory.CreateDirectory(parent);
+                string target = Path.Combine(parent, "proposal.md");
+                var scope = Acquire(target, Input(source, "source"));
+                using var start = new Barrier(2);
+                var creator = Task.Run(() =>
+                {
+                    if (!start.SignalAndWait(TimeSpan.FromSeconds(10))) Fail("CREATE_DISPOSE_SETUP_TIMEOUT");
+                    try { scope.CreateOutput(); return true; }
+                    catch (ObjectDisposedException) { return false; }
+                });
+                var disposer = Task.Run(() =>
+                {
+                    if (!start.SignalAndWait(TimeSpan.FromSeconds(10))) Fail("CREATE_DISPOSE_SETUP_TIMEOUT");
+                    scope.Dispose();
+                });
+                try { Task.WaitAll(creator, disposer); }
+                finally { scope.Dispose(); }
+                if (creator.Result) Equal("approved", File.ReadAllText(target));
+                else if (File.Exists(target)) Fail("DISPOSAL_LOST_CREATE_RACE");
+                File.WriteAllText(source, "released");
+                Directory.Move(parent, parent + "-released");
+            }
         });
 
         string NewFile(string name, string content)
