@@ -126,6 +126,18 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   const runnableGoalCount = runnableGoals.length;
   const availableSlotCount = integer(ignition.availableSlots);
   const dispatchCount = integer(ignition.dispatchCount);
+  // A successfully published external grant is not a worker pickup. Only an
+  // explicitly proven, receipt-bound pickup can clear the pending count.
+  const published = Array.isArray(ignition.dispatched) ? ignition.dispatched : [];
+  const provenPickupCount = published.length === dispatchCount
+    ? published.filter((item) => item?.pickupProven === true
+      && typeof item?.pickupProofRef === 'string'
+      && item.pickupProofRef.trim().length > 0).length
+    : 0;
+  const pickupPendingCount = Math.max(
+    integer(ignition.pickupPendingCount),
+    dispatchCount - provenPickupCount,
+  );
   const heldGoalCount = count(ignition.held);
   const details = {
     activeMissionCount,
@@ -257,6 +269,8 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     runnableGoalCount,
     availableSlotCount,
     dispatchCount,
+    pickupPendingCount,
+    provenPickupCount,
     heldGoalCount,
     programmeStatus: text(conveyorResult.programmeStatus),
     programmeBlockers: frozen(Array.isArray(conveyorResult.programmeBlockers)
@@ -277,7 +291,8 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     nativeGapSourceHealth: text(commanderParity?.nativeGapSourceHealth),
     zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
     capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded,
-    daemonMayReportGreen: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
+    daemonMayReportGreen: capabilityWorkRemainingCount === 0
+      && !nativeGapSourceDegraded && pickupPendingCount === 0,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -293,6 +308,8 @@ export async function runSovereignCommanderFleetGoalSupervisor({
       ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED'
       : nativeCapabilityWorkPending
       ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING'
+      : pickupPendingCount > 0
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PICKUP_PENDING'
       : remoteParityGapCount > 0
       ? dispatchCount > 0
         ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE'
