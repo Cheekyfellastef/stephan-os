@@ -1,4 +1,7 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text.Json;
 using Stephanos.RescueIslandCustody;
@@ -6,6 +9,32 @@ using Stephanos.RescueIslandCustody;
 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("REAL_WINDOWS_TESTS_REQUIRED");
 int passed = 0;
 int failed = 0;
+Run("synthetic assigned-but-disabled identity privileges remain sensitive", () =>
+{
+    string[] identityRights = ["SeTcbPrivilege", "SeCreateTokenPrivilege", "SeAssignPrimaryTokenPrivilege",
+        "SeImpersonatePrivilege", "SeTrustedCredManAccessPrivilege", "SeDelegateSessionUserImpersonatePrivilege",
+        "SeEnableDelegationPrivilege", "SeMachineAccountPrivilege"];
+    var assigned = identityRights.Select(name => (Name: name, Attributes: 0u)).ToArray();
+    var classified = NativePrivilegeFixture.Classify(assigned);
+    if (!classified.SequenceEqual(identityRights.OrderBy(name => name, StringComparer.Ordinal)))
+        throw new Exception("ASSIGNED_DISABLED_IDENTITY_PRIVILEGE_OMITTED");
+});
+Run("synthetic privilege classification ignores enablement and excludes ordinary rights", () =>
+{
+    string[] expected = ["SeDelegateSessionUserImpersonatePrivilege", "SeEnableDelegationPrivilege",
+        "SeMachineAccountPrivilege"];
+    foreach (uint attributes in new[] { 0u, 2u }) // Assigned disabled, then SE_PRIVILEGE_ENABLED.
+    {
+        var classified = NativePrivilegeFixture.Classify(
+            ("SeMachineAccountPrivilege", attributes), ("SeChangeNotifyPrivilege", attributes),
+            ("SeEnableDelegationPrivilege", attributes), ("SeTimeZonePrivilege", attributes),
+            ("SeDelegateSessionUserImpersonatePrivilege", attributes));
+        if (!classified.SequenceEqual(expected)
+            || !NativePrivilegeFixture.Classify(("SeChangeNotifyPrivilege", attributes),
+                ("SeTimeZonePrivilege", attributes)).IsEmpty)
+            throw new Exception("PRIVILEGE_CLASSIFICATION_DEPENDS_ON_ENABLEMENT_OR_ORDINARY_RIGHTS");
+    }
+});
 Run("primary token SID matches actual process; observations do not grant authority", () =>
 {
     var facts = WindowsProcessPrincipalObservation.ObserveCurrentProcess();
@@ -109,4 +138,41 @@ void Run(string name, Action action)
         Console.WriteLine("FAIL " + name + ": " + e.Message
             + (e is CustodyException c ? "; native=" + c.NativeError : ""));
     }
+}
+
+// Synthetic TOKEN_PRIVILEGES entries exercise the exact production decoder.
+// Resolving real Windows LUIDs neither assigns these rights nor claims the
+// hosted account possesses them. No token or account policy is changed.
+internal static class NativePrivilegeFixture
+{
+    internal static ImmutableArray<string> Classify(params (string Name, uint Attributes)[] entries)
+    {
+        int size = checked(4 + entries.Length * 12);
+        IntPtr data = Marshal.AllocHGlobal(size);
+        try
+        {
+            Marshal.WriteInt32(data, entries.Length);
+            for (int i = 0; i < entries.Length; i++)
+            {
+                if (!LookupPrivilegeValueW(null, entries[i].Name, out var luid))
+                    throw new Exception("FIXTURE_PRIVILEGE_LUID_UNAVAILABLE:" + Marshal.GetLastWin32Error());
+                int offset = checked(4 + i * 12);
+                Marshal.WriteInt32(data, offset, unchecked((int)luid.LowPart));
+                Marshal.WriteInt32(data, offset + 4, luid.HighPart);
+                Marshal.WriteInt32(data, offset + 8, unchecked((int)entries[i].Attributes));
+            }
+            var decoder = typeof(WindowsProcessPrincipalObservation).GetMethod("ClassifySensitivePrivileges",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new Exception("PRODUCTION_PRIVILEGE_DECODER_UNAVAILABLE");
+            return decoder.Invoke(null, new object[] { data, size }) is ImmutableArray<string> result
+                ? result : throw new Exception("PRODUCTION_PRIVILEGE_DECODER_RESULT_INVALID");
+        }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Luid { public uint LowPart; public int HighPart; }
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
 }

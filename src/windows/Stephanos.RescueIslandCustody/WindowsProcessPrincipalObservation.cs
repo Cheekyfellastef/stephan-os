@@ -69,35 +69,42 @@ public sealed record WindowsProcessPrincipalObservation(
 
     private static ImmutableArray<string> ReadSensitivePrivileges(SafeAccessTokenHandle token)
     {
+        IntPtr data = ReadInformation(token, 3, out int size);
+        try { return ClassifySensitivePrivileges(data, size); }
+        finally { Marshal.FreeHGlobal(data); }
+    }
+
+    // The native query and untrusted fixture buffers use this same decoder.
+    // This private classifier cannot observe a token or grant host authority.
+    private static ImmutableArray<string> ClassifySensitivePrivileges(IntPtr data, int size)
+    {
         // Presence includes disabled privileges: they may be enabled later.
         // This deliberately makes no assertion about complete OS isolation.
+        // Identity/delegation rights follow Microsoft's privilege contract:
+        // https://learn.microsoft.com/windows/win32/secauthz/privilege-constants
         string[] sensitive = ["SeTcbPrivilege", "SeCreateTokenPrivilege", "SeAssignPrimaryTokenPrivilege",
-            "SeDebugPrivilege", "SeImpersonatePrivilege", "SeBackupPrivilege", "SeRestorePrivilege",
+            "SeDebugPrivilege", "SeImpersonatePrivilege", "SeDelegateSessionUserImpersonatePrivilege",
+            "SeEnableDelegationPrivilege", "SeMachineAccountPrivilege", "SeBackupPrivilege", "SeRestorePrivilege",
             "SeTakeOwnershipPrivilege", "SeLoadDriverPrivilege", "SeSecurityPrivilege",
             "SeManageVolumePrivilege", "SeRelabelPrivilege", "SeTrustedCredManAccessPrivilege"];
-        IntPtr data = ReadInformation(token, 3, out int size);
-        try
+        if (size < 4) throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+        uint count = unchecked((uint)Marshal.ReadInt32(data));
+        if (count > 128 || 4L + count * 12L > size)
+            throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
+        var result = ImmutableArray.CreateBuilder<string>();
+        for (int i = 0; i < count; i++)
         {
-            if (size < 4) throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
-            uint count = unchecked((uint)Marshal.ReadInt32(data));
-            if (count > 128 || 4L + count * 12L > size)
-                throw new CustodyException("ISLAND_HOST_TOKEN_PRIVILEGES_INVALID");
-            var result = ImmutableArray.CreateBuilder<string>();
-            for (int i = 0; i < count; i++)
-            {
-                int offset = checked(4 + i * 12);
-                var luid = new Luid { LowPart = unchecked((uint)Marshal.ReadInt32(data, offset)),
-                    HighPart = Marshal.ReadInt32(data, offset + 4) };
-                var name = new StringBuilder(128);
-                uint length = (uint)name.Capacity;
-                if (!LookupPrivilegeNameW(null, ref luid, name, ref length))
-                    throw new CustodyException("ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE", Marshal.GetLastWin32Error());
-                string value = name.ToString();
-                if (sensitive.Contains(value, StringComparer.Ordinal)) result.Add(value);
-            }
-            return result.ToImmutable().Sort(StringComparer.Ordinal);
+            int offset = checked(4 + i * 12);
+            var luid = new Luid { LowPart = unchecked((uint)Marshal.ReadInt32(data, offset)),
+                HighPart = Marshal.ReadInt32(data, offset + 4) };
+            var name = new StringBuilder(128);
+            uint length = (uint)name.Capacity;
+            if (!LookupPrivilegeNameW(null, ref luid, name, ref length))
+                throw new CustodyException("ISLAND_HOST_PRIVILEGE_NAME_UNAVAILABLE", Marshal.GetLastWin32Error());
+            string value = name.ToString();
+            if (sensitive.Contains(value, StringComparer.Ordinal)) result.Add(value);
         }
-        finally { Marshal.FreeHGlobal(data); }
+        return result.ToImmutable().Sort(StringComparer.Ordinal);
     }
 
     private static IntPtr ReadInformation(SafeAccessTokenHandle token, int informationClass, out int size)
