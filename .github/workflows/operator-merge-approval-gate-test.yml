@@ -29,20 +29,7 @@ jobs:
           import assert from 'node:assert/strict';
           import { readFileSync } from 'node:fs';
 
-          const completeWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8').replace(/\r\n/g, '\n');
-          const legacyRoles = ['merge-group-evidence', 'operator-merge-queue-boundary', 'personal-repository-evidence',
-            'operator-personal-repository-approval', 'operator-personal-repository-squash-merge'];
-          const peerRole = 'r7-first-root-peer-evidence', issuerRole = 'r7-first-root-owner-intake';
-          assert.equal((completeWorkflow.match(/^jobs:\n/gm) || []).length, 1);
-          const headerEnd = completeWorkflow.indexOf('\njobs:\n') + '\njobs:\n'.length;
-          const jobsSource = completeWorkflow.slice(headerEnd);
-          const declarations = [...jobsSource.matchAll(/^  ([a-z0-9_-]+):\n/gm)];
-          assert.deepEqual(declarations.map(match => match[1]), [...legacyRoles, peerRole, issuerRole]);
-          const jobs = new Map(declarations.map((match, index) => [match[1],
-            jobsSource.slice(match.index, declarations[index + 1]?.index ?? jobsSource.length)]));
-          // Keep the original exact five-role assertions below. The appended
-          // R7 roles are independently constrained, not allowed by looser totals.
-          const workflow = completeWorkflow.slice(0, headerEnd) + legacyRoles.map(role => jobs.get(role)).join('');
+          const workflow = readFileSync('.github/workflows/operator-merge-approval-gate.yml', 'utf8');
           const proofWorkflow = readFileSync('.github/workflows/operator-merge-approval-gate-test.yml', 'utf8');
           const mailboxPolicy = readFileSync('shared/agents/protectedWorkflowDispatchMailboxV1.mjs', 'utf8');
           const personalPolicy = readFileSync('shared/agents/operatorPersonalRepositoryMergeV1.mjs', 'utf8');
@@ -145,43 +132,6 @@ jobs:
           assert.match(workflow.slice(approvalStart), /test "\$\{TRIGGERING_ACTOR\}" = 'Cheekyfellastef'/);
           assert.match(proofWorkflow, /ready_for_review/);
           assert.doesNotMatch(workflow, /query:\s*\$\{\{/);
-
-          const peer = jobs.get(peerRole), issuer = jobs.get(issuerRole);
-          const readPermissions = ['actions: read', 'checks: read', 'contents: read', 'deployments: read', 'issues: read', 'pull-requests: read'];
-          function permissions(job) {
-            const block = job.match(/^    permissions:\n((?:      [a-z-]+: (?:read|write)\n)+)/m);
-            assert.ok(block, 'explicit role permissions required');
-            return block[1].trim().split('\n').map(line => line.trim());
-          }
-          assert.deepEqual(permissions(peer), readPermissions);
-          assert.deepEqual(permissions(issuer), [...readPermissions, 'id-token: write']);
-          for (const job of [peer, issuer]) {
-            assert.match(job, /github\.event_name == 'workflow_dispatch' && inputs\.mode == 'user-owned-r7-first-root-policy-intake'/);
-            assert.match(job, /^    runs-on: ubuntu-latest$/m);
-            assert.match(job, /^    timeout-minutes: 5$/m);
-            assert.equal((job.match(/ref: \$\{\{ github\.sha \}\}/g) || []).length, 1);
-            assert.equal((job.match(/persist-credentials: false/g) || []).length, 1);
-            const actions = [...job.matchAll(/uses: ([^\s]+)@([^\s]+)/g)];
-            assert.deepEqual(actions.map(match => match[1]), ['actions/checkout', 'actions/setup-node', 'actions/upload-artifact']);
-            for (const action of actions) assert.match(action[2], /^[a-f0-9]{40}$/);
-            assert.match(job, /node-version: '24\.21\.0'/);
-            assert.doesNotMatch(job, /STEPHANOS_RULESET_PROOF|permission-administration|create-github-app-token|contents: write|issues: write|pull-requests: write/);
-            assert.doesNotMatch(job, /operator-protected-(?:merge-gate-v2|personal-repository-merge)\.mjs|gh api|gh pr|repository_dispatch|workflow_call|continue-on-error/);
-          }
-          assert.doesNotMatch(peer, /^    (?:environment|needs):|id-token:|issue-owner-envelope/m);
-          assert.match(peer, /operator-protected-r7-first-root\.mjs prepare-peer/);
-          assert.match(peer, /GITHUB_STEP_SUMMARY/);
-          assert.match(peer, /ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:/);
-          assert.match(issuer, /needs: \[r7-first-root-peer-evidence\]/);
-          assert.match(issuer, /needs\.r7-first-root-peer-evidence\.result == 'success'/);
-          assert.match(issuer, /environment:\n      name: operator-merge-approval/);
-          assert.match(issuer, /url: https:\/\/github\.com\/Cheekyfellastef\/stephan-os\/actions\/runs\/\$\{\{ github\.run_id \}\}\/attempts\/1/);
-          assert.match(issuer, /operator-protected-r7-first-root\.mjs issue-owner-envelope/);
-          for (const role of legacyRoles.slice(2)) assert.match(jobs.get(role), /inputs\.mode != 'user-owned-r7-first-root-policy-intake'/);
-          assert.equal((completeWorkflow.match(/id-token: write/g) || []).length, 1);
-          assert.doesNotMatch(completeWorkflow, /\b(?:actions|deployments|statuses|checks): write\b|pull_request_target:|repository_dispatch|workflow_call|continue-on-error/);
-          assert.doesNotMatch(completeWorkflow, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
-          assert.doesNotMatch(completeWorkflow, /query:\s*\$\{\{/);
           NODE
       - name: Upload bounded test log
         if: always()

@@ -464,6 +464,12 @@ whole-estate exclusion, installs/starts the service, signs custody evidence or
 releases R7. Those operations require their actual admitted native callgraph and
 independent proof. A serialized success result cannot stand in for that proof.
 
+The proposed protected R7 workflow is retained as the inactive
+`docs/architecture/r7-protected-owner-workflow-proposal.yml.txt` template.
+The live owner workflow and merge validator remain at protected main. Native
+CI tests the template but does not install it or issue credentials. A subsequent
+independently admitted source-policy change must precede producer activation.
+
 The intended subsequent commissioning path remains unfinished. In particular,
 the seed-creation transaction currently has owned-fixture entry points only;
 source exclusion, fixed-policy OS adoption, crash/orphan handling, protected

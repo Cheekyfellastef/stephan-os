@@ -14,6 +14,7 @@ on:
       - 'shared/agents/r7ProtectedOwner*.mjs'
       - 'shared/agents/r7NativeOwnerPeerPairingV1.*'
       - 'scripts/operator-protected-r7-first-root*.mjs'
+      - 'docs/architecture/r7-protected-owner-workflow-proposal.yml.txt'
       - '.github/workflows/operator-merge-approval-gate.yml'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js'

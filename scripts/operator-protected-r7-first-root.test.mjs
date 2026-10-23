@@ -9,13 +9,24 @@ import { join } from 'node:path';
 import { buildR7NativeOwnerPeerPairing } from '../shared/agents/r7NativeOwnerPeerPairingV1.mjs';
 import { R7_FIRST_ROOT_INTAKE_AUDIENCE, R7_INACTIVE_ROOT_PROVISIONING_AUDIENCE,
   R7_INACTIVE_ROOT_PROVISIONING_PURPOSE } from '../shared/agents/r7FirstRootOwnerIntakeProposalV1.mjs';
-const workflow=readFileSync(new URL('../.github/workflows/operator-merge-approval-gate.yml',import.meta.url),'utf8').replace(/\r\n/g,'\n');
+const workflow=readFileSync(new URL('../docs/architecture/r7-protected-owner-workflow-proposal.yml.txt',import.meta.url),'utf8').replace(/\r\n/g,'\n');
+const activeWorkflow=readFileSync(new URL('../.github/workflows/operator-merge-approval-gate.yml',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const script=readFileSync(new URL('./operator-protected-r7-first-root.mjs',import.meta.url),'utf8');
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const entries=[...workflow.matchAll(/^  ([a-z0-9-]+):\n/gm)];
 function job(name){const index=entries.findIndex(row=>row[1]===name);assert.ok(index>=0,name);
   return workflow.slice(entries[index].index,entries[index+1]?.index??workflow.length)
     .replace(/\n  # Proposed purpose-bound policy:[\s\S]*$/,'').trimEnd()+'\n';}
+
+test('R7 issuer proposal is inactive and the existing protected workflow stays unchanged',()=>{
+  assert.match(workflow,/^# INACTIVE SOURCE PROPOSAL:/);
+  // Independently read from protected main a770bdff, not from this working tree.
+  assert.equal(sha(activeWorkflow),'77e0efd38305fdeff4b403b2b537849d47e59225244481fae794ac5b615bc468');
+  assert.deepEqual([...activeWorkflow.matchAll(/^  ([a-z0-9-]+):\n/gm)].map(row=>row[1]),
+    ['merge-group-evidence','operator-merge-queue-boundary','personal-repository-evidence',
+      'operator-personal-repository-approval','operator-personal-repository-squash-merge']);
+  assert.doesNotMatch(activeWorkflow,/r7-first-root|r7_owner_permit_json|id-token:/);
+});
 
 // Immutable 9bd source baselines, independently read from Git before this test
 // was authored. Check actual legacy bodies after reversing only the scoped new

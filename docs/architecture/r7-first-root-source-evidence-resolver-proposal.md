@@ -1,5 +1,14 @@
 # R7 first-root source evidence resolver proposal
 
+The proposed R7 peer and owner-token workflow is preserved at
+`r7-protected-owner-workflow-proposal.yml.txt` in this directory. It is an
+inactive test template outside `.github/workflows`, with no dispatch or token
+authority. The live owner workflow, its proof workflow and merge validator
+remain byte-for-byte at protected main. Native Windows CI tests the proposal
+and verifies the unchanged live workflow independently. Activating either R7
+job needs a subsequent independently admitted policy change; source preparation
+does not grant that activation.
+
 Continuation: #3123 — Goal #2961 child: commission protected Windows r7 custody witness and independent signer.
 Source owner: PR #3178 — Goal #3123: prepare audited R7 custody service and authority contracts.
 

@@ -1,5 +1,11 @@
 # R7 native owner-token intake preparation
 
+The proposed protected producer exists only in the inactive
+`r7-protected-owner-workflow-proposal.yml.txt` template. It is not installed in
+the live owner workflow. The existing protected merge roles and validators are
+unchanged. The template and CLI are tested source preparation; enabling a token
+producer requires separate source-policy admission and native commissioning.
+
 This source supplies a real cryptographic component, not an installed carrier,
 first-root ceremony or physical custody witness. Production service startup
 continues to refuse uncommissioned custody. The original lease remains held.

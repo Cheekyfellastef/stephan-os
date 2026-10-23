@@ -404,62 +404,10 @@ function permissionSignatures(source) {
   });
 }
 
-// The proposed R7 extension is a closed additional profile, not a relaxation
-// of the five legacy merge roles. Pin its complete two job bodies and optional
-// input declarations, then apply the unchanged legacy contract to the rest.
-// This validates source shape only; it adopts no endpoint/Windows/root policy.
-const R7_OWNER_EXTENSION_JOBS = Object.freeze({
-  'r7-first-root-peer-evidence': 'f97a85e37835a05c413ec5b11e8b7985cbf4bbf750003934ceb37aaabd8c12f1',
-  'r7-first-root-owner-intake': '7aa01699552810d9e2491622397e9a9415ba929d66e7c2b9e8586b847088a75e',
-});
-const R7_OWNER_EXTENSION_INPUTS_SHA256 = 'a781dc689f087ad83c6ca04a2e95cef59a22024b824b39e5ecd157365d4a882d';
-const LEGACY_OPERATOR_JOBS = Object.freeze(['merge-group-evidence', 'operator-merge-queue-boundary',
-  'personal-repository-evidence', 'operator-personal-repository-approval', 'operator-personal-repository-squash-merge']);
-
-function projectProtectedR7OwnerExtension(path, source) {
-  if (path !== '.github/workflows/operator-merge-approval-gate.yml') return { source, blockers: [] };
-  const wire = String(source).replaceAll('\r\n', '\n');
-  const jobsAt = wire.indexOf('\njobs:\n');
-  const jobs = jobsAt < 0 ? [] : [...wire.slice(jobsAt).matchAll(/^ {2}([A-Za-z0-9_-]+):\s*$/gm)]
-    .map(match => ({ name: match[1], at: jobsAt + match.index }));
-  const extension = jobs.filter(job => Object.hasOwn(R7_OWNER_EXTENSION_JOBS, job.name));
-  const expected = [...LEGACY_OPERATOR_JOBS, ...Object.keys(R7_OWNER_EXTENSION_JOBS)];
-  const blockers = [];
-  const directKeys = jobsAt < 0 ? [] : wire.slice(jobsAt).split('\n')
-    .filter(line => /^ {2}\S/.test(line) && !line.trimStart().startsWith('#'));
-  if ([...wire.matchAll(/^jobs:\s*$/gm)].length !== 1 || directKeys.length !== jobs.length)
-    blockers.push('protected-workflow-job-encoding-not-exact');
-  if (jobs.length !== expected.length || jobs.some((job, index) => job.name !== expected[index]))
-    blockers.push('protected-workflow-job-estate-not-exact');
-  const inputAt = wire.indexOf('      r7_owner_permit_json:');
-  // The current policy requires this complete profile. Coordinated removal
-  // of both roles AND inputs must never select an older permissive profile.
-  if (extension.length !== Object.keys(R7_OWNER_EXTENSION_JOBS).length)
-    blockers.push('protected-workflow-r7-owner-extension-incomplete');
-  const digest = value => createHash('sha256').update(value, 'utf8').digest('hex');
-  for (const job of extension) {
-    const next = jobs[jobs.indexOf(job) + 1];
-    const body = wire.slice(job.at, next?.at ?? wire.length).trimEnd() + '\n';
-    if (digest(body) !== R7_OWNER_EXTENSION_JOBS[job.name])
-      blockers.push('protected-workflow-r7-owner-job-not-exact');
-  }
-  const inputEnd = inputAt < 0 ? -1 : wire.indexOf('\nconcurrency:', inputAt);
-  if (inputAt < 0 || inputEnd <= inputAt
-    || digest(wire.slice(inputAt, inputEnd).trimEnd() + '\n') !== R7_OWNER_EXTENSION_INPUTS_SHA256)
-    blockers.push('protected-workflow-r7-owner-inputs-not-exact');
-  // Do not project malformed/partial source into an apparently clean profile.
-  if (blockers.length) return { source: wire, blockers };
-  const legacy = wire.slice(0, extension[0].at);
-  return { source: legacy.slice(0, inputAt) + legacy.slice(inputEnd), blockers };
-}
-
 function validateProtectedWorkflowYaml(path, source) {
   const policy = PROTECTED_WORKFLOW_FINAL_POLICIES[path];
   const blockers = [];
   if (!policy) return Object.freeze({ valid: false, blockers: Object.freeze(['protected-workflow-policy-missing']) });
-  const extension = projectProtectedR7OwnerExtension(path, source);
-  blockers.push(...extension.blockers);
-  source = extension.source;
   const events = yamlEventKeys(source);
   if (events.length !== policy.events.length
     || events.some((event, index) => event !== policy.events[index])) {

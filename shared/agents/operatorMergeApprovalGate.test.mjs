@@ -626,42 +626,6 @@ test('independent reviewer analyzes the complete diff and rejects operator-synth
   assert.ok(bad.findings.some((item) => item.code === 'operator-gate-synthesizes-review'));
 });
 
-test('closed R7 owner profile cannot weaken either new role or the five legacy merge roles', () => {
-  const path = '.github/workflows/operator-merge-approval-gate.yml';
-  const original = protectedWorkflowContent(path);
-  const peerAt = original.indexOf('  r7-first-root-peer-evidence:');
-  const ownerAt = original.indexOf('  r7-first-root-owner-intake:');
-  assert.ok(peerAt > 0 && ownerAt > peerAt);
-  const head = original.slice(0, peerAt), peer = original.slice(peerAt, ownerAt), owner = original.slice(ownerAt);
-  const mutants = [
-    head + peer.replace('contents: read', 'contents: write') + owner,
-    head + peer.replace('    permissions:', '    permissions:\n      id-token: write') + owner,
-    head + peer + owner.replace('id-token: write', 'id-token: read'),
-    head + peer + owner.replace('name: operator-merge-approval', 'name: arbitrary-environment'),
-    head + peer + owner.replace('issue-owner-envelope', 'prepare-peer'),
-    head + peer.replace('PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY:', 'PROVISION_ALL_SIGNING_ROOTS:') + owner,
-    head + peer.replace('!Object.hasOwn(descriptions,proof.nativeOperationPurpose)', 'false') + owner,
-    head + peer.replace("proof.peerApprovalComment!==proof.nativeOperationPurpose+':'+proof.peerBindingFingerprint", 'false') + owner,
-    head + peer.replace('11d5960a326750d5838078e36cf38b85af677262', 'v4') + owner,
-    original.replace('r7_native_challenge_expires_at_utc:', 'r7_unknown_dispatch_input:'),
-    head + owner,
-    head + peer,
-    head.replace(/      r7_owner_permit_json:[\s\S]*?(?=\r?\nconcurrency:)/, ''),
-    original + '\n  unexpected-readonly-job:\n    runs-on: ubuntu-latest\n    steps: []\n',
-    original + '\n  unexpected_readonly_job:\n    runs-on: ubuntu-latest\n    steps: []\n',
-    original + '\n  "unexpected-readonly-job":\n    runs-on: ubuntu-latest\n    steps: []\n',
-    original + '\n  unexpected: {runs-on: ubuntu-latest, steps: []}\n',
-    original.replace('contents: write', 'contents: read'),
-  ];
-  for (const content of mutants) {
-    assert.notEqual(content, original);
-    const result = analyzeIndependentSecurityReview({ changedFiles: cleanBoundaryFiles, diff: cleanBoundaryDiff(),
-      ...protectedWorkflowAnalysisEvidence({ [path]: content }) });
-    assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
-    assert.ok(result.findings.some(item => item.code === 'write-workflow-does-not-use-trusted-source'));
-  }
-});
-
 test('independent reviewer rejects untrusted write-authority workflow and unsupported high-risk surfaces', () => {
   const bad = analyzeIndependentSecurityReview({
     changedFiles: ['.github/workflows/independent-merge-security-review.yml', 'scripts/windows/mutate-host.ps1'],
