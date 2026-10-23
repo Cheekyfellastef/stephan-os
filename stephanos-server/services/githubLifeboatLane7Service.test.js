@@ -274,6 +274,22 @@ test('Lane 7 completion advances only after exact external escrow is proven', as
       return { state: { revision: 9, currentPhase: 'GITHUB_COMMIT' } };
     },
   });
+  // No progress receipt exists in this fixture: expiry cannot depend on appendReceipt.
+  for (const boundary of ['escrow', 'collection']) {
+    let fresh = true; let collections = 0;
+    const held = await runGitHubLifeboatLane7({ ...fixture.options,
+      readWorkerHeartbeatAgeMs: () => fresh ? 0 : 120001,
+      verifyPublishedEscrow: async (...args) => {
+        const verified = await fixture.options.verifyPublishedEscrow(...args);
+        if (boundary === 'escrow') fresh = false; return verified;
+      },
+      collectResult: async () => { collections++; await Promise.resolve(); fresh = false; return { state: {} }; },
+    });
+    assert.equal(held.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+    assert.equal(collections, boundary === 'escrow' ? 0 : 1);
+    assert.equal(await readFile(processingPath, 'utf8'), JSON.stringify(item));
+    await assert.rejects(readFile(join(completed, `${actionId}.result.json`)), { code: 'ENOENT' });
+  }
   const result = await runGitHubLifeboatLane7(fixture.options);
   assert.equal(result.completion.ok, true);
   assert.equal(result.completion.result.success, true);
@@ -356,4 +372,20 @@ test('Lane 7 samples custody again after queue awaits before outbox publication'
     readQueue: async () => { if (++reads === 2) fresh = false; return []; } });
   await assert.rejects(runGitHubLifeboatLane7(fixture.options), /MISSION_WORKER_CUSTODY_UNPROVEN/);
   assert.equal(fixture.writes.length, 0);
+});
+
+test('capacity writes each resample custody after preceding awaited work on both entry points', async () => {
+  for (const run of [runGitHubLifeboatLane7, refreshGitHubLifeboatLane7Capacity]) {
+    for (const expireAt of ['queue', 'proof']) {
+      let fresh = true; let proofs = 0; let publications = 0;
+      const fixture = baseOptions(inbox(), {
+        readWorkerHeartbeatAgeMs: () => fresh ? 0 : 120001,
+        readQueue: async () => { await Promise.resolve(); if (expireAt === 'queue') fresh = false; return []; },
+        writeProof: async () => { proofs++; await Promise.resolve(); fresh = false; return { ok: true }; },
+        publishCapacity: async () => { publications++; return { publication: { ok: true } }; },
+      });
+      await assert.rejects(run(fixture.options), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+      assert.equal(proofs, expireAt === 'queue' ? 0 : 1); assert.equal(publications, 0);
+    }
+  }
 });

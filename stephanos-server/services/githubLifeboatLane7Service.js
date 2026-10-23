@@ -296,6 +296,7 @@ async function publishLane7Capacity({ inbox, sourceHead, queue, paths, now, opti
     finalVerdict: 'GITHUB_LIFEBOAT_LANE7_EXTERNAL_CAPACITY_PROVEN',
   });
   const writeProof = options.writeProof || (async (record) => writeAtomicJson(paths.workspaceRoot, ['proof', proofFile], record, { repoRoot: paths.repoRoot, nowMs: now.getTime() }));
+  assertCanonicalMissionWorkerCustody(options);
   const proofWrite = await writeProof(proof);
   if (proofWrite?.ok !== true) return unavailable(`LANE7_PROOF_PUBLICATION_FAILED:${text(proofWrite?.reason, 'unknown')}`, { sourceHead });
   const queueDepth = queue.filter((entry) => text(entry.adapter).toLowerCase() === 'chatgpt-github').length;
@@ -313,6 +314,7 @@ async function publishLane7Capacity({ inbox, sourceHead, queue, paths, now, opti
     proofRefs: Object.freeze([proofRef]),
   });
   const publish = options.publishCapacity || ((record) => publishGitHubContinuityCapacityPublicationV1(paths.workspaceRoot, record, { repoRoot: paths.repoRoot, nowUtc: now.toISOString() }));
+  assertCanonicalMissionWorkerCustody(options);
   const publication = await publish(observation);
   const published = publication?.finalVerdict === 'GITHUB_CONTINUITY_CAPACITY_PUBLISHED' || publication?.publication?.ok === true;
   return published ? Object.freeze({ ok: true, available: true, sourceHead, queueDepth, observation, publication, proofWrite, ...authorityBoundary(), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CAPACITY_PUBLISHED' })
@@ -517,12 +519,15 @@ function validResultReceipt(receipt) {
   return SHA256.test(text(receipt.sha256)) || SHA256.test(text(receipt.commandOutputHash)) || Number(receipt.exitCode) === 0;
 }
 
-async function finishProcessingClaim(claim, result, success) {
+async function finishProcessingClaim(claim, result, success, options) {
+  assertCanonicalMissionWorkerCustody(options);
   await mkdir(success ? claim.paths.completed : claim.paths.failed, { recursive: true });
   const target = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(target, fileName.replace(/\.json$/, '.result.json'));
+  assertCanonicalMissionWorkerCustody(options);
   await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  assertCanonicalMissionWorkerCustody(options);
   await rename(claim.processingPath, resolve(target, fileName));
   return resultPath;
 }
@@ -562,12 +567,13 @@ async function applyCompletion(inbox, paths, now, adapter, options) {
     if (!gate.terminalReceiptAllowed) return Object.freeze({ ok: false, reason: gate.finalVerdict, gate });
   }
   const collect = options.collectResult || collectAgentWorkerResult;
+  assertCanonicalMissionWorkerCustody(options);
   const applied = await collect({
     missionId, actionId, adapter: 'chatgpt-github', success,
     resultId: success ? text(completion.resultId, actionId) : '', changedFiles: success ? changedFiles : [],
     receipt: completion.receipt, evidenceReceipts: success ? completion.evidenceReceipts : [],
     error: success ? '' : text(completion.error, 'Lane 7 external build failed.'),
-  }, { ...options, queueRoot: options.queueRoot, env: options.env });
+  }, { ...options, assertResultCustody: () => assertCanonicalMissionWorkerCustody(options), queueRoot: options.queueRoot, env: options.env });
   let terminalReceipt = await latestReceipt(claim, paths, options);
   if (terminalReceipt && terminalReceipt.state === 'progress') {
     terminalReceipt = await appendReceipt(terminalReceipt, success ? 'completed' : 'failed', success ? 'external-github-lifeboat-result-validated' : 'external-github-lifeboat-result-blocked', paths, now, options, {
@@ -577,7 +583,7 @@ async function applyCompletion(inbox, paths, now, adapter, options) {
     });
   }
   const result = Object.freeze({ schemaVersion: GITHUB_LIFEBOAT_LANE7_SCHEMA, actionId, missionId, success, changedFiles, stateRevision: applied?.state?.revision ?? null, currentPhase: applied?.state?.currentPhase || '', escrowVerification, finalVerdict: success ? 'GITHUB_LIFEBOAT_LANE7_SOURCE_CHANGED_AND_TESTED' : 'GITHUB_LIFEBOAT_LANE7_BUILD_BLOCKED' });
-  const resultPath = await finishProcessingClaim(claim, result, success);
+  const resultPath = await finishProcessingClaim(claim, result, success, options);
   return Object.freeze({ ok: true, result, resultPath, terminalReceipt, ...authorityBoundary() });
 }
 

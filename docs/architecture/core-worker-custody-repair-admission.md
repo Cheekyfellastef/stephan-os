@@ -330,3 +330,13 @@ publishing CLAIM_ACCEPTED; missing, stale, nonnumeric or throwing evidence holds
 Receipt and outbox publications sample again at their own boundaries. No new queue,
 worker, runtime lease or executable is introduced. Native CI exercises the actual
 helpers and queue consumer, including time expiring across awaited reads.
+
+
+A full Lane 7 side-effect audit also places samples before each capacity proof
+and capacity publication, before completion collection, before each of its two
+mission events (after the intervening awaited state read/event), and before
+finalization's directory, create-only result write and processing rename. Tests
+expire custody at each capacity/escrow/collection boundary, including completions
+with no progress receipt. An interrupted event pair can resume only the existing
+exact-result replay path; a missing receipt is never treated as an affirmative
+sample. The existing collector's other adapters retain their admission policy.

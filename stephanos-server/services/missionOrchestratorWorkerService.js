@@ -741,11 +741,13 @@ export async function collectAgentWorkerResult(result, options = {}) {
   if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
     throw new Error('Mission has no active agent dispatch.');
   }
+  if (options.assertResultCustody) options.assertResultCustody();
   let collected = exactSuccessfulReplay
     ? { state: previous, duplicate: true, eventId }
     : await appendMissionEvent(missionId, { eventId, eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId, changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
+    if (options.assertResultCustody) options.assertResultCustody();
     collected = await appendMissionEvent(missionId, {
       eventId: `evidence-${actionId}`.slice(0, 128),
       eventType: 'EVIDENCE_RECORDED',

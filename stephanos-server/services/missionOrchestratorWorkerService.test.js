@@ -671,3 +671,30 @@ test('completed source result replays only missing evidence after interrupted qu
     ...result, receipt: proof('codex result', 'forged-receipt'),
   }, options), /no active agent dispatch/);
 });
+
+test('result custody is rechecked before both mission events with safe exact-result replay', async () => {
+  for (const expireOn of [1, 2]) {
+    const options = await runtime(); options.capacityRouting = freshCodexCapacityRouting();
+    const created = await createMissionRecord(intent, options);
+    await publishMissionWorkerAction(created.state, options);
+    const ready = await appendMissionEvent(intent.missionId, { eventId: 'custody-worktree', eventType: 'WORKTREE_READY',
+      worktreePath: intent.worktreePath, clean: true, receipt: proof('isolated worktree', 'custody-worktree') }, options);
+    const dispatch = await publishMissionWorkerAction(ready.state, options);
+    assert.ok(await claimNextMissionWorkerItem('codex', options));
+    const result = { missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true,
+      changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'custody-result'),
+      evidenceReceipts: [proof('focused test output', 'custody-evidence')] };
+    const before = (await readMissionRecord(intent.missionId, options)).state;
+    let samples = 0;
+    await assert.rejects(collectAgentWorkerResult(result, { ...options,
+      assertResultCustody: () => { if (++samples === expireOn) throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); },
+    }), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+    const held = (await readMissionRecord(intent.missionId, options)).state;
+    assert.equal(samples, expireOn);
+    assert.equal(held.evidenceReceipts.some(r => r.receiptId === 'custody-evidence'), false);
+    if (expireOn === 1) assert.equal(held.revision, before.revision);
+    const resumed = await collectAgentWorkerResult(result, options);
+    assert.equal(resumed.state.currentPhase, 'GITHUB_COMMIT');
+    assert.equal(resumed.state.storeMetadata.processedEventIds.filter(id => id === `result-${dispatch.action.actionId}`).length, 1);
+  }
+});
