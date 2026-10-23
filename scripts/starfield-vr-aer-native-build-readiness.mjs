@@ -120,7 +120,8 @@ export function classifyStarfieldNativeR7Isolation({
   // Reject malformed/duplicate/foreign resource claims rather than pretending
   // that an unrelated R7 or game-directory owner has become available.
   if (!strings(requestedResourceIds) || !strings(activeResourceIds)
-    || requestedResourceIds.length === 0
+    || requestedResourceIds.length !== HOSTED_VR_SOURCE_RESOURCES.length
+    || !HOSTED_VR_SOURCE_RESOURCES.every((id) => requestedResourceIds.includes(id))
     || new Set(requestedResourceIds).size !== requestedResourceIds.length
     || new Set(activeResourceIds).size !== activeResourceIds.length
     || requestedResourceIds.some((id) => !HOSTED_VR_SOURCE_RESOURCES.includes(id))) {
@@ -167,7 +168,20 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_DIR_REQUIRED'});
   }
   const dir = resolve(sourceRoot);
-  const git = (args) => run('git', ['-C', dir, ...args], {encoding: 'utf8', timeout: 3000, windowsHide: true});
+  const git = (args) => run('git', ['-C', dir, ...args], {
+    encoding: 'utf8', timeout: 3000, windowsHide: true, maxBuffer: 8 * 1024 * 1024,
+  });
+  // A Git command from an ignored nested child still reports the parent HEAD.
+  // Compare the requested source directory against Git's actual checkout root.
+  const root = git(['rev-parse', '--show-toplevel']);
+  const top = typeof root.stdout === 'string' ? root.stdout.trim() : '';
+  const sameDir = (left, right) => {
+    const l = resolve(left), r = resolve(right);
+    return process.platform === 'win32' ? l.toLowerCase() === r.toLowerCase() : l === r;
+  };
+  if (root.status !== 0 || !top || !sameDir(dir, top)) {
+    return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_GIT_ROOT_MISMATCH'});
+  }
   const head = git(['rev-parse', 'HEAD']);
   const commit = String(head.stdout || '').trim();
   if (head.status !== 0 || !sha40(commit)) {
@@ -179,7 +193,18 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
   if (status.status !== 0) {
     return Object.freeze({ok: false, commit, clean: false, reason: 'SOURCE_GIT_STATUS_UNAVAILABLE'});
   }
-  const clean = status.stdout.trim() === '';
+  const clean = typeof status.stdout === 'string' && status.stdout.trim() === '';
+  // 'git status' can also hide tracked edits under assume-unchanged and
+  // skip-worktree bits. Enumerate the full indexed source/dependency closure
+  // and reject those marks before treating the workspace as build-ready.
+  const index = git(['ls-files', '-v', '-z', '--recurse-submodules']);
+  const indexEntries = index.status === 0 && !index.error && typeof index.stdout === 'string'
+    ? index.stdout.split('\0').filter(Boolean) : [];
+  const indexVerified = indexEntries.length > 0
+    && indexEntries.every((entry) => /^[HhSs] .+$/s.test(entry))
+    && indexEntries.some((entry) => entry.endsWith(' CMakePresets.json'))
+    && indexEntries.some((entry) => entry.endsWith(' src/CreationEngine/CreationEngineRendererModule.cpp'))
+    && !indexEntries.some((entry) => /^[hSs] /.test(entry));
   // Gitlink equality, hydration and dirty nested dependency state are separate
   // proofs. A pinned parent with -/+/U submodules is not build-ready.
   const submodules = git(['submodule', 'status', '--recursive']);
@@ -195,11 +220,12 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
     })
     && expected.size === 0;
   return Object.freeze({
-    ok: commit === MUTAR_PIN && clean && submodulesVerified,
-    commit, clean, submodulesVerified,
+    ok: commit === MUTAR_PIN && clean && submodulesVerified && indexVerified,
+    commit, clean, submodulesVerified, indexVerified,
     reason: commit !== MUTAR_PIN ? 'SOURCE_COMMIT_DRIFT'
       : !clean ? 'SOURCE_DIR_DIRTY'
-        : submodulesVerified ? 'PINNED_CHECKOUT_VERIFIED' : 'SOURCE_SUBMODULES_UNVERIFIED',
+        : !indexVerified ? 'SOURCE_GIT_INDEX_FLAGS_OR_CONTENT_UNVERIFIED'
+          : submodulesVerified ? 'PINNED_CHECKOUT_VERIFIED' : 'SOURCE_SUBMODULES_UNVERIFIED',
   });
 }
 
