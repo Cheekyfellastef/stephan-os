@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -9,7 +9,7 @@ import {
 } from './rescueIslandPhysicalScopeObservationV1.mjs';
 
 async function fixture(t) {
-  const parent = await mkdtemp(join(tmpdir(), 'rescue-island-physical-scope-'));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), 'rescue-island-physical-scope-')));
   t.after(() => rm(parent, { recursive: true, force: true }));
   const repositoryRoot = join(parent, 'canonical');
   await mkdir(join(repositoryRoot, '.git'), { recursive: true });
@@ -51,12 +51,12 @@ test('reject external symlink alias and a redirected existing scope parent', asy
   const { parent, repositoryRoot } = await fixture(t);
   const outside = join(parent, 'outside');
   await mkdir(outside);
-  await symlink(outside, join(repositoryRoot, 'outside-alias'), 'dir');
+  await symlink(outside, join(repositoryRoot, 'outside-alias'), process.platform === 'win32' ? 'junction' : 'dir');
   const direct = await observe({ repositoryRoot, paths: ['outside-alias/secret.md'] });
   assert.equal(direct.ok, false);
   assert.equal(direct.blocker, 'RESCUE_ISLAND_SCOPE_REDIRECTED');
   const inRepoLink = join(repositoryRoot, 'docs', 'link');
-  await symlink(join(repositoryRoot, 'docs', 'architecture'), inRepoLink, 'dir');
+  await symlink(join(repositoryRoot, 'docs', 'architecture'), inRepoLink, process.platform === 'win32' ? 'junction' : 'dir');
   const internal = await observe({ repositoryRoot, paths: ['docs/link/existing.md'] });
   assert.equal(internal.ok, false);
   assert.equal(internal.blocker, 'RESCUE_ISLAND_SCOPE_REDIRECTED');
@@ -79,7 +79,7 @@ test('a previously safe scan does not allow a later redirected path', async (t) 
   const before = await observe({ repositoryRoot, paths: [path] });
   assert.equal(before.ok, true);
   assert.equal(before.scopeResolutions[0].missingLeafOrAncestor, true);
-  await symlink(parent, join(repositoryRoot, 'docs', 'new-dir'), 'dir');
+  await symlink(parent, join(repositoryRoot, 'docs', 'new-dir'), process.platform === 'win32' ? 'junction' : 'dir');
   const after = await observe({ repositoryRoot, paths: [path] });
   assert.equal(after.ok, false);
   assert.equal(after.blocker, 'RESCUE_ISLAND_SCOPE_REDIRECTED');
@@ -88,7 +88,7 @@ test('a previously safe scan does not allow a later redirected path', async (t) 
 
 test('reject a redirected canonical repository root itself', async (t) => {
   const { parent, repositoryRoot } = await fixture(t);
-  await symlink(repositoryRoot, join(parent, 'alias'), 'dir');
+  await symlink(repositoryRoot, join(parent, 'alias'), process.platform === 'win32' ? 'junction' : 'dir');
   const result = await observe({ repositoryRoot: join(parent, 'alias'), paths: [proposed] });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'RESCUE_ISLAND_REPOSITORY_ROOT_UNTRUSTED');

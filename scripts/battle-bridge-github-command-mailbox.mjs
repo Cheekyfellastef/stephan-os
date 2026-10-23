@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1594,6 +1595,18 @@ const ORIGINAL_R7_MANDATORY_HOLDS = [
   'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
   'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
 ];
+function originalR7WitnessReadinessGuardProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return {};
+  // These guards qualify the summary again after local checkpointing and
+  // public compaction. Preserve actual booleans; missing evidence stays null.
+  return {
+    originalLeaseReleased: safeBoolean(result.originalLeaseReleased),
+    privilegedWindowsWitnessCommissioned: safeBoolean(result.privilegedWindowsWitnessCommissioned),
+    sourceMutationAllowed: safeBoolean(result.sourceMutationAllowed),
+    arbitraryShellAllowed: safeBoolean(result.arbitraryShellAllowed),
+  };
+}
+
 function safeOriginalR7WitnessReadinessProjection(result = {}) {
   if (result.remoteAction !== 'original-r7-witness-readiness') return null;
   const value = result.witnessReadiness;
@@ -1710,6 +1723,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === 'sovereign-windows-reviewer-calibration'
+      && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
+      ? { calibration: operationResult.calibration } : {}),
     remotePlan: Object.freeze(remotePlan),
     stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
     completedSteps: Object.freeze(completedSteps),
@@ -1737,6 +1753,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
     witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
+    ...originalR7WitnessReadinessGuardProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
@@ -2622,6 +2639,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
         originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
         witnessReadiness: inner?.witnessReadiness ?? null,
+        ...originalR7WitnessReadinessGuardProjection(inner),
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
