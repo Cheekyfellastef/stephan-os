@@ -400,6 +400,11 @@ function Get-StarfieldVrGameThreadCpuSample {
     } catch {
         $Previous.Clear()
         $out.reason = 'THREAD_SNAPSHOT_UNAVAILABLE'
+    } finally {
+        # Failed/oversized inventories are still inspection attempts. Retain the
+        # 5-second cooldown during 1s adaptive VR sampling, but not stale deltas.
+        $Previous.processId = $GameProcessId
+        $Previous.collectedAtUtc = $sampledAt
     }
     return [pscustomobject]$out
 }
