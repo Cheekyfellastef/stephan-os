@@ -256,6 +256,7 @@ test('pre-projected Spatial telemetry cannot smuggle operator acceptance into th
     rendererSourceHead: 'A'.repeat(40),
     device: 'Quest/browser',
     phase: 'end',
+    observedAtUtc: '2026-08-03T14:20:00.000Z',
     frame: { count: -1, poseFrames: 30, estimatedFps: 72 },
     input: { selectCount: 1, squeezeCount: 0 },
     operatorAcceptance: true,
