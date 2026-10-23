@@ -396,3 +396,10 @@ at commit after lock/audit awaits, before either result/evidence state write.
 The actual two-event collector regression expires all four caller/store samples;
 no first or second event is committed on stale custody, and exact success/failure
 reconciliation remains read-only until the original finalization.
+
+Pickup's private claim-custody assertion is applied by that same canonical store
+inside its existing mission lock, immediately before AGENT_DISPATCHED commits.
+An actual consumer/store regression independently holds that lock, expires
+custody during the wait, and proves no running event/revision was committed,
+processing is released back to the original pending claim, and only a later
+fresh pickup can proceed. No source writer is launched by reconciliation.

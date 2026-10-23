@@ -73,7 +73,7 @@ export function failedMissionWorkerResultIdentityV1(event = {}) {
   const actionId = text(event.actionId).toLowerCase();
   const adapter = text(event.adapter).toLowerCase();
   const resultId = text(event.resultId);
-  if (event.eventType !== 'AGENT_RESULT_RECEIVED' || event.success !== false
+  if (text(event.eventType).toUpperCase() !== 'AGENT_RESULT_RECEIVED' || event.success !== false
       || !MISSION_ID_PATTERN.test(missionId) || !EVENT_ID_PATTERN.test(eventId)
       || !/^[a-z0-9][a-z0-9._:-]{2,160}$/.test(actionId) || !adapter || !resultId)
     return '';
@@ -426,7 +426,7 @@ export async function appendMissionEvent(missionId, event, options = {}) {
         && transitioned.dispatch?.status === 'failed'
         ? failedMissionWorkerResultIdentityV1(preparedEvent) : '';
       const next = withStoreMetadata(transitioned, {
-        ...(preparedEvent.eventType === 'AGENT_RESULT_RECEIVED'
+        ...(text(preparedEvent.eventType).toUpperCase() === 'AGENT_RESULT_RECEIVED'
           ? { lastFailedWorkerResultIdentityV1: failedResultIdentity } : {}),
         ...(originalSourceAttemptFence ? { originalSourceAttemptFence } : {}),
         processedEventIds: [...processedEventIds, eventId].slice(-1000),
@@ -438,6 +438,8 @@ export async function appendMissionEvent(missionId, event, options = {}) {
       });
       // A result collector may have waited for the mission lock/audit I/O.
       if (options.assertResultCustody) options.assertResultCustody();
+      if (text(preparedEvent.eventType).toUpperCase() === 'AGENT_DISPATCHED' && options.assertClaimCustody)
+        options.assertClaimCustody();
       await atomicWriteJson(paths.statePath, next);
       const completed = quarantine
         ? await reconcilePendingQuarantineAudit(next, paths, options)
