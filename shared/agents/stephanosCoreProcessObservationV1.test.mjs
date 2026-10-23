@@ -28,11 +28,18 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . '${helperPath.replace(/'/g, "''")}'
 $core = 'C:\\repo\\scripts\\stephanos-core-daemon.mjs'
-$good = [pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine='node C:\\repo\\scripts\\stephanos-core-daemon.mjs'}
+$good = [pscustomobject]@{Name='node.exe';ProcessId=7;ExecutablePath='C:\\Program Files\\nodejs\\node.exe';CommandLine='node C:\\repo\\scripts\\stephanos-core-daemon.mjs'}
 $hidden = [pscustomobject]@{Name='node.exe';ProcessId=8;CommandLine=$null}
 $other = [pscustomobject]@{Name='node.exe';ProcessId=9;CommandLine='node C:\\repo\\other.mjs'}
-$slash = [pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine='node C:/repo/scripts/stephanos-core-daemon.mjs'}
+$slash = [pscustomobject]@{Name='node.exe';ProcessId=7;ExecutablePath='C:\\Program Files\\nodejs\\node.exe';CommandLine='node C:/repo/scripts/stephanos-core-daemon.mjs'}
+$alternate = [pscustomobject]@{Name='node.exe';ProcessId=7;ExecutablePath='C:\\alternate\\node.exe';CommandLine=$good.CommandLine}
+$missingExecutable = [pscustomobject]@{Name='node.exe';ProcessId=7;CommandLine=$good.CommandLine}
+$wrongLeaf = [pscustomobject]@{Name='node.exe';ProcessId=7;ExecutablePath='C:\\Program Files\\nodejs\\node.exe.old';CommandLine=$good.CommandLine}
 $cases = @(
+  @{rows=@($alternate);complete=$false;count=$null},
+  @{rows=@($missingExecutable);complete=$false;count=$null},
+  @{rows=@($wrongLeaf);complete=$false;count=$null},
+  @{rows=@($good,$alternate);complete=$false;count=$null},
   @{rows=@($good);complete=$true;count=1},
   @{rows=@($other);complete=$true;count=0},
   @{rows=@($hidden);complete=$false;count=$null},

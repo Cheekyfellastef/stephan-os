@@ -6,6 +6,7 @@ function ConvertTo-StephanosCoreProcessObservation {
         [bool]$ObservationSucceeded = $false,
         [Parameter(Mandatory = $true)][string]$CoreScript
     )
+    $canonicalNode = 'C:\Program Files\nodejs\node.exe'
     $coreMatches = @()
     $uninspectable = 0
     $complete = $ObservationSucceeded
@@ -23,7 +24,15 @@ function ConvertTo-StephanosCoreProcessObservation {
             $complete = $false
             continue
         }
-        if ($command.Replace('/', '\') -match $pattern) { $coreMatches += $row }
+        if ($command.Replace('/', '\') -match $pattern) {
+            $executable = if ($row.PSObject.Properties['ExecutablePath']) { [string]$row.ExecutablePath } else { '' }
+            if (-not [string]::Equals($executable.Replace('/', '\'), $canonicalNode, [StringComparison]::OrdinalIgnoreCase)) {
+                $uninspectable++
+                $complete = $false
+                continue
+            }
+            $coreMatches += $row
+        }
     }
     [pscustomobject]@{
         processes = @($coreMatches)

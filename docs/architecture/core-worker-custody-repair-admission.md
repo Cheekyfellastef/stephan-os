@@ -346,3 +346,14 @@ subsequent receipt-history work, including legacy claims with no execution recei
 That hold must never put a proved writer back in pending. Pickup mission-state
 publication also checks after its awaited state read; before proof is recorded,
 the consumer's existing rollback releases an unproved pickup safely.
+
+
+The shared Windows inventory also requires a Core-matching Win32_Process row's
+ExecutablePath to equal the fixed C:\Program Files\nodejs\node.exe path
+(case-insensitive, slash-normalized). Missing, alternate or suffixed executable
+paths make the entire inventory incomplete, never zero owners or proved custody.
+Both status and caretaker already consume this one helper; neither gets an
+independent caller-provided identity override. The helper's exact-source candidate
+pin and its parent's child pin are updated together and still require external
+qualification and protected bootstrap admission. Native tests retain matching
+command lines while substituting executable identities.

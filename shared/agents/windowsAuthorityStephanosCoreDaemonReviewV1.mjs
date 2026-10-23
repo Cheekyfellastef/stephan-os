@@ -12,7 +12,7 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
   'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['43ea1940733bfa7bfa470109fd32c296f5db956a', '4a95894ec4e6f454e48be2e9be8f961eaf918a58']),
   'scripts/windows/status-stephanos-core-daemon.ps1': Object.freeze(['523aca4b93fe9adf434fd157137c7cb4ef52fbca']),
-  'scripts/windows/stephanos-core-process-observation.ps1': Object.freeze(['81679199d1b842ae054c6cd8e509c6051a28ceb6']),
+  'scripts/windows/stephanos-core-process-observation.ps1': Object.freeze(['9e00ce659859b0274fce36e13cb20045b1b337b1']),
 });
 // Successor estate candidate: these bindings become trusted ONLY through the
 // existing protected reviewer-bootstrap admission, never this PR's own checks.
@@ -289,7 +289,10 @@ function reviewInventoryHelper(source, path, findings) {
     "if ([string]$row.Name -ine 'node.exe') { continue }",
     '$rows = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
     '$complete = $false', '$uninspectable++',
-    "if ($command.Replace('/', '\\') -match $pattern) { $coreMatches += $row }",
+    "$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'",
+    "$executable = if ($row.PSObject.Properties['ExecutablePath']) { [string]$row.ExecutablePath } else { '' }",
+    "if (-not [string]::Equals($executable.Replace('/', '\\'), $canonicalNode, [StringComparison]::OrdinalIgnoreCase)) {",
+    '$coreMatches += $row',
     'processCount = if ($complete) { [int]$coreMatches.Count } else { $null }',
     "blocker = if ($complete) { '' } else { 'CORE_PROCESS_INVENTORY_UNPROVEN' }",
     'ConvertTo-StephanosCoreProcessObservation -ObservationSucceeded $false -CoreScript $CoreScript',
