@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
 import {
   appendFileSync,
   readFileSync,
@@ -419,98 +418,6 @@ async function hydrateExactHeadWorkflowRuns(context, sourceHead, summaries) {
     });
   }
   return validation.runs;
-}
-
-async function readPreApprovalIdentity(context) {
-  const identity = context.dispatch.identity;
-  const prefix = `/repos/${context.owner}/${context.repo}`;
-  const [pullRequest, liveMainRef, headCommit, review] = await Promise.all([
-    apiJson(`${prefix}/pulls/${identity.prNumber}`),
-    apiJson(`${prefix}/git/ref/heads/main`),
-    apiJson(`${prefix}/git/commits/${identity.sourceHead}`),
-    pullRequestReviewState(context.owner, context.repo, identity.prNumber),
-  ]);
-  return { pullRequest, liveMainRef, headCommit, review };
-}
-
-async function readPreApprovalChecks(context) {
-  const prefix = `/repos/${context.owner}/${context.repo}`;
-  const head = context.dispatch.identity.sourceHead;
-  const [summaries, checks, statuses] = await Promise.all([
-    apiCollection(`${prefix}/actions/runs?head_sha=${head}`, 'workflow_runs'),
-    apiCollection(`${prefix}/commits/${head}/check-runs?filter=latest`, 'check_runs'),
-    apiCollection(`${prefix}/commits/${head}/statuses`),
-  ]);
-  // Use full check/run records, just as the final protected job does. Summary
-  // records are not an alternative provenance or exact-head binding.
-  const [workflowRuns, checkRuns] = await Promise.all([
-    hydrateExactHeadWorkflowRuns(context, head, summaries.items),
-    Promise.all(checks.items.map(async (summary) => {
-      if (!exactPositiveInteger(summary?.id)) fail('Pre-approval check identity is invalid.');
-      const check = await apiJson(`${prefix}/check-runs/${summary.id}`);
-      if (check?.id !== summary.id || check?.head_sha !== head
-        || check?.check_suite?.id !== summary?.check_suite?.id) {
-        fail('Pre-approval check detail changed identity.');
-      }
-      return check;
-    })),
-  ]);
-  if (new Set(checkRuns.map((check) => check.id)).size !== checkRuns.length) {
-    fail('Pre-approval check collection contains duplicate identities.');
-  }
-  return { checkRuns, workflowRuns, commitStatuses: statuses.items };
-}
-
-// Early read-only rejection, not an approval receipt. The final protected
-// collector, replay fence, configuration proof and merge revalidation remain
-// mandatory. Test adapters cannot turn this result into mutation authority.
-export async function preflightBeforeProtectedApproval(context, {
-  readExecution = currentWorkflowExecution,
-  readIdentity = readPreApprovalIdentity,
-  readChecks = readPreApprovalChecks,
-  readReview = (value) => loadSelectedIndependentReview(value, value.dispatch.identity, ''),
-} = {}) {
-  await readExecution(context);
-  const identity = context.dispatch.identity;
-  const validateIdentity = ({ pullRequest: pr, liveMainRef, headCommit, review } = {}) => {
-    if (pr?.number !== identity.prNumber || pr?.state !== 'open' || pr?.draft !== false
-      || pr?.head?.repo?.full_name !== context.repository || pr?.base?.repo?.full_name !== context.repository
-      || pr?.head?.ref !== identity.branch || pr?.head?.sha !== identity.sourceHead
-      || pr?.base?.ref !== 'main' || pr?.base?.sha !== identity.baseSha
-      || liveMainRef?.object?.sha !== identity.baseSha || headCommit?.sha !== identity.sourceHead
-      || headCommit?.tree?.sha !== identity.sourceTree || review?.mergeable !== 'MERGEABLE'
-      || review?.unresolvedThreadCount !== 0 || review?.reviewDecision === 'CHANGES_REQUESTED') {
-      fail('Pre-approval PR identity or conversation state is not admissible.');
-    }
-    const expectation = buildPersonalRepositoryCheckExpectation({
-      repository: context.repository, identity, mergeStateStatus: review.mergeStateStatus,
-    });
-    if (!expectation.valid) fail('Pre-approval check expectation is invalid.', { blockers: expectation.blockers });
-    return expectation.expected;
-  };
-  const expected = validateIdentity(await readIdentity(context));
-  const independentReview = await readReview(context);
-  if (independentReview?.reviewMode !== 'clean-independent'
-    || !Array.isArray(independentReview.findings) || independentReview.findings.length !== 0) {
-    fail('Pre-approval independent review is not clean.');
-  }
-  const snapshot = await readChecks(context);
-  if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
-    fail('Pre-approval check snapshot is incomplete.');
-  }
-  const inspect = (binding) => validatePersonalRepositoryCheckRuns(
-    snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, binding,
-    { cleanIndependentReviewProved: true },
-  );
-  const checks = inspect(expected);
-  if (!checks.valid) fail('Exact-head checks must pass before requesting protected approval.', { blockers: checks.blockers });
-  const refreshed = inspect(validateIdentity(await readIdentity(context)));
-  if (!refreshed.valid) fail('PR state changed during pre-approval check collection.', { blockers: refreshed.blockers });
-  return Object.freeze({
-    finalStatus: 'PERSONAL_REPOSITORY_PRE_APPROVAL_CHECKS_READY',
-    advisoryOnly: true, operatorApproval: false, mutationAuthority: false,
-    finalRevalidationRequired: true, checkEvidence: refreshed.evidence,
-  });
 }
 
 function configurationSnapshot(repository, environment, activeRules, rulesets) {
@@ -1167,10 +1074,10 @@ async function postCompletionComment(context, completion, receipt) {
 }
 
 async function main() {
-  if (!['preflight', 'evidence', 'approve', 'merge'].includes(mode)) fail('Mode must be preflight, evidence, approve or merge.');
+  if (!['evidence', 'approve', 'merge'].includes(mode)) fail('Mode must be evidence, approve or merge.');
   if (process.env.GITHUB_ACTIONS !== 'true') fail('Protected personal-repository merge may run only inside GitHub Actions.');
   if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch') fail('Protected personal-repository merge requires workflow_dispatch.');
-  const expectedJob = mode === 'evidence' || mode === 'preflight'
+  const expectedJob = mode === 'evidence'
     ? PERSONAL_REPOSITORY_EVIDENCE_JOB
     : mode === 'approve'
       ? PERSONAL_REPOSITORY_APPROVAL_JOB
@@ -1198,11 +1105,6 @@ async function main() {
     fail('Immutable mailbox authorization comment digest is required.');
   }
   const context = { event, dispatch, repository, owner, repo, runId, runAttempt, authorizationCommentId, authorizationCommentSha256 };
-
-  if (mode === 'preflight') {
-    process.stdout.write(`${JSON.stringify(await preflightBeforeProtectedApproval(context), null, 2)}\n`);
-    return;
-  }
 
   if (mode === 'evidence') {
     const collected = await collectEvidence(context);
@@ -1327,7 +1229,7 @@ async function main() {
   }, null, 2)}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main().catch((error) => {
+main().catch((error) => {
   const details = error instanceof GateError ? error.details : {};
   process.stderr.write(`${JSON.stringify({
     finalStatus: 'PERSONAL_REPOSITORY_PROTECTED_MERGE_BLOCKED',

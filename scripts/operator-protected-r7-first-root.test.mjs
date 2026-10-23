@@ -18,10 +18,26 @@ function job(name){const index=entries.findIndex(row=>row[1]===name);assert.ok(i
   return workflow.slice(entries[index].index,entries[index+1]?.index??workflow.length)
     .replace(/\n  # Proposed purpose-bound policy:[\s\S]*$/,'').trimEnd()+'\n';}
 
-test('R7 issuer proposal is inactive and the existing protected workflow stays unchanged',()=>{
+test('R7 issuer proposal stays inactive across the read-only merge-check prerequisite',()=>{
   assert.match(workflow,/^# INACTIVE SOURCE PROPOSAL:/);
+  const readOnlyCheckStep=[
+    '      - name: Check exact source readiness before requesting protected approval',
+    "        if: ${{ inputs.mode == 'user-owned-protected-squash' }}",
+    '        shell: bash',
+    '        env:',
+    '          GH_TOKEN: ${{ github.token }}',
+    '          STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ steps.authorization.outputs.authorization_comment_id }}',
+    '          STEPHANOS_AUTHORIZATION_COMMENT_SHA256: ${{ steps.authorization.outputs.authorization_comment_sha256 }}',
+    '        run: node scripts/operator-protected-personal-repository-merge.mjs preflight',
+    '', '',
+  ].join('\n');
+  // Permit only this exact non-authority step; retain the prior byte identity
+  // for every original job, credential, permission, operation and boundary.
+  // A duplicate, relocated or modified step cannot satisfy the old digest.
+  const stepAnchor='      - name: Collect exact personal-repository evidence after protected admission';
+  const originalWorkflow=activeWorkflow.replace(readOnlyCheckStep+stepAnchor,stepAnchor);
   // Independently read from protected main a770bdff, not from this working tree.
-  assert.equal(sha(activeWorkflow),'77e0efd38305fdeff4b403b2b537849d47e59225244481fae794ac5b615bc468');
+  assert.equal(sha(originalWorkflow),'77e0efd38305fdeff4b403b2b537849d47e59225244481fae794ac5b615bc468');
   assert.deepEqual([...activeWorkflow.matchAll(/^  ([a-z0-9-]+):\n/gm)].map(row=>row[1]),
     ['merge-group-evidence','operator-merge-queue-boundary','personal-repository-evidence',
       'operator-personal-repository-approval','operator-personal-repository-squash-merge']);
