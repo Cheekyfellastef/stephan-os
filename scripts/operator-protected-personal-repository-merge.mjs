@@ -470,7 +470,7 @@ export async function preflightBeforeProtectedApproval(context, {
   readChecks = readPreApprovalChecks,
   readReview = (value) => loadSelectedIndependentReview(value, value.dispatch.identity, ''),
 } = {}) {
-  await readExecution(context);
+  const execution = await readExecution(context);
   const identity = context.dispatch.identity;
   const validateIdentity = ({ pullRequest: pr, liveMainRef, headCommit, review } = {}) => {
     if (pr?.number !== identity.prNumber || pr?.state !== 'open' || pr?.draft !== false
@@ -494,22 +494,43 @@ export async function preflightBeforeProtectedApproval(context, {
     || !Array.isArray(independentReview.findings) || independentReview.findings.length !== 0) {
     fail('Pre-approval independent review is not clean.');
   }
-  const snapshot = await readChecks(context);
-  if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
-    fail('Pre-approval check snapshot is incomplete.');
-  }
-  const inspect = (binding) => validatePersonalRepositoryCheckRuns(
-    snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, binding,
-    { cleanIndependentReviewProved: true },
-  );
-  const checks = inspect(expected);
+  const inspectFreshChecks = async (binding) => {
+    const snapshot = await readChecks(context);
+    if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
+      fail('Pre-approval check snapshot is incomplete.');
+    }
+    const checks = validatePersonalRepositoryCheckRuns(
+      snapshot.checkRuns, snapshot.workflowRuns, snapshot.commitStatuses, binding,
+      { cleanIndependentReviewProved: true },
+    );
+    // The per-check validator cannot detect an absent required workflow.
+    // Use the same complete workflow contract as the protected final collector.
+    const workflows = validatePersonalRepositoryWorkflowRuns(
+      execution?.definitions, snapshot.workflowRuns, binding,
+    );
+    return {
+      valid: checks.valid && workflows.valid,
+      evidence: checks.evidence,
+      workflowEvidence: workflows.evidence,
+      blockers: [...new Set([...checks.blockers, ...workflows.blockers])],
+    };
+  };
+  const checks = await inspectFreshChecks(expected);
   if (!checks.valid) fail('Exact-head checks must pass before requesting protected approval.', { blockers: checks.blockers });
-  const refreshed = inspect(validateIdentity(await readIdentity(context)));
+  // Refreshing identity does not refresh its checks. Collect again after the
+  // identity read so newly pending or failed work cannot reuse an older pass.
+  const refreshedExpected = validateIdentity(await readIdentity(context));
+  const refreshed = await inspectFreshChecks(refreshedExpected);
   if (!refreshed.valid) fail('PR state changed during pre-approval check collection.', { blockers: refreshed.blockers });
+  const finalExpected = validateIdentity(await readIdentity(context));
+  if (finalExpected.mergeStateStatus !== refreshedExpected.mergeStateStatus) {
+    fail('PR merge state changed during the final pre-approval check read.');
+  }
   return Object.freeze({
     finalStatus: 'PERSONAL_REPOSITORY_PRE_APPROVAL_CHECKS_READY',
     advisoryOnly: true, operatorApproval: false, mutationAuthority: false,
     finalRevalidationRequired: true, checkEvidence: refreshed.evidence,
+    requiredWorkflowEvidence: refreshed.workflowEvidence,
   });
 }
 

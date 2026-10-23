@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { preflightBeforeProtectedApproval } from './operator-protected-personal-repository-merge.mjs';
+import { PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 
 function preApprovalFixture() {
   const repository = 'Cheekyfellastef/stephan-os';
@@ -16,12 +17,18 @@ function preApprovalFixture() {
     headCommit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } },
     review: { mergeable: 'MERGEABLE', mergeStateStatus: 'UNSTABLE', unresolvedThreadCount: 0, reviewDecision: null },
   };
+  const definitions = PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.map((required, index) => ({
+    id: 700 + index, name: required.name, path: required.path, state: 'active',
+  }));
   const workflows = [
     { id: 100, name: 'Stephanos Exact-Head Review', path: '.github/workflows/stephanos-exact-head-review.yml', conclusion: 'failure' },
     { id: 101, name: 'Independent Merge Security Review', path: '.github/workflows/independent-merge-security-review.yml', conclusion: 'success' },
+    ...PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.map((required, index) => ({
+      id: 200 + index, ...required, workflow_id: definitions[index].id, conclusion: 'success',
+    })),
   ].map((run) => ({ ...run, run_attempt: 1, check_suite_id: run.id + 1000,
     repository: { full_name: repository }, head_sha: identity.sourceHead,
-    event: 'pull_request_target', status: 'completed',
+    event: run.event || 'pull_request_target', status: 'completed',
     pull_requests: [{ number: identity.prNumber, head: state.pullRequest.head, base: state.pullRequest.base }] }));
   const snapshot = { workflowRuns: workflows, commitStatuses: [], checkRuns: workflows.map((run, index) => ({
     id: run.id + 2000, name: index ? 'independent-security-review' : 'exact-head-review',
@@ -31,12 +38,12 @@ function preApprovalFixture() {
   })) };
   const events = [];
   const adapters = {
-    readExecution: async () => { events.push('execution'); },
+    readExecution: async () => { events.push('execution'); return { definitions }; },
     readIdentity: async () => { events.push('identity'); return structuredClone(state); },
     readReview: async () => { events.push('review'); return { reviewMode: 'clean-independent', findings: [] }; },
     readChecks: async () => { events.push('checks'); return structuredClone(snapshot); },
   };
-  return { context, state, snapshot, events, adapters };
+  return { context, state, snapshot, definitions, events, adapters };
 }
 
 test('pre-approval check rejects the R7 stale attached security failure despite clean selected review', async () => {
@@ -51,8 +58,9 @@ test('pre-approval check rejects the R7 stale attached security failure despite 
 test('pre-approval success rechecks live identity and has no approval or mutation authority', async () => {
   const f = preApprovalFixture();
   const result = await preflightBeforeProtectedApproval(f.context, f.adapters);
-  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity']);
-  assert.equal(result.checkEvidence.length, 2);
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity', 'checks', 'identity']);
+  assert.equal(result.checkEvidence.length, 2 + PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
+  assert.equal(result.requiredWorkflowEvidence.length, PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
   assert.equal(result.operatorApproval, false);
   assert.equal(result.mutationAuthority, false);
   assert.equal(result.finalRevalidationRequired, true);
@@ -64,6 +72,70 @@ test('pre-approval stops on a consumed attempt before collecting or approving an
   f.adapters.readExecution = async () => { throw Error('prior attempt consumed'); };
   await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), /prior attempt consumed/);
   assert.deepEqual(f.events, []);
+});
+
+test('pre-approval rereads newly pending or failed checks after identity refresh', async () => {
+  for (const conclusion of [null, 'failure']) {
+    const f = preApprovalFixture();
+    const readIdentity = f.adapters.readIdentity;
+    let observations = 0;
+    f.adapters.readIdentity = async () => {
+      if (++observations === 2) {
+        f.state.review.mergeStateStatus = 'BLOCKED';
+        f.snapshot.checkRuns[1].status = conclusion === null ? 'in_progress' : 'completed';
+        f.snapshot.checkRuns[1].conclusion = conclusion;
+      }
+      return readIdentity();
+    };
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+      error.details?.blockers?.includes(conclusion === null
+        ? 'personal-repository-check-run-not-terminal' : 'personal-repository-check-run-not-exact-green'));
+    assert.equal(f.events.filter((event) => event === 'checks').length, 2);
+  }
+});
+
+test('pre-approval rechecks source identity and merge state after the second check read', async () => {
+  for (const move of [
+    state => { state.pullRequest.head.sha = 'd'.repeat(40); },
+    state => { state.review.mergeStateStatus = 'BLOCKED'; },
+  ]) {
+    const f = preApprovalFixture(); const read = f.adapters.readChecks;
+    let reads = 0;
+    f.adapters.readChecks = async () => { const value = await read(); if (++reads === 2) move(f.state); return value; };
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+    assert.equal(reads, 2);
+  }
+});
+
+test('pre-approval requires every mandatory workflow even when all present checks pass', async () => {
+  for (let index = 0; index < PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length; index++) {
+    for (const phase of ['initial', 'refresh']) {
+      const f = preApprovalFixture(); const read = f.adapters.readChecks; let reads = 0;
+      f.adapters.readChecks = async () => {
+        const snapshot = await read();
+        if (++reads === (phase === 'initial' ? 1 : 2)) {
+          const removed = snapshot.workflowRuns.splice(index + 2, 1)[0];
+          snapshot.checkRuns = snapshot.checkRuns.filter((check) => check.check_suite.id !== removed.check_suite_id);
+        }
+        return snapshot;
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+        error.details?.blockers?.includes('personal-repository-workflow-run-not-exact-green:'
+          + PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS[index].name));
+    }
+  }
+});
+
+test('pre-approval rejects missing, disabled, duplicated or wrongly bound workflow definitions', async () => {
+  for (const mutate of [
+    f => { f.definitions.pop(); },
+    f => { f.definitions[0].state = 'disabled_manually'; },
+    f => { f.definitions.push({ ...f.definitions[0] }); },
+    f => { f.snapshot.workflowRuns[2].workflow_id++; },
+  ]) {
+    const f = preApprovalFixture(); mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
 });
 
 test('pre-approval rejects identity, review and collection gaps and concurrent movement', async () => {
