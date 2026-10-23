@@ -3,6 +3,11 @@
 
 typedef struct _R7_MUTATION_GATE R7_MUTATION_GATE, *PR7_MUTATION_GATE;
 
+typedef struct _R7_RECOVERY_BINDING {
+    UCHAR AdoptedBindingDigest[32];
+    GUID AttemptId;
+} R7_RECOVERY_BINDING, *PR7_RECOVERY_BINDING;
+
 /* The enclosing minifilter must reserve FILE and STREAM context slots for
  * this core and register these arrays. There is no DriverEntry, user port,
  * path selector, installer, signing endpoint or whole-estate claim here. */
@@ -53,18 +58,41 @@ NTSTATUS R7GateEnrollChild(
  * capability for this exact retained object. Read guards gain no write rights.
  * Source SIDs/custodian come from authenticated adopted configuration, not wire
  * input. Source principals must be a complete proven non-bypass estate.
- * Once a set is attempted, recovery ownership stays with Gate, even on error;
- * retirement refuses until explicit successful restore. No automatic rollback. */
+ * RecoveryJournalHandle is a separately admitted preprovisioned EMPTY file
+ * outside the source estate, on the same NTFS instance. It must grant read/
+ * append/control/synchronize without overwrite/metadata/delete capability;
+ * the trusted owner authenticates its protected store and unique attempt.
+ * The core persists the ACTUAL original and intended descriptors, native IDs
+ * and captured binding before any set. A caller checkpoint cannot replace it.
+ * Before the first journal write, recovery ownership stays with Gate, even on
+ * error; retirement refuses until explicit verified recovery. No auto rollback.
+ * A journal record is recovery evidence, never custody or restart authority. */
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS R7GateSealSourceDacl(_Inout_ PR7_MUTATION_GATE Gate,
     _In_ HANDLE CommissionerMetadataHandle, _In_ PSID TrustedCustodian,
-    _In_ ULONG SourceCount, _In_reads_(SourceCount) PSID const *SourceSids);
+    _In_ ULONG SourceCount, _In_reads_(SourceCount) PSID const *SourceSids,
+    _In_ HANDLE RecoveryJournalHandle,
+    _In_ const R7_RECOVERY_BINDING *TrustedRecoveryBinding);
 
 /* Explicit trusted recovery only, before/after separately admitted custody
  * retirement as appropriate. Never invoke on a fault after lease release to
  * make an old writer writable. Failed restore keeps all recovery ownership. */
 _IRQL_requires_(PASSIVE_LEVEL)
 NTSTATUS R7GateRestoreSourceDacl(_Inout_ PR7_MUTATION_GATE Gate);
+
+/* One native EMPTY observation for one independently identified RM root.
+ * The read handle may share writes/deletes: it is an observation capability,
+ * never a source guard. Unknown/failed/truncated/nonempty results refuse.
+ * SUCCESS is NOT whole-estate TxF closure or readiness. The producer must
+ * prove every relevant primary/secondary RM is covered, establish persistent
+ * effective source barriers and old/in-flight capability closure FIRST, and
+ * subsequently re-enumerate tree AND ADS against its retained sealed manifest.
+ * Never disable TxF, abort an unrelated transaction or pause other applications. */
+_IRQL_requires_(PASSIVE_LEVEL)
+NTSTATUS R7GateObserveEmptyResourceManager(_In_ PR7_MUTATION_GATE Gate,
+    _In_ HANDLE RetainedResourceManagerReadHandle,
+    _In_ const FILE_ID_INFORMATION *ExpectedNativeRoot,
+    _In_ const GUID *ExpectedResourceManagerId);
 
 /* One-way operation policy change, NOT an ARM/readiness proof. A complete
  * producer must first close namespace/write creates, exclude writable FOs

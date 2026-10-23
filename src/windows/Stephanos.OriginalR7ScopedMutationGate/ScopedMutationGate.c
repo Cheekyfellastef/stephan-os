@@ -1,5 +1,6 @@
 #include "ScopedMutationGate.h"
 #include "OperationPolicy.h"
+#include <bcrypt.h>
 
 #define R7_POOL_TAG 0x37474d52u
 #define R7_CONTEXT_SIGNATURE 0x37435458u
@@ -11,10 +12,40 @@ typedef struct _R7_DACL_SEAL {
     HANDLE MetadataHandle;
     PFILE_OBJECT MetadataObject;
     PSECURITY_DESCRIPTOR Original;
+    ULONG OriginalBytes;
+    HANDLE JournalHandle;
+    PFILE_OBJECT JournalObject;
+    FILE_ID_INFORMATION JournalIdentity;
+    BOOLEAN JournalIdentified;
+    PSECURITY_DESCRIPTOR JournalPolicy;
+    ULONG JournalPolicyBytes;
+    PVOID RecoveryRecord;
+    ULONG RecoveryBytes;
     PACL ExpectedAcl;
     BOOLEAN Verified;
+    BOOLEAN SetAttempted;
     UCHAR Custodian[SECURITY_MAX_SID_SIZE];
 } R7_DACL_SEAL, *PR7_DACL_SEAL;
+
+/* Fixed x64 little-endian disk format. All reserved bytes are zero. The three
+ * payloads are validated self-relative descriptors; no pointer is persisted.
+ * SHA256 covers the entire record with Digest zeroed, including all lengths. */
+typedef struct _R7_RECOVERY_HEADER {
+    UCHAR Magic[8];
+    ULONG Version, HeaderBytes, TotalBytes, OriginalBytes, DesiredBytes, JournalPolicyBytes;
+    FILE_ID_INFORMATION Target, Journal;
+    R7_RECOVERY_BINDING Binding;
+    UCHAR Digest[32];
+    ULONG Directory, DesiredSecurityInformation, Reserved[2];
+} R7_RECOVERY_HEADER, *PR7_RECOVERY_HEADER;
+C_ASSERT(sizeof(R7_RECOVERY_HEADER) == 176);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Target) == 32);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Journal) == 56);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Binding) == 80);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Digest) == 128);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Directory) == 160);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, DesiredSecurityInformation) == 164);
+C_ASSERT(FIELD_OFFSET(R7_RECOVERY_HEADER, Reserved) == 168);
 
 typedef struct _R7_GATE_CONTEXT {
     ULONG Signature;
@@ -125,6 +156,9 @@ static NTSTATUS R7DuplicateCheckedHandle(HANDLE source, ACCESS_MASK required,
     if (!NT_SUCCESS(status)) return status;
     status = ObReferenceObjectByHandle(*duplicate, 0,
         *IoFileObjectType, KernelMode, (PVOID *)file, NULL);
+    if (NT_SUCCESS(status) && (IoIsFileObjectIgnoringSharing(*file)
+        || IoGetTransactionParameterBlock(*file) != NULL))
+        status = STATUS_NOT_SUPPORTED;
     if (NT_SUCCESS(status)) {
         RtlZeroMemory(&information, sizeof(information));
         status = ZwQueryObject(*duplicate, ObjectBasicInformation,
@@ -329,7 +363,7 @@ BOOLEAN R7GateObservedMdlDrain(PR7_MUTATION_GATE gate)
 }
 
 static NTSTATUS R7ReadSecurity(PR7_MUTATION_GATE gate, PFILE_OBJECT file,
-    PSECURITY_DESCRIPTOR *result)
+    PSECURITY_DESCRIPTOR *result, PULONG actualBytes)
 {
     NTSTATUS status;
     ULONG needed = 0, returned = 0;
@@ -337,6 +371,7 @@ static NTSTATUS R7ReadSecurity(PR7_MUTATION_GATE gate, PFILE_OBJECT file,
     const SECURITY_INFORMATION information = OWNER_SECURITY_INFORMATION
         | DACL_SECURITY_INFORMATION;
     *result = NULL;
+    if (actualBytes != NULL) *actualBytes = 0;
     status = FltQuerySecurityObject(gate->Instance, file, information,
         NULL, 0, &needed);
     if (status != STATUS_BUFFER_TOO_SMALL) return NT_SUCCESS(status)
@@ -352,7 +387,10 @@ static NTSTATUS R7ReadSecurity(PR7_MUTATION_GATE gate, PFILE_OBJECT file,
         || !RtlValidRelativeSecurityDescriptor(descriptor, returned, information)))
         status = STATUS_INVALID_SECURITY_DESCR;
     if (!NT_SUCCESS(status)) ExFreePoolWithTag(descriptor, R7_POOL_TAG);
-    else *result = descriptor;
+    else {
+        *result = descriptor;
+        if (actualBytes != NULL) *actualBytes = returned;
+    }
     return status;
 }
 
@@ -377,6 +415,10 @@ static NTSTATUS R7MetadataMatches(PR7_MUTATION_GATE gate, PFILE_OBJECT file)
 
 static VOID R7FreeSeal(PR7_DACL_SEAL seal)
 {
+    if (seal->RecoveryRecord != NULL) ExFreePoolWithTag(seal->RecoveryRecord, R7_POOL_TAG);
+    if (seal->JournalPolicy != NULL) ExFreePoolWithTag(seal->JournalPolicy, R7_POOL_TAG);
+    if (seal->JournalObject != NULL) ObDereferenceObject(seal->JournalObject);
+    if (seal->JournalHandle != NULL) ZwClose(seal->JournalHandle);
     if (seal->ExpectedAcl != NULL) ExFreePoolWithTag(seal->ExpectedAcl, R7_POOL_TAG);
     if (seal->Original != NULL) ExFreePoolWithTag(seal->Original, R7_POOL_TAG);
     if (seal->MetadataObject != NULL) ObDereferenceObject(seal->MetadataObject);
@@ -411,7 +453,7 @@ static NTSTATUS R7DescriptorMatches(PR7_MUTATION_GATE gate,
     BOOLEAN defaulted = FALSE, present = FALSE;
     status = R7MetadataMatches(gate, file);
     if (!NT_SUCCESS(status)) return status;
-    status = R7ReadSecurity(gate, file, &readback);
+    status = R7ReadSecurity(gate, file, &readback, NULL);
     if (!NT_SUCCESS(status)) return status;
     status = RtlGetOwnerSecurityDescriptor(readback, &owner, &defaulted);
     if (NT_SUCCESS(status)) status = RtlGetDaclSecurityDescriptor(readback,
@@ -424,8 +466,179 @@ static NTSTATUS R7DescriptorMatches(PR7_MUTATION_GATE gate,
     return status;
 }
 
+/* Journal capability and storage provenance are separate. This validates real
+ * grants/native state; the enclosing commissioner must authenticate protected
+ * ancestor/metadata/ADS policy and old-capability closure before supplying it. */
+static NTSTATUS R7InspectJournal(PR7_MUTATION_GATE gate, PR7_DACL_SEAL seal,
+    LONGLONG expectedLength)
+{
+    NTSTATUS status;
+    FILE_STANDARD_INFORMATION standard;
+    FILE_ATTRIBUTE_TAG_INFORMATION attributes;
+    FILE_ID_INFORMATION identity;
+    PFLT_VOLUME volume = NULL, expected = NULL;
+    PFLT_FILE_NAME_INFORMATION name = NULL;
+    ULONG returned = 0;
+    PFILE_OBJECT file = seal->JournalObject;
+    if (!file->ReadAccess || !file->WriteAccess || file->DeleteAccess
+        || file->SharedWrite || file->SharedDelete
+        || !FlagOn(file->Flags, FO_SYNCHRONOUS_IO)
+        || FlagOn(file->Flags, FO_VOLUME_OPEN | FO_STREAM_FILE
+            | FO_NO_INTERMEDIATE_BUFFERING)
+        || IoIsFileObjectIgnoringSharing(file)
+        || IoGetTransactionParameterBlock(file) != NULL)
+        return STATUS_INVALID_PARAMETER;
+    status = FltGetVolumeFromInstance(gate->Instance, &expected);
+    if (!NT_SUCCESS(status)) return status;
+    status = FltGetVolumeFromFileObject(gate->Filter, file, &volume);
+    if (NT_SUCCESS(status) && expected != volume) status = STATUS_WRONG_VOLUME;
+    if (volume != NULL) FltObjectDereference(volume);
+    FltObjectDereference(expected);
+    if (!NT_SUCCESS(status)) return status;
+    status = FltQueryInformationFile(gate->Instance, file, &standard,
+        sizeof(standard), FileStandardInformation, &returned);
+    if (!NT_SUCCESS(status)) return status;
+    if (returned != sizeof(standard) || standard.Directory || standard.DeletePending
+        || standard.NumberOfLinks != 1 || standard.EndOfFile.QuadPart != expectedLength)
+        return STATUS_FILE_INVALID;
+    status = FltQueryInformationFile(gate->Instance, file, &attributes,
+        sizeof(attributes), FileAttributeTagInformation, &returned);
+    if (!NT_SUCCESS(status)) return status;
+    if (returned != sizeof(attributes)
+        || FlagOn(attributes.FileAttributes, FILE_ATTRIBUTE_REPARSE_POINT))
+        return STATUS_NOT_SUPPORTED;
+    status = FltQueryInformationFile(gate->Instance, file, &identity,
+        sizeof(identity), FileIdInformation, &returned);
+    if (!NT_SUCCESS(status)) return status;
+    if (returned != sizeof(identity)
+        || RtlEqualMemory(&identity, &gate->Identity, sizeof(identity)))
+        return STATUS_FILE_INVALID;
+    if (!seal->JournalIdentified) {
+        seal->JournalIdentity = identity;
+        seal->JournalIdentified = TRUE;
+    }
+    else if (!RtlEqualMemory(&identity, &seal->JournalIdentity, sizeof(identity)))
+        return STATUS_FILE_INVALID;
+    status = FltGetFileNameInformationUnsafe(file, gate->Instance,
+        FLT_FILE_NAME_OPENED | FLT_FILE_NAME_QUERY_DEFAULT, &name);
+    if (NT_SUCCESS(status)) {
+        status = FltParseFileNameInformation(name);
+        if (NT_SUCCESS(status) && name->Stream.Length != 0)
+            status = STATUS_NOT_SUPPORTED;
+        FltReleaseFileNameInformation(name);
+    }
+    return status;
+}
+
+static NTSTATUS R7BuildRecoveryRecord(PR7_MUTATION_GATE gate, PR7_DACL_SEAL seal,
+    PSECURITY_DESCRIPTOR desired, const R7_RECOVERY_BINDING *binding)
+{
+    NTSTATUS status;
+    ULONG desiredBytes = 0, total;
+    PR7_RECOVERY_HEADER record;
+    BCRYPT_ALG_HANDLE algorithm = NULL;
+    UCHAR digest[32];
+    static const UCHAR magic[8] = { 'R','7','S','D','J','0','1',0 };
+    static const R7_RECOVERY_BINDING zero = { 0 };
+    if (RtlEqualMemory(binding->AdoptedBindingDigest, zero.AdoptedBindingDigest, 32)
+        || RtlEqualMemory(&binding->AttemptId, &zero.AttemptId, sizeof(GUID)))
+        return STATUS_INVALID_PARAMETER;
+    status = RtlAbsoluteToSelfRelativeSD(desired, NULL, &desiredBytes);
+    if (status != STATUS_BUFFER_TOO_SMALL || desiredBytes < sizeof(SECURITY_DESCRIPTOR_RELATIVE)
+        || desiredBytes > R7_MAX_SECURITY_BYTES) return STATUS_INVALID_SECURITY_DESCR;
+    total = sizeof(*record) + seal->OriginalBytes + desiredBytes + seal->JournalPolicyBytes;
+    record = ExAllocatePool2(POOL_FLAG_PAGED, total, R7_POOL_TAG);
+    if (record == NULL) return STATUS_INSUFFICIENT_RESOURCES;
+    RtlCopyMemory(record->Magic, magic, sizeof(magic));
+    record->Version = 1; record->HeaderBytes = sizeof(*record);
+    record->TotalBytes = total; record->OriginalBytes = seal->OriginalBytes;
+    record->DesiredBytes = desiredBytes; record->Directory = !!gate->Directory;
+    record->JournalPolicyBytes = seal->JournalPolicyBytes;
+    record->DesiredSecurityInformation = OWNER_SECURITY_INFORMATION
+        | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION;
+    /* The desired relative SD encodes owner/DACL; this separate, hashed native
+     * SET information encodes protection. A reader must validate BOTH. */
+    record->Target = gate->Identity; record->Journal = seal->JournalIdentity;
+    record->Binding = *binding;
+    RtlCopyMemory((PUCHAR)record + sizeof(*record), seal->Original, seal->OriginalBytes);
+    status = RtlAbsoluteToSelfRelativeSD(desired,
+        (PSECURITY_DESCRIPTOR)((PUCHAR)record + sizeof(*record) + seal->OriginalBytes),
+        &desiredBytes);
+    if (NT_SUCCESS(status) && desiredBytes != record->DesiredBytes)
+        status = STATUS_INFO_LENGTH_MISMATCH;
+    if (NT_SUCCESS(status)) RtlCopyMemory((PUCHAR)record + sizeof(*record)
+        + seal->OriginalBytes + desiredBytes, seal->JournalPolicy, seal->JournalPolicyBytes);
+    if (NT_SUCCESS(status)) status = BCryptOpenAlgorithmProvider(&algorithm,
+        BCRYPT_SHA256_ALGORITHM, NULL, 0);
+    if (NT_SUCCESS(status)) status = BCryptHash(algorithm, NULL, 0,
+        (PUCHAR)record, total, digest, sizeof(digest));
+    if (algorithm != NULL) BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (!NT_SUCCESS(status)) { ExFreePoolWithTag(record, R7_POOL_TAG); return status; }
+    RtlCopyMemory(record->Digest, digest, sizeof(digest));
+    seal->RecoveryRecord = record; seal->RecoveryBytes = total;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS R7JournalPolicyMatches(PR7_MUTATION_GATE gate, PR7_DACL_SEAL seal)
+{
+    NTSTATUS status;
+    PSECURITY_DESCRIPTOR actual = NULL;
+    PSID owner = NULL, expectedOwner = NULL;
+    PACL acl = NULL, expectedAcl = NULL;
+    BOOLEAN present = FALSE, expectedPresent = FALSE, defaulted = FALSE;
+    status = R7ReadSecurity(gate, seal->JournalObject, &actual, NULL);
+    if (!NT_SUCCESS(status)) return status;
+    status = RtlGetOwnerSecurityDescriptor(actual, &owner, &defaulted);
+    if (NT_SUCCESS(status)) status = RtlGetOwnerSecurityDescriptor(seal->JournalPolicy,
+        &expectedOwner, &defaulted);
+    if (NT_SUCCESS(status)) status = RtlGetDaclSecurityDescriptor(actual,
+        &present, &acl, &defaulted);
+    if (NT_SUCCESS(status)) status = RtlGetDaclSecurityDescriptor(seal->JournalPolicy,
+        &expectedPresent, &expectedAcl, &defaulted);
+    if (NT_SUCCESS(status) && (!present || !expectedPresent || acl == NULL
+        || expectedAcl == NULL || owner == NULL || expectedOwner == NULL
+        || !RtlEqualSid(owner, expectedOwner) || !R7AclEquivalent(acl, expectedAcl)
+        || !FlagOn(((PISECURITY_DESCRIPTOR_RELATIVE)actual)->Control, SE_DACL_PROTECTED)
+        || !FlagOn(((PISECURITY_DESCRIPTOR_RELATIVE)seal->JournalPolicy)->Control,
+            SE_DACL_PROTECTED))) status = STATUS_INVALID_SECURITY_DESCR;
+    ExFreePoolWithTag(actual, R7_POOL_TAG);
+    return status;
+}
+
+static NTSTATUS R7PersistRecoveryRecord(PR7_MUTATION_GATE gate, PR7_DACL_SEAL seal,
+    PVOID readback)
+{
+    NTSTATUS status;
+    ULONG written = 0, read = 0;
+    LARGE_INTEGER offset;
+    status = R7InspectJournal(gate, seal, 0);
+    if (status != STATUS_SUCCESS) return status;
+    status = R7JournalPolicyMatches(gate, seal);
+    if (status != STATUS_SUCCESS) return status;
+    offset.QuadPart = -1; /* FILE_WRITE_TO_END_OF_FILE, never overwrite. */
+    status = FltWriteFile(gate->Instance, seal->JournalObject, &offset,
+        seal->RecoveryBytes, seal->RecoveryRecord,
+        FLTFL_IO_OPERATION_DO_NOT_UPDATE_BYTE_OFFSET, &written, NULL, NULL);
+    if (status != STATUS_SUCCESS) return status;
+    if (written != seal->RecoveryBytes) return STATUS_DATA_ERROR;
+    status = FltFlushBuffers(gate->Instance, seal->JournalObject);
+    if (status != STATUS_SUCCESS) return status;
+    offset.QuadPart = 0;
+    status = FltReadFile(gate->Instance, seal->JournalObject, &offset,
+        seal->RecoveryBytes, readback, FLTFL_IO_OPERATION_DO_NOT_UPDATE_BYTE_OFFSET,
+        &read, NULL, NULL);
+    if (status != STATUS_SUCCESS) return status;
+    if (read != seal->RecoveryBytes
+        || !RtlEqualMemory(readback, seal->RecoveryRecord, seal->RecoveryBytes))
+        return STATUS_DATA_ERROR;
+    status = R7InspectJournal(gate, seal, seal->RecoveryBytes);
+    if (status != STATUS_SUCCESS) return status;
+    return R7JournalPolicyMatches(gate, seal);
+}
+
 NTSTATUS R7GateSealSourceDacl(PR7_MUTATION_GATE gate, HANDLE metadataHandle,
-    PSID custodian, ULONG sourceCount, PSID const *sources)
+    PSID custodian, ULONG sourceCount, PSID const *sources,
+    HANDLE recoveryHandle, const R7_RECOVERY_BINDING *binding)
 {
     NTSTATUS status;
     PR7_DACL_SEAL seal;
@@ -435,13 +648,16 @@ NTSTATUS R7GateSealSourceDacl(PR7_MUTATION_GATE gate, HANDLE metadataHandle,
     ULONG index, prior, length, aclBytes;
     UCHAR captured[R7_MAX_SOURCE_SIDS][SECURITY_MAX_SID_SIZE];
     SECURITY_DESCRIPTOR desired;
+    R7_RECOVERY_BINDING capturedBinding;
+    PVOID readback = NULL;
     if (KeGetCurrentIrql() != PASSIVE_LEVEL || ExGetPreviousMode() != KernelMode
         || KeAreAllApcsDisabled() || IoGetTopLevelIrp() != NULL || gate == NULL
         || gate->Retiring || gate->DenyPaging || gate->SecurityRecoveryStarted
         || gate->ActiveChildren != 0
-        || gate->Seal != NULL || sources == NULL || custodian == NULL
+        || gate->Seal != NULL || sources == NULL || custodian == NULL || binding == NULL
         || sourceCount == 0 || sourceCount > R7_MAX_SOURCE_SIDS
         || !RtlValidSid(custodian)) return STATUS_INVALID_PARAMETER;
+    capturedBinding = *binding;
     seal = ExAllocatePool2(POOL_FLAG_PAGED, sizeof(*seal), R7_POOL_TAG);
     if (seal == NULL) return STATUS_INSUFFICIENT_RESOURCES;
     status = RtlCopySid(sizeof(seal->Custodian), seal->Custodian, custodian);
@@ -469,7 +685,7 @@ NTSTATUS R7GateSealSourceDacl(PR7_MUTATION_GATE gate, HANDLE metadataHandle,
     if (!NT_SUCCESS(status)) goto FailBeforeSet;
     status = R7MetadataMatches(gate, seal->MetadataObject);
     if (!NT_SUCCESS(status)) goto FailBeforeSet;
-    status = R7ReadSecurity(gate, seal->MetadataObject, &seal->Original);
+    status = R7ReadSecurity(gate, seal->MetadataObject, &seal->Original, &seal->OriginalBytes);
     if (!NT_SUCCESS(status)) goto FailBeforeSet;
     status = RtlGetOwnerSecurityDescriptor(seal->Original, &originalOwner, &defaulted);
     if (NT_SUCCESS(status)) status = RtlGetDaclSecurityDescriptor(seal->Original,
@@ -529,9 +745,34 @@ NTSTATUS R7GateSealSourceDacl(PR7_MUTATION_GATE gate, HANDLE metadataHandle,
     if (NT_SUCCESS(status)) status = RtlSetDaclSecurityDescriptor(&desired,
         TRUE, seal->ExpectedAcl, FALSE);
     if (!NT_SUCCESS(status)) goto FailBeforeSet;
-    /* Publish recovery ownership BEFORE any possible filesystem mutation.
-     * No caller can retire this gate, even if set/readback later fails. */
+    status = R7DuplicateCheckedHandle(recoveryHandle,
+        FILE_READ_DATA | FILE_APPEND_DATA | READ_CONTROL | SYNCHRONIZE,
+        FILE_WRITE_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD
+            | DELETE | WRITE_DAC | WRITE_OWNER | ACCESS_SYSTEM_SECURITY,
+        &seal->JournalHandle, &seal->JournalObject);
+    if (!NT_SUCCESS(status)) goto FailBeforeSet;
+    status = R7InspectJournal(gate, seal, 0);
+    if (!NT_SUCCESS(status)) goto FailBeforeSet;
+    status = R7ReadSecurity(gate, seal->JournalObject, &seal->JournalPolicy,
+        &seal->JournalPolicyBytes);
+    if (!NT_SUCCESS(status)) goto FailBeforeSet;
+    status = R7JournalPolicyMatches(gate, seal);
+    if (!NT_SUCCESS(status)) goto FailBeforeSet;
+    status = R7BuildRecoveryRecord(gate, seal, &desired, &capturedBinding);
+    if (!NT_SUCCESS(status)) goto FailBeforeSet;
+    readback = ExAllocatePool2(POOL_FLAG_PAGED, seal->RecoveryBytes, R7_POOL_TAG);
+    if (readback == NULL) { status = STATUS_INSUFFICIENT_RESOURCES; goto FailBeforeSet; }
+    /* Sticky BEFORE even a torn journal append. The original native buffer is
+     * exactly the one persisted; no caller claim can advance the mutation. */
     gate->Seal = seal;
+    status = R7PersistRecoveryRecord(gate, seal, readback);
+    ExFreePoolWithTag(readback, R7_POOL_TAG); readback = NULL;
+    if (status != STATUS_SUCCESS) return status;
+    status = R7DescriptorMatches(gate, seal->MetadataObject, originalOwner,
+        originalAcl, FlagOn(((PISECURITY_DESCRIPTOR_RELATIVE)seal->Original)->Control,
+            SE_DACL_PROTECTED) != 0);
+    if (status != STATUS_SUCCESS) return status;
+    seal->SetAttempted = TRUE;
     status = FltSetSecurityObject(gate->Instance, seal->MetadataObject,
         OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
             | PROTECTED_DACL_SECURITY_INFORMATION, &desired);
@@ -540,6 +781,7 @@ NTSTATUS R7GateSealSourceDacl(PR7_MUTATION_GATE gate, HANDLE metadataHandle,
     seal->Verified = NT_SUCCESS(status);
     return status;
 FailBeforeSet:
+    if (readback != NULL) ExFreePoolWithTag(readback, R7_POOL_TAG);
     R7FreeSeal(seal);
     return status;
 }
@@ -569,7 +811,7 @@ NTSTATUS R7GateRestoreSourceDacl(PR7_MUTATION_GATE gate)
         return NT_SUCCESS(status) ? STATUS_INVALID_SECURITY_DESCR : status;
     protected = FlagOn(((PISECURITY_DESCRIPTOR_RELATIVE)seal->Original)->Control,
         SE_DACL_PROTECTED) != 0;
-    status = FltSetSecurityObject(gate->Instance, seal->MetadataObject,
+    if (seal->SetAttempted) status = FltSetSecurityObject(gate->Instance, seal->MetadataObject,
         OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
             | (protected ? PROTECTED_DACL_SECURITY_INFORMATION
                 : UNPROTECTED_DACL_SECURITY_INFORMATION), seal->Original);
@@ -579,6 +821,97 @@ NTSTATUS R7GateRestoreSourceDacl(PR7_MUTATION_GATE gate)
     gate->Seal = NULL;
     R7FreeSeal(seal);
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS R7QueryResourceManager(PR7_MUTATION_GATE gate, PFILE_OBJECT file,
+    const GUID *expectedId, PVOID buffer)
+{
+    NTSTATUS status;
+    ULONG returned = 0;
+    PTXFS_QUERY_RM_INFORMATION information = buffer;
+    RtlZeroMemory(buffer, 4096);
+    status = FltFsControlFile(gate->Instance, file, FSCTL_TXFS_QUERY_RM_INFORMATION,
+        NULL, 0, buffer, 4096, &returned);
+    if (status != STATUS_SUCCESS) return status;
+    if (returned < sizeof(*information) || returned > 4096
+        || information->RmState != TXFS_RM_STATE_ACTIVE
+        || !RtlEqualMemory(&information->RMName, expectedId, sizeof(GUID)))
+        return STATUS_INVALID_DEVICE_STATE;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS R7GateObserveEmptyResourceManager(PR7_MUTATION_GATE gate, HANDLE rmHandle,
+    const FILE_ID_INFORMATION *expectedRoot, const GUID *expectedId)
+{
+    NTSTATUS status;
+    HANDLE duplicate = NULL;
+    PFILE_OBJECT file = NULL;
+    PFLT_VOLUME volume = NULL, expectedVolume = NULL;
+    FILE_ID_INFORMATION identity, capturedRoot;
+    GUID capturedId, zero = { 0 };
+    FILE_STANDARD_INFORMATION standard;
+    FILE_ATTRIBUTE_TAG_INFORMATION attributes;
+    TXFS_LIST_TRANSACTIONS transactions;
+    ULONG returned = 0;
+    PVOID buffer = NULL;
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL || ExGetPreviousMode() != KernelMode
+        || KeAreAllApcsDisabled() || IoGetTopLevelIrp() != NULL || gate == NULL
+        || gate->Retiring || gate->SecurityRecoveryStarted || gate->Seal == NULL
+        || !gate->Seal->Verified || expectedRoot == NULL || expectedId == NULL)
+        return STATUS_INVALID_DEVICE_STATE;
+    capturedRoot = *expectedRoot; capturedId = *expectedId;
+    if (RtlEqualMemory(&capturedId, &zero, sizeof(GUID))) return STATUS_INVALID_PARAMETER;
+    status = R7DuplicateReadHandle(rmHandle, &duplicate, &file);
+    if (!NT_SUCCESS(status)) return status;
+    if (!file->ReadAccess || file->WriteAccess || file->DeleteAccess
+        || FlagOn(file->Flags, FO_VOLUME_OPEN | FO_STREAM_FILE)) {
+        status = STATUS_INVALID_PARAMETER; goto Done;
+    }
+    status = FltGetVolumeFromInstance(gate->Instance, &expectedVolume);
+    if (!NT_SUCCESS(status)) goto Done;
+    status = FltGetVolumeFromFileObject(gate->Filter, file, &volume);
+    if (NT_SUCCESS(status) && expectedVolume != volume) status = STATUS_WRONG_VOLUME;
+    if (!NT_SUCCESS(status)) goto Done;
+    status = FltQueryInformationFile(gate->Instance, file, &standard,
+        sizeof(standard), FileStandardInformation, &returned);
+    if (!NT_SUCCESS(status)) goto Done;
+    if (returned != sizeof(standard) || !standard.Directory || standard.DeletePending) {
+        status = STATUS_FILE_INVALID; goto Done;
+    }
+    status = FltQueryInformationFile(gate->Instance, file, &attributes,
+        sizeof(attributes), FileAttributeTagInformation, &returned);
+    if (!NT_SUCCESS(status)) goto Done;
+    if (returned != sizeof(attributes)
+        || FlagOn(attributes.FileAttributes, FILE_ATTRIBUTE_REPARSE_POINT)) {
+        status = STATUS_NOT_SUPPORTED; goto Done;
+    }
+    status = FltQueryInformationFile(gate->Instance, file, &identity,
+        sizeof(identity), FileIdInformation, &returned);
+    if (!NT_SUCCESS(status)) goto Done;
+    if (returned != sizeof(identity)
+        || !RtlEqualMemory(&identity, &capturedRoot, sizeof(identity))) {
+        status = STATUS_FILE_INVALID; goto Done;
+    }
+    buffer = ExAllocatePool2(POOL_FLAG_PAGED, 4096, R7_POOL_TAG);
+    if (buffer == NULL) { status = STATUS_INSUFFICIENT_RESOURCES; goto Done; }
+    status = R7QueryResourceManager(gate, file, &capturedId, buffer);
+    if (status != STATUS_SUCCESS) goto Done;
+    RtlZeroMemory(&transactions, sizeof(transactions));
+    status = FltFsControlFile(gate->Instance, file, FSCTL_TXFS_LIST_TRANSACTIONS,
+        NULL, 0, &transactions, sizeof(transactions), &returned);
+    if (status != STATUS_SUCCESS) goto Done;
+    if (returned != sizeof(transactions)
+        || transactions.BufferSizeRequired != sizeof(transactions)) {
+        status = STATUS_INFO_LENGTH_MISMATCH; goto Done;
+    }
+    if (transactions.NumberOfTransactions != 0) { status = STATUS_DEVICE_BUSY; goto Done; }
+    status = R7QueryResourceManager(gate, file, &capturedId, buffer);
+Done:
+    if (buffer != NULL) ExFreePoolWithTag(buffer, R7_POOL_TAG);
+    if (volume != NULL) FltObjectDereference(volume);
+    if (expectedVolume != NULL) FltObjectDereference(expectedVolume);
+    ObDereferenceObject(file); ZwClose(duplicate);
+    return status;
 }
 
 NTSTATUS R7GateEnrollChild(PR7_MUTATION_GATE parent, PCUNICODE_STRING leaf,

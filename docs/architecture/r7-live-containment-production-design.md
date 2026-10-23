@@ -44,6 +44,9 @@ The following are observed counterexamples and controls, not source exclusion:
 | Existing writable file handle | New restrictive guard fails with sharing violation |
 | New named alternate data stream | Stream creation succeeds while the unnamed-stream oplock remains pending |
 | New child under a directory Read oplock | Child creation succeeds; oplock notification is advisory |
+| Named data stream on a directory | Its writer survives the directory-main guard; a separate stream guard refuses it |
+| TxF child staged before directory sealing, with its file handle already closed | Hidden child can commit after the guard and later ADD denial; native RM inventory detects the old transaction |
+| Wrong RM root or incomplete native transaction list | Query failure/truncation cannot be treated as an empty inventory |
 
 These results rule out replacing the production startup refusal with a loop
 over ordinary read handles or Read oplocks. The native fixture never opens the
@@ -57,7 +60,12 @@ workflow executes it alongside the original owned regressions.
 The [retained-object mutation core](../../src/windows/Stephanos.OriginalR7ScopedMutationGate/README.md)
 implements actual Filter Manager operation callbacks and native handle/context
 ownership, native relative child acquisition, directory data-stream enrollment
-and a bounded per-object owner/DACL sealing/recovery primitive. Its portable
+and a bounded per-object owner/DACL sealing/recovery primitive. The setter now
+requires an admitted empty recovery file and persists the exact native original,
+intended policy and journal descriptor with identities, binding and SHA256;
+native append/flush/exact readback precedes any source ACL set. Failure recovery
+is sticky before the first append. Native handle admission also refuses actual
+sharing bypass and transaction parameter blocks. Its portable
 policy tests and kernel compilation/link check do not
 establish NTFS runtime enforcement. Namespace closure, existing capability
 closure, privileged source-role separation and independently protected creators
@@ -73,6 +81,16 @@ The owned regression now covers directory ADS: their writer can coexist with
 the directory-main guard, but conflicts with a separate stream read guard.
 The native component and all unresolved production prerequisites are described
 in its linked README. No production entry or authority is enabled.
+
+The new single-RM observation primitive requires native RM/root identities and
+an exact successful empty native transaction-list response. It supplies no
+whole-estate TxF proof: every relevant primary/secondary RM must be covered,
+effective barriers and old/in-flight capability closure must precede observation,
+and native tree/ADS reconciliation must follow it. No unrelated transaction is
+aborted or disabled. Protected recovery-store admission, crash inspection and
+outcome/recovery protocol, enclosing filter/issuer lifecycle and physical native
+qualification remain required. A durable prepared record preserves before-images
+but cannot establish a mutation's final outcome after a crash.
 
 An independent Windows/security design review must identify a concrete live
 enforcement mechanism for **all** of the following together. A partial

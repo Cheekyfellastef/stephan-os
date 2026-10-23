@@ -64,7 +64,7 @@ if ($LASTEXITCODE -ne 0) { throw 'R7_KERNEL_GATE_COMPILE_FAILED' }
 if ($LASTEXITCODE -ne 0) { throw 'R7_KERNEL_GATE_LIBRARY_FAILED' }
 & $r7Compiler @r7Kernel "/Fo$r7Output/KernelLinkProbe.obj" (Join-Path $r7Source 'KernelLinkProbe.c')
 if ($LASTEXITCODE -ne 0) { throw 'R7_LINK_PROBE_COMPILE_FAILED' }
-& $r7Linker /nologo /DRIVER /SUBSYSTEM:NATIVE /MACHINE:X64 /ENTRY:DriverEntry /NODEFAULTLIB /OPT:NOREF /INTEGRITYCHECK "/OUT:$r7Output/KernelLinkProbe.sys" (Join-Path $r7Output 'KernelLinkProbe.obj') (Join-Path $r7Output 'ScopedMutationGate.obj') "/LIBPATH:$r7KernelLib" fltMgr.lib ntoskrnl.lib BufferOverflowFastFailK.lib
+& $r7Linker /nologo /DRIVER /SUBSYSTEM:NATIVE /MACHINE:X64 /ENTRY:DriverEntry /NODEFAULTLIB /OPT:NOREF /INTEGRITYCHECK "/OUT:$r7Output/KernelLinkProbe.sys" (Join-Path $r7Output 'KernelLinkProbe.obj') (Join-Path $r7Output 'ScopedMutationGate.obj') "/LIBPATH:$r7KernelLib" fltMgr.lib ntoskrnl.lib cng.lib BufferOverflowFastFailK.lib
 if ($LASTEXITCODE -ne 0) { throw 'R7_KERNEL_ABI_LINK_FAILED' }
 & $r7Compiler @r7Common /O2 /MT "/Fo$r7Output/PolicyTests.obj" "/Fe$r7Output/PolicyTests.exe" (Join-Path $r7Source 'PolicyTests.c') /link "/LIBPATH:$r7VcLib" "/LIBPATH:$r7SdkLib/ucrt/x64" "/LIBPATH:$r7SdkLib/um/x64"
 if ($LASTEXITCODE -ne 0) { throw 'R7_POLICY_TEST_COMPILE_FAILED' }

@@ -13,6 +13,9 @@ its own duplicate until explicit retirement; a FILE_OBJECT reference alone
 would allow last-handle CLEANUP to invalidate a retained sharing guard. Actual
 grants are queried with `ZwQueryObject(ObjectBasicInformation)`: read data is
 required and data/EA/attribute/delete/security mutation grants are rejected.
+Handles with a native transaction parameter block or the actual
+`IoIsFileObjectIgnoringSharing` flag are refused. These checks strengthen
+admission but cannot prove another outstanding transaction/capability absent.
 Only NTFS, non-reparse, non-delete-pending objects with one hardlink are admitted.
 The instance and file must resolve to the same referenced native volume.
 
@@ -73,16 +76,42 @@ comparison. No new inherited denial is used as a substitute for enrolling an
 existing child. This policy is a conditional native proposal, not adoption of
 the older diagnostic's inherited-ACE policy shape.
 
-Recovery ownership is attached to the gate before the first security-set call.
-After an attempted set, failed mutation/readback retains the original descriptor,
-metadata handle and guards, and retirement refuses. Explicit recovery restores
-and verifies the original policy before releasing that state. Beginning recovery
-permanently prevents re-arming this gate's paging policy. Recovery is never an
-automatic response to a fault or permission to make an old writer writable
-after release. Stop issuance and satisfy the separately admitted retirement
-policy first. The native snapshot is currently memory-only: the production
-commissioner must durably journal the exact recovery material in its protected
-store **before invoking a mutation**. This helper supplies no crash-durable log.
+The setter now requires a second genuine recovery-journal capability. The file
+must be preprovisioned empty, regular, unnamed, single-link, non-reparse and on
+the same native NTFS instance, distinct from the source object. Actual read,
+append, read-control and synchronize grants are required; overwrite, delete,
+EA/attribute and security-change grants are forbidden. The file must use buffered
+synchronous I/O with no write/delete sharing and a protected native DACL. The
+trusted commissioner must independently authenticate its disjoint protected
+store, policy and old-capability closure; those facts cannot come from a handle
+mask, hash or matching descriptor alone.
+
+Before the first journal append, recovery ownership becomes sticky on the gate.
+The core serializes the actual original security descriptor, desired owner/DACL
+descriptor and journal policy, with both native file identities, adopted binding
+digest and unique admitted attempt ID. The bounded x64 little-endian record has
+a 176-byte header, asserted field offsets, zero reserved fields and SHA256 over
+the entire record with its digest field zeroed. The desired native SET flags
+are hashed separately and include DACL protection: readers must interpret and
+validate those flags together with the desired self-relative descriptor.
+
+Instance-directed `FltWriteFile` appends the record, `FltFlushBuffers` synchronizes
+it, and `FltReadFile` reads every byte back. NULL callbacks make the operations
+synchronous. Exact successful status, byte counts, EOF, native identity, DACL
+continuity and byte equality are required before the source policy is rechecked
+and `FltSetSecurityObject` can run. Short/torn writes and all subsequent failures
+retain the original descriptor, both handles and guards, and retirement refuses.
+No journal is truncated, overwritten, removed or replaced for a retry.
+
+Explicit recovery verifies/restores the original source policy before releasing
+in-memory state; it never removes the durable record. If no source set was
+attempted, it verifies the unchanged policy without writing it. Recovery
+permanently prevents forward re-arming. It is never automatic fault handling or
+permission to make an old writer writable after release. The prepared record
+alone cannot distinguish never-applied, applied and subsequently restored state
+after a crash. Outcome remains UNKNOWN: restart inspection, outcome records and
+explicit admitted recovery still need implementation and physical qualification.
+There is no automatic crash replay or continuation authority here.
 
 These are real kernel operations in source, not an installed commissioning
 entry point. The source-SID set, custodian, commissioner capability and target
@@ -98,6 +127,32 @@ file and directory ADS, outside ordinary/POSIX replacements, aliases, pending
 TxF work, old sections/MDLs and queued I/O. Disabled privileges or an unelevated
 token alone cannot prove the non-bypass estate. None of this establishes that
 Battle Bridge presently meets those requirements.
+
+## Pending transactions and native RM observation
+
+The owned Windows fixture proves that a child staged in TxF can remain hidden
+after its file handle closes, then commit successfully after a retained directory
+guard and a later explicit ADD_FILE/ADD_SUBDIRECTORY denial. The native RM list
+detects that transaction. The fixture also verifies an ordinary directory's
+failed RM query and an incomplete response are not evidence of an empty list.
+It changes only its disposable directory's DACL and restores it before cleanup.
+
+`R7GateObserveEmptyResourceManager` uses a real kernel read handle for one native
+RM root and requires expected native identity and RM GUID. It directs native RM
+information/list queries to the same volume instance. Only an exact successful
+16-byte list with zero transactions and required size 16 counts as one empty
+observation. Native failures, nonempty lists and truncation refuse. Shared
+write/delete access on this observation handle keeps unrelated use possible;
+the handle is not a source sharing guard. No transaction is aborted or disabled.
+
+This primitive neither discovers secondary RMs nor supplies whole-estate closure.
+The enclosing producer must establish effective barriers and old/in-flight
+capability closure first, prove every relevant RM is covered, then re-enumerate
+the native tree AND ADS and compare them with the sealed retained manifest.
+An earlier commit can have published previously hidden objects. Any new identity
+or stream requires acquisition/sealing and another admitted reconciliation pass.
+The eventual pending-commit/native-publication boundary needs physical testing;
+a successful observation cannot authorize paging policy, issuance or a lease.
 
 ## Mandatory enclosing-owner obligations
 
@@ -192,4 +247,7 @@ Battle Bridge is authorized by this source or its development build.
 - [Native relative opens](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltcreatefileex2)
 - [Security query](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltquerysecurityobject)
 - [Security set](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltsetsecurityobject)
+- [Generated file write](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltwritefile)
+- [Native flush](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltflushbuffers)
+- [RM transaction listing](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_txfs_list_transactions)
 - [NTFS stream semantics](https://learn.microsoft.com/en-us/windows/win32/fileio/file-streams)

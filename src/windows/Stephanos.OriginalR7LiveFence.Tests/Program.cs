@@ -1,10 +1,13 @@
 using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 
 // Feasibility experiment on NEW OWNED files only. No production tree, token,
-// service, task, ACL, account, process, root, key or lease is changed.
+// service, task, production ACL, account, process, root, key or lease is changed.
+// The transaction experiment restores its disposable directory's owned DACL.
 if (!OperatingSystem.IsWindows()) return 2;
 uint previousErrorMode = Native.SetErrorMode(3);
 try { return RunOwnedProbe(); }
@@ -121,6 +124,7 @@ try
             directoryGuardOpened = !guard.IsInvalid, namedStreamDirectoryFlag = standard.Directory,
             separateStreamGuardDenied = streamGuard.IsInvalid, streamError });
     }
+    ProveOwnedTransaction(root, Check, results);
     Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = "stephanos.r7-owned-live-fence-feasibility.v1",
         observedAtUtc = DateTimeOffset.UtcNow, assertions, results, productionSourceTouched = false,
         originalWriterAuthenticated = false, completeContainmentProven = false,
@@ -144,6 +148,117 @@ finally
     foreach (string file in Directory.GetFiles(root)) File.Delete(file);
     Directory.Delete(root, false);
 }
+}
+
+static void ProveOwnedTransaction(string root, Action<bool, string> check, List<object> results)
+{
+    string directory = Path.Combine(root, "pending-transaction");
+    Directory.CreateDirectory(directory);
+    var ownedDirectory = new DirectoryInfo(directory);
+    DirectorySecurity original = ownedDirectory.GetAccessControl();
+    using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+    SecurityIdentifier sid = identity.User ?? throw new InvalidOperationException("OWNED_SID_REQUIRED");
+    using var transaction = Transactions.CreateTransaction(0, 0, 0, 0, 0, 30000, "Owned R7 TxF regression");
+    check(!transaction.IsInvalid, "OWNED_NATIVE_TRANSACTION_REQUIRED");
+    if (!Transactions.GetTransactionId(transaction, out Guid transactionId))
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+    bool committed = false, changedAcl = false;
+    string child = Path.Combine(directory, "staged.txt");
+    try
+    {
+        using (var staged = Transactions.CreateFileTransactedW(child, 0x40000000, 7,
+            0, 1, 0x00200000, 0, transaction, 0, 0))
+        {
+            check(!staged.IsInvalid, "OWNED_TRANSACTED_CHILD_REQUIRED");
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes("owned staged contents");
+            bool written = Transactions.WriteFile(staged, bytes, (uint)bytes.Length, out uint count, 0);
+            check(written && count == bytes.Length, "OWNED_TRANSACTION_WRITE_REQUIRED");
+        }
+        check(!File.Exists(child), "OWNED_STAGED_CHILD_MUST_BE_HIDDEN");
+        string volumeRoot = Path.GetPathRoot(directory)!;
+        var wrongRoot = Transactions.Inventory(directory, transactionId);
+        check(!wrongRoot.ListSucceeded && wrongRoot.ListError == 6803,
+            "NON_RM_DIRECTORY_MUST_NOT_BE_TREATED_AS_EMPTY");
+        var during = Transactions.Inventory(volumeRoot, transactionId);
+        check(during.Complete && during.OwnedTransactionPresent,
+            "NATIVE_RM_LIST_MUST_DETECT_CLOSED_HANDLE_TRANSACTION");
+        var truncated = Transactions.Inventory(volumeRoot, transactionId, 16);
+        check(!truncated.EmptyObserved, "TRUNCATED_RM_LIST_MUST_NOT_BE_EMPTY");
+        using (var guard = Native.Open(directory, 0x81, 1, 0x42200000))
+        {
+            DirectorySecurity denied = ownedDirectory.GetAccessControl();
+            denied.AddAccessRule(new FileSystemAccessRule(sid,
+                FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories,
+                AccessControlType.Deny));
+            ownedDirectory.SetAccessControl(denied); changedAcl = true;
+            committed = Transactions.CommitTransaction(transaction);
+            check(committed, "STAGED_COMMIT_COUNTEREXAMPLE_REQUIRED");
+            check(File.Exists(child) && File.ReadAllText(child) == "owned staged contents",
+                "COMMITTED_CHILD_BYPASSES_LATER_DIRECTORY_ADD_DENIAL");
+            var after = Transactions.Inventory(volumeRoot, transactionId);
+            check(after.Complete && !after.OwnedTransactionPresent,
+                "COMMITTED_TRANSACTION_MUST_LEAVE_NATIVE_ACTIVE_LIST");
+            results.Add(new { scenario = "preexisting-hidden-transaction-after-file-handle-close",
+                directoryGuardOpened = !guard.IsInvalid, ownedDirectoryAddDenied = true,
+                committedAfterDenial = committed, nativeInventoryDetectedBefore = during.OwnedTransactionPresent,
+                wrongRootRefused = !wrongRoot.ListSucceeded, truncatedListRefused = !truncated.EmptyObserved,
+                nativeInventoryEmptyAfterCommit = after.EmptyObserved,
+                wholeEstateRmCoverageProven = false, kernelCallbacksExecuted = false });
+        }
+    }
+    finally
+    {
+        try
+        {
+            if (!committed && !Transactions.RollbackTransaction(transaction))
+                throw new InvalidOperationException("OWNED_TRANSACTION_ROLLBACK_FAILED");
+        }
+        finally { if (changedAcl) ownedDirectory.SetAccessControl(original); }
+    }
+}
+
+internal static class Transactions
+{
+    internal sealed record Snapshot(bool ListSucceeded, int ListError, uint Returned,
+        ulong Count, ulong Required, bool Complete, bool OwnedTransactionPresent)
+    {
+        internal bool EmptyObserved => Complete && Count == 0 && Returned == 16 && Required == 16;
+    }
+    internal static Snapshot Inventory(string path, Guid owned, int capacity = 65536)
+    {
+        using var file = Native.Open(path, 0x81, 7, 0x02200000);
+        byte[] output = new byte[capacity];
+        bool success = Query(file, 606692, 0, 0, output, (uint)output.Length, out uint returned, 0);
+        int error = success ? 0 : Marshal.GetLastWin32Error();
+        ulong count = returned >= 16 ? BitConverter.ToUInt64(output, 0) : ulong.MaxValue;
+        ulong required = returned >= 16 ? BitConverter.ToUInt64(output, 8) : ulong.MaxValue;
+        bool complete = success && returned >= 16 && returned <= output.Length
+            && required == returned && count <= (returned - 16) / 40
+            && 16 + count * 40 == returned;
+        bool found = false;
+        if (complete)
+            for (ulong i = 0; i < count; i++)
+                if (new Guid(output.AsSpan(16 + checked((int)i) * 40, 16)) == owned) found = true;
+        return new(success, error, returned, count, required, complete, found);
+    }
+    [DllImport("kernel32.dll", EntryPoint = "DeviceIoControl", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool Query(SafeFileHandle file,
+        uint code, nint input, uint inputBytes, byte[] output, uint outputBytes, out uint returned, nint overlapped);
+    [DllImport("KtmW32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern SafeFileHandle CreateTransaction(nint security, nint id, uint options,
+        uint isolation, uint flags, uint timeout, string description);
+    [DllImport("KtmW32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetTransactionId(SafeFileHandle transaction, out Guid id);
+    [DllImport("KtmW32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CommitTransaction(SafeFileHandle transaction);
+    [DllImport("KtmW32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool RollbackTransaction(SafeFileHandle transaction);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern SafeFileHandle CreateFileTransactedW(string path, uint access, uint share,
+        nint security, uint disposition, uint flags, nint template, SafeFileHandle transaction,
+        nint version, nint extended);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool WriteFile(SafeFileHandle file, byte[] bytes, uint length, out uint written, nint overlapped);
 }
 
 internal sealed class ReadOplock : IDisposable
