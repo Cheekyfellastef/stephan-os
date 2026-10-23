@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   SPATIAL_WORKSPACE_TELEMETRY_FEED_SCHEMA_V1,
   SPATIAL_WORKSPACE_TELEMETRY_SCHEMA_V1,
+  sanitizeSpatialWorkspaceTelemetryV1,
 } from '../shared/vr/spatialWorkspaceTelemetryContractV1.mjs';
 import {
   projectSpatialWorkspaceTelemetryForConsumersV1,
@@ -127,4 +128,43 @@ test('matching uppercase renderer identity preserves valid cached telemetry', ()
   assert.equal(result.available, true);
   assert.equal(result.state, 'ready');
   assert.equal(result.sourceHead, HEAD);
+});
+
+test('supplied invalid renderer identity fails closed after real telemetry sanitization', () => {
+  for (const rendererSourceHead of ['not-a-commit', '', null]) {
+    const packet = sanitizeSpatialWorkspaceTelemetryV1({ ...latest.evidence, rendererSourceHead });
+    assert.equal(Object.hasOwn(packet, 'rendererSourceHead'), true);
+    assert.equal(packet.rendererSourceHead, '');
+    const once = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence: packet }));
+    const twice = projectSpatialWorkspaceTelemetryForConsumersV1(once);
+    assert.equal(once.state, 'waiting');
+    assert.equal(once.available, false);
+    assert.equal(twice.state, 'waiting');
+    assert.equal(twice.operatorAcceptance, false);
+  }
+});
+
+test('genuinely omitted legacy renderer identity survives sanitizer and consumer re-projection', () => {
+  const legacy = { ...latest.evidence };
+  delete legacy.rendererSourceHead;
+  const packet = sanitizeSpatialWorkspaceTelemetryV1(legacy);
+  assert.equal(Object.hasOwn(packet, 'rendererSourceHead'), false);
+  const once = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence: packet }));
+  const twice = projectSpatialWorkspaceTelemetryForConsumersV1(once);
+  assert.equal(once.available, true);
+  assert.equal(once.state, 'ready');
+  assert.equal(Object.hasOwn(once, 'rendererSourceHead'), false);
+  assert.equal(twice.available, true);
+  assert.equal(twice.state, 'ready');
+  assert.equal(twice.operatorAcceptance, false);
+});
+
+test('consumer projection with supplied blank renderer cannot regain READY', () => {
+  const clean = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready'));
+  const once = projectSpatialWorkspaceTelemetryForConsumersV1({ ...clean, rendererSourceHead: '' });
+  const twice = projectSpatialWorkspaceTelemetryForConsumersV1(once);
+  assert.equal(once.available, false);
+  assert.equal(once.state, 'waiting');
+  assert.equal(twice.state, 'waiting');
+  assert.equal(twice.operatorAcceptance, false);
 });
