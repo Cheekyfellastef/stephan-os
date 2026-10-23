@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
 
@@ -255,4 +257,23 @@ test('physical verdict authority fields reject coercible non-string values', () 
       `expected array-valued ${field} to fail closed`,
     );
   }
+});
+
+test('Starfield thread inspection limits attempts even on failure', () => {
+  const functionBody = recorder.split('function Get-StarfieldVrGameThreadCpuSample {')[1]
+    ?.split('function Get-StarfieldVrCrashFingerprint')[0];
+  assert.ok(functionBody, 'target sampler must exist');
+  assert.match(functionBody, /THREAD_INVENTORY_LIMIT[\\s\\S]*?\\$Previous\\.Clear\\(\\)[\\s\\S]*?return \\[pscustomobject\\]\\$out/);
+  assert.match(functionBody, /\\} catch \\{[\\s\\S]*?\\$out\\.reason = 'THREAD_SNAPSHOT_UNAVAILABLE'\\s*\\} finally \\{/);
+  assert.match(functionBody, /\\$Previous\\.processId = \\$GameProcessId\\s*\\$Previous\\.collectedAtUtc = \\$sampledAt/);
+  assert.doesNotMatch(functionBody, /Stop-Process|taskkill|ProcessorAffinity\\s*=|PriorityLevel\\s*=/i);
+});
+
+test('Starfield thread inspection native Windows regression: failure, cap and recovery', { skip: process.platform !== 'win32' }, () => {
+  const file = fileURLToPath(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = ["$ErrorActionPreference = 'Stop'","RECORDER_FILE_PATH","$base = [DateTime]::Parse('2026-10-23T12:00:00Z')","$script:now = $base","$script:mode = 'deny'","$script:cpuSeconds = 0","$script:attempts = 0","function Get-Date { return $script:now }","function Get-Process {"," [CmdletBinding()]"," param([int]$Id)"," $script:attempts++"," if ($script:mode -eq 'deny') { throw 'simulated access denied' }"," if ($script:mode -eq 'oversized') { return [pscustomobject]@{StartTime=$base;Threads=@(1..513)} }"," return [pscustomobject]@{StartTime=$base;Threads=@([pscustomobject]@{Id=12;StartTime=$base;TotalProcessorTime=[TimeSpan]::FromSeconds($script:cpuSeconds)})}","}","foreach ($mode in @('deny','oversized')) {"," $script:mode = $mode"," $script:attempts = 0"," $history = @{}"," foreach ($n in 0..11) {","  $script:now = $base.AddSeconds($n)","  $sample = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","  if ($null -ne $sample.busiestThreadCpuPct) { throw 'unmeasured CPU reported as measured' }"," }"," if ($script:attempts -ne 3) { throw \"failure-mode $mode attempted $script:attempts inspections instead of 3\" }","}","$script:mode = 'healthy'","$script:attempts = 0","$history = @{}","$script:now = $base","$script:cpuSeconds = 0","$warm = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","$script:now = $base.AddSeconds(1)","$skip = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","$script:now = $base.AddSeconds(5)","$script:cpuSeconds = 2","$measure = Get-StarfieldVrGameThreadCpuSample -GameProcessId 42 -Previous $history","if ($warm.reason -ne 'THREAD_WARMUP' -or $skip.reason -ne 'THREAD_SAMPLE_THROTTLED' -or $measure.reason -ne 'THREAD_CPU_MEASURED') {throw 'recovery reason incorrect'}","if ($measure.busiestThreadCpuPct -lt 39 -or $measure.busiestThreadCpuPct -gt 41 -or $script:attempts -ne 2) {throw 'measurement/recovery incorrect'}"].join('\\n').replace('RECORDER_FILE_PATH', ". '" + file + "'");
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20000, windowsHide: true });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\\n'));
 });
