@@ -75,6 +75,7 @@ test('observed system CPU pressure prioritizes missing game-thread and backgroun
   });
   assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
   assert.match(loop.nextExperiment.rationale, /PR #3187/);
+  assert.match(loop.nextExperiment.title, /PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests/);
   assert.ok(loop.missingTelemetry.some((entry) => entry.id === 'starfield-cpu-attribution'));
   assert.equal(loop.authority.automaticRuntimeMutation, false);
 });
@@ -102,7 +103,7 @@ test('motion and stereo skew prioritise AER isolation without silently enabling 
     runIdentity: identity,
     diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['stereo-eye-timing-skew-observed'] },
     metrics: {
-      avgApplicationFrameTimeMs: 15, deliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgApplicationFrameTimeMs: 15, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
     },
   });
@@ -118,7 +119,7 @@ test('pose-latency focus alone cannot masquerade as evidence of AER stereo fault
     runIdentity: identity,
     diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['pose-age-high'] },
     metrics: {
-      avgApplicationFrameTimeMs: 15, deliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgApplicationFrameTimeMs: 15, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
     },
   });
