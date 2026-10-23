@@ -196,6 +196,24 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
   if (head.status !== 0 || !sha40(commit)) {
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_GIT_HEAD_UNAVAILABLE'});
   }
+  // 'git status' can also hide tracked edits under assume-unchanged and
+  // skip-worktree bits. Enumerate the full indexed source/dependency closure
+  // and reject those marks before treating the workspace as build-ready.
+  const index = git(['ls-files', '-v', '-z', '--recurse-submodules']);
+  const indexEntries = index.status === 0 && !index.error && typeof index.stdout === 'string'
+    ? index.stdout.split('\0').filter(Boolean) : [];
+  const indexVerified = indexEntries.length > 0
+    && indexEntries.every((entry) => /^[HhSs] .+$/s.test(entry))
+    && indexEntries.some((entry) => entry.endsWith(' CMakePresets.json'))
+    && indexEntries.some((entry) => entry.endsWith(' src/CreationEngine/CreationEngineRendererModule.cpp'))
+    && !indexEntries.some((entry) => /^[hSs] /.test(entry));
+  // Fail before any worktree-sensitive Git status or filter execution when
+  // the actual index is hidden, missing or incompletely inspected. The
+  // source-only index enumeration is not a physical custody attestation.
+  if (!indexVerified) {
+    return Object.freeze({ ok: false, commit, clean: false, indexVerified: false,
+      reason: 'SOURCE_GIT_INDEX_FLAGS_OR_CONTENT_UNVERIFIED' });
+  }
   // Git's clean/process filters can execute checkout-defined helpers during
   // status and fabricate clean bytes. Before touching the worktree, inspect
   // the *effective*, sanitized Git configuration for the pinned root and both
@@ -229,17 +247,6 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
     return Object.freeze({ok: false, commit, clean: false, reason: 'SOURCE_GIT_STATUS_UNAVAILABLE'});
   }
   const clean = typeof status.stdout === 'string' && status.stdout.trim() === '';
-  // 'git status' can also hide tracked edits under assume-unchanged and
-  // skip-worktree bits. Enumerate the full indexed source/dependency closure
-  // and reject those marks before treating the workspace as build-ready.
-  const index = git(['ls-files', '-v', '-z', '--recurse-submodules']);
-  const indexEntries = index.status === 0 && !index.error && typeof index.stdout === 'string'
-    ? index.stdout.split('\0').filter(Boolean) : [];
-  const indexVerified = indexEntries.length > 0
-    && indexEntries.every((entry) => /^[HhSs] .+$/s.test(entry))
-    && indexEntries.some((entry) => entry.endsWith(' CMakePresets.json'))
-    && indexEntries.some((entry) => entry.endsWith(' src/CreationEngine/CreationEngineRendererModule.cpp'))
-    && !indexEntries.some((entry) => /^[hSs] /.test(entry));
   // Gitlink equality, hydration and dirty nested dependency state are separate
   // proofs. A pinned parent with -/+/U submodules is not build-ready.
   const submodules = git(['submodule', 'status', '--recursive']);
