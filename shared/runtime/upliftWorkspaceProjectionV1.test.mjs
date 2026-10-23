@@ -1,5 +1,11 @@
 import test from 'node:test';
 import '../../tests/conversational-intelligence-experience-seed.test.mjs';
+// Integrate independent seed-lane tests without changing protected CI workflow.
+import './seedCanopyParallelForgeV1.test.mjs';
+import './seedCanopyParallelResourceV1.test.mjs';
+import './seedCanopyParallelGitHubApprovalV1.test.mjs';
+import './seedCanopyParallelSupervisorV1.test.mjs';
+import '../../tests/seed-canopy-parallel-forge-integration.test.mjs';
 // Keep OpenClaw's fail-closed seed proofs in the existing surface-ignition CI suite.
 import './openClawExcellenceSeedV1.test.mjs';
 import assert from 'node:assert/strict';

@@ -5,13 +5,21 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
+      - 'global.json'
       - 'scripts/windows/stage-original-r7-witness-candidate.ps1'
       - 'src/windows/Stephanos.OriginalR7DaclReadback/**'
       - 'src/windows/Stephanos.OriginalR7DaclReadback.Tests/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
+      - 'src/windows/Stephanos.OriginalR7*.Tests/**'
+      - 'shared/agents/r7ProtectedOwner*.mjs'
+      - 'shared/agents/r7NativeOwnerPeerPairingV1.*'
+      - 'scripts/operator-protected-r7-first-root*.mjs'
+      - 'docs/architecture/r7-protected-owner-workflow-proposal.yml.txt'
+      - '.github/workflows/operator-merge-approval-gate.yml'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js'
       - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
+      - 'shared/agents/originalR7ImagePinRegistryBindingV1.test.mjs'
       - '.github/workflows/original-r7-native-windows-proof.yml'
 
 permissions:
@@ -26,13 +34,28 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4; immutable upstream commit
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.426'
+      - name: Select and assert the exact R7 SDK for this job
+        shell: pwsh
+        run: |
+          $pin = @{ sdk = @{ version = '8.0.426'; rollForward = 'disable'; allowPrerelease = $false } }
+          $path = Join-Path $PWD 'global.json'
+          if (Test-Path -LiteralPath $path) {
+            $existing = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($existing.sdk.version -cne '8.0.426' -or $existing.sdk.rollForward -cne 'disable' -or $existing.sdk.allowPrerelease -ne $false) {
+              throw 'R7_EXISTING_SDK_PIN_MISMATCH'
+            }
+          } else {
+            [IO.File]::WriteAllText($path, ($pin | ConvertTo-Json -Depth 3), [Text.UTF8Encoding]::new($false))
+          }
+          $selected = (& dotnet --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $selected -cne '8.0.426') { throw 'R7_EXACT_DOTNET_SDK_NOT_SELECTED' }
       - name: Compile and execute native Windows probe regressions
         shell: pwsh
         run: |
@@ -47,17 +70,58 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $witnessExe = Join-Path $PWD 'src/windows/Stephanos.OriginalR7CustodyWitness/bin/Release/net8.0-windows/Stephanos.OriginalR7CustodyWitness.exe'
           if (-not (Test-Path -LiteralPath $witnessExe -PathType Leaf)) { throw 'WITNESS_NATIVE_BINARY_MISSING' }
-          # Main rejects any argument with exit 2 before calling ServiceBase.Run.
+          # Main rejects an unapproved argument before calling ServiceBase.Run.
           # This proves the negative guard executes on real Windows, not OS containment.
           # Start-Process exposes an expected nonzero native exit without
           # GitHub Actions pwsh's terminating native-command preference.
           $child = Start-Process -FilePath $witnessExe -ArgumentList '--unapproved-ci-invocation' -NoNewWindow -Wait -PassThru
           $rejected = $child.ExitCode
           if ($rejected -ne 2) { throw "WITNESS_INTERACTIVE_ARGUMENT_DENIAL_NOT_PROVEN: $rejected" }
+      - name: Execute owned native capability and peer preparation regressions
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          # Disposable fixtures only. None invokes a real password dialog,
+          # registers a service, creates production roots or releases a lease.
+          $projects = @(
+            'Stephanos.OriginalR7CapabilityObservation.Tests',
+            'Stephanos.OriginalR7PrincipalGroups.Tests',
+            'Stephanos.OriginalR7ThreadIdentity.Tests',
+            'Stephanos.OriginalR7PeerPairing.Tests',
+            'Stephanos.OriginalR7SeedCreation.Tests',
+            'Stephanos.OriginalR7EstateSnapshot.Tests'
+          )
+          foreach ($project in $projects) {
+            dotnet run --project "src/windows/$project" --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:RestoreLockedMode=true
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Prove fixed native peer bindings in the exact single-file runtime
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          # .NET8 single-file probing differs from .NET10: attribute-only
+          # search restrictions are insufficient. The owned fixture places
+          # genuine OS credui.dll copies in appdir and a temporary CWD.
+          # Cold children compare attribute-only and fixed absolute loading;
+          # actual module origins and public dummy unpack are observed only.
+          $output = Join-Path $env:RUNNER_TEMP 'r7-peer-singlefile-proof'
+          dotnet publish src/windows/Stephanos.OriginalR7PeerPairing.Tests/Stephanos.OriginalR7PeerPairing.Tests.csproj --configuration Release --runtime win-x64 --self-contained true --disable-build-servers --warnaserror -m:1 -p:UseSharedCompilation=false -p:RestoreLockedMode=true -p:UseAppHost=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:RuntimeFrameworkVersion=8.0.32 -p:TargetLatestRuntimePatch=false --output $output
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = Join-Path $env:RUNNER_TEMP 'r7-peer-singlefile-extract'
+          & (Join-Path $output 'Stephanos.OriginalR7PeerPairing.Tests.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test native witness source and workflow boundaries
         shell: pwsh
         run: |
           node --test shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test shared/agents/originalR7ImagePinRegistryBindingV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test shared/agents/r7ProtectedOwnerEnvelopeV1.test.mjs shared/agents/r7ProtectedOwnerEnvelopeIssuerV1.test.mjs shared/agents/r7ProtectedOwnerSourceReadbackV1.test.mjs shared/agents/r7NativeOwnerPeerPairingV1.test.mjs scripts/operator-protected-r7-first-root.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test independent R7 signed evidence trust-file handling
         shell: pwsh

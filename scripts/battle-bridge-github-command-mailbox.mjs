@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1414,7 +1415,8 @@ const ORIGINAL_CUSTODY_RECEIPT_BLOCKERS = new Set([
   'ORIGINAL_CHECKOUT_NOT_OBSERVED', 'ORIGINAL_CHECKOUT_ACL_UNOBSERVED',
   'ORIGINAL_PROCESS_ENUMERATION_UNAVAILABLE', 'ORIGINAL_PROCESS_CANDIDATES_PRESENT',
   'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_PROBE_UNAVAILABLE',
-  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'TASK_INVENTORY_UNAVAILABLE',
+  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'CIM_PROCESS_COMMAND_LINE_UNOBSERVED',
+  'TASK_INVENTORY_UNAVAILABLE',
   'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
   'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
   'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
@@ -1568,6 +1570,128 @@ function safeCpuPressureReceiptProjection(operationResult = {}) {
   });
 }
 
+// Closed-world public summary for the fixed original-r7 Windows witness readiness
+// observation. A source-only preflight is never permission to install, sign,
+// release the lease, or infer exclusion from an empty process census.
+const ORIGINAL_R7_READINESS_BLOCKERS = new Set([
+  'PUBLISHER_TASK_CONTEXT_UNAVAILABLE',
+  'OS_WITNESS_SERVICE_NOT_OBSERVED', 'OS_WITNESS_SERVICE_NOT_RUNNING',
+  'ORIGINAL_WRITER_PROCESS_INVENTORY_UNAVAILABLE',
+  'ORIGINAL_WRITER_PROCESS_CANDIDATES_PRESENT',
+  'RELATED_SCHEDULED_TASK_INVENTORY_UNAVAILABLE',
+  'SERVICE_ENUMERATION_UNAVAILABLE', 'PROCESS_ENUMERATION_UNAVAILABLE',
+  'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_INSPECTION_UNAVAILABLE',
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+]);
+const ORIGINAL_R7_MANDATORY_HOLDS = [
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+];
+function originalR7WitnessReadinessGuardProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return {};
+  // These guards qualify the summary again after local checkpointing and
+  // public compaction. Preserve actual booleans; missing evidence stays null.
+  return {
+    originalLeaseReleased: safeBoolean(result.originalLeaseReleased),
+    privilegedWindowsWitnessCommissioned: safeBoolean(result.privilegedWindowsWitnessCommissioned),
+    sourceMutationAllowed: safeBoolean(result.sourceMutationAllowed),
+    arbitraryShellAllowed: safeBoolean(result.arbitraryShellAllowed),
+  };
+}
+
+function safeOriginalR7WitnessReadinessProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return null;
+  const value = result.witnessReadiness;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || result.ok !== true || result.finalVerdict !== 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD'
+    || result.originalLeaseReleased !== false || result.privilegedWindowsWitnessCommissioned !== false
+    || result.sourceMutationAllowed !== false || result.arbitraryShellAllowed !== false
+    || result.publicReceiptSafe !== true || result.secretMaterialReturned !== false
+    || value.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED'
+    || value.historicalOutcome !== 'UNKNOWN' || value.authenticatedWitness !== false
+    || value.physicalPickupProven !== false || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false
+    || typeof value.servicePresent !== 'boolean'
+    || !['RUNNING', 'STOPPED', 'NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus)
+    || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
+    || typeof value.publisherTaskPresent !== 'boolean'
+    || !['RUNNING', 'READY', 'DISABLED', 'QUEUED', 'NOT_FOUND', 'UNKNOWN'].includes(value.publisherTaskState)
+    || !['ZERO', 'NONZERO', 'NEVER_RUN', 'UNKNOWN'].includes(value.publisherLastResultClass)
+    || value.publisherOriginalWriterAuthenticated !== false
+    || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
+    || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))
+    || ORIGINAL_R7_MANDATORY_HOLDS.some(code => !value.blockers.includes(code))) return null;
+  const stamp = value.observedAtUtc;
+  const ms = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== stamp
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(stamp)) return null;
+  return Object.freeze({
+    observedAtUtc: stamp,
+    servicePresent: value.servicePresent,
+    serviceStatus: value.serviceStatus,
+    publisherTaskPresent: value.publisherTaskPresent,
+    publisherTaskState: value.publisherTaskState,
+    publisherLastResultClass: value.publisherLastResultClass,
+    publisherOriginalWriterAuthenticated: false,
+    blockers: Object.freeze([...new Set(value.blockers)]),
+    historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
+    physicalPickupProven: false, leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
+  });
+}
+
+// The public census may HOLD its safe numeric summary for a schema reason.
+// Surface only a fixed reason, never raw PIDs, identities, command lines,
+// checkout paths, invalid blocker strings or apparent lease-release authority.
+function safeOriginalSourceCustodyProjectionDiagnostic(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const projected = safeOriginalSourceCustodyReceiptProjection(operationResult);
+  let status = 'CENSUS_SUMMARY_UNQUALIFIED';
+  if (projected) status = 'SAFE_CENSUS_SUMMARY_VISIBLE';
+  else {
+    const observation = operationResult.inspection;
+    if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+      status = 'CENSUS_DETAIL_MISSING';
+    } else if (!Array.isArray(observation.blockers)
+      || observation.blockers.some(x => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(x))) {
+      status = 'CENSUS_BLOCKERS_UNQUALIFIED';
+    } else if (!([null].includes(observation.candidateProcessCount)
+      || Number.isSafeInteger(observation.candidateProcessCount))
+      || !([null].includes(observation.stephanosScheduledTaskCount)
+      || Number.isSafeInteger(observation.stephanosScheduledTaskCount))) {
+      status = 'CENSUS_COUNTS_UNQUALIFIED';
+    } else {
+      const observedAt = observation.inspectedAtUtc;
+      const ms = Date.parse(observedAt);
+      if (typeof observedAt !== 'string'
+        || !Number.isFinite(ms)
+        || new Date(ms).toISOString() !== observedAt) {
+        status = 'CENSUS_TIMESTAMP_UNQUALIFIED';
+      }
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-source-custody-public-diagnostic.v1',
+    status,
+    safeCountSummaryAvailable: Boolean(projected),
+    readOnly: true,
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1599,6 +1723,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === 'sovereign-windows-reviewer-calibration'
+      && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
+      ? { calibration: operationResult.calibration } : {}),
     remotePlan: Object.freeze(remotePlan),
     stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
     completedSteps: Object.freeze(completedSteps),
@@ -1624,6 +1751,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
+    originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
+    witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
+    ...originalR7WitnessReadinessGuardProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
@@ -2507,6 +2637,9 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
         rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
+        originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
+        witnessReadiness: inner?.witnessReadiness ?? null,
+        ...originalR7WitnessReadinessGuardProjection(inner),
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),

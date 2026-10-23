@@ -134,8 +134,9 @@ function receipt(stage, task, extras = {}) {
 }
 
 /**
- * Testable bounded source engine. No public CLI or autonomous producer.
- * Trusted admission is intentionally a separate unsatisfied requirement.
+ * Uncommissioned bounded source engine. No public CLI or autonomous producer.
+ * Owner/claim observations do not exclude a same-principal source writer.
+ * Native execution custody is a separate, unsatisfied admission requirement.
  */
 export async function constructIsolatedRescueIslandPilotV1({
   task, observed, nowUtc, repoRoot, worktreeRoot, receiptRoot,
@@ -166,6 +167,15 @@ export async function constructIsolatedRescueIslandPilotV1({
   });
   if (eligibility.preflight !== 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED')
     fail('RESCUE_ISLAND_PREFLIGHT_HELD:' + eligibility.blockers.join(','));
+  // A realpath/hash scan authenticates an instant, not the subsequent use.
+  // Another same-principal writer can replace Git metadata, test code, target
+  // parents or receipt roots after inspection. Post-commit rejection is too
+  // late to contain code already executed by Node or an out-of-scope write.
+  // No caller flag, injected runner, platform or recovery path can waive this.
+  // Keep this before ALL filesystem/Git activity, claims and pickup receipts.
+  // Replace only with an independently reviewed native custody implementation
+  // covering the complete execution estate; see rescue-island-execution-custody.
+  fail('RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED');
   // This demonstration does not claim that the two booleans constitute
   // external authentication. Only separately reviewed trusted adapters may
   // supply them; do not expose this function as a remote mailbox action.

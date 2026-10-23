@@ -1,0 +1,611 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:stephanos:r7-policy-proposal:exceptional-writer-enrollment:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyState",
+    "policyVersion",
+    "requestId",
+    "commandId",
+    "nonce",
+    "issuedAtUtc",
+    "expiresAtUtc",
+    "original",
+    "candidate",
+    "issuer",
+    "historicalExecutionOutcome",
+    "historicalReceiptReconstructed",
+    "evidence",
+    "identityMode",
+    "enrolledPrincipalSids",
+    "processBindings",
+    "consumedExecutionEvidenceDigest",
+    "prospectiveEstateEvidenceDigest",
+    "unknownIdentityPolicy",
+    "handleLifetimeBasis",
+    "bootBoundary",
+    "prospectiveScope",
+    "historicalIdentityAuthenticated"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "stephanos.r7-exceptional-writer-enrollment-proposal.v1"
+    },
+    "policyState": {
+      "const": "PROPOSED_UNADOPTED"
+    },
+    "policyVersion": {
+      "const": 1
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 120,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "commandId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 120,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "nonce": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "issuedAtUtc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+    },
+    "expiresAtUtc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+    },
+    "original": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "parentIssue",
+        "capabilityIssue",
+        "missionId",
+        "leaseId",
+        "revision",
+        "leaseDigest",
+        "sourceExecutionId",
+        "branch",
+        "headSha",
+        "worktreePath",
+        "worktreeNativeIdentityDigest"
+      ],
+      "properties": {
+        "repository": {
+          "const": "Cheekyfellastef/stephan-os"
+        },
+        "parentIssue": {
+          "const": 2961
+        },
+        "capabilityIssue": {
+          "const": 3123
+        },
+        "missionId": {
+          "const": "critical-2962-elastic-goal"
+        },
+        "leaseId": {
+          "const": "critical-2962-elastic-goal-r7-lease"
+        },
+        "revision": {
+          "const": 7
+        },
+        "leaseDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "sourceExecutionId": {
+          "type": "string",
+          "pattern": "^critical-2962-elastic-goal-r(?:0|[1-9][0-9]*)-[a-f0-9]{12}$"
+        },
+        "branch": {
+          "const": "openclaw/elastic-goal-2962"
+        },
+        "headSha": {
+          "const": "4e5023eef829b285095db4eeb09d6f2b365e33e4"
+        },
+        "worktreePath": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 240
+        },
+        "worktreeNativeIdentityDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "capabilityIssue",
+        "prNumber",
+        "branch",
+        "baseSha",
+        "sourceHead",
+        "treeSha",
+        "imageSha256",
+        "bundleSha256",
+        "manifestSha256",
+        "serviceName"
+      ],
+      "properties": {
+        "repository": {
+          "const": "Cheekyfellastef/stephan-os"
+        },
+        "capabilityIssue": {
+          "const": 3123
+        },
+        "prNumber": {
+          "const": 3178
+        },
+        "branch": {
+          "const": "feature/3123-r7-registry-protection-readback-20261020"
+        },
+        "baseSha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000"
+          }
+        },
+        "sourceHead": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000"
+          }
+        },
+        "treeSha": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000"
+          }
+        },
+        "imageSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "bundleSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "manifestSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "serviceName": {
+          "const": "StephanosOriginalR7CustodyWitness"
+        }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "keySpkiSha256",
+        "enrollmentEvidenceDigest",
+        "adoptedPolicyDigest",
+        "currentRevocationDigest"
+      ],
+      "properties": {
+        "role": {
+          "const": "ORIGINAL_MISSION_CUSTODY_POLICY_OWNER"
+        },
+        "keySpkiSha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "enrollmentEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "adoptedPolicyDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "currentRevocationDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        }
+      }
+    },
+    "historicalExecutionOutcome": {
+      "const": "UNKNOWN"
+    },
+    "historicalReceiptReconstructed": {
+      "const": false
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "evidenceId",
+          "evidenceDigest",
+          "producerEnrollmentDigest",
+          "observedAtUtc"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 120,
+            "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+          },
+          "evidenceDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            }
+          },
+          "producerEnrollmentDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "x-r7-evidence-reference": "ALWAYS"
+          },
+          "observedAtUtc": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+          }
+        }
+      },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "identityMode": {
+      "enum": [
+        "AUTHENTICATED_HISTORICAL_ENROLLMENT",
+        "PROSPECTIVE_COMPLETE_ESTATE",
+        "HISTORICAL_IDENTITY_UNKNOWN_SCOPE_INCOMPLETE"
+      ]
+    },
+    "enrolledPrincipalSids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 8,
+        "maxLength": 184,
+        "pattern": "^S-1-[1-9][0-9]*(?:-(?:0|[1-9][0-9]*)){1,15}$"
+      },
+      "minItems": 0,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "processBindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "principalSid",
+          "processId",
+          "creationFileTimeUtc",
+          "enrollmentEvidenceDigest",
+          "tokenObjectEvidenceDigest"
+        ],
+        "properties": {
+          "principalSid": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 184,
+            "pattern": "^S-1-[1-9][0-9]*(?:-(?:0|[1-9][0-9]*)){1,15}$"
+          },
+          "processId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "creationFileTimeUtc": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{15,19}$"
+          },
+          "enrollmentEvidenceDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "x-r7-evidence-reference": "ALWAYS"
+          },
+          "tokenObjectEvidenceDigest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "not": {
+              "const": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "x-r7-evidence-reference": "ALWAYS"
+          }
+        }
+      },
+      "minItems": 0,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "consumedExecutionEvidenceDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "x-r7-evidence-reference": "ALWAYS"
+    },
+    "prospectiveEstateEvidenceDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "not": {
+        "const": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "x-r7-evidence-reference": "ALWAYS"
+    },
+    "unknownIdentityPolicy": {
+      "enum": [
+        "NO_UNKNOWN_IDENTITY",
+        "PRESERVE_UNKNOWN_REQUIRE_COMPLETE_PROSPECTIVE_SCOPE",
+        "HOLD_SCOPE_INCOMPLETE"
+      ]
+    },
+    "handleLifetimeBasis": {
+      "enum": [
+        "AUTHENTICATED_CURRENT_HANDLE_MAPPING_DISPOSITION",
+        "AUTHENTICATED_KERNEL_BOUNDARY_AND_COMPLETE_POST_BOOT_ESTATE"
+      ]
+    },
+    "bootBoundary": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "currentKernelInstanceDigest",
+        "priorKernelObjectDispositionEvidenceDigest",
+        "writerTimeUpperBoundEvidenceDigest",
+        "bootTimeLowerBoundEvidenceDigest",
+        "clockProvenanceDigest",
+        "postBootEstateDispositionEvidenceDigest",
+        "latestPossiblePreBootWriterEndUtc",
+        "currentKernelStartLowerBoundUtc",
+        "reentryFenceEffectiveAtUtc",
+        "postBootDispositionObservedAtUtc"
+      ],
+      "properties": {
+        "currentKernelInstanceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "priorKernelObjectDispositionEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "writerTimeUpperBoundEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "bootTimeLowerBoundEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "clockProvenanceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "postBootEstateDispositionEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "ALWAYS"
+        },
+        "latestPossiblePreBootWriterEndUtc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+        },
+        "currentKernelStartLowerBoundUtc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+        },
+        "reentryFenceEffectiveAtUtc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+        },
+        "postBootDispositionObservedAtUtc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z$"
+        }
+      }
+    },
+    "prospectiveScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sourceBoundaryNativeDigest",
+        "principalCapabilityInventoryDigest",
+        "openHandleAndMappingDispositionDigest",
+        "detachedWriterDispositionDigest",
+        "reentryEstateDigest",
+        "sourceDenialProofDigest",
+        "continuityEvidenceDigest",
+        "queueQuiescenceDigest"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "CLAIMED_COMPLETE_UNVERIFIED",
+            "INCOMPLETE_UNKNOWN"
+          ]
+        },
+        "sourceBoundaryNativeDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "principalCapabilityInventoryDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "openHandleAndMappingDispositionDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "detachedWriterDispositionDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "reentryEstateDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "sourceDenialProofDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "continuityEvidenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        },
+        "queueQuiescenceDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "not": {
+            "const": "0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "x-r7-evidence-reference": "COMPLETE_PROSPECTIVE_SCOPE"
+        }
+      }
+    },
+    "historicalIdentityAuthenticated": {
+      "const": false
+    }
+  },
+  "$comment": "Shape alone cannot establish correlated evidence or principal independence; the semantic validator is mandatory and never grants authority.",
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "identityMode": {
+            "enum": [
+              "AUTHENTICATED_HISTORICAL_ENROLLMENT",
+              "PROSPECTIVE_COMPLETE_ESTATE"
+            ]
+          }
+        },
+        "required": [
+          "identityMode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prospectiveScope": {
+            "properties": {
+              "status": {
+                "const": "CLAIMED_COMPLETE_UNVERIFIED"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

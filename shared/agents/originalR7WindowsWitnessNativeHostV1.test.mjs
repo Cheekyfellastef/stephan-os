@@ -13,6 +13,67 @@ const scm = await readFile(new URL('OriginalR7ScmPreflight.cs', root), 'utf8');
 const project = await readFile(new URL('Stephanos.OriginalR7CustodyWitness.csproj', root), 'utf8');
 const guide = await readFile(new URL('README.md', root), 'utf8');
 const nativeCi = await readFile(new URL('../../.github/workflows/original-r7-native-windows-proof.yml', import.meta.url), 'utf8');
+const scmCi = await readFile(new URL('../../.github/workflows/original-r7-scm-preflight.yml', import.meta.url), 'utf8');
+const imagePin = await readFile(new URL('OriginalR7ImagePinPreflight.cs', root), 'utf8');
+
+test('every executable action in both R7 source-proof workflows has an immutable reviewed identity', () => {
+  // Upstream actions/* v4 commit objects were read back on2026-10-21.
+  // These source checks are not package signing or Windows commissioning.
+  const pins = new Map([
+    ['actions/checkout', '11d5960a326750d5838078e36cf38b85af677262'],
+    ['actions/setup-dotnet', '67a3573c9a986a3f9c594539f4ab511d57bb3ce9'],
+    ['actions/setup-node', '49933ea5288caeca8642d1e84afbd3f7d6820020'],
+    ['actions/upload-artifact', 'ea165f8d65b6e75b540449e92b4886f43607fa02'],
+  ]);
+  function inspect(source, required) {
+    const lines = source.split(/\r?\n/).filter(line => /^\s*(?:-\s*)?uses:/.test(line));
+    assert.equal(lines.length, required.length, 'every executable action is inspected');
+    const observed = [];
+    for (const line of lines) {
+      const value = /^\s*(?:-\s*)?uses:\s*([a-z0-9-]+\/[a-z0-9-]+)@([a-f0-9]{40})\s+# v4; immutable upstream commit\s*$/.exec(line);
+      assert.ok(value, 'action must use full immutable SHA and version comment: ' + line);
+      assert.equal(value[2], pins.get(value[1]), 'unexpected executable action identity');
+      observed.push(value[1]);
+    }
+    assert.deepEqual(observed, required);
+  }
+  const scmActions = ['actions/checkout', 'actions/setup-dotnet', 'actions/setup-node', 'actions/upload-artifact'];
+  inspect(nativeCi, ['actions/checkout', 'actions/setup-dotnet']);
+  inspect(scmCi, scmActions);
+  // A new/movable/short/mistyped identity fails even if every other action
+  // remains pinned. The invariant covers pre-build and artifact-upload code.
+  for (const [action, sha] of pins) {
+    for (const alternate of ['v4', 'main', sha.slice(0, 12), '0'.repeat(40)]) {
+      const changed = scmCi.replace(action + '@' + sha, action + '@' + alternate);
+      assert.notEqual(changed, scmCi);
+      assert.throws(() => inspect(changed, scmActions));
+    }
+  }
+  assert.throws(() => inspect(scmCi + '\n      - uses: unrelated/extra@' + 'a'.repeat(40) + '\n', scmActions));
+});
+
+test('SCM proof follows audit-parser edits and tests the delivered complete managed payload', () => {
+  const paths = scmCi.slice(scmCi.indexOf('    paths:'), scmCi.indexOf('\npermissions:'));
+  for (const path of ['shared/agents/originalR7WitnessCommissioningAuditV1.mjs',
+    'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs',
+    'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs']) {
+    assert.ok(paths.includes("'" + path + "'"), path + ' must trigger hosted Windows proof');
+  }
+  assert.match(scmCi, /-p:PublishProfile=WitnessSingleFile[^\n]*--output \$stage/);
+  assert.doesNotMatch(scmCi, /--self-contained false/);
+  assert.match(scmCi, /& \$binary --inspect-bundle-only/);
+  assert.match(scmCi, /R7_PUBLISHED_PACKAGE_BUNDLE_GATE_FAILED/);
+  assert.match(program, /args\.Length == 1 && args\[0\] == "--inspect-bundle-only"/);
+  assert.match(program, /if \(!OriginalR7ScmPreflight\.BundledPayloadObserved\(\)\) return 4/);
+  assert.match(program, /OriginalR7ImagePinPreflight\.Evaluate\(image, untrustedDigest\)/);
+  assert.match(imagePin, /MaxImageBytes = 128L \* 1024 \* 1024/);
+  assert.match(scmCi, /Get-ChildItem -LiteralPath \$stage -File -Filter '\*\.dll'/);
+  assert.match(scmCi, /R7_UNBUNDLED_EXECUTABLE_PAYLOAD/);
+  assert.match(scmCi, /& \$binary --unapproved-ci-invocation/);
+  assert.match(scmCi, /\$LASTEXITCODE -ne 2/);
+  assert.match(imagePin, /R7_IMAGE_MANAGED_PAYLOAD_NOT_BUNDLED/);
+  assert.match(scmCi, /physicalBattleBridgeCommissioned=false/);
+});
 
 test('native Windows witness host requires real SCM and its exact service identity', () => {
   assert.match(project, /<TargetFramework>net8\.0-windows<\/TargetFramework>/);
@@ -52,7 +113,8 @@ test('service SID cannot be carried by an unrelated or elevated Windows principa
   assert.match(program, /\(!exactVirtualServiceAccount && !localServiceWithEnabledSid\)/);
   assert.match(program, /identity\.IsSystem \|\| elevatedAdministrator/);
   assert.doesNotMatch(program, /identity\.Groups\?\.Contains\(expected\)/);
-  assert.doesNotMatch(program, /(?:RunAs|TokenImpersonationLevel|LogonUser|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)/);
+  // Match actual identifiers, not the RunAs substring in ordinary RunAsync.
+  assert.doesNotMatch(program, /\b(?:RunAs|TokenImpersonationLevel|LogonUser(?:W|A)?|AdjustTokenPrivileges|OpenProcessToken|SetTokenInformation)\b/);
   assert.match(program, /WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED/);
 });
 
@@ -85,6 +147,95 @@ test('SCM preflight checks the exact on-disk witness image pin before any custod
 });
 
 const stagingScriptUrl = new URL('../../scripts/windows/stage-original-r7-witness-candidate.ps1', import.meta.url);
+
+test('registration protection stays behind interactive staging and uses only the fixed existing key', async () => {
+  const source = await readFile(stagingScriptUrl, 'utf8');
+  const normalized = source.replace(/\r\n/g, '\n');
+  const stage = normalized.indexOf('if (-not $Stage -or $WhatIfPreference)');
+  const admin = normalized.indexOf("throw 'R7_STAGE_INTERACTIVE_ADMIN_REQUIRED'");
+  const create = normalized.indexOf('& $sc create $service');
+  const protect = normalized.indexOf('\n    Protect-StagedRegistration\n');
+  assert.ok(stage > 0 && admin > stage && create > admin && protect > create);
+  assert.match(source, /RegistryHive\]::LocalMachine, \[Microsoft\.Win32\.RegistryView\]::Registry64/);
+  assert.match(source, /OpenSubKey\("SYSTEM\\CurrentControlSet\\Services\\\$service"/);
+  assert.match(source, /\$key\.SetAccessControl\(\$acl\)/);
+  assert.match(source, /Assert-StagedRegistrationSecurity \(\$key\.GetAccessControl\(\)\.GetSecurityDescriptorBinaryForm\(\)\) \$witness/);
+  assert.match(source, /\$key\.SetValue\('PinnedImageSha256', \$ExpectedSha256/);
+  assert.doesNotMatch(source, /\b(?:CreateSubKey|AdjustTokenPrivileges|Enable-Privilege)\b/);
+});
+
+test('real PowerShell registration descriptor construction rejects hostile ACL shapes without registry mutation', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'r7-registry-descriptor-test-'));
+  try {
+    const script = join(dir, 'descriptors.ps1');
+    await writeFile(script, `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:R7_STAGE_SCRIPT, [ref]$tokens, [ref]$errors)
+if ($errors.Count -ne 0) { throw 'STAGING_SCRIPT_PARSE_FAILED' }
+# Load only the two pure descriptor helpers. Never dot-source the installer,
+# register an SCM service, set a registry ACL or require administrator access.
+foreach ($name in @('New-StagedRegistrationSecurity', 'Assert-StagedRegistrationSecurity')) {
+    $nodes = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true))
+    if ($nodes.Count -ne 1) { throw 'DESCRIPTOR_HELPER_NOT_UNIQUE' }
+    . ([scriptblock]::Create($nodes[0].Extent.Text))
+}
+$sid = [Security.Principal.SecurityIdentifier]::new('S-1-5-80-1-2-3-4-5')
+$acl = New-StagedRegistrationSecurity $sid
+Assert-StagedRegistrationSecurity ($acl.GetSecurityDescriptorBinaryForm()) $sid
+$raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+if ($raw.DiscretionaryAcl.Count -ne 3) { throw 'ACE_COUNT_MISMATCH' }
+$masks = @{}
+foreach ($ace in $raw.DiscretionaryAcl) { $masks[$ace.SecurityIdentifier.Value] = $ace.AccessMask }
+if ($masks['S-1-5-18'] -ne 0xf003f -or $masks['S-1-5-32-544'] -ne 0xf003f -or
+    $masks[$sid.Value] -ne 0x20019) { throw 'NATIVE_READER_MASK_MISMATCH' }
+$good = 'O:BAG:BAD:P(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;S-1-5-80-1-2-3-4-5)'
+$cases = @(
+    $good.Replace('O:BA', 'O:SY'),
+    $good.Replace('D:P', 'D:'),
+    $good.Replace('(A;;KA;;;SY)', ''),
+    $good.Replace('(A;;KR;;;S-1-5-80-1-2-3-4-5)', ''),
+    $good.Replace('KR;;;S-1-5-80-1-2-3-4-5', 'KA;;;S-1-5-80-1-2-3-4-5'),
+    $good.Replace('KA;;;SY', 'KR;;;SY'),
+    $good.Replace('(A;;KA;;;BA)', '(D;;KA;;;BA)'),
+    $good.Replace('(A;;KA;;;SY)', '(A;ID;KA;;;SY)'),
+    $good.Replace('(A;;KA;;;SY)', '(A;CI;KA;;;SY)'),
+    $good.Replace('S-1-5-80-1-2-3-4-5', 'S-1-5-80-9-2-3-4-5'),
+    ($good + '(A;;KR;;;BU)'),
+    ($good + '(A;;KA;;;SY)'),
+    'O:BAG:BAD:P',
+    'O:BAG:BAD:NO_ACCESS_CONTROL'
+)
+foreach ($sddl in $cases) {
+    # Preserve the raw ACE inventory: RegistrySecurity normalizes/merges
+    # duplicate ACEs before serialization and would hide this negative case.
+    $candidate = [Security.AccessControl.RawSecurityDescriptor]::new($sddl)
+    $bytes = [byte[]]::new($candidate.BinaryLength)
+    $candidate.GetBinaryForm($bytes, 0)
+    $rejected = $false
+    try { Assert-StagedRegistrationSecurity $bytes $sid } catch { $rejected = $true }
+    if (-not $rejected) { throw ('HOSTILE_DESCRIPTOR_ACCEPTED: ' + $sddl) }
+}
+$rejected = $false
+try { New-StagedRegistrationSecurity ([Security.Principal.SecurityIdentifier]::new('S-1-5-18')) } catch { $rejected = $true }
+if (-not $rejected) { throw 'NON_SERVICE_SID_ACCEPTED' }
+Write-Output 'R7_REGISTRY_DESCRIPTOR_TESTS_PASSED'
+`, 'utf8');
+    const run = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script,
+    ], { shell: false, windowsHide: true, encoding: 'utf8', timeout: 60000,
+      env: { ...process.env, R7_STAGE_SCRIPT: fileURLToPath(stagingScriptUrl) } });
+    assert.equal(run.status, 0, run.stderr || run.error?.message || 'descriptor test failed');
+    assert.match(run.stdout, /R7_REGISTRY_DESCRIPTOR_TESTS_PASSED/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('Windows PowerShell 5.1 delivers the fixed SCM arguments to a harmless native receiver', {
   skip: process.platform !== 'win32',
