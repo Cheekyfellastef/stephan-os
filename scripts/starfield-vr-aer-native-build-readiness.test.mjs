@@ -76,8 +76,10 @@ test('license, patch path and compiler preset substitution fails closed', () => 
 test('checkout authority reads only git head and status; no source write is requested', () => {
   const run=(cmd,args)=>{
     assert.equal(cmd,'git');
+    if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
     if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
+    if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0H extern/vrframework/mod.cpp\0H extern/CommonLibSF/include.cpp\0'};
     if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework (pinned)\n 2222222222222222222222222222222222222222 extern/CommonLibSF (pinned)\n'};
     throw new Error('unexpected git command');
   };
@@ -176,8 +178,10 @@ test('checkout inspector forces dirty submodule visibility regardless of ignore=
   const calls=[];
   const run=(command,args)=>{
     calls.push([command,...args]);
+    if(args.at(-1)==='--show-toplevel') return {status:0,stdout:'/isolated/pinned\n'};
     if(args.at(-1)==='HEAD') return {status:0,stdout:MUTAR_PIN+'\n'};
     if(args.at(-1)==='--ignore-submodules=none') return {status:0,stdout:' m extern/vrframework\n'};
+    if(args.at(-1)==='--recurse-submodules') return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0'};
     if(args.at(-1)==='--recursive') return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
     throw new Error('unexpected Git argument');
   };
@@ -221,6 +225,89 @@ test('real Git checkout with submodule.ignore=all cannot hide dirty nested nativ
     const inspected=inspectPinnedSourceCheckout(parent);
     assert.equal(inspected.clean,false);
     assert.equal(inspected.ok,false);
+  } finally {
+    await rm(root,{recursive:true,force:true});
+  }
+});
+
+
+test('Starfield source checkout rejects ignored child directories even if parent is pinned', () => {
+  const run=(cmd,args)=>{
+    if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/pinned-checkout\n'};
+    throw new Error('must refuse nonroot before reading HEAD or source');
+  };
+  const result=inspectPinnedSourceCheckout('/pinned-checkout/ignored/child',{run});
+  assert.equal(result.ok,false);
+  assert.equal(result.reason,'SOURCE_GIT_ROOT_MISMATCH');
+});
+
+test('Starfield source checkout refuses hidden Git assume-unchanged and skip-worktree flags', () => {
+  const index='H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0';
+  for(const prefix of ['h CMakePresets.json\0','S src/CreationEngine/CreationEngineRendererModule.cpp\0']) {
+    const run=(cmd,args)=>{
+      if(args.at(-1)==='--show-toplevel') return {status:0,stdout:'/source\n'};
+      if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+      if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
+      if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:index+prefix};
+      if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
+      throw new Error('unexpected git command');
+    };
+    const result=inspectPinnedSourceCheckout('/source',{run});
+    assert.equal(result.ok,false);
+    assert.equal(result.indexVerified,false);
+    assert.equal(result.reason,'SOURCE_GIT_INDEX_FLAGS_OR_CONTENT_UNVERIFIED');
+  }
+});
+
+test('Starfield hosted resource classification always requires BOTH pinned source and scratch', () => {
+  for(const requestedResourceIds of [
+    ['vr/2707/pinned-source-read'],
+    ['vr/2707/hosted-cpp23-test-scratch'],
+    ['vr/2707/pinned-source-read','vr/2707/pinned-source-read'],
+  ]) {
+    const result=classifyStarfieldNativeR7Isolation({
+      action:'HOSTED_SOURCE_TEST',surface:'GITHUB_HOSTED',originalR7LeaseState:'SAFE_HOLD',
+      requestedResourceIds,activeResourceIds:['vr/2707/hosted-cpp23-test-scratch'],
+    });
+    assert.equal(result.classification,'NATIVE_VR_WORK_PARKED');
+    assert.equal(result.sourceTestCandidateEligible,false);
+    assert.equal(result.nativeBuildAllowed,false);
+  }
+});
+
+test('real Git index flag and nested-child regressions hold even when status is empty', async(t) => {
+  const gitVersion=spawnSync('git',['--version'],{encoding:'utf8'});
+  if(gitVersion.status!==0){t.skip('Git unavailable');return;}
+  const root=await mkdtemp(join(tmpdir(),'vr-native-index-bits-'));
+  const git=(args)=>{
+    const cmd=spawnSync('git',['-C',root,...args],{encoding:'utf8',timeout:8000});
+    assert.equal(cmd.status,0,'git '+args.join(' ')+': '+cmd.stderr);
+    return cmd.stdout.trim();
+  };
+  try {
+    git(['init','-q']);
+    git(['config','user.name','Fixture']);
+    git(['config','user.email','fixture@example.invalid']);
+    await mkdir(join(root,'src/CreationEngine'),{recursive:true});
+    await writeFile(join(root,'CMakePresets.json'),'{}\n');
+    await writeFile(join(root,'src/CreationEngine/CreationEngineRendererModule.cpp'),'int before = 1;\n');
+    git(['add','.']);
+    git(['commit','-qm','pinned files']);
+    const source=join(root,'src/CreationEngine/CreationEngineRendererModule.cpp');
+    git(['update-index','--assume-unchanged','src/CreationEngine/CreationEngineRendererModule.cpp']);
+    await writeFile(source,'int hidden_edit = 2;\n');
+    assert.equal(git(['status','--porcelain']), '', 'baseline Git status unexpectedly spotted assumed edit');
+    let observed=inspectPinnedSourceCheckout(root);
+    assert.equal(observed.ok,false);
+    assert.equal(observed.indexVerified,false);
+    git(['update-index','--no-assume-unchanged','src/CreationEngine/CreationEngineRendererModule.cpp']);
+    git(['update-index','--skip-worktree','src/CreationEngine/CreationEngineRendererModule.cpp']);
+    observed=inspectPinnedSourceCheckout(root);
+    assert.equal(observed.ok,false);
+    assert.equal(observed.indexVerified,false);
+    await mkdir(join(root,'ignored-child'));
+    observed=inspectPinnedSourceCheckout(join(root,'ignored-child'));
+    assert.equal(observed.reason,'SOURCE_GIT_ROOT_MISMATCH');
   } finally {
     await rm(root,{recursive:true,force:true});
   }
