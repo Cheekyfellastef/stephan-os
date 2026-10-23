@@ -265,3 +265,53 @@ test('malicious packet coercion, getters, proxies and cycles fail without runnin
   }
   assert.equal(accessed,0);
 });
+
+
+test('array accessors and proxy arrays are rejected without executing their traps', () => {
+  let invoked = 0;
+  const getterArray = [];
+  Object.defineProperty(getterArray, '0', {
+    configurable: true, enumerable: true,
+    get() { invoked++; throw new Error('array access not permitted'); },
+  });
+  const silentGetterArray = [];
+  Object.defineProperty(silentGetterArray, '0', {
+    configurable: true, enumerable: true,
+    get() { invoked++; return 'pretend-evidence'; },
+  });
+  const proxyArray = new Proxy(['pretend-evidence'], {
+    get() { invoked++; throw new Error('proxy array access'); },
+    ownKeys() { invoked++; throw new Error('proxy enumerated'); },
+  });
+  const proxyObject = new Proxy({ fixed: true }, {
+    ownKeys() { invoked++; throw new Error('proxy enumerated'); },
+  });
+  const sparse = new Array(1);
+  const extra = ['ok'];
+  extra.extraProperty = true;
+  const inherited = Object.assign(Object.create(Array.prototype), {0: 'entry',length:1});
+  for (const poison of [getterArray, silentGetterArray, proxyArray, proxyObject,
+    sparse, extra, inherited]) {
+    const candidate = assess({ ...packet, signedCapabilityExam: {
+      ...exam, blockers: poison,
+    } });
+    assert.equal(candidate.qualifiedSpecialist, false);
+    assert.equal(candidate.nextGate, 'EXACT_SOURCE_PAIR');
+    assert.equal(candidate.rungs[0].reason, 'UNTRUSTED_INPUT_INVALID');
+    const builder = assessBuilders({ ...builderPacket, extra: poison });
+    assert.equal(builder.sourceMutationAllowed, false);
+    assert.equal(builder.island.commanderPhysicalScopeReportedUnattested, false);
+  }
+  assert.equal(invoked, 0, 'no poisoned getter or proxy trap may run');
+});
+
+test('ordinary dense arrays still permit candidate evidence while preventing authority', () => {
+  const result = assess(packet);
+  assert.equal(result.rungs[3].state, 'EXAM_REPORTED_UNATTESTED');
+  assert.equal(result.rungs[4].state, 'HELD');
+  assert.equal(result.qualifiedSpecialist, false);
+  const builder = assessBuilders(builderPacket);
+  assert.equal(builder.island.commanderPhysicalScopeReportedUnattested, true);
+  assert.equal(builder.originalR7LeaseReleased, false);
+  assert.equal(builder.physicalBuilderPickupProven, false);
+});
