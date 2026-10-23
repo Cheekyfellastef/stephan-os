@@ -1,7 +1,8 @@
 # R7 production containment while Battle Bridge remains usable
 
-Status: design review required. The production containment implementation is
-still absent. This record and its owned native regressions grant no custody,
+Status: design review required. A retained-object kernel mutation core now exists
+in source; the complete production containment implementation is still absent.
+This record and its owned native regressions grant no custody,
 key access, installation, cancellation, source-fence or lease-release authority.
 
 Owner: #3123 — Goal #2961 child: commission protected Windows r7 custody
@@ -14,14 +15,11 @@ Battle Bridge must remain fully usable. Do not propose an automatic reboot,
 account-wide denial, broad service pause, termination of unknown processes or
 freezing unrelated worktrees as the implementation of this requirement.
 
-The private canonical mission and lease were re-read after protected merge
-#3178. They still bind `critical-2962-elastic-goal`, revision7, lease
-`critical-2962-elastic-goal-r7-lease`, branch `openclaw/elastic-goal-2962`,
-PR #2987 and source `4e5023eef829b285095db4eeb09d6f2b365e33e4`.
-The mission identifies a separate original worktree. Its absolute path and
-machine principal details stay in private host evidence. The consumed result
-identity remains `critical-2962-elastic-goal-r1-27828c3fdb2c`; it must never
-be renamed r7. Historical execution outcome remains UNKNOWN.
+The original mission, lease revision, source and consumed-result identities
+remain bound to their existing private canonical records. Those identifiers,
+the original worktree's absolute path and machine principal details stay in
+private host evidence. Never rename the authentic consumed result to match a
+later repair revision. Historical execution outcome remains UNKNOWN.
 
 The merged host still unconditionally refuses
 `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED`. Its bounded observation,
@@ -55,6 +53,13 @@ The fixture uses no package dependency. The existing read-only native Windows
 workflow executes it alongside the original owned regressions.
 
 ## Production transaction that still needs a qualified implementation
+
+The [retained-object mutation core](../../src/windows/Stephanos.OriginalR7ScopedMutationGate/README.md)
+implements actual Filter Manager operation callbacks and native handle/context
+ownership. Its portable policy tests and kernel compilation/link check do not
+establish NTFS runtime enforcement. Namespace closure, existing capability
+closure, privileged source-role separation and independently protected creators
+remain required components. The existing production startup refusal remains.
 
 An independent Windows/security design review must identify a concrete live
 enforcement mechanism for **all** of the following together. A partial
