@@ -18,6 +18,17 @@ function metricPresent(metrics, key) {
   return value !== null && value !== undefined && value !== '' && value !== false;
 }
 
+function measuredCpuPercent(metrics, key) {
+  const value = metrics?.[key];
+  return typeof value === 'number' && Number.isFinite(value)
+    && value >= 0 && value <= 100;
+}
+
+function measuredCpuSampleCount(metrics, key) {
+  const count = metrics?.[key];
+  return Number.isSafeInteger(count) && count > 0;
+}
+
 function sourceRevision(registry, sourceId) {
   const source = Array.isArray(registry?.sources)
     ? registry.sources.find((entry) => text(entry?.source_id) === sourceId)
@@ -100,10 +111,16 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   const stereoMotionObserved = signals.has('stereo-eye-timing-skew-observed');
   // A single busy-game-thread reading or process total cannot identify the
   // competing VR/desktop load. Only same-run samples prove attribution.
+  // CPU fields alone are not same-run physical attribution proof. Require
+  // measured thread and process-family sample intervals as well as finite
+  // percentage metrics before offering a targeted CPU experiment.
   const cpuAttributionReady = [
     'avgSystemCpuPct', 'avgStarfieldCpuPct',
     'maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
-  ].every((key) => metricPresent(metrics, key));
+  ].every((key) => measuredCpuPercent(metrics, key))
+    && [
+      'starfieldThreadCpuMeasuredSampleCount', 'cpuConsumersAvailableSampleCount',
+    ].every((key) => measuredCpuSampleCount(metrics, key));
 
   const sources = Object.freeze({
     mutar: {
