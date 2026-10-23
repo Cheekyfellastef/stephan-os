@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   MUTAR_PIN, NATIVE_BUILD_READINESS_SCHEMA, inspectPinnedSourceCheckout,
   inspectStarfieldAerNativeBuildContract, createStarfieldAerNativeBuildReadiness,
+  classifyStarfieldNativeR7Isolation, STARFIELD_NATIVE_R7_ISOLATION_SCHEMA,
 } from './starfield-vr-aer-native-build-readiness.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -76,12 +77,12 @@ test('checkout authority reads only git head and status; no source write is requ
   const run=(cmd,args)=>{
     assert.equal(cmd,'git');
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
-    if(args.at(-1)==='--untracked-files=normal')return {status:0,stdout:''};
+    if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
     if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework (pinned)\n 2222222222222222222222222222222222222222 extern/CommonLibSF (pinned)\n'};
     throw new Error('unexpected git command');
   };
   assert.equal(inspectPinnedSourceCheckout('/source',{run}).reason,'PINNED_CHECKOUT_VERIFIED');
-  const dirty=inspectPinnedSourceCheckout('/source',{run:(cmd,args)=>args.at(-1)==='HEAD'?run(cmd,args):{status:0,stdout:' M src/hook.cpp\n'}});
+  const dirty=inspectPinnedSourceCheckout('/source',{run:(cmd,args)=>args.at(-1)==='--ignore-submodules=none'?{status:0,stdout:' M src/hook.cpp\n'}:run(cmd,args)});
   assert.equal(dirty.reason,'SOURCE_DIR_DIRTY');
   assert.equal(inspectPinnedSourceCheckout('',{run}).reason,'SOURCE_DIR_REQUIRED');
   const missing = inspectPinnedSourceCheckout('/source',{run:(cmd,args)=>args.at(-1)==='--recursive'?{status:0,stdout:'-1111111111111111111111111111111111111111 extern/vrframework\n'}:run(cmd,args)});
@@ -126,5 +127,101 @@ test('native C++23 stereo-history fixture really compiles and executes in a scra
     assert.equal(executed.status,0,'Compiled stereo-history probe failed: '+executed.stderr);
   }finally{
     await rm(dir,{recursive:true,force:true});
+  }
+});
+
+
+test('hosted VR source tests remain disjoint from the R7 SAFE_HOLD and active gaming', () => {
+  const result = classifyStarfieldNativeR7Isolation({
+    action: 'HOSTED_SOURCE_TEST', surface: 'GITHUB_HOSTED',
+    originalR7LeaseState: 'SAFE_HOLD', gamingActive: true,
+  });
+  assert.equal(result.schemaVersion, STARFIELD_NATIVE_R7_ISOLATION_SCHEMA);
+  assert.equal(result.classification, 'HOSTED_SOURCE_TEST_R7_DISJOINT');
+  assert.equal(result.sourceTestCandidateEligible, true);
+  assert.equal(result.existingGoal, 2707);
+  assert.equal(result.existingControllerPreserved, true);
+  assert.equal(result.originalR7LeaseReleaseAllowed, false);
+  assert.equal(result.originalR7WriterMutationAllowed, false);
+  assert.equal(result.battleBridgeMutationAllowed, false);
+  assert.equal(result.nativeBuildAllowed, false);
+  assert.equal(result.sourceWriterPickupVerified, false);
+  assert.equal(result.authority.sourceMutationAllowed, false);
+});
+
+test('nonhosted, native build, competing writers and forged R7 work remain parked', () => {
+  const options = [
+    {action:'ISOLATED_NATIVE_BUILD'},
+    {action:'RELEASE_R7_LEASE'},
+    {action:'HOSTED_SOURCE_TEST',surface:'BATTLE_BRIDGE'},
+    {action:'HOSTED_SOURCE_TEST', requestedResourceIds:['r7/original-writer']},
+    {action:'HOSTED_SOURCE_TEST', requestedResourceIds:['vr/2707/hosted-cpp23-test-scratch', 'vr/2707/hosted-cpp23-test-scratch']},
+    {action:'HOSTED_SOURCE_TEST', activeResourceIds:['vr/2707/pinned-source-read']},
+    {action:'HOSTED_SOURCE_TEST', requestedResourceIds:['vr/2707/pinned-source-read', 'battle-bridge/starfield-game-dll']},
+    {action:'HOSTED_SOURCE_TEST', requestedResourceIds:null},
+  ];
+  for(const input of options) {
+    const result=classifyStarfieldNativeR7Isolation({
+      originalR7LeaseState:'SAFE_HOLD', gamingActive:false, ...input,
+    });
+    assert.equal(result.classification,'NATIVE_VR_WORK_PARKED',JSON.stringify(input));
+    assert.equal(result.sourceTestCandidateEligible,false);
+    assert.equal(result.originalR7LeaseReleaseAllowed,false);
+    assert.equal(result.nativeBuildAllowed,false);
+    assert.ok(result.blockers.length>0);
+  }
+});
+
+test('checkout inspector forces dirty submodule visibility regardless of ignore=all configuration', () => {
+  const calls=[];
+  const run=(command,args)=>{
+    calls.push([command,...args]);
+    if(args.at(-1)==='HEAD') return {status:0,stdout:MUTAR_PIN+'\n'};
+    if(args.at(-1)==='--ignore-submodules=none') return {status:0,stdout:' m extern/vrframework\n'};
+    if(args.at(-1)==='--recursive') return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
+    throw new Error('unexpected Git argument');
+  };
+  const result=inspectPinnedSourceCheckout('/isolated/pinned',{run});
+  assert.equal(result.clean,false);
+  assert.equal(result.reason,'SOURCE_DIR_DIRTY');
+  assert.ok(calls.some((args)=>args.includes('--ignore-submodules=none')));
+  assert.ok(calls.every((args)=>args[0]==='git'));
+});
+
+test('real Git checkout with submodule.ignore=all cannot hide dirty nested native code', async(t) => {
+  const version=spawnSync('git',['--version'],{encoding:'utf8',timeout:3000});
+  if(version.status!==0){t.skip('Git unavailable on this test host');return;}
+  const root=await mkdtemp(join(tmpdir(),'vr-r7-submodule-proof-'));
+  const dep=join(root,'dep');
+  const parent=join(root,'parent');
+  const git=(dir,args)=>{
+    const command=spawnSync('git',['-C',dir,...args],{encoding:'utf8',timeout:9000});
+    assert.equal(command.status,0,'git '+args.join(' ')+': '+command.stderr);
+    return command.stdout.trim();
+  };
+  try {
+    await mkdir(dep);
+    await mkdir(parent);
+    git(dep,['init','-q']);
+    git(dep,['config','user.email','test@example.invalid']);
+    git(dep,['config','user.name','Native Test']);
+    await writeFile(join(dep,'source.cpp'),'int safe() { return 1; }\n');
+    git(dep,['add','source.cpp']);
+    git(dep,['commit','-q','-m','pinned dependency']);
+    git(parent,['init','-q']);
+    git(parent,['config','user.email','test@example.invalid']);
+    git(parent,['config','user.name','Native Test']);
+    git(parent,['-c','protocol.file.allow=always','submodule','add','-q',dep,'extern/vrframework']);
+    git(parent,['add','.']);
+    git(parent,['commit','-q','-m','parent with pinned submodule']);
+    git(parent,['config','submodule.extern/vrframework.ignore','all']);
+    await writeFile(join(parent,'extern/vrframework/source.cpp'),'int changed() { return 0; }\n');
+    const hidden=git(parent,['status','--porcelain','--untracked-files=normal']);
+    assert.equal(hidden,'','expected ignore=all to hide edited submodule');
+    const inspected=inspectPinnedSourceCheckout(parent);
+    assert.equal(inspected.clean,false);
+    assert.equal(inspected.ok,false);
+  } finally {
+    await rm(root,{recursive:true,force:true});
   }
 });
