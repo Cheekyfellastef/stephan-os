@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup>
+  <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+  <EnableWindowsTargeting>true</EnableWindowsTargeting><ImplicitUsings>enable</ImplicitUsings>
+  <Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors><UseAppHost>false</UseAppHost>
+ </PropertyGroup>
+ <ItemGroup><Compile Include="../Stephanos.OriginalR7DaclReadback/*.cs" Link="Mechanism/%(Filename)%(Extension)" /></ItemGroup>
+</Project>
