@@ -12,7 +12,13 @@ const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress']);
+// A protected environment may keep the run at GitHub's `waiting` state
+// briefly after the owner approves it, even when the protected merge job
+// has begun. This is a run-identity observation only. The actual merge job
+// remains gated by the environment's authenticated owner approval, exact
+// head/base/tree checks, independent review and replay/lease protections.
+// Never admit a terminal or cancelled run through this observation.
+const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress', 'waiting']);
 const PERSONAL_REPOSITORY_RULESET_PROOF_PATHS = Object.freeze([
   /^\/repos\/[^/?]+\/[^/?]+$/,
   /^\/repos\/[^/?]+\/[^/?]+\/rules\/branches\/main\?per_page=100&page=(?:[1-9]|1[0-9]|20)$/,

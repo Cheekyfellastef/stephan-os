@@ -598,3 +598,31 @@ test('Windows calibration requires exact bounded identity and authenticated rout
   assert.equal(passed.command.mergeAuthority, false);
   assert.equal(passed.command.arbitraryUnboundedCommandAllowed, false);
 });
+
+test('native reviewer setup exception retains only fixed typed preexecution denial', async () => {
+  const identity = {
+    schemaVersion:'stephanos.sovereign-review-exact-request.v1',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:1574,prNumber:3199,branch:'main',
+    sourceHead:'a'.repeat(40),baseSha:'b'.repeat(40),
+    implementerProvider:'github-builder',
+    implementerSessionId:'builder-3199',reviewerSessionId:'reviewer-3199',
+    implementerPrincipal:'builder-principal',reviewerPrincipal:'reviewer-principal',
+  };
+  let called=0;
+  const result=await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    {payload:{actionId:'sovereign-windows-reviewer-calibration',reviewIdentity:identity}},
+  ),{repoRoot:REPO,routeProof:{commandPathProven:true,authenticatedMcp:true,mcpSessionReady:true},
+    spawnSyncFn(){called++;throw Error('PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET');}});
+  assert.equal(called,1);
+  assert.equal(result.ok,false);
+  assert.equal(result.finalVerdict,'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+  assert.equal(result.command.plan.processId,'sovereign-windows-reviewer-calibration');
+  assert.equal(result.blocker,'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+  assert.deepEqual(result.structuredContent,{ok:false,status:null,stdout:'',stderr:'',
+    errorCode:'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'});
+  assert.equal(result.contentText,'');
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_REVIEWER_EXECUTION_PATH_AND_SECRET/);
+  assert.equal(result.command.mergeAuthority,false);
+});
