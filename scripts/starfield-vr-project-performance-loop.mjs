@@ -205,7 +205,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       metricKeys: ['avgApplicationFrameTimeMs', 'p95ApplicationFrameTimeMs'],
       sourceRef: sources.airLink.path,
       rationale: 'Project Air Link acceptance requires application frame time and delivered cadence.',
-      available: metricPresent(metrics, 'avgApplicationFrameTimeMs'),
+      available: ['avgApplicationFrameTimeMs', 'p95ApplicationFrameTimeMs']
+        .every((key) => metricPresent(metrics, key)),
     }),
     requirement({
       id: 'delivered-cadence',

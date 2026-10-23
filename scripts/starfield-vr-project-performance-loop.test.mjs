@@ -87,7 +87,7 @@ test('matched CPU evidence chooses safe per-stage investigation before graphics 
     diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
     metrics: {
       avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
-      avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9,
+      avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0,
       starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
       avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
@@ -104,7 +104,7 @@ test('motion and stereo skew prioritise AER isolation without silently enabling 
     runIdentity: identity,
     diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['stereo-eye-timing-skew-observed'] },
     metrics: {
-      avgApplicationFrameTimeMs: 15, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
     },
   });
@@ -120,7 +120,7 @@ test('pose-latency focus alone cannot masquerade as evidence of AER stereo fault
     runIdentity: identity,
     diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['pose-age-high'] },
     metrics: {
-      avgApplicationFrameTimeMs: 15, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
     },
   });
@@ -133,7 +133,7 @@ test('CPU stage isolation requires same-run measured sample counts and finite CP
   const base = {
     avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
     maxStarfieldBusiestThreadCpuPct: 97, avgChatGptCpuPct: 0, avgMetaVrCpuPct: 0,
-    avgApplicationFrameTimeMs: 44.9, avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+    avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0, avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
   };
   const missingOrInvalid = [
     {},
@@ -203,6 +203,7 @@ test('resource-pressure availability requires complete measured percent evidence
 test('numeric telemetry requirements reject placeholders instead of claiming measured input', async () => {
   const measured = {
     avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
     avgDeliveredCadenceHz: 72,
     headsetRefreshRateHz: 72,
     droppedFrames: 0,
@@ -312,4 +313,26 @@ test('reprojection readiness distinguishes measured activity from ambiguous NONE
     assert.equal(loop.authority.automaticRuntimeMutation, false);
     if (!expected) assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirement.id));
   }
+});
+
+test('application frame-time readiness requires measured average and p95 from the canonical diagnosis', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  assert.match(producer, /p95ApplicationFrameTimeMs\s*=/);
+  const base = {
+    avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+  };
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] },
+    metrics,
+  });
+  for (const invalid of [undefined, null, 0, '18', NaN, Infinity]) {
+    const loop = await project({ ...base, p95ApplicationFrameTimeMs: invalid });
+    assert.equal(loop.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, false);
+    assert.equal(loop.nextExperiment.id, 'close-frame-timing-telemetry-gap');
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const measured = await project(base);
+  assert.equal(measured.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, true);
 });
