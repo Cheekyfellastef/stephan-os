@@ -35,6 +35,15 @@ const NUMERIC_TELEMETRY_CONTRACTS = Object.freeze({
 
 function metricPresent(metrics, key) {
   const value = metrics?.[key];
+  if (key === 'reprojectionState') {
+    // The Windows runtime producer emits NONE_OBSERVED both for measured zero
+    // and for an unavailable reprojection count. Do not turn missing source
+    // evidence into a healthy headset claim without a positive sample count.
+    if (value === 'REPROJECTING') return true;
+    return value === 'NONE_OBSERVED'
+      && Number.isSafeInteger(metrics?.reprojectionObservedSampleCount)
+      && metrics.reprojectionObservedSampleCount > 0;
+  }
   const numericContract = NUMERIC_TELEMETRY_CONTRACTS[key];
   if (numericContract) {
     if (typeof value !== 'number' || !Number.isFinite(value)) return false;
