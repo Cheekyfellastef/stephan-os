@@ -284,3 +284,31 @@ test('Air Link qualification uses fields emitted by the canonical session diagno
   assert.equal(malformed.telemetryRequirements.find((item) => item.id === 'air-link-network-quality').available, false);
   assert.equal(malformed.authority.automaticRuntimeMutation, false);
 });
+
+test('reprojection readiness distinguishes measured activity from ambiguous NONE_OBSERVED', async () => {
+  const producer = await readFile(
+    new URL('./windows/starfield-vr-runtime-metrics-producer.ps1', import.meta.url), 'utf8',
+  );
+  assert.match(producer, /reprojectionState = if \(\$null -ne \$reprojections/);
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: [] }, metrics,
+  });
+  for (const [reprojectionState, reprojectionObservedSampleCount, expected] of [
+    ['REPROJECTING', undefined, true],
+    ['NONE_OBSERVED', undefined, false],
+    ['NONE_OBSERVED', 0, false],
+    ['NONE_OBSERVED', 3, true],
+    ['UNKNOWN', 3, false],
+    ['REPROJECTING ', 3, false],
+    ['', 3, false],
+  ]) {
+    const loop = await project({
+      droppedFrames: 0, reprojectionState, reprojectionObservedSampleCount,
+    });
+    const requirement = loop.telemetryRequirements.find((entry) => entry.id === 'dropped-frames-reprojection');
+    assert.equal(requirement.available, expected, String(reprojectionState));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+    if (!expected) assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirement.id));
+  }
+});
