@@ -168,3 +168,159 @@ export function assessSovereignReviewerQualificationLadderV1(input = {}) {
     ...CLOSED_AUTHORITY,
   });
 }
+
+
+// Connect existing Sovereign Commander *read-only* Island observations to the
+// existing Sovereign Reviewer's commissioning checklist. This is NOT a new
+// execution adapter. Inputs, including GitHub-shaped evidence, are untrusted.
+// Independent host, signer and exact-head review authorities are separate.
+export const SOVEREIGN_INDEPENDENT_BUILDER_COMMISSIONING_SCHEMA =
+  'stephanos.sovereign-independent-builder-commissioning.v1';
+
+const INDEPENDENT_BUILDER_OWNERS = Object.freeze({
+  island: Object.freeze({
+    issue: 3109, pr: 3195,
+    issueTitle: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+    prTitle: 'Rescue Island #3109: add native host bootstrap and process-token observation',
+    nativeStage: 'ISLAND_PROTECTED_OS_PRINCIPAL_AND_WHOLE_EXECUTION_ESTATE_REQUIRED',
+    firstPickup: 'PROVE_ISLAND01_SELECTED_CLAIMED_PHYSICAL_PICKUP_EDITED_TESTED_ISOLATED_COMMIT',
+  }),
+  seed: Object.freeze({
+    issue: 3096, pr: 3205,
+    issueTitle: 'Goal: Independent Seed Canopy Parallel Forge, isolated local-model build route',
+    prTitle: 'Seed #3096: retain deterministic inventory input and output custody',
+    nativeStage: 'SEED_PROTECTED_ORIGINAL_WRITER_AND_FIXED_OPERATION_CUSTODY_REQUIRED',
+    firstPickup: 'PROVE_SEED_DETERMINISTIC_INVENTORY_REAL_OS_PICKUP_AND_SOURCE_COMMIT',
+  }),
+});
+const INDEPENDENT_BUILDER_DENIALS = Object.freeze({
+  authenticatedIndependentWindowsSigner: false,
+  reviewerQualifiedWindowsSpecialist: false,
+  sourceMutationAllowed: false,
+  sourceWriterOwnerAuthenticated: false,
+  protectedNativeHostInstalled: false,
+  completeExecutionEstateProtected: false,
+  originalR7LeaseReleased: false,
+  originalR7LeaseAccessAllowed: false,
+  gamingGovernorCustodyProven: false,
+  modelInferenceAllowed: false,
+  physicalBuilderPickupProven: false,
+  protectedMergeAuthority: false,
+  deploymentAllowed: false,
+});
+
+const reportedOriginalPr = (packet, original) => Boolean(
+  isObject(packet)
+  && packet.repository === REPOSITORY
+  && packet.issueNumber === original.issue
+  && packet.issueTitle === original.issueTitle
+  && packet.prNumber === original.pr
+  && packet.prTitle === original.prTitle
+  && typeof packet.branch === 'string' && BRANCH.test(packet.branch)
+  && !packet.branch.includes('..') && !packet.branch.startsWith('/')
+  && safeSha(packet.head) && safeSha(packet.base) && packet.head !== packet.base
+);
+
+// Commander output may be independently fetched using the *existing* private
+// transport, but carrying it into this untrusted input does not prove host
+// identity. The exact approved main pair and all no-authority flags must agree.
+function reportedCommanderIslandBoundary(packet, mainHead) {
+  const x = packet;
+  return Boolean(isObject(x) && safeSha(mainHead) && x.sourceHead === mainHead
+    && x.remoteAction === 'rescue-island-readonly-boundary'
+    && x.finalVerdict === 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED'
+    && x.sourceMutationAllowed === false
+    && x.originalSourceLeaseReleaseAllowed === false
+    && x.mergeAuthority === false
+    && x.publicReceiptSafe === true && x.secretMaterialReturned === false
+    && isObject(x.rescueIslandBoundary)
+    && x.rescueIslandBoundary.schemaVersion === 'stephanos.rescue-island-boundary-probe.v1'
+    && x.rescueIslandBoundary.ok === true && x.rescueIslandBoundary.readOnly === true
+    && x.rescueIslandBoundary.observedPathCount === 3
+    && x.rescueIslandBoundary.physicalScopeReadback === 'LOCAL_OS_SCOPE_OBSERVED'
+    && x.rescueIslandBoundary.sourceMutationAllowed === false
+    && x.rescueIslandBoundary.workerStartAllowed === false
+    && x.rescueIslandBoundary.independentOwnershipAuthenticated === false
+    && x.rescueIslandBoundary.gamingBudgetAuthenticated === false
+    && x.rescueIslandBoundary.originalSourceLeaseReleaseAllowed === false
+    && x.rescueIslandBoundary.seedForgeQueueAccessAllowed === false
+    && x.rescueIslandBoundary.mergeAllowed === false
+    && x.rescueIslandBoundary.publicReceiptSafe === true
+    && x.rescueIslandBoundary.secretMaterialReturned === false);
+}
+
+/**
+ * Sovereign-to-Sovereign engineering handoff for existing #3109 and #3096.
+ * The prior #2962/r7 SAFE_HOLD cannot be used to block disjoint source tests
+ * or as permission to clone, seize, or release any original writer.
+ * Every observed GitHub CI / Commander packet remains UNATTESTED until
+ * independently authenticated by the already protected authority adapters.
+ */
+export function assessSovereignIndependentBuilderCommissioningV1(input = {}) {
+  const safeInput = boundedPlainData(input) && isObject(input) ? input : {};
+  const mainHead = safeSha(safeInput.mainHead) ? safeInput.mainHead : '';
+  const islandPacket = safeInput.island;
+  const seedPacket = safeInput.seed;
+  const islandIdentified = reportedOriginalPr(islandPacket, INDEPENDENT_BUILDER_OWNERS.island);
+  const seedIdentified = reportedOriginalPr(seedPacket, INDEPENDENT_BUILDER_OWNERS.seed);
+  const boundaryReported = islandIdentified
+    && reportedCommanderIslandBoundary(safeInput.islandCommanderBoundary, mainHead);
+
+  const route = (name, identified) => {
+    const own = INDEPENDENT_BUILDER_OWNERS[name];
+    const sourceHead = identified ? safeInput[name].head : '';
+    const baseSha = identified ? safeInput[name].base : '';
+    return Object.freeze({
+      ownerIssue: own.issue,
+      ownerIssueTitle: own.issueTitle,
+      originalPrNumber: own.pr,
+      originalPrTitle: own.prTitle,
+      sourceHead,
+      baseSha,
+      sourceIdentityReportedUnattested: identified,
+      hostedWindowsProofIsPhysicalPickup: false,
+      nextGate: !mainHead ? 'VERIFY_CURRENT_PROTECTED_MAIN'
+        : !identified ? 'VERIFY_ORIGINAL_OWNER_PR_HEAD_AND_TITLE'
+          : own.nativeStage,
+      firstPhysicalPickupTarget: own.firstPickup,
+      sourceOwnerChangeAuthority: false,
+      osWorkerCommissioned: false,
+      physicalBuilderPickupVerified: false,
+      originalR7WriterReused: false,
+    });
+  };
+  const island = route('island', islandIdentified);
+  const seed = route('seed', seedIdentified);
+  return Object.freeze({
+    schemaVersion: SOVEREIGN_INDEPENDENT_BUILDER_COMMISSIONING_SCHEMA,
+    status: 'INDEPENDENT_WINDOWS_COMMISSIONING_REQUIRED',
+    observedCurrentMainHead: mainHead,
+    island: Object.freeze({
+      ...island,
+      commanderPhysicalScopeReportedUnattested: boundaryReported,
+      physicalScopeAllowsExecution: false,
+      nextCommanderAction: boundaryReported
+        ? 'OBTAIN_INDEPENDENT_OS_IDENTITY_AND_TASK_BOUND_COMPLETE_EXECUTION_CUSTODY'
+        : 'READ_EXISTING_RESCUE_ISLAND_BOUNDARY_RECEIPT_AT_EXACT_MAIN',
+    }),
+    seed: Object.freeze({
+      ...seed,
+      deterministicInventoryDoesNotRequireResidentLlamaModel: true,
+      modelBackedForgeHeldForRouterEviction: true,
+      nextCommanderAction: 'QUALIFY_SEED_NATIVE_FIXED_OUTPUT_WRITER_WITH_COMPLETE_OS_CUSTODY',
+    }),
+    reviewer: Object.freeze({
+      goal: 1574,
+      nextAction: 'QUALIFY_SOVEREIGN_REVIEWER_WITH_SEPARATE_WINDOWS_SIGNER_AND_INDEPENDENT_AUDITOR',
+      localExamOrHostedCiIsIndependentApproval: false,
+      selfReviewAllowed: false,
+      originalPrHeadsNeedExactFreshReview: true,
+      physicalAttestationPresent: false,
+    }),
+    nextRealBuildMilestone: island.firstPhysicalPickupTarget,
+    thirdSystemOriginalR7StillHeld: true,
+    noNewControllerOrQueue: true,
+    evidenceProvenance: 'UNTRUSTED_INPUT_CANDIDATE_ONLY',
+    ...INDEPENDENT_BUILDER_DENIALS,
+  });
+}
