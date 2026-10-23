@@ -99,3 +99,32 @@ for (const property of ['runId', 'phase', 'observedAtUtc', 'sourceHead']) {
     assert.equal(result.operatorAcceptance, false);
   });
 }
+
+for (const [label, rendererHead] of [
+  ['different-commit', 'b'.repeat(40)],
+  ['invalid-identity', 'not-a-commit'],
+]) {
+  test(`Spatial canonical READY fails closed on ${label} renderer/source drift`, () => {
+    const evidence = { ...latest.evidence, rendererSourceHead: rendererHead };
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence }));
+    assert.equal(result.available, false);
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.operatorAcceptance, false);
+  });
+  test(`Spatial consumer READY reprojection fails closed on ${label} renderer/source drift`, () => {
+    const valid = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready'));
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1({
+      ...valid, rendererSourceHead: rendererHead,
+    });
+    assert.equal(result.available, false);
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.operatorAcceptance, false);
+  });
+}
+test('matching uppercase renderer identity preserves valid cached telemetry', () => {
+  const evidence = { ...latest.evidence, rendererSourceHead: HEAD.toUpperCase() };
+  const result = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence }));
+  assert.equal(result.available, true);
+  assert.equal(result.state, 'ready');
+  assert.equal(result.sourceHead, HEAD);
+});

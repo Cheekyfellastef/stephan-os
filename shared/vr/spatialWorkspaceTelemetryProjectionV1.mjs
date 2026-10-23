@@ -15,11 +15,21 @@ const SAFE_PHASES = new Set(['start', 'sample', 'end', 'error']);
 function hasProvenance(evidence) {
   const stamp = evidence?.observedAtUtc;
   const time = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  const sourceHead = evidence?.sourceHead;
+  const rendererHead = evidence?.rendererSourceHead;
+  // When both identities are supplied, a renderer built from a different
+  // source head must not be represented as current immersive telemetry.
+  // Older packets with no renderer identity remain readable as before.
+  const rendererMatches = rendererHead === undefined || rendererHead === null || rendererHead === ''
+    || (typeof sourceHead === 'string' && typeof rendererHead === 'string'
+      && SHA40.test(rendererHead) && rendererHead.toLowerCase() === sourceHead.toLowerCase());
   return SAFE_RUN_ID.test(evidence?.runId ?? '')
     && SAFE_PHASES.has(evidence?.phase)
     && Number.isFinite(time)
     && new Date(time).toISOString() === stamp
-    && SHA40.test(evidence?.sourceHead ?? '');
+    && typeof sourceHead === 'string'
+    && SHA40.test(sourceHead)
+    && rendererMatches;
 }
 
 function text(value, fallback = '') {
