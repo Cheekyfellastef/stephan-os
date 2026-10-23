@@ -35,7 +35,7 @@ const cmakePreset = {
   configurePresets: [{name: 'build-release-msvc'}],
   buildPresets: [{name: 'release-msvc', configurePreset: 'build-release-msvc'}],
 };
-const sourceState = {ok: true, commit: MUTAR_PIN, clean: true, reason: 'PINNED_CHECKOUT_VERIFIED'};
+const sourceState = {ok: true, commit: MUTAR_PIN, clean: true, submodulesVerified: true, reason: 'PINNED_CHECKOUT_VERIFIED'};
 const inspect = (changes={}) => inspectStarfieldAerNativeBuildContract({
   sourceLock: lock, patchV1: p1, patchV2: p2, cmakePreset, sourceState, ...changes,
 });
@@ -77,12 +77,16 @@ test('checkout authority reads only git head and status; no source write is requ
     assert.equal(cmd,'git');
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
     if(args.at(-1)==='--untracked-files=normal')return {status:0,stdout:''};
+    if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework (pinned)\n 2222222222222222222222222222222222222222 extern/CommonLibSF (pinned)\n'};
     throw new Error('unexpected git command');
   };
   assert.equal(inspectPinnedSourceCheckout('/source',{run}).reason,'PINNED_CHECKOUT_VERIFIED');
   const dirty=inspectPinnedSourceCheckout('/source',{run:(cmd,args)=>args.at(-1)==='HEAD'?run(cmd,args):{status:0,stdout:' M src/hook.cpp\n'}});
   assert.equal(dirty.reason,'SOURCE_DIR_DIRTY');
   assert.equal(inspectPinnedSourceCheckout('',{run}).reason,'SOURCE_DIR_REQUIRED');
+  const missing = inspectPinnedSourceCheckout('/source',{run:(cmd,args)=>args.at(-1)==='--recursive'?{status:0,stdout:'-1111111111111111111111111111111111111111 extern/vrframework\n'}:run(cmd,args)});
+  assert.equal(missing.reason,'SOURCE_SUBMODULES_UNVERIFIED');
+  assert.equal(missing.ok,false);
 });
 
 test('actual committed cleanroom source-lock and patch bytes preserve provenance', async () => {
