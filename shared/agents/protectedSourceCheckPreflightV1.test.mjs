@@ -180,3 +180,18 @@ test('trusted-main dispatch review retains its separate exact execution model',(
  evidence.run.head_sha=head;
  assert.equal(inspect({...snapshot(),independentReview:evidence}).checkSnapshotAdmissible,false);
 });
+test('every non-object JSON review payload remains held despite matching archive metadata',()=>{
+ for(const payload of [null,false,0,'',true,42,'text',[],['text']]){
+  const review=reviewEvidence();
+  const bytes=singleEntryZip({payload:JSON.stringify(payload)}).archive;
+  const digest='sha256:'+createHash('sha256').update(bytes).digest('hex');
+  review.archiveBytes=bytes;
+  review.selection.archiveDigest=digest;
+  review.artifacts.artifacts[0].digest=digest;
+  review.artifacts.artifacts[0].size_in_bytes=bytes.length;
+  const result=inspect({...snapshot([run(100,'failure')]),mergeStateStatus:'UNSTABLE',independentReview:review});
+  assert.equal(result.reviewEvidenceConsistent,false,JSON.stringify(payload));
+  assert.equal(result.checkSnapshotAdmissible,false,JSON.stringify(payload));
+  assert.ok(result.blockers.includes('preflight-review-payload-not-object'),JSON.stringify(payload));
+ }
+});

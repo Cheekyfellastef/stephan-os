@@ -49,7 +49,11 @@ function inspectReview(review, expected) {
   try {artifact=JSON.parse(extractPersonalRepositoryArtifactZip(archiveBytes,INDEPENDENT_REVIEW_ARTIFACT_FILE).toString('utf8'));}
   catch {blockers.push('preflight-review-payload-unreadable');}
  }
- if (artifact) {
+ // JSON primitives and arrays cannot carry a canonical review artifact.
+ // A successful parse is not a clean review, even when its value is falsy.
+ if (artifact === null || typeof artifact !== 'object' || Array.isArray(artifact)) {
+  blockers.push('preflight-review-payload-not-object');
+ } else {
   const validation=validateIndependentReviewArtifact(artifact,{
    repository:expected.repository,prNumber:expected.prNumber,branch:expected.branch,
    expectedHead:expected.sourceHead,expectedBaseSha:expected.baseSha,
