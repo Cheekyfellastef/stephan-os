@@ -4,7 +4,10 @@ param()
 # Fixed, read-only diagnostic. No caller-selected command, PID, path or task.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-$processNames = @('powershell','pwsh','node','MsMpEng','ollama','llama-server')
+$processNames = @('powershell','pwsh','node','MsMpEng','ollama','llama-server','msedge','brave','chrome','firefox','ChatGPT','msedgewebview2')
+# Fixed vendor/product process names only. Never inspect browser URLs, tab
+# titles, session contents, cookies, extensions or command-line switches.
+$browserNames = @('msedge','brave','chrome','firefox','ChatGPT','msedgewebview2')
 $scriptNames = @(
     'run-vr-resource-governor.ps1',
     'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
@@ -85,6 +88,51 @@ $rows = @(
         }
     }
 )
+$systemCpuPct = $null
+$systemCpuMeasured = $false
+try {
+    $cpuPackages = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+    if ($cpuPackages.Count -gt 0 -and @($cpuPackages | Where-Object { $null -eq $_.LoadPercentage }).Count -eq 0) {
+        $total = [double](($cpuPackages | Measure-Object -Property LoadPercentage -Average).Average)
+        if (-not [double]::IsNaN($total) -and -not [double]::IsInfinity($total) -and $total -ge 0 -and $total -le 100) {
+            $systemCpuPct = [math]::Round($total, 2)
+            $systemCpuMeasured = $true
+        }
+    }
+} catch {
+    # Never convert missing OS counters into a misleading 0% CPU claim.
+    $systemCpuPct = $null
+    $systemCpuMeasured = $false
+}
+# Aggregate the full process family before trimming the top-N PID display.
+# This includes idle browser subprocesses without copying tab titles or URLs.
+$browserApps = @(
+    foreach ($browser in $browserNames) {
+        $members = @($rows | Where-Object { $_.processName -ieq $browser })
+        $measured = @($members | Where-Object { $_.sampleMatched -eq $true -and $null -ne $_.cpuPercent })
+        $groupCpu = $null
+        if ($members.Count -eq 0) { $groupCpu = 0.0 }
+        elseif ($measured.Count -eq $members.Count) {
+            $groupCpu = [math]::Round([double](($measured | Measure-Object -Property cpuPercent -Sum).Sum), 2)
+        }
+        $memoryBytes = [double]0
+        $memoryMeasuredCount = 0
+        foreach ($p in $after) {
+            if ($p.ProcessName -ine $browser) { continue }
+            try {
+                $memoryBytes += [double]$p.WorkingSet64
+                $memoryMeasuredCount++
+            } catch {}
+        }
+        [pscustomobject]@{
+            app = $browser
+            processCount = $members.Count
+            cpuSampledCount = $measured.Count
+            cpuPercent = $groupCpu
+            workingSetMiB = if ($memoryMeasuredCount -eq $members.Count) { [math]::Round($memoryBytes / 1MB, 1) } else { $null }
+        }
+    }
+)
 $selected = @($rows | Sort-Object @{Expression={if ($null -eq $_.cpuPercent) {-1} else {$_.cpuPercent}};Descending=$true} | Select-Object -First 20)
 [pscustomobject]@{
     schemaVersion = 'stephanos.battle-bridge-cpu-pressure.v1'
@@ -92,6 +140,11 @@ $selected = @($rows | Sort-Object @{Expression={if ($null -eq $_.cpuPercent) {-1
     sampleSeconds = [math]::Round($sampleSeconds, 2)
     processorCount = [Environment]::ProcessorCount
     metadataAvailable = $metadataAvailable
+    systemCpuMeasured = $systemCpuMeasured
+    systemCpuPct = $systemCpuPct
+    browserApps = $browserApps
+    browserTabsInspected = $false
+    browserProfilesInspected = $false
     rows = $selected
     readOnly = $true
     sourceMutationAllowed = $false
