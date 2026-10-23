@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+// The hosted vr-research-tests entry point also exercises bounded CPU recorder regressions.
+import './starfield-vr-flight-recorder.test.mjs';
+
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
 const flightRecorderUrl = new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url);
