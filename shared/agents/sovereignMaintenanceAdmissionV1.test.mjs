@@ -166,3 +166,91 @@ test('actual default HTTP MCP and ignition retain guardian timeout custody after
     assert.equal(fixedSpawns, 1, 'only read-only observation executed');
   } finally { await new Promise(resolve => created.server.close(resolve)); }
 });
+
+// Exercise the actual wrappers, not a model of the guardian's own condition.
+test('completed wrapper exits retain nested timeout custody in scheduled and both manual aliases', async () => {
+  const { runSovereignCommanderGoalBuilderRepair } = await import('../../scripts/sovereign-commander-goal-builder-repair.mjs');
+  const { runSovereignCommanderStephanosRepair } = await import('../../scripts/sovereign-commander-stephanos-repair.mjs');
+  const head = 'a'.repeat(40);
+  for (const errorCode of ['ETIMEDOUT', 'ABORT_ERR']) {
+    const builder = runSovereignCommanderGoalBuilderRepair({
+      readWorkerHeartbeatAgeMs: () => 0,
+      runStep: step => step.id === 'goal-discovery-heartbeat'
+        ? { ok: false, status: null, stdout: '', errorCode }
+        : { ok: true, status: 0, stdout: '{}' },
+    });
+    const composed = runSovereignCommanderStephanosRepair({
+      readHead: () => head,
+      runStep: step => step.id === 'sovereign-control-plane-caretaker'
+        ? { ok: true, status: 0, stdout: JSON.stringify({ healthy: true,
+          coreDaemonHealthy: true, coreDaemonSourceHead: head }) }
+        : { ok: false, status: 2, stdout: 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=' + JSON.stringify(builder) },
+    });
+    assert.equal(builder.blocker, errorCode);
+    assert.equal(composed.blocker, errorCode);
+    for (const [actionId, marker, receipt] of [
+      ['repair-goal-builder-flow', 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=', builder],
+      ['repair-stephanos', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=', composed],
+    ]) {
+      for (const operation of ['MAINTENANCE_ACTION', 'START_PROCESS']) {
+        const guardian = startSovereignCommanderContinuousRepairGuardian({
+          setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+        });
+        try {
+          const command = { operation, plan: { kind: 'fixed-process', processId: actionId } };
+          const result = await guardian.withMaintenanceOwner(command, async () => ({ ok: false,
+            structuredContent: { status: 2, signal: '', errorCode: '', stdout: marker + JSON.stringify(receipt) } }));
+          assert.equal(result.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+          assert.equal(guardian.status().timeoutCustodyHeld, true);
+          assert.equal(guardian.status().scheduled, false);
+          assert.equal(guardian.runNow(), false);
+          await guardian.withMaintenanceOwner(command, () => assert.fail('nested timeout admitted another child'));
+        } finally { guardian.stop(); }
+      }
+    }
+    for (const topLevelGreen of [false, true]) {
+      const timers = []; let child, launches = 0;
+      const guardian = startSovereignCommanderContinuousRepairGuardian({
+        spawnImpl() { launches++; child = new EventEmitter(); child.stdout = new EventEmitter();
+          child.stderr = new EventEmitter(); return child; },
+        setTimeoutImpl(fn, delay) { const timer = { fn, delay, unref() {} }; timers.push(timer); return timer; },
+        clearTimeoutImpl() {},
+      });
+      try {
+        timers[0].fn();
+        child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=' + JSON.stringify({
+          ...composed, ok: topLevelGreen, blocker: 'UNRELATED_OUTER_HOLD', reporting: { ok: true },
+        }) + '\n');
+        child.emit('close', topLevelGreen ? 0 : 2);
+        assert.equal(guardian.status().timeoutCustodyHeld, true);
+        assert.equal(guardian.status().scheduled, false);
+        assert.equal(guardian.status().lastBlocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+        assert.equal(guardian.runNow(), false);
+        child.emit('close', 0); // A late successful close cannot release descendants.
+        assert.equal(guardian.status().timeoutCustodyHeld, true);
+        assert.equal(launches, 1);
+      } finally { guardian.stop(); }
+    }
+  }
+});
+
+test('shared terminal custody invariant is monotone under nested negative evidence and bounded malformed graphs', async () => {
+  const { sovereignMaintenanceCustodyUnprovenV1: held } = await import('./sovereignMaintenanceAdmissionV1.mjs');
+  const execution = { status: 2, signal: '', errorCode: '' };
+  const ordinary = { blocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING', steps: [{ status: 2, errorCode: '' }] };
+  assert.equal(held(execution, ordinary), false, 'completed ordinary HOLD retains normal paced retry');
+  for (const token of ['ETIMEDOUT', 'ABORT_ERR']) {
+    for (const field of ['blocker', 'errorCode', 'controlPlaneResidualBlocker']) {
+      for (let depth = 0; depth < 8; depth++) {
+        let nested = { status: 2, [field]: token };
+        for (let i = 0; i < depth; i++) nested = { status: 0, steps: [{ status: 0 }, nested, { status: 0 }] };
+        for (const status of [0, 2]) assert.equal(held({ ...execution, status }, nested), true);
+      }
+    }
+  }
+  const cycle = {}; cycle.steps = [cycle];
+  for (const receipt of [cycle, { steps: {} }, { steps: [null] }, { steps: [{ status: null }] },
+    { steps: Array.from({ length: 129 }, () => ({ status: 0 })) }]) assert.equal(held(execution, receipt), true);
+  assert.equal(held({ status: 0, signal: 'SIGTERM' }), true);
+  assert.equal(held({ status: null }), true);
+});

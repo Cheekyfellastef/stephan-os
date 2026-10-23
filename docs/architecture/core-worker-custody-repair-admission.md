@@ -241,3 +241,28 @@ shared async terminal boundary now discards reviewer output on unknown exit,
 signal or execution error, while preserving known-exit structured HOLD reports.
 The same real-owner regression now also tests signal close. Unknown custody
 still parks the guardian; no pre-spawn provenance is invented.
+
+## Structural terminal-custody review — nested wrapper failures
+
+The independent f0cd0982 review found a second route to unknown descendants:
+a repair wrapper can return exit 2 normally while its internal heartbeat child
+timed out. Direct-child status alone therefore cannot authorize another cycle.
+The structural invariant is monotone: any nested timeout, abort, unknown step
+status or signal retains the original owner's custody, regardless of a parent
+exit 0/2, an unrelated top-level blocker or later successful close.
+
+The shared maintenance admission model now owns that classification for both
+scheduled repair and manual owner reservation. It scans only bounded structured
+terminal step evidence; malformed, repeated or oversized graphs hold. Known
+completed ordinary negative supervisor reports still use existing paced retry.
+The independently proven pre-spawn reviewer exception remains private and
+separate; nested evidence cannot mint it or release an existing custody latch.
+
+The regression executes both actual production wrappers with injected internal
+ETIMEDOUT/ABORT_ERR, then supplies their real negative results to both manual
+aliases and the actual scheduled guardian. It failed against the previous
+candidate before correction and passes after correction. The invariant matrix
+varies error fields, nesting depth and positive/negative outer exit, plus cycle,
+null-step and budget attacks. No assertion is weakened and no process or lease
+exclusion is fabricated. Cross-restart Windows custody remains independently
+unqualified; this model does not install a witness or release R7.

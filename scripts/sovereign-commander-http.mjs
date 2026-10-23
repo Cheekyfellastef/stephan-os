@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
 import { isProvenSovereignWindowsReviewerPreExecutionDenialV1 } from '../shared/agents/sovereignCommanderV1.mjs';
-import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
@@ -143,7 +143,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     let stderr = '';
     let settled = false;
     let currentChild;
-    const finish = (code, fallbackBlocker = '') => {
+    const finish = (code, fallbackBlocker = '', signal = '') => {
       if (settled) return;
       settled = true;
       if (killTimer) {
@@ -151,6 +151,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         killTimer = null;
       }
       const receipt = parseContinuousRepairReceipt(stdout);
+      state.timeoutCustodyHeld ||= sovereignMaintenanceCustodyUnprovenV1(
+        { status: code, signal, errorCode: fallbackBlocker }, receipt,
+      );
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
         ? receipt.reporting
         : {};
@@ -218,9 +221,9 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       currentChild.once?.('error', (error) => {
         finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
       });
-      currentChild.once?.('close', (code) => {
+      currentChild.once?.('close', (code, signal) => {
         if (state.timeoutCustodyHeld) child = null;
-        finish(code);
+        finish(code, '', text(signal));
       });
       killTimer = setTimeoutImpl(() => {
         if (settled) return;
@@ -262,8 +265,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         const execution = result?.structuredContent;
         const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
         if (!provenPreExecutionDenial
-            && (!execution || !Number.isInteger(execution.status) || execution.signal
-              || ['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode))) {
+            && sovereignMaintenanceCustodyUnprovenV1(execution,
+              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout))) {
           state.timeoutCustodyHeld = true;
           state.lastOk = false;
           state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
