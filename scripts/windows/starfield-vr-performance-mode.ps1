@@ -926,18 +926,31 @@ while ($true) {
 
     $starfieldCpuPct = $null
     $cpuSeconds = $game.TotalProcessorTime.TotalSeconds
-    if ($previousCpuByPid.ContainsKey($currentGameProcessId)) {
+    $gameStartTicks = $null
+    try { $gameStartTicks = [long]$game.StartTime.ToUniversalTime().Ticks } catch {}
+    if ($null -ne $gameStartTicks -and $previousCpuByPid.ContainsKey($currentGameProcessId)) {
         $previousCpu = $previousCpuByPid[$currentGameProcessId]
-        $elapsedSeconds = [Math]::Max(0.001, ($sampledAt - $previousCpu.sampledAt).TotalSeconds)
-        $cpuDeltaSeconds = [Math]::Max(0, $cpuSeconds - [double]$previousCpu.cpuSeconds)
-        $starfieldCpuPct = [math]::Round(
-            [Math]::Min(100, (($cpuDeltaSeconds / $elapsedSeconds) / $logicalProcessorCount) * 100),
-            1
-        )
+        $elapsedSeconds = ($sampledAt - [DateTime]$previousCpu.sampledAt).TotalSeconds
+        $cpuDeltaSeconds = $cpuSeconds - [double]$previousCpu.cpuSeconds
+        # A PID can be reused after a game restart. A different start time,
+        # unreadable identity or non-monotonic counter must never produce a
+        # fabricated CPU percentage (including a fabricated zero).
+        if ([long]$previousCpu.processStartTicks -eq $gameStartTicks -and
+            $elapsedSeconds -gt 0 -and $elapsedSeconds -le 120 -and $cpuDeltaSeconds -ge 0) {
+            $starfieldCpuPct = [math]::Round(
+                [Math]::Min(100, (($cpuDeltaSeconds / $elapsedSeconds) / $logicalProcessorCount) * 100),
+                1
+            )
+        }
     }
-    $previousCpuByPid[$currentGameProcessId] = [pscustomobject]@{
-        sampledAt = $sampledAt
-        cpuSeconds = $cpuSeconds
+    if ($null -ne $gameStartTicks) {
+        $previousCpuByPid[$currentGameProcessId] = [pscustomobject]@{
+            processStartTicks = $gameStartTicks
+            sampledAt = $sampledAt
+            cpuSeconds = $cpuSeconds
+        }
+    } else {
+        [void]$previousCpuByPid.Remove($currentGameProcessId)
     }
 
     # Same-session fixed-name CPU attribution. No separate daemon or browser

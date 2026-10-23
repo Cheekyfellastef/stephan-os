@@ -93,6 +93,19 @@ test('Starfield VR playtest CPU attribution tracks desktop ChatGPT and browsers 
   assert.match(reporter, /avgChatGptCpuPct: safeMetric/);
 });
 
+
+test('Starfield whole-game CPU sample rejects PID reuse, counter rollback and stale baseline', () => {
+  const cpuBlock = performance.match(/\$starfieldCpuPct = \$null[\s\S]*?# Same-session fixed-name CPU attribution/)?.[0];
+  assert.ok(cpuBlock, 'locate the same-session game CPU delta block');
+  assert.match(cpuBlock, /\$gameStartTicks = \[long\]\$game\.StartTime\.ToUniversalTime\(\)\.Ticks/);
+  assert.match(cpuBlock, /\$previousCpu\.processStartTicks -eq \$gameStartTicks/);
+  assert.match(cpuBlock, /\$elapsedSeconds -gt 0 -and \$elapsedSeconds -le 120/);
+  assert.match(cpuBlock, /\$cpuDeltaSeconds -ge 0/);
+  assert.match(cpuBlock, /\$null -ne \$gameStartTicks/);
+  assert.match(cpuBlock, /\$previousCpuByPid\.Remove\(\$currentGameProcessId\)/);
+  assert.doesNotMatch(cpuBlock, /\[Math\]::Max\(0, \$cpuSeconds -/);
+});
+
 test('Starfield busiest-thread CPU uses bounded, lifetime-bound, low-overhead measurements', () => {
   assert.match(recorder, /function Get-StarfieldVrGameThreadCpuSample/);
   assert.match(recorder, /MaximumThreadCount = 512/);
