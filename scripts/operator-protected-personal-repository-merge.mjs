@@ -493,11 +493,13 @@ export async function preflightBeforeProtectedApproval(context, {
     return expectation.expected;
   };
   const expected = validateIdentity(await readIdentity(context));
-  const independentReview = await readReview(context);
-  if (independentReview?.reviewMode !== 'clean-independent'
-    || !Array.isArray(independentReview.findings) || independentReview.findings.length !== 0) {
-    fail('Pre-approval independent review is not clean.');
-  }
+  const validateReview = (independentReview) => {
+    if (independentReview?.reviewMode !== 'clean-independent'
+      || !Array.isArray(independentReview.findings) || independentReview.findings.length !== 0) {
+      fail('Pre-approval independent review is not clean.');
+    }
+  };
+  validateReview(await readReview(context));
   const inspectFreshChecks = async (binding) => {
     const snapshot = await readChecks(context);
     if (!snapshot || ['checkRuns', 'workflowRuns', 'commitStatuses'].some((key) => !Array.isArray(snapshot[key]))) {
@@ -515,7 +517,7 @@ export async function preflightBeforeProtectedApproval(context, {
     return {
       valid: checks.valid && workflows.valid,
       evidence: checks.evidence,
-      workflowEvidence: workflows.evidence,
+      workflowRuns: snapshot.workflowRuns,
       blockers: [...new Set([...checks.blockers, ...workflows.blockers])],
     };
   };
@@ -530,11 +532,22 @@ export async function preflightBeforeProtectedApproval(context, {
   if (finalExpected.mergeStateStatus !== refreshedExpected.mergeStateStatus) {
     fail('PR merge state changed during the final pre-approval check read.');
   }
+  // Artifact/run metadata and the dispatch estate can move during hydration.
+  // Reauthenticate both before returning; closing definitions must also match
+  // the complete required workflow set observed in the refreshed check read.
+  validateReview(await readReview(context));
+  const finalExecution = await readExecution(context);
+  const finalWorkflows = validatePersonalRepositoryWorkflowRuns(
+    finalExecution?.definitions, refreshed.workflowRuns, finalExpected,
+  );
+  if (!finalWorkflows.valid) {
+    fail('Workflow definitions changed during pre-approval collection.', { blockers: finalWorkflows.blockers });
+  }
   return Object.freeze({
     finalStatus: 'PERSONAL_REPOSITORY_PRE_APPROVAL_CHECKS_READY',
     advisoryOnly: true, operatorApproval: false, mutationAuthority: false,
     finalRevalidationRequired: true, checkEvidence: refreshed.evidence,
-    requiredWorkflowEvidence: refreshed.workflowEvidence,
+    requiredWorkflowEvidence: finalWorkflows.evidence,
   });
 }
 

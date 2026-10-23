@@ -58,7 +58,7 @@ test('pre-approval check rejects the R7 stale attached security failure despite 
 test('pre-approval success rechecks live identity and has no approval or mutation authority', async () => {
   const f = preApprovalFixture();
   const result = await preflightBeforeProtectedApproval(f.context, f.adapters);
-  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity', 'checks', 'identity']);
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity', 'checks', 'identity', 'review', 'execution']);
   assert.equal(result.checkEvidence.length, 2 + PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
   assert.equal(result.requiredWorkflowEvidence.length, PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
   assert.equal(result.operatorApproval, false);
@@ -199,6 +199,57 @@ test('every pre-approval identity read rejects unsupported or missing review sta
       await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
       assert.equal(observations, readNumber);
     }
+  }
+});
+
+test('pre-approval rejects replay or artifact changes discovered by closing reauthentication', async () => {
+  for (const adapter of ['readExecution', 'readReview']) {
+    for (const checkNumber of [1, 2]) {
+      const f = preApprovalFixture();
+      const original = f.adapters[adapter];
+      const readChecks = f.adapters.readChecks;
+      let invalidated = false;
+      let observations = 0;
+      let authentications = 0;
+      f.adapters[adapter] = async () => {
+        authentications++;
+        if (invalidated) throw Error('new dispatch or changed artifact binding');
+        return original();
+      };
+      f.adapters.readChecks = async () => {
+        const result = await readChecks();
+        if (++observations === checkNumber) invalidated = true;
+        return result;
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters),
+        /new dispatch or changed artifact binding/);
+      assert.equal(authentications, 2);
+    }
+  }
+});
+
+test('pre-approval applies closing workflow definitions and rejects a later nonclean review', async () => {
+  for (const mutate of [
+    f => { const original = f.adapters.readExecution; let reads = 0;
+      f.adapters.readExecution = async () => {
+        const result = await original();
+        return ++reads === 2 ? { definitions: result.definitions.slice(1) } : result;
+      };
+    },
+    f => { const original = f.adapters.readReview; let reads = 0;
+      f.adapters.readReview = async () => ++reads === 2
+        ? { reviewMode: 'clean-independent', findings: [{ code: 'new-finding' }] }
+        : original();
+    },
+    f => { const original = f.adapters.readReview; let reads = 0;
+      f.adapters.readReview = async () => ++reads === 2
+        ? { reviewMode: 'qualified-operator-bootstrap', findings: [] }
+        : original();
+    },
+  ]) {
+    const f = preApprovalFixture();
+    mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
   }
 });
 
