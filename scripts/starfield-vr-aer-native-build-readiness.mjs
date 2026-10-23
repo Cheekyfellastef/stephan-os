@@ -196,6 +196,110 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
   if (head.status !== 0 || !sha40(commit)) {
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_GIT_HEAD_UNAVAILABLE'});
   }
+  // Git's clean/process filters can execute checkout-defined helpers during
+  // status and fabricate clean bytes. Before touching the worktree, inspect
+  // the *effective*, sanitized Git configuration for the pinned root and both
+  // required submodules. Any filter driver, uncertain result, or missing
+  // submodule is a source qualification HOLD, never a clean checkout.
+  const filterPattern = '^filter\\..*\\.(clean|process)
+  if (status.status !== 0) {
+    return Object.freeze({ok: false, commit, clean: false, reason: 'SOURCE_GIT_STATUS_UNAVAILABLE'});
+  }
+  const clean = typeof status.stdout === 'string' && status.stdout.trim() === '';
+  // 'git status' can also hide tracked edits under assume-unchanged and
+  // skip-worktree bits. Enumerate the full indexed source/dependency closure
+  // and reject those marks before treating the workspace as build-ready.
+  const index = git(['ls-files', '-v', '-z', '--recurse-submodules']);
+  const indexEntries = index.status === 0 && !index.error && typeof index.stdout === 'string'
+    ? index.stdout.split('\0').filter(Boolean) : [];
+  const indexVerified = indexEntries.length > 0
+    && indexEntries.every((entry) => /^[HhSs] .+$/s.test(entry))
+    && indexEntries.some((entry) => entry.endsWith(' CMakePresets.json'))
+    && indexEntries.some((entry) => entry.endsWith(' src/CreationEngine/CreationEngineRendererModule.cpp'))
+    && !indexEntries.some((entry) => /^[hSs] /.test(entry));
+  // Gitlink equality, hydration and dirty nested dependency state are separate
+  // proofs. A pinned parent with -/+/U submodules is not build-ready.
+  const submodules = git(['submodule', 'status', '--recursive']);
+  const lines = submodules.status === 0
+    ? String(submodules.stdout || '').split(/\r?\n/).filter(Boolean) : [];
+  const expected = new Set(['extern/vrframework', 'extern/CommonLibSF']);
+  const submodulesVerified = lines.length >= 2
+    && lines.every((line) => {
+      const match = /^ ([0-9a-f]{40}) (\S+)(?: \(.*\))?$/.exec(line);
+      if (!match) return false;
+      expected.delete(match[2]);
+      return true;
+    })
+    && expected.size === 0;
+  return Object.freeze({
+    ok: commit === MUTAR_PIN && clean && submodulesVerified && indexVerified,
+    commit, clean, submodulesVerified, indexVerified,
+    reason: commit !== MUTAR_PIN ? 'SOURCE_COMMIT_DRIFT'
+      : !clean ? 'SOURCE_DIR_DIRTY'
+        : !indexVerified ? 'SOURCE_GIT_INDEX_FLAGS_OR_CONTENT_UNVERIFIED'
+          : submodulesVerified ? 'PINNED_CHECKOUT_VERIFIED' : 'SOURCE_SUBMODULES_UNVERIFIED',
+  });
+}
+
+export async function createStarfieldAerNativeBuildReadiness({
+  repoRoot = ROOT, sourceRoot = '', sourceProbe = inspectPinnedSourceCheckout,
+} = {}) {
+  const fromRepo = (p) => readFile(resolve(repoRoot, p), 'utf8');
+  const [sourceLock, patchV1, patchV2] = await Promise.all([
+    fromRepo('VR-Research-Lab/reference-source-lock.json'),
+    fromRepo(PATCH_V1_PATH), fromRepo(PATCH_V2_PATH),
+  ]);
+  let cmakePreset = {};
+  if (sourceRoot) {
+    try {cmakePreset = JSON.parse(await readFile(resolve(sourceRoot, 'CMakePresets.json'), 'utf8'));}
+    catch { /* remain blocked; no invented Windows toolchain */ }
+  }
+  return inspectStarfieldAerNativeBuildContract({
+    sourceLock: JSON.parse(sourceLock), patchV1, patchV2, cmakePreset,
+    sourceState: sourceRoot ? sourceProbe(sourceRoot) : null,
+  });
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2);
+  const valid = args.length === 0 || (args.length === 1 && args[0] === '--json')
+    || (args.length === 2 && args[0] === '--source-dir' && !args[1].startsWith('--'))
+    || (args.length === 3 && args[0] === '--source-dir' && !args[1].startsWith('--') && args[2] === '--json');
+  if (!valid) {
+    process.stderr.write('Usage: node scripts/starfield-vr-aer-native-build-readiness.mjs [--source-dir <pinned-checkout>] [--json]\n');
+    process.exitCode = 2;
+  } else {
+    const sourceRoot = args[0] === '--source-dir' ? args[1] : '';
+    createStarfieldAerNativeBuildReadiness({sourceRoot}).then((result) => {
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      if (result.status !== 'SOURCE_READY_FOR_SEPARATE_QUALIFIED_NATIVE_BUILD') process.exitCode = 2;
+    }).catch((error) => {
+      process.stderr.write('STARFIELD_AER_BUILD_PREFLIGHT_UNAVAILABLE: ' + (error.code || 'UNAVAILABLE') + '\n');
+      process.exitCode = 2;
+    });
+  }
+}
+;
+  const gitOptions = {
+    encoding: 'utf8', timeout: 3000, windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024, shell: false, env: gitBoundary.environment,
+  };
+  for (const inspectDir of [
+    dir, resolve(dir, 'extern/vrframework'), resolve(dir, 'extern/CommonLibSF'),
+  ]) {
+    const filterConfig = run(gitBoundary.executable,
+      [...gitBoundary.fixedConfigArgs, '-C', inspectDir,
+        'config', '--name-only', '--get-regexp', filterPattern], gitOptions);
+    if (filterConfig?.error || filterConfig?.status !== 1
+        || typeof filterConfig.stdout !== 'string'
+        || filterConfig.stdout.length !== 0
+        || (filterConfig.stderr && String(filterConfig.stderr).trim() !== '')) {
+      return Object.freeze({
+        ok: false, commit, clean: false,
+        reason: 'SOURCE_GIT_FILTER_DRIVER_OR_CONFIG_UNVERIFIED',
+      });
+    }
+  }
   // Git configuration can hide dirty submodule trees. Override it rather
   // than inheriting submodule.<name>.ignore=all from the inspected checkout.
   const status = git(['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none']);
