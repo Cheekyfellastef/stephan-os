@@ -429,6 +429,7 @@ async function proveProcessingClaim(claim, options = {}) {
     throw new Error(`MISSION_WORKER_PROCESSING_CLAIM_STATE_INVALID:${status || 'unknown'}`);
   }
 
+  if (options.assertClaimCustody) options.assertClaimCustody();
   const claimed = await appendMissionEvent(missionId, {
     eventId: `pickup-${normalizedText(claim?.item?.actionId)}`.slice(0, 128),
     eventType: 'AGENT_DISPATCHED',

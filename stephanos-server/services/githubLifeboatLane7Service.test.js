@@ -389,3 +389,21 @@ test('capacity writes each resample custody after preceding awaited work on both
     }
   }
 });
+
+test('custody lost after proved pickup retains processing ownership without a receipt', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'lane7-held-pickup-'));
+  const processing = join(root, 'processing'), pending = join(root, 'pending');
+  await mkdir(processing); await mkdir(pending);
+  const entry = queueEntry(); const processingPath = join(processing, 'held.json');
+  await writeFile(processingPath, 'original-claim'); let fresh = true;
+  const fixture = baseOptions(inbox('CLAIMED', { claim: { actionId: entry.item.actionId, missionId: entry.item.missionId } }), {
+    readWorkerHeartbeatAgeMs: () => fresh ? 0 : null,
+    readQueue: async () => [entry],
+    readWorkspaceHandoff: async () => ({ handoffId: entry.item.actionId, toParticipantId: 'chatgpt', correlationId: entry.item.missionId }),
+    claimNext: async () => { await Promise.resolve(); fresh = false; return { item: entry.item, processingPath, paths: { pending } }; },
+  });
+  const result = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.equal(await readFile(processingPath, 'utf8'), 'original-claim');
+  await assert.rejects(readFile(join(pending, 'held.json')), { code: 'ENOENT' });
+});

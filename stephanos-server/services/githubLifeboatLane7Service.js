@@ -454,6 +454,7 @@ async function beginClaim(inbox, queue, sourceHead, paths, now, options) {
   if (!claim) return Object.freeze({ ok: false, reason: 'LANE7_CLAIM_NOT_PENDING', actionId: claimRequest.actionId });
   try {
     let receipt = await latestReceipt(claim, paths, options);
+    assertCanonicalMissionWorkerCustody(options);
     if (receipt && receipt.state !== 'queued') throw new Error(`LANE7_CLAIM_RECEIPT_STATE_INVALID:${receipt.state}`);
     if (receipt) {
       receipt = await appendReceipt(receipt, 'accepted', 'external-github-lifeboat-claim-accepted', paths, now, options, { expectedNextAction: 'External GitHub worker may begin the exact bounded source handoff.' });
@@ -462,6 +463,9 @@ async function beginClaim(inbox, queue, sourceHead, paths, now, options) {
     }
     return Object.freeze({ ok: true, actionId: claimRequest.actionId, missionId: claimRequest.missionId, processingPath: claim.processingPath, executionReceipt: receipt, finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CLAIMED' });
   } catch (error) {
+    // A proved pickup owns processing. Expired evidence cannot return that
+    // ownership to pending and permit a second writer.
+    if (error?.message === 'MISSION_WORKER_CUSTODY_UNPROVEN') throw error;
     await rename(claim.processingPath, resolve(claim.paths.pending, basename(claim.processingPath))).catch(() => {});
     throw error;
   }

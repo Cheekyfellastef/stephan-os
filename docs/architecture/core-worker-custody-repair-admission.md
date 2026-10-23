@@ -340,3 +340,9 @@ expire custody at each capacity/escrow/collection boundary, including completion
 with no progress receipt. An interrupted event pair can resume only the existing
 exact-result replay path; a missing receipt is never treated as an affirmative
 sample. The existing collector's other adapters retain their admission policy.
+
+A successful pickup retains its processing ownership if custody expires during
+subsequent receipt-history work, including legacy claims with no execution receipt.
+That hold must never put a proved writer back in pending. Pickup mission-state
+publication also checks after its awaited state read; before proof is recorded,
+the consumer's existing rollback releases an unproved pickup safely.
