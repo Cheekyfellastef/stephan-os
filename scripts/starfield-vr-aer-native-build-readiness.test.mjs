@@ -78,6 +78,7 @@ test('checkout authority reads only git head and status; no source write is requ
     assert.match(cmd, /git(?:\.exe)?$/i);
     if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+    if(args.includes('--get-regexp')) return {status:1,stdout:''};
     if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
     if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0H extern/vrframework/mod.cpp\0H extern/CommonLibSF/include.cpp\0'};
     if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework (pinned)\n 2222222222222222222222222222222222222222 extern/CommonLibSF (pinned)\n'};
@@ -180,6 +181,7 @@ test('checkout inspector forces dirty submodule visibility regardless of ignore=
     calls.push([command,...args]);
     if(args.at(-1)==='--show-toplevel') return {status:0,stdout:'/isolated/pinned\n'};
     if(args.at(-1)==='HEAD') return {status:0,stdout:MUTAR_PIN+'\n'};
+    if(args.includes('--get-regexp')) return {status:1,stdout:''};
     if(args.at(-1)==='--ignore-submodules=none') return {status:0,stdout:' m extern/vrframework\n'};
     if(args.at(-1)==='--recurse-submodules') return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0'};
     if(args.at(-1)==='--recursive') return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
@@ -247,6 +249,7 @@ test('Starfield source checkout refuses hidden Git assume-unchanged and skip-wor
     const run=(cmd,args)=>{
       if(args.at(-1)==='--show-toplevel') return {status:0,stdout:'/source\n'};
       if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+      if(args.includes('--get-regexp')) return {status:1,stdout:''};
       if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
       if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:index+prefix};
       if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
@@ -320,6 +323,7 @@ test('native source inspector inherits the canonical hardened Git environment fo
     calls.push({cmd,args,options});
     if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+    if(args.includes('--get-regexp')) return {status:1,stdout:''};
     if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
     if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0'};
     if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
@@ -327,7 +331,7 @@ test('native source inspector inherits the canonical hardened Git environment fo
   };
   const observed=inspectPinnedSourceCheckout('/source',{run});
   assert.equal(observed.reason,'PINNED_CHECKOUT_VERIFIED');
-  assert.equal(calls.length,5);
+  assert.equal(calls.length,8);
   for(const call of calls){
     assert.match(call.cmd,/git(?:\.exe)?$/i);
     assert.equal(call.options.shell,false);
@@ -342,6 +346,63 @@ test('native source inspector inherits the canonical hardened Git environment fo
     assert.ok(exported.some(([key,value])=>key==='core.fsmonitor'&&value==='false'));
     assert.ok(exported.some(([key,value])=>key==='core.hooksPath'&&(value==='NUL'||value==='/dev/null')));
   }
+});
+
+
+test('nested executable Git content filters fail closed before status can run', () => {
+  for(const kind of ['present','unreadable']){
+    let statusCalled=false;
+    const run=(cmd,args)=>{
+      if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
+      if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+      if(args.includes('--get-regexp')){
+        const inspected=args[args.indexOf('-C')+1];
+        if(inspected.endsWith('extern/vrframework')){
+          return kind==='present'
+            ? {status:0,stdout:'filter.evil.clean\n'}
+            : {status:128,stdout:'',stderr:'configuration unavailable'};
+        }
+        return {status:1,stdout:''};
+      }
+      if(args.at(-1)==='--ignore-submodules=none')statusCalled=true;
+      throw new Error('Git status must not run before filter qualification');
+    };
+    const result=inspectPinnedSourceCheckout('/source',{run});
+    assert.equal(result.ok,false);
+    assert.equal(result.reason,'SOURCE_GIT_FILTER_DRIVER_OR_CONFIG_UNVERIFIED');
+    assert.equal(statusCalled,false);
+  }
+});
+
+test('real local clean filter cannot execute during pinned-source preflight',async(t)=>{
+  if(process.platform==='win32'){t.skip('POSIX executable fixture; shared source guard is platform neutral');return;}
+  if(spawnSync('git',['--version'],{encoding:'utf8'}).status!==0){t.skip('Git unavailable');return;}
+  const base=await mkdtemp(join(tmpdir(),'vr-native-clean-filter-'));
+  const root=join(base,'repo'), sentinel=join(base,'filter-executed'), helper=join(base,'filter.sh');
+  const git=(args)=>{
+    const outcome=spawnSync('git',['-C',root,...args],{encoding:'utf8',timeout:8000});
+    assert.equal(outcome.status,0,outcome.stderr||'fixture git failed');
+    return outcome.stdout;
+  };
+  try{
+    await mkdir(root);
+    git(['init','-q']);
+    git(['config','user.name','Fixture']);
+    git(['config','user.email','fixture@example.invalid']);
+    await mkdir(join(root,'src/CreationEngine'),{recursive:true});
+    await writeFile(join(root,'CMakePresets.json'),'{}\n');
+    const source=join(root,'src/CreationEngine/CreationEngineRendererModule.cpp');
+    await writeFile(source,'int original=1;\n');
+    git(['add','.']);git(['commit','-qm','fixture']);
+    await writeFile(helper,'#!/bin/sh\nprintf invoked > '+JSON.stringify(sentinel)+'\ncat\n',{mode:0o700});
+    git(['config','filter.evil.clean',helper]);
+    await writeFile(join(root,'.git/info/attributes'),'src/CreationEngine/*.cpp filter=evil\n');
+    await writeFile(source,'int modified=2;\n');
+    const result=inspectPinnedSourceCheckout(root);
+    assert.equal(result.ok,false);
+    assert.equal(result.reason,'SOURCE_GIT_FILTER_DRIVER_OR_CONFIG_UNVERIFIED');
+    await assert.rejects(readFile(sentinel,'utf8'),{code:'ENOENT'});
+  }finally{await rm(base,{recursive:true,force:true});}
 });
 
 test('real repository-configured fsmonitor hook never executes during native source readback',async(t)=>{
