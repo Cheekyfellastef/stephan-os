@@ -28,8 +28,10 @@ internal sealed record OriginalR7ImagePinObservation(
 
 internal static class OriginalR7ImagePinPreflight
 {
-    private const string ParametersKey =
-        @"SYSTEM\CurrentControlSet\Services\StephanosOriginalR7CustodyWitness\Parameters";
+    // Stage-B and the SCM preflight protect and read the fixed service key.
+    // Read that same pin, not a second unprovisioned Parameters value.
+    private const string ServiceKey =
+        @"SYSTEM\CurrentControlSet\Services\StephanosOriginalR7CustodyWitness";
     private const string DigestName = "PinnedImageSha256";
     // The self-contained, untrimmed win-x64 runtime exceeds 64 MiB. Keep a
     // bounded 128 MiB ceiling and exercise the retained executable in CI.
@@ -112,7 +114,7 @@ internal static class OriginalR7ImagePinPreflight
                 return Held("R7_IMAGE_MANAGED_PAYLOAD_NOT_BUNDLED");
 
             using RegistryKey? registry = Registry.LocalMachine.OpenSubKey(
-                ParametersKey, writable: false);
+                ServiceKey, writable: false);
             if (registry is null || registry.GetValueKind(DigestName) != RegistryValueKind.String)
                 return Held("R7_IMAGE_PIN_NOT_PROVISIONED");
             string? pin = registry.GetValue(DigestName, null,

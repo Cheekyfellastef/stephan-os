@@ -19,6 +19,7 @@ on:
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.test.js'
       - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
+      - 'shared/agents/originalR7ImagePinRegistryBindingV1.test.mjs'
       - '.github/workflows/original-r7-native-windows-proof.yml'
 
 permissions:
@@ -117,6 +118,8 @@ jobs:
         shell: pwsh
         run: |
           node --test shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test shared/agents/originalR7ImagePinRegistryBindingV1.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --test shared/agents/r7ProtectedOwnerEnvelopeV1.test.mjs shared/agents/r7ProtectedOwnerEnvelopeIssuerV1.test.mjs shared/agents/r7ProtectedOwnerSourceReadbackV1.test.mjs shared/agents/r7NativeOwnerPeerPairingV1.test.mjs scripts/operator-protected-r7-first-root.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
