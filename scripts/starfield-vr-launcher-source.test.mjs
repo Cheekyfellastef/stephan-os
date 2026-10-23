@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { buildStarfieldVrTelemetryHeadlineProjection } from './report-starfield-vr-telemetry.mjs';
 
 // The hosted vr-research-tests entry point also exercises bounded CPU recorder regressions.
 import './starfield-vr-flight-recorder.test.mjs';
@@ -127,6 +128,38 @@ test('playtest CPU attribution includes Starfield busiest thread, normalised gam
   assert.match(diagnosis, /starfield-single-thread-saturation-observed/);
   assert.match(diagnosis, /desktop-chatgpt-cpu-contention-observed/);
   assert.doesNotMatch(recorder, /\b(?:Stop-Process|taskkill|Invoke-Expression|CommandLine|Get-CimInstance Win32_Process)\b/i);
+});
+
+test('measured Chrome and Firefox CPU reaches diagnosis, headline, archive and bounded receipts without fabricated zero', async () => {
+  const [performance, diagnosis, reporter, archive, mailbox, remote] = await Promise.all([
+    readFile(performanceModeUrl, 'utf8'),
+    readFile(vrDiagnosisUrl, 'utf8'),
+    readFile(new URL('./report-starfield-vr-telemetry.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('./starfield-vr-telemetry-archive.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../shared/agents/sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8'),
+  ]);
+  for (const family of ['chrome', 'firefox']) {
+    const title = family[0].toUpperCase() + family.slice(1);
+    assert.match(performance, new RegExp('\\$' + family + 'CpuSamples = @\\(\\$samples'));
+    assert.match(performance, new RegExp('avg' + title + 'CpuPct = if \\(\\$' + family + 'CpuSamples\\.Count\\)'));
+    assert.match(diagnosis, new RegExp('avg' + title + 'CpuPct = Get-Average -Values \\$' + family + 'Cpu'));
+    for (const projection of [reporter, archive, mailbox, remote]) {
+      assert.match(projection, new RegExp('avg' + title + 'CpuPct:'));
+    }
+  }
+  const known = buildStarfieldVrTelemetryHeadlineProjection({
+    ok: true,
+    generatedAtUtc: '2026-10-23T12:00:00Z',
+    headline: { avgChromeCpuPct: 18.37, avgFirefoxCpuPct: 0 },
+  });
+  assert.equal(known.headline.avgChromeCpuPct, 18.37);
+  assert.equal(known.headline.avgFirefoxCpuPct, 0);
+  const unknown = buildStarfieldVrTelemetryHeadlineProjection({
+    headline: { avgChromeCpuPct: null, avgFirefoxCpuPct: 105 },
+  });
+  assert.equal(unknown.headline.avgChromeCpuPct, null);
+  assert.equal(unknown.headline.avgFirefoxCpuPct, null);
 });
 
 test('Quest audio helper captures and restores exact Windows default endpoints without third-party utilities', async () => {

@@ -152,6 +152,8 @@ export async function readStarfieldVrTelemetryArchive({
       maxChatGptCpuPct: safeMetric(summary?.maxChatGptCpuPct, 100),
       avgEdgeCpuPct: safeMetric(summary?.avgEdgeCpuPct, 100),
       avgBraveCpuPct: safeMetric(summary?.avgBraveCpuPct, 100),
+      avgChromeCpuPct: safeMetric(summary?.avgChromeCpuPct, 100),
+      avgFirefoxCpuPct: safeMetric(summary?.avgFirefoxCpuPct, 100),
       avgWebView2CpuPct: safeMetric(summary?.avgWebView2CpuPct, 100),
       avgNodeCpuPct: safeMetric(summary?.avgNodeCpuPct, 100),
       avgMetaVrCpuPct: safeMetric(summary?.avgMetaVrCpuPct, 100),
