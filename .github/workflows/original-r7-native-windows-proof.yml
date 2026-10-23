@@ -92,6 +92,7 @@ jobs:
             'Stephanos.OriginalR7PeerPairing.Tests',
             'Stephanos.OriginalR7SeedCreation.Tests',
             'Stephanos.OriginalR7EstateSnapshot.Tests'
+            'Stephanos.OriginalR7LiveFence.Tests'
           )
           foreach ($project in $projects) {
             dotnet run --project "src/windows/$project" --configuration Release --disable-build-servers -p:UseSharedCompilation=false -p:RestoreLockedMode=true
