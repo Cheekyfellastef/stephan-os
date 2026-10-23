@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assessSovereignReviewerQualificationLadderV1 as assess } from './sovereignReviewerQualificationLadderV1.mjs';
+import { assessSovereignReviewerQualificationLadderV1 as assess,
+  assessSovereignIndependentBuilderCommissioningV1 as assessBuilders,
+  SOVEREIGN_INDEPENDENT_BUILDER_COMMISSIONING_SCHEMA,
+} from './sovereignReviewerQualificationLadderV1.mjs';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), digest = 'c'.repeat(64);
 const source = { repository:'Cheekyfellastef/stephan-os', prNumber: 3200,
@@ -106,6 +109,159 @@ test('accessor, proxy, cyclic and hostile oversized packets fail without executi
     assert.equal(result.nextGate,'EXACT_SOURCE_PAIR');
     assert.equal(result.rungs[0].reason,'UNTRUSTED_INPUT_INVALID');
     assert.equal(result.qualifiedSpecialist,false);
+  }
+  assert.equal(accessed,0);
+});
+
+
+const originalIsland = {
+  repository: 'Cheekyfellastef/stephan-os',
+  issueNumber: 3109,
+  issueTitle: 'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+  prNumber: 3195,
+  prTitle: 'Rescue Island #3109: add native host bootstrap and process-token observation',
+  branch: 'repair/3109-island-host-principal-20261021',
+  head: '1'.repeat(40),
+  base: '2'.repeat(40),
+};
+const originalSeed = {
+  repository: 'Cheekyfellastef/stephan-os',
+  issueNumber: 3096,
+  issueTitle: 'Goal: Independent Seed Canopy Parallel Forge, isolated local-model build route',
+  prNumber: 3205,
+  prTitle: 'Seed #3096: retain deterministic inventory input and output custody',
+  branch: 'seed-parallel/forge-v1-3096',
+  head: '3'.repeat(40),
+  base: '4'.repeat(40),
+};
+const originalMain = '5'.repeat(40);
+const islandBoundary = {
+  sourceHead: originalMain,
+  remoteAction: 'rescue-island-readonly-boundary',
+  finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED',
+  sourceMutationAllowed: false,
+  originalSourceLeaseReleaseAllowed: false,
+  mergeAuthority: false,
+  publicReceiptSafe: true,
+  secretMaterialReturned: false,
+  rescueIslandBoundary: {
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true,
+    readOnly: true,
+    observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  },
+};
+const builderPacket = { mainHead: originalMain, island: originalIsland,
+  seed: originalSeed, islandCommanderBoundary: islandBoundary };
+
+test('island physical scope cannot become OS execution authority, even during r7 SAFE_HOLD', () => {
+  const result = assessBuilders({...builderPacket, originalR7LeaseState:'SAFE_HOLD'});
+  assert.equal(result.schemaVersion, SOVEREIGN_INDEPENDENT_BUILDER_COMMISSIONING_SCHEMA);
+  assert.equal(result.status, 'INDEPENDENT_WINDOWS_COMMISSIONING_REQUIRED');
+  assert.equal(result.island.originalPrNumber, 3195);
+  assert.equal(result.island.sourceIdentityReportedUnattested, true);
+  assert.equal(result.seed.sourceIdentityReportedUnattested, true);
+  assert.equal(result.island.commanderPhysicalScopeReportedUnattested, true);
+  assert.equal(result.island.physicalScopeAllowsExecution, false);
+  assert.equal(result.island.osWorkerCommissioned, false);
+  assert.equal(result.island.physicalBuilderPickupVerified, false);
+  assert.equal(result.seed.osWorkerCommissioned, false);
+  assert.equal(result.seed.modelBackedForgeHeldForRouterEviction, true);
+  assert.equal(result.originalR7LeaseAccessAllowed, false);
+  assert.equal(result.originalR7LeaseReleased, false);
+  assert.equal(result.reviewerQualifiedWindowsSpecialist, false);
+  assert.equal(result.sourceMutationAllowed, false);
+  assert.equal(result.physicalBuilderPickupProven, false);
+  assert.equal(result.noNewControllerOrQueue, true);
+});
+
+test('Commander source match, three observed paths and every source denial are mandatory', () => {
+  const mutations = [
+    {sourceHead:'6'.repeat(40)},
+    {remoteAction:'repair-goal-builder-flow'},
+    {sourceMutationAllowed:true},
+    {mergeAuthority:true},
+    {rescueIslandBoundary:{...islandBoundary.rescueIslandBoundary,observedPathCount:0}},
+    {rescueIslandBoundary:{...islandBoundary.rescueIslandBoundary,workerStartAllowed:true}},
+    {rescueIslandBoundary:{...islandBoundary.rescueIslandBoundary,independentOwnershipAuthenticated:true}},
+    {rescueIslandBoundary:{...islandBoundary.rescueIslandBoundary, gamingBudgetAuthenticated:true}},
+    {rescueIslandBoundary:{...islandBoundary.rescueIslandBoundary, secretMaterialReturned:true}},
+  ];
+  for (const change of mutations) {
+    const value = assessBuilders({...builderPacket,
+      islandCommanderBoundary:{...islandBoundary,...change}});
+    assert.equal(value.island.commanderPhysicalScopeReportedUnattested,false,JSON.stringify(change));
+    assert.equal(value.island.physicalScopeAllowsExecution,false);
+    assert.equal(value.sourceMutationAllowed,false);
+  }
+});
+
+test('wrong issue title, PR or branch denies Island and Seed author identity', () => {
+  const packets=[
+    {island:{...originalIsland,prTitle:'unverified'}},
+    {island:{...originalIsland,prNumber:3205}},
+    {island:{...originalIsland,branch:'../stolen'}},
+    {seed:{...originalSeed,issueTitle:'unverified'}},
+    {seed:{...originalSeed,base:'not-sha'}},
+    {seed:{...originalSeed,head:originalSeed.base,base:originalSeed.base}},
+  ];
+  for(const patch of packets){
+    const v=assessBuilders({...builderPacket,...patch});
+    const touched=Object.hasOwn(patch,'island')?'island':'seed';
+    assert.equal(v[touched].sourceIdentityReportedUnattested,false);
+    assert.equal(v[touched].sourceHead,'');
+    assert.equal(v.sourceMutationAllowed,false);
+  }
+});
+
+test('missing current main cannot qualify Commander receipt or spawn a worker', () => {
+  const value=assessBuilders({...builderPacket,mainHead:''});
+  assert.equal(value.island.nextGate,'VERIFY_CURRENT_PROTECTED_MAIN');
+  assert.equal(value.seed.nextGate,'VERIFY_CURRENT_PROTECTED_MAIN');
+  assert.equal(value.island.commanderPhysicalScopeReportedUnattested,false);
+  assert.equal(value.physicalBuilderPickupProven,false);
+});
+
+test('forged success, OS signer and reviewer labels never grant authority', () => {
+  const forged=assessBuilders({...builderPacket,
+    originalR7LeaseReleased:true,
+    sourceMutationAllowed:true,
+    signedWindowsCustodyProven:true,
+    island:{...originalIsland,hostCommissioned:true,physicalPickupProven:true,mergeAllowed:true},
+    seed:{...originalSeed,approved:true,modelResident:true,signerCommissioned:true},
+    reviewer:{qualifiedWindowsSpecialist:true,independentAuditorCommissioned:true},
+  });
+  assert.equal(forged.authenticatedIndependentWindowsSigner,false);
+  assert.equal(forged.reviewerQualifiedWindowsSpecialist,false);
+  assert.equal(forged.sourceWriterOwnerAuthenticated,false);
+  assert.equal(forged.protectedMergeAuthority,false);
+  assert.equal(forged.originalR7LeaseReleased,false);
+  assert.equal(forged.physicalBuilderPickupProven,false);
+  assert.equal(forged.reviewer.selfReviewAllowed,false);
+});
+
+test('malicious packet coercion, getters, proxies and cycles fail without running code', () => {
+  let accessed=0;
+  const dangerous=Object.defineProperty({},'mainHead',{enumerable:true,get(){accessed++;throw Error('getter');}});
+  const cycle={};cycle.self=cycle;
+  const proxy=new Proxy({}, {ownKeys(){throw Error('accessed');}});
+  for(const value of [dangerous,cycle,proxy,{
+    ...builderPacket,seed:{...originalSeed,prNumber:{toString(){accessed++;return 3205;}}}
+  }]){
+    const result=assessBuilders(value);
+    assert.equal(result.sourceMutationAllowed,false);
+    assert.equal(result.physicalBuilderPickupProven,false);
+    assert.equal(result.island.commanderPhysicalScopeReportedUnattested,false);
   }
   assert.equal(accessed,0);
 });
