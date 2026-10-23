@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 export const NATIVE_BUILD_READINESS_SCHEMA = 'stephanos.starfield-aer-native-build-readiness.v1';
 export const MUTAR_PIN = 'c8a2b200710cdf70db22fd0fcac498cba02da676';
@@ -168,9 +169,17 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_DIR_REQUIRED'});
   }
   const dir = resolve(sourceRoot);
-  const git = (args) => run('git', ['-C', dir, ...args], {
-    encoding: 'utf8', timeout: 3000, windowsHide: true, maxBuffer: 8 * 1024 * 1024,
-  });
+  // Reuse the canonical Git child boundary; checkout-owned core.fsmonitor,
+  // hooks, global config, credentials or untrusted Git environment may never
+  // execute merely because this source-preflight is described as read-only.
+  // Its fixed -c overrides and sanitized GIT_CONFIG_* environment survive
+  // recursively spawned submodule Git subprocesses.
+  const gitBoundary = resolveBattleBridgeGitExecution();
+  const git = (args) => run(gitBoundary.executable,
+    [...gitBoundary.fixedConfigArgs, '-C', dir, ...args], {
+      encoding: 'utf8', timeout: 3000, windowsHide: true,
+      maxBuffer: 8 * 1024 * 1024, shell: false, env: gitBoundary.environment,
+    });
   // A Git command from an ignored nested child still reports the parent HEAD.
   // Compare the requested source directory against Git's actual checkout root.
   const root = git(['rev-parse', '--show-toplevel']);
