@@ -355,6 +355,9 @@ test('nested executable Git content filters fail closed before status can run', 
     const run=(cmd,args)=>{
       if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
       if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+      // Index enumeration is deliberately earlier than config/status: exercise
+      // a genuinely valid index before testing the nested untrusted filter.
+      if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0'};
       if(args.includes('--get-regexp')){
         const inspected=args[args.indexOf('-C')+1];
         if(inspected.endsWith('extern/vrframework')){
