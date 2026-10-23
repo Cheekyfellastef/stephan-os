@@ -95,8 +95,9 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   const cpuPressureObserved = focus === 'CPU_LOAD'
     || signals.has('system-cpu-load-high')
     || signals.has('starfield-single-thread-saturation-observed');
-  const stereoMotionObserved = focus === 'RENDERING_OR_STEREO'
-    || signals.has('stereo-eye-timing-skew-observed');
+  // RENDERING_OR_STEREO also covers pose-age pressure; it cannot by itself
+  // establish AER/eye-history instability. Require a stereo-specific signal.
+  const stereoMotionObserved = signals.has('stereo-eye-timing-skew-observed');
   // A single busy-game-thread reading or process total cannot identify the
   // competing VR/desktop load. Only same-run samples prove attribution.
   const cpuAttributionReady = [
@@ -340,9 +341,9 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       }
     : cpuPressureObserved && !cpuAttributionReady
       ? {
-          id: 'close-starfield-cpu-attribution-gap',
-          title: 'Capture matched Starfield thread, app-family and total CPU measurements',
-          rationale: 'The playtest shows CPU pressure but cannot yet prove whether Starfield, ChatGPT, Meta or another process is responsible.',
+          id: 'qualify-starfield-cpu-attribution-collector',
+          title: 'Qualify and activate the existing Starfield CPU attribution collector',
+          rationale: 'The live canonical reporter currently lacks complete busiest-thread and app-family CPU evidence. Existing PR #3187 adds these fields but requires independent Windows review, protected merge, Battle Bridge exact-head sync and a real matched playtest before detailed CPU attribution is available.',
           sourceRef: sources.installedCorpus.path,
         }
     : missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence', 'headset-refresh'].includes(item.id))
