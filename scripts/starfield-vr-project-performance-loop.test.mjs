@@ -198,3 +198,56 @@ test('resource-pressure availability requires complete measured percent evidence
   const valid = await project(complete);
   assert.equal(valid.telemetryRequirements.find((item) => item.id === 'resource-pressure').available, true);
 });
+
+
+test('numeric telemetry requirements reject placeholders instead of claiming measured input', async () => {
+  const measured = {
+    avgApplicationFrameTimeMs: 15,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+    droppedFrames: 0,
+    reprojectionState: 'OFF',
+    encodeLatencyMs: 5,
+    networkLatencyMs: 20,
+    decodeLatencyMs: 8,
+    airLinkBitrateMbps: 80,
+    packetLossPct: 0,
+    jitterMs: 0,
+    renderScalePct: 100,
+  };
+  const project = async (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] },
+    metrics,
+  });
+  const valid = await project(measured);
+  const expectedPresent = [
+    'application-frame-time', 'delivered-cadence', 'headset-refresh',
+    'dropped-frames-reprojection', 'air-link-latency-chain',
+    'air-link-network-quality', 'render-resolution',
+  ];
+  for (const id of expectedPresent) {
+    assert.equal(valid.telemetryRequirements.find((entry) => entry.id === id).available, true, id);
+  }
+  const malformed = [
+    ['application-frame-time', 'avgApplicationFrameTimeMs', '15'],
+    ['application-frame-time', 'avgApplicationFrameTimeMs', 0],
+    ['delivered-cadence', 'avgDeliveredCadenceHz', Number.NaN],
+    ['headset-refresh', 'headsetRefreshRateHz', Infinity],
+    ['dropped-frames-reprojection', 'droppedFrames', -1],
+    ['air-link-latency-chain', 'networkLatencyMs', -1],
+    ['air-link-network-quality', 'packetLossPct', 101],
+    ['render-resolution', 'renderScalePct', '100'],
+  ];
+  for (const [requirementId, metric, invalid] of malformed) {
+    const loop = await project({ ...measured, [metric]: invalid });
+    assert.equal(
+      loop.telemetryRequirements.find((entry) => entry.id === requirementId).available,
+      false,
+      requirementId + ':' + metric,
+    );
+    assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirementId));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+});
