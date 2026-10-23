@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import './vrRuntimeRecoveryClassificationV1.test.mjs';
+// Exercise the original Spatial telemetry regressions in hosted VR CI.
+import '../../tests/spatial-workspace-telemetry-state-fidelity.test.mjs';
 import test from 'node:test';
 
 import {
