@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
+import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -6,6 +8,7 @@ import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
+import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
@@ -17,6 +20,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'battle-bridge-status',
   'battle-bridge-observe',
   'original-source-custody-census',
+  'original-r7-witness-readiness',
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
@@ -28,6 +32,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-recovery-mesh',
   'status-worker-watchdog',
   'status-stephanos-core-daemon',
+  'sovereign-windows-reviewer-calibration',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -89,11 +94,13 @@ const ALLOWED_FIELDS = new Set([
   'targetBranch',
   'targetHead',
   'controllerActivity',
+  'reviewIdentity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const CPU_SNAPSHOT_SCRIPT = 'scripts/windows/read-battle-bridge-cpu-pressure.ps1';
 const ORIGINAL_CUSTODY_CENSUS_SCRIPT = 'scripts/windows/inspect-original-source-custody-readonly.ps1';
+const ORIGINAL_R7_READINESS_SCRIPT = 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
@@ -2091,9 +2098,11 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'original-source-custody-census'
+      || actionId === 'original-r7-witness-readiness'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
@@ -2126,6 +2135,26 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
       remoteAction,
+    });
+  }
+  // Only the fixed reviewed calibration may accept per-review identity.
+  // The outer authenticated mailbox HEAD and repository must agree; a
+  // caller-supplied identity cannot create high-risk reviewer authority.
+  if (remoteAction === 'sovereign-windows-reviewer-calibration'
+    || Object.hasOwn(command, 'reviewIdentity')) {
+    if (remoteAction !== 'sovereign-windows-reviewer-calibration') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_ACTION_MISMATCH', { requested: true });
+    }
+    const identity = validateSovereignWindowsReviewIdentityV1(command.reviewIdentity);
+    if (!identity || identity.sourceHead !== expectedHead
+      || identity.repository !== text(command.repository)
+      || identity.branch !== text(command.branch)) {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_UNBOUND', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction,
+        reviewIdentity: identity }),
     });
   }
   if (remoteAction === 'starfield-vr-telemetry-archive') {
@@ -2285,18 +2314,14 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
     return 'ISLAND_NATIVE_ACTION_NOT_ALLOWED';
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
       || Object.keys(envelope).length === 0) {
-    // Do not silently flatten an MCP result that failed before a native
-    // process was launched. No private exception, argv, SID, path or stderr
-    // may enter public GitHub diagnostics. Always keep worker start denied.
+    // Classify only fixed native Commander runner denials. Raw process,
+    // path, task identity and untrusted exception data remain private.
     let observation = rawMaintenance;
     for (let depth = 0; depth < 5; depth += 1) {
       if (!observation || typeof observation !== 'object'
         || Array.isArray(observation)) break;
       if (observation.ok === false
         && observation.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
-        // Only fixed known Commander command-planning blockers are eligible
-        // for projection. Never copy its raw blocker, plan, cwd or OS paths.
-        // No classification is evidence the running Commander was reloaded.
         const known = observation.command?.blockers;
         if (Array.isArray(known) && known.every(item => typeof item === 'string')) {
           if (known.includes('trusted-repository-root-required'))
@@ -2491,6 +2516,71 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       inspection,
       proofHash: createHash('sha256')
         .update(JSON.stringify({ sourceHead: observedHead, inspection })).digest('hex'),
+      readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
+      originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
+      sourceMutationAllowed: false, arbitraryShellAllowed: false,
+      mergeAuthority: false, vendorMeterRequired: false,
+    });
+    return Object.freeze({
+      ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result,
+    });
+  }
+
+  if (shape.command.remoteAction === 'original-r7-witness-readiness') {
+    // Only the exact committed sampler may run. No caller inputs, script paths,
+    // admin action or arbitrary shell is accepted by this route.
+    const committed = run(spawnSyncFn, GIT, [
+      '-C', repositoryRoot, 'show', observedHead + ':' + ORIGINAL_R7_READINESS_SCRIPT,
+    ], { timeout: 10_000, maxBuffer: 12 * 1024 });
+    const sourceBytes = committed.stdout;
+    const rootBase64 = Buffer.from(repositoryRoot, 'utf16le').toString('base64');
+    const fixedPrelude = '$script:PSScriptRoot = Join-Path ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String("'
+      + rootBase64 + '"))) "scripts\\windows"\r\n';
+    const encoded = committed.ok && sourceBytes.length > 0 && sourceBytes.length <= 12_000
+      ? Buffer.from(fixedPrelude + sourceBytes, 'utf16le').toString('base64') : '';
+    if (!encoded || encoded.length > 32_000) return fail(
+      'SOVEREIGN_R7_READINESS_COMMITTED_SOURCE_UNAVAILABLE',
+      { publicReceiptSafe: true, secretMaterialReturned: false },
+    );
+    const sampled = run(spawnSyncFn, CPU_SNAPSHOT_POWERSHELL, [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-EncodedCommand', encoded,
+    ], { timeout: 25_000, maxBuffer: 16 * 1024 });
+    let raw = null;
+    try {
+      if (sampled.ok && sampled.stdout.length <= 8_000) raw = JSON.parse(sampled.stdout);
+    } catch {}
+    const readiness = projectOriginalR7WitnessCommissioningAuditV1(raw);
+    if (!sampled.ok || readiness.observable !== true
+      || readiness.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED') {
+      return fail('SOVEREIGN_R7_READINESS_UNTRUSTED_OR_STALE', {
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const observation = Object.freeze({
+      observedAtUtc: raw.observedAtUtc,
+      servicePresent: readiness.servicePresent,
+      serviceStatus: readiness.serviceStatus,
+      publisherTaskPresent: readiness.publisherTaskPresent,
+      publisherTaskState: readiness.publisherTaskState,
+      publisherLastResultClass: readiness.publisherLastResultClass,
+      publisherOriginalWriterAuthenticated: false,
+      blockers: readiness.blockers,
+      historicalOutcome: 'UNKNOWN',
+      authenticatedWitness: false,
+      physicalPickupProven: false,
+      leaseReleaseAuthority: false,
+      sourceMutationAuthority: false,
+      finalVerdict: readiness.finalVerdict,
+    });
+    const result = Object.freeze({
+      ok: true, remoteAction: 'original-r7-witness-readiness',
+      finalVerdict: 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD',
+      sourceHead: observedHead, witnessReadiness: observation,
+      proofHash: createHash('sha256')
+        .update(JSON.stringify({ sourceHead: observedHead, observation })).digest('hex'),
       readOnly: true, publicReceiptSafe: true, secretMaterialReturned: false,
       originalLeaseReleased: false, privilegedWindowsWitnessCommissioned: false,
       sourceMutationAllowed: false, arbitraryShellAllowed: false,
@@ -3095,7 +3185,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
               'utf8',
             ).toString('base64url'),
           }
-          : { actionId: shape.command.remoteAction },
+          : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
+            ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
@@ -3104,7 +3196,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
-  const boundedFailure = dedicatedBoundedFailureAction
+  const boundedFailure = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
   if (boundedFailure) {
@@ -3118,10 +3211,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       secretMaterialReturned: false,
     });
   }
-  const rawMaintenance = dedicatedBoundedFailureAction
+  const rawMaintenance = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
+  if (shape.command.remoteAction === 'sovereign-windows-reviewer-calibration') {
+    const calibration = parseWindowsCalibrationRemoteV1(
+      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead,
+      shape.command.reviewIdentity.baseSha);
+    if (!calibration) {
+      // The calibration may fail before it can emit a typed, signed-source
+      // candidate/HOLD projection. Keep receipt admission fail-closed while
+      // exposing only the pre-existing strict token-filtered native failure.
+      // Never echo native stdout, stderr, command arguments, identities or paths.
+      const nativeFailure = safeMaintenanceFailureProjection(
+        rawMaintenance, shape.command.remoteAction);
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        ...(nativeFailure ? {
+          // The canonical public mailbox reads operationResult.status.
+          // Missing native exit status remains absent, never coerced to zero.
+          ...(Number.isInteger(nativeFailure.status)
+            ? { status: nativeFailure.status } : {}),
+          errorCode: nativeFailure.errorCode,
+          executionBlocker: nativeFailure.executionBlocker,
+        } : {}),
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    // DONE means candidate exam completed, not that a specialist was admitted.
+    if (calibration.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_HELD', {
+        remoteAction: shape.command.remoteAction, calibration,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true, finalVerdict: 'SOVEREIGN_WINDOWS_CALIBRATION_CANDIDATE_OBSERVED',
+      remoteAction: shape.command.remoteAction, sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash, calibration,
+      qualifiedWindowsSpecialist: false, mergeAuthority: false, leaseReleaseAuthority: false,
+      vendorMeterRequired: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({ ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result });
+  }
+
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;

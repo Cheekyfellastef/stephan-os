@@ -1,5 +1,7 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.ServiceProcess;
 
@@ -11,6 +13,30 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Fixed read-only package diagnostic. It inspects this process's
+        // bundle layout and its own bytes only: no SCM, registry, identity,
+        // custody or signing. A self-computed digest is explicitly untrusted.
+        if (args.Length == 1 && args[0] == "--inspect-bundle-only")
+        {
+            if (!OperatingSystem.IsWindows()) return 2;
+            if (!OriginalR7ScmPreflight.BundledPayloadObserved()) return 4;
+            try
+            {
+                string? image = Environment.ProcessPath;
+                if (image is null) return 5;
+                using FileStream stream = new(image, FileMode.Open, FileAccess.Read,
+                    FileShare.Read, 4096, FileOptions.SequentialScan);
+                if (stream.Length <= 0 || stream.Length > OriginalR7ImagePinPreflight.MaxImageBytes)
+                    return 5;
+                string untrustedDigest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+                OriginalR7ImagePinObservation report = OriginalR7ImagePinPreflight.Evaluate(image, untrustedDigest);
+                return report.ImageDigestMatchesConfiguredPin
+                    && !report.IndependentlyProtectedPinProven && !report.OriginalWriterExclusionProven
+                    && !report.SignedWitnessIssued && !report.LeaseReleaseAuthorized ? 0 : 5;
+            }
+            catch { return 5; }
+        }
+
         if (args.Length != 0 || !OperatingSystem.IsWindows()
             || Environment.UserInteractive)
         {
@@ -90,9 +116,18 @@ internal sealed class OriginalR7CustodyWitnessService : ServiceBase
             throw new InvalidOperationException(scm.Classification);
         }
 
-        // Registry shape + SCM identity are only prerequisites. Original
-        // writer containment, protected audit, independent signer and real
-        // negative write/re-entry proof have not been commissioned.
+        // A registry value can pin bytes, but cannot prove the provenance
+        // or immutability of the pin, original writer exclusion or signer trust.
+        // Refuse startup if no fixed-host hash shape is configured.
+        OriginalR7ImagePinObservation imagePin = OriginalR7ImagePinPreflight.Inspect();
+        if (!imagePin.ImageDigestMatchesConfiguredPin)
+        {
+            throw new InvalidOperationException(imagePin.Classification);
+        }
+
+        // Even a successful hash check supplies NO custody or signing rights:
+        // a separately protected OS security owner must authenticate the pin,
+        // original token/handles/re-entry denial, audit and distinct signers.
         throw new InvalidOperationException("WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED");
     }
 

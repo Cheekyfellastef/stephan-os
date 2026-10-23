@@ -27,7 +27,13 @@ privileged Windows proof issuer, is NOT installed and cannot release a lease.
   NT SERVICE SID. Raw groups/deny-only memberships are not sufficient.
 - Reject administrator membership, LocalSystem, an interactive user and
   arbitrary service accounts, even if they carry a matching service SID.
-- This is a token-isolation source hardening step only, not real Windows
+- A fixed Windows service Parameters registry value, PinnedImageSha256, may
+  be checked against the bytes of the currently launched image. This is a
+  necessary local digest comparison, not independent attestation of the pin:
+  the service's registry DACL and image/ancestor mapping require separate OS
+  review. Missing/invalid pin, unreadable image, changed bytes or alias fail
+  closed. No setter, installer, source-controlled pin or signing key is provided.
+- This is a token/image-integrity source hardening step only, not real Windows
   principal provisioning, ACL enforcement, signer isolation or runtime proof.
 - Even after identity passes, startup is refused with
   WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED
@@ -36,6 +42,23 @@ The intentionally failing final gate prevents a user account, Core daemon or
 unsigned service from presenting a running process as credible custody.
 There are no protected keys, receipts, service installer, remote endpoints,
 network handlers, read-write access to the source checkout or generic shell.
+
+## Native old-writer negative-open probe integration (source only)
+
+The native witness host now references the already independently source-tested
+`Stephanos.OriginalR7DaclReadback` library and exposes an internal
+`OriginalR7WriterAccessPreflight.ObserveSingleTarget` adapter. It asks the OS
+kernel for separate DATA/APPEND/WRITE_DAC/WRITE_OWNER opens under one retained,
+unmodified Windows token and refuses missing, filtered, bypass-capable or
+mismatched tokens and unstable object identity. No writer token acquisition,
+production SID selection, network or CLI trigger, physical enforcement or
+signer is added. The source-only adapter always rejects claims of authenticated
+original provenance, whole-tree/old-handle/relaunch exclusion, audit, signing
+and lease authority, even if one target's negative opens are observed.
+
+The existing SCM host deliberately does **not** invoke this adapter at start:
+no independent authority currently supplies the original r7 token. A runner
+Windows user token cannot stand in for that historical identity.
 
 ## Remaining service implementation
 
@@ -100,3 +123,70 @@ The proposed PowerShell recipe is read-only by default and verifies an exact loc
 The supplied SHA-256 is NOT independent code provenance: an operator could provide a matching hash for an untrusted file. Windows packaging, signing, loaded module/native extraction identity, registry key and ACL immutability, service-account correctness, time-of-check races, original-writer tokens, old handles, WMI/COM/services/tasks, continuous audit and separate Ed25519 trust roots all require independent Windows security review and actual physical proof before installation or final commissioning. The recipe returns only a local, redacted `R7_STAGE_B_DISABLED_SERVICE_STAGED_NOT_COMMISSIONED` candidate receipt; if partially failed it leaves explicit `R7_STAGE_B_PARTIAL_ARTIFACTS_REQUIRE_REVIEW` and does not silently delete a service or directory.
 
 **Do not execute `-Stage` until the new recipe has passed exact-head Windows/security specialist review, protected merge, approved immutable binary provenance and explicit operator-scoped Battle Bridge admin authorization.** An installed disabled service is not custody or proof. The original `WINDOWS_WITNESS_PHYSICAL_CONTAINMENT_UNCOMMISSIONED` OnStart gate and `critical-2962-elastic-goal-r7-lease` HOLD remain mandatory.
+
+## Bounded original-token multi-file negative-open survey (source only)
+
+`OriginalR7WriterScopePreflight.ObserveBoundedFiles` adds a fixed-limit,
+read-only ordinary-file enumeration and individual native OPEN_EXISTING
+DATA/APPEND/WRITE_DAC/WRITE_OWNER access-denial observations using the retained,
+unmodified original-token handle supplied by a separate qualified OS security
+owner. It rejects reparse points, noncanonical paths, unknown ownership/token
+state, missing files, incomplete traversal and all over-budget surveys. It does
+not traverse through junctions, create or edit source entries, or publish paths,
+SIDs or handles.
+
+Even a fully denied bounded sample means **sample only**. It is not a
+whole-source witness because directory create rights, unsampled/replaced
+objects, other actors, existing writable mappings/handles, task/service/WMI/COM
+re-entry, historical outcome, audit and two independently protected signers
+remain unproven. The service does NOT invoke this survey from SCM OnStart and
+the public mailbox CANNOT supply the original token or scope. A CI runner's
+identity remains untrusted; source tests verify fail-closed gates only.
+
+## Bounded original-token directory rights probe (source only)
+
+`OriginalR7DirectoryRightsPreflight.Observe` makes actual Windows
+OPEN_EXISTING rights requests under an independently supplied retained OS
+token: FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD, WRITE_DAC
+and WRITE_OWNER. It never creates, deletes, renames, writes or changes an
+ACL. Unavailable/wrong tokens, noncanonical paths, reparse ancestors,
+unstable directory identity and unknown Win32 errors fail closed.
+
+Even all five denied rights establish only a single-directory/token
+snapshot, not historic original identity, complete source containment,
+old handle revocation, alternate tokens, re-entry, protected audit or
+signatures. The SCM service does not invoke this helper and the remote
+mailbox has no way to call it. No installer, signing or lease authority
+is added. Native tests touch only a disposable Windows CI directory.
+
+## Ancestor-junction race fix
+
+A qualified-reviewer P2 identified that checking an ancestor's attributes
+without retaining its handle allows an attacker to substitute a junction
+between write-rights opens. The directory preflight now holds native handles
+to the target and **every ancestor without DELETE sharing** throughout all
+five original-token requests, checking each normalized final OS path and
+object type, then verifying the same target object again. Any failure is a
+bounded HOLD, never positive custody proof. This is still source-only and
+has no protected Windows signing, installation or lease authority.
+
+## Executable payload custody boundary
+
+The retained source-only Windows package uses the self-contained win-x64
+`WitnessSingleFile` profile, matching the SCM bundled-payload gate. Its EXE
+digest covers the bundled managed witness, access-probe and .NET assemblies.
+Packaging rejects adjacent DLLs and executes the exact delivered EXE with
+`--inspect-bundle-only`: exit 0 means this retained process passes the existing
+assembly-layout predicate AND the production image-length/digest evaluator
+with a self-computed, explicitly untrusted digest. Exit 4 denies an unbundled
+layout; exit 5 denies image readback/size/digest shape. The image remains bounded
+at 128 MiB, accommodating the self-contained untrimmed win-x64 runtime. Hosted
+Windows tests also reject an oversized image. This fixed diagnostic reads only
+its own layout/bytes and never invokes SCM, registry, signing or custody.
+The package also verifies that other unapproved CLI invocation fails closed.
+
+This does not establish independently protected digest provenance, extracted
+native-library/configuration integrity, whole-source exclusion, or signer custody.
+OnStart still refuses commissioning. Stage B/C needs independently qualified
+Windows review and separate privileged installation/physical evidence before
+any signed witness can be eligible; historical outcome remains UNKNOWN.

@@ -3,6 +3,8 @@ import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/p
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
+import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
+import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
@@ -84,6 +86,99 @@ function pathWithin(root, candidate) {
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
 }
 
+// Source-bound reviewer metadata is a bounded input to the existing fixed
+// calibration binary, NEVER independent signer identity or reviewer authority.
+// Reject inherited properties, accessors and unknown keys before observation.
+export function validateSovereignWindowsReviewIdentityV1(raw) {
+  const keys = [
+    'schemaVersion', 'repository', 'issueNumber', 'prNumber', 'branch',
+    'sourceHead', 'baseSha', 'implementerProvider', 'implementerSessionId',
+    'reviewerSessionId', 'implementerPrincipal', 'reviewerPrincipal',
+  ];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype
+    || Object.keys(raw).length !== keys.length
+    || keys.some(k => !Object.hasOwn(raw, k)
+      || !Object.hasOwn(Object.getOwnPropertyDescriptor(raw, k), 'value'))) {
+    return null;
+  }
+  const v = Object.fromEntries(keys.map(k => [k, raw[k]]));
+  const ref = /^[0-9a-f]{40}$/;
+  const id = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+  const branch = /^[a-z0-9][a-z0-9._/-]{0,159}$/i;
+  if (v.schemaVersion !== 'stephanos.sovereign-review-exact-request.v1'
+    || v.repository !== 'Cheekyfellastef/stephan-os'
+    || !Number.isSafeInteger(v.issueNumber) || v.issueNumber < 1
+    || !Number.isSafeInteger(v.prNumber) || v.prNumber < 1
+    || !branch.test(v.branch) || v.branch.includes('..') || v.branch.includes('//')
+    || v.branch.endsWith('/') || v.branch.startsWith('refs/')
+    || !ref.test(v.sourceHead) || !ref.test(v.baseSha)
+    || v.sourceHead === v.baseSha
+    || ['implementerProvider', 'implementerSessionId', 'reviewerSessionId',
+      'implementerPrincipal', 'reviewerPrincipal'].some(k => !id.test(v[k]))
+    || v.implementerSessionId === v.reviewerSessionId
+    || v.implementerPrincipal === v.reviewerPrincipal) {
+    return null;
+  }
+  return frozen(v);
+}
+const REVIEWER_ENV_KEYS = Object.freeze([
+  'STEPHANOS_REVIEW_REPOSITORY', 'STEPHANOS_REVIEW_ISSUE',
+  'STEPHANOS_REVIEW_PR', 'STEPHANOS_REVIEW_EXACT_BRANCH',
+  'STEPHANOS_REVIEW_EXACT_HEAD', 'STEPHANOS_REVIEW_EXACT_BASE',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER',
+  'STEPHANOS_REVIEW_IMPLEMENTER_SESSION', 'STEPHANOS_REVIEW_SESSION',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL',
+  'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
+]);
+export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  'scripts/sovereign-review-coverage-v1-engine.mjs',
+  'shared/agents/sovereignExactCommitLoaderV1.mjs',
+  'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
+  'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeWindowsHosts.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+  'shared/agents/sharedWorkspaceRuntimeConfig.mjs',
+  'shared/agents/sharedAgentWorkspace.mjs',
+  'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+  'shared/agents/closedLoopLearningV1.mjs',
+]);
+function fixedReviewerEnvironment(identity, inherited) {
+  const sourceEnv = inherited || process.env;
+  const env = { ...createBattleBridgeMinimalChildEnvironment(sourceEnv) };
+  // The inference settings are data; never inherit Node preload/loader options.
+  for (const key of ['STEPHANOS_SHARED_AGENT_WORKSPACE', 'STEPHANOS_SOVEREIGN_REVIEW_MODEL',
+    'STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS']) {
+    if (typeof sourceEnv[key] === 'string') env[key] = sourceEnv[key];
+  }
+  // Never fall back to the long-lived daemon's ambient review metadata.
+  for (const key of REVIEWER_ENV_KEYS) delete env[key];
+  const p = validateSovereignWindowsReviewIdentityV1(identity);
+  if (!p) return null;
+  return {
+    ...env,
+    STEPHANOS_REVIEW_REPOSITORY: p.repository,
+    STEPHANOS_REVIEW_ISSUE: String(p.issueNumber),
+    STEPHANOS_REVIEW_PR: String(p.prNumber),
+    STEPHANOS_REVIEW_EXACT_BRANCH: p.branch,
+    STEPHANOS_REVIEW_EXACT_HEAD: p.sourceHead,
+    STEPHANOS_REVIEW_EXACT_BASE: p.baseSha,
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: p.implementerProvider,
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: p.implementerSessionId,
+    STEPHANOS_REVIEW_SESSION: p.reviewerSessionId,
+    STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL: p.implementerPrincipal,
+    STEPHANOS_REVIEW_REVIEWER_PRINCIPAL: p.reviewerPrincipal,
+  };
+}
+
 function fixedRegistry(repoRoot) {
   const root = normalizedAbsolutePath(repoRoot);
   if (!root) return frozen({});
@@ -157,6 +252,11 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
       timeoutMs: 10_000,
+    }),
+    'sovereign-windows-reviewer-calibration': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-windows-review-calibration-v1.mjs'), '--commander-once']),
+      timeoutMs: 180_000,
     }),
     'qwen35-canary': frozen({
       executable: node,
@@ -484,6 +584,11 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
         } else {
           args = [...args, '--offset', String(offset), '--limit', String(limit)];
         }
+      } else if (processId === 'sovereign-windows-reviewer-calibration') {
+        // An absent per-review identity must not borrow daemon startup env.
+        if (!validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity)) {
+          blockers.push('sovereign-windows-review-identity-required');
+        }
       } else if (processId === 'publish-controller-activity') {
         const encoded = text(payload.controllerActivityPayloadBase64);
         let decoded = null;
@@ -533,7 +638,12 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
           ];
         }
       }
-      if (blockers.length === 0) plan = frozen({ kind: 'fixed-process', processId, ...fixed, args: frozen(args) });
+      if (blockers.length === 0) plan = frozen({
+        kind: 'fixed-process', processId, ...fixed, args: frozen(args),
+        ...(processId === 'sovereign-windows-reviewer-calibration'
+          ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
+          : {}),
+      });
     }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
@@ -668,12 +778,28 @@ function fixedProcessStructuredBlocker(result) {
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const routeEnvironment = fixedProcessRouteEnvironment(options);
-  const result = runner(plan.executable, [...plan.args], {
+  const reviewer = plan.processId === 'sovereign-windows-reviewer-calibration';
+  const candidateEnvironment = reviewer
+    ? fixedReviewerEnvironment(plan.reviewIdentity, routeEnvironment)
+    : routeEnvironment;
+  if (reviewer && (!candidateEnvironment || options?.routeProof?.authenticatedMcp !== true)) {
+    return frozen({ ok: false, status: null, stdout: '', stderr: '',
+      errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
+  }
+  // This loader is supplied by the independently installed Commander parent,
+  // not by the candidate script. No candidate module evaluates before its
+  // complete import closure has been authenticated and captured in memory.
+  const args = reviewer ? ['--experimental-loader', sovereignExactCommitLoaderV1({
+    root: normalizedAbsolutePath(options.repoRoot), head: plan.reviewIdentity.sourceHead,
+    files: WINDOWS_CALIBRATION_SOURCE_PATHS,
+    git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
+  }), ...plan.args] : [...plan.args];
+  const result = runner(plan.executable, args, {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
-    ...(routeEnvironment ? { env: routeEnvironment } : {}),
+    ...(candidateEnvironment ? { env: candidateEnvironment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
@@ -922,6 +1048,23 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    // Fixed high-risk reviewer failure may happen before child spawn or before
+    // a terminal calibration marker exists. Never expose the raw thrown value,
+    // executable paths, Git arguments, model output, or loader implementation.
+    // Retain only one closed-world denial for the existing authenticated MCP
+    // mailbox, preserving explicit status:null and no authority on exceptions.
+    if (command.plan?.kind === 'fixed-process'
+      && command.plan.processId === 'sovereign-windows-reviewer-calibration') {
+      const errorCode = 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+      return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        contentText: '',
+        structuredContent: frozen({ ok: false, status: null,
+          stdout: '', stderr: '', errorCode }),
+        blocker: errorCode,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      });
+    }
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
