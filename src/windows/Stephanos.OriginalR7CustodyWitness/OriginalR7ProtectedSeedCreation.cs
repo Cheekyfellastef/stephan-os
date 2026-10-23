@@ -10,6 +10,218 @@ namespace Stephanos.OriginalR7CustodyWitness;
 internal enum OriginalR7SeedCreationStage { EmptyProtectedFile, MaterialWritten, MaterialFlushed, MaterialVerified }
 internal enum OriginalR7SeedFixtureFault { None, PartialWrite, BeforeFlush, AfterFlush, ReadbackMismatch, AfterReadback }
 
+internal enum OriginalR7SeedPairStage { Reserved, WitnessStored, OperatorStored, Committed }
+
+internal sealed record OriginalR7CreatedSeedPairObservation(
+    OriginalR7CreatedSeedObservation Witness, OriginalR7CreatedSeedObservation Operator,
+    OriginalR7AuditCheckpoint DurableCommit)
+{
+    internal bool RootEnrolled => false;
+    internal bool CreationCustodyProven => false;
+    internal bool SigningAuthorized => false;
+    internal bool LeaseReleaseAuthorized => false;
+}
+
+internal sealed class OriginalR7SeedPairException : InvalidOperationException
+{
+    internal bool ReservationCreated { get; }
+    internal int VerifiedSeedCount { get; }
+    internal bool DurableFaultRecorded { get; }
+    internal bool AutonomousRetryAllowed => false;
+    internal OriginalR7SeedPairException(bool reserved, int verified, bool faultRecorded)
+        : base(reserved ? "R7_SEED_PAIR_PARTIAL_STATE_REQUIRES_RECOVERY" : "R7_SEED_PAIR_RESERVATION_REFUSED")
+    { ReservationCreated = reserved; VerifiedSeedCount = verified; DurableFaultRecorded = faultRecorded; }
+}
+
+// Two-file creation cannot be made atomic by renaming a final JSON receipt.
+// Reserve in the EXISTING audit journal before either seed operation, flush
+// each result, and preserve partial state on failure. A pre-existing attempt,
+// including an empty/torn one, is NEVER resumed or overwritten. No roots are
+// enrolled by a successful storage transaction. Production still requires the
+// independently admitted native creation-custody producer BEFORE entering it.
+// This callable wrapper remains an explicitly untrusted, owned-fixture seam;
+// it cannot be reached by the SCM host or the owner authentication operation.
+internal static class OriginalR7SeedPairTransaction
+{
+    internal static OriginalR7CreatedSeedPairObservation CreateNewUntrustedOwnedFixture(
+        string witnessDirectory, string operatorDirectory, string auditDirectory,
+        OriginalR7AuditBinding binding, string candidateHead, string candidateTree,
+        Action<OriginalR7SeedPairStage>? checkpoint = null,
+        OriginalR7SeedFixtureFault operatorFault = OriginalR7SeedFixtureFault.None,
+        Action<OriginalR7SignaturePurpose, OriginalR7SeedCreationCheckpoint>? materialCheckpoint = null)
+    {
+        var pinned = new List<SafeFileHandle>();
+        var material = new List<(FileStream Stream, string Path, OriginalR7CreatedSeedObservation Observation)>();
+        OriginalR7AuditJournal? journal = null;
+        FileStream? stream = null;
+        SafeFileHandle? auditHandle = null; // owned by stream/journal, never independently closed
+        string auditPath = "", auditIdentity = "", auditDescriptor = "";
+        bool reserved = false;
+        int verified = 0;
+        try
+        {
+            if (!OperatingSystem.IsWindows() || !Hex(candidateHead, 40) || !Hex(candidateTree, 40)
+                || binding is null || !Hex(binding.SourceRevision, 40) || !Hex(binding.OriginalLeaseDigest, 64)
+                || !Enum.IsDefined(operatorFault)) throw Held();
+            using WindowsIdentity actor = WindowsIdentity.GetCurrent();
+            string sid = actor.User?.Value ?? throw Held();
+            string[] directories = [witnessDirectory, operatorDirectory, auditDirectory];
+            var identities = new List<string>();
+            var descriptors = new List<string>();
+            foreach (string directory in directories)
+            {
+                // Reject aliasing/links using the same retained native
+                // directory and descriptor readers as the single-seed path.
+                if (directory.Length is < 4 or > 200 || !Path.IsPathFullyQualified(directory)
+                    || !string.Equals(directory, Path.GetFullPath(directory), StringComparison.Ordinal)
+                    || !Path.GetFileName(directory).StartsWith("r7-seed-create-fixture-", StringComparison.Ordinal)) throw Held();
+                SafeFileHandle h = OriginalR7AuditStorage.OpenPinnedDirectory(directory, true);
+                pinned.Add(h);
+                byte[] descriptor = OriginalR7AuditStorage.ReadDescriptor(h);
+                if (!OriginalR7ProtectedSeedCreation.UntrustedFixtureDirectoryMatches(descriptor, sid)) throw Held();
+                identities.Add(OriginalR7ProtectedKeyMetadata.FileIdentity(h));
+                descriptors.Add(Hash(descriptor));
+            }
+            if (identities.Distinct(StringComparer.Ordinal).Count() != 3) throw Held();
+            void RefreshDirectories()
+            {
+                for (int i = 0; i < directories.Length; i++)
+                    if (!OriginalR7AuditStorage.NativeIdentityMatches(pinned[i], directories[i], true)
+                        || OriginalR7ProtectedKeyMetadata.FileIdentity(pinned[i]) != identities[i]
+                        || Hash(OriginalR7AuditStorage.ReadDescriptor(pinned[i])) != descriptors[i]) throw Held();
+                foreach (var seed in material) RefreshSeed(seed.Stream, seed.Path, seed.Observation);
+                if (auditHandle is not null
+                    && (!OriginalR7AuditStorage.NativeIdentityMatches(auditHandle, auditPath, false)
+                        || OriginalR7ProtectedKeyMetadata.FileIdentity(auditHandle) != auditIdentity
+                        || Hash(OriginalR7AuditStorage.ReadDescriptor(auditHandle)) != auditDescriptor)) throw Held();
+            }
+            void RetainSeed(string directory, OriginalR7CreatedSeedObservation observation)
+            {
+                string path = Path.Combine(directory, observation.Purpose == OriginalR7SignaturePurpose.Witness
+                    ? "witness.seed" : "operator.seed");
+                var read = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1);
+                material.Add((read, path, observation));
+                RefreshSeed(read, path, observation);
+            }
+            // Include actual native object identities and the complete exact
+            // candidate in the durable reservation, not only directory names.
+            string planDigest = Hash(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new {
+                schemaVersion = "stephanos.r7-inactive-seed-pair-storage.v1",
+                candidateHead, candidateTree, binding, nativeDirectories = identities,
+                descriptorDigests = descriptors, witnessPurpose = "Witness", operatorPurpose = "Operator"
+            }));
+            RefreshDirectories();
+            string ledger = Path.Combine(auditDirectory, "seed-pair.ndjson");
+            // CREATE_NEW is the cross-process reservation. Never recover by
+            // deleting/emptying this file or retrying with another name.
+            stream = new FileStream(ledger, FileMode.CreateNew, FileAccess.ReadWrite,
+                FileShare.Read, 1, FileOptions.WriteThrough);
+            reserved = true;
+            auditHandle = stream.SafeFileHandle;
+            auditPath = ledger;
+            auditIdentity = OriginalR7ProtectedKeyMetadata.FileIdentity(auditHandle);
+            auditDescriptor = Hash(OriginalR7AuditStorage.ReadDescriptor(auditHandle));
+            RefreshDirectories();
+            journal = new OriginalR7AuditJournal(stream, binding);
+            stream = null; // journal owns the exact retained handle
+            journal.Append(OriginalR7AuditEvent.Start, planDigest);
+            RefreshDirectories();
+            checkpoint?.Invoke(OriginalR7SeedPairStage.Reserved);
+            RefreshDirectories();
+            // Reject either pre-existing leaf before generating the first
+            // seed. This is a preflight only; each subsequent CREATE_NEW
+            // still independently refuses a raced/pre-existing object.
+            foreach (string path in new[] { Path.Combine(witnessDirectory, "witness.seed"),
+                Path.Combine(operatorDirectory, "operator.seed") })
+            {
+                try { _ = File.GetAttributes(path); }
+                catch (FileNotFoundException) { continue; }
+                throw Held();
+            }
+            var witness = OriginalR7ProtectedSeedCreation.CreateNewUntrustedOwnedFixture(
+                witnessDirectory, OriginalR7SignaturePurpose.Witness,
+                checkpoint: c => materialCheckpoint?.Invoke(OriginalR7SignaturePurpose.Witness, c));
+            verified = 1;
+            RetainSeed(witnessDirectory, witness);
+            RefreshDirectories();
+            string witnessDigest = Hash(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(witness));
+            journal.Append(OriginalR7AuditEvent.Observation, witnessDigest);
+            checkpoint?.Invoke(OriginalR7SeedPairStage.WitnessStored);
+            RefreshDirectories();
+            var op = OriginalR7ProtectedSeedCreation.CreateNewUntrustedOwnedFixture(
+                operatorDirectory, OriginalR7SignaturePurpose.Operator,
+                checkpoint: c => materialCheckpoint?.Invoke(OriginalR7SignaturePurpose.Operator, c), fault: operatorFault);
+            verified = 2;
+            RetainSeed(operatorDirectory, op);
+            RefreshDirectories();
+            if (witness.Purpose != OriginalR7SignaturePurpose.Witness || op.Purpose != OriginalR7SignaturePurpose.Operator
+                || witness.PublicSpkiSha256 == op.PublicSpkiSha256 || witness.NativeFileIdentityDigest == op.NativeFileIdentityDigest)
+                throw Held();
+            string operatorDigest = Hash(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(op));
+            journal.Append(OriginalR7AuditEvent.Observation, operatorDigest);
+            checkpoint?.Invoke(OriginalR7SeedPairStage.OperatorStored);
+            RefreshDirectories();
+            var commit = journal.Append(OriginalR7AuditEvent.Stop,
+                Hash(Encoding.ASCII.GetBytes("stephanos.r7-inactive-seed-pair-commit.v1\0" + planDigest + witnessDigest + operatorDigest)));
+            checkpoint?.Invoke(OriginalR7SeedPairStage.Committed);
+            RefreshDirectories();
+            return new(witness, op, commit);
+        }
+        catch
+        {
+            bool recorded = false;
+            if (journal is not null)
+            {
+                try
+                {
+                    journal.Append(OriginalR7AuditEvent.Fault,
+                        Hash(Encoding.ASCII.GetBytes("stephanos.r7-inactive-seed-pair-fault.v1\0" + verified)));
+                    recorded = true;
+                }
+                catch { /* Torn/poisoned/committed journal: preserve every byte. */ }
+            }
+            // Never erase either seed on pair failure: the same attempt may
+            // have crashed after its material flushed but before its receipt.
+            // Fresh entropy on retry cannot repair uncertain creation custody.
+            throw new OriginalR7SeedPairException(reserved, verified, recorded);
+        }
+        finally
+        {
+            journal?.Dispose(); stream?.Dispose();
+            for (int i = material.Count - 1; i >= 0; i--) material[i].Stream.Dispose();
+            for (int i = pinned.Count - 1; i >= 0; i--) pinned[i].Dispose();
+        }
+    }
+
+    private static void RefreshSeed(FileStream stream, string path, OriginalR7CreatedSeedObservation observed)
+    {
+        SafeFileHandle file = stream.SafeFileHandle;
+        if (!OriginalR7AuditStorage.NativeIdentityMatches(file, path, false)
+            || OriginalR7ProtectedKeyMetadata.FileIdentity(file) != observed.NativeFileIdentityDigest
+            || Hash(OriginalR7AuditStorage.ReadDescriptor(file)) != observed.DescriptorDigest
+            || RandomAccess.GetLength(file) != 32) throw Held();
+        Span<byte> bytes = stackalloc byte[32];
+        try
+        {
+            int offset = 0;
+            while (offset < bytes.Length)
+            {
+                int read = RandomAccess.Read(file, bytes[offset..], offset);
+                if (read <= 0) throw Held();
+                offset += read;
+            }
+            byte[] publicKey = OriginalR7SigningPrimitives.PublicKey(bytes);
+            if (Hash(OriginalR7SigningPrimitives.PublicSpki(publicKey)) != observed.PublicSpkiSha256) throw Held();
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    private static bool Hex(string value, int length) => value is not null && value.Length == length
+        && value.Any(c => c != '0') && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+    private static InvalidOperationException Held() => new("R7_SEED_PAIR_STORAGE_UNQUALIFIED");
+}
+
 internal sealed record OriginalR7SeedCreationCheckpoint(
     OriginalR7SeedCreationStage Stage, string NativeFileIdentityDigest, string DescriptorDigest,
     long Length, bool CanonicalPolicyMatches);
@@ -293,6 +505,8 @@ internal static class OriginalR7ProtectedSeedCreation
 
     internal static byte[] UntrustedFixtureDescriptor(string actualFixtureOwner, string role, bool directory)
         => Descriptor(actualFixtureOwner, role, directory);
+    internal static bool UntrustedFixtureDirectoryMatches(byte[] descriptor, string actualFixtureOwner)
+        => Matches(descriptor, actualFixtureOwner, actualFixtureOwner, true);
     private static byte[] Descriptor(string owner, string role, bool directory)
     {
         var sd = new RawSecurityDescriptor("O:" + new SecurityIdentifier(owner).Value

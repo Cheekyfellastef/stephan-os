@@ -620,3 +620,29 @@ file, and clears owned buffers. Only owned-fixture entry points currently exist;
 there is no admitted production key-creation wrapper. Ambiguous cleanup, extra
 hard links, crash/orphan recovery and two-root commissioning remain unresolved
 operational gates. Neither this transaction nor the census admits a signer.
+
+The native seed component now also implements a two-root storage transaction
+using the existing `OriginalR7AuditJournal`. Its callable entry remains an
+explicitly untrusted owned-fixture seam. It reserves one fixed `seed-pair.ndjson`
+with `CREATE_NEW`, flushes a source/candidate/native-directory-bound start record
+before seed I/O, then flushes each role's verified result and a final pair commit.
+It retains and rechecks the created material's file identity, descriptor, length
+and derived public identity while creating the other role. Directory or journal
+identity/descriptor changes, aliases, pre-existing leaves and concurrent attempts
+fail closed. No private seed bytes enter the journal.
+
+Failure preserves the attempt and any verified first key. An existing empty,
+torn, faulted or completed reservation is never deleted, overwritten or resumed.
+A second-key failure cannot silently regenerate the first key. A durable storage
+commit still enrolls neither root, and does not prove creation custody. The
+wrapper's ordinary fixture journal storage is not the separately provisioned
+protected production audit store. Native custody admission and that fixed store
+must be joined before any production entry can be wired.
+
+The Windows seed fixture exercises a real concurrent reservation, first-key
+descriptor and journal hard-link tampering, pre-existing second material, partial
+second-key failure, replay through the existing audit validator, and twelve
+controlled child-process exits inside and between the key writes. Restart
+preserves zero/32-byte orphan files without adopting them. These are actual
+process-exit tests, not power-loss or complete host-containment qualification.
+Production SCM refusal, original ownership and lease CAS remain unchanged.

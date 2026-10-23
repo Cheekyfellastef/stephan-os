@@ -4,6 +4,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
+using System.Diagnostics;
 using Stephanos.OriginalR7CustodyWitness;
 
 internal static class Program
@@ -17,6 +18,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         SetErrorMode(SetErrorMode(0) | 3);
+        if (args.SequenceEqual(new[] { "--owned-seed-pair-crash" })) return PairCrashChild();
         try { return Run(args); }
         catch (Exception ex)
         { Console.Error.WriteLine("R7_SEED_FIXTURE_CLEANUP_OR_HARNESS_FAILED=" + ex.GetType().Name); return 1; }
@@ -196,6 +198,7 @@ internal static class Program
                 "SOURCE_PROPOSAL_FIXED_SEPARATE_ROLE_MAPPING");
             Check(!witnessLocation.PolicyAdopted && !witnessLocation.HostExecutionAuthorized && !witnessLocation.RootEnrollmentAuthorized
                 && !operatorLocation.PolicyAdopted && !operatorLocation.RootEnrollmentAuthorized, "MAPPING_NEVER_INSTALLS_OR_ADOPTS_ROOTS");
+            PairTransactions();
             bool invalidRoleHeld = false;
             try { OriginalR7ProtectedSeedCreation.ProposedFixedLocation((OriginalR7SignaturePurpose)99); }
             catch (InvalidOperationException) { invalidRoleHeld = true; }
@@ -239,6 +242,235 @@ internal static class Program
         }
         finally { pinned.Free(); }
         return directory;
+    }
+
+    private sealed record PairFixture(string Witness, string Operator, string Audit);
+    private sealed record PairCrashRequest(string Root, PairFixture Pair, OriginalR7SeedPairStage? Stage,
+        OriginalR7SignaturePurpose? MaterialPurpose = null, OriginalR7SeedCreationStage? MaterialStage = null);
+    private static readonly OriginalR7AuditBinding PairBinding = new(new string('a', 40), new string('b', 64),
+        "r7-seed-pair-fixture-request", "r7-seed-pair-fixture-command",
+        "critical-2962-elastic-goal-r1-27828c3fdb2c", "4e5023eef829b285095db4eeb09d6f2b365e33e4");
+    private static PairFixture NewPair() => new(NewDirectory(), NewDirectory(), NewDirectory());
+    private static OriginalR7CreatedSeedPairObservation Pair(PairFixture f,
+        Action<OriginalR7SeedPairStage>? at = null,
+        OriginalR7SeedFixtureFault fault = OriginalR7SeedFixtureFault.None)
+        => OriginalR7SeedPairTransaction.CreateNewUntrustedOwnedFixture(f.Witness, f.Operator, f.Audit,
+            PairBinding, new string('c', 40), new string('d', 40), at, fault);
+    private static string Ledger(PairFixture f) => Path.Combine(f.Audit, "seed-pair.ndjson");
+    private static string[] Events(PairFixture f)
+    {
+        // A reader must share the already-retained writer's access. The
+        // writer itself still denies every additional data-write open.
+        using var stream = new FileStream(Ledger(f), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => {
+            using var doc = JsonDocument.Parse(line); return doc.RootElement.GetProperty("Event").GetString()!;
+        }).ToArray();
+    }
+
+    private static void CrashOwnedPair(PairCrashRequest request)
+    {
+        string exe = Environment.ProcessPath ?? throw new InvalidOperationException("PAIR_OWN_IMAGE_REQUIRED");
+        var start = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = Environment.CurrentDirectory };
+        if (Path.GetFileName(exe).Equals("dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(typeof(Program).Assembly.Location);
+        start.ArgumentList.Add("--owned-seed-pair-crash");
+        start.Environment["R7_OWNED_PAIR_CRASH"] = JsonSerializer.Serialize(request);
+        using var child = Process.Start(start) ?? throw new InvalidOperationException("PAIR_OWN_CHILD_START");
+        bool exited = child.WaitForExit(15000);
+        if (!exited)
+        {
+            child.Kill(); // Only the exact child object this fixture just created.
+            if (!child.WaitForExit(10000)) throw new InvalidOperationException("PAIR_OWN_CHILD_CLEANUP_UNPROVEN");
+        }
+        Check(exited && child.ExitCode == 87, "PAIR_ACTUAL_PROCESS_EXIT_AT_FIXED_CHECKPOINT");
+    }
+
+    private static void PairTransactions()
+    {
+        int begin = assertions;
+        var f = NewPair();
+        var stages = new List<OriginalR7SeedPairStage>();
+        var pair = Pair(f, stage => {
+            stages.Add(stage);
+            string[] events = Events(f);
+            Check(events.Length == (int)stage + 1, "PAIR_STAGE_FOLLOWS_DURABLE_JOURNAL_READBACK");
+            if (stage == OriginalR7SeedPairStage.Reserved)
+                Check(!File.Exists(Path.Combine(f.Witness, "witness.seed"))
+                    && !File.Exists(Path.Combine(f.Operator, "operator.seed")), "PAIR_RESERVATION_PRECEDES_BOTH_SEEDS");
+            if (stage == OriginalR7SeedPairStage.WitnessStored)
+            {
+                Check(!File.Exists(Path.Combine(f.Operator, "operator.seed")), "PAIR_WITNESS_CHECKPOINT_PRECEDES_OPERATOR");
+                bool blocked = false;
+                try { using var overwrite = new FileStream(Path.Combine(f.Witness, "witness.seed"), FileMode.Open,
+                    FileAccess.Write, FileShare.ReadWrite | FileShare.Delete); }
+                catch (IOException) { blocked = true; } catch (UnauthorizedAccessException) { blocked = true; }
+                Check(blocked, "PAIR_RETAINS_FIRST_SEED_AGAINST_NEW_WRITERS_UNTIL_COMMIT");
+            }
+        });
+        Check(stages.SequenceEqual(Enum.GetValues<OriginalR7SeedPairStage>()), "PAIR_ALL_DURABLE_PHASES_EXECUTE");
+        Check(Events(f).SequenceEqual(new[] { "Start", "Observation", "Observation", "Stop" }), "PAIR_EXACT_JOURNAL_LIFECYCLE");
+        VerifyPublic(f.Witness, pair.Witness); VerifyPublic(f.Operator, pair.Operator);
+        Check(pair.DurableCommit.Sequence == 4 && pair.DurableCommit.Event == OriginalR7AuditEvent.Stop,
+            "PAIR_TERMINAL_COMMIT_RETURNED_AFTER_FLUSH");
+        Check(!pair.RootEnrolled && !pair.CreationCustodyProven && !pair.SigningAuthorized && !pair.LeaseReleaseAuthorized,
+            "PAIR_STORAGE_CANNOT_ADMIT_ROOTS_OR_CUSTODY");
+        byte[] original = File.ReadAllBytes(Ledger(f));
+        bool replay = false;
+        try { Pair(f); } catch (OriginalR7SeedPairException ex)
+        { replay = !ex.ReservationCreated && !ex.AutonomousRetryAllowed; }
+        Check(replay && File.ReadAllBytes(Ledger(f)).AsSpan().SequenceEqual(original), "PAIR_REPLAY_NEVER_REWRITES_COMPLETED_ATTEMPT");
+        VerifyPublic(f.Witness, pair.Witness); VerifyPublic(f.Operator, pair.Operator);
+        using (var recovered = new OriginalR7AuditJournal(new FileStream(Ledger(f), FileMode.Open,
+            FileAccess.ReadWrite, FileShare.Read, 1, FileOptions.WriteThrough), PairBinding))
+        {
+            Check(recovered.LastCheckpoint == pair.DurableCommit, "PAIR_COMMIT_REPLAYS_THROUGH_EXISTING_AUDIT_CHAIN_VALIDATOR");
+            bool cannotResume = false;
+            try { recovered.Append(OriginalR7AuditEvent.Start, new string('f', 64)); }
+            catch (InvalidOperationException) { cannotResume = true; }
+            Check(cannotResume, "PAIR_RECOVERY_CANNOT_RESUME_A_PREVIOUS_JOURNAL_SESSION");
+        }
+        var alias = NewPair(); bool aliasHeld = false;
+        try { Pair(alias with { Operator = alias.Witness }); }
+        catch (OriginalR7SeedPairException ex) { aliasHeld = !ex.ReservationCreated; }
+        Check(aliasHeld && !File.Exists(Ledger(alias)), "PAIR_DISTINCT_PATHS_REQUIRE_DISTINCT_NATIVE_DIRECTORY_OBJECTS");
+        var invalid = NewPair(); bool candidateHeld = false;
+        try { OriginalR7SeedPairTransaction.CreateNewUntrustedOwnedFixture(invalid.Witness, invalid.Operator,
+            invalid.Audit, PairBinding, new string('0', 40), new string('d', 40)); }
+        catch (OriginalR7SeedPairException ex) { candidateHeld = !ex.ReservationCreated; }
+        Check(candidateHeld && !File.Exists(Ledger(invalid)), "PAIR_PLACEHOLDER_CANDIDATE_CANNOT_RESERVE_OR_GENERATE");
+        var occupied = NewPair();
+        string occupiedPath = Path.Combine(occupied.Operator, "operator.seed");
+        File.WriteAllText(occupiedPath, "owned preexisting sentinel");
+        bool occupiedHeld = false;
+        try { Pair(occupied); } catch (OriginalR7SeedPairException ex)
+        { occupiedHeld = ex.ReservationCreated && ex.VerifiedSeedCount == 0 && ex.DurableFaultRecorded; }
+        Check(occupiedHeld && !File.Exists(Path.Combine(occupied.Witness, "witness.seed"))
+            && File.ReadAllText(occupiedPath) == "owned preexisting sentinel", "PAIR_PREEXISTING_SECOND_ROOT_REFUSED_BEFORE_FIRST_ENTROPY");
+
+        foreach (string wire in new[] { "", "{\"torn\":" })
+        {
+            var torn = NewPair(); File.WriteAllText(Ledger(torn), wire);
+            bool held = false;
+            try { Pair(torn); } catch (OriginalR7SeedPairException ex) { held = !ex.ReservationCreated; }
+            Check(held && File.ReadAllText(Ledger(torn)) == wire
+                && !File.Exists(Path.Combine(torn.Witness, "witness.seed"))
+                && !File.Exists(Path.Combine(torn.Operator, "operator.seed")), "PAIR_EMPTY_OR_TORN_PREEXISTING_RESERVATION_IS_NOT_REUSED");
+        }
+        var failed = NewPair(); bool partial = false;
+        try { Pair(failed, fault: OriginalR7SeedFixtureFault.BeforeFlush); }
+        catch (OriginalR7SeedPairException ex)
+        { partial = ex.ReservationCreated && ex.VerifiedSeedCount == 1 && ex.DurableFaultRecorded && !ex.AutonomousRetryAllowed; }
+        Check(partial && File.ReadAllBytes(Path.Combine(failed.Witness, "witness.seed")).Length == 32
+            && !File.Exists(Path.Combine(failed.Operator, "operator.seed")), "PAIR_SECOND_ROOT_FAILURE_PRESERVES_FIRST_AND_REQUIRES_RECOVERY");
+        Check(Events(failed).SequenceEqual(new[] { "Start", "Observation", "Fault" }), "PAIR_PARTIAL_FAILURE_DURABLY_RECORDED");
+
+        var bad = NewPair(); bool badHeld = false;
+        try { Pair(bad, stage => {
+            if (stage != OriginalR7SeedPairStage.WitnessStored) return;
+            var altered = new FileSecurity();
+            altered.SetSecurityDescriptorSddlForm("D:P(A;;FA;;;" + actorSid + ")", AccessControlSections.Access);
+            new FileInfo(Path.Combine(bad.Witness, "witness.seed")).SetAccessControl(altered);
+        }); }
+        catch (OriginalR7SeedPairException ex) { badHeld = ex.ReservationCreated && ex.VerifiedSeedCount == 1 && ex.DurableFaultRecorded; }
+        Check(badHeld && !File.Exists(Path.Combine(bad.Operator, "operator.seed")), "PAIR_FIRST_ROOT_DESCRIPTOR_CHANGE_PREVENTS_SECOND_ROOT");
+        var badJournal = NewPair(); bool journalHeld = false;
+        try { Pair(badJournal, stage => {
+            if (stage != OriginalR7SeedPairStage.Reserved) return;
+            Check(CreateHardLinkW(Path.Combine(badJournal.Audit, "added-link.seed"), Ledger(badJournal), IntPtr.Zero),
+                "PAIR_OWNED_JOURNAL_LINK_TAMPER_CREATED");
+        }); }
+        catch (OriginalR7SeedPairException ex) { journalHeld = ex.ReservationCreated && ex.VerifiedSeedCount == 0; }
+        Check(journalHeld && !File.Exists(Path.Combine(badJournal.Witness, "witness.seed"))
+            && !File.Exists(Path.Combine(badJournal.Operator, "operator.seed")), "PAIR_JOURNAL_IDENTITY_LOSS_PREVENTS_BOTH_SEEDS");
+
+        var race = NewPair();
+        using var reserved = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
+        var winner = Task.Run(() => Pair(race, stage => {
+            if (stage != OriginalR7SeedPairStage.Reserved) return;
+            reserved.Set(); if (!release.Wait(TimeSpan.FromSeconds(10))) throw new InvalidOperationException("PAIR_TEST_BARRIER_TIMEOUT");
+        }));
+        try
+        {
+            Check(reserved.Wait(TimeSpan.FromSeconds(10)), "PAIR_CONCURRENT_WINNER_RESERVED");
+            bool refused = false;
+            try { Pair(race); } catch (OriginalR7SeedPairException ex) { refused = !ex.ReservationCreated; }
+            Check(refused, "PAIR_CREATE_NEW_SERIALIZES_CONCURRENT_ATTEMPTS");
+        }
+        finally { release.Set(); }
+        var winning = winner.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+        VerifyPublic(race.Witness, winning.Witness); VerifyPublic(race.Operator, winning.Operator);
+        Check(Events(race).Length == 4, "PAIR_ONLY_ONE_CONCURRENT_TRANSACTION_WROTE_AUDIT");
+
+        foreach (OriginalR7SeedPairStage crashAt in Enum.GetValues<OriginalR7SeedPairStage>())
+        {
+            var crash = NewPair();
+            CrashOwnedPair(new(root, crash, crashAt));
+            byte[] before = File.ReadAllBytes(Ledger(crash));
+            Check(Events(crash).Length == (int)crashAt + 1, "PAIR_CRASH_RETAINS_EXACT_FLUSHED_PREFIX_" + crashAt);
+            Check(File.Exists(Path.Combine(crash.Witness, "witness.seed")) == (crashAt >= OriginalR7SeedPairStage.WitnessStored)
+                && File.Exists(Path.Combine(crash.Operator, "operator.seed")) == (crashAt >= OriginalR7SeedPairStage.OperatorStored),
+                "PAIR_CRASH_MATERIAL_MATCHES_REACHED_STAGE_" + crashAt);
+            bool denied = false;
+            try { Pair(crash); } catch (OriginalR7SeedPairException ex) { denied = !ex.ReservationCreated && !ex.AutonomousRetryAllowed; }
+            Check(denied && File.ReadAllBytes(Ledger(crash)).AsSpan().SequenceEqual(before), "PAIR_CRASH_RESTART_NEVER_RECREATES_OR_ADOPTS_KEYS_" + crashAt);
+        }
+        // Crash INSIDE each native file transaction as well. In particular a
+        // zero/32-byte orphan may exist without a corresponding key receipt.
+        // This is process-exit recovery, not a power-loss durability claim.
+        foreach (OriginalR7SignaturePurpose purpose in Enum.GetValues<OriginalR7SignaturePurpose>())
+        foreach (OriginalR7SeedCreationStage phase in Enum.GetValues<OriginalR7SeedCreationStage>())
+        {
+            var crash = NewPair();
+            CrashOwnedPair(new(root, crash, null, purpose, phase));
+            string orphan = Path.Combine(purpose == OriginalR7SignaturePurpose.Witness ? crash.Witness : crash.Operator,
+                purpose == OriginalR7SignaturePurpose.Witness ? "witness.seed" : "operator.seed");
+            Check(new FileInfo(orphan).Length == (phase == OriginalR7SeedCreationStage.EmptyProtectedFile ? 0 : 32),
+                "PAIR_ACTUAL_ORPHAN_LENGTH_AT_NATIVE_MATERIAL_CHECKPOINT");
+            Check(Events(crash).Length == (purpose == OriginalR7SignaturePurpose.Witness ? 1 : 2),
+                "PAIR_UNRECEIPTED_MATERIAL_IS_NOT_A_VERIFIED_KEY");
+            byte[] audit = File.ReadAllBytes(Ledger(crash)), orphanBytes = File.ReadAllBytes(orphan);
+            try
+            {
+                bool refused = false;
+                try { Pair(crash); } catch (OriginalR7SeedPairException ex) { refused = !ex.ReservationCreated && !ex.AutonomousRetryAllowed; }
+                Check(refused && File.ReadAllBytes(Ledger(crash)).AsSpan().SequenceEqual(audit)
+                    && File.ReadAllBytes(orphan).AsSpan().SequenceEqual(orphanBytes), "PAIR_UNRECEIPTED_ORPHAN_PRESERVED_ON_RESTART");
+            }
+            finally { CryptographicOperations.ZeroMemory(orphanBytes); }
+        }
+        Console.WriteLine("R7_NATIVE_SEED_PAIR_TRANSACTION_ASSERTIONS_PASSED=" + (assertions - begin));
+        Console.WriteLine("R7_SEED_PAIR_ACTUAL_PROCESS_CRASH_BOUNDARIES_TESTED=12");
+    }
+
+    private static int PairCrashChild()
+    {
+        try
+        {
+            string wire = Environment.GetEnvironmentVariable("R7_OWNED_PAIR_CRASH") ?? "";
+            if (wire.Length > 2048) return 2;
+            var request = JsonSerializer.Deserialize<PairCrashRequest>(wire);
+            if (request is null
+                || !(request.Stage.HasValue && Enum.IsDefined(request.Stage.Value)
+                        && request.MaterialPurpose is null && request.MaterialStage is null
+                    || request.Stage is null && request.MaterialPurpose.HasValue && Enum.IsDefined(request.MaterialPurpose.Value)
+                        && request.MaterialStage.HasValue && Enum.IsDefined(request.MaterialStage.Value))
+                || Path.GetDirectoryName(request.Root) != Path.GetFullPath(Environment.CurrentDirectory).TrimEnd('\\')
+                || !Path.GetFileName(request.Root).StartsWith("owned-seed-fixtures-", StringComparison.Ordinal)
+                || (File.GetAttributes(request.Root) & FileAttributes.ReparsePoint) != 0
+                || new[] { request.Pair.Witness, request.Pair.Operator, request.Pair.Audit }
+                    .Any(d => Path.GetDirectoryName(d) != request.Root)) return 2;
+            OriginalR7SeedPairTransaction.CreateNewUntrustedOwnedFixture(
+                request.Pair.Witness, request.Pair.Operator, request.Pair.Audit, PairBinding,
+                new string('c', 40), new string('d', 40),
+                stage => { if (stage == request.Stage) Environment.Exit(87); },
+                materialCheckpoint: (purpose, checkpoint) => {
+                    if (purpose == request.MaterialPurpose && checkpoint.Stage == request.MaterialStage) Environment.Exit(87);
+                });
+            return 3;
+        }
+        catch { return 4; }
     }
     private static bool ExactFixtureFileAcl(byte[] bytes)
     {
@@ -296,7 +528,7 @@ internal static class Program
                 throw new InvalidOperationException("FIXTURE_CLEANUP_CHILD_UNPROVEN");
             foreach (string file in Directory.GetFiles(directory))
             {
-                if (Path.GetDirectoryName(file) != directory || !new[] { "witness.seed", "operator.seed", "existing.txt", "sentinel.txt", "added-link.seed" }.Contains(Path.GetFileName(file)))
+                if (Path.GetDirectoryName(file) != directory || !new[] { "witness.seed", "operator.seed", "existing.txt", "sentinel.txt", "added-link.seed", "seed-pair.ndjson" }.Contains(Path.GetFileName(file)))
                     throw new InvalidOperationException("FIXTURE_CLEANUP_FILE_UNPROVEN");
                 File.Delete(file);
             }
