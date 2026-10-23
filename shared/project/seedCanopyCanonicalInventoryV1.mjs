@@ -41,10 +41,15 @@ export function buildSeedCanopyCanonicalInventoryV1(seeds) {
     seen.add(seed.seedId);
     // Match renderParallelSeedCanonicalInventoryV1 exactly: do not trim the
     // first rung or search later entries when the declared first rung is invalid.
-    const firstRung = Array.isArray(seed.growthRungs) && /^[A-Z0-9_]{3,90}$/.test(seed.growthRungs[0])
-      ? seed.growthRungs[0] : 'INVENTORY';
-    if (typeof firstRung !== 'string')
+    // Do not run RegExp.test on an untyped object: it invokes attacker-defined
+    // toString/valueOf code before the projection has validated the candidate.
+    // Null/missing remain the established INVENTORY fallback.
+    const candidateRung = Array.isArray(seed.growthRungs) ? seed.growthRungs[0] : undefined;
+    if (candidateRung !== undefined && candidateRung !== null
+        && typeof candidateRung !== 'string')
       throw new Error('SEED_CANOPY_PROJECTION_RUNG_TYPE_INVALID');
+    const firstRung = typeof candidateRung === 'string' && /^[A-Z0-9_]{3,90}$/.test(candidateRung)
+      ? candidateRung : 'INVENTORY';
     if (!fullMatch(/^[A-Z0-9_]{3,90}$/, firstRung))
       throw new Error('SEED_CANOPY_PROJECTION_RUNG_TOKEN_INVALID');
     return Object.freeze({
