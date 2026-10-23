@@ -1,6 +1,104 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { preflightBeforeProtectedApproval } from './operator-protected-personal-repository-merge.mjs';
+
+function preApprovalFixture() {
+  const repository = 'Cheekyfellastef/stephan-os';
+  const identity = { prNumber: 3178, branch: 'feature/r7-test', sourceHead: 'a'.repeat(40),
+    sourceTree: 'c'.repeat(40), baseSha: 'b'.repeat(40) };
+  const context = { repository, dispatch: { identity } };
+  const state = {
+    pullRequest: { number: identity.prNumber, state: 'open', draft: false,
+      head: { ref: identity.branch, sha: identity.sourceHead, repo: { full_name: repository } },
+      base: { ref: 'main', sha: identity.baseSha, repo: { full_name: repository } } },
+    liveMainRef: { object: { sha: identity.baseSha } },
+    headCommit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } },
+    review: { mergeable: 'MERGEABLE', mergeStateStatus: 'UNSTABLE', unresolvedThreadCount: 0, reviewDecision: null },
+  };
+  const workflows = [
+    { id: 100, name: 'Stephanos Exact-Head Review', path: '.github/workflows/stephanos-exact-head-review.yml', conclusion: 'failure' },
+    { id: 101, name: 'Independent Merge Security Review', path: '.github/workflows/independent-merge-security-review.yml', conclusion: 'success' },
+  ].map((run) => ({ ...run, run_attempt: 1, check_suite_id: run.id + 1000,
+    repository: { full_name: repository }, head_sha: identity.sourceHead,
+    event: 'pull_request_target', status: 'completed',
+    pull_requests: [{ number: identity.prNumber, head: state.pullRequest.head, base: state.pullRequest.base }] }));
+  const snapshot = { workflowRuns: workflows, commitStatuses: [], checkRuns: workflows.map((run, index) => ({
+    id: run.id + 2000, name: index ? 'independent-security-review' : 'exact-head-review',
+    head_sha: identity.sourceHead, app: { id: 15368, slug: 'github-actions' },
+    check_suite: { id: run.check_suite_id }, status: 'completed', conclusion: run.conclusion,
+    details_url: `https://github.com/${repository}/actions/runs/${run.id}/job/${run.id + 2000}`,
+  })) };
+  const events = [];
+  const adapters = {
+    readExecution: async () => { events.push('execution'); },
+    readIdentity: async () => { events.push('identity'); return structuredClone(state); },
+    readReview: async () => { events.push('review'); return { reviewMode: 'clean-independent', findings: [] }; },
+    readChecks: async () => { events.push('checks'); return structuredClone(snapshot); },
+  };
+  return { context, state, snapshot, events, adapters };
+}
+
+test('pre-approval check rejects the R7 stale attached security failure despite clean selected review', async () => {
+  const f = preApprovalFixture();
+  f.snapshot.checkRuns[1].conclusion = 'failure';
+  f.snapshot.workflowRuns[1].conclusion = 'failure';
+  await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+    error.details?.blockers?.includes('personal-repository-check-run-not-exact-green'));
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks']);
+});
+
+test('pre-approval success rechecks live identity and has no approval or mutation authority', async () => {
+  const f = preApprovalFixture();
+  const result = await preflightBeforeProtectedApproval(f.context, f.adapters);
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity']);
+  assert.equal(result.checkEvidence.length, 2);
+  assert.equal(result.operatorApproval, false);
+  assert.equal(result.mutationAuthority, false);
+  assert.equal(result.finalRevalidationRequired, true);
+  assert.equal(result.advisoryOnly, true);
+});
+
+test('pre-approval stops on a consumed attempt before collecting or approving anything', async () => {
+  const f = preApprovalFixture();
+  f.adapters.readExecution = async () => { throw Error('prior attempt consumed'); };
+  await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), /prior attempt consumed/);
+  assert.deepEqual(f.events, []);
+});
+
+test('pre-approval rejects identity, review and collection gaps and concurrent movement', async () => {
+  for (const mutate of [
+    f => { f.state.pullRequest.draft = true; },
+    f => { f.state.headCommit.tree.sha = 'd'.repeat(40); },
+    f => { f.state.review.unresolvedThreadCount = 1; },
+    f => { f.state.review.reviewDecision = 'CHANGES_REQUESTED'; },
+    f => { delete f.snapshot.commitStatuses; },
+    f => { f.snapshot.checkRuns[1].status = 'in_progress'; },
+    f => { f.adapters.readReview = async () => { throw Error('artifact not authenticated'); }; },
+    f => { f.adapters.readReview = async () => ({ reviewMode: 'qualified-operator-bootstrap', findings: [] }); },
+    f => { const read = f.adapters.readChecks; f.adapters.readChecks = async () => {
+      const result = await read(); f.state.liveMainRef.object.sha = 'd'.repeat(40); return result;
+    }; },
+    f => { const read = f.adapters.readChecks; f.adapters.readChecks = async () => {
+      const result = await read(); f.state.review.mergeStateStatus = 'CLEAN'; return result;
+    }; },
+  ]) {
+    const f = preApprovalFixture(); mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
+});
+
+test('read-only preflight precedes approval and does not replace protected final validation', async () => {
+  const source = await readFile(new URL('../.github/workflows/operator-merge-approval-gate.yml', import.meta.url), 'utf8');
+  const early = source.slice(source.indexOf('  personal-repository-evidence:'), source.indexOf('  operator-personal-repository-approval:'));
+  assert.match(early, /run: node scripts\/operator-protected-personal-repository-merge\.mjs preflight/);
+  assert.doesNotMatch(early.replace(/^\s*#.*$/gm, ''), /environment:|contents: write|issues: write|pull-requests: write|STEPHANOS_RULESET_PROOF_TOKEN/);
+  const final = source.slice(source.indexOf('  operator-personal-repository-squash-merge:'));
+  assert.match(final, /environment: operator-merge-approval/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs evidence/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs approve/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs merge/);
+});
 
 const publishScript = new URL('./repository-native-publish-merge-lane.mjs', import.meta.url);
 const protectedMergeScript = new URL('./operator-protected-merge-gate-v2.mjs', import.meta.url);
@@ -168,7 +266,12 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION/);
   assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_APPROVAL_READY/);
   assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_SQUASH_MERGED/);
-  assert.doesNotMatch(source, /PREAPPROVAL|BEFORE_PROTECTED_ENVIRONMENT|Pre-environment|before protected approval/i);
+  // A read-only early rejection may precede approval; reusable authority
+  // evidence must still be produced only inside the protected final job.
+  assert.doesNotMatch(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT|Pre-environment personal-repository evidence/i);
+  const earlyMode = source.slice(source.indexOf("  if (mode === 'preflight') {"), source.indexOf("  if (mode === 'evidence') {"));
+  assert.doesNotMatch(earlyMode, /appendOutputs|collectEvidence|buildPersonalRepositoryApprovalReceipt|apiJson/);
+  assert.match(earlyMode, /preflightBeforeProtectedApproval\(context\)/);
   assert.match(source, /method: 'PUT',[\s\S]*?merge_method: 'squash',[\s\S]*?sha: receipt\.sourceHead/);
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
   assert.doesNotMatch(source, /delete_branch|DELETE|git\s+(?:push|reset|clean|rebase)|--force/);
