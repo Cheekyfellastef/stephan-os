@@ -97,6 +97,71 @@ export function inspectStarfieldAerNativeBuildContract({
   });
 }
 
+// Read-only resource partition check for the EXISTING #2707 VR lane.
+// This does not grant native writer custody, authenticated worker pickup,
+// approval, deployment, task creation, or any lease release.
+export const STARFIELD_NATIVE_R7_ISOLATION_SCHEMA = 'stephanos.starfield-native-r7-isolation.v1';
+const HOSTED_VR_SOURCE_RESOURCES = Object.freeze([
+  'vr/2707/pinned-source-read',
+  'vr/2707/hosted-cpp23-test-scratch',
+]);
+
+export function classifyStarfieldNativeR7Isolation({
+  action = 'HOSTED_SOURCE_TEST',
+  surface = 'GITHUB_HOSTED',
+  requestedResourceIds = HOSTED_VR_SOURCE_RESOURCES,
+  activeResourceIds = [],
+  gamingActive = null,
+  originalR7LeaseState = 'UNVERIFIED',
+} = {}) {
+  const blockers = [];
+  const strings = (value) => Array.isArray(value)
+    && value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 120);
+  // Reject malformed/duplicate/foreign resource claims rather than pretending
+  // that an unrelated R7 or game-directory owner has become available.
+  if (!strings(requestedResourceIds) || !strings(activeResourceIds)
+    || requestedResourceIds.length === 0
+    || new Set(requestedResourceIds).size !== requestedResourceIds.length
+    || new Set(activeResourceIds).size !== activeResourceIds.length
+    || requestedResourceIds.some((id) => !HOSTED_VR_SOURCE_RESOURCES.includes(id))) {
+    blockers.push('NATIVE_VR_RESOURCE_IDENTITY_INVALID');
+  }
+  if (action !== 'HOSTED_SOURCE_TEST') blockers.push('NATIVE_BUILD_SEPARATE_AUTHORITY_REQUIRED');
+  if (surface !== 'GITHUB_HOSTED') blockers.push('NATIVE_VR_EXECUTION_SURFACE_UNQUALIFIED');
+  if (strings(requestedResourceIds) && strings(activeResourceIds)
+    && requestedResourceIds.some((id) => activeResourceIds.includes(id))) {
+    blockers.push('NATIVE_VR_RESOURCE_CONFLICT');
+  }
+  // Any R7 hold, including unknown or spoofed release status, is irrelevant to
+  // read-only hosted VR compilation. It never authorises local source writing.
+  const eligible = blockers.length === 0;
+  return Object.freeze({
+    schemaVersion: STARFIELD_NATIVE_R7_ISOLATION_SCHEMA,
+    existingGoal: 2707,
+    existingControllerPreserved: true,
+    originalR7LeaseStateObservedOnly: String(originalR7LeaseState).slice(0, 100),
+    gamingActiveObservedOnly: gamingActive === true ? true : gamingActive === false ? false : null,
+    action,
+    surface,
+    resourceIds: Object.freeze(strings(requestedResourceIds) ? [...requestedResourceIds] : []),
+    blockers: Object.freeze(blockers),
+    classification: eligible ? 'HOSTED_SOURCE_TEST_R7_DISJOINT' : 'NATIVE_VR_WORK_PARKED',
+    sourceTestCandidateEligible: eligible,
+    sourceWriterPickupVerified: false,
+    independentNativeWorkerQualified: false,
+    nativeBuildAllowed: false,
+    originalR7LeaseReleaseAllowed: false,
+    originalR7WriterMutationAllowed: false,
+    battleBridgeMutationAllowed: false,
+    questMutationAllowed: false,
+    deploymentAllowed: false,
+    authority: Object.freeze({
+      sourceMutationAllowed: false, nativeBuildAllowed: false,
+      originalR7LeaseReleaseAllowed: false, deploymentAllowed: false,
+    }),
+  });
+}
+
 export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) {
   if (typeof sourceRoot !== 'string' || !sourceRoot.trim()) {
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_DIR_REQUIRED'});
@@ -108,7 +173,9 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
   if (head.status !== 0 || !sha40(commit)) {
     return Object.freeze({ok: false, commit: '', clean: false, reason: 'SOURCE_GIT_HEAD_UNAVAILABLE'});
   }
-  const status = git(['status', '--porcelain', '--untracked-files=normal']);
+  // Git configuration can hide dirty submodule trees. Override it rather
+  // than inheriting submodule.<name>.ignore=all from the inspected checkout.
+  const status = git(['status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none']);
   if (status.status !== 0) {
     return Object.freeze({ok: false, commit, clean: false, reason: 'SOURCE_GIT_STATUS_UNAVAILABLE'});
   }
