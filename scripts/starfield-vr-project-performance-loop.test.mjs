@@ -65,3 +65,48 @@ test('telemetry reporter publishes the project loop into shared workspace', asyn
   assert.match(report, /projectTelemetryGapCount/);
   assert.match(report, /projectNextExperiment/);
 });
+
+test('observed system CPU pressure prioritizes missing game-thread and background attribution', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
+    metrics: { avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, avgGpuUtilPct: 28.8 },
+  });
+  assert.equal(loop.nextExperiment.id, 'close-starfield-cpu-attribution-gap');
+  assert.ok(loop.missingTelemetry.some((entry) => entry.id === 'starfield-cpu-attribution'));
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
+});
+
+test('matched CPU evidence chooses safe per-stage investigation before graphics tuning', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+    metrics: {
+      avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
+      avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9,
+      deliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
+    },
+  });
+  assert.equal(loop.nextExperiment.id, 'starfield-cpu-stage-isolation');
+  assert.equal(loop.telemetryRequirements.find((entry) => entry.id === 'starfield-cpu-attribution').available, true);
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+});
+
+test('motion and stereo skew prioritise AER isolation without silently enabling the experimental DLL', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['stereo-eye-timing-skew-observed'] },
+    metrics: {
+      avgApplicationFrameTimeMs: 15, deliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
+    },
+  });
+  assert.equal(loop.nextExperiment.id, 'starfield-aer-motion-isolation');
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+  assert.equal(loop.nextExperiment.authority.rollbackRequired, true);
+  assert.equal(loop.authority.operatorAcceptancePreserved, true);
+});
