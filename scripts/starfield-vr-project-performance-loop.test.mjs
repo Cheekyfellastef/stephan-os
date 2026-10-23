@@ -73,7 +73,8 @@ test('observed system CPU pressure prioritizes missing game-thread and backgroun
     diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
     metrics: { avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, avgGpuUtilPct: 28.8 },
   });
-  assert.equal(loop.nextExperiment.id, 'close-starfield-cpu-attribution-gap');
+  assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+  assert.match(loop.nextExperiment.rationale, /PR #3187/);
   assert.ok(loop.missingTelemetry.some((entry) => entry.id === 'starfield-cpu-attribution'));
   assert.equal(loop.authority.automaticRuntimeMutation, false);
 });
@@ -109,4 +110,19 @@ test('motion and stereo skew prioritise AER isolation without silently enabling 
   assert.equal(loop.nextExperiment.authority.automaticMutation, false);
   assert.equal(loop.nextExperiment.authority.rollbackRequired, true);
   assert.equal(loop.authority.operatorAcceptancePreserved, true);
+});
+
+test('pose-latency focus alone cannot masquerade as evidence of AER stereo faults', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['pose-age-high'] },
+    metrics: {
+      avgApplicationFrameTimeMs: 15, deliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
+    },
+  });
+  assert.notEqual(loop.nextExperiment.id, 'starfield-aer-motion-isolation');
+  assert.equal(loop.candidateTechniques.some((item) => item.id === 'starfield-aer-motion-isolation'), false);
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
 });
