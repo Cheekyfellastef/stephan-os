@@ -27,7 +27,7 @@ export function readCanonicalMissionWorkerSourceIdentity({ env = process.env, sp
 }
 
 export function readCanonicalMissionWorkerHeartbeatAgeMs({
-  env = process.env, nowMs = Date.now(), workspaceRoot = resolveGoalDiscoveryWorkspaceV1({ env }), expectedSourceHead,
+  env = process.env, nowMs, workspaceRoot = resolveGoalDiscoveryWorkspaceV1({ env }), expectedSourceHead,
   readSourceIdentity = () => readCanonicalMissionWorkerSourceIdentity({ env }),
 } = {}) {
   let fd;
@@ -49,12 +49,16 @@ export function readCanonicalMissionWorkerHeartbeatAgeMs({
     const source = readSourceIdentity();
     if (source?.ok !== true || source.branch !== 'main'
         || (expectedSourceHead !== undefined && source.sourceHead !== expectedSourceHead)) return null;
+    // Source identity invokes bounded synchronous Git calls. Production time
+    // must be sampled after those calls, not captured at reader entry.
+    // Explicit nowMs remains a deterministic projection seam for fixtures.
+    const admissionNowMs = nowMs === undefined ? Date.now() : nowMs;
     const projection = projectMissionWorkerHeartbeat(JSON.parse(bytes), {
-      nowUtc: new Date(nowMs).toISOString(), expectedRepositoryRoot: paths.repositoryRoot,
+      nowUtc: new Date(admissionNowMs).toISOString(), expectedRepositoryRoot: paths.repositoryRoot,
       expectedHeadSha: source.sourceHead,
     });
     return projection.valid && projection.fresh && projection.lastTickAffirmative
-      && Date.parse(projection.timestampUtc) <= nowMs ? projection.ageMs : null;
+      && Date.parse(projection.timestampUtc) <= admissionNowMs ? projection.ageMs : null;
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }
 }

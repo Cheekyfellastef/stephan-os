@@ -368,3 +368,12 @@ completion regression expires custody after publication, proves processing remai
 owned, rejects an unrelated existing result unchanged, and resumes the exact result
 through the original rename with fresh evidence. This is not permission to clear
 a lease or rerun a source writer.
+
+
+The canonical heartbeat reader samples production time only after its two bounded
+synchronous source-identity Git reads. Both age/freshness projection and future
+record rejection use that late admission time. Deterministic native-owner tests
+advance the production clock during identity observation across the120-second
+boundary and cover fresh, expired and future timestamps without wall-clock sleeps.
+Explicit fixed nowMs is only the pre-existing deterministic fixture projection seam;
+no production owner supplies it.

@@ -130,3 +130,26 @@ test('source identity observation reuses fixed Git custody and strips inherited 
   assert.deepEqual(result, { ok: true, sourceHead: HEAD, branch: 'main' });
   assert.equal(calls.length, 2);
 });
+
+test('production freshness and future-time checks use the clock after blocking source identity reads', () => fixture(({ env, paths, record }) => {
+  const realNow = Date.now;
+  try {
+    for (const [initialAge, identityDelay, expectedAge] of [
+      [119850, 100, 119950], [119950, 150, null], [120001, 0, null],
+      [-50, 150, 100], [-200, 100, null],
+    ]) {
+      let clock = nowMs; let identityFinished = false; const samples = [];
+      writeFileSync(paths.heartbeatPath, JSON.stringify({ ...record,
+        timestampUtc: new Date(nowMs - initialAge).toISOString() }));
+      Date.now = () => { samples.push(identityFinished); return clock; };
+      const age = readGoalBuilderWorkerHeartbeatAgeMs({ env,
+        readSourceIdentity: () => {
+          clock += identityDelay; identityFinished = true;
+          return { ok: true, branch: 'main', sourceHead: HEAD };
+        },
+      });
+      assert.equal(age, expectedAge, `age=${initialAge}, identityDelay=${identityDelay}`);
+      assert.deepEqual(samples, [true], 'production clock must not be sampled before source identity finishes');
+    }
+  } finally { Date.now = realNow; }
+}));
