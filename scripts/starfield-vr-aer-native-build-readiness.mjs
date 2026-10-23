@@ -64,7 +64,8 @@ export function inspectStarfieldAerNativeBuildContract({
     blockers.push('PINNED_MSVC_CMAKE_PRESET_INVALID');
   }
   if (!sourceState) blockers.push('ISOLATED_PINNED_CHECKOUT_NOT_PROVEN');
-  else if (sourceState.ok !== true || sourceState.commit !== MUTAR_PIN || sourceState.clean !== true) {
+  else if (sourceState.ok !== true || sourceState.commit !== MUTAR_PIN || sourceState.clean !== true
+      || sourceState.submodulesVerified !== true) {
     blockers.push('ISOLATED_SOURCE_HEAD_OR_CLEANLINESS_INVALID');
   }
   return Object.freeze({
@@ -112,9 +113,26 @@ export function inspectPinnedSourceCheckout(sourceRoot, {run = spawnSync} = {}) 
     return Object.freeze({ok: false, commit, clean: false, reason: 'SOURCE_GIT_STATUS_UNAVAILABLE'});
   }
   const clean = status.stdout.trim() === '';
+  // Gitlink equality, hydration and dirty nested dependency state are separate
+  // proofs. A pinned parent with -/+/U submodules is not build-ready.
+  const submodules = git(['submodule', 'status', '--recursive']);
+  const lines = submodules.status === 0
+    ? String(submodules.stdout || '').split(/\r?\n/).filter(Boolean) : [];
+  const expected = new Set(['extern/vrframework', 'extern/CommonLibSF']);
+  const submodulesVerified = lines.length >= 2
+    && lines.every((line) => {
+      const match = /^ ([0-9a-f]{40}) (\S+)(?: \(.*\))?$/.exec(line);
+      if (!match) return false;
+      expected.delete(match[2]);
+      return true;
+    })
+    && expected.size === 0;
   return Object.freeze({
-    ok: commit === MUTAR_PIN && clean, commit, clean,
-    reason: commit !== MUTAR_PIN ? 'SOURCE_COMMIT_DRIFT' : clean ? 'PINNED_CHECKOUT_VERIFIED' : 'SOURCE_DIR_DIRTY',
+    ok: commit === MUTAR_PIN && clean && submodulesVerified,
+    commit, clean, submodulesVerified,
+    reason: commit !== MUTAR_PIN ? 'SOURCE_COMMIT_DRIFT'
+      : !clean ? 'SOURCE_DIR_DIRTY'
+        : submodulesVerified ? 'PINNED_CHECKOUT_VERIFIED' : 'SOURCE_SUBMODULES_UNVERIFIED',
   });
 }
 
