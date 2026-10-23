@@ -206,7 +206,7 @@ test('numeric telemetry requirements reject placeholders instead of claiming mea
     avgDeliveredCadenceHz: 72,
     headsetRefreshRateHz: 72,
     droppedFrames: 0,
-    reprojectionState: 'OFF',
+    reprojectionState: 'REPROJECTING',
     avgEncodeLatencyMs: 5,
     avgNetworkLatencyMs: 20,
     avgDecodeLatencyMs: 8,
@@ -300,6 +300,7 @@ test('reprojection readiness distinguishes measured activity from ambiguous NONE
     ['NONE_OBSERVED', 0, false],
     ['NONE_OBSERVED', 3, true],
     ['UNKNOWN', 3, false],
+    ['OFF', 3, false],
     ['REPROJECTING ', 3, false],
     ['', 3, false],
   ]) {
