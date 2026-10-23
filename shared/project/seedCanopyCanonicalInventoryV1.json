@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "stephanos.seed-canopy-canonical-inventory.v1",
+  "seeds": [
+    {
+      "seedId": "starfield-vr-outcome-ownership",
+      "title": "Starfield VR Excellence",
+      "issue": "#2655",
+      "source": "shared/runtime/starfieldVrOutcomeOwnershipContractV1.mjs",
+      "firstRung": "INVENTORY"
+    },
+    {
+      "seedId": "stephanos-whole-system-capability-closure",
+      "title": "Stephanos Whole-System Capability Closure",
+      "issue": "#2670",
+      "source": "shared/runtime/upliftWorkspaceProjectionV1.mjs",
+      "firstRung": "INVENTORY"
+    },
+    {
+      "seedId": "stephanos-runs-the-project",
+      "title": "Stephanos Runs the Project",
+      "issue": "#2796",
+      "source": "shared/runtime/autonomousProjectStewardshipSeedV1.mjs",
+      "firstRung": "SEE_REALITY"
+    },
+    {
+      "seedId": "stephanos-flywheel-conversational-intelligence",
+      "title": "Stephanos + Flywheel Conversational Intelligence",
+      "issue": "#2798",
+      "source": "shared/runtime/conversationalIntelligenceSeedV1.mjs",
+      "firstRung": "HEAR_INTENT"
+    },
+    {
+      "seedId": "sovereign-commander-safe-parity",
+      "title": "Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely",
+      "issue": "#2519",
+      "source": "shared/runtime/sovereignCommanderParitySeedV1.mjs",
+      "firstRung": "SEE_REMOTE_CAPABILITY"
+    },
+    {
+      "seedId": "stephanos-sovereign-meter-independence",
+      "title": "Stephanos Sovereign Meter Independence",
+      "issue": "#2968",
+      "source": "shared/runtime/sovereignMeterIndependenceSeedV1.mjs",
+      "firstRung": "INVENTORY_METERS"
+    },
+    {
+      "seedId": "stephanos-full-sovereignty-every-function",
+      "title": "Stephanos Full Sovereignty: Every Function, Zero External Critical Dependencies",
+      "issue": "#3026",
+      "source": "shared/runtime/fullSovereigntySeedV1.mjs",
+      "firstRung": "INVENTORY_ALL_FUNCTIONS_AND_EXTERNAL_EDGES"
+    },
+    {
+      "seedId": "workspace-integrity-provenance",
+      "title": "Every Workspace, Card and Visualiser Has Verified End-to-End Provenance",
+      "issue": "#2898",
+      "source": "shared/runtime/workspaceIntegritySeedV1.mjs",
+      "firstRung": "INVENTORY_VISIBLE_COMPONENTS"
+    },
+    {
+      "seedId": "goal-conveyor-fleet-care",
+      "title": "Continuous Goal Conveyor and Fleet Care",
+      "issue": "#2972",
+      "source": "shared/runtime/goalConveyorFleetCareSeedV1.mjs",
+      "firstRung": "SEED_PLANTED"
+    }
+  ]
+}
