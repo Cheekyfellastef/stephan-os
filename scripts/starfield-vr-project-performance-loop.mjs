@@ -92,6 +92,17 @@ export async function buildStarfieldVrProjectPerformanceLoop({
   const identityStatus = text(runIdentity?.status || 'UNKNOWN_PROVIDER');
   const signals = new Set(Array.isArray(diagnosis?.signals) ? diagnosis.signals.map(text) : []);
   const focus = text(diagnosis?.focus || 'UNCLASSIFIED');
+  const cpuPressureObserved = focus === 'CPU_LOAD'
+    || signals.has('system-cpu-load-high')
+    || signals.has('starfield-single-thread-saturation-observed');
+  const stereoMotionObserved = focus === 'RENDERING_OR_STEREO'
+    || signals.has('stereo-eye-timing-skew-observed');
+  // A single busy-game-thread reading or process total cannot identify the
+  // competing VR/desktop load. Only same-run samples prove attribution.
+  const cpuAttributionReady = [
+    'avgSystemCpuPct', 'avgStarfieldCpuPct',
+    'maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
+  ].every((key) => metricPresent(metrics, key));
 
   const sources = Object.freeze({
     mutar: {
@@ -207,10 +218,43 @@ export async function buildStarfieldVrProjectPerformanceLoop({
     }),
   ];
 
+  if (cpuPressureObserved) {
+    requirements.push(requirement({
+      id: 'starfield-cpu-attribution',
+      title: 'Game, busiest-thread, desktop and Meta CPU attribution',
+      metricKeys: [
+        'avgSystemCpuPct', 'avgStarfieldCpuPct',
+        'maxStarfieldBusiestThreadCpuPct', 'avgChatGptCpuPct', 'avgMetaVrCpuPct',
+      ],
+      sourceRef: sources.installedCorpus.path,
+      rationale: 'CPU saturation must be attributed from matching session timestamps before tuning graphics or disabling processes.',
+      available: cpuAttributionReady,
+    }));
+  }
   const missingTelemetry = requirements.filter((item) => item.available !== true);
 
   const techniques = [];
   const add = (item) => techniques.push(technique(item));
+  if (cpuPressureObserved) {
+    add({
+      id: 'starfield-cpu-stage-isolation',
+      title: 'Attribute Starfield main-thread and background CPU pressure',
+      sources: [sources.installedCorpus, sources.airLink],
+      rationale: 'A pegged whole-system CPU with a partly idle GPU needs matched game-thread, desktop and Meta runtime evidence, not an assumed culprit.',
+      experiment: 'Repeat stationary, yaw and strafe segments without changing the profile; compare busiest Starfield thread, process-family CPU, actual frame time and compositor cadence.',
+      priority: 115,
+    });
+  }
+  if (stereoMotionObserved) {
+    add({
+      id: 'starfield-aer-motion-isolation',
+      title: 'Isolate AER eye history during rotation and lateral motion',
+      sources: [sources.referenceImplementations, sources.installedCorpus],
+      rationale: 'Zero presenter-sequence faults cannot exclude stereo temporal-history contamination or frame interpolation artefacts.',
+      experiment: 'Compare identical camera-yaw and lateral-strafe segments on the accepted baseline and separately qualified AER candidate; bind eye identity, frame timing, ASW and rollback before accepting a change.',
+      priority: 116,
+    });
+  }
 
   if (provider === 'mutar-openxr') {
     add({
@@ -294,6 +338,13 @@ export async function buildStarfieldVrProjectPerformanceLoop({
         title: 'Prove exact VR run identity before tuning',
         rationale: 'Provider-specific fixes are unsafe when the run identity is unknown or conflicting.',
       }
+    : cpuPressureObserved && !cpuAttributionReady
+      ? {
+          id: 'close-starfield-cpu-attribution-gap',
+          title: 'Capture matched Starfield thread, app-family and total CPU measurements',
+          rationale: 'The playtest shows CPU pressure but cannot yet prove whether Starfield, ChatGPT, Meta or another process is responsible.',
+          sourceRef: sources.installedCorpus.path,
+        }
     : missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence', 'headset-refresh'].includes(item.id))
       ? {
           id: 'close-frame-timing-telemetry-gap',
