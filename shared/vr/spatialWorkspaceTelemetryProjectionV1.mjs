@@ -8,6 +8,19 @@ export const SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1 =
 
 const SHA40 = /^[0-9a-f]{40}$/i;
 const SAFE_STATES = new Set(['ready', 'stale', 'waiting', 'unavailable']);
+const SAFE_RUN_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
+const SAFE_PHASES = new Set(['start', 'sample', 'end', 'error']);
+
+// Both feed and consumer forms must carry real run identity before showing cached evidence.
+function hasProvenance(evidence) {
+  const stamp = evidence?.observedAtUtc;
+  const time = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  return SAFE_RUN_ID.test(evidence?.runId ?? '')
+    && SAFE_PHASES.has(evidence?.phase)
+    && Number.isFinite(time)
+    && new Date(time).toISOString() === stamp
+    && SHA40.test(evidence?.sourceHead ?? '');
+}
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -40,6 +53,7 @@ function sourceRecord(input = {}) {
     && input?.readOnly === true;
   const canonicalEvidence = canonicalFeed
     && input?.latest?.evidence?.schemaVersion === SPATIAL_WORKSPACE_TELEMETRY_SCHEMA_V1
+    && hasProvenance(input.latest.evidence)
     ? input.latest.evidence
     : null;
   if (canonicalEvidence) {
@@ -54,7 +68,7 @@ function sourceRecord(input = {}) {
 
   const boundedProjection = input?.schemaVersion === SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1
     && input?.readOnly === true;
-  if (boundedProjection && input?.available === true) {
+  if (boundedProjection && input?.available === true && hasProvenance(input)) {
     return {
       kind: 'consumer-projection',
       evidence: input,

@@ -82,3 +82,20 @@ test('invalid consumer projection state fails closed on reprojection', () => {
   assert.equal(twice.runId, 'spatial-state-regression');
   assert.equal(twice.operatorAcceptance, false);
 });
+
+for (const property of ['runId', 'phase', 'observedAtUtc', 'sourceHead']) {
+  test(`canonical READY requires provenance ${property}`, () => {
+    const malformed = { ...latest.evidence, [property]: '' };
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence: malformed }));
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.available, false);
+    assert.equal(result.operatorAcceptance, false);
+  });
+  test(`consumer READY re-projection requires provenance ${property}`, () => {
+    const valid = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready'));
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1({ ...valid, [property]: '' });
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.available, false);
+    assert.equal(result.operatorAcceptance, false);
+  });
+}
