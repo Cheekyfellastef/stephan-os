@@ -88,6 +88,7 @@ test('matched CPU evidence chooses safe per-stage investigation before graphics 
     metrics: {
       avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
       avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9,
+      starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
       avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
     },
@@ -126,4 +127,41 @@ test('pose-latency focus alone cannot masquerade as evidence of AER stereo fault
   assert.notEqual(loop.nextExperiment.id, 'starfield-aer-motion-isolation');
   assert.equal(loop.candidateTechniques.some((item) => item.id === 'starfield-aer-motion-isolation'), false);
   assert.equal(loop.authority.automaticRuntimeMutation, false);
+});
+
+test('CPU stage isolation requires same-run measured sample counts and finite CPU percentages', async () => {
+  const base = {
+    avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
+    maxStarfieldBusiestThreadCpuPct: 97, avgChatGptCpuPct: 0, avgMetaVrCpuPct: 0,
+    avgApplicationFrameTimeMs: 44.9, avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+  };
+  const missingOrInvalid = [
+    {},
+    { starfieldThreadCpuMeasuredSampleCount: 0, cpuConsumersAvailableSampleCount: 4 },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 0 },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      maxStarfieldBusiestThreadCpuPct: '97' },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      avgChatGptCpuPct: Number.NaN },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      avgMetaVrCpuPct: -1 },
+  ];
+  for (const caseFields of missingOrInvalid) {
+    const loop = await buildStarfieldVrProjectPerformanceLoop({
+      repoRoot, runIdentity: identity,
+      diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+      metrics: { ...base, ...caseFields },
+    });
+    assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+    assert.equal(loop.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, false);
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const measured = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+    metrics: { ...base, starfieldThreadCpuMeasuredSampleCount: 4,
+      cpuConsumersAvailableSampleCount: 4 },
+  });
+  assert.equal(measured.nextExperiment.id, 'starfield-cpu-stage-isolation');
+  assert.equal(measured.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, true);
 });
