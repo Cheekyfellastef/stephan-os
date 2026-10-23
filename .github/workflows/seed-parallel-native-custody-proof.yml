@@ -36,12 +36,21 @@ jobs:
           dotnet-version: '8.0.415'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # verified v4
         with:
-          node-version: '24'
+          node-version: '24.21.0'
       - name: Verify closed canonical data and native reference bytes against actual source
         shell: pwsh
         run: |
-          node --version
-          node --test-reporter=tap shared/project/seedCanopyCanonicalInventoryV1.test.mjs
+          $ErrorActionPreference = 'Stop'
+          $nodePath = (Get-Command node -CommandType Application -ErrorAction Stop).Source
+          if (-not [System.IO.Path]::IsPathFullyQualified($nodePath)) { throw 'SEED_NODE_PATH_UNPROVEN' }
+          # Official signed release SHASUMS: https://nodejs.org/en/blog/release/v24.21.0
+          $expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'
+          $actualNodeSha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualNodeSha256 -cne $expectedNodeSha256) { throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' }
+          $actualNodeVersion = & $nodePath --version
+          if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne 'v24.21.0') { throw 'SEED_NODE_VERSION_MISMATCH' }
+          Write-Output ('SEED_NODE_EXECUTABLE_SHA256=' + $actualNodeSha256)
+          & $nodePath --test-reporter=tap shared/project/seedCanopyCanonicalInventoryV1.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Exercise actual native new-file handles against disposable replacement attempts
         shell: pwsh

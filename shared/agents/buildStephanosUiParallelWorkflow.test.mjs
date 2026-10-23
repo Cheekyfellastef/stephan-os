@@ -174,3 +174,32 @@ test('Sovereign reviewer qualification suites remain in exact-head custody jobs'
   assert.match(execution, /shared\/agents\/localReviewCapabilityExamV1\.test\.mjs/);
   assert.match(execution, /scripts\/sovereign-windows-review-calibration-v1\.test\.mjs/);
 });
+
+
+function assertSeedNodeExecutableIdentity(workflow) {
+  assert.match(workflow, /node-version: '24\.21\.0'/);
+  assert.match(workflow, /Get-Command node -CommandType Application -ErrorAction Stop/);
+  assert.match(workflow, /Get-FileHash -LiteralPath \$nodePath -Algorithm SHA256/);
+  assert.match(workflow, /\$expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'/);
+  assert.match(workflow, /if \(\$actualNodeSha256 -cne \$expectedNodeSha256\) \{ throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' \}/);
+  assert.match(workflow, /\$actualNodeVersion = & \$nodePath --version/);
+  assert.match(workflow, /if \(\$LASTEXITCODE -ne 0 -or \$actualNodeVersion -cne 'v24\.21\.0'\) \{ throw 'SEED_NODE_VERSION_MISMATCH' \}/);
+  const digestGate = workflow.indexOf("throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH'");
+  const versionGate = workflow.indexOf("throw 'SEED_NODE_VERSION_MISMATCH'");
+  const canonicalImport = workflow.indexOf('& $nodePath --test-reporter=tap');
+  assert.ok(digestGate >= 0 && versionGate > digestGate && canonicalImport > versionGate);
+  assert.doesNotMatch(workflow, /^\s+node (?:--version|--test-reporter)/m);
+}
+
+test('Seed canonical imports use the exact release executable only after digest and version verification', async () => {
+  const workflow = await readFile(new URL('../../.github/workflows/seed-parallel-native-custody-proof.yml', import.meta.url), 'utf8');
+  assertSeedNodeExecutableIdentity(workflow);
+  for (const changed of [
+    workflow.replace("node-version: '24.21.0'", "node-version: '24'"),
+    workflow.replace('ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32', '0'.repeat(64)),
+    workflow.replace("throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH'", 'Write-Output ignored'),
+    workflow.replace("throw 'SEED_NODE_VERSION_MISMATCH'", 'Write-Output ignored'),
+    workflow.replace('& $nodePath --test-reporter=tap', 'node --test-reporter=tap'),
+    workflow.replace('Get-Command node -CommandType Application -ErrorAction Stop', 'Get-Command node'),
+  ]) assert.throws(() => assertSeedNodeExecutableIdentity(changed));
+});
