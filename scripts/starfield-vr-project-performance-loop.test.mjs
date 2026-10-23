@@ -207,12 +207,12 @@ test('numeric telemetry requirements reject placeholders instead of claiming mea
     headsetRefreshRateHz: 72,
     droppedFrames: 0,
     reprojectionState: 'OFF',
-    encodeLatencyMs: 5,
-    networkLatencyMs: 20,
-    decodeLatencyMs: 8,
-    airLinkBitrateMbps: 80,
-    packetLossPct: 0,
-    jitterMs: 0,
+    avgEncodeLatencyMs: 5,
+    avgNetworkLatencyMs: 20,
+    avgDecodeLatencyMs: 8,
+    avgAirLinkBitrateMbps: 80,
+    maxPacketLossPct: 0,
+    maxJitterMs: 0,
     renderScalePct: 100,
   };
   const project = async (metrics) => buildStarfieldVrProjectPerformanceLoop({
@@ -236,8 +236,8 @@ test('numeric telemetry requirements reject placeholders instead of claiming mea
     ['delivered-cadence', 'avgDeliveredCadenceHz', Number.NaN],
     ['headset-refresh', 'headsetRefreshRateHz', Infinity],
     ['dropped-frames-reprojection', 'droppedFrames', -1],
-    ['air-link-latency-chain', 'networkLatencyMs', -1],
-    ['air-link-network-quality', 'packetLossPct', 101],
+    ['air-link-latency-chain', 'avgNetworkLatencyMs', -1],
+    ['air-link-network-quality', 'maxPacketLossPct', 101],
     ['render-resolution', 'renderScalePct', '100'],
   ];
   for (const [requirementId, metric, invalid] of malformed) {
@@ -250,4 +250,37 @@ test('numeric telemetry requirements reject placeholders instead of claiming mea
     assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirementId));
     assert.equal(loop.authority.automaticRuntimeMutation, false);
   }
+});
+
+
+test('Air Link qualification uses fields emitted by the canonical session diagnosis, not raw CSV aliases', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  const canonicalKeys = [
+    'avgEncodeLatencyMs', 'avgNetworkLatencyMs', 'avgDecodeLatencyMs',
+    'avgAirLinkBitrateMbps', 'maxPacketLossPct', 'maxJitterMs',
+  ];
+  for (const key of canonicalKeys) {
+    assert.match(producer, new RegExp('\\b' + key + '\\s*='), 'real diagnosis emits ' + key);
+  }
+  const actualSessionMetrics = {
+    avgEncodeLatencyMs: 5, avgNetworkLatencyMs: 20, avgDecodeLatencyMs: 8,
+    avgAirLinkBitrateMbps: 80, maxPacketLossPct: 0, maxJitterMs: 0,
+  };
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] }, metrics,
+  });
+  const real = await project(actualSessionMetrics);
+  assert.equal(real.telemetryRequirements.find((item) => item.id === 'air-link-latency-chain').available, true);
+  assert.equal(real.telemetryRequirements.find((item) => item.id === 'air-link-network-quality').available, true);
+  const rawOnly = await project({
+    encodeLatencyMs: 5, networkLatencyMs: 20, decodeLatencyMs: 8,
+    airLinkBitrateMbps: 80, packetLossPct: 0, jitterMs: 0,
+  });
+  for (const id of ['air-link-latency-chain', 'air-link-network-quality']) {
+    assert.equal(rawOnly.telemetryRequirements.find((item) => item.id === id).available, false);
+  }
+  const malformed = await project({ ...actualSessionMetrics, maxPacketLossPct: 101 });
+  assert.equal(malformed.telemetryRequirements.find((item) => item.id === 'air-link-network-quality').available, false);
+  assert.equal(malformed.authority.automaticRuntimeMutation, false);
 });
