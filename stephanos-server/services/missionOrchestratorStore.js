@@ -65,6 +65,27 @@ export function resolveMissionOperationsSnapshotRoot(env = process.env) {
     : '';
 }
 
+// Closed identity for a failed worker result. Stored atomically with the
+// resulting failed state; old unbound failures do not gain replay authority.
+export function failedMissionWorkerResultIdentityV1(event = {}) {
+  const missionId = text(event.missionId).toLowerCase();
+  const eventId = text(event.eventId).toLowerCase();
+  const actionId = text(event.actionId).toLowerCase();
+  const adapter = text(event.adapter).toLowerCase();
+  const resultId = text(event.resultId);
+  if (event.eventType !== 'AGENT_RESULT_RECEIVED' || event.success !== false
+      || !MISSION_ID_PATTERN.test(missionId) || !EVENT_ID_PATTERN.test(eventId)
+      || !/^[a-z0-9][a-z0-9._:-]{2,160}$/.test(actionId) || !adapter || !resultId)
+    return '';
+  return sha256(JSON.stringify({ schemaVersion: 'stephanos.failed-worker-result-identity.v1',
+    missionId, eventId, actionId, adapter, resultId, success: false,
+    changedFiles: Array.isArray(event.changedFiles) ? event.changedFiles : [],
+    receipt: event.receipt ?? null, error: text(event.error),
+    sourceArtifactEscrow: event.sourceArtifactEscrow ?? null,
+    offlinePublicationOutbox: event.offlinePublicationOutbox ?? null,
+  }));
+}
+
 function missionPaths(root, missionId) {
   const safeId = safeMissionId(missionId);
   const resolvedRoot = resolve(root);
@@ -399,7 +420,14 @@ export async function appendMissionEvent(missionId, event, options = {}) {
       if (quarantine && Buffer.byteLength(serial) > MAX_QUARANTINE_AUDIT_BYTES) {
         throw new Error('ORIGINAL_QUARANTINE_AUDIT_EVENT_UNBOUNDED');
       }
-      const next = withStoreMetadata(applyMissionOrchestratorEvent(current, preparedEvent, options), {
+      const transitioned = applyMissionOrchestratorEvent(current, preparedEvent, options);
+      const failedResultIdentity = current.dispatch?.status === 'running'
+        && preparedEvent.adapter === current.dispatch?.adapter
+        && transitioned.dispatch?.status === 'failed'
+        ? failedMissionWorkerResultIdentityV1(preparedEvent) : '';
+      const next = withStoreMetadata(transitioned, {
+        ...(preparedEvent.eventType === 'AGENT_RESULT_RECEIVED'
+          ? { lastFailedWorkerResultIdentityV1: failedResultIdentity } : {}),
         ...(originalSourceAttemptFence ? { originalSourceAttemptFence } : {}),
         processedEventIds: [...processedEventIds, eventId].slice(-1000),
         lastEventId: eventId,
@@ -408,6 +436,8 @@ export async function appendMissionEvent(missionId, event, options = {}) {
           eventId, eventSha256: sha256(serial), event: logEvent,
         } } : {}),
       });
+      // A result collector may have waited for the mission lock/audit I/O.
+      if (options.assertResultCustody) options.assertResultCustody();
       await atomicWriteJson(paths.statePath, next);
       const completed = quarantine
         ? await reconcilePendingQuarantineAudit(next, paths, options)

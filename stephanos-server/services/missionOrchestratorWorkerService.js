@@ -7,6 +7,7 @@ import {
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
   appendMissionEvent,
+  failedMissionWorkerResultIdentityV1,
   listMissionRecords,
   readMissionRecord,
   resolveMissionOrchestratorRoot,
@@ -718,6 +719,35 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const eventId = `result-${actionId}`.slice(0, 128);
   const resultId = text(result.resultId, actionId);
   const previous = current.state;
+  const resultEvent = {
+    missionId, actionId, adapter, eventId, eventType: 'AGENT_RESULT_RECEIVED',
+    success: result.success === true, resultId,
+    changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [],
+    sourceArtifactEscrow: result.sourceArtifactEscrow,
+    offlinePublicationOutbox: result.offlinePublicationOutbox,
+    receipt: result.receipt, error: text(result.error),
+    summary: `${adapter} result collected from the durable worker queue.`,
+  };
+  const failedIdentity = failedMissionWorkerResultIdentityV1(resultEvent);
+  const exactFailedReplay = state => result.success === false && failedIdentity
+    && (!Array.isArray(result.evidenceReceipts) || result.evidenceReceipts.length === 0)
+    && state.cancelled !== true && !state.storeMetadata?.originalSourceAttemptFence
+    && state.currentPhase === 'BLOCKED' && state.dispatch?.status === 'failed'
+    && state.dispatch?.adapter === adapter && state.dispatch?.resultId === resultId
+    && state.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && state.storeMetadata?.lastFailedWorkerResultIdentityV1 === failedIdentity;
+  if (exactFailedReplay(previous)) {
+    const locked = await runWithMissionStatePrecondition(missionId, {
+      expectedRevision: previous.revision, expectedCurrentPhase: previous.currentPhase,
+    }, state => {
+      if (!exactFailedReplay(state)) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_UNPROVEN');
+      if (options.assertResultCustody) options.assertResultCustody();
+      return { state, duplicate: true, eventId };
+    }, options);
+    if (locked.preconditionFailed) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_PRECONDITION_FAILED');
+    return locked.result;
+  }
+
   const normalizedFiles = (files) => (Array.isArray(files) ? files : [])
     .map((file) => text(file).replace(/\\\\/g, '/')).sort();
   // A crash between AGENT_RESULT_RECEIVED and EVIDENCE_RECORDED leaves the
@@ -744,7 +774,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   if (options.assertResultCustody) options.assertResultCustody();
   let collected = exactSuccessfulReplay
     ? { state: previous, duplicate: true, eventId }
-    : await appendMissionEvent(missionId, { eventId, eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId, changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+    : await appendMissionEvent(missionId, resultEvent, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
     if (options.assertResultCustody) options.assertResultCustody();

@@ -14,6 +14,9 @@ import {
   runGitHubLifeboatLane7,
 } from './githubLifeboatLane7Service.js';
 
+import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
+
 const NOW = new Date('2026-09-18T10:30:00.000Z');
 const HEAD = 'a'.repeat(40);
 const RESULT = 'd'.repeat(40);
@@ -423,4 +426,44 @@ test('custody lost after proved pickup retains processing ownership without a re
   assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
   assert.equal(await readFile(processingPath, 'utf8'), 'original-claim');
   await assert.rejects(readFile(join(pending, 'held.json')), { code: 'ENOENT' });
+});
+
+test('actual failed collector reconciles the original Lane 7 claim after late custody expiry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'lane7-failed-result-'));
+  const processing = join(root, 'processing'), failed = join(root, 'failed'), completed = join(root, 'completed');
+  await Promise.all([mkdir(processing), mkdir(failed), mkdir(completed)]);
+  const missionId = 'lane7-failed-result-replay', actionId = 'lane7-failed-action-001';
+  const store = { root: join(root, 'missions'), snapshotRoot: join(root, 'snapshots') };
+  await createMissionRecord({ missionId, operatorIntent: 'Reconcile a bounded failed result.',
+    intendedOutcome: 'Preserve failed source custody.', missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:/repo', branch: 'fix/lane7-failed-result-replay',
+    worktreePath: 'C:/worktree', allowedFiles: [PATH], requiredEvidence: [], requiredTests: ['node --test lane7.test.mjs'],
+  }, store);
+  await appendMissionEvent(missionId, { eventId: 'failed-result-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: 'C:/worktree', clean: true, receipt: { receiptId: 'failed-worktree-proof',
+      requirement: 'isolated worktree', source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 } }, store);
+  await appendMissionEvent(missionId, { eventId: 'failed-result-dispatch', eventType: 'AGENT_DISPATCHED',
+    agentId: 'chatgpt-github', adapter: 'chatgpt-github' }, store);
+  const item = { missionId, actionId, payload: { missionId, actionId, adapter: 'chatgpt-github' } };
+  const processingPath = join(processing, `${actionId}.json`);
+  await writeFile(processingPath, JSON.stringify(item)); let fresh = true;
+  const fixture = baseOptions(inbox('COMPLETED', { completion: { missionId, actionId,
+    success: false, error: 'bounded source task failed', changedFiles: [] } }), {
+    ...store, readWorkerHeartbeatAgeMs: () => fresh ? 0 : null,
+    loadProcessingClaim: async () => ({ item, processingPath, paths: { processing, failed, completed } }),
+    collectResult: async (input, options) => {
+      const collected = await collectAgentWorkerResult(input, options); fresh = false; return collected;
+    },
+  });
+  const interrupted = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(interrupted.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  const before = (await readMissionRecord(missionId, store)).state;
+  assert.equal(before.dispatch.status, 'failed');
+  assert.equal(await readFile(processingPath, 'utf8'), JSON.stringify(item));
+  fresh = true;
+  const resumed = await runGitHubLifeboatLane7({ ...fixture.options, collectResult: collectAgentWorkerResult });
+  assert.equal(resumed.completion.ok, true); assert.equal(resumed.completion.result.success, false);
+  assert.equal((await readMissionRecord(missionId, store)).state.revision, before.revision);
+  await assert.rejects(readFile(processingPath), { code: 'ENOENT' });
+  assert.equal(await readFile(join(failed, `${actionId}.json`), 'utf8'), JSON.stringify(item));
 });

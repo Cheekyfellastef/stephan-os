@@ -28,6 +28,7 @@ on:
       - 'stephanos-server/services/githubLifeboatLane7*'
       - 'stephanos-server/services/missionOrchestratorWorkerConsumer*'
       - 'stephanos-server/services/missionOrchestratorWorkerService*'
+      - 'stephanos-server/services/missionOrchestratorStore*'
       - 'shared/agents/stephanosCoreDaemonV1*'
       - 'scripts/mission-orchestrator-worker-heartbeat*'
       - 'scripts/stephanos-core-daemon.mjs'
@@ -82,6 +83,7 @@ on:
       - 'stephanos-server/services/githubLifeboatLane7*'
       - 'stephanos-server/services/missionOrchestratorWorkerConsumer*'
       - 'stephanos-server/services/missionOrchestratorWorkerService*'
+      - 'stephanos-server/services/missionOrchestratorStore*'
       - 'shared/agents/stephanosCoreDaemonV1*'
       - 'scripts/mission-orchestrator-worker-heartbeat*'
       - 'scripts/stephanos-core-daemon.mjs'
@@ -173,4 +175,4 @@ jobs:
         with:
           node-version: '24'
       - name: Actual Windows classifier, custody hold and shared admission regressions
-        run: node --test --test-concurrency=1 stephanos-server/services/githubLifeboatLane7Service.test.js stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js scripts/battle-bridge-goal-discovery-heartbeat.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs scripts/sovereign-commander-custody-recycle.test.mjs shared/agents/stephanosCoreProcessObservationV1.test.mjs shared/agents/sovereignCommanderWindows.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
+        run: node --test --test-concurrency=1 stephanos-server/services/githubLifeboatLane7Service.test.js stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorStore.atomic-write.test.js scripts/battle-bridge-goal-discovery-heartbeat.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs scripts/sovereign-commander-custody-recycle.test.mjs shared/agents/stephanosCoreProcessObservationV1.test.mjs shared/agents/sovereignCommanderWindows.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs

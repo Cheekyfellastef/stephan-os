@@ -377,3 +377,22 @@ advance the production clock during identity observation across the120-second
 boundary and cover fresh, expired and future timestamps without wall-clock sleeps.
 Explicit fixed nowMs is only the pre-existing deterministic fixture projection seam;
 no production owner supplies it.
+
+
+Failed completion reconciliation also has a closed replay identity. The canonical
+mission store atomically records a SHA256 of the full normalized failed-result
+identity with its failed state: mission/action/event/adapter/result IDs, failure,
+files, receipt, error and escrow/outbox. The collector accepts an exact retry only
+under the existing mission-state lock and revision/phase precondition, with a
+fresh custody sample, without another event or provider dispatch. Altered fields,
+new evidence, cancellation/fencing, active dispatches and legacy unbound failures
+remain held. Actual Lane7-to-real-collector tests expire custody after durable
+failure, then reconcile the same original processing claim without changing the
+failed mission revision. This is deduplication, not retry admission or writer
+restart authority.
+
+The same private result-custody assertion is also applied by the canonical store
+at commit after lock/audit awaits, before either result/evidence state write.
+The actual two-event collector regression expires all four caller/store samples;
+no first or second event is committed on stale custody, and exact success/failure
+reconciliation remains read-only until the original finalization.
