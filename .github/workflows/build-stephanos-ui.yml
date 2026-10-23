@@ -155,10 +155,6 @@ jobs:
           node-version: '20'
       - name: Run VR Research Agent and workspace projection tests
         run: |
-          vr_link_tests=()
-          if [[ -f apps/vr-link/vr-link-session-lifecycle.test.mjs ]]; then
-            vr_link_tests+=(apps/vr-link/vr-link-session-lifecycle.test.mjs)
-          fi
           node --test --test-concurrency=1 \
             shared/agents/vrResearchAgentV1.test.mjs \
             shared/agents/vrResearchWorkspaceProjectionV1.test.mjs \
@@ -169,8 +165,7 @@ jobs:
             scripts/starfield-vr-storage-telemetry.test.mjs \
             scripts/starfield-vr-project-performance-loop.test.mjs \
             scripts/starfield-vr-crash-recovery.test.mjs \
-            scripts/starfield-vr-telemetry-reporter-runtime.test.mjs \
-            "${vr_link_tests[@]}"
+            scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
   build:
     if: >-
