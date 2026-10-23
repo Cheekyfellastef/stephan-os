@@ -59,3 +59,24 @@ test('missing navigator.xr keeps baseline offline without request',async()=>{
   await h.click();
   assert.equal(h.requestCount(),0);
 });
+
+test('late end event from an old XR session cannot terminate the new one', async () => {
+  const h = harness(); await settle();
+  let firstEnd;
+  const firstRequest = h.click();
+  h.pending[0].resolve({ addEventListener: (type, cb) => { if (type === 'end') firstEnd = cb; } });
+  await firstRequest;
+  firstEnd();
+  assert.equal(h.nodes.session.textContent, 'Fallback');
+  let secondEnd;
+  const secondRequest = h.click();
+  h.pending[1].resolve({ addEventListener: (type, cb) => { if (type === 'end') secondEnd = cb; } });
+  await secondRequest;
+  firstEnd(); // Simulate a stale queued event from the previous session.
+  assert.equal(h.nodes.session.textContent, 'immersive-vr');
+  assert.equal(h.nodes.enter.disabled, true);
+  assert.equal(h.requestCount(), 2);
+  secondEnd();
+  assert.equal(h.nodes.session.textContent, 'Fallback');
+  assert.equal(h.nodes.enter.disabled, false);
+});
