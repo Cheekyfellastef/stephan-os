@@ -123,3 +123,19 @@ test('golden cases distinguish ECMAScript trim and UTF-16 length from platform d
   for (const name of ['maximum-intent-ascii', 'maximum-intent-astral-pair-at-boundary',
     'maximum-intent-astral-pairs']) assert.equal(byName(name).manifest.intent.length, 2400);
 });
+
+test('untrusted rung objects cannot execute coercion during canonical projection', () => {
+  const seed = HIGH_LEVEL_FLYWHEEL_SEEDS_V1[0];
+  let calls = 0;
+  const attacker = Object.freeze({
+    toString() { calls++; return 'VALID_RUNG'; },
+    valueOf() { calls++; return 123; },
+  });
+  for (const invalid of [attacker, new String('VALID_RUNG'), 0, 123, Symbol('VALID_RUNG')]) {
+    assert.throws(() => buildSeedCanopyCanonicalInventoryV1([{ ...seed, growthRungs: [invalid] }]),
+      /RUNG_TYPE_INVALID/);
+  }
+  assert.equal(calls, 0, 'untrusted rung toString and valueOf must never execute');
+  const fallback = buildSeedCanopyCanonicalInventoryV1([{ ...seed, growthRungs: [null] }]);
+  assert.equal(fallback.seeds[0].firstRung, 'INVENTORY');
+});
