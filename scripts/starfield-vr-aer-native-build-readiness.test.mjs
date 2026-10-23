@@ -75,7 +75,7 @@ test('license, patch path and compiler preset substitution fails closed', () => 
 
 test('checkout authority reads only git head and status; no source write is requested', () => {
   const run=(cmd,args)=>{
-    assert.equal(cmd,'git');
+    assert.match(cmd, /git(?:\.exe)?$/i);
     if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
     if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
     if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
@@ -189,7 +189,7 @@ test('checkout inspector forces dirty submodule visibility regardless of ignore=
   assert.equal(result.clean,false);
   assert.equal(result.reason,'SOURCE_DIR_DIRTY');
   assert.ok(calls.some((args)=>args.includes('--ignore-submodules=none')));
-  assert.ok(calls.every((args)=>args[0]==='git'));
+  assert.ok(calls.every((args)=>/git(?:\.exe)?$/i.test(args[0])));
 });
 
 test('real Git checkout with submodule.ignore=all cannot hide dirty nested native code', async(t) => {
@@ -310,5 +310,69 @@ test('real Git index flag and nested-child regressions hold even when status is 
     assert.equal(observed.reason,'SOURCE_GIT_ROOT_MISMATCH');
   } finally {
     await rm(root,{recursive:true,force:true});
+  }
+});
+
+
+test('native source inspector inherits the canonical hardened Git environment for all subprocesses', () => {
+  const calls=[];
+  const run=(cmd,args,options)=>{
+    calls.push({cmd,args,options});
+    if(args.at(-1)==='--show-toplevel')return {status:0,stdout:'/source\n'};
+    if(args.at(-1)==='HEAD')return {status:0,stdout:MUTAR_PIN+'\n'};
+    if(args.at(-1)==='--ignore-submodules=none')return {status:0,stdout:''};
+    if(args.at(-1)==='--recurse-submodules')return {status:0,stdout:'H CMakePresets.json\0H src/CreationEngine/CreationEngineRendererModule.cpp\0'};
+    if(args.at(-1)==='--recursive')return {status:0,stdout:' 1111111111111111111111111111111111111111 extern/vrframework\n 2222222222222222222222222222222222222222 extern/CommonLibSF\n'};
+    throw new Error('unexpected Git command');
+  };
+  const observed=inspectPinnedSourceCheckout('/source',{run});
+  assert.equal(observed.reason,'PINNED_CHECKOUT_VERIFIED');
+  assert.equal(calls.length,5);
+  for(const call of calls){
+    assert.match(call.cmd,/git(?:\.exe)?$/i);
+    assert.equal(call.options.shell,false);
+    assert.equal(call.options.env.GIT_CONFIG_NOSYSTEM,'1');
+    assert.equal(call.options.env.GIT_OPTIONAL_LOCKS,'0');
+    assert.equal(call.options.env.GIT_CONFIG_GLOBAL,process.platform==='win32'?'NUL':'/dev/null');
+    assert.ok(call.args.includes('core.fsmonitor=false'));
+    assert.ok(call.args.includes('core.hooksPath='+(process.platform==='win32'?'NUL':'/dev/null')));
+    const entries=Number(call.options.env.GIT_CONFIG_COUNT);
+    assert.ok(Number.isInteger(entries)&&entries>0);
+    const exported=Array.from({length:entries},(_,i)=>[call.options.env['GIT_CONFIG_KEY_'+i],call.options.env['GIT_CONFIG_VALUE_'+i]]);
+    assert.ok(exported.some(([key,value])=>key==='core.fsmonitor'&&value==='false'));
+    assert.ok(exported.some(([key,value])=>key==='core.hooksPath'&&(value==='NUL'||value==='/dev/null')));
+  }
+});
+
+test('real repository-configured fsmonitor hook never executes during native source readback',async(t)=>{
+  if(process.platform==='win32'){t.skip('POSIX test hook execution requires /bin/sh; Windows custody is separate');return;}
+  if(spawnSync('git',['--version'],{encoding:'utf8'}).status!==0){t.skip('Git unavailable');return;}
+  const base=await mkdtemp(join(tmpdir(),'vr-native-fsmonitor-proof-'));
+  const root=join(base,'repo'),sentinel=join(base,'hook-executed'),hook=join(base,'fsmonitor.sh');
+  const git=(args)=>{
+    const r=spawnSync('git',['-C',root,...args],{encoding:'utf8',timeout:8000});
+    assert.equal(r.status,0,r.stderr);
+    return r.stdout;
+  };
+  try{
+    await mkdir(root);
+    git(['init','-q']);
+    git(['config','user.name','Fixture']);
+    git(['config','user.email','fixture@example.invalid']);
+    await writeFile(join(root,'CMakePresets.json'),'{}\n');
+    await mkdir(join(root,'src/CreationEngine'),{recursive:true});
+    await writeFile(join(root,'src/CreationEngine/CreationEngineRendererModule.cpp'),'int baseline = 1;\n');
+    git(['add','.']);git(['commit','-qm','source']);
+    // An attacker-controlled fsmonitor from local .git/config would launch
+    // on an ordinary status command and can lie about changed tracked paths.
+    await writeFile(hook,'#!/bin/sh\nprintf touched > '+JSON.stringify(sentinel)+'\nprintf "/\\n"\n',{mode:0o700});
+    git(['config','core.fsmonitor',hook]);
+    // The inspected parent HEAD is intentionally not the canonical MutaR SHA;
+    // proof here concerns *no hook execution*, not build admission.
+    const observation=inspectPinnedSourceCheckout(root);
+    assert.equal(observation.ok,false);
+    await assert.rejects(readFile(sentinel,'utf8'),{code:'ENOENT'});
+  }finally{
+    await rm(base,{recursive:true,force:true});
   }
 });
