@@ -155,10 +155,10 @@ export async function buildStarfieldVrProjectPerformanceLoop({
     requirement({
       id: 'delivered-cadence',
       title: 'Delivered headset cadence',
-      metricKeys: ['deliveredCadenceHz'],
+      metricKeys: ['avgDeliveredCadenceHz'],
       sourceRef: sources.airLink.path,
       rationale: 'Low or oscillating delivered cadence distinguishes render misses from transport instability.',
-      available: metricPresent(metrics, 'deliveredCadenceHz'),
+      available: metricPresent(metrics, 'avgDeliveredCadenceHz'),
     }),
     requirement({
       id: 'headset-refresh',
@@ -342,8 +342,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
     : cpuPressureObserved && !cpuAttributionReady
       ? {
           id: 'qualify-starfield-cpu-attribution-collector',
-          title: 'Qualify and activate the existing Starfield CPU attribution collector',
-          rationale: 'The live canonical reporter currently lacks complete busiest-thread and app-family CPU evidence. Existing PR #3187 adds these fields but requires independent Windows review, protected merge, Battle Bridge exact-head sync and a real matched playtest before detailed CPU attribution is available.',
+          title: 'Qualify and activate Starfield CPU attribution in PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests',
+          rationale: 'The live canonical reporter currently lacks complete busiest-thread and app-family CPU evidence. PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests adds these fields but requires independent Windows review, protected merge, Battle Bridge exact-head sync and a real matched playtest before detailed CPU attribution is available.',
           sourceRef: sources.installedCorpus.path,
         }
     : missingTelemetry.some((item) => ['application-frame-time', 'delivered-cadence', 'headset-refresh'].includes(item.id))
