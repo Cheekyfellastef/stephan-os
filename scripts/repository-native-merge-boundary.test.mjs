@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { preflightBeforeProtectedApproval } from './operator-protected-personal-repository-merge.mjs';
-import { PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+import { PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS, validatePersonalRepositoryConversationState, validatePersonalRepositoryEvidence } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
 
 function preApprovalFixture() {
   const repository = 'Cheekyfellastef/stephan-os';
@@ -157,6 +157,48 @@ test('pre-approval rejects identity, review and collection gaps and concurrent m
   ]) {
     const f = preApprovalFixture(); mutate(f);
     await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
+});
+
+test('pre-approval and protected evidence share the review and conversation acceptance contract', async () => {
+  for (const decision of [null, '', 'APPROVED', ' approved ', undefined,
+    'REVIEW_REQUIRED', 'CHANGES_REQUESTED', 'UNKNOWN', 'changes_requested', 'review_required']) {
+    const review = { reviewDecision: decision, mergeable: 'MERGEABLE', unresolvedThreadCount: 0 };
+    const expected = [null, '', 'APPROVED', ' approved ', undefined].includes(decision);
+    const contract = validatePersonalRepositoryConversationState(review);
+    assert.equal(contract.valid, expected, String(decision));
+    const final = validatePersonalRepositoryEvidence(review);
+    for (const blocker of contract.blockers) assert.ok(final.blockers.includes(blocker));
+    const f = preApprovalFixture();
+    f.state.review.reviewDecision = decision;
+    if (expected) await preflightBeforeProtectedApproval(f.context, f.adapters);
+    else await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters),
+      error => contract.blockers.every(blocker => error.details?.blockers?.includes(blocker)));
+  }
+});
+
+test('every pre-approval identity read rejects unsupported or missing review state', async () => {
+  for (const readNumber of [1, 2, 3]) {
+    for (const mutate of [
+      review => { review.reviewDecision = 'REVIEW_REQUIRED'; },
+      review => { review.reviewDecision = 'CHANGES_REQUESTED'; },
+      review => { review.reviewDecision = 'UNKNOWN'; },
+      review => { delete review.reviewDecision; },
+      review => { review.mergeable = 'UNKNOWN'; },
+      review => { delete review.mergeable; },
+      review => { review.unresolvedThreadCount = 1; },
+      review => { delete review.unresolvedThreadCount; },
+    ]) {
+      const f = preApprovalFixture();
+      const readIdentity = f.adapters.readIdentity;
+      let observations = 0;
+      f.adapters.readIdentity = async () => {
+        if (++observations === readNumber) mutate(f.state.review);
+        return readIdentity();
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+      assert.equal(observations, readNumber);
+    }
   }
 });
 

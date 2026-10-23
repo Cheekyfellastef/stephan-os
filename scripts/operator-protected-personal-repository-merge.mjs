@@ -49,6 +49,7 @@ import {
   validatePersonalRepositoryDispatchExecution,
   validatePersonalRepositoryDispatchWorkflowDefinition,
   validatePersonalRepositoryEvidence,
+  validatePersonalRepositoryConversationState,
   validatePersonalRepositoryRulesetProofRequest,
   validatePersonalRepositoryRulesetProofResponse,
   validatePersonalRepositorySquashCompletion,
@@ -478,9 +479,12 @@ export async function preflightBeforeProtectedApproval(context, {
       || pr?.head?.ref !== identity.branch || pr?.head?.sha !== identity.sourceHead
       || pr?.base?.ref !== 'main' || pr?.base?.sha !== identity.baseSha
       || liveMainRef?.object?.sha !== identity.baseSha || headCommit?.sha !== identity.sourceHead
-      || headCommit?.tree?.sha !== identity.sourceTree || review?.mergeable !== 'MERGEABLE'
-      || review?.unresolvedThreadCount !== 0 || review?.reviewDecision === 'CHANGES_REQUESTED') {
+      || headCommit?.tree?.sha !== identity.sourceTree) {
       fail('Pre-approval PR identity or conversation state is not admissible.');
+    }
+    const conversation = validatePersonalRepositoryConversationState(review);
+    if (!conversation.valid) {
+      fail('Pre-approval review or conversation state is not admissible.', { blockers: conversation.blockers });
     }
     const expectation = buildPersonalRepositoryCheckExpectation({
       repository: context.repository, identity, mergeStateStatus: review.mergeStateStatus,
