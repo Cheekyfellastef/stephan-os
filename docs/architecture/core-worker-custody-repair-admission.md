@@ -315,3 +315,18 @@ exit contradiction. It fails on the previous source and passes on the corrected
 contract. Existing HTTP success fixtures now use the actual source schema and
 format, while real pre-spawn exception and completed ordinary HOLD behavior
 remain covered. No new process, queue, witness, authority or merge route exists.
+
+
+### Awaited pre-sweep custody boundary
+
+The owner must not carry an affirmative worker sample through awaited Lane 7
+network, capacity, handoff or queue reads. The heartbeat rechecks before each
+subsequent pre-sweep provider. Lane 7 receives the owner's canonical age reader
+and workspace, samples after handoff validation, and supplies the same synchronous
+assertion to the existing queue consumer immediately before its pending-to-processing
+rename. The consumer's other callers retain their existing admission policy.
+The acknowledgement keeper samples after processing-file reads immediately before
+publishing CLAIM_ACCEPTED; missing, stale, nonnumeric or throwing evidence holds.
+Receipt and outbox publications sample again at their own boundaries. No new queue,
+worker, runtime lease or executable is introduced. Native CI exercises the actual
+helpers and queue consumer, including time expiring across awaited reads.

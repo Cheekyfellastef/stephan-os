@@ -1,3 +1,4 @@
+import { assertCanonicalMissionWorkerCustody } from '../../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -383,6 +384,7 @@ async function publishOutbox({ queue, sourceHead, paths, now, adapter, options }
     }
   }
   const write = options.writeOutbox || ((body) => adapter.writeComment(GITHUB_LIFEBOAT_LANE7_OUTBOX_COMMENT_ID, body));
+  assertCanonicalMissionWorkerCustody(options);
   const result = await write(renderOutbox(payload));
   return Object.freeze({ ok: result?.ok === true, payload, publication: result, finalVerdict: result?.ok === true ? 'GITHUB_LIFEBOAT_LANE7_OUTBOX_PUBLISHED' : 'GITHUB_LIFEBOAT_LANE7_OUTBOX_BLOCKED' });
 }
@@ -414,6 +416,7 @@ async function appendReceipt(previous, state, phase, paths, now, options, additi
     proofRefs: additions.proofRefs || previous.proofRefs,
     expectedNextAction: additions.expectedNextAction || '',
   });
+  assertCanonicalMissionWorkerCustody(options);
   const stored = await append(paths.workspaceRoot, receipt, receiptOptions(paths, options));
   if (stored?.ok !== true) throw new Error(`LANE7_EXECUTION_RECEIPT_APPEND_FAILED:${text(stored?.reason, 'unknown')}`);
   return receipt;
@@ -444,7 +447,8 @@ async function beginClaim(inbox, queue, sourceHead, paths, now, options) {
   const claimRequest = inbox.envelope.claim;
   const queueRoot = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   const claimFn = options.claimNext || claimNextMissionWorkerItem;
-  const claim = await claimFn('chatgpt-github', { queueRoot, actionGrant: { adapter: 'chatgpt-github', missionId: claimRequest.missionId, actionId: claimRequest.actionId } });
+  assertCanonicalMissionWorkerCustody(options);
+  const claim = await claimFn('chatgpt-github', { queueRoot, assertClaimCustody: () => assertCanonicalMissionWorkerCustody(options), actionGrant: { adapter: 'chatgpt-github', missionId: claimRequest.missionId, actionId: claimRequest.actionId } });
   if (!claim) return Object.freeze({ ok: false, reason: 'LANE7_CLAIM_NOT_PENDING', actionId: claimRequest.actionId });
   try {
     let receipt = await latestReceipt(claim, paths, options);

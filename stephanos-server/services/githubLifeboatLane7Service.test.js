@@ -75,6 +75,7 @@ function baseOptions(observed, extra = {}) {
     publications,
     options: {
       now: NOW,
+      readWorkerHeartbeatAgeMs: () => 0,
       paths: { repoRoot: 'C:/repo', workspaceRoot: 'C:/workspace' },
       readSourceHead: async () => HEAD,
       adapter: adapter(observed, writes),
@@ -332,4 +333,27 @@ test('Lane 7 rejects an exact commit whose complete GitHub diff contains undecla
   const result = await runGitHubLifeboatLane7(fixture.options);
   assert.equal(result.completion.ok, false);
   assert.equal(result.completion.reason, 'LANE7_ESCROW_COMPLETE_DIFF_MISMATCH');
+});
+
+test('Lane 7 rechecks custody after awaited handoff validation before claiming', async () => {
+  const entry = queueEntry(); let fresh = true; let claims = 0;
+  const fixture = baseOptions(inbox('CLAIMED', { claim: { actionId: entry.item.actionId, missionId: entry.item.missionId } }), {
+    readWorkerHeartbeatAgeMs: () => fresh ? 119999 : 120001,
+    readQueue: async () => [entry],
+    readWorkspaceHandoff: async () => {
+      await Promise.resolve(); fresh = false;
+      return { handoffId: entry.item.actionId, toParticipantId: 'chatgpt', correlationId: entry.item.missionId };
+    },
+    claimNext: async () => { claims++; return null; },
+  });
+  const result = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(claims, 0); assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
+test('Lane 7 samples custody again after queue awaits before outbox publication', async () => {
+  let reads = 0; let fresh = true;
+  const fixture = baseOptions(inbox(), { readWorkerHeartbeatAgeMs: () => fresh ? 0 : null,
+    readQueue: async () => { if (++reads === 2) fresh = false; return []; } });
+  await assert.rejects(runGitHubLifeboatLane7(fixture.options), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  assert.equal(fixture.writes.length, 0);
 });

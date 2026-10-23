@@ -639,3 +639,16 @@ test('retry ownership proof requires released failed claim plus terminal executi
   assert.equal(proven.classification, 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN');
   assert.equal(proven.executionReceiptId, 'terminal-receipt');
 });
+
+test('claim custody is sampled after queue reads immediately before pending rename', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('claim-custody-expiry'), options);
+  await publishMissionWorkerAction(created.state, options);
+  let checks = 0;
+  await assert.rejects(claimNextMissionWorkerItem('openclaw-signed', {
+    ...options, assertClaimCustody: () => { checks++; throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); },
+  }), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  assert.equal(checks, 1);
+  assert.deepEqual(await readdir(join(options.queueRoot, 'openclaw-signed', 'processing')), []);
+  assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
+});

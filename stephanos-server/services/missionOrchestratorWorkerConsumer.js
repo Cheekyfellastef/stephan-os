@@ -526,6 +526,8 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
           'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
         continue;
       }
+      // Lane 7 admission must survive the awaited queue and source-fence reads.
+      if (options.assertClaimCustody) options.assertClaimCustody();
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
       try {

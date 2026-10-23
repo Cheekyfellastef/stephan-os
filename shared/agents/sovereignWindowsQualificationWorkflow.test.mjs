@@ -17,6 +17,9 @@ test('isolated changes anywhere in the qualified estate and reviewer rerun the n
     'shared/agents/windowsAuthoritySpecialistBoundaryV1.test.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/canonicalMissionWorkerEvidenceV1.mjs',
+    'stephanos-server/services/githubLifeboatLane7Service.js',
+    'stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js',
+    'stephanos-server/services/missionOrchestratorWorkerConsumer.js',
     'scripts/battle-bridge-goal-discovery-heartbeat.mjs',
     'scripts/stephanos-core-daemon.mjs',
     'scripts/sovereign-commander-control-plane-repair.mjs',
@@ -31,7 +34,11 @@ test('isolated changes anywhere in the qualified estate and reviewer rerun the n
   }
   const windowsJob = source.slice(source.indexOf('  windows-core-admission:'));
   assert.match(windowsJob, /runs-on: windows-latest/);
-  for (const fixture of ['scripts/sovereign-commander-custody-recycle.test.mjs',
+  for (const fixture of ['stephanos-server/services/githubLifeboatLane7Service.test.js',
+    'stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.test.js',
+    'stephanos-server/services/missionOrchestratorWorkerConsumer.test.js',
+    'scripts/battle-bridge-goal-discovery-heartbeat.test.mjs',
+    'scripts/sovereign-commander-custody-recycle.test.mjs',
     'shared/agents/stephanosCoreDaemonV1.test.mjs',
     'scripts/sovereign-commander-control-plane-repair.test.mjs',
     'shared/agents/stephanosCoreProcessObservationV1.test.mjs',

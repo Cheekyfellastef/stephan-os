@@ -950,3 +950,18 @@ test('configured Shared Workspace is preserved for provider-neutral execution re
   assert.equal(observedBuilderOptions.sharedWorkspaceRoot, configuredWorkspace);
   assert.equal(observedBuilderOptions.env.STEPHANOS_SHARED_AGENT_WORKSPACE, configuredWorkspace);
 });
+
+test('custody expiring inside lifeboat await prevents claim acknowledgement and remaining pre-sweep work', async () => {
+  let fresh = true; const calls = [];
+  const result = await heartbeat({ readWorkerHeartbeatAgeMs: () => fresh ? 119999 : 120001,
+    refreshGithubLifeboat: async options => {
+      assert.equal(options.readWorkerHeartbeatAgeMs(), 119999);
+      await Promise.resolve(); fresh = false; return githubLifeboatReady();
+    },
+    refreshGithubLifeboatClaimAck: async () => { calls.push('ack'); },
+    refreshLifeboatCapacity: async () => { calls.push('capacity'); },
+    conveyor: async () => { calls.push('claim'); },
+  });
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  assert.deepEqual(calls, []);
+});

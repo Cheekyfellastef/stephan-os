@@ -465,27 +465,36 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     try {
       githubLifeboat = await refreshGithubLifeboat({
         ...githubLifeboatOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         gitCommand: githubLifeboatOptions.gitCommand || 'git',
         ghCommand: githubLifeboatOptions.ghCommand || BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
       });
     } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try {
       githubLifeboatClaimAck = await refreshGithubLifeboatClaimAck({
         ...githubLifeboatClaimAckOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         sourceHead: githubLifeboat?.sourceHead || githubLifeboatClaimAckOptions.sourceHead || '',
       });
     } catch (error) { githubLifeboatClaimAck = unavailableGithubLifeboatClaimAck(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { sovereignCapacity = await refreshSovereignCapacity({ paths, ...sovereignOptions }); }
     catch (error) { sovereignCapacity = { ok: false, available: false, reason: 'SOVEREIGN_BUILDER8_CAPACITY_REFRESH_EXCEPTION' }; }
 
+    if (!workerAllowed()) return workerHold();
     try { openClawCapacity = await refreshOpenClawCapacity(openClawOptions); }
     catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 

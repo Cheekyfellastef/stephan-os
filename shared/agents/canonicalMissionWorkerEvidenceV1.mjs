@@ -58,3 +58,13 @@ export function readCanonicalMissionWorkerHeartbeatAgeMs({
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }
 }
+
+// Sample at the mutation boundary, never carry an earlier affirmative boolean
+// across an awaited network, queue, handoff or capacity operation.
+export function assertCanonicalMissionWorkerCustody(options = {}) {
+  const read = options.readWorkerHeartbeatAgeMs || readCanonicalMissionWorkerHeartbeatAgeMs;
+  let age;
+  try { age = read({ env: options.env, workspaceRoot: options.workerWorkspaceRoot }); }
+  catch { throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); }
+  if (!canonicalMissionWorkerEvidenceAllowsWork(age)) throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN');
+}
