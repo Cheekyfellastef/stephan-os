@@ -357,3 +357,14 @@ independent caller-provided identity override. The helper's exact-source candida
 pin and its parent's child pin are updated together and still require external
 qualification and protected bootstrap admission. Native tests retain matching
 command lines while substituting executable identities.
+
+
+Interrupted finalization keeps create-only result publication and the last custody
+sample before queue rename. A fresh retry may resume only if the existing bounded,
+regular single-link file is byte-identical to the fixed expected result. The open
+handle must match the pathname's before/after identity; links, path swaps, partial,
+malformed or conflicting results remain held and are never overwritten. The actual
+completion regression expires custody after publication, proves processing remains
+owned, rejects an unrelated existing result unchanged, and resumes the exact result
+through the original rename with fresh evidence. This is not permission to clear
+a lease or rerun a source writer.

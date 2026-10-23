@@ -5,6 +5,8 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Stephanos.OriginalR7DaclReadback;
 
+internal enum R7NativeTokenStampKind { Primary = 1, Impersonation = 2 }
+
 // An instantaneous kernel process/token binding, not historical enrollment,
 // executable provenance, whole-source exclusion or continuous containment.
 // Do not publish the input PID, SID or creation time through a public mailbox.
@@ -102,20 +104,29 @@ public static class R7ProcessBoundWriteDenial
         }
     }
 
-    private static bool MatchesLiveProcess(SafeProcessHandle process, long expected)
+    internal static bool MatchesLiveProcess(SafeProcessHandle process, long expected)
         => WaitForSingleObject(process, 0) == WaitTimeout
             && GetProcessTimes(process, out long created, out _, out _, out _)
             && created == expected;
 
-    private readonly record struct TokenStamp(ulong TokenId, ulong AuthenticationId,
-        ulong ModifiedId, uint GroupCount, uint PrivilegeCount, string PrivilegeDigest);
+    internal readonly record struct TokenStamp(ulong TokenId, ulong AuthenticationId,
+        ulong ModifiedId, uint GroupCount, uint PrivilegeCount, string PrivilegeDigest, string GroupInventoryDigest,
+        int NativeType = 1, int ImpersonationLevel = -1);
 
-    private static TokenStamp ReadStamp(SafeAccessTokenHandle token)
+    internal static TokenStamp ReadStamp(SafeAccessTokenHandle token)
+        => ReadStamp(token, R7NativeTokenStampKind.Primary);
+
+    // Explicit internal metadata observation only. Default/public source-writer
+    // callers remain primary-only. Reuse the ONE native statistics layout.
+    internal static TokenStamp ReadStamp(SafeAccessTokenHandle token, R7NativeTokenStampKind kind)
     {
+        if (kind is not (R7NativeTokenStampKind.Primary or R7NativeTokenStampKind.Impersonation))
+            throw new InvalidOperationException();
         int size = Marshal.SizeOf<TokenStatistics>();
         if (!GetTokenInformation(token, 10 /* TokenStatistics */,
             out TokenStatistics info, size, out int actual)
-            || actual != size || info.TokenType != 1 /* TokenPrimary */)
+            || actual != size || info.TokenType != (int)kind
+            || (kind == R7NativeTokenStampKind.Impersonation && info.ImpersonationLevel is < 0 or > 3))
             throw new InvalidOperationException();
         // On some Windows versions privilege removal changes the privilege
         // inventory without advancing ModifiedId. Bind the actual bounded,
@@ -123,8 +134,18 @@ public static class R7ProcessBoundWriteDenial
         byte[] privileges = ReadPrivileges(token);
         if (BitConverter.ToUInt32(privileges) != info.PrivilegeCount)
             throw new InvalidOperationException();
+        var groups = R7TokenGroupInventory.ReadBoundedInventory(token);
+        if (groups.Groups.Count != info.GroupCount
+            || !GetTokenInformation(token, 10, out TokenStatistics after, size, out int afterSize)
+            || afterSize != size || after.TokenType != (int)kind
+            || (kind == R7NativeTokenStampKind.Impersonation && after.ImpersonationLevel != info.ImpersonationLevel)
+            || after.TokenId != info.TokenId || after.AuthenticationId != info.AuthenticationId
+            || after.ModifiedId != info.ModifiedId || after.GroupCount != info.GroupCount
+            || after.PrivilegeCount != info.PrivilegeCount)
+            throw new InvalidOperationException();
         return new(info.TokenId, info.AuthenticationId, info.ModifiedId,
-            info.GroupCount, info.PrivilegeCount, Convert.ToHexString(SHA256.HashData(privileges)));
+            info.GroupCount, info.PrivilegeCount, Convert.ToHexString(SHA256.HashData(privileges)), groups.Digest,
+            (int)kind, kind == R7NativeTokenStampKind.Impersonation ? info.ImpersonationLevel : -1);
     }
 
     private static byte[] ReadPrivileges(SafeAccessTokenHandle token)

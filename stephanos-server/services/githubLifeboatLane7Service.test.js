@@ -290,8 +290,25 @@ test('Lane 7 completion advances only after exact external escrow is proven', as
     assert.equal(await readFile(processingPath, 'utf8'), JSON.stringify(item));
     await assert.rejects(readFile(join(completed, `${actionId}.result.json`)), { code: 'ENOENT' });
   }
+  // Expire only after create-only result publication. Fresh retry must use
+  // those exact bytes and finish the original processing rename.
+  let samples = 0;
+  const interrupted = await runGitHubLifeboatLane7({ ...fixture.options,
+    readWorkerHeartbeatAgeMs: () => ++samples === 6 ? null : 0 });
+  assert.equal(interrupted.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+  const persistedPath = join(completed, `${actionId}.result.json`);
+  const persisted = await readFile(persistedPath);
+  assert.equal(await readFile(processingPath, 'utf8'), JSON.stringify(item));
+  const unrelated = Buffer.from(persisted); unrelated[0] = 33;
+  await writeFile(persistedPath, unrelated);
+  const conflicting = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(conflicting.blocker, 'LANE7_FINALIZATION_RESULT_CONFLICT');
+  assert.deepEqual(await readFile(persistedPath), unrelated);
+  assert.equal(await readFile(processingPath, 'utf8'), JSON.stringify(item));
+  await writeFile(persistedPath, persisted);
   const result = await runGitHubLifeboatLane7(fixture.options);
   assert.equal(result.completion.ok, true);
+  assert.deepEqual(await readFile(persistedPath), persisted);
   assert.equal(result.completion.result.success, true);
   assert.equal(collected.adapter, 'chatgpt-github');
   assert.deepEqual(collected.changedFiles, [PATH]);

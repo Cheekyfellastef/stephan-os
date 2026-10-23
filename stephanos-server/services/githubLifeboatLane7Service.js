@@ -1,7 +1,8 @@
 import { assertCanonicalMissionWorkerCustody } from '../../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile, lstat, open } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import { basename, resolve } from 'node:path';
 
 import {
@@ -523,6 +524,30 @@ function validResultReceipt(receipt) {
   return SHA256.test(text(receipt.sha256)) || SHA256.test(text(receipt.commandOutputHash)) || Number(receipt.exitCode) === 0;
 }
 
+// A custody hold after create-only publication must be resumable without
+// overwriting existing evidence. Bind the opened regular file to its pathname,
+// bound the read to the exact expected length, and require byte identity.
+async function requireExactPersistedResult(path, expected) {
+  let handle;
+  try {
+    const before = await lstat(path);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size !== expected.length)
+      throw new Error('LANE7_FINALIZATION_RESULT_CONFLICT');
+    handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== expected.length)
+      throw new Error('LANE7_FINALIZATION_RESULT_CONFLICT');
+    const bytes = Buffer.alloc(expected.length + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const after = await lstat(path);
+    if (bytesRead !== expected.length || !bytes.subarray(0, bytesRead).equals(expected)
+        || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1
+        || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== expected.length)
+      throw new Error('LANE7_FINALIZATION_RESULT_CONFLICT');
+  } catch { throw new Error('LANE7_FINALIZATION_RESULT_CONFLICT'); }
+  finally { if (handle) await handle.close(); }
+}
+
 async function finishProcessingClaim(claim, result, success, options) {
   assertCanonicalMissionWorkerCustody(options);
   await mkdir(success ? claim.paths.completed : claim.paths.failed, { recursive: true });
@@ -530,7 +555,12 @@ async function finishProcessingClaim(claim, result, success, options) {
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(target, fileName.replace(/\.json$/, '.result.json'));
   assertCanonicalMissionWorkerCustody(options);
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  const expected = Buffer.from(`${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  try { await writeFile(resultPath, expected, { flag: 'wx' }); }
+  catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    await requireExactPersistedResult(resultPath, expected);
+  }
   assertCanonicalMissionWorkerCustody(options);
   await rename(claim.processingPath, resolve(target, fileName));
   return resultPath;
