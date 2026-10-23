@@ -19,10 +19,20 @@ export function isSovereignMaintenanceObservationV1(processId) {
   return READ_ONLY_ACTIONS.has(processId);
 }
 
+// Closed wire contracts: a descendant's receipt cannot substitute for its parent.
+const TERMINAL_PROTOCOLS = Object.freeze({
+  'repair-stephanos': Object.freeze({ schema: 'stephanos.sovereign-commander-stephanos-repair.v1', marker: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=', failedExit: 2 }),
+  'repair-goal-builder-flow': Object.freeze({ schema: 'stephanos.sovereign-commander-goal-builder-repair.v1', marker: 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=', failedExit: 2 }),
+  'repair-control-plane': Object.freeze({ schema: 'stephanos.sovereign-commander-control-plane-repair.v1', marker: '', failedExit: 1 }),
+});
+
 // Terminal parent exit is not descendant exclusion. Share this negative-evidence
 // model between scheduled repair and manually reserved fixed maintenance.
-export function sovereignMaintenanceCustodyUnprovenV1(execution = {}, receipt = {}) {
+export function sovereignMaintenanceCustodyUnprovenV1(execution = {}, receipt = {}, processId = '') {
   if (!Number.isInteger(execution.status) || execution.signal) return true;
+  const protocol = Object.hasOwn(TERMINAL_PROTOCOLS, processId) ? TERMINAL_PROTOCOLS[processId] : null;
+  if (protocol && (receipt?.schemaVersion !== protocol.schema || typeof receipt?.ok !== 'boolean'
+      || execution.status !== (receipt.ok ? 0 : protocol.failedExit))) return true;
   const pending = [execution, receipt];
   const seen = new Set();
   while (pending.length) {
@@ -47,29 +57,20 @@ export function sovereignMaintenanceCustodyUnprovenV1(execution = {}, receipt = 
 }
 
 export function readSovereignMaintenanceTerminalReceiptV1(stdout = '', processId = '') {
-  const required = ['repair-stephanos', 'repair-goal-builder-flow', 'repair-control-plane'].includes(processId);
+  const protocol = Object.hasOwn(TERMINAL_PROTOCOLS, processId) ? TERMINAL_PROTOCOLS[processId] : null;
+  if (!protocol) return {};
+  const hold = () => ({ status: null });
   const raw = typeof stdout === 'string' ? stdout.trim() : '';
-  if (Buffer.byteLength(raw, 'utf8') > 64 * 1024) return { status: null };
-  // The existing control-plane CLI emits bare JSON, while the two repair
-  // wrappers emit markers. Preserve all three established wire formats.
-  const markers = [
-    'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=',
-    'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=',
-  ];
-  const schemas = new Set([
-    'stephanos.sovereign-commander-stephanos-repair.v1',
-    'stephanos.sovereign-commander-goal-builder-repair.v1',
-    'stephanos.sovereign-commander-control-plane-repair.v1',
-  ]);
-  const lines = raw.split(/\r?\n/).reverse();
-  for (const line of lines) {
-    const marker = markers.find(value => line.trim().startsWith(value));
-    const candidate = marker ? line.trim().slice(marker.length) : line.trim();
-    try {
-      const receipt = JSON.parse(candidate);
-      if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)
-          && schemas.has(receipt.schemaVersion)) return receipt;
-    } catch {}
-  }
-  return required ? { status: null } : {};
+  if (!raw || Buffer.byteLength(raw, 'utf8') > 64 * 1024) return hold();
+  // Each established CLI writes its own terminal record last. Never scan back
+  // to an earlier descendant record after the requested parent's record is lost.
+  const line = raw.split(/\r?\n/).at(-1).trim();
+  if (protocol.marker && !line.startsWith(protocol.marker)) return hold();
+  const candidate = protocol.marker ? line.slice(protocol.marker.length) : line;
+  try {
+    const receipt = JSON.parse(candidate);
+    if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+        && receipt.schemaVersion === protocol.schema && typeof receipt.ok === 'boolean') return receipt;
+  } catch {}
+  return hold();
 }

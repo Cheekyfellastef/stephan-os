@@ -24,7 +24,6 @@ export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS = 15 * 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
-const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 const REPAIR_TIMEOUT_CUSTODY_BLOCKER = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
 
 function text(value) {
@@ -33,21 +32,6 @@ function text(value) {
 
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
-}
-
-function parseContinuousRepairReceipt(stdout = '') {
-  const line = String(stdout || '')
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter((value) => value.startsWith(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER))
-    .at(-1);
-  if (!line) return {};
-  try {
-    const parsed = JSON.parse(line.slice(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER.length));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 function appendBoundedOutput(current, chunk, maxBytes) {
@@ -150,10 +134,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         clearTimeoutImpl(killTimer);
         killTimer = null;
       }
-      const receipt = parseContinuousRepairReceipt(stdout);
+      const receipt = readSovereignMaintenanceTerminalReceiptV1(stdout, 'repair-stephanos');
       state.timeoutCustodyHeld ||= sovereignMaintenanceCustodyUnprovenV1(
         { status: code, signal, errorCode: fallbackBlocker },
-        typeof receipt?.ok === 'boolean' ? receipt : { status: null },
+        receipt, 'repair-stephanos',
       );
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
         ? receipt.reporting
@@ -267,7 +251,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
         if (!provenPreExecutionDenial
             && sovereignMaintenanceCustodyUnprovenV1(execution,
-              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId))) {
+              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId), command?.plan?.processId)) {
           state.timeoutCustodyHeld = true;
           state.lastOk = false;
           state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;

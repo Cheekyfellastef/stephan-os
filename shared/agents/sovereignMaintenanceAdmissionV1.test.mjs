@@ -272,7 +272,7 @@ test('actual bare-JSON control-plane protocol holds the real manual owner after 
     },
   });
   const stdout = JSON.stringify(receipt) + '\n'; // Exact existing CLI output, no invented marker.
-  const parsed = read(stdout);
+  const parsed = read(stdout, 'repair-control-plane');
   assert.equal(parsed.schemaVersion, 'stephanos.sovereign-commander-control-plane-repair.v1');
   assert.equal(held({ status: 1 }, parsed), true);
   assert.equal(held({ status: 0 }, { repair: { tasks: [{ status: 0, executionEvidence: [{ status: null, errorCode: 'ETIMEDOUT' }] }] } }), true);
@@ -299,4 +299,33 @@ test('missing, malformed, unknown and oversized wrapper protocols cannot release
     }
   }
   assert.equal(held({ status: 0 }, read('', 'unrelated-fixed-action')), false);
+});
+
+test('terminal protocol is bound to the requested wrapper, exact format and final record', async () => {
+  const { readSovereignMaintenanceTerminalReceiptV1: read, sovereignMaintenanceCustodyUnprovenV1: held } = await import('./sovereignMaintenanceAdmissionV1.mjs');
+  const protocols = [
+    ['repair-stephanos', 'stephanos.sovereign-commander-stephanos-repair.v1', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=', 2],
+    ['repair-goal-builder-flow', 'stephanos.sovereign-commander-goal-builder-repair.v1', 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=', 2],
+    ['repair-control-plane', 'stephanos.sovereign-commander-control-plane-repair.v1', '', 1],
+  ];
+  for (const [processId, schema, marker, failedExit] of protocols) {
+    for (const ok of [true, false]) {
+      const receipt = { schemaVersion: schema, ok, steps: [], blocker: ok ? '' : 'ORDINARY_COMPLETED_HOLD' };
+      const wire = marker + JSON.stringify(receipt);
+      const status = ok ? 0 : failedExit;
+      assert.equal(held({ status }, read(wire, processId), processId), false);
+      assert.equal(held({ status: ok ? failedExit : 0 }, read(wire, processId), processId), true, 'contradictory exit cannot release');
+      for (const [otherId, otherSchema, otherMarker] of protocols) {
+        if (otherId === processId) continue;
+        const otherWire = otherMarker + JSON.stringify({ schemaVersion: otherSchema, ok: true, steps: [] });
+        for (const output of [otherWire, wire + '\n' + otherWire,
+          marker + JSON.stringify({ schemaVersion: otherSchema, ok: true }), otherWire + '\n{truncated']) {
+          assert.equal(held({ status }, read(output, processId), processId), true, processId + ' must reject ' + otherId);
+        }
+        assert.equal(held({ status }, read(otherWire + '\n' + wire, processId), processId), false);
+      }
+      const wrongFormat = marker ? JSON.stringify(receipt) : 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_RESULT=' + JSON.stringify(receipt);
+      assert.equal(held({ status }, read(wrongFormat, processId), processId), true);
+    }
+  }
 });

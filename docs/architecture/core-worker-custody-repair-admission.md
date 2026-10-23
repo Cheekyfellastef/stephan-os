@@ -296,3 +296,22 @@ job include this wrapper and its tests. The original #3188 branch remains
 untouched; its same-#2961 control-plane changes must be semantically reconciled
 by the existing owner if integrated later. These changes stay on #3189 as the
 bounded correction to its independently reported current-head finding.
+
+## Requested-operation binding replaces the shared schema set
+
+The third related terminal-custody review round required a structural design
+review rather than another local guard. The earlier shared set could accept a
+sibling wrapper's receipt after the required parent's receipt disappeared.
+The terminal contract is now a closed tagged union keyed by the fixed requested
+process identity: exact schema, exact marker versus bare-JSON format, and exact
+success/failure exit code. Only the final nonempty record can satisfy it. A
+foreign record, wrong format, truncated parent, unknown schema or contradictory
+exit remains unknown custody. The scheduled guardian uses the same decoder and
+classifier as manual reservation; the former loose scheduled parser is removed.
+
+A protocol matrix covers every wrapper pair, both outer outcomes, marker/bare
+format substitutions, foreign records before/after the parent, truncation and
+exit contradiction. It fails on the previous source and passes on the corrected
+contract. Existing HTTP success fixtures now use the actual source schema and
+format, while real pre-spawn exception and completed ordinary HOLD behavior
+remain covered. No new process, queue, witness, authority or merge route exists.

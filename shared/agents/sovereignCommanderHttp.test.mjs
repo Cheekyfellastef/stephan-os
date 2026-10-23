@@ -280,7 +280,7 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
   assert.equal(spawnCount, 1);
 
   activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-    + JSON.stringify({
+    + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1',
       ok: true,
       finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
       reporting: {
@@ -344,7 +344,7 @@ test('continuous repair guardian rejects a green repair receipt without durable 
 
   timers[0].fn();
   activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-    + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
+    + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
     + '\n');
   activeChild.emit('close', 0);
 
@@ -385,7 +385,7 @@ function retryGuardianHarness() {
     assert.equal(cleared.has(timer), false);
     timer.fn();
     assert.equal(guardian.runNow(), false, 'in-flight cycle retains single flight');
-    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=' + JSON.stringify({
+    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=' + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1',
       ok, sourceHead: head, blocker,
       finalVerdict: ok ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
       reporting: { ok: true, outcome: ok ? 'HEALTHY' : 'BLOCKED', status: ok ? 'READY' : 'ATTENTION_REQUIRED' },
@@ -505,7 +505,7 @@ test('timed-out Windows repair holds descendant custody instead of launching a s
       // Even a late success receipt or direct-child exit proves nothing about
       // grandchild Task Scheduler/PowerShell work still in flight on Windows.
       child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-        + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
+        + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
           reporting: { ok: true, outcome: 'HEALTHY' } }) + '\n');
       child.emit('close', 0);
       assert.equal(guardian.status().timeoutCustodyHeld, true);
