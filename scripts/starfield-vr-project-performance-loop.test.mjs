@@ -88,7 +88,7 @@ test('matched CPU evidence chooses safe per-stage investigation before graphics 
     metrics: {
       avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
       avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9,
-      deliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+      avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
       avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
     },
   });
