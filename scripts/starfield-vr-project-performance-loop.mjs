@@ -224,7 +224,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       metricKeys: ['avgGpuUtilPct', 'maxGpuMemoryPct', 'avgSystemCpuPct', 'minGameDriveFreePct'],
       sourceRef: sources.installedCorpus.path,
       rationale: 'Resource attribution remains the first coarse performance split.',
-      available: metricPresent(metrics, 'avgGpuUtilPct') && metricPresent(metrics, 'maxGpuMemoryPct'),
+      available: ['avgGpuUtilPct', 'maxGpuMemoryPct', 'avgSystemCpuPct', 'minGameDriveFreePct']
+        .every((key) => measuredCpuPercent(metrics, key)),
     }),
     requirement({
       id: 'long-session-drift',

@@ -165,3 +165,36 @@ test('CPU stage isolation requires same-run measured sample counts and finite CP
   assert.equal(measured.nextExperiment.id, 'starfield-cpu-stage-isolation');
   assert.equal(measured.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, true);
 });
+
+
+test('resource-pressure availability requires complete measured percent evidence', async () => {
+  const complete = {
+    avgGpuUtilPct: 48,
+    maxGpuMemoryPct: 61,
+    avgSystemCpuPct: 72,
+    minGameDriveFreePct: 16,
+  };
+  const cases = [
+    { avgGpuUtilPct: 48, maxGpuMemoryPct: 61 },
+    { ...complete, avgSystemCpuPct: undefined },
+    { ...complete, minGameDriveFreePct: null },
+    { ...complete, avgSystemCpuPct: '72' },
+    { ...complete, maxGpuMemoryPct: Infinity },
+    { ...complete, minGameDriveFreePct: -2 },
+  ];
+  const project = async (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'VRAM_PRESSURE', signals: ['vram-pressure-high'] },
+    metrics,
+  });
+  for (const metrics of cases) {
+    const loop = await project(metrics);
+    const required = loop.telemetryRequirements.find((item) => item.id === 'resource-pressure');
+    assert.equal(required.available, false);
+    assert.ok(loop.missingTelemetry.some((item) => item.id === 'resource-pressure'));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const valid = await project(complete);
+  assert.equal(valid.telemetryRequirements.find((item) => item.id === 'resource-pressure').available, true);
+});
