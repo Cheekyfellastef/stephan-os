@@ -1,3 +1,5 @@
+import { types as nodeTypes } from 'node:util';
+
 // Goal #1574: read-only qualification progress for the EXISTING Sovereign Reviewer.
 // Input is untrusted observation, not independently authenticated provenance.
 // This module cannot commission a model, signer, OS principal, review policy or R7 writer.
@@ -53,11 +55,23 @@ function boundedPlainData(value) {
     if (v === null || typeof v === 'boolean') return true;
     if (typeof v === 'number') return Number.isFinite(v) && !Object.is(v, -0);
     if (typeof v === 'string') return v.length <= 4096;
-    if (typeof v !== 'object' || depth > 9 || ++nodes > 384 || seen.has(v)) return false;
+    if (typeof v !== 'object' || depth > 9 || ++nodes > 384 || seen.has(v)
+        || nodeTypes.isProxy(v)) return false;
     seen.add(v);
     if (Array.isArray(v)) {
-      if (v.length > 64 || Object.keys(v).length !== v.length) return false;
-      return v.every(item => inspect(item, depth + 1));
+      // Array.every and v[i] invoke accessors. Inspect descriptors instead,
+      // including rejecting subclasses and sparse or extra own properties.
+      if (Object.getPrototypeOf(v) !== Array.prototype) return false;
+      const fields = Object.getOwnPropertyDescriptors(v);
+      const length = fields.length?.value;
+      if (!Number.isSafeInteger(length) || length > 64
+          || Reflect.ownKeys(fields).length !== length + 1) return false;
+      for (let i = 0; i < length; ++i) {
+        const slot = fields[String(i)];
+        if (!slot || !Object.hasOwn(slot, 'value')
+            || !inspect(slot.value, depth + 1)) return false;
+      }
+      return true;
     }
     if (![Object.prototype, null].includes(Object.getPrototypeOf(v))) return false;
     const properties = Object.getOwnPropertyDescriptors(v);
