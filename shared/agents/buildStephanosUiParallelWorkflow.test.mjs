@@ -179,6 +179,7 @@ test('Sovereign reviewer qualification suites remain in exact-head custody jobs'
 function assertSeedNodeExecutableIdentity(workflow) {
   assert.match(workflow, /node-version: '24\.21\.0'/);
   assert.match(workflow, /Get-Command node -CommandType Application -ErrorAction Stop/);
+  assert.match(workflow, /Invoke-WebRequest -Uri 'https:\/\/nodejs\.org\/dist\/v24\.21\.0\/win-x64\/node\.exe' -OutFile \$nodePath -TimeoutSec 120 -MaximumRedirection 0/);
   assert.match(workflow, /Get-FileHash -LiteralPath \$nodePath -Algorithm SHA256/);
   assert.match(workflow, /\$expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'/);
   assert.match(workflow, /if \(\$actualNodeSha256 -cne \$expectedNodeSha256\) \{ throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' \}/);

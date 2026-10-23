@@ -46,6 +46,15 @@ jobs:
           # Official signed release SHASUMS: https://nodejs.org/en/blog/release/v24.21.0
           $expectedNodeSha256 = 'ba4e6d110e8c1592a1ecd390f6b05f3da124b13871a5be62b341a07a853c6c32'
           $actualNodeSha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualNodeSha256 -cne $expectedNodeSha256) {
+            # The hosted cache is not executable authority. Use only the fixed
+            # official release bytes, then apply the SAME required digest gate.
+            $fixedNodeDir = Join-Path $env:RUNNER_TEMP 'seed-node-v24.21.0-win-x64'
+            [void](New-Item -ItemType Directory -Path $fixedNodeDir -ErrorAction Stop)
+            $nodePath = Join-Path $fixedNodeDir 'node.exe'
+            Invoke-WebRequest -Uri 'https://nodejs.org/dist/v24.21.0/win-x64/node.exe' -OutFile $nodePath -TimeoutSec 120 -MaximumRedirection 0
+            $actualNodeSha256 = (Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          }
           if ($actualNodeSha256 -cne $expectedNodeSha256) { throw 'SEED_NODE_EXECUTABLE_DIGEST_MISMATCH' }
           $actualNodeVersion = & $nodePath --version
           if ($LASTEXITCODE -ne 0 -or $actualNodeVersion -cne 'v24.21.0') { throw 'SEED_NODE_VERSION_MISMATCH' }
