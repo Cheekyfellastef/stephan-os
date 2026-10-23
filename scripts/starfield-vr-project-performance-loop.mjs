@@ -13,8 +13,37 @@ async function readJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
 }
 
+// A syntactically present field is not necessarily a measured value.
+// Keep the producer's units and numeric trust contract in one place rather
+// than treating placeholders (NaN, strings, -1, Infinity) as telemetry.
+const NUMERIC_TELEMETRY_CONTRACTS = Object.freeze({
+  avgApplicationFrameTimeMs: 'positive',
+  p95ApplicationFrameTimeMs: 'positive',
+  avgDeliveredCadenceHz: 'positive',
+  headsetRefreshRateHz: 'positive',
+  droppedFrames: 'count',
+  encodeLatencyMs: 'nonnegative',
+  networkLatencyMs: 'nonnegative',
+  decodeLatencyMs: 'nonnegative',
+  airLinkBitrateMbps: 'nonnegative',
+  packetLossPct: 'percent',
+  jitterMs: 'nonnegative',
+  openXrRenderWidth: 'positive-integer',
+  openXrRenderHeight: 'positive-integer',
+  renderScalePct: 'positive',
+});
+
 function metricPresent(metrics, key) {
   const value = metrics?.[key];
+  const numericContract = NUMERIC_TELEMETRY_CONTRACTS[key];
+  if (numericContract) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+    if (numericContract === 'positive') return value > 0;
+    if (numericContract === 'positive-integer') return Number.isSafeInteger(value) && value > 0;
+    if (numericContract === 'count') return Number.isSafeInteger(value) && value >= 0;
+    if (numericContract === 'percent') return value >= 0 && value <= 100;
+    return value >= 0; // nonnegative observed latency / bitrate / jitter.
+  }
   return value !== null && value !== undefined && value !== '' && value !== false;
 }
 
