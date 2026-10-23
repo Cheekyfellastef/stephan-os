@@ -105,6 +105,22 @@ try
         results.Add(new { scenario = "directory-new-child", oplock.Granted,
             oplock.RequestError, childCreated, advisoryBreakObserved = oplock.BreakSignaled });
     }
+    string directoryStreams = Path.Combine(root, "directory-streams");
+    Directory.CreateDirectory(directoryStreams);
+    string namedDirectoryStream = directoryStreams + ":owned-data";
+    File.WriteAllText(namedDirectoryStream, "owned directory data stream");
+    using (var writer = Native.Open(namedDirectoryStream, 2, 7, 0x00200000))
+    using (var guard = Native.Open(directoryStreams, 0x81, 1, 0x42200000))
+    using (var streamGuard = Native.TryOpen(namedDirectoryStream, 0x80000000, 1, 0x40200000, out int streamError))
+    {
+        Check(!guard.IsInvalid, "DIRECTORY_MAIN_GUARD_DOES_NOT_EXCLUDE_ADS_WRITER");
+        Native.StandardInformation standard = Native.Standard(writer);
+        Check(standard.Directory == 0, "DIRECTORY_ADS_IS_NON_DIRECTORY_STREAM");
+        Check(streamGuard.IsInvalid && streamError == 32, "DIRECTORY_ADS_REQUIRES_SEPARATE_STREAM_GUARD");
+        results.Add(new { scenario = "directory-alternate-data-stream",
+            directoryGuardOpened = !guard.IsInvalid, namedStreamDirectoryFlag = standard.Directory,
+            separateStreamGuardDenied = streamGuard.IsInvalid, streamError });
+    }
     Console.WriteLine(JsonSerializer.Serialize(new { schemaVersion = "stephanos.r7-owned-live-fence-feasibility.v1",
         observedAtUtc = DateTimeOffset.UtcNow, assertions, results, productionSourceTouched = false,
         originalWriterAuthenticated = false, completeContainmentProven = false,
@@ -178,6 +194,23 @@ internal sealed class ReadOplock : IDisposable
 
 internal static class Native
 {
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct StandardInformation
+    {
+        internal long AllocationSize, EndOfFile;
+        internal uint NumberOfLinks;
+        internal byte DeletePending, Directory;
+    }
+    internal static StandardInformation Standard(SafeFileHandle file)
+    {
+        if (!GetFileInformationByHandleEx(file, 1, out StandardInformation value,
+            (uint)Marshal.SizeOf<StandardInformation>())) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return value;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int kind,
+        out StandardInformation information, uint length);
     [DllImport("kernel32.dll")] internal static extern uint SetErrorMode(uint mode);
     [StructLayout(LayoutKind.Sequential)]
     internal struct Overlapped { internal nint Internal, InternalHigh; internal uint Offset, OffsetHigh; internal nint Event; }

@@ -56,10 +56,23 @@ workflow executes it alongside the original owned regressions.
 
 The [retained-object mutation core](../../src/windows/Stephanos.OriginalR7ScopedMutationGate/README.md)
 implements actual Filter Manager operation callbacks and native handle/context
-ownership. Its portable policy tests and kernel compilation/link check do not
+ownership, native relative child acquisition, directory data-stream enrollment
+and a bounded per-object owner/DACL sealing/recovery primitive. Its portable
+policy tests and kernel compilation/link check do not
 establish NTFS runtime enforcement. Namespace closure, existing capability
 closure, privileged source-role separation and independently protected creators
 remain required components. The existing production startup refusal remains.
+
+A concrete conditional route now delegates fresh namespace authorization to
+NTFS DACL enforcement, with retained ordinary share guards and kernel metadata
+operation denial. It requires independently authenticated non-bypass source
+capabilities, complete stream/old-capability closure, native quiescence and a
+protected durable commissioning journal. It is not a universal normalized-name
+filter and does not pass unresolved name requests as physical exclusion.
+The owned regression now covers directory ADS: their writer can coexist with
+the directory-main guard, but conflicts with a separate stream read guard.
+The native component and all unresolved production prerequisites are described
+in its linked README. No production entry or authority is enabled.
 
 An independent Windows/security design review must identify a concrete live
 enforcement mechanism for **all** of the following together. A partial

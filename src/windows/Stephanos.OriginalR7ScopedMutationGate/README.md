@@ -36,6 +36,69 @@ Retirement drains this core's callbacks, removes its contexts and closes its
 private handles. It does not drain operations already below the filter, revoke
 another process's handles or establish that source writers have stopped.
 
+## Native scope and per-object security transaction
+
+`R7GateEnrollChild` opens one existing immediate child relative to the parent's
+private retained kernel directory handle. Its access/share/disposition/options
+are fixed: read-only, share-read, `FILE_OPEN`, no reparse traversal and no share
+bypass. It captures and bounds a single leaf, rejects traversal/stream selectors,
+and checks the actual native identity against the expected native enumeration
+identity before installing contexts. The open is asynchronous so its retained
+object can participate in the Read-oplock protocol. A file's unnamed stream is
+enrolled before publication; partial acquisition retires the unpublished gate.
+The child retains its parent; parent retirement refuses while children remain.
+This binds acquisition, not a stable enumeration snapshot.
+
+Directories can contain writable named data streams. Their directory-main
+sharing guard does not exclude a writer to such a stream. `R7GateEnrollStream`
+therefore accepts named data-stream objects on a directory when they report a
+non-directory stream and match the actual native ID and exact file context.
+The owned Windows regression demonstrates this distinction and a separate
+stream guard refusing an existing writer. Every directory ADS still needs
+explicit native enumeration and retained protection by the enclosing owner.
+
+`R7GateSealSourceDacl` implements a fixed native owner/DACL transaction on one
+already retained object. It requires a separate real commissioner metadata
+handle with `READ_CONTROL | WRITE_DAC | WRITE_OWNER`, duplicates that capability
+and verifies its actual file context and native identity. Read guards acquire
+no metadata-write grant. The commissioner must also possess the actual Windows
+authority to assign the new owner and, if needed, restore the previous owner;
+`WRITE_OWNER` alone does not promise arbitrary owner assignment will succeed.
+
+The helper captures the original owner/DACL, adds explicit per-object full-access
+denials for the configured source SIDs ahead of the original ACEs, assigns the
+distinct custodian and protects the DACL. It reads the native owner, ordered used
+ACEs, protection bit and identity back. ACL free padding is excluded from policy
+comparison. No new inherited denial is used as a substitute for enrolling an
+existing child. This policy is a conditional native proposal, not adoption of
+the older diagnostic's inherited-ACE policy shape.
+
+Recovery ownership is attached to the gate before the first security-set call.
+After an attempted set, failed mutation/readback retains the original descriptor,
+metadata handle and guards, and retirement refuses. Explicit recovery restores
+and verifies the original policy before releasing that state. Beginning recovery
+permanently prevents re-arming this gate's paging policy. Recovery is never an
+automatic response to a fault or permission to make an old writer writable
+after release. Stop issuance and satisfy the separately admitted retirement
+policy first. The native snapshot is currently memory-only: the production
+commissioner must durably journal the exact recovery material in its protected
+store **before invoking a mutation**. This helper supplies no crash-durable log.
+
+These are real kernel operations in source, not an installed commissioning
+entry point. The source-SID set, custodian, commissioner capability and target
+scope must come from independently authenticated adopted host configuration.
+No argument here authenticates an estate or grants that authority. Never seal
+shared ancestors/control objects if the denial would affect unrelated work.
+
+For a proven non-bypass source estate, NTFS parent/stream access checks offer a
+concrete namespace-denial route alongside metadata callbacks and retained
+guards. It avoids claiming universal pre-create path classification. Production
+qualification must cover old DELETE_CHILD/metadata handles, low-access creates,
+file and directory ADS, outside ordinary/POSIX replacements, aliases, pending
+TxF work, old sections/MDLs and queued I/O. Disabled privileges or an unelevated
+token alone cannot prove the non-bypass estate. None of this establishes that
+Battle Bridge presently meets those requirements.
+
 ## Mandatory enclosing-owner obligations
 
 Lifecycle calls are serialized, exactly-once retirement occurs outside callbacks,
@@ -126,3 +189,7 @@ Battle Bridge is authorized by this source or its development build.
 - [MDL preparation](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/flt-parameters-for-irp-mj-prepare-mdl-write)
 - [MDL completion](https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/flt-parameters-for-irp-mj-mdl-write-complete)
 - [Pinned WDK package](https://www.nuget.org/packages/Microsoft.Windows.WDK.x64/10.0.26100.6584)
+- [Native relative opens](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltcreatefileex2)
+- [Security query](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltquerysecurityobject)
+- [Security set](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fltkernel/nf-fltkernel-fltsetsecurityobject)
+- [NTFS stream semantics](https://learn.microsoft.com/en-us/windows/win32/fileio/file-streams)
