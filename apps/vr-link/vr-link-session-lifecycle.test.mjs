@@ -20,7 +20,7 @@ function harness({ supported = true, xrPresent = true } = {}) {
     navigator:{userAgent:'Test browser',xr},
     location:{protocol:'https:',hostname:'example.com'},
     setTimeout,clearTimeout,AbortController,
-    fetch:()=>new Promise((resolve,reject)=>healthRequests.push({resolve,reject})), 
+    fetch:()=>new Promise((resolve,reject)=>healthRequests.push({resolve,reject})),
   },{timeout:500});
   return {nodes,pending,healthRequests,ping:()=>nodes.ping.handlers.click(),click:()=>nodes.enter.handlers.click(),requestCount:()=>requestCount};
 }
