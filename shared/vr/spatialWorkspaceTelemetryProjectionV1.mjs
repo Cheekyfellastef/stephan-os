@@ -20,7 +20,9 @@ function hasProvenance(evidence) {
   // When both identities are supplied, a renderer built from a different
   // source head must not be represented as current immersive telemetry.
   // Older packets with no renderer identity remain readable as before.
-  const rendererMatches = rendererHead === undefined || rendererHead === null || rendererHead === ''
+  // Only genuinely omitted renderer identity is legacy-compatible.
+  // A supplied blank/invalid SHA cannot become READY through normalization.
+  const rendererMatches = !Object.hasOwn(evidence ?? {}, 'rendererSourceHead')
     || (typeof sourceHead === 'string' && typeof rendererHead === 'string'
       && SHA40.test(rendererHead) && rendererHead.toLowerCase() === sourceHead.toLowerCase());
   return SAFE_RUN_ID.test(evidence?.runId ?? '')
@@ -118,7 +120,8 @@ export function projectSpatialWorkspaceTelemetryForConsumersV1(input = {}) {
     phase: text(evidence?.phase, 'unknown').slice(0, 24),
     observedAtUtc: text(evidence?.observedAtUtc).slice(0, 40),
     sourceHead: head(evidence?.sourceHead),
-    rendererSourceHead: head(evidence?.rendererSourceHead),
+    ...(evidence && Object.hasOwn(evidence, 'rendererSourceHead')
+      ? { rendererSourceHead: head(evidence.rendererSourceHead) } : {}),
     device: text(evidence?.device, 'Spatial Workspace').slice(0, 80),
     room: text(evidence?.room, 'holodeck-starting-chamber').slice(0, 80),
     frame: Object.freeze({
