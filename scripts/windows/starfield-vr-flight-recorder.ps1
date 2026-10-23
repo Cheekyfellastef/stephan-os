@@ -333,8 +333,12 @@ function Get-StarfieldVrGameThreadCpuSample {
     # Collect thread-level evidence at most every five seconds. Sampling
     # every frame or every adaptive 1s tick can itself create CPU overhead.
     if ($Previous.ContainsKey('collectedAtUtc') -and $Previous.ContainsKey('processId') -and
-        $Previous.processId -eq $GameProcessId) {
-        $since = ($sampledAt - [DateTime]$Previous.collectedAtUtc).TotalSeconds
+        $Previous.processId -eq $GameProcessId -and
+        $Previous.collectedAtUtc -is [DateTime]) {
+        # Never convert an untrusted/stale history timestamp outside the
+        # protected sampling block. Invalid history must re-warm, not crash
+        # the low-overhead playtest recorder or fabricate a measured delta.
+        $since = ($sampledAt - $Previous.collectedAtUtc).TotalSeconds
         if ($since -ge 0 -and $since -lt 5) {
             $out.reason = 'THREAD_SAMPLE_THROTTLED'
             return [pscustomobject]$out
