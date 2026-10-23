@@ -1960,10 +1960,14 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
-    ok: parsed.ok === true,
-    processCount: Number.isSafeInteger(Number(parsed.processCount)) && Number(parsed.processCount) >= 0 && Number(parsed.processCount) <= 100
-      ? Number(parsed.processCount)
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true
+      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
+      ? parsed.processCount
       : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
+      ? text(parsed.processObservationBlocker) : '',
     daemonHealthy: parsed.daemonHealthy === true,
     reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
     // Public projection contains only bounded custody verdicts, never PIDs,
