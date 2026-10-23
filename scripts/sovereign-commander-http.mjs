@@ -152,7 +152,8 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       }
       const receipt = parseContinuousRepairReceipt(stdout);
       state.timeoutCustodyHeld ||= sovereignMaintenanceCustodyUnprovenV1(
-        { status: code, signal, errorCode: fallbackBlocker }, receipt,
+        { status: code, signal, errorCode: fallbackBlocker },
+        typeof receipt?.ok === 'boolean' ? receipt : { status: null },
       );
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
         ? receipt.reporting
@@ -266,7 +267,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
         if (!provenPreExecutionDenial
             && sovereignMaintenanceCustodyUnprovenV1(execution,
-              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout))) {
+              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId))) {
           state.timeoutCustodyHeld = true;
           state.lastOk = false;
           state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;

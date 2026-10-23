@@ -116,7 +116,9 @@ test('Core/stdio delegation executes in the actual HTTP owner while health remai
     timers[0].fn(); assert.equal(guardianStarts, 0);
     const second = await invoke(); assert.equal(second.blocker, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY');
     assert.equal(fixedStarts, 1);
-    child.stdout.emit('data', '{"ok":true}'); child.emit('close', 0, null);
+    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT='
+      + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-goal-builder-repair.v1', ok: true, steps: [] }));
+    child.emit('close', 0, null);
     const result = await first;
     assert.equal(result.ok, true); assert.equal(result.command.missionId, 'same-mission');
     assert.ok(result.structuredContent.ownerCommandId);
@@ -253,4 +255,48 @@ test('shared terminal custody invariant is monotone under nested negative eviden
     { steps: Array.from({ length: 129 }, () => ({ status: 0 })) }]) assert.equal(held(execution, receipt), true);
   assert.equal(held({ status: 0, signal: 'SIGTERM' }), true);
   assert.equal(held({ status: null }), true);
+});
+
+test('actual bare-JSON control-plane protocol holds the real manual owner after internal native timeout', async () => {
+  const { runSovereignCommanderControlPlaneRepair } = await import('../../scripts/sovereign-commander-control-plane-repair.mjs');
+  const { readSovereignMaintenanceTerminalReceiptV1: read, sovereignMaintenanceCustodyUnprovenV1: held } = await import('./sovereignMaintenanceAdmissionV1.mjs');
+  const receipt = runSovereignCommanderControlPlaneRepair({
+    repoRoot: 'C:\\repo', platform: 'win32',
+    spawnSyncFn: (exe, args) => exe.includes('Git')
+      ? { status: 0, stdout: args.at(-1) === '--show-current' ? 'main\n' : 'a'.repeat(40) }
+      : { status: null, stdout: '', error: { code: 'ETIMEDOUT' } },
+    reconciler: ({ spawnSyncFn }) => {
+      spawnSyncFn('fixed-installer', []);
+      return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+        sourceMutationAllowed: false, gitMutationAllowed: false, arbitraryShellAllowed: false, pcRestartAllowed: false };
+    },
+  });
+  const stdout = JSON.stringify(receipt) + '\n'; // Exact existing CLI output, no invented marker.
+  const parsed = read(stdout);
+  assert.equal(parsed.schemaVersion, 'stephanos.sovereign-commander-control-plane-repair.v1');
+  assert.equal(held({ status: 1 }, parsed), true);
+  assert.equal(held({ status: 0 }, { repair: { tasks: [{ status: 0, executionEvidence: [{ status: null, errorCode: 'ETIMEDOUT' }] }] } }), true);
+  for (const operation of ['MAINTENANCE_ACTION', 'START_PROCESS']) {
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+    });
+    try {
+      const result = await guardian.withMaintenanceOwner({ operation, plan: { processId: 'repair-control-plane' } },
+        async () => ({ ok: false, structuredContent: { status: 1, errorCode: '', signal: '', stdout } }));
+      assert.equal(result.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      assert.equal(guardian.status().scheduled, false);
+      assert.equal(guardian.status().timeoutCustodyHeld, true);
+      assert.equal(guardian.runNow(), false);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('missing, malformed, unknown and oversized wrapper protocols cannot release descendant custody', async () => {
+  const { readSovereignMaintenanceTerminalReceiptV1: read, sovereignMaintenanceCustodyUnprovenV1: held } = await import('./sovereignMaintenanceAdmissionV1.mjs');
+  for (const processId of ['repair-stephanos', 'repair-goal-builder-flow', 'repair-control-plane']) {
+    for (const stdout of ['', '{', '{}', JSON.stringify({ schemaVersion: 'unknown', ok: true }), 'x'.repeat(65537)]) {
+      assert.equal(held({ status: 0 }, read(stdout, processId)), true);
+    }
+  }
+  assert.equal(held({ status: 0 }, read('', 'unrelated-fixed-action')), false);
 });

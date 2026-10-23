@@ -266,3 +266,33 @@ varies error fields, nesting depth and positive/negative outer exit, plus cycle,
 null-step and budget attacks. No assertion is weakened and no process or lease
 exclusion is fabricated. Cross-restart Windows custody remains independently
 unqualified; this model does not install a witness or release R7.
+
+## Full fixed-wrapper protocol inventory and control-plane custody
+
+The next exact-head review identified the missing third protocol: control-plane
+repair emits bare JSON, not a marker, and its lower reconciler can compact away
+native timeout details. The structural review therefore covers all three actual
+repair wrappers and their serializer/projection boundaries. The shared parser
+now accepts their exact source schemas in the established marker or bare-JSON
+formats, with a 64 KiB bound, and the classifier follows bounded repair, task
+and execution-evidence records as well as steps. An unknown schema grants no
+receipt authority.
+
+Before calling the existing reconciler, the control-plane wrapper now retains
+bounded raw terminal status/signal/error evidence from its existing injected
+spawn primitive. After unknown custody or the evidence budget is reached, no
+further child launches occur. Native errors and reconciler exceptions return a
+fixed custody HOLD without raw diagnostics; this survives lower work-conserving
+projection as a top-level typed blocker and structured evidence. Known completed
+non-timeout operations retain their original behavior. No installer, executable,
+command argument, source root, task, lease or approval authority is enlarged.
+
+The actual wrapper and actual-owner regressions failed on the prior source:
+the reconciler launched a second child after a timeout, and the parser ignored
+the real bare-JSON receipt. They now pass for timeout, abort, signal, spawn error,
+buffer error and reconciler exception, including suppression of subsequent
+calls and hostile output. Both PR/main workflow filters and the native Windows
+job include this wrapper and its tests. The original #3188 branch remains
+untouched; its same-#2961 control-plane changes must be semantically reconciled
+by the existing owner if integrated later. These changes stay on #3189 as the
+bounded correction to its independently reported current-head finding.

@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 
 export const SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA = 'stephanos.sovereign-commander-control-plane-repair.v1';
@@ -53,27 +54,64 @@ export function runSovereignCommanderControlPlaneRepair({
     });
   }
 
-  const repair = reconciler({
-    repoRoot,
-    expectedHead: observedHead,
-    platform,
-    spawnSyncFn,
-  });
+  // The lower reconciler compacts installer failures and may continue other
+  // tasks. Retain raw terminal custody before that projection loses it, and
+  // never launch another fixed child after an unknown descendant outcome.
+  const executionEvidence = [];
+  let custodyHeld = false;
+  const guardedSpawn = (...args) => {
+    if (custodyHeld || executionEvidence.length >= 128) {
+      custodyHeld = true;
+      return { status: null, stdout: '', stderr: '',
+        error: { code: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } };
+    }
+    let result;
+    try { result = spawnSyncFn(...args); }
+    catch {
+      custodyHeld = true;
+      executionEvidence.push(Object.freeze({ status: null, signal: '',
+        errorCode: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER }));
+      return { status: null, stdout: '', stderr: '',
+        error: { code: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } };
+    }
+    const evidence = Object.freeze({
+      status: Number.isInteger(result?.status) ? result.status : null,
+      signal: text(result?.signal),
+      errorCode: text(result?.error?.code).slice(0, 160),
+    });
+    executionEvidence.push(evidence);
+    custodyHeld ||= Boolean(result?.error) || sovereignMaintenanceCustodyUnprovenV1(evidence);
+    return result;
+  };
+  let repair;
+  try {
+    repair = reconciler({
+      repoRoot,
+      expectedHead: observedHead,
+      platform,
+      spawnSyncFn: guardedSpawn,
+    });
+  } catch {
+    custodyHeld = true;
+    repair = Object.freeze({ ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER });
+  }
 
   const authoritySafe = repair?.sourceMutationAllowed === false
     && repair?.gitMutationAllowed === false
     && repair?.arbitraryShellAllowed === false
     && repair?.pcRestartAllowed === false;
-  const ok = repair?.ok === true
+  const ok = !custodyHeld && repair?.ok === true
     && repair?.sourceHead === observedHead
     && authoritySafe;
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_SCHEMA,
     ok,
-    blocker: ok ? '' : text(repair?.blocker || 'CONTROL_PLANE_REPAIR_UNPROVEN'),
+    blocker: custodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+      : ok ? '' : text(repair?.blocker || 'CONTROL_PLANE_REPAIR_UNPROVEN'),
     sourceHead: observedHead,
     repair,
+    executionEvidence: Object.freeze(executionEvidence),
     sourceMutationAllowed: false,
     gitMutationAllowed: false,
     arbitraryShellAllowed: false,

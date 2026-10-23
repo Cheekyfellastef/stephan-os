@@ -36,28 +36,40 @@ export function sovereignMaintenanceCustodyUnprovenV1(execution = {}, receipt = 
       if (/(?:^|[^A-Z0-9])(?:ETIMEDOUT|ABORT_ERR)(?:$|[^A-Z0-9])/.test(value)
           || value === SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER) return true;
     }
-    if (Object.hasOwn(row, 'steps')) {
-      if (!Array.isArray(row.steps) || row.steps.length > 128) return true;
-      pending.push(...row.steps);
+    for (const field of ['steps', 'tasks', 'executionEvidence']) {
+      if (!Object.hasOwn(row, field)) continue;
+      if (!Array.isArray(row[field]) || row[field].length > 128) return true;
+      pending.push(...row[field]);
     }
+    if (Object.hasOwn(row, 'repair')) pending.push(row.repair);
   }
   return false;
 }
 
-export function readSovereignMaintenanceTerminalReceiptV1(stdout = '') {
+export function readSovereignMaintenanceTerminalReceiptV1(stdout = '', processId = '') {
+  const required = ['repair-stephanos', 'repair-goal-builder-flow', 'repair-control-plane'].includes(processId);
+  const raw = typeof stdout === 'string' ? stdout.trim() : '';
+  if (Buffer.byteLength(raw, 'utf8') > 64 * 1024) return { status: null };
+  // The existing control-plane CLI emits bare JSON, while the two repair
+  // wrappers emit markers. Preserve all three established wire formats.
   const markers = [
     'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=',
     'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=',
-    'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_RESULT=',
   ];
-  const lines = String(stdout).trim().split(/\r?\n/).reverse();
+  const schemas = new Set([
+    'stephanos.sovereign-commander-stephanos-repair.v1',
+    'stephanos.sovereign-commander-goal-builder-repair.v1',
+    'stephanos.sovereign-commander-control-plane-repair.v1',
+  ]);
+  const lines = raw.split(/\r?\n/).reverse();
   for (const line of lines) {
     const marker = markers.find(value => line.trim().startsWith(value));
-    if (!marker) continue;
+    const candidate = marker ? line.trim().slice(marker.length) : line.trim();
     try {
-      const receipt = JSON.parse(line.trim().slice(marker.length));
-      return receipt && typeof receipt === 'object' && !Array.isArray(receipt) ? receipt : {};
-    } catch { return {}; }
+      const receipt = JSON.parse(candidate);
+      if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+          && schemas.has(receipt.schemaVersion)) return receipt;
+    } catch {}
   }
-  return {};
+  return required ? { status: null } : {};
 }

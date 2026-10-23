@@ -19,6 +19,8 @@ test('isolated changes anywhere in the qualified estate and reviewer rerun the n
     'shared/agents/canonicalMissionWorkerEvidenceV1.mjs',
     'scripts/battle-bridge-goal-discovery-heartbeat.mjs',
     'scripts/stephanos-core-daemon.mjs',
+    'scripts/sovereign-commander-control-plane-repair.mjs',
+    'scripts/sovereign-commander-control-plane-repair.test.mjs',
     'shared/agents/stephanosCoreDaemonV1.mjs',
     'shared/agents/stephanosCoreDaemonV1.test.mjs',
   ];
@@ -31,6 +33,7 @@ test('isolated changes anywhere in the qualified estate and reviewer rerun the n
   assert.match(windowsJob, /runs-on: windows-latest/);
   for (const fixture of ['scripts/sovereign-commander-custody-recycle.test.mjs',
     'shared/agents/stephanosCoreDaemonV1.test.mjs',
+    'scripts/sovereign-commander-control-plane-repair.test.mjs',
     'shared/agents/stephanosCoreProcessObservationV1.test.mjs',
     'scripts/sovereign-goal-builder-worker-evidence.test.mjs',
     'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs']) {
