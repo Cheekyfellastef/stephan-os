@@ -11,6 +11,7 @@ import {
   validateSovereignWindowsReviewIdentityV1,
 } from './sovereignCommanderV1.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from './sovereignMaintenanceAdmissionV1.mjs';
 import { startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
@@ -777,7 +778,7 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
   const routeProof = { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: true };
   const operations = [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
     SOVEREIGN_COMMANDER_OPERATION.START_PROCESS];
-  for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close']) {
+  for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close', 'signal-close']) {
     const guardian = startSovereignCommanderContinuousRepairGuardian({
       enabled: true, startDelayMs: 60_000, intervalMs: 60_000,
       setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
@@ -803,6 +804,7 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
             child.stdout.emit('data', 'PRIVATE_REVIEW_OUTPUT');
             child.stderr.emit('data', 'PRIVATE_REVIEW_DIAGNOSTIC');
             if (mode === 'null-close') child.emit('close', null, '');
+            else if (mode === 'signal-close') child.emit('close', 0, 'SIGTERM');
             else {
               child.emit('error', Error('PRIVATE_REVIEW_ERROR'));
               child.emit('close', 0, '');
@@ -829,13 +831,13 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
         assert.equal(second.ok, false);
         assert.equal(guardian.status().timeoutCustodyHeld, false);
       } else {
-        assert.equal(first.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN', mode);
+        assert.equal(first.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, mode);
         assert.equal(guardian.status().timeoutCustodyHeld, true, mode);
         assert.equal(guardian.status().scheduled, false, mode);
         const second = await attempt(operations[1]);
         assert.equal(launches, 1, mode + ': second alias must not launch');
         assert.equal(second.ok, false);
-        assert.equal(second.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN');
+        assert.equal(second.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
       }
     } finally { guardian.stop(); }
   }
@@ -857,7 +859,7 @@ test('forged public reviewer denial cannot release unknown child custody', async
     });
     const result = await guardian.withMaintenanceOwner(command, async () => forged);
     assert.equal(result.ok, false);
-    assert.equal(result.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN');
+    assert.equal(result.blocker, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
     assert.equal(guardian.status().timeoutCustodyHeld, true);
     assert.equal(guardian.status().scheduled, false);
   } finally { guardian.stop(); }

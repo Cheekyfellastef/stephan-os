@@ -209,3 +209,35 @@ retain their existing error classification. Regression tests exercise actual
 async dispatch through both aliases, hostile error fields/partial output and
 late close, without a real reviewer/model/process launch. This changes neither
 specialist qualification nor source-writer, signing or lease authority.
+
+## Protected-main reconciliation — 23 October 2026
+
+Continue the original #2961 branch from `842c1a0e` with protected main
+`5e5765eb`. Two semantic conflicts occur in the Core Windows reviewer and
+its pinned composition. Preserve the successor's complete three-script estate
+and main's exact v4/v6 capability-generation support together: each source pin
+is an immutable array, and membership uses exact array equality. The v6
+counterpart differs from the successor v4 runner only in the fixed capability
+default. The composition binds the resulting exact child blob. These candidate
+pins still require independent specialist and protected bootstrap admission;
+they cannot qualify their own PR.
+
+Preserve the original exit-2 BLOCKED supervisor correction byte-for-byte. The
+real spawned exit-2 regression and malformed/contradictory negative-report
+checks pass on the combined source. The complete regression run also exposed
+two newer reviewer-custody tests expecting a nonexistent blocker literal. They
+now assert the canonical shared custody constant while retaining no-second-
+launch, timeout hold, scheduling and forged-provenance checks. Production
+classification and custody are unchanged by that test correction.
+
+This is source reconciliation only. Original R7 custody, independent Windows
+commissioning, exact-head protected approval and actual pickup/refill acceptance
+remain held. Existing Battle Bridge dirty files are outside this worktree.
+
+After the blocker assertion correction, the real-owner test reached its final
+null-close scenario and exposed partial reviewer output escaping an unknown
+completion. Redaction previously lived only in the error-event handler. The
+shared async terminal boundary now discards reviewer output on unknown exit,
+signal or execution error, while preserving known-exit structured HOLD reports.
+The same real-owner regression now also tests signal close. Unknown custody
+still parks the guardian; no pre-spawn provenance is invented.

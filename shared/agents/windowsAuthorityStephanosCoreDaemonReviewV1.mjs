@@ -10,9 +10,9 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
 // The textual checks below add defense in depth, but may not approve a
 // modified script merely because familiar safe snippets still occur.
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
-  'scripts/windows/run-sovereign-commander-hidden.ps1': '43ea1940733bfa7bfa470109fd32c296f5db956a',
-  'scripts/windows/status-stephanos-core-daemon.ps1': '523aca4b93fe9adf434fd157137c7cb4ef52fbca',
-  'scripts/windows/stephanos-core-process-observation.ps1': '81679199d1b842ae054c6cd8e509c6051a28ceb6',
+  'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['43ea1940733bfa7bfa470109fd32c296f5db956a', '4a95894ec4e6f454e48be2e9be8f961eaf918a58']),
+  'scripts/windows/status-stephanos-core-daemon.ps1': Object.freeze(['523aca4b93fe9adf434fd157137c7cb4ef52fbca']),
+  'scripts/windows/stephanos-core-process-observation.ps1': Object.freeze(['81679199d1b842ae054c6cd8e509c6051a28ceb6']),
 });
 // Successor estate candidate: these bindings become trusted ONLY through the
 // existing protected reviewer-bootstrap admission, never this PR's own checks.
@@ -333,7 +333,7 @@ export function analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input = {}) {
       findings.push(finding('windows-authority-source-evidence-invalid', path));
       continue;
     }
-    if (candidates[0].blobSha !== REVIEWED_CORE_SOURCE_BLOBS[path]) {
+    if (!REVIEWED_CORE_SOURCE_BLOBS[path]?.includes(candidates[0].blobSha)) {
       findings.push(finding('windows-authority-core-source-blob-unreviewed', path));
     }
     if (path.endsWith('stephanos-core-process-observation.ps1')) reviewInventoryHelper(candidates[0].content, path, findings);

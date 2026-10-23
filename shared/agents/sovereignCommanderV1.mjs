@@ -855,6 +855,13 @@ function runOwnedFixedProcess(plan, options = {}) {
       if (settled) return;
       settled = true;
       if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
+      // Unknown/signal/error completion is never a calibration receipt. Apply
+      // redaction at the shared terminal boundary, including close and timeout,
+      // while preserving known-exit structured HOLD reports and custody state.
+      if (plan.processId === 'sovereign-windows-reviewer-calibration'
+          && (!Number.isInteger(status) || signal || errorCode)) {
+        stdout = ''; stderr = '';
+      }
       const execution = frozen({ ok: status === 0 && !signal && !errorCode, status,
         signal, errorCode, stdout, stderr });
       if (provenPreSpawn) provenReviewerPreExecution.add(execution);
