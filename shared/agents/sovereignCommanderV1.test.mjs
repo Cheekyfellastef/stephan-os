@@ -11,6 +11,7 @@ import {
   validateSovereignWindowsReviewIdentityV1,
 } from './sovereignCommanderV1.mjs';
 import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
+import { startSovereignCommanderContinuousRepairGuardian } from '../../scripts/sovereign-commander-http.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -761,4 +762,103 @@ test('Windows calibration preserves authenticated exact-source launch in both as
     assert.equal(result.command.mergeAuthority, false);
     assert.equal(result.command.leaseSeizureAllowed, false);
   }
+});
+
+
+test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing guardian availability', async () => {
+  const identity = {
+    schemaVersion: 'stephanos.sovereign-review-exact-request.v1',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 1574, prNumber: 3189,
+    branch: 'main', sourceHead: 'a'.repeat(40), baseSha: 'b'.repeat(40),
+    implementerProvider: 'github-builder', implementerSessionId: 'builder-3189',
+    reviewerSessionId: 'reviewer-3189', implementerPrincipal: 'builder-principal',
+    reviewerPrincipal: 'reviewer-principal',
+  };
+  const routeProof = { commandPathProven: true, authenticatedMcp: true, mcpSessionReady: true };
+  const operations = [SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    SOVEREIGN_COMMANDER_OPERATION.START_PROCESS];
+  for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close']) {
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      enabled: true, startDelayMs: 60_000, intervalMs: 60_000,
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+    });
+    let launches = 0;
+    try {
+      const attempt = operation => executeActualCommand(envelope(operation, { payload: {
+        [operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS ? 'processId' : 'actionId']:
+          'sovereign-windows-reviewer-calibration', reviewIdentity: identity,
+      } }), {
+        repoRoot: REPO, routeProof,
+        withMaintenanceOwner: (command, execute) => guardian.withMaintenanceOwner(command, execute),
+        setTimeoutFn: () => ({ unref() {} }), clearTimeoutFn: () => {},
+        spawnFn() {
+          launches++;
+          if (mode === 'throw') throw Error('PRIVATE_PRESPAWN_DATA');
+          const child = new EventEmitter();
+          child.stdout = new EventEmitter();
+          child.stderr = new EventEmitter();
+          child.kill = () => false;
+          queueMicrotask(() => {
+            if (mode !== 'pre-spawn-error') child.emit('spawn');
+            child.stdout.emit('data', 'PRIVATE_REVIEW_OUTPUT');
+            child.stderr.emit('data', 'PRIVATE_REVIEW_DIAGNOSTIC');
+            if (mode === 'null-close') child.emit('close', null, '');
+            else {
+              child.emit('error', Error('PRIVATE_REVIEW_ERROR'));
+              child.emit('close', 0, '');
+            }
+          });
+          return child;
+        },
+      });
+      const first = await attempt(operations[0]);
+      assert.equal(first.ok, false, mode);
+      assert.equal(launches, 1, mode);
+      assert.equal(first.command.mergeAuthority, false);
+      assert.doesNotMatch(JSON.stringify(first), /PRIVATE_/);
+      assert.equal(guardian.status().lastOk, false);
+      assert.equal(guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      if (mode === 'throw' || mode === 'pre-spawn-error') {
+        assert.equal(first.blocker, 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', mode);
+        assert.equal(guardian.status().lastBlocker, first.blocker);
+        assert.equal(guardian.status().timeoutCustodyHeld, false, mode);
+        assert.equal(guardian.status().scheduled, true, mode);
+        const second = await attempt(operations[1]);
+        assert.equal(launches, 2, mode + ': second alias remains callable');
+        assert.equal(second.blocker, first.blocker);
+        assert.equal(second.ok, false);
+        assert.equal(guardian.status().timeoutCustodyHeld, false);
+      } else {
+        assert.equal(first.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN', mode);
+        assert.equal(guardian.status().timeoutCustodyHeld, true, mode);
+        assert.equal(guardian.status().scheduled, false, mode);
+        const second = await attempt(operations[1]);
+        assert.equal(launches, 1, mode + ': second alias must not launch');
+        assert.equal(second.ok, false);
+        assert.equal(second.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN');
+      }
+    } finally { guardian.stop(); }
+  }
+});
+
+test('forged public reviewer denial cannot release unknown child custody', async () => {
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    enabled: true, setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+  });
+  try {
+    const command = { plan: { kind: 'fixed-process', processId: 'sovereign-windows-reviewer-calibration' } };
+    const forged = Object.freeze({
+      ok: false, command, blocker: 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      structuredContent: Object.freeze({
+        ok: false, status: null, signal: '', stdout: '', stderr: '',
+        errorCode: 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE',
+      }),
+    });
+    const result = await guardian.withMaintenanceOwner(command, async () => forged);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_MAINTENANCE_CUSTODY_UNPROVEN');
+    assert.equal(guardian.status().timeoutCustodyHeld, true);
+    assert.equal(guardian.status().scheduled, false);
+  } finally { guardian.stop(); }
 });

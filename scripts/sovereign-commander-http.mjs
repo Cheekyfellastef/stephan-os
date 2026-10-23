@@ -9,6 +9,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
+import { isProvenSovereignWindowsReviewerPreExecutionDenialV1 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
@@ -259,14 +260,23 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         // A direct-child timeout/unknown result cannot release Windows
         // descendant custody. No caller retry or timer clears this hold.
         const execution = result?.structuredContent;
-        if (!execution || !Number.isInteger(execution.status) || execution.signal
-            || ['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)) {
+        const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
+        if (!provenPreExecutionDenial
+            && (!execution || !Number.isInteger(execution.status) || execution.signal
+              || ['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode))) {
           state.timeoutCustodyHeld = true;
           state.lastOk = false;
           state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
           state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
           return Object.freeze({ ...result, ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
             finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+        }
+        if (provenPreExecutionDenial) {
+          // Keep the typed independent reviewer HOLD visible and allow only
+          // the guardian's ordinary scheduled retry, never reviewer authority.
+          state.lastOk = false;
+          state.lastBlocker = result.blocker;
+          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
         }
         return result;
       } catch (error) {

@@ -827,29 +827,50 @@ function runFixedProcess(plan, options = {}) {
   });
 }
 
+// Only an actual pre-spawn reviewer failure may release the maintenance owner's
+// custody reservation. Public blocker strings or a fabricated result never suffice.
+const provenReviewerPreExecution = new WeakSet();
+export function isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result) {
+  const execution = result?.structuredContent;
+  return command?.plan?.kind === 'fixed-process'
+    && command.plan.processId === 'sovereign-windows-reviewer-calibration'
+    && result?.ok === false
+    && result?.blocker === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'
+    && result?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    && execution && typeof execution === 'object'
+    && provenReviewerPreExecution.has(execution)
+    && execution.ok === false && execution.status === null
+    && !execution.signal && execution.stdout === '' && execution.stderr === ''
+    && execution.errorCode === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+}
+
 function runOwnedFixedProcess(plan, options = {}) {
   // Source-only executor fixtures inject the synchronous primitive explicitly.
   if (options.spawnSyncFn) return Promise.resolve(runFixedProcess(plan, options));
   const launch = prepareFixedProcessLaunch(plan, options);
   if (!launch.ok) return Promise.resolve(launch);
   return new Promise(resolveResult => {
-    let child, timer, settled = false, stdout = '', stderr = '';
-    const finish = (status, signal = '', errorCode = '') => {
+    let child, timer, settled = false, spawned = false, stdout = '', stderr = '';
+    const finish = (status, signal = '', errorCode = '', provenPreSpawn = false) => {
       if (settled) return;
       settled = true;
       if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
-      resolveResult(frozen({ ok: status === 0 && !signal && !errorCode, status,
-        signal, errorCode, stdout, stderr }));
+      const execution = frozen({ ok: status === 0 && !signal && !errorCode, status,
+        signal, errorCode, stdout, stderr });
+      if (provenPreSpawn) provenReviewerPreExecution.add(execution);
+      resolveResult(execution);
     };
     const failSpawn = error => {
       if (settled) return;
       if (plan.processId === 'sovereign-windows-reviewer-calibration') {
-        // The async owner consumes spawn failures here, before the outer
-        // exception boundary can redact them. Preserve the same fixed HOLD
-        // as synchronous setup; neither event payload nor partial output is
-        // a calibration receipt. Late close(0) must not change this failure.
+        // ChildProcess emits 'spawn' only after successful creation. An error
+        // after that event cannot exclude surviving Windows descendants.
+        // Redact calibration output in either case; never convert a post-spawn
+        // error into safe pre-execution evidence.
         stdout = ''; stderr = '';
-        finish(null, '', 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE');
+        finish(null, '', spawned
+          ? 'SOVEREIGN_WINDOWS_REVIEW_EXECUTION_CUSTODY_UNPROVEN'
+          : 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', !spawned);
       } else {
         finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED'));
       }
@@ -862,6 +883,7 @@ function runOwnedFixedProcess(plan, options = {}) {
       });
       child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
       child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.once('spawn', () => { spawned = true; });
       child.once('error', failSpawn);
       child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
       timer = (options.setTimeoutFn || setTimeout)(() => {
