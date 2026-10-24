@@ -219,7 +219,7 @@ test('protected merge entry constructs one repository-bound check expectation', 
     source,
     /const checkExpectation = buildPersonalRepositoryCheckExpectation\(\{[\s\S]*repository: context\.repository,[\s\S]*identity,[\s\S]*mergeStateStatus: review\.mergeStateStatus,[\s\S]*\}\);/,
   );
-  assert.match(source, /expected: checkExpectation\.expected,/);
+  assert.match(source, /expected: \{ \.\.\.checkExpectation\.expected, sourceTree: identity\.sourceTree \},/);
   assert.doesNotMatch(source, /expected:\s*\{\s*\.\.\.identity,\s*mergeStateStatus:/);
 });
 

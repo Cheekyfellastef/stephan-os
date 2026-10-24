@@ -61,6 +61,7 @@ import {
 } from '../shared/agents/operatorMergeBaseBindingV1.mjs';
 
 import { proveProtectedWorkflowActorHandoff } from './prove-protected-workflow-actor-handoff.mjs';
+import { loadProtectedReadyReviewLifecycle } from './protected-ready-review-lifecycle-v1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-personal-repository-protected-squash';
@@ -990,6 +991,27 @@ async function collectEvidence(context, expected = {}) {
       blockers: checkExpectation.blockers,
     });
   }
+  const loadReadyReviewForSnapshot = async (snapshot, mergeStateStatus, cleanIndependentReviewProved) => {
+    const expectation = { ...checkExpectation.expected, sourceTree: identity.sourceTree, mergeStateStatus };
+    // Existing successful PR-target supersession remains sufficient. The new
+    // route is read only when an observed exact-head draft skip still blocks.
+    if (validatePersonalRepositoryCheckRuns(snapshot.checkRuns, snapshot.workflowRuns,
+      snapshot.commitStatuses, expectation, { cleanIndependentReviewProved }).valid) return null;
+    const skippedRunIds = snapshot.workflowRuns.filter(run => run.event === 'pull_request_target'
+      && run.path === '.github/workflows/stephanos-exact-head-review.yml'
+      && run.name === 'Stephanos Exact-Head Review' && run.head_sha === identity.sourceHead
+      && snapshot.checkRuns.some(check => check.name === 'exact-head-review' && check.conclusion === 'skipped'
+        && check.head_sha === identity.sourceHead && check.check_suite?.id === run.check_suite_id))
+      .map(run => run.id);
+    if (!skippedRunIds.length) return null;
+    return loadProtectedReadyReviewLifecycle({ identity: { ...identity, repository: context.repository },
+      skippedRunIds, selectedReview: context.dispatch.identity,
+      api: path => apiJson(`/repos/${context.owner}/${context.repo}${path}`),
+      download: id => apiArtifactArchive(`/repos/${context.owner}/${context.repo}/actions/artifacts/${id}/zip`,
+        context.repository, INDEPENDENT_REVIEW_ARTIFACT_MAX_BYTES) });
+  };
+  const initialReadyReview = await loadReadyReviewForSnapshot(initialCheckSnapshot,
+    review.mergeStateStatus, independentReview.reviewMode === 'clean-independent');
   const checks = await validatePersonalRepositoryCheckRunsWithBoundedReread({
     readSnapshot: async (attempt) => {
       if (attempt === 1) return initialCheckSnapshot;
@@ -1009,8 +1031,9 @@ async function collectEvidence(context, expected = {}) {
         commitStatuses: freshCommitStatuses.items,
       });
     },
-    expected: checkExpectation.expected,
-    options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent' },
+    expected: { ...checkExpectation.expected, sourceTree: identity.sourceTree },
+    options: { cleanIndependentReviewProved: independentReview.reviewMode === 'clean-independent',
+      readyReviewLifecycleEvidence: initialReadyReview },
   });
   if (!checks.valid) {
     fail('One or more exact-head checks are pending, failed, stale or outside the reviewed escalation.', {
@@ -1029,12 +1052,15 @@ async function collectEvidence(context, expected = {}) {
       blockers: refreshedCheckExpectation.blockers,
     });
   }
+  const refreshedReadyReview = await loadReadyReviewForSnapshot(checks.selectedSnapshot,
+    refreshedAuthority.review.mergeStateStatus, refreshedAuthority.independentReview.reviewMode === 'clean-independent');
   const finalChecks = validatePersonalRepositoryCheckRuns(
     checks.selectedSnapshot.checkRuns,
     checks.selectedSnapshot.workflowRuns,
     checks.selectedSnapshot.commitStatuses,
-    refreshedCheckExpectation.expected,
-    { cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent' },
+    { ...refreshedCheckExpectation.expected, sourceTree: identity.sourceTree },
+    { cleanIndependentReviewProved: refreshedAuthority.independentReview.reviewMode === 'clean-independent',
+      readyReviewLifecycleEvidence: refreshedReadyReview },
   );
   if (!finalChecks.valid) {
     fail('Authority changed after exact-head check convergence.', {

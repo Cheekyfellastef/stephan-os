@@ -80,6 +80,8 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/deploy-stephanos-pages.yml',
     '.github/workflows/pr-clean.yml',
     '.github/workflows/exact-head-review-dispatch.yml',
+    '.github/workflows/protected-workflow-dispatch-mailbox.yml',
+    '.github/workflows/stephanos-exact-head-review.yml',
     '.github/workflows/battle-bridge-publisher-proof.yml',
     '.github/workflows/codex-dispatch-queue-proof.yml',
     '.github/workflows/openclaw-github-operator.yml',
@@ -87,6 +89,8 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/stephanos-deploy.yml',
     'scripts/operator-protected-merge-gate-v2.mjs',
     'scripts/operator-protected-personal-repository-merge.mjs',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.mjs',
     'scripts/independent-merge-security-review-v2.mjs',
     'shared/agents/operatorMergeApprovalGate.mjs',
     'shared/agents/operatorMergeApprovalGateV2.mjs',
@@ -96,6 +100,7 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.mjs',
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
@@ -530,6 +535,23 @@ test('classifies both sides of a GitHub rename so protected paths cannot be rena
     item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
     && item.path === protectedPath
   )));
+});
+
+test('READY lifecycle authority paths require qualified review for direct edits and renames', () => {
+  for (const path of [
+    '.github/workflows/protected-workflow-dispatch-mailbox.yml',
+    '.github/workflows/stephanos-exact-head-review.yml',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
+    'scripts/protected-ready-review-lifecycle-v1.mjs',
+    'shared/agents/protectedReadyReviewLifecycleV1.mjs',
+  ]) {
+    for (const changedFiles of [[{ filename: path, status: 'modified' }],
+      [{ filename: 'docs/renamed-lifecycle.txt', previous_filename: path, status: 'renamed' }]]) {
+      const result = analyzeIndependentSecurityReviewV2({ changedFiles, diff: diffFor(path, ['const sourceChanged = true;']) });
+      assert.ok(result.findings.some(f => f.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+        && f.path === path), path);
+    }
+  }
 });
 
 test('rejects specialist-review synthesis in the live v2 operator executor', () => {

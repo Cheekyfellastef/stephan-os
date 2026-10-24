@@ -24,11 +24,18 @@ jobs:
       contains(github.event.comment.body, 'stephanos-protected-workflow-dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      ready_review: ${{ steps.lifecycle.outputs.ready_review }}
+      ready_review_sha256: ${{ steps.lifecycle.outputs.ready_review_sha256 }}
+      ready_review_pr: ${{ steps.lifecycle.outputs.ready_review_pr }}
+      ready_review_head: ${{ steps.lifecycle.outputs.ready_review_head }}
+      ready_review_base: ${{ steps.lifecycle.outputs.ready_review_base }}
+      ready_review_artifact_id: ${{ steps.ready_handoff.outputs.artifact-id }}
     steps:
       - name: Check out canonical main dispatcher
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
       - uses: actions/setup-node@v4
@@ -37,6 +44,47 @@ jobs:
       - name: Require canonical mailbox epoch from trusted main
         run: node scripts/canonical-mailbox-workflow-event-gate.mjs protected
       - name: Validate exact owner command and perform only the fixed protected lifecycle action
+        id: lifecycle
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/dispatch-protected-merge-from-mailbox.mjs
+      - name: Seal immutable owner READY handoff
+        id: ready_handoff
+        if: steps.lifecycle.outputs.ready_review == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: protected-ready-review-handoff-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: protected-ready-review-handoff.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # The target verifies that the READY producer job has finished successfully.
+  # The final merge collector additionally requires this whole run to succeed.
+  review-ready:
+    needs: [dispatch]
+    if: needs.dispatch.outputs.ready_review == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Dispatch exactly one authenticated review from the completed READY proof
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          READY_REVIEW_PR: ${{ needs.dispatch.outputs.ready_review_pr }}
+          READY_REVIEW_HEAD: ${{ needs.dispatch.outputs.ready_review_head }}
+          READY_REVIEW_BASE: ${{ needs.dispatch.outputs.ready_review_base }}
+          READY_REVIEW_ARTIFACT_ID: ${{ needs.dispatch.outputs.ready_review_artifact_id }}
+          READY_REVIEW_SHA256: ${{ needs.dispatch.outputs.ready_review_sha256 }}
+        run: node scripts/protected-ready-review-lifecycle-v1.mjs dispatch
