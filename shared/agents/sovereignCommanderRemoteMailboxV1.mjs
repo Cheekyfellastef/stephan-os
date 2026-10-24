@@ -66,6 +66,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
+  'observe-open-stephanos-tabs',
   'prove-stephanos-ai-commander',
   'reconcile-remote-commander-parity',
   'sync-vr-reference-sources',
@@ -500,6 +501,39 @@ function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
   });
 }
 
+export function safeBrowserObservationProjection(value = {}, processId = '') {
+  if (processId !== 'observe-open-stephanos-tabs') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith('SOVEREIGN_BROWSER_OBSERVATION_RESULT='));
+  let observed;
+  try { observed = JSON.parse(line.slice('SOVEREIGN_BROWSER_OBSERVATION_RESULT='.length)); } catch { return null; }
+  if (observed?.schemaVersion !== 'stephanos.sovereign-browser-observation.v1'
+    || observed.readOnly !== true || observed.observationOnly !== true
+    || observed.servedHeadVerified !== false || observed.functionalAcceptanceVerified !== false
+    || !['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC', 'BROWSER_OBSERVATION_PARTIAL', 'BROWSER_OBSERVATION_BLOCKED'].includes(observed.finalVerdict)) return null;
+  const count = (number) => Number.isSafeInteger(number) && number >= 0 && number <= 10_000 ? number : null;
+  const blocker = text(observed.blocker);
+  const observedAtUtc = text(observed.observedAtUtc);
+  const evidenceHash = text(observed.evidenceHash).toLowerCase();
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-browser-observation.v1',
+    ok: observed.ok === true && ['BROWSER_OBSERVATION_CAPTURED', 'BROWSER_OBSERVATION_DIAGNOSTIC'].includes(observed.finalVerdict),
+    finalVerdict: observed.finalVerdict,
+    blocker: /^[A-Z0-9_]{0,96}$/.test(blocker) ? blocker : '',
+    observedAtUtc: observedAtUtc.length <= 40 && Number.isFinite(Date.parse(observedAtUtc)) ? observedAtUtc : '',
+    connectedTabCount: count(observed.connectedTabCount),
+    admittedTabCount: count(observed.admittedTabCount),
+    observedTabCount: count(observed.observedTabCount),
+    screenshotCount: count(observed.screenshotCount),
+    diagnosticTabCount: count(observed.diagnosticTabCount),
+    evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    observationOnly: true,
+    servedHeadVerified: false,
+    functionalAcceptanceVerified: false,
+    readOnly: true,
+  });
+}
+
 function safeRuntimeProofProjection(value = {}, processId = '') {
   const proofContract = processId === 'prove-vr-atlas-runtime'
     ? Object.freeze({
@@ -562,6 +596,25 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     receiptCaptured: Boolean(proof.receiptPath),
     blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
   });
+}
+
+export function browserObservationCompleteForAction(proof = null) {
+  const common = proof?.ok === true
+    && proof?.readOnly === true
+    && proof?.observationOnly === true
+    && proof?.servedHeadVerified === false
+    && proof?.functionalAcceptanceVerified === false
+    && PROOF_HASH_PATTERN.test(proof?.evidenceHash || '');
+  const visual = proof?.finalVerdict === 'BROWSER_OBSERVATION_CAPTURED'
+    && Number.isSafeInteger(proof?.observedTabCount)
+    && proof.observedTabCount > 0
+    && proof?.screenshotCount === proof.observedTabCount;
+  const diagnostic = proof?.finalVerdict === 'BROWSER_OBSERVATION_DIAGNOSTIC'
+    && proof?.observedTabCount === 0
+    && proof?.screenshotCount === 0
+    && Number.isSafeInteger(proof?.diagnosticTabCount)
+    && proof.diagnosticTabCount > 0;
+  return common && (visual || diagnostic);
 }
 
 function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead = '') {
@@ -1718,6 +1771,7 @@ function safeMaintenanceProjection(value = {}) {
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(source, processId),
+    browserObservation: safeBrowserObservationProjection(source, processId),
     aiCommanderAcceptance: safeAiCommanderAcceptanceProjection(source, processId),
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
@@ -3065,6 +3119,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
       const aiProofRequired = actionId === 'prove-stephanos-ai-commander';
+      const browserObservationRequired = actionId === 'observe-open-stephanos-tabs';
+      const browserObservationComplete = !browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation);
       const runtimeProofComplete = !runtimeProofRequired
         || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
@@ -3073,6 +3129,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && projection.processId === actionId
         && projection.status === 0
         && runtimeProofComplete
+        && browserObservationComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
@@ -3084,6 +3141,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           runtimeProof: projection.runtimeProof,
+          browserObservation: projection.browserObservation,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3097,6 +3155,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         status: projection.status,
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
+        browserObservation: projection.browserObservation,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
       }));
     }
@@ -3923,6 +3982,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
   const aiProofRequired = shape.command.remoteAction === 'prove-stephanos-ai-commander';
+  const browserObservationRequired = shape.command.remoteAction === 'observe-open-stephanos-tabs';
   if (aiProofRequired) {
     const acceptance = projection.aiCommanderAcceptance;
     const actionEnvelopeComplete = projection.ok === true
@@ -3995,6 +4055,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && projection.status === 0
     && runtimeProofComplete
     && observationComplete
+    && (!browserObservationRequired || browserObservationCompleteForAction(projection.browserObservation))
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
@@ -4004,6 +4065,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
       observation: projection.observation,
+      browserObservation: projection.browserObservation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -4021,6 +4083,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     runtimeProof: projection.runtimeProof,
     aiCommanderAcceptance: projection.aiCommanderAcceptance,
     observation: projection.observation,
+    browserObservation: projection.browserObservation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,

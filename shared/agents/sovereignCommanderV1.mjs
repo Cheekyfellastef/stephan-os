@@ -436,6 +436,13 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
       timeoutMs: 60_000,
     }),
+    'observe-open-stephanos-tabs': frozen({
+      executable: node,
+      // Passive, origin-bound attachment to an explicitly opted-in local Chromium session.
+      // No caller-selected URL, profile, debugging listener or arbitrary script.
+      args: frozen([nodeFile('sovereign-commander-browser-observe.mjs')]),
+      timeoutMs: 90_000,
+    }),
     'prove-stephanos-ai-commander': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ai-chat-acceptance.mjs')]),
