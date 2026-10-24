@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   PROTECTED_OPERATOR_WORKFLOW_MERGE_MODE,
+  executeProtectedOpenClawMergeOnBattleBridge,
   buildProtectedOpenClawMergePlan,
   buildProtectedOperatorWorkflowDispatchArgs,
   resolveProtectedOperatorAuthorizationCommentId,
@@ -96,3 +97,22 @@ test('protected workflow dispatch always carries the exact authorization comment
     0,
   ), null);
 });
+
+for (const platform of ['win32', 'linux']) {
+  test('clean legacy merge returns the canonical mailbox handoff before execution on ' + platform, async () => {
+    let calls = 0;
+    const result = await executeProtectedOpenClawMergeOnBattleBridge(command(), {
+      now: new Date('2026-09-11T22:00:00.000Z'),
+      userProfile: 'C:\\Users\\Stef',
+      platform,
+      runCommand: () => { calls++; throw new Error('NO_CHILD_EXPECTED'); },
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'PROTECTED_OPERATOR_MERGE_CANONICAL_MAILBOX_REQUIRED');
+    assert.equal(result.details.operation, 'DISPATCH_PROTECTED_OPERATOR_MERGE');
+    assert.equal(result.details.issueNumber, 3149);
+    assert.equal(result.details.expectedHead, head);
+    assert.equal(result.details.expectedBase, base);
+  });
+}
