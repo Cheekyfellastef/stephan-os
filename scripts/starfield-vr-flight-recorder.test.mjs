@@ -96,6 +96,19 @@ test('Starfield VR playtest CPU attribution tracks desktop ChatGPT and browsers 
 });
 
 
+test('Starfield diagnosis carries actual sampled CPU attribution counts into planning', () => {
+  // Real collector summary already writes these counts, but the diagnostic
+  // payload that the CPU/AER planner consumes must report them independently.
+  assert.match(performance, /starfieldThreadCpuMeasuredSampleCount = \\$busiestThreadSamples\\.Count/);
+  assert.match(performance, /cpuConsumersAvailableSampleCount = \\$cpuConsumerAvailableSamples\\.Count/);
+  assert.match(diagnosis, /\\$cpuConsumersAvailableRows = @\\(\\$rows \\| Where-Object/);
+  assert.match(diagnosis, /-Name 'cpuConsumersAvailable' -Default 'False'\\) -ceq 'True'/);
+  assert.match(diagnosis, /starfieldThreadCpuMeasuredSampleCount = @\\(\\$starfieldThreadCpu\\)\\.Count/);
+  assert.match(diagnosis, /cpuConsumersAvailableSampleCount = \\$cpuConsumersAvailableRows\\.Count/);
+  assert.match(reporter, /starfieldThreadCpuMeasuredSampleCount: metrics\\?\\.starfieldThreadCpuMeasuredSampleCount/);
+  assert.match(reporter, /cpuConsumersAvailableSampleCount: metrics\\?\\.cpuConsumersAvailableSampleCount/);
+});
+
 test('Starfield whole-game CPU sample rejects PID reuse, counter rollback and stale baseline', () => {
   const cpuBlock = performance.match(/\$starfieldCpuPct = \$null[\s\S]*?# Same-session fixed-name CPU attribution/)?.[0];
   assert.ok(cpuBlock, 'locate the same-session game CPU delta block');

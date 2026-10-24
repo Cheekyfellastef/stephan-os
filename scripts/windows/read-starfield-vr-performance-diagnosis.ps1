@@ -116,6 +116,11 @@ $firefoxCpu = Get-NumericValues -Rows $rows -Name 'firefoxCpuPct'
 $webView2Cpu = Get-NumericValues -Rows $rows -Name 'webView2CpuPct'
 $nodeCpu = Get-NumericValues -Rows $rows -Name 'nodeCpuPct'
 $metaVrCpu = Get-NumericValues -Rows $rows -Name 'metaVrCpuPct'
+# Count only real same-session CSV intervals where the bounded process-family sampler succeeded.
+# A missing legacy column, missing process inventory, or a failed sample is not a measured zero.
+$cpuConsumersAvailableRows = @($rows | Where-Object {
+    [string](Get-OptionalValue -Object $_ -Name 'cpuConsumersAvailable' -Default 'False') -ceq 'True'
+})
 $llama = Get-NumericValues -Rows $rows -Name 'llamaServerCount'
 $metaWorkingSet = Get-NumericValues -Rows $rows -Name 'metaVrWorkingSetMiB'
 $driveFreeGiB = Get-NumericValues -Rows $rows -Name 'gameDriveFreeGiB'
@@ -158,10 +163,12 @@ $metrics = [ordered]@{
     maxStarfieldCpuPct = Get-Maximum -Values $starfieldCpu
     avgStarfieldBusiestThreadCpuPct = Get-Average -Values $starfieldThreadCpu
     maxStarfieldBusiestThreadCpuPct = Get-Maximum -Values $starfieldThreadCpu
+    starfieldThreadCpuMeasuredSampleCount = @($starfieldThreadCpu).Count
     starfieldThreadCpuTelemetryAvailable = @($starfieldThreadCpu).Count -gt 0
     avgSystemCpuPct = Get-Average -Values $systemCpu
     maxSystemCpuPct = Get-Maximum -Values $systemCpu
     cpuAttributionAvailable = @($chatGptCpu).Count -gt 0
+    cpuConsumersAvailableSampleCount = $cpuConsumersAvailableRows.Count
     avgChatGptCpuPct = Get-Average -Values $chatGptCpu
     maxChatGptCpuPct = Get-Maximum -Values $chatGptCpu
     avgEdgeCpuPct = Get-Average -Values $edgeCpu
