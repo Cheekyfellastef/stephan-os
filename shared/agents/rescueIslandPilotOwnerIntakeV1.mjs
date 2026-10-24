@@ -12,6 +12,8 @@ const OWNER_ID = 267490109;
 const HEAD = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const TASK = /^[a-z0-9][a-z0-9-]{7,63}$/;
+const SUPERVISED_INTAKE = Symbol('supervised-cooperative-intake');
+const SUPERVISED_COMMAND = /^\/rescue-island-01 supervised-cooperative ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
 const COMMAND = /^\/rescue-island-01 pilot ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
 const MAX_AGE = 10 * 60 * 1000;
 const COMMENT_URL = 'https://api.github.com/repos/' + REPO + '/issues/comments/';
@@ -45,6 +47,7 @@ function matchesCommentIdentity(comment, requestedCommentId) {
  */
 export function inspectRescueIslandPilotOwnerIntakeV1({
   issue, comment, commentId, mainHead, nowUtc, task, consumedCommentIds = [],
+  [SUPERVISED_INTAKE]: supervised = false,
 } = {}) {
   const blockers = [];
   const now = parseTimestamp(nowUtc);
@@ -79,7 +82,7 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
       || !Number.isFinite(expires) || expires <= now || expires - now > MAX_AGE)
     blockers.push('TASK_IDENTITY_SCOPE_OR_EXPIRY_INVALID');
   if (task?.baseHead !== mainHead) blockers.push('TASK_HEAD_NOT_CURRENT_MAIN');
-  const match = typeof comment?.body === 'string' ? comment.body.match(COMMAND) : null;
+  const match = typeof comment?.body === 'string' ? comment.body.match(supervised ? SUPERVISED_COMMAND : COMMAND) : null;
   const hash = typeof task?.content === 'string'
     ? createHash('sha256').update(task.content, 'utf8').digest('hex') : '';
   if (!match || match[1] !== mainHead || match[2] !== task?.taskId
@@ -88,6 +91,7 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
 
   return Object.freeze({
     schemaVersion: RESCUE_ISLAND_INTAKE_SCHEMA,
+    ...(supervised ? { assuranceProfile: 'SUPERVISED_COOPERATIVE_V1' } : {}),
     issueNumber: ISSUE,
     workerId: 'rescue-island-01',
     taskId: primitive(task?.taskId, TASK) ? task.taskId : '',
@@ -105,4 +109,10 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
     mergeAllowed: false,
     unattendedRefillAllowed: false,
   });
+}
+
+// A distinct owner command explicitly accepts the reduced assurance profile.
+// Like the ordinary intake, this parser alone grants no execution authority.
+export function inspectRescueIslandSupervisedOwnerIntakeV1(input = {}) {
+  return inspectRescueIslandPilotOwnerIntakeV1({ ...input, [SUPERVISED_INTAKE]: true });
 }

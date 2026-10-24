@@ -8,6 +8,8 @@ using Microsoft.Win32.SafeHandles;
 using Stephanos.RescueIslandCustody;
 
 if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("REAL_WINDOWS_TESTS_REQUIRED");
+if (args.Length == 1 && args[0] == "--run-adapter-tests") return RestrictedAdapterTestRunner.Run();
+if (args.Length != 0) throw new Exception("UNREGISTERED_TEST_OPERATION");
 int passed = 0;
 int failed = 0;
 Run("synthetic assigned-but-disabled identity privileges remain sensitive", () =>
@@ -198,10 +200,22 @@ Run("real one-shot host identifies its child PID and remains held under forged f
         "canonicalLeaseAccessAllowed", "seedForgeQueueAccessAllowed" })
         if (facts.GetProperty(field).GetBoolean()) throw new Exception("HOST_FORGED_AUTHORITY_ACCEPTED:" + field);
 });
+Run("supervised command rejects caller authority fields before source access", () =>
+{
+    var result = Invoke(["--supervised-once"]);
+    var principal = WindowsProcessPrincipalObservation.ObserveCurrentProcess();
+    bool administrative = principal.Elevated || principal.ElevationType == "Full"
+        || (principal.AdministratorsGroupPresent && (principal.AdministratorsGroupAttributes & 16) == 0);
+    string expected = administrative ? "ISLAND_HOST_NON_ADMINISTRATIVE_TOKEN_REQUIRED" : "ISLAND_HOST_REQUEST_INVALID";
+    if (result.ExitCode != 3 || result.Facts.GetProperty("executionAllowed").GetBoolean()
+        || result.Facts.GetProperty("blocker").GetString() != expected
+        || result.Facts.GetProperty("assuranceProfile").GetString() != "SUPERVISED_COOPERATIVE_V1")
+        throw new Exception("SUPERVISED_CALLER_AUTHORITY_ADMITTED");
+});
 Run("run, recovery, arbitrary paths, stdin and extra arguments have no admitted host operation", () =>
 {
     foreach (string[] args in new[] { Array.Empty<string>(), new[] { "--run" }, new[] { "--recover" },
-        new[] { "--inspect-principal", "--run" }, new[] { "--inspect-principal=approved" },
+        new[] { "--inspect-principal", "--run" }, new[] { "--supervised-once", "--run" }, new[] { "--inspect-principal=approved" },
         new[] { "C:\\canonical\\.git" }, new[] { "--task", "{\"approvalAuthenticated\":true}" } })
     {
         var result = Invoke(args);
