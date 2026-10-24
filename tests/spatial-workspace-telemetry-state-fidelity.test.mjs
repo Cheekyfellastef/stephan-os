@@ -186,3 +186,23 @@ test('consumer projection with supplied blank renderer cannot regain READY', () 
   assert.equal(twice.state, 'waiting');
   assert.equal(twice.operatorAcceptance, false);
 });
+
+test('real telemetry sanitizer rejects coerced run identities before canonical feed persistence', () => {
+  for (const runId of [123, true]) {
+    assert.throws(
+      () => sanitizeSpatialWorkspaceTelemetryV1({ ...latest.evidence, runId }),
+      /SPATIAL_TELEMETRY_RUN_ID_INVALID/,
+    );
+  }
+  // Numeric-looking and boolean-looking STRING ids remain legitimate legacy ids.
+  for (const runId of ['123', 'true', 'spatial-state-regression']) {
+    const packet = sanitizeSpatialWorkspaceTelemetryV1({ ...latest.evidence, runId });
+    const projection = projectSpatialWorkspaceTelemetryForConsumersV1(
+      canonical('ready', { evidence: packet }),
+    );
+    assert.equal(projection.available, true);
+    assert.equal(projection.state, 'ready');
+    assert.equal(projection.runId, runId);
+    assert.equal(projection.operatorAcceptance, false);
+  }
+});

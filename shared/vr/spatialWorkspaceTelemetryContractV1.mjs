@@ -33,6 +33,8 @@ function boundedErrors(value) {
 }
 
 export function sanitizeSpatialWorkspaceTelemetryV1(input = {}) {
+  // A numeric/boolean run ID must not become valid provenance by string coercion.
+  if (typeof input.runId !== 'string') throw new Error('SPATIAL_TELEMETRY_RUN_ID_INVALID');
   const runId = text(input.runId).toLowerCase();
   const phase = text(input.phase).toLowerCase();
   const observedAtUtc = iso(input.observedAtUtc);
