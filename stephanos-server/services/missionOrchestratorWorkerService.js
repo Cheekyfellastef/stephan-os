@@ -382,13 +382,19 @@ function validateExactActionGrant(state, action, grant, options = {}) {
 async function beginRepairIfRequired(state, options) {
   if (state.currentPhase !== 'REPAIR_REQUIRED') return { state, repairStarted: false };
   const round = Number.isInteger(state.repair?.currentRound) ? state.repair.currentRound + 1 : 1;
-  const started = await appendMissionEvent(state.missionId, {
+  let started;
+  try {
+    started = await appendMissionEvent(state.missionId, {
     eventId: `repair-${state.missionId}-round-${round}`.slice(0, 128),
     eventType: 'REPAIR_STARTED',
     expectedRevision: state.revision,
     expectedCurrentPhase: 'REPAIR_REQUIRED',
     summary: `Bounded source repair round ${round} started after required check failure.`,
-  }, options);
+    }, options);
+  } catch (error) {
+    if (error?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw error;
+    return { state, repairStarted: false, preconditionFailed: true, reason: error.message };
+  }
   return {
     state: started.state,
     repairStarted: started.preconditionFailed !== true,
@@ -398,6 +404,10 @@ async function beginRepairIfRequired(state, options) {
 }
 
 async function publishLockedMissionWorkerAction(state, options = {}) {
+  if (state.cancelled === true || state.storeMetadata?.originalSourceAttemptFence
+      || state.storeMetadata?.supervisedRecoveryMaintenance) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
   const action = buildMissionWorkerAction(state, options);
   if (action.executable !== true) {
     return {

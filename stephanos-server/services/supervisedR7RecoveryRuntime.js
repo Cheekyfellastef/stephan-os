@@ -347,23 +347,31 @@ export function supervisedR7FenceBindsLease(fence, lease) {
 export async function verifyRuntimeSupervisedR7Fence(fence, lease, paths, env) {
   if (!supervisedR7FenceBindsLease(fence, lease)) return false;
   const packet = fence.prepared.packet;
-  const { state } = await readMissionRecord(MISSION, { root: paths.orchestratorRoot, env });
-  await quiescence(state.storeMetadata?.supervisedRecoveryMaintenance, { paths, env });
-  const root = artifactRoot(paths, packet.commandId);
-  const manifest = JSON.parse(await regularBytes(root, 'manifest.json', 2 * 1024 * 1024));
-  if (supervisedRecoveryDigest(manifest) !== packet.maintenanceEvidence.preservationDigest) return false;
-  if (supervisedRecoveryDigest(state.storeMetadata.supervisedRecoveryMaintenance) !== packet.maintenanceEvidence.maintenanceDigest
-      || bytesDigest(await regularBytes(root, 'original-history.bundle', 256 * 1024 * 1024)) !== manifest.gitBundleDigest)
-    return false;
-  for (const entry of manifest.entries) {
-    if (!entry.deleted && bytesDigest(await regularBytes(root, join(entry.group, entry.name))) !== entry.sha256) return false;
-  }
-  const expectedSource = manifest.entries.filter(e => ['dirty', 'git'].includes(e.group));
-  const currentSource = manifestEntries(await sourceInventory(state.storeMetadata.supervisedRecoveryMaintenance));
-  if (supervisedRecoveryDigest(currentSource) !== supervisedRecoveryDigest(expectedSource)) return false;
+  const verifyEvidence = async () => {
+    const { state } = await readMissionRecord(MISSION, { root: paths.orchestratorRoot, env });
+    await quiescence(state.storeMetadata?.supervisedRecoveryMaintenance, { paths, env });
+    const root = artifactRoot(paths, packet.commandId);
+    const manifest = JSON.parse(await regularBytes(root, 'manifest.json', 2 * 1024 * 1024));
+    if (supervisedRecoveryDigest(manifest) !== packet.maintenanceEvidence.preservationDigest) return false;
+    if (supervisedRecoveryDigest(state.storeMetadata.supervisedRecoveryMaintenance) !== packet.maintenanceEvidence.maintenanceDigest
+        || bytesDigest(await regularBytes(root, 'original-history.bundle', 256 * 1024 * 1024)) !== manifest.gitBundleDigest)
+      return false;
+    for (const entry of manifest.entries) {
+      if (!entry.deleted && bytesDigest(await regularBytes(root, join(entry.group, entry.name))) !== entry.sha256) return false;
+    }
+    const expectedSource = manifest.entries.filter(e => ['dirty', 'git'].includes(e.group));
+    const currentSource = manifestEntries(await sourceInventory(state.storeMetadata.supervisedRecoveryMaintenance));
+    if (supervisedRecoveryDigest(currentSource) !== supervisedRecoveryDigest(expectedSource)) return false;
+    await quiescence(state.storeMetadata.supervisedRecoveryMaintenance, { paths, env });
+    return true;
+  };
+  if (!await verifyEvidence()) return false;
   const inspected = await authenticateRuntimeSupervisedR7(fence.prepared, fence.approvalCommentId,
     { now: () => Date.parse(fence.approvalConsumedAtUtc) });
-  return inspected.approvalEvidenceDigest === fence.approvalEvidenceDigest;
+  // The GitHub read can yield to source changes or new queue/worker activity.
+  // Re-observe the entire bound estate after that IO, while the reconciler
+  // still holds the canonical mission lock, immediately before lease CAS.
+  return inspected.approvalEvidenceDigest === fence.approvalEvidenceDigest && await verifyEvidence();
 }
 
 export async function authenticateRuntimeSupervisedR7(prepared, approvalCommentId, options = {}) {

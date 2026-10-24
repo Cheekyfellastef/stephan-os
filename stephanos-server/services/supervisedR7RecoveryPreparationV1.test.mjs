@@ -185,8 +185,11 @@ for (const [label, change] of [
     authenticateOperatorApproval: async expected => { calls++; return approving(expected); } }), /PACKET_INVALID/);
   assert.equal(calls, 0);
 });
-test('ordinary strict proof and cancellation remain byte-identical to the reviewed baseline', async () => {
-  const service = await readFile(new URL('./originalSourceAttemptFenceService.js', import.meta.url), 'utf8');
+test('ordinary strict proof and cancellation retain the reviewed canonical LF bytes', async () => {
+  // Windows Git may check text out with CRLF. Compare the canonical Git text
+  // bytes without allowing any other source change through this regression.
+  const service = (await readFile(new URL('./originalSourceAttemptFenceService.js', import.meta.url), 'utf8'))
+    .replace(/\r\n/g, '\n');
   const strict = service.slice(service.indexOf('export async function proveOriginalSourceQuarantine('),
     service.indexOf('export async function verifyOriginalSourceAttemptFence('));
   assert.equal(createHash('sha256').update(strict).digest('hex'), '395efbe092ef0840c664c1093fde3c65be2e74be1aed7f99aca06ce286204171');

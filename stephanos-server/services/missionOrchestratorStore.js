@@ -415,7 +415,9 @@ export async function appendMissionEvent(missionId, event, options = {}) {
     const stored = JSON.parse(await readFile(paths.statePath, 'utf8'));
     const current = await reconcilePendingQuarantineAudit(stored, paths, options);
     if (current.storeMetadata?.supervisedRecoveryMaintenance
-        && event.eventType === 'AGENT_DISPATCHED') {
+        && event.eventType !== 'MISSION_CANCELLED') {
+      // Preserve the exact reserved revision against stale repair/retry/result
+      // snapshots. Only the separately proven cancellation may advance it.
       throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
     }
     const eventId = safeEventId(event.eventId);

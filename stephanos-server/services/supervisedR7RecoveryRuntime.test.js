@@ -12,6 +12,7 @@ import { assertOriginalSourceAttemptNotFenced, withOriginalSourceAttemptMutation
 import { reconcileExpiredElasticReviewLeaseV1 } from './elasticPrHeadLeaseService.js';
 import { createMissionWorkerHeartbeatRecord } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { publishForgePrePrToGitHub } from './forgePrePrGitHubPublisherService.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { describeSupervisedR7Maintenance, beginSupervisedR7Maintenance, preserveSupervisedR7Maintenance,
   persistRuntimeSupervisedR7Packet, prepareRuntimeSupervisedR7, readSupervisedR7OperatorApproval,
   supervisedRecoveryDigest as digest, supervisedR7FenceBindsLease } from './supervisedR7RecoveryRuntime.js';
@@ -253,6 +254,44 @@ test('a stale source callback cannot cross the installed maintenance boundary',a
   await assert.rejects(withOriginalSourceAttemptMutationGuard(MISSION,async()=>{ran=true;},
     {env:f.env,missionStoreOptions:{root:f.paths.orchestratorRoot}}),/ATTEMPT_FENCED/);
   assert.equal(ran,false);
+});
+
+test('a pre-maintenance publisher snapshot cannot advance the reserved repair revision',async t=>{
+  const f=await fixture(t);
+  const before=(await readMissionRecord(MISSION,{root:f.paths.orchestratorRoot})).state;
+  await f.maintenance();
+  const published=await publishMissionWorkerAction(before,{root:f.paths.orchestratorRoot,env:f.env});
+  assert.equal(published.published,false);assert.equal(published.repairStarted,false);
+  assert.equal(published.reason,'repair-transition-precondition-failed');
+  for (const eventType of ['REPAIR_STARTED','AGENT_RESULT_COLLECTED','REVIEW_COMPLETED']) {
+    await assert.rejects(appendMissionEvent(MISSION,{eventId:'late-'+eventType,eventType,
+      expectedRevision:7,expectedCurrentPhase:'REPAIR_REQUIRED'},
+    {root:f.paths.orchestratorRoot,env:f.env}),/ATTEMPT_FENCED/);
+  }
+  const {state}=await readMissionRecord(MISSION,{root:f.paths.orchestratorRoot});
+  assert.equal(state.revision,7);assert.equal(state.currentPhase,'REPAIR_REQUIRED');
+  await preserveSupervisedR7Maintenance(f.options);
+  assert.ok((await persistRuntimeSupervisedR7Packet(f.input,f.options)).packetDigest);
+});
+
+for(const [name,mutate] of [
+  ['source mutation',async f=>appendFile(join(f.worktree,'untracked.txt'),'during approval read')],
+  ['stale queue',async f=>{
+    const dir=join(f.env.STEPHANOS_MISSION_WORKER_QUEUE_DIR,'forge-publication','pending');
+    await mkdir(dir,{recursive:true});await writeFile(join(dir,'late.json'),JSON.stringify({missionId:MISSION}));
+  }],
+  ['worker activity',async f=>f.heartbeat({activeTaskId:MISSION+'-late',activeReceiptId:'late-active-receipt'})],
+]) test(`${name} during release authentication blocks CAS`,async t=>{
+  const f=await fixture(t);await f.prepared();
+  const cancelled=await retireSupervisedOriginalSourceRecovery(f.input,12,f.options);
+  const originalFetch=globalThis.fetch;let called=false;
+  globalThis.fetch=async url=>{called=true;await mutate(f);return f.options.fetchImpl(url);};
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  const released=await reconcileExpiredElasticReviewLeaseV1({paths:f.paths,env:f.env,
+    sourceRevision:f.input.sourceRevision,missionRecords:[cancelled.state]});
+  assert.equal(called,true);assert.equal(released.released,false);
+  assert.equal((await readSourceMutationLease({root:f.paths.workspaceRoot,repoRoot:f.paths.repoRoot,
+    nowUtc:new Date(f.time).toISOString()})).present,true);
 });
 
 for(const [name,mutate] of [
