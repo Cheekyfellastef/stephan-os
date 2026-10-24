@@ -561,7 +561,7 @@ export function replacementSourceForgePublicationBlocked(state = {}) {
 }
 
 export async function publishMissionWorkerAction(inputState, options = {}) {
-  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence) return {
+  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence || inputState.storeMetadata?.supervisedRecoveryMaintenance) return {
     published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
   };
   if (replacementSourceForgePublicationBlocked(inputState)) return {
@@ -712,7 +712,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const adapter = text(result?.adapter).toLowerCase();
   if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
-  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence) {
+  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence || current.state.storeMetadata?.supervisedRecoveryMaintenance) {
     throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
   }
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
@@ -731,7 +731,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const failedIdentity = failedMissionWorkerResultIdentityV1(resultEvent);
   const exactFailedReplay = state => result.success === false && failedIdentity
     && (!Array.isArray(result.evidenceReceipts) || result.evidenceReceipts.length === 0)
-    && state.cancelled !== true && !state.storeMetadata?.originalSourceAttemptFence
+    && state.cancelled !== true && !state.storeMetadata?.originalSourceAttemptFence && !state.storeMetadata?.supervisedRecoveryMaintenance
     && state.currentPhase === 'BLOCKED' && state.dispatch?.status === 'failed'
     && state.dispatch?.adapter === adapter && state.dispatch?.resultId === resultId
     && state.storeMetadata?.processedEventIds?.includes(eventId) === true

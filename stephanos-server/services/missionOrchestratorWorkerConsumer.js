@@ -398,7 +398,8 @@ async function proveProcessingClaim(claim, options = {}) {
       // lock after rename. A preflight read alone can race fence commit.
       const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
         if (state.cancelled === true || state.currentPhase === 'CANCELLED'
-            || state.storeMetadata?.originalSourceAttemptFence) {
+            || state.storeMetadata?.originalSourceAttemptFence
+            || state.storeMetadata?.supervisedRecoveryMaintenance) {
           throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
         }
         return Object.freeze({ proven: true, state: 'NON_AGENT_MISSION_FENCE_CHECKED' });
@@ -411,7 +412,8 @@ async function proveProcessingClaim(claim, options = {}) {
   const adapter = normalizedText(claim?.adapter).toLowerCase();
   const record = await readMissionRecord(missionId, options);
   if (record.state.cancelled === true || record.state.currentPhase === 'CANCELLED'
-      || record.state.storeMetadata?.originalSourceAttemptFence) {
+      || record.state.storeMetadata?.originalSourceAttemptFence
+      || record.state.storeMetadata?.supervisedRecoveryMaintenance) {
     throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
   }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();

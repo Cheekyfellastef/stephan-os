@@ -203,6 +203,29 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
+// Fresh owner-decision evidence for the existing recovery service. Reuse the
+// canonical credential reader; this performs GET only and cannot create a
+// decision. A connector-authored comment is not a direct operator decision.
+export async function readGithubOwnerApprovalComment(commentId, { env = process.env, fetchImpl = fetch } = {}) {
+  if (!Number.isSafeInteger(commentId) || commentId <= 0) throw new Error('SUPERVISED_R7_APPROVAL_ID_INVALID');
+  const auth = await resolveGithubTokenConfig({ env });
+  const response = await fetchImpl(
+    `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/comments/${commentId}`,
+    { redirect: 'error', headers: {
+      Accept: 'application/vnd.github+json', 'User-Agent': 'stephanos-operator-approval-read',
+      ...(auth.configured ? { Authorization: `Bearer ${auth.token}` } : {}),
+    }, signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error('SUPERVISED_R7_APPROVAL_READ_FAILED');
+  const bytes = await response.text();
+  if (Buffer.byteLength(bytes) > 65536) throw new Error('SUPERVISED_R7_APPROVAL_UNBOUNDED');
+  const comment = JSON.parse(bytes);
+  if (comment.id !== commentId || comment.user?.id !== 267490109
+      || comment.user?.login !== 'Cheekyfellastef' || comment.user?.type !== 'User'
+      || comment.author_association !== 'OWNER' || comment.performed_via_github_app != null
+      || comment.created_at !== comment.updated_at) throw new Error('SUPERVISED_R7_APPROVAL_NOT_OWNER_IMMUTABLE');
+  return comment;
+}
+
 
 const CANONICAL_MUTABLE_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
