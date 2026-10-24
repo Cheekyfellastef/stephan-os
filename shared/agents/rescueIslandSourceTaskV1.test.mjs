@@ -70,6 +70,15 @@ test('source patch plan permits only exact before/after strings and a bound full
     assert.equal(inspect(bad,now).valid,false);
   }
 });
+test('source task rejects coercive field types without throwing or admitting numeric task IDs',()=>{
+  for(const field of Object.keys(fixture()).filter(k=>k!=='issueNumber')){
+    const bad={...fixture(),[field]:12345678};
+    assert.doesNotThrow(()=>assert.equal(inspect(bad,now).valid,false,field));
+  }
+  for(const issueNumber of ['3109',0,-1,1.5,Number.NaN,Number.POSITIVE_INFINITY])
+    assert.equal(inspect({...fixture(),issueNumber},now).valid,false);
+});
+
 test('Seed proposal consent must come from the actual Seed issue and explicit source grammar',()=>{
   const task=fixture();task.issueNumber=3096;task.issueTitle=RESCUE_ISLAND_SOURCE_PLANS.SEED_FORGE_V1.issueTitle;
   task.targetPath='shared/runtime/seedCanopyParallelResourceV1.mjs';
