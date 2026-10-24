@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-performance-loop.mjs';
+import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-performance-recommendations.mjs';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
 const identity = {
@@ -64,4 +65,373 @@ test('telemetry reporter publishes the project loop into shared workspace', asyn
   assert.match(report, /loop-current\.json/);
   assert.match(report, /projectTelemetryGapCount/);
   assert.match(report, /projectNextExperiment/);
+});
+
+test('observed system CPU pressure prioritizes missing game-thread and background attribution', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['system-cpu-load-high'] },
+    metrics: { avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, avgGpuUtilPct: 28.8 },
+  });
+  assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+  assert.match(loop.nextExperiment.rationale, /PR #3187/);
+  assert.match(loop.nextExperiment.title, /PR #3187: Record ChatGPT Desktop and browser CPU pressure during Starfield VR playtests/);
+  assert.ok(loop.missingTelemetry.some((entry) => entry.id === 'starfield-cpu-attribution'));
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
+});
+
+test('matched CPU evidence chooses safe per-stage investigation before graphics tuning', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+    metrics: {
+      avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7, maxStarfieldBusiestThreadCpuPct: 97,
+      avgChatGptCpuPct: 7, avgMetaVrCpuPct: 10, avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0,
+      starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 28.8, maxGpuMemoryPct: 40,
+    },
+  });
+  assert.equal(loop.nextExperiment.id, 'starfield-cpu-stage-isolation');
+  assert.equal(loop.telemetryRequirements.find((entry) => entry.id === 'starfield-cpu-attribution').available, true);
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+});
+
+test('motion and stereo skew prioritise AER isolation without silently enabling the experimental DLL', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['stereo-eye-timing-skew-observed'] },
+    metrics: {
+      avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
+    },
+  });
+  assert.equal(loop.nextExperiment.id, 'starfield-aer-motion-isolation');
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+  assert.equal(loop.nextExperiment.authority.rollbackRequired, true);
+  assert.equal(loop.authority.operatorAcceptancePreserved, true);
+});
+
+test('pose-latency focus alone cannot masquerade as evidence of AER stereo faults', async () => {
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: ['pose-age-high'] },
+    metrics: {
+      avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18, avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+      avgGpuUtilPct: 40, maxGpuMemoryPct: 42,
+    },
+  });
+  assert.notEqual(loop.nextExperiment.id, 'starfield-aer-motion-isolation');
+  assert.equal(loop.candidateTechniques.some((item) => item.id === 'starfield-aer-motion-isolation'), false);
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
+});
+
+test('CPU stage isolation requires same-run measured sample counts and finite CPU percentages', async () => {
+  const base = {
+    avgSystemCpuPct: 100, avgStarfieldCpuPct: 36.7,
+    maxStarfieldBusiestThreadCpuPct: 97, avgChatGptCpuPct: 0, avgMetaVrCpuPct: 0,
+    avgApplicationFrameTimeMs: 44.9, p95ApplicationFrameTimeMs: 52.0, avgDeliveredCadenceHz: 71.6, headsetRefreshRateHz: 72,
+  };
+  const missingOrInvalid = [
+    {},
+    { starfieldThreadCpuMeasuredSampleCount: 0, cpuConsumersAvailableSampleCount: 4 },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 0 },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      maxStarfieldBusiestThreadCpuPct: '97' },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      avgChatGptCpuPct: Number.NaN },
+    { starfieldThreadCpuMeasuredSampleCount: 4, cpuConsumersAvailableSampleCount: 4,
+      avgMetaVrCpuPct: -1 },
+  ];
+  for (const caseFields of missingOrInvalid) {
+    const loop = await buildStarfieldVrProjectPerformanceLoop({
+      repoRoot, runIdentity: identity,
+      diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+      metrics: { ...base, ...caseFields },
+    });
+    assert.equal(loop.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
+    assert.equal(loop.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, false);
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const measured = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'CPU_LOAD', signals: ['starfield-single-thread-saturation-observed'] },
+    metrics: { ...base, starfieldThreadCpuMeasuredSampleCount: 4,
+      cpuConsumersAvailableSampleCount: 4 },
+  });
+  assert.equal(measured.nextExperiment.id, 'starfield-cpu-stage-isolation');
+  assert.equal(measured.telemetryRequirements.find((item) => item.id === 'starfield-cpu-attribution').available, true);
+});
+
+
+test('resource-pressure availability requires complete measured percent evidence', async () => {
+  const complete = {
+    avgGpuUtilPct: 48,
+    maxGpuMemoryPct: 61,
+    avgSystemCpuPct: 72,
+    minGameDriveFreePct: 16,
+  };
+  const cases = [
+    { avgGpuUtilPct: 48, maxGpuMemoryPct: 61 },
+    { ...complete, avgSystemCpuPct: undefined },
+    { ...complete, minGameDriveFreePct: null },
+    { ...complete, avgSystemCpuPct: '72' },
+    { ...complete, maxGpuMemoryPct: Infinity },
+    { ...complete, minGameDriveFreePct: -2 },
+  ];
+  const project = async (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'VRAM_PRESSURE', signals: ['vram-pressure-high'] },
+    metrics,
+  });
+  for (const metrics of cases) {
+    const loop = await project(metrics);
+    const required = loop.telemetryRequirements.find((item) => item.id === 'resource-pressure');
+    assert.equal(required.available, false);
+    assert.ok(loop.missingTelemetry.some((item) => item.id === 'resource-pressure'));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const valid = await project(complete);
+  assert.equal(valid.telemetryRequirements.find((item) => item.id === 'resource-pressure').available, true);
+});
+
+
+test('numeric telemetry requirements reject placeholders instead of claiming measured input', async () => {
+  const measured = {
+    avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+    droppedFrames: 0,
+    reprojectionState: 'REPROJECTING',
+    avgEncodeLatencyMs: 5,
+    avgNetworkLatencyMs: 20,
+    avgDecodeLatencyMs: 8,
+    avgAirLinkBitrateMbps: 80,
+    maxPacketLossPct: 0,
+    maxJitterMs: 0,
+    renderScalePct: 100,
+  };
+  const project = async (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] },
+    metrics,
+  });
+  const valid = await project(measured);
+  const expectedPresent = [
+    'application-frame-time', 'delivered-cadence', 'headset-refresh',
+    'dropped-frames-reprojection', 'air-link-latency-chain',
+    'air-link-network-quality', 'render-resolution',
+  ];
+  for (const id of expectedPresent) {
+    assert.equal(valid.telemetryRequirements.find((entry) => entry.id === id).available, true, id);
+  }
+  const malformed = [
+    ['application-frame-time', 'avgApplicationFrameTimeMs', '15'],
+    ['application-frame-time', 'avgApplicationFrameTimeMs', 0],
+    ['delivered-cadence', 'avgDeliveredCadenceHz', Number.NaN],
+    ['headset-refresh', 'headsetRefreshRateHz', Infinity],
+    ['dropped-frames-reprojection', 'droppedFrames', -1],
+    ['air-link-latency-chain', 'avgNetworkLatencyMs', -1],
+    ['air-link-network-quality', 'maxPacketLossPct', 101],
+    ['render-resolution', 'renderScalePct', '100'],
+  ];
+  for (const [requirementId, metric, invalid] of malformed) {
+    const loop = await project({ ...measured, [metric]: invalid });
+    assert.equal(
+      loop.telemetryRequirements.find((entry) => entry.id === requirementId).available,
+      false,
+      requirementId + ':' + metric,
+    );
+    assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirementId));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+});
+
+
+test('Air Link qualification uses fields emitted by the canonical session diagnosis, not raw CSV aliases', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  const canonicalKeys = [
+    'avgEncodeLatencyMs', 'avgNetworkLatencyMs', 'avgDecodeLatencyMs',
+    'avgAirLinkBitrateMbps', 'maxPacketLossPct', 'maxJitterMs',
+  ];
+  for (const key of canonicalKeys) {
+    assert.match(producer, new RegExp('\\b' + key + '\\s*='), 'real diagnosis emits ' + key);
+  }
+  const actualSessionMetrics = {
+    avgEncodeLatencyMs: 5, avgNetworkLatencyMs: 20, avgDecodeLatencyMs: 8,
+    avgAirLinkBitrateMbps: 80, maxPacketLossPct: 0, maxJitterMs: 0,
+  };
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] }, metrics,
+  });
+  const real = await project(actualSessionMetrics);
+  assert.equal(real.telemetryRequirements.find((item) => item.id === 'air-link-latency-chain').available, true);
+  assert.equal(real.telemetryRequirements.find((item) => item.id === 'air-link-network-quality').available, true);
+  const rawOnly = await project({
+    encodeLatencyMs: 5, networkLatencyMs: 20, decodeLatencyMs: 8,
+    airLinkBitrateMbps: 80, packetLossPct: 0, jitterMs: 0,
+  });
+  for (const id of ['air-link-latency-chain', 'air-link-network-quality']) {
+    assert.equal(rawOnly.telemetryRequirements.find((item) => item.id === id).available, false);
+  }
+  const malformed = await project({ ...actualSessionMetrics, maxPacketLossPct: 101 });
+  assert.equal(malformed.telemetryRequirements.find((item) => item.id === 'air-link-network-quality').available, false);
+  assert.equal(malformed.authority.automaticRuntimeMutation, false);
+});
+
+test('reprojection readiness distinguishes measured activity from ambiguous NONE_OBSERVED', async () => {
+  const producer = await readFile(
+    new URL('./windows/starfield-vr-runtime-metrics-producer.ps1', import.meta.url), 'utf8',
+  );
+  assert.match(producer, /reprojectionState = if \(\$null -ne \$reprojections/);
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'RENDERING_OR_STEREO', signals: [] }, metrics,
+  });
+  for (const [reprojectionState, reprojectionObservedSampleCount, expected] of [
+    ['REPROJECTING', undefined, true],
+    ['NONE_OBSERVED', undefined, false],
+    ['NONE_OBSERVED', 0, false],
+    ['NONE_OBSERVED', 3, true],
+    ['UNKNOWN', 3, false],
+    ['OFF', 3, false],
+    ['REPROJECTING ', 3, false],
+    ['', 3, false],
+  ]) {
+    const loop = await project({
+      droppedFrames: 0, reprojectionState, reprojectionObservedSampleCount,
+    });
+    const requirement = loop.telemetryRequirements.find((entry) => entry.id === 'dropped-frames-reprojection');
+    assert.equal(requirement.available, expected, String(reprojectionState));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+    if (!expected) assert.ok(loop.missingTelemetry.some((entry) => entry.id === requirement.id));
+  }
+});
+
+test('application frame-time readiness requires measured average and p95 from the canonical diagnosis', async () => {
+  const producer = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+  assert.match(producer, /p95ApplicationFrameTimeMs\s*=/);
+  const base = {
+    avgApplicationFrameTimeMs: 15, p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72, headsetRefreshRateHz: 72,
+  };
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity,
+    diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] },
+    metrics,
+  });
+  for (const invalid of [undefined, null, 0, '18', NaN, Infinity]) {
+    const loop = await project({ ...base, p95ApplicationFrameTimeMs: invalid });
+    assert.equal(loop.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, false);
+    assert.equal(loop.nextExperiment.id, 'close-frame-timing-telemetry-gap');
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const measured = await project(base);
+  assert.equal(measured.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, true);
+});
+
+test('long-session drift is not ready without measured duration and a completed verdict', async () => {
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] }, metrics,
+  });
+  const unavailable = [
+    {},
+    { runtimeSeconds: 1800 },
+    { longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: 0, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: -1, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: '1800', longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: Number.NaN, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: Number.POSITIVE_INFINITY, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'UNKNOWN' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'UNAVAILABLE' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'PENDING' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: {} },
+  ];
+  for (const metrics of unavailable) {
+    const loop = await project(metrics);
+    const entry = loop.telemetryRequirements.find((item) => item.id === 'long-session-drift');
+    assert.equal(entry.available, false, JSON.stringify(metrics));
+    assert.ok(loop.missingTelemetry.some((item) => item.id === 'long-session-drift'));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const observed = await project({ runtimeSeconds: 1800, longSessionDriftVerdict: 'STABLE' });
+  assert.equal(observed.telemetryRequirements.find((item) => item.id === 'long-session-drift').available, true);
+});
+
+test('measured low game-drive capacity takes canonical advisory storage priority over generic VR techniques', async () => {
+  const diagnosis = { focus: 'STORAGE_PRESSURE', signals: ['drive-space-pressure-high'] };
+  const recommendationPlan = await buildStarfieldVrPerformanceRecommendations({
+    repoRoot, diagnosis, runIdentity: identity,
+  });
+  assert.equal(recommendationPlan.nextExperiment?.id, 'storage-pressure-first');
+  const metrics = {
+    minGameDriveFreePct: 6,
+    avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+  };
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, diagnosis, metrics, recommendationPlan,
+  });
+  assert.equal(loop.nextExperiment.id, 'storage-pressure-first');
+  assert.equal(loop.nextExperiment.authority.advisoryOnly, true);
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
+  assert.equal(loop.authority.operatorAcceptancePreserved, true);
+});
+
+test('storage-priority advice refuses unknown measurements, foreign providers and expanded runtime authority', async () => {
+  const diagnosis = { focus: 'STORAGE_PRESSURE', signals: ['drive-space-pressure-high'] };
+  const plan = await buildStarfieldVrPerformanceRecommendations({
+    repoRoot, diagnosis, runIdentity: identity,
+  });
+  assert.equal(plan.nextExperiment?.id, 'storage-pressure-first');
+  const metrics = {
+    minGameDriveFreePct: 6,
+    avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+  };
+  const cases = [
+    { metrics: { ...metrics, minGameDriveFreePct: undefined }, plan },
+    { metrics: { ...metrics, minGameDriveFreePct: '6' }, plan },
+    { metrics: { ...metrics, minGameDriveFreePct: 94 }, plan },
+    { metrics, plan: { ...plan, currentProvider: 'vorpx' } },
+    { metrics, plan: { ...plan, diagnosisFocus: 'CPU_LOAD' } },
+    { metrics, plan: { ...plan, boundaries: { ...plan.boundaries, automaticRuntimeMutation: true } } },
+    { metrics, plan: { ...plan, nextExperiment: { ...plan.nextExperiment,
+      authority: { ...plan.nextExperiment.authority, launchesGame: true } } } },
+    { metrics, plan: { ...plan, nextExperiment: { ...plan.nextExperiment,
+      id: 'untrusted-experiment' } } },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const loop = await buildStarfieldVrProjectPerformanceLoop({
+      repoRoot, runIdentity: identity, diagnosis, metrics: item.metrics,
+      recommendationPlan: item.plan,
+    });
+    assert.notEqual(loop.nextExperiment.id, 'storage-pressure-first', 'case ' + index);
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const noSource = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, metrics, recommendationPlan: plan,
+    diagnosis: { focus: 'STORAGE_PRESSURE', signals: [] },
+  });
+  assert.notEqual(noSource.nextExperiment.id, 'storage-pressure-first');
+  const cpuFirst = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, metrics, recommendationPlan: plan,
+    diagnosis: { focus: 'STORAGE_PRESSURE',
+      signals: ['drive-space-pressure-high', 'system-cpu-load-high'] },
+  });
+  assert.equal(cpuFirst.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
 });
