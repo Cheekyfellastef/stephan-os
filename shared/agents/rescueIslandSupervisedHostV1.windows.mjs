@@ -605,3 +605,23 @@ test('default narrow host dispatch executes worker02 through the real adapters a
     assert.equal(receipt.hostileWriterContainmentProven,false);
   }
 });
+
+for(const mutation of ['worktree','test-log','unchanged'])test('Island01 revalidates completed Island02 peer '+mutation+' before source admission',async t=>{
+  const second=await fixture(t,{worker02:true}),result=await second.run(second.request),first=second.firstLane;
+  const tested=result.receipts.find(r=>r.stage==='TESTED'),logPath=join(second.host.roots.receiptRoot,'test-output',tested.testOutputFile);
+  const peerFile=join(second.host.roots.worktreeRoot,second.task.taskId,second.task.targetPath);
+  if(mutation==='worktree')await writeFile(peerFile,'unexplained peer source mutation');
+  if(mutation==='test-log')await writeFile(logPath,'unexplained peer test evidence mutation');
+  const task={...first.task,...sourceTaskFields(first.task),taskId:'source-peer-'+mutation+'-01',expiresAtUtc:new Date(Date.now()+300000).toISOString()};
+  const expected={...first.expected,commentId:first.expected.commentId+2,taskId:task.taskId,
+    taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),targetPath:task.targetPath,
+    targetPaths:JSON.parse(task.content).changes.map(c=>c.path),taskKind:'SOURCE_PROPOSAL_V1',needsNativeObserver:false};
+  await first.host.host.withExistingOwnerAdmission(expected,async()=>{
+    const observe=()=>first.host.host.observeSupervisedAdmission({...expected,stage:'BEFORE_PREPARATION'});
+    if(mutation==='unchanged')assert.equal((await observe()).workerId,'rescue-island-01');
+    else await assert.rejects(observe(),/RETAINED_WORKTREE_CHANGED|PEER_RETAINED_PROOF_UNPROVEN/);
+  });
+  if(mutation!=='unchanged')await assert.rejects(stat(join(first.host.roots.receiptRoot,'claims',task.taskId+'.ADMITTED.json')),/ENOENT/);
+  if(mutation==='worktree')assert.equal(await readFile(peerFile,'utf8'),'unexplained peer source mutation');
+  if(mutation==='test-log')assert.equal(await readFile(logPath,'utf8'),'unexplained peer test evidence mutation');
+});

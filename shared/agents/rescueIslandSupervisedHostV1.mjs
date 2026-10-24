@@ -427,11 +427,15 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       if(active.peerIdentity!==undefined && active.peerIdentity!==peerIdentity)
         held('ISLAND_HOST_PEER_ESTATE_IDENTITY_CHANGED');
       active.peerIdentity=peerIdentity;
-      if(workerId==='rescue-island-02') {
-        let material=false;
-        for(const saved of peerAdmissions)if(await retainedCompletion(saved,peerRoots)){material=true;break;}
-        if(!material)held('ISLAND_HOST_FIRST_WORKER_MATERIAL_PROOF_REQUIRED');
+      // Retained proof is an admission invariant for BOTH directions. A valid
+      // first result cannot hide a later peer's changed worktree or test log.
+      let peerMaterial=false;
+      for(const saved of peerAdmissions) {
+        if(!await retainedCompletion(saved,peerRoots))held('ISLAND_HOST_PEER_RETAINED_PROOF_UNPROVEN');
+        peerMaterial=true;
       }
+      if(workerId==='rescue-island-02' && !peerMaterial)
+        held('ISLAND_HOST_FIRST_WORKER_MATERIAL_PROOF_REQUIRED');
       const peerClaims=peerAdmissions.map(saved=>({...claim(saved.taskId,saved.ownerIssueNumber,
         'rescue-island/pilot-'+saved.taskId,join(peerRoots.worktreeRoot,saved.taskId),
         sourcePaths(saved.targetPaths || [saved.targetPath]),{workerId:peer})[0],
