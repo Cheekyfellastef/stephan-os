@@ -2,6 +2,7 @@
 // independently observed owner comment/issue/current-main identity. No writer.
 // This does NOT authenticate canonical/Seed/Island ownership or allow pickup.
 import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
+import {inspectRescueIslandSourceTaskV1} from './rescueIslandSourceTaskV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import { inspectRescueIslandPilotOwnerIntakeV1, inspectRescueIslandSupervisedOwnerIntakeV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
@@ -91,11 +92,12 @@ const BROKER_READS = Object.freeze([
     jq: '{ref,object:{sha:.object.sha}}' }),
 ]);
 
-function trustedSharedGithubObservation(spec, commentId, nowMs) {
+function trustedSharedGithubObservation(spec, commentId, nowMs, issueNumber=ISSUE) {
   const endpoint = spec.id === 'comment'
-    ? ROOT.slice(1) + '/issues/comments/' + commentId : spec.endpoint;
+    ? ROOT.slice(1) + '/issues/comments/' + commentId
+    : spec.id==='issue' ? ROOT.slice(1)+'/issues/'+issueNumber : spec.endpoint;
   const observed = readBrokeredGithubJson({
-    key: 'rescue-island:3109:' + commentId + ':' + spec.id,
+    key: 'rescue-island:' + issueNumber + ':' + commentId + ':' + spec.id,
     endpoint,
     args: ['--jq', spec.jq],
     ttlMs: 1000,
@@ -139,9 +141,13 @@ export async function readRescueIslandPilotGithubFactsV1({
   // Never allow an externally supplied clock to bypass shared cooldown.
   if (!Number.isFinite(statedMs) || Math.abs(statedMs - liveNowMs) > 5_000)
     return blocker('OBSERVATION_TIME_NOT_LIVE');
+  const source = supervised && task?.schemaVersion==='stephanos.rescue-island-source-task.v1';
+  const sourcePlan = source ? inspectRescueIslandSourceTaskV1(task,new Date().toISOString()) : null;
+  if(source && !sourcePlan.valid)return blocker('SOURCE_TASK_PLAN_HELD');
+  const issueNumber=sourcePlan?.issueNumber || ISSUE;
   const payloads = [];
   for (const spec of BROKER_READS) {
-    const result = trustedSharedGithubObservation(spec, commentId, liveNowMs);
+    const result = trustedSharedGithubObservation(spec, commentId, liveNowMs, issueNumber);
     if (!result.ok) return blocker(result.blocker);
     payloads.push(result.payload);
   }

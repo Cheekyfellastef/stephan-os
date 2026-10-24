@@ -1,3 +1,4 @@
+import './githubGoalEstateBoundedConcurrency.test.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -250,6 +251,39 @@ test('goal-estate request is aborted by a bounded timeout', async () => { const 
 
 test('401 primary credential rejection falls back to approved gh-cli token', async () => { const seenTokens = []; const result = await fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'expired-primary', authority: 'env' }, ghTokenProvider: async () => 'approved-gh-cli-token', fetchImpl: async (url, options) => { const token = options.headers.Authorization.replace('Bearer ', ''); seenTokens.push(token); if (token === 'expired-primary') return response({}, 401); if (url.includes('/events?')) return response([ownerGoalLabelEvent()]); return url.includes('/comments?') ? response([ownerAdmissionComment()]) : response([canonicalGoal()]); }, maxPages: 1 }); assert.equal(seenTokens[0], 'expired-primary'); assert.ok(seenTokens.includes('approved-gh-cli-token')); assert.equal(result.status, 'fetched'); assert.equal(result.issues.length, 1); });
 
-test('entire goal-estate observation is bounded by one total deadline across pagination', async () => { let requestCount = 0; const result = await fetchGithubGoalIssues({ owner: OWNER, repo: 'stephan-os-total-deadline-test', auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (_url, options) => { requestCount += 1; return new Promise((resolve, reject) => { const timer = setTimeout(() => resolve(response(Array.from({ length: 100 }, () => canonicalGoal()))), 700); options.signal.addEventListener('abort', () => { clearTimeout(timer); const error = new Error('aborted'); error.name = 'AbortError'; reject(error); }, { once: true }); }); }, cacheEnabled: false, requestTimeoutMs: 1_000, maxPages: 10 }); assert.equal(result.status, 'error'); assert.match(result.recommendedNextAction, /408/); assert.ok(requestCount <= 2, `expected total deadline to stop pagination, saw ${requestCount} requests`); });
+test('entire goal-estate observation is bounded by one total deadline across pagination', async () => {
+  let listRequests = 0, eventRequests = 0, active = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER, repo: 'stephan-os-total-deadline-test',
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url, { signal }) => {
+      const isList = url.includes('/issues?');
+      if (isList) listRequests++; else eventRequests++;
+      active++;
+      try {
+        return await new Promise((resolve, reject) => {
+          const finish = () => {
+            signal.removeEventListener('abort', abort);
+            resolve(response(isList ? Array.from({ length: 100 }, () => canonicalGoal()) : [ownerGoalLabelEvent()]));
+          };
+          const timer = setTimeout(finish, 700);
+          const abort = () => {
+            clearTimeout(timer);
+            signal.removeEventListener('abort', abort);
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          };
+          if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+        });
+      } finally { active--; }
+    },
+    cacheEnabled: false, requestTimeoutMs: 1000, maxPages: 10,
+  });
+  assert.equal(result.status, 'error');
+  assert.match(result.recommendedNextAction, /408/);
+  assert.deepEqual(result.issues, []);
+  assert.equal(listRequests, 1, 'deadline must prevent a second estate page');
+  assert.ok(eventRequests <= 4, 'only the bounded in-flight authority reads may start');
+  assert.equal(active, 0, 'all started requests must drain before returning');
+});
 
 test('unavailable authentication resolution participates in failure backoff', async () => { let clockMs = 3_000_000; const options = { owner: OWNER, repo: 'stephan-os-auth-backoff-test', auth: { configured: false, token: '', authority: 'none' }, cacheEnabled: true, failureBackoffMs: 30_000, nowMs: () => clockMs }; const first = await fetchGithubGoalIssues(options); assert.equal(first.status, 'error'); clockMs += 2_000; const backedOff = await fetchGithubGoalIssues(options); assert.equal(backedOff, first); });

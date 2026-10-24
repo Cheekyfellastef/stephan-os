@@ -101,7 +101,7 @@ Passing and failing Node stdout is retained under `receipts/test-output`, with
 content-addressed log names. A TESTED receipt binds its exact log SHA-256,
 test path and zero exit status. A failed test does not emit TESTED or COMMIT.
 
-The first pilot invokes the existing canonical governor's fixed `Reconcile`
+The first pilot invokes the existing canonical governor's fixed read-only `ObserveAdmission`
 action for a fresh NORMAL/idle observation for CPU-only work, expiring at the
 observed timestamp + 10 seconds. A stale transition timestamp is not a heartbeat.
 The exact governor Git blob is materialised into the Island's private input
@@ -193,3 +193,59 @@ API contracts: Microsoft's [OpenProcessToken](https://learn.microsoft.com/en-us/
 and [access-token rights](https://learn.microsoft.com/en-us/windows/win32/secauthz/access-rights-for-access-token-objects),
 [TOKEN_PRIVILEGES](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_privileges)
 and [privilege names](https://learn.microsoft.com/en-us/windows/win32/secauthz/privilege-constants).
+
+
+## Bounded supervised source proposals
+
+The same native --supervised-once ingress also understands the distinct
+stephanos.rescue-island-source-task.v1 task. Its runtime request is still exactly
+{commentId, task}; it accepts no caller-selected executable, runner function,
+test arguments or approval flags. The task retains twelve primitive fields.
+Its content is an exact approved JSON manifest with scopeId and sorted changes:
+each change contains path, beforeBlob (null for a new file) and content.
+For an existing module up to 64 KiB, a change can instead contain path,
+beforeBlob, afterSha256 and up to eight exact {before, after} replacements.
+Each before fragment must occur exactly once, replacements run sequentially,
+and the complete resulting UTF-8 bytes must match afterSha256 before any edit.
+There is no regex, shell, patch executable or caller-supplied function.
+
+The source catalogue in rescueIslandSourceTaskV1.mjs is finite: Island agent
+modules/tests and the four existing Seed Forge JS module/test pairs. At most
+six files and 8,192 manifest bytes are admitted. An existing file must match
+its exact base Git blob; a new file must be absent. The catalogue derives the
+test plan. Unknown paths, native/OS changes and arbitrary commands are refused.
+This is a bounded source-proposal route, not general-purpose unattended coding.
+
+Source consent has a separate grammar on the actual task-owner issue:
+
+/rescue-island-01 supervised-source-cooperative <current-main-SHA> <task-id> <SHA256-of-manifest-content>
+
+Island work belongs to #3109. Seed source proposals belong to #3096 and must
+authenticate that actual issue/title and owner comment; the execution estate
+and whole-operation guard still belong to Island 01. A Seed proposal never
+enters Seed's queue or starts its worker/model. Documentation approval cannot
+authorise source execution. Every source-stage receipt identifies the task
+owner and Island execution owner, exact content digest and approved paths.
+
+The host may admit a further disjoint source task only after verifying each
+retained previous admission against its actual independent Git commit, exact
+parent/diff/blobs and correlated durable passing-test log. It keeps all claims,
+branches, worktrees and receipts. Missing or altered completion, failed/partial
+admission and overlaps remain reconciliation holds; there is no automatic
+retry, deletion or task reassignment. A clean detached independent repository
+base can advance from the fixed canonical source under the same owner guard,
+using expected-old ref protection, without changing canonical Git or previous
+task worktrees.
+
+Fixed Node source tests have a two-minute deadline. The native child deadline
+is five minutes for a source proposal and remains three for a documentation
+pilot. Both remain non-administrative and below-normal priority, with repeated
+read-only gaming admission. Tests execute the explicitly approved candidate
+code under the trusted-operator/cooperative-worker assumption. This supplies
+LESS assurance than hostile-writer containment and is not an OS sandbox.
+
+Source proposals require independent review and protected integration after
+construction. This change does not commission Island 02, general model
+authoring, Seed execution, an Octopus worker or unattended refill. The catalogue
+allows a future reviewed Island 02 module/test proposal; its presence is not an
+operating second lane. The original strict construction refusal remains.

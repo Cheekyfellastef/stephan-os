@@ -27,7 +27,7 @@ function git(cwd,args) {
   assert.equal(r.status,0,r.stderr);return r.stdout.trim();
 }
 async function save(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value));}
-async function fixture(t,{realFlatSignal=false}={}) {
+async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=false,sourcePatch=false}={}) {
   assert.equal(process.platform,'win32','This suite requires the real native Windows token observer.');
   await stat(nativeHostPath); // No skip or fabricated principal if the host was not built.
   const root=await realpath(await mkdtemp(join(tmpdir(),'island-real-adapters-')));
@@ -65,6 +65,15 @@ async function fixture(t,{realFlatSignal=false}={}) {
     (realFlatSignal?"function Get-GamingSignal { Get-FlatGameSignal }\n":
       "function Get-GamingSignal { [pscustomobject]@{active=[bool]$state.active} }\n")+
     admissionAction);
+  if(sourceTask || sourceBaseline) {
+    for(const name of ['rescueIslandSourceTaskV1.mjs','rescueIslandSourceTaskV1.test.mjs',
+      'rescueIslandSupervisedRunV1.test.mjs','rescueIslandFirstCommitV1.mjs',
+      'rescueIslandAuthenticatedGithubReadV1.mjs','rescueIslandPilotOwnerIntakeV1.mjs',
+      'battleBridgeWindowsHosts.mjs'])
+      await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
+  }
+  if(sourcePatch) await writeFile(join(canonicalRoot,'shared/agents/rescueIslandSecondLaneV1.mjs'),
+    '// '+('actual large Windows baseline '.repeat(500))+'\nexport const lane = 1;\n');
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
   git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
   git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
@@ -78,8 +87,17 @@ async function fixture(t,{realFlatSignal=false}={}) {
     content:'# Rescue Island pilot\nTest-only validation of the real production adapters.\n',
     testPath:'shared/agents/rescueIslandPreflightV1.test.mjs',approvalSource:'EXTERNAL_OWNER_ATTESTATION_REQUIRED',
     expiresAtUtc:new Date(Date.now()+300000).toISOString()};
+  if(sourceTask) Object.assign(task,sourceTaskFields(task));
+  if(sourcePatch){
+    const manifest=JSON.parse(task.content),before=await readFile(join(canonicalRoot,task.targetPath),'utf8');
+    manifest.changes[0]={path:task.targetPath,beforeBlob:git(canonicalRoot,['rev-parse','HEAD:'+task.targetPath]),
+      afterSha256:hash(before.replace('export const lane = 1;','export const lane = 2;')),
+      edits:[{before:'export const lane = 1;',after:'export const lane = 2;'}]};
+    task.content=JSON.stringify(manifest);
+  }
   const expected={commentId:6380000001,taskId:task.taskId,taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),
-    baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1'};
+    baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1',
+    ...(sourceTask?{targetPaths:JSON.parse(task.content).changes.map(w=>w.path),ownerIssueNumber:task.issueNumber,taskKind:'SOURCE_PROPOSAL_V1'}:{})};
   const config={canonicalRoot,sharedWorkspaceRoot,missionRoot,seedRoot,nativeHostPath};
   const host=createRescueIslandSupervisedHostV1(config);
   const governor={schemaVersion:'stephanos.vr-resource-governor.v1',active:false,phase:'NORMAL',
@@ -89,7 +107,7 @@ async function fixture(t,{realFlatSignal=false}={}) {
   // its four fixed GitHub reads have a deterministic test transport.
   const harness=join(root,'harness');await mkdir(harness);
   for(const name of ['rescueIslandFirstCommitV1.mjs','rescueIslandAuthenticatedGithubReadV1.mjs',
-    'rescueIslandPilotOwnerIntakeV1.mjs','rescueIslandPreflightV1.mjs',
+    'rescueIslandPilotOwnerIntakeV1.mjs', 'rescueIslandSourceTaskV1.mjs','rescueIslandPreflightV1.mjs',
     'battleBridgeExecutionBoundaryV1.mjs','battleBridgeWindowsHosts.mjs'])
     await writeFile(join(harness,name),await readFile(join(source,name)));
   const now=new Date().toISOString(),issueUrl='https://api.github.com/repos/'+task.repository+'/issues/3109';
@@ -97,11 +115,12 @@ async function fixture(t,{realFlatSignal=false}={}) {
     main:{ref:'refs/heads/main',object:{sha:baseHead}},comment:{id:expected.commentId,
       url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+expected.commentId,issue_url:issueUrl,
       user:{login:'Cheekyfellastef',type:'User',id:267490109},author_association:'OWNER',
-      created_at:now,updated_at:now,body:'/rescue-island-01 supervised-cooperative '+baseHead+' '+task.taskId+' '+hash(task.content)}};
+      created_at:now,updated_at:now,body:'/rescue-island-01 '+(sourceTask?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content)}};
+  const factsFile=join(root,'github-facts.json');await save(factsFile,facts);
   await writeFile(join(harness,'githubObservationBrokerV1.mjs'),
-    'import {writeFileSync} from "node:fs"; const facts='+JSON.stringify(facts)+'; export function readBrokeredGithubJson(s){writeFileSync('+JSON.stringify(join(root,'broker-call.json'))+',JSON.stringify(s));return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
+    'import {readFileSync,writeFileSync} from "node:fs"; export function readBrokeredGithubJson(s){const facts=JSON.parse(readFileSync('+JSON.stringify(factsFile)+',"utf8"));writeFileSync('+JSON.stringify(join(root,'broker-call.json'))+',JSON.stringify(s));return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
   const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(harness,'rescueIslandFirstCommitV1.mjs')));
-  return {root,task,expected,config,host,governor,
+  return {root,task,expected,config,host,governor,factsFile,
     run:createRescueIslandSupervisedRunnerV1(host.host),request:{commentId:expected.commentId,task}};
 }
 
@@ -301,4 +320,109 @@ test('interrupted terminal receipt publication retains commit, admission and fai
   const entries=await readdir(join(f.host.roots.receiptRoot,'claims'));
   assert.ok(entries.includes(f.task.taskId+'.BLOCKED.json'));assert.ok(entries.includes(f.task.taskId+'.json'));
   await assert.rejects(f.run(f.request));
+});
+
+
+function sourceTaskFields(task){
+  return {schemaVersion:'stephanos.rescue-island-source-task.v1',
+    targetPath:'shared/agents/rescueIslandSecondLaneV1.mjs',
+    content:JSON.stringify({scopeId:'ISLAND_BUILDERS_V1',changes:[
+      {path:'shared/agents/rescueIslandSecondLaneV1.mjs',beforeBlob:null,content:'export const lane = 2;\n'},
+      {path:'shared/agents/rescueIslandSecondLaneV1.test.mjs',beforeBlob:null,
+        content:"import test from 'node:test'; import assert from 'node:assert/strict'; import {lane} from './rescueIslandSecondLaneV1.mjs'; test('real adapter candidate code',()=>assert.equal(lane,2));\n"},
+    ]})};
+}
+async function sourceFollowup(f,taskId='source-followup-3109'){
+  const task={...f.task,...sourceTaskFields(f.task),taskId,
+    expiresAtUtc:new Date(Date.now()+600000).toISOString()};
+  const id=f.expected.commentId+1,now=new Date().toISOString();
+  const facts=JSON.parse(await readFile(f.factsFile));
+  facts.comment={...facts.comment,id,url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+id,
+    created_at:now,updated_at:now,body:'/rescue-island-01 supervised-source-cooperative '+task.baseHead+' '+task.taskId+' '+hash(task.content)};
+  facts.main.object.sha=task.baseHead;
+  await save(f.factsFile,facts);
+  return {commentId:id,task};
+}
+
+test('real Windows source path writes two approved files, runs actual candidate tests and commits exact scope',async t=>{
+  const f=await fixture(t,{sourceTask:true,sourcePatch:true}),result=await f.run(f.request);
+  assert.equal(result.ok,true);assert.equal(result.taskKind,'SOURCE_PROPOSAL_V1');
+  assert.equal(result.parent,f.task.baseHead);assert.equal(result.changedPaths.length,2);
+  const actual=await readFile(join(f.host.roots.worktreeRoot,f.task.taskId,f.task.targetPath));
+  assert.ok(actual.length>8192);assert.equal(hash(actual),JSON.parse(f.task.content).changes[0].afterSha256);
+  const wt=join(f.host.roots.worktreeRoot,f.task.taskId);
+  assert.equal(git(wt,['status','--porcelain']),'');
+  const tested=result.receipts.find(r=>r.stage==='TESTED');
+  const output=await readFile(join(f.host.roots.receiptRoot,'test-output',tested.testOutputFile),'utf8');
+  assert.match(output,/real adapter candidate code/);assert.equal(hash(output),tested.testResultHash);
+  assert.equal(await readFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
+  t.diagnostic('REAL_WINDOWS_SOURCE_FIXTURE_COMMIT='+result.head+';LIVE_PROGRAMME_BUILD=false');
+});
+
+test('real host admits a new disjoint source task only after reading actual retained commit and passing-test proof',async t=>{
+  const f=await fixture(t,{sourceBaseline:true}),first=await f.run(f.request);
+  const next=await sourceFollowup(f);
+  const result=await f.run(next);assert.equal(result.ok,true);
+  assert.notEqual(result.head,first.head);assert.equal(result.parent,f.task.baseHead);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+  assert.ok((await readdir(join(f.host.roots.receiptRoot,'claims'))).includes(f.task.taskId+'.ISOLATED_COMMIT.json'));
+  await assert.rejects(f.run(next),/RECONCILIATION/);
+});
+
+test('a changed retained commit receipt blocks the next real source admission and preserves the original worktree',async t=>{
+  const f=await fixture(t,{sourceBaseline:true}),first=await f.run(f.request);
+  const path=join(f.host.roots.receiptRoot,'claims',f.task.taskId+'.ISOLATED_COMMIT.json');
+  const receipt=JSON.parse(await readFile(path));receipt.exactParentHead='0'.repeat(40);await save(path,receipt);
+  const next=await sourceFollowup(f);
+  await assert.rejects(f.run(next),/RECONCILIATION/);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+  await assert.rejects(readFile(join(f.host.roots.receiptRoot,'claims',next.task.taskId+'.ADMITTED.json')),/ENOENT/);
+});
+
+
+test('unexplained retained raw-claim mutation blocks the next task before any new admission',async t=>{
+  const f=await fixture(t,{sourceBaseline:true}),first=await f.run(f.request);
+  const path=join(f.host.roots.receiptRoot,'claims',f.task.taskId+'.json');
+  const claim=JSON.parse(await readFile(path));claim.fingerprint='0'.repeat(64);await save(path,claim);
+  const next=await sourceFollowup(f);
+  await assert.rejects(f.run(next),/CLAIM_IDENTITY_CHANGED/);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+  await assert.rejects(readFile(join(f.host.roots.receiptRoot,'claims',next.task.taskId+'.ADMITTED.json')),/ENOENT/);
+});
+
+
+test('a clean but unexplained independent-repository commit is retained instead of overwritten by source-base advance',async t=>{
+  const f=await fixture(t,{sourceBaseline:true}),first=await f.run(f.request),root=f.host.roots.repoRoot;
+  await writeFile(join(root,'unexplained-source.txt'),'retain this independent source\n');
+  git(root,['add','--','unexplained-source.txt']);
+  git(root,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Unexplained independent fixture work']);
+  const unexplained=git(root,['rev-parse','HEAD']),next=await sourceFollowup(f);
+  await assert.rejects(f.run(next),/INDEPENDENT_REPOSITORY_CHANGED/);
+  assert.equal(git(root,['rev-parse','HEAD']),unexplained);
+  assert.equal(await readFile(join(root,'unexplained-source.txt'),'utf8'),'retain this independent source\n');
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+});
+
+test('existing owner guard advances only the known clean detached base while preserving completed task history',async t=>{
+  const f=await fixture(t,{sourceBaseline:true}),first=await f.run(f.request);
+  const oldBase=f.task.baseHead,root=f.config.canonicalRoot;
+  await writeFile(join(root,'legitimate-main.txt'),'disjoint fixture main movement\n');
+  git(root,['add','--','legitimate-main.txt']);
+  git(root,['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Disjoint fixture main movement']);
+  const newBase=git(root,['rev-parse','HEAD']);git(root,['update-ref','refs/remotes/origin/main',newBase,oldBase]);
+  const task={...f.task,...sourceTaskFields(f.task),taskId:'source-known-base-advance',baseHead:newBase,
+    expiresAtUtc:new Date(Date.now()+600000).toISOString()};
+  const expected={commentId:f.expected.commentId+1,taskId:task.taskId,
+    taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),baseHead:newBase,
+    targetPath:task.targetPath,targetPaths:JSON.parse(task.content).changes.map(w=>w.path),
+    ownerIssueNumber:3109,taskKind:'SOURCE_PROPOSAL_V1',assuranceProfile:'SUPERVISED_COOPERATIVE_V1'};
+  await f.host.host.withExistingOwnerAdmission(expected,async()=>{
+    const observation=await f.host.host.observeSupervisedAdmission({...expected,stage:'BEFORE_PREPARATION'});
+    assert.equal(observation.sourceHead,newBase);
+  });
+  assert.equal(git(f.host.roots.repoRoot,['rev-parse','HEAD']),newBase);
+  assert.equal(git(f.host.roots.repoRoot,['rev-parse','origin/main']),newBase);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+  assert.equal(await readFile(join(root,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
+  t.diagnostic('ADAPTER_BASE_ADVANCE_TEST_ONLY=true;LIVE_PROGRAMME_BUILD=false');
 });

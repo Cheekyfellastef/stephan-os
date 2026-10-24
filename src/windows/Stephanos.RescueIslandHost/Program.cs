@@ -34,6 +34,7 @@ try
         }
         if (count > 16384) throw new HostHeldException("ISLAND_HOST_REQUEST_OVERSIZE");
         string request = new System.Text.UTF8Encoding(false, true).GetString(buffer, 0, count);
+        bool sourceProposal = false;
         using (var document = JsonDocument.Parse(request, new JsonDocumentOptions { MaxDepth = 8 }))
         {
             var root = document.RootElement;
@@ -42,6 +43,8 @@ try
                 || !root.GetProperty("commentId").TryGetInt64(out long commentId) || commentId < 1
                 || root.GetProperty("task").ValueKind != JsonValueKind.Object)
                 throw new HostHeldException("ISLAND_HOST_REQUEST_INVALID");
+            sourceProposal = root.GetProperty("task").TryGetProperty("schemaVersion", out var schema)
+                && schema.ValueKind == JsonValueKind.String && schema.GetString() == "stephanos.rescue-island-source-task.v1";
         }
         // The built executable has one source layout. No cwd/env/task can
         // nominate a script, executable or repository. Copied binaries fail shut.
@@ -71,7 +74,7 @@ try
             child.PriorityClass = ProcessPriorityClass.BelowNormal;
             await child.StandardInput.WriteAsync(request);
             child.StandardInput.Close();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(sourceProposal ? 5 : 3));
             await child.WaitForExitAsync(deadline.Token);
             return child.ExitCode;
         }
