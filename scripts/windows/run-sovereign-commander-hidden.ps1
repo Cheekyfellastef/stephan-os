@@ -488,6 +488,11 @@ if ($healthBefore.timeoutCustodyHeld -eq $true) {
     $blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'
 } elseif ($healthBefore.maintenanceInFlight -eq $true) {
     $blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'
+} elseif (($before.Count -gt 0 -or $healthBefore.basicHealthy) -and -not $healthyBefore -and -not $authenticatedInBandParentProof) {
+    # A health snapshot is not an atomic maintenance drain/reservation. Legacy
+    # daemons also omit custody fields. Never kill an existing owner to refresh
+    # its contract until a separate admitted handoff proves terminal custody.
+    $blocker = 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN'
 } elseif (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
