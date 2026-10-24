@@ -170,7 +170,7 @@ function executionWorkerTypeForAdapter(adapter = '') {
   if (normalized === 'codex') return 'remote-codex';
   if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
   if (normalized === 'stephanos-native') return 'orchestration-engine';
-  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander' || normalized === 'sovereign-commander') return 'github-first';
+  if (normalized === 'foundry-forge' || normalized === 'forge-publication' || normalized === 'chatgpt-github' || normalized === 'desktop-commander' || normalized === 'sovereign-commander') return 'github-first';
   return normalized;
 }
 

@@ -969,3 +969,31 @@ test('published review grant refuses stale, foreign, parked and source-writing m
     assert.equal(result.allowWorkerTick, false);
   }
 });
+
+
+test('live controller preparation does not freeze later authority observation clocks', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  const seen = [];
+  const f = machineryFor(projection('IDLE'), {
+    reconcileLearningGoals: async () => { t.mock.timers.tick(90000); return { ok: true }; },
+    loadAuthoritativeProjection: async options => { seen.push(options.nowUtc); return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.ok(seen.length > 0);
+  assert.ok(seen.every(value => value === undefined), 'live observation inherited the cycle-start snapshot');
+  assert.equal(result.status, 'IDLE');
+  assert.ok(Date.parse(f.heartbeats.at(-1).timestampUtc) >= Date.parse(NOW) + 90000);
+});
+
+test('live authority refresh failure holds before any projection or worker grant', async () => {
+  let publications = 0, reads = 0;
+  const f = machineryFor(projection('IDLE'), {
+    publishControllerHeartbeat: async () => ({ ok: ++publications === 1 }),
+    loadAuthoritativeProjection: async () => { reads++; return projection('IDLE'); },
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, { sourceRevision: SOURCE_REVISION, env: {} });
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+  assert.equal(reads, 0);
+  assert.ok(result.blockers.includes('controller-heartbeat:observation-refresh-failed'));
+});
