@@ -68,6 +68,12 @@ governor source, failed observation, active game or any pending prepare evidence
 holds construction. Persisted NORMAL/local-model admission is also required.
 The existing watcher remains the sole state/model writer. No transition
 timestamp is rewritten, lease cleared or model action invoked by this observer.
+The observer uses an existing regular, physically resolved
+`C:\Program Files\PowerShell\7\pwsh.exe` when present, otherwise the fixed
+Windows PowerShell system executable. It installs neither. The selected engine
+is bound across admission observations; a changed selection holds the run.
+Inherited PATH and executable overrides cannot select an engine. Existing
+Windows PowerShell cold-start failures remain failures, with bounded diagnostics.
 
 The Windows-only real-adapter suite is explicitly launched by the existing
 native proof workflow, rather than collected by portable Node test globs:

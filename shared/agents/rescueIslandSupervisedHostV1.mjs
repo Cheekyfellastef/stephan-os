@@ -217,7 +217,17 @@ export function rescueIslandGovernorEnvironmentV1(source=process.env) {
   return environment;
 }
 
-async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
+async function fixedGovernorExecutable() {
+  // Both are fixed machine locations. No PATH, cwd, environment override or
+  // remote request can nominate an engine. Existing PS7 avoids the observed
+  // service-token Windows PowerShell cold-start delay; PS5 remains supported.
+  const modern='C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+  const selected=await present(modern)?modern:BATTLE_BRIDGE_WINDOWS_HOST.powershell;
+  if(!(await physical(selected)).isFile())held('ISLAND_HOST_GOVERNOR_EXECUTABLE_INVALID');
+  return selected;
+}
+
+async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead,executable) {
   const script='scripts/windows/run-vr-resource-governor.ps1';
   if(!(await physical(join(canonicalRoot,script))).isFile())held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
   const expectedBlob=git(canonicalRoot,['rev-parse',sourceHead+':'+script]).trim();
@@ -239,7 +249,7 @@ async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
   if(!(await physical(pinnedScript)).isFile() || !bytes.equals(await readFile(pinnedScript)))
     held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
   const started=Date.now();
-  const observation=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
+  const observation=spawnSync(executable,
     ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','ObserveAdmission'],
     {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:32768,
       env:rescueIslandGovernorEnvironmentV1(process.env)});
@@ -256,8 +266,8 @@ async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
   return {started,facts,path:join(sharedWorkspaceRoot,'vr','vr-resource-governor-current.json')};
 }
 
-async function currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
-  const refreshed=await refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead);
+async function currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead,executable) {
+  const refreshed=await refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead,executable);
   const governor=await json(refreshed.path), observed=Date.parse(refreshed.facts.observedAtUtc);
   if(governor.schemaVersion!=='stephanos.vr-resource-governor.v1' || governor.active!==false
     || governor.phase!=='NORMAL' || governor.localModelAllowed!==true
@@ -306,7 +316,11 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         || git(canonicalRoot,['rev-parse','HEAD']).trim()!==expected.baseHead
         || git(canonicalRoot,['rev-parse','origin/main']).trim()!==expected.baseHead)
         held('ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
-      let observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead);
+      const governorExecutable=await fixedGovernorExecutable();
+      if(active.governorExecutable && active.governorExecutable!==governorExecutable)
+        held('ISLAND_HOST_GOVERNOR_EXECUTABLE_CHANGED');
+      active.governorExecutable=governorExecutable;
+      let observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead,governorExecutable);
       const canonicalClaims=await readIslandCanonicalClaimsV1({canonicalRoot,sharedWorkspaceRoot,missionRoot});
       const seedClaims=await readIslandSeedClaimsV1(seedRoot);
       const sourceScope=[...new Map([expected.targetPath,...canonicalClaims.flatMap(c=>c.targetPaths),
@@ -399,7 +413,7 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       // Cloning/preservation can take longer than one observation's budget.
       // Refresh through the SAME governor again before returning admission.
       if(Date.now()-observed>1000)
-        observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead);
+        observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead,governorExecutable);
       return {schemaVersion:'stephanos.rescue-island-supervised-host-observation.v1',
         assuranceProfile:PROFILE,repository:REPOSITORY,...active.expected,workerId:'rescue-island-01',
         sourceHead:expected.baseHead,sourceBranch:'rescue-island/pilot-'+expected.taskId,
