@@ -9,7 +9,7 @@ Use Sovereign Commander as the guarded Battle Bridge control surface without rel
 
 ## Safety and routing
 
-For requests such as "Show Battle Bridge telemetry", "Show Stephanos service health", or "Show active physical and logical lanes", select the transport before selecting the action. If local Sovereign Commander MCP tools are present, call the matching local action. If they are absent but the GitHub dependency is available, use the canonical issue #2808 mailbox with `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`, exact current `main` head, a short expiry, `operator-approved`, and the narrow remote action (`battle-bridge-observe`, `status-stephanos-core-daemon`, or `controller-lane-status`). Read the correlated terminal receipt and return only its sanitised projection. Do not ask the operator to copy telemetry between surfaces.
+For requests such as "Show Battle Bridge telemetry", "Show Stephanos service health", or "Show active physical and logical lanes", select the transport before selecting the action. If local Sovereign Commander MCP tools are present, call the matching local action. If they are absent but the GitHub dependency is available, use the source-defined canonical mailbox (resolve `CANONICAL_MAILBOX_ISSUE` from protected main) with `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`, exact current `main` head, a short expiry, `operator-approved`, and the narrow remote action (`battle-bridge-observe`, `status-stephanos-core-daemon`, or `controller-lane-status`). Read the correlated terminal receipt and return only its sanitised projection. Do not ask the operator to copy telemetry between surfaces.
 
 For the default broad diagnostic question ("what is broken?", "is Stephanos awake?", "show me the Battle Bridge state", or before considering Remote Desktop Commander), prefer the single read-only `visibility-snapshot` action. A cloud ChatGPT session must also use this Sovereign route for reachability/device-status checks instead of calling Remote Desktop Commander `list_devices`; absence of the local Sovereign MCP tool surface is a transport fact, not evidence that Sovereign Commander or Battle Bridge is offline. It composes current remote `origin/main`, exact local Git identity/dirty counts, fixed Stephanos service probes, Core wake and repair truth, dependency/Octopus self-heal headlines, controller/lane refill truth, capacity posture, and Sovereign Relay freshness into one twice-sanitised packet. Its `headSync` projection distinguishes `CURRENT`, `REPOSITORY_DRIFT`, `RUNTIME_DRIFT`, and bounded unknown-head states so a caller can prove whether Battle Bridge and the running daemon have consumed the latest merged main head. It returns no filenames, arbitrary process list, command lines, raw logs, local paths, credentials, or shell surface. A RED or stale subsystem remains visible instead of causing the observation itself to fail.
 
@@ -131,7 +131,7 @@ controller, mailbox consumer, queue, writer or approval path.
 
 This local plugin's stdio tools are Desktop-scoped. A normal cloud/iPad/iPhone
 ChatGPT Plus chat can instead use the existing authenticated owner-authored
-GitHub issue #2808 command mailbox with a fresh exact `main` head, valid expiry
+the current source-defined canonical GitHub command mailbox with a fresh exact `main` head, valid expiry
 and only a source-admitted remote action. The parent GitHub connector must
 actually be connected; a plugin skill alone does not expose a cloud MCP tool.
 The operation's `operator-approved` value records real operator approval,
@@ -157,3 +157,16 @@ tool use, durable memory and retrieval, the same execution command fabric
 and actual receipts. ChatGPT Plus may assist but is not a required source of
 ongoing local execution. Its usage allowance, GitHub's quota, and separately
 billed API calls cannot be erased by a plugin upgrade.
+
+### Rescue Island merge and commissioning
+
+For Rescue Island merge, test or commissioning requests, follow
+[merge-and-commission-rescue-island](../merge-and-commission-rescue-island/SKILL.md)
+before any protected dispatch. Check complete technical thread resolution and
+prior protected attempts first. The read-only readiness helper and skill grant
+no merge, runtime, lease or commissioning authority.
+
+
+## Build-conveyor sovereign recovery skill pack (v1.0.6)
+
+For the user's goal-to-build unblocking requests, use [repair-build-conveyors](../repair-build-conveyors/SKILL.md) and its read-only executable triage `shared/agents/sovereignGoalRecoveryTriageV1.mjs`. For iPad/cloud transport diagnosis, use [repair-sovereign-fast-bridge](../repair-sovereign-fast-bridge/SKILL.md). For privileged #2962/r7 original source custody requirements, use [commission-original-source-custody](../commission-original-source-custody/SKILL.md). These skills add typed gap intake and guarded operator action guidance; they are not proof of an installed OS writer, independent witness signer, live Island pickup or GPU-safe Seed Forge.

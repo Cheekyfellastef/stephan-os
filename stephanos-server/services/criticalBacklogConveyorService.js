@@ -32,7 +32,7 @@ import {
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
 import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 import { publishMissionWorkerAction, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
-import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
+import { appendMissionEvent, listMissionRecords, MISSION_STATE_LOCK_BUSY } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ACTIVE_SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
@@ -1275,7 +1275,23 @@ export async function ensureCriticalBacklogMission(options = {}) {
     });
   }
 
-  const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
+  let parking;
+  try {
+    parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
+  } catch (error) {
+    if (error?.code !== MISSION_STATE_LOCK_BUSY
+        || !/^[a-z0-9][a-z0-9._-]{2,127}$/.test(error?.missionId || '')) throw error;
+    // Parking is mission-local housekeeping. Retain its exact failed state,
+    // lock and claim; ordinary authority still decides unrelated admission.
+    parking = Object.freeze({
+      ok: true,
+      classification: 'BLOCKED_MISSION_PARKING_LOCK_BUSY',
+      blocker: MISSION_STATE_LOCK_BUSY,
+      missionId: error.missionId,
+      parked: false,
+      stateTransitionDeferred: true,
+    });
+  }
   if (parking?.ok === false) {
     return Object.freeze({
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,

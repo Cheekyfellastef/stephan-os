@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
+import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -909,7 +909,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   // command route, under its original lease and cancellation fences.
   const run = options.runCommand || defaultRun;
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
-  const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
+  let completedAt = '';
   let patchPath = '';
   let mutationApplied = false;
   let structuredEditsApplied = false;
@@ -920,6 +920,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let executionReceipt = null;
   let mutationSnapshot = [];
   let mutationEvidence = '';
+  const guardMutation = operation => withOriginalSourceAttemptMutationGuard(action.missionId, operation, {
+    env: options.env, missionStoreOptions: { root: options.root }, readMissionRecord: options.readMissionRecord,
+  });
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -962,107 +965,108 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       { ...options, sourceSnapshots },
     );
     providerCompleted = true;
-    await assertOriginalSourceAttemptNotFenced(action.missionId, {
-      env: options.env, missionStoreOptions: { root: options.root },
-      readMissionRecord: options.readMissionRecord,
-    });
+    const { finalized, receipt, sourceTestReceipts } = await guardMutation(async () => {
 
-    if (Array.isArray(generated.edits)) {
-      const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
-        worktreePath,
-        generated.edits,
-        sourceBuildAction.allowedFiles,
-        sourceSnapshots,
-        options,
-      );
-      const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
-      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
-      mutationEvidence = JSON.stringify(edits);
-      structuredEditsApplied = true;
-      mutationApplied = true;
-    } else {
-      const patch = typeof generated.patch === 'string' ? generated.patch : '';
-      mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, sourceBuildAction.allowedFiles);
-      patchPath = text(claim.processingPath)
-        ? claim.processingPath + '.provider-neutral.patch'
-        : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
-      await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
-
-      let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
-      let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-      if (check.error || check.status !== 0) {
-        const recountCheck = run(
-          'git.exe',
-          ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
-          { cwd: worktreePath },
+      if (Array.isArray(generated.edits)) {
+        const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
+          worktreePath,
+          generated.edits,
+          sourceBuildAction.allowedFiles,
+          sourceSnapshots,
+          options,
         );
-        if (recountCheck.error || recountCheck.status !== 0) {
-          throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+        const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
+        mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
+        mutationEvidence = JSON.stringify(edits);
+        structuredEditsApplied = true;
+        mutationApplied = true;
+      } else {
+        const patch = typeof generated.patch === 'string' ? generated.patch : '';
+        mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, sourceBuildAction.allowedFiles);
+        patchPath = text(claim.processingPath)
+          ? claim.processingPath + '.provider-neutral.patch'
+          : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
+        await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
+
+        let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
+        let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+        if (check.error || check.status !== 0) {
+          const recountCheck = run(
+            'git.exe',
+            ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
+            { cwd: worktreePath },
+          );
+          if (recountCheck.error || recountCheck.status !== 0) {
+            throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+          }
+          check = recountCheck;
+          patchRecountUsed = true;
+          applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
         }
-        check = recountCheck;
-        patchRecountUsed = true;
-        applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
+        const apply = run('git.exe', applyArgs, { cwd: worktreePath });
+        if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+        mutationEvidence = patch;
+        mutationApplied = true;
       }
-      const apply = run('git.exe', applyArgs, { cwd: worktreePath });
-      if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
-      mutationEvidence = patch;
-      mutationApplied = true;
-    }
 
-    const files = changedFiles(worktreePath, run);
-    if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
-    const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
-    if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
+      const files = changedFiles(worktreePath, run);
+      if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
+      const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
+      if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
-    // Reject structurally invalid generated modules before tests, signed escrow or GitHub PR publication.
-    // Run only on scoped changed JS sources to avoid rechecking the entire repository on every build.
-    for (const sourcePath of files) {
-      if (!/\.(?:mjs|js)$/i.test(sourcePath)) continue;
-      const source = await readFile(resolve(worktreePath, sourcePath), 'utf8');
-      const violations = analyzeImportStructureInSource(source, sourcePath);
-      if (violations.length) {
-        const first = violations[0];
-        throw new Error(`PROVIDER_NEUTRAL_IMPORT_STRUCTURE_INVALID:${first.file}:${first.reason}`);
+      // Reject structurally invalid generated modules before tests, signed escrow or GitHub PR publication.
+      // Run only on scoped changed JS sources to avoid rechecking the entire repository on every build.
+      for (const sourcePath of files) {
+        if (!/\.(?:mjs|js)$/i.test(sourcePath)) continue;
+        const source = await readFile(resolve(worktreePath, sourcePath), 'utf8');
+        const violations = analyzeImportStructureInSource(source, sourcePath);
+        if (violations.length) {
+          const first = violations[0];
+          throw new Error(`PROVIDER_NEUTRAL_IMPORT_STRUCTURE_INVALID:${first.file}:${first.reason}`);
+        }
       }
-    }
 
-    const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
-    const receipt = Object.freeze({
-      receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
-      requirement: 'provider-neutral bounded source change',
-      source: claim.adapter,
-      evidenceType: 'source-mutation',
-      verified: true,
-      commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
-      createdAt: completedAt,
-    });
+      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // options.now is an admission snapshot, not the completion clock.
+      completedAt = new Date().toISOString();
+      const receipt = Object.freeze({
+        receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
+        requirement: 'provider-neutral bounded source change',
+        source: claim.adapter,
+        evidenceType: 'source-mutation',
+        verified: true,
+        commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
+        createdAt: completedAt,
+      });
 
-    const execution = Object.freeze({
-      success: true,
-      resultId: text(action.actionId),
-      changedFiles: Object.freeze(files),
-      completedAt,
-      receipt,
-      evidenceReceipts: sourceTestReceipts,
-      sourceTestReceipts,
-      stage: 'TESTED',
-      testsPassed: true,
-      summary: generated.summary,
+      const execution = Object.freeze({
+        success: true,
+        resultId: text(action.actionId),
+        changedFiles: Object.freeze(files),
+        completedAt,
+        receipt,
+        evidenceReceipts: sourceTestReceipts,
+        sourceTestReceipts,
+        stage: 'TESTED',
+        testsPassed: true,
+        summary: generated.summary,
+      });
+      const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
+        action,
+        execution,
+        claim,
+        {
+          ...options,
+          actionGrant: claim.item?.actionGrant || options.actionGrant,
+          runCommand: run,
+          repoRoot: options.repoRoot || action.repositoryRoot,
+        },
+      );
+      if (!finalized.sourceArtifactEscrow || !finalized.offlinePublicationOutbox) {
+        throw new Error('PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED');
+      }
+      return { finalized, receipt, sourceTestReceipts };
     });
-    const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
-      action,
-      execution,
-      claim,
-      {
-        ...options,
-        actionGrant: claim.item?.actionGrant || options.actionGrant,
-        runCommand: run,
-        repoRoot: options.repoRoot || action.repositoryRoot,
-      },
-    );
-    if (!finalized.sourceArtifactEscrow || !finalized.offlinePublicationOutbox) {
-      throw new Error('PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED');
-    }
 
     await collectResult({
       missionId: action.missionId,
@@ -1103,7 +1107,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         options,
         {
           phase: 'provider-neutral-result-validated',
-          timestampUtc: completedAt,
+          timestampUtc: new Date().toISOString(),
           proofRefs: [receipt.receiptId, ...sourceTestReceipts.map((item) => item.receiptId)],
           expectedNextAction: 'Release/refill may consume this terminal receipt after canonical completion gates pass.',
         },
@@ -1117,11 +1121,13 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (mutationApplied && !succeeded) {
       const rollbackPaths = changedFiles(worktreePath, run);
       try {
-        if (structuredEditsApplied) {
-          await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
-        } else if (patchPath) {
-          await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
-        }
+        await guardMutation(async () => {
+          if (structuredEditsApplied) {
+            await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+          } else if (patchPath) {
+            await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+          }
+        });
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED'}`;
       }
@@ -1162,6 +1168,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
           {
             phase: 'provider-neutral-result-blocked',
+            timestampUtc: new Date().toISOString(),
             blocker: failure,
             expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
           },

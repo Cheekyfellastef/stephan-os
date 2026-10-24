@@ -136,6 +136,14 @@ function SkillForgeObservatory({ runtimeStatusModel }) {
           <p className="skill-truth-note">Knowledge may travel from Local to Stephanos, Sovereign Commander and Standalone. Each recipient needs a fresh proof, scope review and its own approval; privileges never travel with the lesson.</p>
         </section>
       </div>
+      <section className="skill-panel" data-testid="skill-forge-external-intake">
+        <div className="skill-section-head">
+          <div><span className="skill-kicker">SOVEREIGN SKILL FOUNDRY · EXTERNAL INTAKE</span><h3>Ready-made skill review</h3></div>
+          <span>{view.skillCandidates.filter(skill => skill.provenance === 'EXTERNAL_DRAFT_NOT_INSTALLED').length} external review draft(s)</span>
+        </div>
+        <p>Pre-existing SKILL.md packages from OpenAI, Anthropic, GitHub or ClawHub can be staged with the offline intake tool. Only typed packets already recorded in Shared Workspace appear here. Source links, licenses and publisher claims still require independent verification.</p>
+        <p className="skill-truth-note">Intake is review-only. No marketplace install, executable shell, automatic approval, new authority, global OpenClaw propagation or Battle Bridge activation is enabled. OpenClaw Local is the only initial candidate recipient.</p>
+      </section>
       <section className="skill-panel">
         <div className="skill-section-head"><div><span className="skill-kicker">CANDIDATE LIBRARY</span><h3>Skill blueprint vault</h3></div><span>{filtered.length} of {view.skillCandidates.length} seeds</span></div>
         <div className="skill-filters" aria-label="Filter skill candidates">

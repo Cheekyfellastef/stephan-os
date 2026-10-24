@@ -2177,3 +2177,41 @@ test('canonical guarded release can reconcile an exact expired lease without sei
     assert.equal(after.reason, 'SOURCE_MUTATION_LEASE_NOT_CLAIMED');
   });
 });
+
+
+test('live authority brackets heartbeat reads after asynchronous workspace work without accepting future evidence', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    let advanced = false;
+    const dependencies = {
+      readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ', branch: 'main', headSha: HEAD }),
+      listMissionRecords: async () => [],
+      readWorkspaceFeed: async () => {
+        if (!advanced) {
+          advanced = true;
+          t.mock.timers.tick(90000);
+          await publishWorkerHeartbeat(home, { timestampUtc: new Date().toISOString() });
+        }
+        return { state: 'ready', records: { goalRecords: [], statusRecords: [], proofRecords: [], receiptRecords: [] } };
+      },
+      resolveGithubTokenConfig: async () => ({ configured: false }),
+    };
+    const options = { root, home, repoRoot, env: {}, testOnly: true, dependencies };
+    const live = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(live.workerHeartbeat.valid, true, JSON.stringify(live.workerHeartbeat.errors));
+    assert.equal(live.workerHeartbeat.fresh, true);
+    assert.ok(Date.parse(live.observedAtUtc) >= Date.parse(live.workerHeartbeat.timestampUtc));
+    const expired = await readAuthoritativeProgrammeProjection({ ...options, dependencies: {
+      ...dependencies, buildCapabilityRegistry: () => {
+        t.mock.timers.tick(125000); return {};
+      },
+    } });
+    assert.equal(expired.workerHeartbeat.fresh, false, 'an initially valid heartbeat must age out during later reads');
+    assert.equal(expired.status, 'HOLD');
+    await publishWorkerHeartbeat(home, { timestampUtc: new Date(Date.now() + 90000).toISOString() });
+    const future = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(future.workerHeartbeat.valid, false, 'genuine future heartbeat must remain invalid');
+  });
+});

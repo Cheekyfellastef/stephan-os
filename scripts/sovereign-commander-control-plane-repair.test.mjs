@@ -63,3 +63,35 @@ test('Sovereign Commander control-plane repair blocks non-main checkout and auth
   assert.equal(widened.ok, false);
   assert.equal(widened.finalVerdict, 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED');
 });
+
+test('actual control-plane wrapper retains raw child custody before lower projections lose it', () => {
+  for (const mode of ['timeout', 'abort', 'signal', 'throw', 'buffer-error', 'reconciler-throw']) {
+    let launches = 0;
+    const result = runSovereignCommanderControlPlaneRepair({
+      repoRoot: 'C:\\repo', platform: 'win32',
+      spawnSyncFn: (exe, args) => {
+        if (exe.includes('Git')) return spawnFor()(exe, args);
+        launches++;
+        if (mode === 'throw') throw Error('PRIVATE_RAW_ERROR');
+        if (mode === 'reconciler-throw') return { status: 0, stdout: '' };
+        return { status: mode === 'signal' ? 0 : mode === 'buffer-error' ? 1 : null,
+          signal: mode === 'signal' ? 'SIGTERM' : '', stdout: 'PRIVATE_PARTIAL_OUTPUT',
+          ...(mode === 'signal' ? {} : { error: { code: mode === 'timeout' ? 'ETIMEDOUT'
+            : mode === 'abort' ? 'ABORT_ERR' : 'ENOBUFS' } }) };
+      },
+      reconciler: ({ spawnSyncFn, expectedHead }) => {
+        spawnSyncFn('fixed-installer', []);
+        if (mode === 'reconciler-throw') throw Error('PRIVATE_RECONCILER_ERROR');
+        spawnSyncFn('fixed-caretaker', []); // Must never launch after lost custody.
+        return { ok: true, sourceHead: expectedHead, blocker: 'GENERIC_COMPACTED_RESULT',
+          sourceMutationAllowed: false, gitMutationAllowed: false, arbitraryShellAllowed: false, pcRestartAllowed: false };
+      },
+    });
+    assert.equal(launches, 1, mode);
+    assert.equal(result.ok, false, mode);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN', mode);
+    assert.equal(result.executionEvidence.length, 1);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_/);
+    assert.equal(result.sourceMutationAllowed, false);
+  }
+});

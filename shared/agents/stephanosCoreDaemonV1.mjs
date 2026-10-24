@@ -7,8 +7,28 @@ function bool(value) {
 }
 
 function finiteAge(value) {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  // fileAgeMs returns null on a missing/unreadable heartbeat. Coercing it
+  // to zero suppresses dependency repair by falsely proving a fresh worker.
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value : null;
+}
+
+// Worker-dependent Core orchestration may reach lifecycle maintenance through
+// the Flywheel/Octopus repair graph. Unknown/stale worker evidence cannot admit
+// that graph merely because the direct dependency sweep returned a HOLD.
+export function coreWorkerDependentWorkAllowed(state = {}) {
+  const age = finiteAge(state?.missionWorkerHeartbeatAgeMs);
+  return state?.missionWorkerHealthy === true && age !== null && age <= 300_000;
+}
+
+// The Windows gaming governor publishes to Shared Workspace/vr, not status.
+// Missing, corrupt, or contradictory state must never authorise a local CPU
+// build. External GitHub runners are independent of this Core admission gate.
+export function coreGamingProtectionFromGovernor(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)
+    || state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
+    || typeof state.active !== 'boolean') return true;
+  return state.active !== false || state.phase !== 'NORMAL';
 }
 
 export function shouldReloadStephanosCoreDaemon(initialHead, currentHead) {
