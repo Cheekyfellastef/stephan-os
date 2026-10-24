@@ -12,7 +12,7 @@ export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 export const REQUIRED_COMMANDER_CAPABILITY_VERSION =
-  '2026-10-13-private-mcp-batch-metadata-v5';
+  '2026-10-18-island-action-contract-v6';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;

@@ -11,7 +11,7 @@ import {
 const HEAD = 'a'.repeat(40);
 
 test('repair-stephanos requires the current continuous-repair liveness capability', () => {
-  assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-13-private-mcp-batch-metadata-v5');
+  assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-18-island-action-contract-v6');
 });
 
 function result(payload, status = 0) {
