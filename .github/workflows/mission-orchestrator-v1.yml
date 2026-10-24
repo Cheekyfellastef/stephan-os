@@ -18,6 +18,11 @@ on:
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
       - 'stephanos-server/services/missionOrchestrator*.js'
+      - 'stephanos-server/services/supervisedR7Recovery*'
+      - 'stephanos-server/services/originalSourceAttemptFenceService*'
+      - 'stephanos-server/services/elasticPrHeadLeaseService*'
+      - 'stephanos-server/services/programmeAuthorityService*'
+      - 'scripts/supervised-r7-recovery.mjs'
       - 'scripts/mission-orchestrator-worker.mjs'
       - 'scripts/mission-orchestrator-worker.test.mjs'
       - 'scripts/windows/*mission-orchestrator-worker*.ps1'
@@ -68,6 +73,8 @@ jobs:
         run: node --test shared/agents/missionControllerCapacityRouterV1.test.mjs shared/agents/stephanosNativeCapacityRoutingAdmissionV1.security.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
         run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js stephanos-server/services/missionOrchestratorStephanosNativeExecutor.test.js
+      - name: Run supervised R7 recovery and unchanged strict fence regressions
+        run: node --experimental-vm-modules --test stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js stephanos-server/services/originalSourceAttemptFenceService.test.js stephanos-server/services/programmeAuthorityService.test.js stephanos-server/services/elasticPrHeadLeaseService.test.js
       - name: Run persistent worker and OC1 provider adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
       - name: Run signed authorization and executor regressions
