@@ -1,3 +1,4 @@
+import { buildMissionWorkerAction } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -1203,4 +1204,134 @@ test('terminal or already accepted receipt without a lease cannot reclaim writer
     assert.equal(result.activeLease, null);
     assert.equal(claims, 0);
   }
+});
+
+
+async function completedInspectionFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'completed-elastic-review-'));
+  const paths = { workspaceRoot: join(root, 'workspace'), repoRoot: join(root, 'repo'), orchestratorRoot: join(root, 'orchestrator') };
+  const env = { ...process.env, STEPHANOS_MISSION_WORKER_QUEUE_DIR: join(root, 'queue') };
+  const prior = mission(1802, 2096, HEAD_A, { revision: 6, dispatch: { status: 'complete', resultId: 'source-result' } });
+  const lease = leaseFor(prior);
+  const action = buildMissionWorkerAction(prior);
+  const eventId = 'worker-' + action.actionId;
+  const sourceId = prior.missionId + '-r1-aaaaaaaaaaaa';
+  const checks = [{ id: 'verify', name: 'verify', status: 'failure', required: true }];
+  const completedAt = new Date(NOW.getTime() - 1000).toISOString();
+  const event = { eventId, missionId: prior.missionId, eventType: 'PULL_REQUEST_CHECKS_UPDATED',
+    prNumber: 2096, headSha: HEAD_A, prState: 'open', mergeable: true, checks,
+    receipt: { verified: true, source: 'openclaw-github-readonly', evidenceType: 'github-inspection', commandOutputHash: 'f'.repeat(64), createdAt: completedAt } };
+  const current = { ...prior, revision: 7, currentPhase: 'REPAIR_REQUIRED',
+    pullRequest: { ...prior.pullRequest, checks },
+    storeMetadata: { lastEventId: eventId, processedEventIds: ['result-' + sourceId, eventId] } };
+  const identity = { missionId: prior.missionId, repository: REPOSITORY, issueNumber: 1802,
+    prNumber: 2096, branch: prior.git.branch, headSha: HEAD_A };
+  const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1', controllerId: 'durable-flywheel-controller',
+    grantId: 'grant-' + action.actionId, ...identity, laneId: prior.missionId, missionRevision: 6,
+    currentPhase: 'CHECK_PULL_REQUEST', actionId: action.actionId, actionKind: 'github-inspection',
+    adapter: 'openclaw-github-readonly', operation: 'check-pr', boundedActionCount: 1,
+    mergeAuthority: false, leaseSeizureAllowed: false, sourceRevision: SOURCE };
+  const item = { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter: grant.adapter,
+    actionId: action.actionId, missionId: prior.missionId, actionGrant: grant, payload: action,
+    executionBinding: { schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1', ...identity,
+      executionId: action.actionId, leaseKey: lease.leaseId, missionRevision: 6, grantId: grant.grantId, sourceRevision: SOURCE } };
+  const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId,
+    missionId: prior.missionId, operation: 'check-pr', eventId, stateRevision: 7, currentPhase: 'REPAIR_REQUIRED',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE', execution: { success: true, commandOutputHash: 'f'.repeat(64), completedAt },
+    inspection: { prNumber: 2096, headSha: HEAD_A, prState: 'open', mergeable: true, checks } };
+  const queued = { ...identity, sourceHead: HEAD_A, leaseKey: lease.leaseId, executionId: action.actionId, state: 'queued' };
+  const sourceReceipt = { ...identity, executionId: sourceId, leaseKey: prior.missionId + '-r1-lease', state: 'completed' };
+  const facts = { root, paths, env, lease, current, item, result, event,
+    events: [{ eventId: 'result-' + sourceId, missionId: prior.missionId, eventType: 'AGENT_RESULT_RECEIVED', resultId: 'source-result' }, event],
+    history: { ok: true, receipts: [queued], latestReceipt: queued },
+    sourceHistory: { ok: true, receipts: [sourceReceipt], latestReceipt: sourceReceipt }, releases: [] };
+  facts.persist = async () => {
+    await mkdir(paths.orchestratorRoot, { recursive: true });
+    await writeFile(join(paths.orchestratorRoot, current.missionId + '.state.json'), JSON.stringify(current));
+    await writeFile(join(paths.orchestratorRoot, current.missionId + '.events.ndjson'), facts.events.map(e => JSON.stringify(e)).join('\n') + '\n');
+    const dir = join(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR, 'openclaw-github-readonly', 'completed');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, action.actionId + '.json'), JSON.stringify(item));
+    await writeFile(join(dir, action.actionId + '.result.json'), JSON.stringify(result));
+  };
+  facts.args = { now: NOW, env, paths, sourceRevision: SOURCE, missionRecords: [current],
+    readLease: async () => ({ ok: true, present: true, record: lease, validation: { valid: true, active: true, stale: false } }),
+    releaseLease: async expected => { facts.releases.push(expected); return { ok: true, released: true }; },
+    readReceiptHistoryFn: async (_root, query) => query.executionId === sourceId ? facts.sourceHistory : facts.history,
+    originalMissionInFlightFn: async () => false };
+  return facts;
+}
+
+test('consumed read-only inspection retires exact epoch without fabricating queued receipt history', async () => {
+  const f = await completedInspectionFixture();
+  try {
+    await f.persist();
+    const before = JSON.stringify(f.history);
+    const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+    assert.equal(outcome.released, true, JSON.stringify(outcome));
+    assert.equal(outcome.classification, 'ELASTIC_CONSUMED_READONLY_INSPECTION_LEASE_RELEASED');
+    assert.equal(outcome.terminalExecutionReceiptReconstructed, false);
+    assert.equal(outcome.sourceMutationAllowed, false);
+    assert.equal(f.releases.length, 1);
+    assert.equal(f.releases[0].leaseId, f.lease.leaseId);
+    assert.match(f.releases[0].originalLeaseDigest, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(f.history), before);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('completed inspection custody rejects source, identity, journal, receipt and live-writer substitutions', async t => {
+  const mutations = {
+    'extra revision': f => { f.current.revision += 1; },
+    'source phase': f => { f.current.currentPhase = 'AGENT_IMPLEMENTATION'; },
+    'original fence': f => { f.current.storeMetadata.originalSourceAttemptFence = { schemaVersion: 'retained' }; },
+    'maintenance': f => { f.current.storeMetadata.supervisedRecoveryMaintenance = {}; },
+    'parked': f => { f.current.continuity = { parkingStatus: 'PARKED' }; },
+    'cancelled': f => { f.current.cancelled = true; },
+    'source writer grant': f => { f.item.actionGrant.actionKind = 'agent-handoff'; },
+    'writer payload': f => { f.item.payload.activeWriter = 'source'; },
+    'foreign lease binding': f => { f.item.executionBinding.leaseKey = 'other-lease'; },
+    'foreign head': f => { f.item.actionGrant.headSha = HEAD_C; },
+    'expanded grant': f => { f.item.actionGrant.mergeAuthority = true; },
+    'duplicate event': f => { f.events.push(f.event); },
+    'unconsumed event': f => { f.current.storeMetadata.processedEventIds = []; },
+    'wrong last event': f => { f.current.storeMetadata.lastEventId = 'different'; },
+    'result hash mismatch': f => { f.result.execution.commandOutputHash = 'e'.repeat(64); },
+    'result successor mismatch': f => { f.result.stateRevision += 1; },
+    'result failed': f => { f.result.execution.success = false; },
+    'different check evidence': f => { f.result.inspection.checks = []; },
+    'nonterminal receipt': f => { f.history.latestReceipt.state = 'started'; },
+    'additional execution': f => { f.history.receipts.push({ ...f.history.latestReceipt, executionId: 'foreign-action' }); },
+    'source incomplete': f => { f.sourceHistory.latestReceipt.state = 'started'; },
+    'active original work': f => { f.args.originalMissionInFlightFn = async () => true; },
+    'lease changed before CAS': f => { let reads = 0; f.args.readLease = async () => ({ ok: true, present: true,
+      record: ++reads === 1 ? f.lease : { ...f.lease, renewedAtUtc: NOW.toISOString() },
+      validation: { valid: true, active: true, stale: false } }); },
+    'CAS refusal': f => { f.args.releaseLease = async () => ({ ok: false, released: false }); },
+  };
+  for (const [name, mutate] of Object.entries(mutations)) await t.test(name, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      mutate(f); await f.persist();
+      const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(outcome.released, false, JSON.stringify(outcome));
+      assert.equal(f.releases.length, 0);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+
+test('completed inspection pending and passing outcomes retain normal operator and review gates', async t => {
+  for (const [status, phase] of [['pending', 'CHECK_PULL_REQUEST'], ['success', 'AWAITING_OPERATOR_APPROVAL']]) await t.test(phase, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      f.event.checks[0].status = status;
+      f.current.currentPhase = phase; f.result.currentPhase = phase;
+      await f.persist();
+      const outcome = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(outcome.released, true, JSON.stringify(outcome));
+      assert.equal(outcome.mergeAuthority, false);
+      assert.equal(outcome.sourceMutationAllowed, false);
+      assert.equal(f.current.currentPhase, phase);
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
 });

@@ -1,3 +1,4 @@
+import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -685,4 +686,67 @@ test('custody expiring while the actual pickup store waits for its lock never pu
   assert.deepEqual(await readdir(join(options.queueRoot, 'codex', 'processing')), []);
   assert.equal((await readdir(join(options.queueRoot, 'codex', 'pending'))).length, 1);
   assert.ok(await claimNextMissionWorkerItem('codex', options));
+});
+
+
+async function queuedInspectionReceiptFixture() {
+  const options = await runtime();
+  options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
+  options.repoRoot = join(options.root, '..', 'repo');
+  const created = await createMissionRecord(intent('inspection-receipt-test'), options);
+  const state = created.state;
+  state.revision = 6; state.currentPhase = 'CHECK_PULL_REQUEST';
+  state.git = { ...state.git, worktreeReady: true, commitSha: 'a'.repeat(40), pushed: true };
+  state.dispatch = { ...state.dispatch, status: 'complete', startedAt: new Date().toISOString() };
+  state.evidenceReceipts = [proof('focused evidence', 'inspection-fixture-source-proof')];
+  state.pullRequest = { ...state.pullRequest, number: 2096, headSha: 'a'.repeat(40), state: 'open', mergeable: true, checks: [] };
+  await writeFile(created.statePath, JSON.stringify(state));
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true);
+  const item = JSON.parse(await readFile(published.path, 'utf8'));
+  const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    grantId: 'grant-' + item.actionId, missionId: state.missionId, missionRevision: state.revision,
+    actionId: item.actionId, repository: state.repository, issueNumber: 1802, prNumber: 2096,
+    branch: state.git.branch, headSha: state.pullRequest.headSha, sourceRevision: 'b'.repeat(40) };
+  item.actionGrant = grant;
+  item.executionBinding = { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+    executionId: item.actionId, leaseKey: state.missionId + '-r6-lease' };
+  await writeFile(published.path, JSON.stringify(item));
+  const receipt = createExecutionReceipt({ repository: grant.repository, issueNumber: grant.issueNumber,
+    prNumber: grant.prNumber, branch: grant.branch, sourceHead: grant.headSha,
+    workerId: 'openclaw-standalone', workerType: 'openclaw', executionId: item.actionId,
+    leaseKey: item.executionBinding.leaseKey, state: 'queued', phase: 'pr-head-dispatch-queued', sequence: 1,
+    timestampUtc: new Date(Date.now() - 1000).toISOString(), proofRefs: ['inspection-fixture-source-proof'], expectedNextAction: 'Accept exact inspection before execution.' });
+  const appended = await appendExecutionReceipt(options.sharedWorkspaceRoot, receipt, { repoRoot: options.repoRoot });
+  assert.equal(appended.ok, true, JSON.stringify(appended));
+  const history = () => readExecutionReceiptHistory(options.sharedWorkspaceRoot,
+    { executionId: item.actionId }, { repoRoot: options.repoRoot });
+  return { options, history, state, item };
+}
+
+test('GitHub inspection records started before adapter and terminal receipt after consumed event', async () => {
+  const f = await queuedInspectionReceiptFixture();
+  let called = false;
+  const result = await processNextGitHubInspectionItem({ ...f.options, inspectGitHub: async () => {
+    called = true;
+    assert.deepEqual((await f.history()).receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress']);
+    return { execution: { success: true, commandOutputHash: 'f'.repeat(64), completedAt: new Date().toISOString() },
+      inspection: { prNumber: 2096, headSha: 'a'.repeat(40), prState: 'open', mergeable: true,
+        checks: [{ id: 'verify', name: 'verify', status: 'failure', required: true }] } };
+  } });
+  assert.equal(called, true, result.error?.stack || JSON.stringify(result.result));
+  assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE', result.error?.stack);
+  assert.equal(result.applied.state.currentPhase, 'REPAIR_REQUIRED');
+  const h = await f.history();
+  assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
+  assert.ok(h.latestReceipt.proofRefs.includes(result.event.eventId));
+  assert.equal(result.executionReceipt.receiptId, h.latestReceipt.receiptId);
+});
+
+test('GitHub inspector exception records failed truth and retains mission revision', async () => {
+  const f = await queuedInspectionReceiptFixture();
+  const result = await processNextGitHubInspectionItem({ ...f.options, inspectGitHub: async () => { throw Error('inspection fixture unavailable'); } });
+  assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
+  assert.equal((await f.history()).latestReceipt.state, 'failed', result.error?.stack);
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, 6);
 });
