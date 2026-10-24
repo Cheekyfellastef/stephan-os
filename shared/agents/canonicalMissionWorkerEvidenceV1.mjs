@@ -57,13 +57,13 @@ export function readCanonicalMissionWorkerHeartbeatAgeMs({
       nowUtc: new Date(admissionNowMs).toISOString(), expectedRepositoryRoot: paths.repositoryRoot,
       expectedHeadSha: source.sourceHead,
     });
-    return projection.valid && projection.fresh && projection.lastTickAffirmative
+    return projection.valid && projection.fresh && projection.lastTickOperational
       && Date.parse(projection.timestampUtc) <= admissionNowMs ? projection.ageMs : null;
   } catch { return null; }
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
-// Sample at the mutation boundary, never carry an earlier affirmative boolean
+// Sample at the mutation boundary, never carry an earlier readiness boolean
 // across an awaited network, queue, handoff or capacity operation.
 export function assertCanonicalMissionWorkerCustody(options = {}) {
   const read = options.readWorkerHeartbeatAgeMs || readCanonicalMissionWorkerHeartbeatAgeMs;

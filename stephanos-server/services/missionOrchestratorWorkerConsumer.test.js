@@ -10,9 +10,88 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, appendMissionWorkerExecutionReceiptTransition, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, appendMissionWorkerExecutionReceiptTransition, processNextForgePublicationItem, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
+
+async function grantedForgePublicationFixture() {
+  const options = await runtime();
+  options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
+  options.repoRoot = join(options.root, '..', 'repo');
+  const missionId = 'critical-1819-elastic-goal';
+  const created = await createMissionRecord(intent(missionId), options);
+  const state = created.state;
+  state.currentPhase = 'GITHUB_COMMIT'; state.revision = 5;
+  state.git.worktreeReady = true;
+  state.dispatch = { ...state.dispatch, adapter: 'foundry-forge', status: 'complete' };
+  state.sourcePublication = { artifactSha256: 'e'.repeat(64), outboxId: 'offline-publication-' + 'f'.repeat(24),
+    exactParentHead: 'a'.repeat(40), exactResultTree: 'c'.repeat(40), canonicalBranch: state.git.branch };
+  await writeFile(created.statePath, JSON.stringify(state));
+  const actionId = 'forge-publication-receipt-test';
+  const action = { actionId, missionId, adapter: 'forge-publication', actionKind: 'forge-escrow-publication',
+    operation: 'publish-forge-escrow', repository: state.repository, branch: state.git.branch,
+    ...state.sourcePublication, receiptRequirement: 'signed exact-tree Forge draft PR publication' };
+  const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    grantId: 'grant-' + actionId, actionId, missionId, missionRevision: 5,
+    repository: state.repository, issueNumber: 1819, prNumber: null, branch: state.git.branch,
+    headSha: '', sourceRevision: 'a'.repeat(40), adapter: 'forge-publication',
+    workerId: 'github-first', capacityProofRefs: ['forge-publication-fixture-proof'] };
+  const item = { schemaVersion: 'stephanos.mission-worker-queue-item.v1', adapter: 'forge-publication',
+    actionId, missionId, payload: action, actionGrant: grant, createdAt: new Date(Date.now() - 1000).toISOString(),
+    executionBinding: { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId, leaseKey: missionId + '-r5-lease' } };
+  const pending = join(options.queueRoot, 'forge-publication', 'pending');
+  await mkdir(pending, { recursive: true });
+  const path = join(pending, actionId + '.json');
+  await writeFile(path, JSON.stringify(item));
+  options.actionGrant = grant;
+  const history = () => readExecutionReceiptHistory(options.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: options.repoRoot });
+  return { options, item, path, state, history };
+}
+
+test('actual Forge publication consumer records canonical custody before publisher and completion after consumption', async () => {
+  const f = await grantedForgePublicationFixture();
+  let calls = 0;
+  const result = await processNextForgePublicationItem({ ...f.options, executeForgePublication: async () => {
+    calls++;
+    const h = await f.history();
+    assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress']);
+    assert.ok(h.receipts.every(r => r.workerType === 'github-first'));
+    assert.ok(h.receipts.every(r => r.executionId === f.item.actionId && r.sourceHead === 'a'.repeat(40)));
+    assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.pullRequest.number, null);
+    return { ok: true, finalVerdict: 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF',
+      draft: true, mergeAuthority: false, forcePushAllowed: false,
+      repository: f.state.repository, branch: f.state.git.branch,
+      exactResultTree: f.state.sourcePublication.exactResultTree,
+      sourceArtifactSha256: f.state.sourcePublication.artifactSha256,
+      commitSha: 'd'.repeat(40), prNumber: 3002 };
+  } });
+  assert.equal(calls, 1, result.error?.stack);
+  assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE', result.error?.stack);
+  const h = await f.history();
+  assert.deepEqual(h.receipts.map(r => r.state), ['queued', 'accepted', 'started', 'progress', 'completed']);
+  const state = (await readMissionRecord(f.state.missionId, f.options)).state;
+  assert.equal(state.pullRequest.number, 3002);
+  assert.equal(state.pullRequest.state, 'draft');
+  assert.equal(state.approval.status, 'not-requested');
+  // Even a restored duplicate queue file cannot execute this terminal action.
+  await writeFile(f.path, JSON.stringify(f.item));
+  const replay = await processNextForgePublicationItem({ ...f.options,
+    executeForgePublication: async () => assert.fail('terminal publication replay executed') });
+  assert.match(replay.result.error, /EXECUTION_RECEIPT_CLAIM_STATE_INVALID:completed/);
+  assert.equal((await f.history()).receipts.length, 5);
+});
+
+test('Forge publication foreign persisted binding refuses before publisher or receipt fabrication', async () => {
+  const f = await grantedForgePublicationFixture();
+  f.item.executionBinding.sourceRevision = 'f'.repeat(40);
+  await writeFile(f.path, JSON.stringify(f.item));
+  const result = await processNextForgePublicationItem({ ...f.options,
+    executeForgePublication: async () => assert.fail('foreign grant reached publisher') });
+  assert.match(result.result.error, /EXECUTION_RECEIPT_QUEUE_GRANT_BINDING_MISMATCH/);
+  assert.equal((await f.history()).receipts.length, 0);
+  assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, 5);
+});
 
 function freshCodexCapacityRouting() {
   const now = new Date();
