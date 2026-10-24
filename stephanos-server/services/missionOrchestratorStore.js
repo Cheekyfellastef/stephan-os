@@ -65,6 +65,27 @@ export function resolveMissionOperationsSnapshotRoot(env = process.env) {
     : '';
 }
 
+// Closed identity for a failed worker result. Stored atomically with the
+// resulting failed state; old unbound failures do not gain replay authority.
+export function failedMissionWorkerResultIdentityV1(event = {}) {
+  const missionId = text(event.missionId).toLowerCase();
+  const eventId = text(event.eventId).toLowerCase();
+  const actionId = text(event.actionId).toLowerCase();
+  const adapter = text(event.adapter).toLowerCase();
+  const resultId = text(event.resultId);
+  if (text(event.eventType).toUpperCase() !== 'AGENT_RESULT_RECEIVED' || event.success !== false
+      || !MISSION_ID_PATTERN.test(missionId) || !EVENT_ID_PATTERN.test(eventId)
+      || !/^[a-z0-9][a-z0-9._:-]{2,160}$/.test(actionId) || !adapter || !resultId)
+    return '';
+  return sha256(JSON.stringify({ schemaVersion: 'stephanos.failed-worker-result-identity.v1',
+    missionId, eventId, actionId, adapter, resultId, success: false,
+    changedFiles: Array.isArray(event.changedFiles) ? event.changedFiles : [],
+    receipt: event.receipt ?? null, error: text(event.error),
+    sourceArtifactEscrow: event.sourceArtifactEscrow ?? null,
+    offlinePublicationOutbox: event.offlinePublicationOutbox ?? null,
+  }));
+}
+
 function missionPaths(root, missionId) {
   const safeId = safeMissionId(missionId);
   const resolvedRoot = resolve(root);
@@ -88,12 +109,12 @@ export async function writeMissionJsonAtomically(path, value, options = {}) {
   const payload = `${JSON.stringify(value, null, 2)}\n`;
   const temporaryPath = `${path}.tmp-${pid}-${nowMs()}`;
 
-  await writeFileFn(temporaryPath, payload, { encoding: 'utf8', flag: 'wx' });
+  await writeFileFn(temporaryPath, payload, { encoding: 'utf8', flag: 'wx', ...(options.durable ? { flush: true } : {}) });
   try {
     await renameFn(temporaryPath, path);
     return Object.freeze({ fallbackUsed: false, temporaryPath });
   } catch (error) {
-    if (platform !== 'win32' || error?.code !== 'EPERM') {
+    if (options.durable || platform !== 'win32' || error?.code !== 'EPERM') {
       await rmFn(temporaryPath, { force: true }).catch(() => {});
       throw error;
     }
@@ -121,7 +142,42 @@ export async function writeMissionJsonAtomically(path, value, options = {}) {
 }
 
 async function atomicWriteJson(path, value) {
-  await writeMissionJsonAtomically(path, value);
+  await writeMissionJsonAtomically(path, value, {
+    durable: Boolean(value.storeMetadata?.supervisedRecoveryMaintenance),
+  });
+}
+
+// Same mission lock/state, not a new lease or controller. The trusted service
+// authenticates an exact maintenance decision while this lock is held.
+export async function recordSupervisedOriginalSourceMaintenance(authorize, options = {}) {
+  if (typeof authorize !== 'function') throw new Error('SUPERVISED_R7_AUTHENTICATOR_REQUIRED');
+  const missionId = 'critical-2962-elastic-goal';
+  const root = options.root || resolveMissionOrchestratorRoot(options.env || process.env);
+  if (!root) throw new Error('SUPERVISED_R7_STORE_UNAVAILABLE');
+  const paths = missionPaths(root, missionId);
+  const guarded = await runWithMissionStatePrecondition(missionId,
+    { expectedRevision: 7, expectedCurrentPhase: 'REPAIR_REQUIRED' }, async current => {
+      const maintenance = await authorize(structuredClone(current));
+      if (maintenance?.schemaVersion !== 'stephanos.supervised-r7-maintenance.v1'
+          || maintenance.target?.missionId !== missionId || maintenance.target.revision !== 7
+          || !/^[a-f0-9]{64}$/.test(maintenance.approvalEvidenceDigest || '')) {
+        throw new Error('SUPERVISED_R7_MAINTENANCE_RECORD_INVALID');
+      }
+      const prior = current.storeMetadata?.supervisedRecoveryMaintenance;
+      if (prior) {
+        if (JSON.stringify(prior) === JSON.stringify(maintenance)) return current;
+        if (prior.commandId === maintenance.commandId || prior.requestId === maintenance.requestId)
+          throw new Error('SUPERVISED_R7_MAINTENANCE_ALREADY_RESERVED');
+      }
+      const history = current.storeMetadata?.supervisedRecoveryMaintenanceHistory || [];
+      if (history.length >= 20) throw new Error('SUPERVISED_R7_MAINTENANCE_HISTORY_LIMIT');
+      const next = withStoreMetadata(current, { supervisedRecoveryMaintenance: maintenance,
+        ...(prior ? { supervisedRecoveryMaintenanceHistory: [...history, prior] } : {}) });
+      await atomicWriteJson(paths.statePath, next);
+      return next;
+    }, { ...options, root });
+  if (guarded.preconditionFailed) throw new Error('SUPERVISED_R7_MISSION_CHANGED');
+  return guarded.result;
 }
 
 async function acquireLock(lockPath) {
@@ -213,7 +269,8 @@ async function reconcilePendingQuarantineAudit(state, paths, options = {}) {
       } finally { await handle.close(); }
     }
     const appendAudit = options.appendMissionAuditFile || appendFile;
-    await appendAudit(paths.eventPath, serial + '\n', 'utf8');
+    await appendAudit(paths.eventPath, serial + '\n',
+      state.storeMetadata?.supervisedRecoveryMaintenance ? { encoding: 'utf8', flush: true } : 'utf8');
   }
   const clean = structuredClone(state);
   delete clean.storeMetadata.pendingQuarantineAuditEvent;
@@ -357,6 +414,12 @@ export async function appendMissionEvent(missionId, event, options = {}) {
   try {
     const stored = JSON.parse(await readFile(paths.statePath, 'utf8'));
     const current = await reconcilePendingQuarantineAudit(stored, paths, options);
+    if (current.storeMetadata?.supervisedRecoveryMaintenance
+        && event.eventType !== 'MISSION_CANCELLED') {
+      // Preserve the exact reserved revision against stale repair/retry/result
+      // snapshots. Only the separately proven cancellation may advance it.
+      throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+    }
     const eventId = safeEventId(event.eventId);
     const processedEventIds = Array.isArray(current.storeMetadata?.processedEventIds)
       ? current.storeMetadata.processedEventIds
@@ -399,7 +462,14 @@ export async function appendMissionEvent(missionId, event, options = {}) {
       if (quarantine && Buffer.byteLength(serial) > MAX_QUARANTINE_AUDIT_BYTES) {
         throw new Error('ORIGINAL_QUARANTINE_AUDIT_EVENT_UNBOUNDED');
       }
-      const next = withStoreMetadata(applyMissionOrchestratorEvent(current, preparedEvent, options), {
+      const transitioned = applyMissionOrchestratorEvent(current, preparedEvent, options);
+      const failedResultIdentity = current.dispatch?.status === 'running'
+        && preparedEvent.adapter === current.dispatch?.adapter
+        && transitioned.dispatch?.status === 'failed'
+        ? failedMissionWorkerResultIdentityV1(preparedEvent) : '';
+      const next = withStoreMetadata(transitioned, {
+        ...(text(preparedEvent.eventType).toUpperCase() === 'AGENT_RESULT_RECEIVED'
+          ? { lastFailedWorkerResultIdentityV1: failedResultIdentity } : {}),
         ...(originalSourceAttemptFence ? { originalSourceAttemptFence } : {}),
         processedEventIds: [...processedEventIds, eventId].slice(-1000),
         lastEventId: eventId,
@@ -408,6 +478,10 @@ export async function appendMissionEvent(missionId, event, options = {}) {
           eventId, eventSha256: sha256(serial), event: logEvent,
         } } : {}),
       });
+      // A result collector may have waited for the mission lock/audit I/O.
+      if (options.assertResultCustody) options.assertResultCustody();
+      if (text(preparedEvent.eventType).toUpperCase() === 'AGENT_DISPATCHED' && options.assertClaimCustody)
+        options.assertClaimCustody();
       await atomicWriteJson(paths.statePath, next);
       const completed = quarantine
         ? await reconcilePendingQuarantineAudit(next, paths, options)

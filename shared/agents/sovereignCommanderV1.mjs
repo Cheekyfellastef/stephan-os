@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import process from 'node:process';
 import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
 import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
@@ -10,6 +10,7 @@ import {
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
@@ -775,14 +776,18 @@ function fixedProcessStructuredBlocker(result) {
   return '';
 }
 
-function runFixedProcess(plan, options = {}) {
-  const runner = options.spawnSyncFn || spawnSync;
+// Both observation and owner-reserved asynchronous execution use this same
+// admission and launch preparation. Moving a fixed action between runners
+// must never lose its request identity, authenticated transport or loader.
+function prepareFixedProcessLaunch(plan, options = {}) {
   const routeEnvironment = fixedProcessRouteEnvironment(options);
   const reviewer = plan.processId === 'sovereign-windows-reviewer-calibration';
   const candidateEnvironment = reviewer
     ? fixedReviewerEnvironment(plan.reviewIdentity, routeEnvironment)
     : routeEnvironment;
-  if (reviewer && (!candidateEnvironment || options?.routeProof?.authenticatedMcp !== true)) {
+  if (reviewer && (!candidateEnvironment || !routeEnvironment
+      || options?.routeProof?.authenticatedMcp !== true
+      || options?.routeProof?.mcpSessionReady !== true)) {
     return frozen({ ok: false, status: null, stdout: '', stderr: '',
       errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
   }
@@ -794,12 +799,19 @@ function runFixedProcess(plan, options = {}) {
     files: WINDOWS_CALIBRATION_SOURCE_PATHS,
     git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
   }), ...plan.args] : [...plan.args];
-  const result = runner(plan.executable, args, {
+  return frozen({ ok: true, args: frozen(args), environment: candidateEnvironment });
+}
+
+function runFixedProcess(plan, options = {}) {
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return launch;
+  const runner = options.spawnSyncFn || spawnSync;
+  const result = runner(plan.executable, launch.args, {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
-    ...(candidateEnvironment ? { env: candidateEnvironment } : {}),
+    ...(launch.environment ? { env: launch.environment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
@@ -812,6 +824,83 @@ function runFixedProcess(plan, options = {}) {
     stdout,
     stderr,
     errorCode: text(result?.error?.code || result?.error?.message).slice(0, 160),
+  });
+}
+
+// Only an actual pre-spawn reviewer failure may release the maintenance owner's
+// custody reservation. Public blocker strings or a fabricated result never suffice.
+const provenReviewerPreExecution = new WeakSet();
+export function isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result) {
+  const execution = result?.structuredContent;
+  return command?.plan?.kind === 'fixed-process'
+    && command.plan.processId === 'sovereign-windows-reviewer-calibration'
+    && result?.ok === false
+    && result?.blocker === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'
+    && result?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    && execution && typeof execution === 'object'
+    && provenReviewerPreExecution.has(execution)
+    && execution.ok === false && execution.status === null
+    && !execution.signal && execution.stdout === '' && execution.stderr === ''
+    && execution.errorCode === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+}
+
+function runOwnedFixedProcess(plan, options = {}) {
+  // Source-only executor fixtures inject the synchronous primitive explicitly.
+  if (options.spawnSyncFn) return Promise.resolve(runFixedProcess(plan, options));
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return Promise.resolve(launch);
+  return new Promise(resolveResult => {
+    let child, timer, settled = false, spawned = false, stdout = '', stderr = '';
+    const finish = (status, signal = '', errorCode = '', provenPreSpawn = false) => {
+      if (settled) return;
+      settled = true;
+      if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
+      // Unknown/signal/error completion is never a calibration receipt. Apply
+      // redaction at the shared terminal boundary, including close and timeout,
+      // while preserving known-exit structured HOLD reports and custody state.
+      if (plan.processId === 'sovereign-windows-reviewer-calibration'
+          && (!Number.isInteger(status) || signal || errorCode)) {
+        stdout = ''; stderr = '';
+      }
+      const execution = frozen({ ok: status === 0 && !signal && !errorCode, status,
+        signal, errorCode, stdout, stderr });
+      if (provenPreSpawn) provenReviewerPreExecution.add(execution);
+      resolveResult(execution);
+    };
+    const failSpawn = error => {
+      if (settled) return;
+      if (plan.processId === 'sovereign-windows-reviewer-calibration') {
+        // ChildProcess emits 'spawn' only after successful creation. An error
+        // after that event cannot exclude surviving Windows descendants.
+        // Redact calibration output in either case; never convert a post-spawn
+        // error into safe pre-execution evidence.
+        stdout = ''; stderr = '';
+        finish(null, '', spawned
+          ? 'SOVEREIGN_WINDOWS_REVIEW_EXECUTION_CUSTODY_UNPROVEN'
+          : 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', !spawned);
+      } else {
+        finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED'));
+      }
+    };
+    try {
+      child = (options.spawnFn || spawn)(plan.executable, launch.args, {
+        cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
+        shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        ...(launch.environment ? { env: launch.environment } : {}),
+      });
+      child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.once('spawn', () => { spawned = true; });
+      child.once('error', failSpawn);
+      child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
+      timer = (options.setTimeoutFn || setTimeout)(() => {
+        if (settled) return;
+        // Settle as unknown custody before a synchronous close can look green.
+        finish(null, '', 'ETIMEDOUT');
+        try { child.kill(); } catch {}
+      }, safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS));
+      timer?.unref?.();
+    } catch (error) { failSpawn(error); }
   });
 }
 
@@ -854,6 +943,33 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
     });
   }
 
+  const run = () => executeAdmittedSovereignCommandV1(command, options);
+  if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
+    if (typeof options.withMaintenanceOwner === 'function') {
+      return options.withMaintenanceOwner(command, run);
+    }
+    // Local Core/stdio callers never launch beside an independently scheduled
+    // guardian. The existing authenticated HTTP owner performs the operation.
+    try {
+      const callOwner = options.callMaintenanceOwner || (await import('./sovereignCommanderRemoteMailboxV1.mjs')).callSovereignMaintenanceOwnerV1;
+      const owned = await callOwner({ actionId: command.plan.processId,
+        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs });
+      if (!owned || owned.command?.plan?.processId !== command.plan.processId) {
+        return frozen({ ok: false, command, blocker: owned?.blocker || 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID',
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      }
+      const structuredContent = frozen({ ...owned.structuredContent,
+        ownerCommandId: owned.command.commandId, ownerProofHash: owned.proofHash || '' });
+      return frozen({ ...owned, command, structuredContent,
+        proofHash: hash({ commandId: command.commandId, missionId: command.missionId,
+          operation: command.operation, plan: command.plan, contentText: owned.contentText, structuredContent }) });
+    } catch { return frozen({ ok: false, command, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }); }
+  }
+  return run();
+}
+
+async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
     let structuredContent = null;
@@ -1010,7 +1126,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         });
       }
     } else if (command.plan.kind === 'fixed-process') {
-      const result = runFixedProcess(command.plan, options);
+      const result = isSovereignMaintenanceObservationV1(command.plan.processId)
+        ? runFixedProcess(command.plan, options) : await runOwnedFixedProcess(command.plan, options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
       structuredContent = result;
       if (!result.ok) {

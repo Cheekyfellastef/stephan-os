@@ -1890,6 +1890,11 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
       nowUtc,
       readFileImpl: deps.readFile,
     });
+    if (expected.originalLeaseDigest !== undefined
+        && ((current.present && createHash('sha256').update(JSON.stringify(current.record)).digest('hex') !== expected.originalLeaseDigest)
+          || (existingRelease.present && existingRelease.value.originalLeaseDigest !== expected.originalLeaseDigest))) {
+      return Object.freeze({ ok: false, released: false, reason: 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_CHANGED' });
+    }
     if (
       current.present
       && current.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
@@ -1965,7 +1970,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         releaseOnlyExactLease: true,
       });
     }
-    const releaseRecord = createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc });
+    const releaseRecord = { ...createSourceMutationLeaseReleaseRecord(current.record, { timestampUtc: nowUtc }),
+      ...(expected.originalLeaseDigest !== undefined ? { originalLeaseDigest: expected.originalLeaseDigest } : {}) };
     let releasePublication;
     if (existingRelease.present) {
       if (!exactSourceMutationLeaseRelease(existingRelease.value, current.record, nowUtc)) {
@@ -1987,7 +1993,8 @@ export async function releaseSourceMutationLease(expected = {}, options = {}) {
         layout.root,
         ['status', `${releaseRecord.statusId}.json`],
         releaseRecord,
-        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+        { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc),
+          durable: expected.originalLeaseDigest !== undefined },
       );
       if (!releasePublication.ok) {
         return Object.freeze({

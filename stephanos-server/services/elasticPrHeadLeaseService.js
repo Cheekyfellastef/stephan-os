@@ -544,14 +544,18 @@ export async function reconcileExpiredElasticReviewLeaseV1({
   const leaseRead = await readLease({
     root: paths.workspaceRoot, repoRoot: paths.repoRoot, nowUtc,
   });
-  if (!leaseRead?.present || leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT') {
+  const supervisedReleaseResume = leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'
+    && missionRecords.some(m => m.missionId === leaseRead.record?.laneId
+      && m.storeMetadata?.originalSourceAttemptFence?.schemaVersion === 'stephanos.supervised-r7-retirement-fence.v1');
+  if (!leaseRead?.present || (leaseRead?.reason === 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT' && !supervisedReleaseResume)) {
     return held('EXACT_STALE_SOURCE_LEASE_NOT_PRESENT');
   }
-  if (leaseRead.ok !== true
+  if ((!supervisedReleaseResume && (leaseRead.ok !== true
       || leaseRead.validation?.valid !== true
       || leaseRead.validation?.active !== false
       || leaseRead.validation?.stale !== true
-      || leaseRead.validation?.finalVerdict !== 'SOURCE_MUTATION_LEASE_STALE') {
+      || leaseRead.validation?.finalVerdict !== 'SOURCE_MUTATION_LEASE_STALE'))
+      || leaseRead.validation?.valid !== true) {
     return held('CANONICAL_LEASE_EXPIRED_STATE_NOT_PROVEN');
   }
   const lease = leaseRead.record;

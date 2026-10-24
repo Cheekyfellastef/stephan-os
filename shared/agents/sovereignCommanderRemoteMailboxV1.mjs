@@ -10,6 +10,7 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -440,6 +441,57 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
     body,
     transportTimedOut: false,
   });
+}
+
+// Private local callers reuse the existing bounded authenticated MCP transport.
+// No health snapshot grants admission, no local child fallback, and no attempt
+// to start/recycle an unavailable owner is permitted on this delegation path.
+export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const readFileFn = options.readFileFn || readFile;
+  let token = '', sessionId = '';
+  try {
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const health = JSON.parse(healthExchange.bodyText || 'null');
+    if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+    }
+    token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
+    if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE');
+    const init = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'sovereign-existing-owner-delegation', version: '1' } } }, '', 3_000);
+    if (!init.ok || !init.sessionId || init.body?.error) return fail('SOVEREIGN_MAINTENANCE_OWNER_INITIALIZE_FAILED');
+    sessionId = init.sessionId;
+    const initialized = await postMcp(fetchFn, token, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId, 3_000);
+    const listed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, init.sessionId, 3_000);
+    if (!initialized.ok || !listed.ok || !listed.body?.result?.tools?.some(tool => tool.name === 'maintenance_action')) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE');
+    }
+    const timeoutMs = Number.isSafeInteger(request.timeoutMs) ? Math.min(285_000, request.timeoutMs + 15_000) : 285_000;
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { ...request.arguments, actionId: request.actionId } } }, init.sessionId, timeoutMs);
+    const result = called.body?.result?.structuredContent;
+    if (!called.ok || !result || result.command?.plan?.processId !== request.actionId) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+    }
+    if (result.ok === true) {
+      const expected = createHash('sha256').update(JSON.stringify({ commandId: result.command.commandId,
+        missionId: result.command.missionId, operation: result.command.operation, plan: result.command.plan,
+        contentText: result.contentText, structuredContent: result.structuredContent })).digest('hex');
+      if (result.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' || result.proofHash !== expected) {
+        return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+      }
+    }
+    return result;
+  } catch { return fail('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'); }
+  finally {
+    if (sessionId && token) {
+      try { await fetchTextWithDeadline(fetchFn, MCP_URL, { method: 'DELETE', headers: {
+        authorization: `Bearer ${token}`, 'mcp-session-id': sessionId,
+      } }, 3_000); } catch {}
+    }
+  }
 }
 
 function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
@@ -1960,10 +2012,14 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
-    ok: parsed.ok === true,
-    processCount: Number.isSafeInteger(Number(parsed.processCount)) && Number(parsed.processCount) >= 0 && Number(parsed.processCount) <= 100
-      ? Number(parsed.processCount)
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true
+      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
+      ? parsed.processCount
       : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
+      ? text(parsed.processObservationBlocker) : '',
     daemonHealthy: parsed.daemonHealthy === true,
     reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
     // Public projection contains only bounded custody verdicts, never PIDs,
