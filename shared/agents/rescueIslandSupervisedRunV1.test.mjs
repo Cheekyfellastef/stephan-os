@@ -85,6 +85,7 @@ async function fixture(t, overrides = {}, options = {}) {
   const inventory = { reads: 0, stages: [], gateCalls: 0, brokerMode: 'UPSTREAM_REFRESH', brokerAge: 0 };
   const broker = { readBrokeredGithubJson: spec => {
     inventory.reads++;
+    (inventory.endpoints ||= []).push(spec.endpoint);
     const payload = spec.endpoint.endsWith('/git/ref/heads/main')
       ? { ref: 'refs/heads/main', object: { sha: baseHead } }
       : spec.endpoint.includes('/issues/comments/') ? comment : issue;
@@ -150,6 +151,21 @@ function mutateObservation(f, transform) {
   f.host.observeSupervisedAdmission=async expected => transform(await original(expected),expected);
   f.run=f.module.namespace.createRescueIslandSupervisedRunnerV1(f.host);
 }
+
+test('Island02 production reader uses its fixed parent endpoint and grants no host authority',async t=>{
+  const f=await fixture(t,{workerId:'rescue-island-02',issueNumber:3103,
+    issueTitle:'Rescue Island: two independent proof-gated builders outside Goal Conveyor'});
+  Object.assign(f.issue,{number:3103,title:f.task.issueTitle,url:'https://api.github.com/repos/'+REPO+'/issues/3103'});
+  f.comment.issue_url=f.issue.url;
+  f.comment.body='/rescue-island-02 supervised-cooperative '+f.baseHead+' '+f.task.taskId+' '+hash(f.task.content);
+  const {readRescueIslandSupervisedPilotGithubFactsV1:read02}=await import(pathToFileURL(join(f.harness,'rescueIslandAuthenticatedGithubReadV1.mjs')));
+  const result=await read02(f.request);
+  assert.equal(result.verdict,'GITHUB_FACTS_STRUCTURALLY_VERIFIED');assert.equal(result.workerId,'rescue-island-02');assert.equal(result.ownerIssueNumber,3103);
+  assert.deepEqual(f.inventory.endpoints,['git/ref/heads/main','issues/3103','issues/comments/'+f.commentId,'git/ref/heads/main'].map(p=>'repos/'+REPO+'/'+p));
+  for(const key of ['approvalAuthenticated','physicalPickupAllowed','sourceMutationAllowed','liveRunnerRegistered'])assert.equal(result[key],false);
+  f.task.workerId='rescue-island-03';const before=f.inventory.reads;
+  assert.equal((await read02(f.request)).verdict,'HELD');assert.equal(f.inventory.reads,before);
+});
 
 test('strict public executor retains its unconditional hold before any Git/filesystem write',async t=>{
   const f=await fixture(t);

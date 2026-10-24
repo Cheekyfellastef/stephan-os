@@ -17,6 +17,22 @@ const SUPERVISED_INTAKE = Symbol('supervised-cooperative-intake');
 const SUPERVISED_COMMAND = /^\/rescue-island-01 supervised-cooperative ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
 const SOURCE_COMMAND = /^\/rescue-island-01 supervised-source-cooperative ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
 const COMMAND = /^\/rescue-island-01 pilot ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
+const SUPERVISED_SECOND_COMMAND = /^\/rescue-island-02 supervised-cooperative ([a-f0-9]{40}) ([a-z0-9][a-z0-9-]{7,63}) ([a-f0-9]{64})$/;
+const DOCUMENT_WORKERS = Object.freeze({
+  'rescue-island-01': Object.freeze({workerId:'rescue-island-01',issueNumber:ISSUE,issueTitle:ISSUE_TITLE}),
+  'rescue-island-02': Object.freeze({workerId:'rescue-island-02',issueNumber:3103,
+    issueTitle:'Rescue Island: two independent proof-gated builders outside Goal Conveyor'}),
+});
+// Fixed read targets only. This resolver grants no execution or estate authority.
+export function resolveRescueIslandSupervisedDocumentWorkerV1(task) {
+  if(!task || Object.getPrototypeOf(task)!==Object.prototype)return null;
+  const schema=Object.getOwnPropertyDescriptor(task,'schemaVersion');
+  const worker=Object.getOwnPropertyDescriptor(task,'workerId');
+  if(!schema || !Object.hasOwn(schema,'value') || schema.value!=='stephanos.rescue-island-pilot-task.v1'
+    || !worker || !Object.hasOwn(worker,'value') || typeof worker.value!=='string'
+    || !Object.hasOwn(DOCUMENT_WORKERS,worker.value))return null;
+  return DOCUMENT_WORKERS[worker.value];
+}
 const MAX_AGE = 10 * 60 * 1000;
 const COMMENT_URL = 'https://api.github.com/repos/' + REPO + '/issues/comments/';
 const ISSUE_URL = 'https://api.github.com/repos/' + REPO + '/issues/' + ISSUE;
@@ -54,8 +70,9 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
   const blockers = [];
   const source = supervised && task?.schemaVersion==='stephanos.rescue-island-source-task.v1';
   const sourcePlan = source ? inspectRescueIslandSourceTaskV1(task,nowUtc) : null;
-  const issueNumber = sourcePlan?.valid ? sourcePlan.issueNumber : ISSUE;
-  const issueTitle = sourcePlan?.valid ? task.issueTitle : ISSUE_TITLE;
+  const documentWorker = !source && supervised ? resolveRescueIslandSupervisedDocumentWorkerV1(task) : DOCUMENT_WORKERS['rescue-island-01'];
+  const issueNumber = sourcePlan?.valid ? sourcePlan.issueNumber : documentWorker?.issueNumber || ISSUE;
+  const issueTitle = sourcePlan?.valid ? task.issueTitle : documentWorker?.issueTitle || ISSUE_TITLE;
   const issueUrl = 'https://api.github.com/repos/'+REPO+'/issues/'+issueNumber;
   const now = parseTimestamp(nowUtc);
   const created = parseTimestamp(comment?.created_at);
@@ -74,9 +91,9 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
       || consumedCommentIds.some(v => !Number.isSafeInteger(v) || v <= 0)
       || new Set(consumedCommentIds).size !== consumedCommentIds.length
       || consumedCommentIds.includes(commentId)) blockers.push('COMMENT_ALREADY_OWNED_OR_INVENTORY_INVALID');
-  if (source ? !sourcePlan.valid : (!exactObject(task) || task.schemaVersion !== 'stephanos.rescue-island-pilot-task.v1'
-      || task.repository !== REPO || task.issueNumber !== ISSUE
-      || task.issueTitle !== ISSUE_TITLE || task.workerId !== 'rescue-island-01'
+  if (source ? !sourcePlan.valid : (!documentWorker || !exactObject(task) || task.schemaVersion !== 'stephanos.rescue-island-pilot-task.v1'
+      || task.repository !== REPO || task.issueNumber !== issueNumber
+      || task.issueTitle !== issueTitle || task.workerId !== documentWorker.workerId
       || !primitive(task.taskId, TASK) || !primitive(task.baseHead, HEAD)
       || !primitive(task.targetPath, /^docs\/architecture\/rescue-island-pilot-[a-z0-9-]+\.md$/)
       || task.targetPath !== 'docs/architecture/rescue-island-pilot-' + task.taskId + '.md'
@@ -89,7 +106,7 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
       || !Number.isFinite(expires) || expires <= now || expires - now > MAX_AGE))
     blockers.push('TASK_IDENTITY_SCOPE_OR_EXPIRY_INVALID');
   if (task?.baseHead !== mainHead) blockers.push('TASK_HEAD_NOT_CURRENT_MAIN');
-  const match = typeof comment?.body === 'string' ? comment.body.match(source ? SOURCE_COMMAND : supervised ? SUPERVISED_COMMAND : COMMAND) : null;
+  const match = typeof comment?.body === 'string' ? comment.body.match(source ? SOURCE_COMMAND : supervised ? (documentWorker?.workerId==='rescue-island-02' ? SUPERVISED_SECOND_COMMAND : SUPERVISED_COMMAND) : COMMAND) : null;
   const hash = typeof task?.content === 'string'
     ? createHash('sha256').update(task.content, 'utf8').digest('hex') : '';
   if (!match || match[1] !== mainHead || match[2] !== task?.taskId
@@ -100,7 +117,7 @@ export function inspectRescueIslandPilotOwnerIntakeV1({
     schemaVersion: RESCUE_ISLAND_INTAKE_SCHEMA,
     ...(supervised ? { assuranceProfile: 'SUPERVISED_COOPERATIVE_V1' } : {}),
     issueNumber,
-    workerId: 'rescue-island-01',
+    workerId: source ? 'rescue-island-01' : documentWorker?.workerId || 'rescue-island-01',
     taskId: primitive(task?.taskId, TASK) ? task.taskId : '',
     requestedSourceHead: primitive(mainHead, HEAD) ? mainHead : '',
     commentId: Number.isSafeInteger(commentId) && commentId > 0 ? commentId : null,
