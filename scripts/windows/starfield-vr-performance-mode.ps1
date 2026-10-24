@@ -1246,9 +1246,13 @@ $summary = [ordered]@{
     avgNodeCpuPct = if ($nodeCpuSamples.Count) { [math]::Round(($nodeCpuSamples | Measure-Object nodeCpuPct -Average).Average, 2) } else { $null }
     avgSteamWebCpuPct = if ($steamWebCpuSamples.Count) { [math]::Round(($steamWebCpuSamples | Measure-Object steamWebCpuPct -Average).Average, 2) } else { $null }
     avgMetaVrCpuPct = if ($metaVrCpuSamples.Count) { [math]::Round(($metaVrCpuSamples | Measure-Object metaVrCpuPct -Average).Average, 2) } else { $null }
+    # Every fixed-name browser family must have a genuine measured (including
+    # observed absent-process zero) sample before reporting complete coverage.
+    # Unknown Chrome/Firefox CPU cannot silently qualify as complete attribution.
     browserAndAppCpuAttributionComplete = [bool]($samples.Count -gt 1 -and
         $chatGptCpuSamples.Count -gt 0 -and $edgeCpuSamples.Count -gt 0 -and
-        $braveCpuSamples.Count -gt 0 -and $webView2CpuSamples.Count -gt 0)
+        $braveCpuSamples.Count -gt 0 -and $chromeCpuSamples.Count -gt 0 -and
+        $firefoxCpuSamples.Count -gt 0 -and $webView2CpuSamples.Count -gt 0)
     browserTabsInspected = $false
     chatGptConversationContentsInspected = $false
     minSystemFreeMemoryMiB = if ($samples.Count) { ($samples | Measure-Object systemFreeMemoryMiB -Minimum).Minimum } else { $null }
