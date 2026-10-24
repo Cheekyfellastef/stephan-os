@@ -1048,6 +1048,23 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    // Fixed high-risk reviewer failure may happen before child spawn or before
+    // a terminal calibration marker exists. Never expose the raw thrown value,
+    // executable paths, Git arguments, model output, or loader implementation.
+    // Retain only one closed-world denial for the existing authenticated MCP
+    // mailbox, preserving explicit status:null and no authority on exceptions.
+    if (command.plan?.kind === 'fixed-process'
+      && command.plan.processId === 'sovereign-windows-reviewer-calibration') {
+      const errorCode = 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+      return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        contentText: '',
+        structuredContent: frozen({ ok: false, status: null,
+          stdout: '', stderr: '', errorCode }),
+        blocker: errorCode,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      });
+    }
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
