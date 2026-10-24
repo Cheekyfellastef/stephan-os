@@ -140,6 +140,54 @@ try
     int objectAcl = (int)BinaryPrimitives.ReadUInt32LittleEndian(objectDescriptor.AsSpan(16, 4));
     BinaryPrimitives.WriteUInt16LittleEndian(shortObjectAce.AsSpan(176 + objectAcl + 10, 2), 12);
     Rehash(shortObjectAce); Reject(shortObjectAce, "TRUNCATED_OBJECT_GUID_BODY");
+    byte[] WithSaclAce(byte[] ace, byte revision = 2)
+    {
+        byte[] sd = new byte[original.Length + 8 + ace.Length]; original.CopyTo(sd, 0);
+        sd[2] |= 0x10; U32(sd, 12, (uint)original.Length);
+        int at = original.Length; sd[at] = revision;
+        BinaryPrimitives.WriteUInt16LittleEndian(sd.AsSpan(at + 2, 2), (ushort)(8 + ace.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(sd.AsSpan(at + 4, 2), 1);
+        ace.CopyTo(sd, at + 8); return Fixture(sd);
+    }
+    Reject(WithSaclAce(new byte[] { 0x11, 0, 4, 0 }), "REVIEWER_HEADER_ONLY_MANDATORY_LABEL");
+    // Every header-only ACE, including opaque/future values, must refuse.
+    for (int type = 0; type <= 255; type++) Reject(WithSaclAce(new byte[] { (byte)type, 0, 4, 0 }), "ALL_HEADER_ONLY_ACE_TYPES");
+    byte[] label = new byte[] { 0x11,0,20,0, 1,0,0,0, 1,1,0,0,0,0,0,16, 0,16,0,0 };
+    Check(Inspect(WithSaclAce(label)).Outcome == "UNKNOWN", "VALID_NATIVE_MANDATORY_LABEL");
+    foreach (byte type in new byte[] { 0,1,2,3 })
+    {
+        byte[] basic = label.ToArray(); basic[0] = type;
+        Check(Inspect(WithSaclAce(basic)).Outcome == "UNKNOWN", "SUPPORTED_BASIC_ACE_FAMILIES");
+    }
+    foreach (byte type in new byte[] { 5,6,7,8 })
+        for (uint flags = 0; flags < 4; flags++)
+        {
+            int sidAt = 12 + ((flags & 1) != 0 ? 16 : 0) + ((flags & 2) != 0 ? 16 : 0);
+            byte[] objectAce = new byte[sidAt + 12]; objectAce[0] = type;
+            BinaryPrimitives.WriteUInt16LittleEndian(objectAce.AsSpan(2, 2), (ushort)objectAce.Length);
+            U32(objectAce, 4, 1); U32(objectAce, 8, flags); label.AsSpan(8).CopyTo(objectAce.AsSpan(sidAt));
+            Check(Inspect(WithSaclAce(objectAce, 4)).Outcome == "UNKNOWN", "SUPPORTED_OBJECT_GUID_COMBINATIONS");
+            Reject(WithSaclAce(objectAce, 2), "OBJECT_ACE_REQUIRES_DS_ACL");
+            byte[] badFlags = objectAce.ToArray(); U32(badFlags, 8, 4);
+            Reject(WithSaclAce(badFlags, 4), "OBJECT_ACE_RESERVED_FLAGS");
+        }
+    foreach (int index in new[] { 4, 8, 9, 10, 15 })
+    {
+        byte[] broken = label.ToArray(); broken[index] = 0xff;
+        Reject(WithSaclAce(broken), "MALFORMED_MANDATORY_LABEL_BODY");
+    }
+    for (int length = 4; length < label.Length; length += 4)
+    {
+        byte[] truncated = label[..length]; BinaryPrimitives.WriteUInt16LittleEndian(truncated.AsSpan(2, 2), (ushort)length);
+        Reject(WithSaclAce(truncated), "ALL_MANDATORY_LABEL_BODY_TRUNCATIONS");
+    }
+    byte[] extraLabel = new byte[24]; label.CopyTo(extraLabel, 0);
+    BinaryPrimitives.WriteUInt16LittleEndian(extraLabel.AsSpan(2, 2), 24); Reject(WithSaclAce(extraLabel), "LABEL_TRAILING_BODY");
+    foreach (byte type in new byte[] { 4,9,10,11,12,13,14,15,16,18,19,20,21,255 })
+    {
+        byte[] opaque = label.ToArray(); opaque[0] = type;
+        Reject(WithSaclAce(opaque, 4), "UNVALIDATED_NATIVE_LAYOUT_UNSUPPORTED");
+    }
     var random = new Random(3123);
     for (int sample = 0; sample < 5000; sample++)
     {

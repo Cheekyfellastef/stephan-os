@@ -135,6 +135,7 @@ internal static class OriginalR7RecoveryPreparedRecord
             Require(cursor <= limit - 4, "ACE_HEADER");
             int size = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(cursor + 2, 2));
             Require(size >= 4 && size % 4 == 0 && size <= limit - cursor, "ACE_LENGTH");
+            ValidateAce(value.Slice(cursor, size), value[dacl]);
             cursor += size;
         }
         // Independently decode the bounded ACL body as well. This is structural
@@ -142,6 +143,34 @@ internal static class OriginalR7RecoveryPreparedRecord
         try { _ = new RawAcl(value.Slice(dacl, aclLength).ToArray(), 0); }
         catch (ArgumentException) { throw Invalid("ACL_ENCODING"); }
         catch (IndexOutOfRangeException) { throw Invalid("ACL_ENCODING"); }
+    }
+
+    private static void ValidateAce(ReadOnlySpan<byte> ace, byte aclRevision)
+    {
+        // RawAcl treats native ACE types above .NET's enum as CustomAce and
+        // does not validate their native bodies. Keep an explicit support
+        // boundary; callback/claim/compound/future layouts stay unsupported.
+        byte type = ace[0];
+        int sidOffset;
+        if (type <= 3 || type == 0x11) sidOffset = 8; // header, mask, SID
+        else if (type is >= 5 and <= 8)
+        {
+            Require(aclRevision == 4 && ace.Length >= 12, "OBJECT_ACE_HEADER");
+            uint flags = U32(ace, 8);
+            Require((flags & ~3u) == 0, "OBJECT_ACE_FLAGS");
+            sidOffset = 12 + ((flags & 1) != 0 ? 16 : 0) + ((flags & 2) != 0 ? 16 : 0);
+        }
+        else throw Invalid("ACE_TYPE_UNSUPPORTED");
+        Require(sidOffset <= ace.Length - 8, "ACE_SID_HEADER");
+        ReadOnlySpan<byte> sid = ace[sidOffset..];
+        Require(sid[0] == 1 && sid[1] <= 15 && sid.Length == 8 + 4 * sid[1], "ACE_SID_BODY");
+        if (type == 0x11)
+        {
+            // SYSTEM_MANDATORY_LABEL_ACE has only the three documented
+            // policy bits and one integrity RID under mandatory authority16.
+            Require((U32(ace, 4) & ~7u) == 0 && sid[1] == 1
+                && Zero(sid.Slice(2, 5)) && sid[7] == 16, "MANDATORY_LABEL_BODY");
+        }
     }
 
     private static bool Offset(uint offset, int length, int minimum) =>

@@ -126,6 +126,15 @@ OWNER+DACL readback. Wire records are test fixtures assembled in user mode; they
 do not execute `R7BuildRecoveryRecord` in the kernel. That cross-boundary native
 writer/reader qualification remains required on the disposable driver target.
 
+ACE bodies have an explicit support boundary independent of .NET's opaque
+`CustomAce` handling. Basic allow/deny/audit/alarm, non-callback object ACEs and
+native mandatory labels have bounded SID/GUID/body validation. Labels require
+the mandatory authority and documented policy bits. Compound, callback, claim,
+other newer and unknown ACE layouts refuse with `ACE_TYPE_UNSUPPORTED` until
+their complete layouts are implemented and independently qualified. A valid
+Windows descriptor using an unsupported layout remains HOLD, never a reason
+to skip body validation or infer recovery authority.
+
 These are real kernel operations in source, not an installed commissioning
 entry point. The source-SID set, custodian, commissioner capability and target
 scope must come from independently authenticated adopted host configuration.
