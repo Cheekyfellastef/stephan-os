@@ -329,3 +329,14 @@ test('restart finishes an interrupted release using the consumed decision after 
   assert.equal(replay.duplicate,true);
   assert.equal(await readFile(join(f.paths.orchestratorRoot,MISSION+'.events.ndjson'),'utf8'),audit);
 });
+
+test('advancing clock preserves a valid bounded evidence window for retirement preparation', async t => {
+  const f = await fixture(t);
+  await f.maintenance();
+  const options = { ...f.options, now: () => { f.tick(1); return f.time; } };
+  await preserveSupervisedR7Maintenance(options);
+  const prepared = await persistRuntimeSupervisedR7Packet(f.input, options);
+  const evidence = prepared.packet.maintenanceEvidence;
+  assert.equal(Date.parse(evidence.expiresAtUtc) - Date.parse(evidence.observedAtUtc), 600000);
+  assert.ok(Date.parse(prepared.packet.preparedAtUtc) < Date.parse(prepared.packet.expiresAtUtc));
+});
