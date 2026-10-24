@@ -252,6 +252,74 @@ test('continuity parking can see an elastic blocked goal outside the static back
   assert.equal(observedEvent.eventType, 'MISSION_PARKED_FOR_REPAIR');
 });
 
+test('a busy blocked mission parking transition does not stop independently admitted elastic work', async () => {
+  const paths = await roots();
+  const blocked = { ...elasticImplementationMission(3036), revision: 3, currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' }, continuity: { parkingStatus: 'ACTIVE' },
+    blockers: ['SOURCE_ARTIFACT_PARENT_HEAD_GRANT_MISMATCH'] };
+  const independent = { ...elasticImplementationMission(4008), currentPhase: 'VERIFYING',
+    dispatch: { status: 'complete' }, continuity: { parkingStatus: 'ACTIVE' } };
+  const before = JSON.stringify([blocked, independent]);
+  let transitions = 0, admissions = 0, dispatches = 0;
+  for (const authorityStatus of ['READY', 'HOLD']) {
+    const result = await ensureCriticalBacklogMission({
+      paths, allowLegacyMissionCreation: false,
+      listMissions: async () => [blocked, independent],
+      appendMissionEvent: async (id, event) => {
+        transitions += 1;
+        assert.equal(id, blocked.missionId);
+        assert.equal(event.eventType, 'MISSION_PARKED_FOR_REPAIR');
+        throw Object.assign(new Error('Mission state lock is busy.'), {
+          code: 'MISSION_STATE_LOCK_BUSY', missionId: id,
+        });
+      },
+      readProgrammeProjection: async () => ({ status: authorityStatus,
+        blockers: authorityStatus === 'HOLD' ? ['source-lease-custody-unproven'] : [],
+        machineryInventory: { sourceHead: 'a'.repeat(40) },
+        scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } } }),
+      ensureElasticMissions: async () => { admissions += 1; return {
+        ok: true, selectedMission: independent, elasticMissions: [independent],
+        activeMissions: [independent], runnableMissions: [independent], desiredWidth: 1,
+      }; },
+      readCapacityRouting: async () => null,
+      dispatchElasticBuilds: async () => { dispatches += 1; return { ok: true, dispatchCount: 0, held: [] }; },
+      publishProjection: async () => ({ ok: true }),
+      dispatchActiveCriticalMission: async () => ({ ok: true }),
+    });
+    assert.equal(result.parking.classification, 'BLOCKED_MISSION_PARKING_LOCK_BUSY');
+    assert.equal(result.parking.missionId, blocked.missionId);
+    assert.equal(result.parking.parked, false);
+    assert.equal(result.parking.stateTransitionDeferred, true);
+    if (authorityStatus === 'READY') {
+      assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
+      assert.equal(result.elasticAdmission.selectedMission.missionId, independent.missionId);
+    } else {
+      assert.equal(result.programmeStatus, 'HOLD');
+      assert.deepEqual(result.programmeBlockers, ['source-lease-custody-unproven']);
+      assert.equal(result.elasticAdmission, null);
+    }
+    assert.equal(JSON.stringify([blocked, independent]), before);
+    assert.equal(result.mergeAuthority, false);
+  }
+  assert.equal(transitions, 2);
+  assert.equal(admissions, 1);
+  assert.equal(dispatches, 1);
+});
+
+test('parking deferral does not suppress fenced originals, I/O errors or untyped exceptions', async () => {
+  const blocked = { ...elasticImplementationMission(3036), currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' }, continuity: { parkingStatus: 'ACTIVE' }, blockers: ['source-parent-mismatch'] };
+  for (const error of [Object.assign(new Error('I/O failed'), { code: 'EACCES' }),
+    new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED'), new Error('Mission state lock is busy.')]) {
+    let authorityReads = 0;
+    await assert.rejects(ensureCriticalBacklogMission({ paths: await roots(),
+      listMissions: async () => [blocked], appendMissionEvent: async () => { throw error; },
+      readProgrammeProjection: async () => { authorityReads += 1; return {}; },
+    }), actual => actual === error);
+    assert.equal(authorityReads, 0);
+  }
+});
+
 test('continuity re-entry can see a repaired elastic goal outside the static backlog', async () => {
   const paths = await roots();
   const mission = {
