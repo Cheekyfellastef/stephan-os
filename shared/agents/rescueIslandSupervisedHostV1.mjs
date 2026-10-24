@@ -239,21 +239,27 @@ async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
   if(!(await physical(pinnedScript)).isFile() || !bytes.equals(await readFile(pinnedScript)))
     held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
   const started=Date.now();
-  const reconciled=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
-    ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','Reconcile'],
+  const observation=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
+    ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','ObserveAdmission'],
     {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:18000,maxBuffer:32768,
       env:rescueIslandGovernorEnvironmentV1(process.env)});
-  if(reconciled.error || reconciled.status!==0)held('ISLAND_HOST_GOVERNOR_RECONCILE_FAILED');
-  // The canonical governor owns signal collection and reconciliation. Read its
-  // actual persisted result separately; request data cannot supply idle truth.
-  return {started,path:join(sharedWorkspaceRoot,'vr','vr-resource-governor-current.json')};
+  if(observation.error || observation.status!==0)held('ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED');
+  let facts;
+  try{facts=JSON.parse(observation.stdout);}catch{held('ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED');}
+  // The existing watcher remains the only state/model writer. This exact-source
+  // operation freshly reads its actual signals; it never fabricates a newer
+  // transition timestamp or clears another owner's prepare evidence.
+  return {started,facts,path:join(sharedWorkspaceRoot,'vr','vr-resource-governor-current.json')};
 }
 
 async function currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
   const refreshed=await refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead);
-  const governor=await json(refreshed.path), observed=Date.parse(governor.updatedAtUtc);
+  const governor=await json(refreshed.path), observed=Date.parse(refreshed.facts.observedAtUtc);
   if(governor.schemaVersion!=='stephanos.vr-resource-governor.v1' || governor.active!==false
     || governor.phase!=='NORMAL' || governor.localModelAllowed!==true
+    || refreshed.facts.schemaVersion!=='stephanos.gaming-resource-admission-observation.v1'
+    || refreshed.facts.readOnly!==true || refreshed.facts.signalActive!==false || refreshed.facts.preparePending!==false
+    || !['AUTO','FORCE_OFF'].includes(refreshed.facts.overrideMode)
     || !Number.isFinite(observed) || observed<refreshed.started-1000 || observed>Date.now()
     || Date.now()-observed>10000)held('ISLAND_HOST_GAMING_ADMISSION_REVOKED_OR_STALE');
   return observed;

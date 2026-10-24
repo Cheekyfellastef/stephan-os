@@ -40,9 +40,13 @@ async function fixture(t,{realFlatSignal=false}={}) {
     await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
   await mkdir(join(canonicalRoot,'scripts/windows'),{recursive:true});
   const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
+  const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
+  const actionStart=canonical.indexOf("if ($Action -eq 'ObserveAdmission') {"),
+    actionEnd=canonical.indexOf("if ($Action -eq 'SetAuto') {",actionStart);
+  assert.ok(actionStart>0&&actionEnd>actionStart);
+  const admissionAction=canonical.slice(actionStart,actionEnd);
   let detector='';
   if(realFlatSignal) {
-    const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
     const start=canonical.indexOf('function Get-FlatGameSignal {'),end=canonical.indexOf('function Get-GamingSignal {',start);
     assert.ok(start>0&&end>start);
     // Real canonical signal-resolution code, isolated from reconciliation and
@@ -53,12 +57,14 @@ async function fixture(t,{realFlatSignal=false}={}) {
       "function Test-WindowsGamePresenceActive { $false }\n";
   }
   await writeFile(join(canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1'),
-    "param([ValidateSet('Reconcile')][string]$Action)\n$ErrorActionPreference='Stop'\n"+
+    "param([ValidateSet('ObserveAdmission')][string]$Action)\n$ErrorActionPreference='Stop'\n"+
     detector+
     "$path='"+governorFile+"'\n$state=[IO.File]::ReadAllText($path)|ConvertFrom-Json\n"+
-    (realFlatSignal?"$signal=Get-FlatGameSignal\nif($signal.active){$state.active=$true;$state.phase='GAMING';$state.localModelAllowed=$false}\n":'')+
-    "$state.updatedAtUtc=[DateTime]::UtcNow.ToString('o')\n"+
-    "$encoded=$state|ConvertTo-Json -Depth 8\n[IO.File]::WriteAllText($path,$encoded,(New-Object Text.UTF8Encoding($false)))\n$encoded\n");
+    "$preparePath='"+join(sharedWorkspaceRoot,'vr/gaming-resource-prepare.json').replaceAll("'","''")+"'\n"+
+    "function Read-OverrideMode { 'AUTO' }\n"+
+    (realFlatSignal?"function Get-GamingSignal { Get-FlatGameSignal }\n":
+      "function Get-GamingSignal { [pscustomobject]@{active=[bool]$state.active} }\n")+
+    admissionAction);
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
   git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
   git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
@@ -152,13 +158,21 @@ test('GitHub approval reader ignores inherited executable, host and credential s
   for(const key of keys.filter(k=>k!=='PATH'))assert.equal(observed.childEnv[key],undefined);
   assert.notEqual(observed.childEnv.PATH,'UNTRUSTED_FIXTURE_OVERRIDE');
 });
-test('idle governor transition timestamps are refreshed through the fixed source-verified action',async t=>{
+test('fresh read-only governor admission preserves idle transition bytes and timestamp',async t=>{
   const f=await fixture(t);
   await save(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),{
     ...f.governor,updatedAtUtc:'2000-01-01T00:00:00Z'});
+  const file=join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),before=await readFile(file);
   const result=await f.run(f.request);assert.equal(result.ok,true);
-  const state=JSON.parse(await readFile(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),'utf8'));
-  assert.ok(Date.now()-Date.parse(state.updatedAtUtc)<10000);
+  assert.deepEqual(await readFile(file),before);
+});
+
+test('read-only canonical admission retains pending or expired prepare evidence',async t=>{
+  const f=await fixture(t),file=join(f.config.sharedWorkspaceRoot,'vr/gaming-resource-prepare.json');
+  const retained='{"active":true,"expiresAtUtc":"2000-01-01T00:00:00Z"}';
+  await writeFile(file,retained);
+  await assert.rejects(f.run(f.request),/GAMING_ADMISSION_REVOKED_OR_STALE/);
+  assert.equal(await readFile(file,'utf8'),retained);
 });
 
 test('canonical custom game-name and library detection revoke real adapter admission',async t=>{

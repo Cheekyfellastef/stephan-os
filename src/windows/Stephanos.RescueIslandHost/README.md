@@ -59,12 +59,15 @@ receipt-publication failures remain for operator reconciliation. No automatic
 recovery or refill is implemented.
 
 Fresh gaming admission runs the exact canonical governor Git bytes with its
-fixed Reconcile action. The trusted operator's additive custom-game settings
+fixed read-only ObserveAdmission action. The trusted operator's additive custom-game settings
 (`STEPHANOS_GAME_PROCESS_NAMES` and `STEPHANOS_GAME_LIBRARY_ROOTS`) survive native
 ingress and are validated as bounded detector data before reaching that child.
 They cannot select a command or supply an idle observation. Other inherited
 executable, credential and preload selectors remain excluded. A change to the
-governor source, failed reconciliation or active game holds construction.
+governor source, failed observation, active game or any pending prepare evidence
+holds construction. Persisted NORMAL/local-model admission is also required.
+The existing watcher remains the sole state/model writer. No transition
+timestamp is rewritten, lease cleared or model action invoked by this observer.
 
 The Windows-only real-adapter suite is explicitly launched by the existing
 native proof workflow, rather than collected by portable Node test globs:
@@ -84,6 +87,9 @@ it also creates a private window station; a non-admin local caller uses a privat
 desktop within its existing accessible station. Handles are retained through
 the child's terminal result and then closed. Existing desktop ACLs, interactive
 desktop selection, accounts, policies and production admission stay unchanged.
+The new restricted token and its future objects have explicit same-user/SYSTEM
+descriptors, so an inherited administrator-only default cannot exclude the
+child from its own objects. The caller's primary token is never modified.
 
 Passing and failing Node stdout is retained under `receipts/test-output`, with
 content-addressed log names. A TESTED receipt binds its exact log SHA-256,

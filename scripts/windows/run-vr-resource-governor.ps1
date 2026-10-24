@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
+    [ValidateSet('Watch','Reconcile','Status','ObserveAdmission','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
     [int]$PollMilliseconds = 500,
     [int]$ReleaseGraceSeconds = 45,
     [int]$CooldownSeconds = 90,
@@ -1132,6 +1132,22 @@ function Invoke-CurrentReconcile {
     $prior = Read-GovernorState
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
     return Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
+}
+
+if ($Action -eq 'ObserveAdmission') {
+    # Fresh read-only admission for cooperative CPU workers. Leave the sole
+    # watcher/reconciler in charge of persisted state, leases and model actions.
+    # Do not call Resolve-EffectiveState: it can clear prepare-lease evidence.
+    $signal = Get-GamingSignal
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.gaming-resource-admission-observation.v1'
+        observedAtUtc = [DateTime]::UtcNow.ToString('o')
+        signalActive = [bool]$signal.active
+        overrideMode = [string](Read-OverrideMode)
+        preparePending = [bool](Test-Path -LiteralPath $preparePath)
+        readOnly = $true
+    } | ConvertTo-Json -Depth 4
+    exit 0
 }
 
 if ($Action -eq 'SetAuto') {

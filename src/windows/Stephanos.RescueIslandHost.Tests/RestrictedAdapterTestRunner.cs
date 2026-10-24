@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Security.AccessControl;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using Stephanos.RescueIslandCustody;
@@ -23,7 +24,8 @@ internal static class RestrictedAdapterTestRunner
         // token cannot add rights. See Microsoft CreateRestrictedToken and
         // CreateProcessAsUserW documentation; it is a restricted copy of the
         // caller, so no account logon or new credential is involved.
-        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query | TokenAccessLevels.Duplicate | TokenAccessLevels.AssignPrimary);
+        using var identity = WindowsIdentity.GetCurrent(TokenAccessLevels.Query | TokenAccessLevels.Duplicate
+            | TokenAccessLevels.AssignPrimary | TokenAccessLevels.AdjustDefault | (TokenAccessLevels)0x40000);
         var admin = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         byte[] sidBytes = new byte[admin.BinaryLength]; admin.GetBinaryForm(sidBytes, 0);
         IntPtr sid = Marshal.AllocHGlobal(sidBytes.Length);
@@ -34,6 +36,7 @@ internal static class RestrictedAdapterTestRunner
                 throw new Exception("ADAPTER_TEST_RESTRICTED_TOKEN_FAILED:" + Marshal.GetLastWin32Error());
             using (reduced)
             {
+                PreparePrivateTokenObjects(reduced, identity.User!);
                 using var desktop = new AdapterTestDesktop(identity);
                 string log = Path.Combine(Path.GetTempPath(), "island-adapter-ci-" + Guid.NewGuid().ToString("N") + ".log");
                 using var output = new FileStream(log, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Inheritable);
@@ -62,6 +65,58 @@ internal static class RestrictedAdapterTestRunner
         finally { Marshal.FreeHGlobal(sid); }
     }
 
+    // Some service tokens default new objects to Administrators/SYSTEM only.
+    // Once Administrators becomes deny-only, that default can exclude the
+    // child from its OWN token, processes, threads and newly created files.
+    // Give only this user and SYSTEM access to the NEW restricted token and
+    // its future objects. Never edit the caller token or an existing estate.
+    private static void PreparePrivateTokenObjects(SafeAccessTokenHandle reduced, SecurityIdentifier user)
+    {
+        GetTokenInformation(reduced, 6, IntPtr.Zero, 0, out int size);
+        if (size < IntPtr.Size || size > 65536) throw new Exception("ADAPTER_TEST_DEFAULT_DACL_SIZE_INVALID");
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformation(reduced, 6, buffer, size, out _))
+                throw new Exception("ADAPTER_TEST_DEFAULT_DACL_READ_FAILED:" + Marshal.GetLastWin32Error());
+            IntPtr acl = Marshal.ReadIntPtr(buffer);
+            bool allowsUser = false;
+            if (acl != IntPtr.Zero)
+            {
+                int bytes = (ushort)Marshal.ReadInt16(acl, 2);
+                if (bytes < 8 || bytes > 65535) throw new Exception("ADAPTER_TEST_DEFAULT_DACL_INVALID");
+                byte[] copy = new byte[bytes]; Marshal.Copy(acl, copy, 0, bytes);
+                allowsUser = new RawAcl(copy, 0).OfType<CommonAce>().Any(a => a.AceQualifier == AceQualifier.AccessAllowed && a.SecurityIdentifier == user);
+            }
+            Console.WriteLine("ISLAND_ADAPTER_TEST_PRIOR_DEFAULT_DACL_EXPLICIT_USER_ALLOW=" + allowsUser);
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            "D:P(A;;GA;;;" + user.Value + ")(A;;GA;;;SY)", 1, out var descriptor, out _))
+            throw new Exception("ADAPTER_TEST_TOKEN_DESCRIPTOR_FAILED:" + Marshal.GetLastWin32Error());
+        try
+        {
+            if (!GetSecurityDescriptorDacl(descriptor, out bool present, out IntPtr acl, out _) || !present || acl == IntPtr.Zero)
+                throw new Exception("ADAPTER_TEST_TOKEN_DACL_UNAVAILABLE");
+            var defaults = new TokenDefaultDacl { Acl = acl };
+            if (!SetTokenInformation(reduced, 6, ref defaults, Marshal.SizeOf<TokenDefaultDacl>())
+                || !SetKernelObjectSecurity(reduced, 4, descriptor))
+                throw new Exception("ADAPTER_TEST_PRIVATE_TOKEN_SECURITY_FAILED:" + Marshal.GetLastWin32Error());
+        }
+        finally { LocalFree(descriptor); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)] private struct TokenDefaultDacl { public IntPtr Acl; }
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetTokenInformation(SafeAccessTokenHandle token, int kind, IntPtr buffer, int length, out int returned);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetTokenInformation(SafeAccessTokenHandle token, int kind, ref TokenDefaultDacl buffer, int length);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, [MarshalAs(UnmanagedType.Bool)] out bool present,
+        out IntPtr acl, [MarshalAs(UnmanagedType.Bool)] out bool defaulted);
+    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKernelObjectSecurity(SafeAccessTokenHandle handle, uint information, IntPtr descriptor);
+
     // Service-runner default desktops can exclude a LUA token and produce
     // STATUS_DLL_INIT_FAILED before Node starts. Never widen that existing
     // desktop's ACL. Use fresh, noninteractive test objects, accessible only
@@ -76,7 +131,7 @@ internal static class RestrictedAdapterTestRunner
             IntPtr original = GetProcessWindowStation();
             if (original == IntPtr.Zero) throw new Exception("ADAPTER_TEST_STATION_UNAVAILABLE");
             if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                "D:P(A;;GA;;;" + identity.User!.Value + ")S:(ML;;NW;;;ME)", 1, out var descriptor, out _))
+                "D:P(A;;GA;;;" + identity.User!.Value + ")(A;;GA;;;SY)S:(ML;;NW;;;ME)", 1, out var descriptor, out _))
                 throw new Exception("ADAPTER_TEST_DESCRIPTOR_FAILED:" + Marshal.GetLastWin32Error());
             try
             {
