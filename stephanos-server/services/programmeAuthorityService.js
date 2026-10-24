@@ -2057,7 +2057,7 @@ export async function readProgrammeControllerHeartbeat({
   if (loaded.error) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_READ_FAILED', { errorCode: loaded.error.code || '' });
   if (!loaded.present) return blockedRead('PROGRAMME_CONTROLLER_HEARTBEAT_MISSING', { path: resolved.path });
   const projection = projectProgrammeControllerHeartbeat(loaded.value, {
-    nowUtc,
+    nowUtc: nowUtc === undefined ? new Date().toISOString() : nowUtc,
     maxAgeMs,
     expectedSourceRevision,
   });
@@ -2118,7 +2118,7 @@ async function readMissionWorkerHeartbeat(options, deps, nowUtc, expectedHeadSha
     ok: true,
     record: loaded.value,
     projection: projectMissionWorkerHeartbeat(loaded.value, {
-      nowUtc,
+      nowUtc: options.nowUtc === undefined ? new Date().toISOString() : nowUtc,
       maxAgeMs: options.workerHeartbeatMaxAgeMs,
       expectedRepositoryRoot: paths.repositoryRoot,
       expectedHeadSha,
@@ -2277,7 +2277,7 @@ function holdProjection(nowUtc, reason, additions = {}) {
 export async function readAuthoritativeProgrammeProjection(options = {}) {
   const deps = dependencies(options);
   const suppliedNow = options.nowUtc === undefined ? '' : safeNow(options.nowUtc);
-  const nowUtc = suppliedNow || new Date().toISOString();
+  let nowUtc = suppliedNow || new Date().toISOString();
   if (options.nowUtc !== undefined && !suppliedNow) {
     const projection = holdProjection(nowUtc, 'PROGRAMME_OBSERVATION_TIME_INVALID');
     return Object.freeze({
@@ -2324,7 +2324,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     readProgrammeControllerHeartbeat({
       root,
       repoRoot: options.repoRoot,
-      nowUtc,
+      nowUtc: suppliedNow ? nowUtc : undefined,
       maxAgeMs: options.controllerHeartbeatMaxAgeMs,
       expectedSourceRevision,
       readFileImpl: deps.readFile,
@@ -2332,7 +2332,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     }),
     deps.listMissionRecords({
@@ -2374,7 +2374,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? await deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
-      nowMs: Date.parse(nowUtc),
+      nowMs: suppliedNow ? Date.parse(nowUtc) : undefined,
       staleAfterMs: options.workspaceStaleAfterMs,
     })
     : workspaceFeed;
@@ -2414,6 +2414,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
+  if (!suppliedNow) nowUtc = new Date().toISOString();
   const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
     nowUtc,
     maxProofAgeMs: options.workspaceStaleAfterMs,
@@ -2514,14 +2515,24 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? [`source:${executionRead.reason}`] : []
     ),
   ];
+  if (!suppliedNow) nowUtc = new Date().toISOString();
+  const observedControllerHeartbeat = controllerHeartbeatRead.record
+    ? projectProgrammeControllerHeartbeat(controllerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.controllerHeartbeatMaxAgeMs, expectedSourceRevision,
+    }) : controllerHeartbeatRead.projection;
+  const observedWorkerHeartbeat = workerHeartbeatRead.record
+    ? projectMissionWorkerHeartbeat(workerHeartbeatRead.record, {
+      nowUtc, maxAgeMs: options.workerHeartbeatMaxAgeMs, expectedHeadSha: expectedSourceRevision,
+      expectedRepositoryRoot: missionWorkerPaths.repositoryRoot,
+    }) : workerHeartbeatRead.projection;
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
     workspaceFeed: effectiveWorkspaceFeed,
     goalMirrorFallback,
     lane,
     mutationLease: lease,
-    controllerHeartbeatProjection: controllerHeartbeatRead.projection,
-    workerHeartbeatProjection: workerHeartbeatRead.projection,
+    controllerHeartbeatProjection: observedControllerHeartbeat,
+    workerHeartbeatProjection: observedWorkerHeartbeat,
     executionReceipt,
     battleBridgeProofs: proof.records,
     runtimeHealthRecords: effectiveWorkspaceFeed?.records?.statusRecords,
@@ -2552,7 +2563,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         ? 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE'
         : leaseRead.reason,
       controllerHeartbeat: controllerHeartbeatRead.reason,
-        workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
+        workerHeartbeat: observedWorkerHeartbeat.finalVerdict,
         github: github?.status ?? 'not-required',
         githubGoalEstate: githubGoalEstateRead.reason,
         githubGoalMirror: goalMirrorPublication.classification,

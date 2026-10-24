@@ -975,7 +975,7 @@ function shouldAttemptOrphanRecovery(projection = {}) {
 
 export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
   const deps = productionMachinery(machinery);
-  const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  let nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
   const env = options.env ?? process.env;
   const sourceRevision = sha(options.sourceRevision ?? env.STEPHANOS_MISSION_WORKER_HEAD_SHA);
   const cycleReceiptId = receiptId(nowUtc);
@@ -1116,7 +1116,25 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     });
   }
 
-  const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  // Preparation may outlive the skew window. Bookkeeping time is not a live
+  // authority observation override; explicit deterministic snapshots stay fixed.
+  if (options.nowUtc === undefined) {
+    nowUtc = new Date().toISOString();
+    serviceOptions.nowUtc = nowUtc;
+    const refreshedHeartbeat = await publishHeartbeat(heartbeatInput({
+      state: 'RECONCILING', sourceRevision, nowUtc,
+    }), serviceOptions);
+    if (refreshedHeartbeat?.ok !== true) {
+      const result = holdResult('controller-heartbeat:observation-refresh-failed', { observedAtUtc: nowUtc, sourceRevision });
+      const receipt = createCycleReceipt(result, null, nowUtc);
+      const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
+      return freeze({ ...result, heartbeatPublication: refreshedHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+    }
+  }
+  const readProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
+  const loadProjection = settings => readProjection({
+    ...settings, nowUtc: options.nowUtc === undefined ? undefined : settings.nowUtc,
+  });
   let transitionAuthorityReceipt = null;
   let transitionAuthorityReceiptPublication = null;
   let transitionAuthorityHeartbeatPublication = null;
