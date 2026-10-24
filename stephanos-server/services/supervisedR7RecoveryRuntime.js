@@ -256,7 +256,7 @@ export async function preserveSupervisedR7Maintenance(options = {}) {
   const manifest = { schemaVersion: 'stephanos.supervised-r7-preservation.v1', target: maintenance.target,
     maintenanceDigest: supervisedRecoveryDigest(maintenance), entries, observedAtUtc,
     gitBundleDigest: bytesDigest(bundle),
-    expiresAtUtc: new Date(nowMs(options) + 600000).toISOString() };
+    expiresAtUtc: new Date(Date.parse(observedAtUtc) + 600000).toISOString() };
   await durableCreate(join(root, 'manifest.json'), JSON.stringify(manifest));
   return { preservationDigest: supervisedRecoveryDigest(manifest), entryCount: entries.length };
 }
