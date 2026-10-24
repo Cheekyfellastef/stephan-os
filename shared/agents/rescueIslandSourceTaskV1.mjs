@@ -37,7 +37,8 @@ const exact=(v,keys)=>v&&Object.getPrototypeOf(v)===Object.prototype
   });
 const denied=reason=>Object.freeze({valid:false,blocker:reason,executionAuthority:false});
 export function inspectRescueIslandSourceTaskV1(task,nowUtc=new Date().toISOString()){
-  if(!exact(task,fields)||fields.some(k=>!['number','string'].includes(typeof task[k])))
+  if(!exact(task,fields)||fields.some(k=>k==='issueNumber'
+    ? !Number.isSafeInteger(task[k])||task[k]<=0 : typeof task[k]!=='string'))
     return denied('SOURCE_TASK_SHAPE_INVALID');
   const now=Date.parse(nowUtc),expiry=Date.parse(task.expiresAtUtc);
   if(task.schemaVersion!==RESCUE_ISLAND_SOURCE_TASK_SCHEMA||task.repository!==REPO
