@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+// Exercise isolated native C++23 preflight through the existing hosted VR test suite.
+import './starfield-vr-aer-native-build-readiness.test.mjs';
+
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
