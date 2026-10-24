@@ -45,10 +45,8 @@ async function ensurePaths(paths) {
 }
 
 function executionReceiptRoot(options = {}) {
-  return options.sharedWorkspaceRoot
-    || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || '';
+  const env = options.env || process.env;
+  return options.sharedWorkspaceRoot || env.STEPHANOS_SHARED_AGENT_WORKSPACE || '';
 }
 
 function executionReceiptOptions(options = {}) {
@@ -238,7 +236,11 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
 
 export async function beginMissionWorkerExecutionReceiptChain(claim, options = {}) {
   const root = executionReceiptRoot(options);
-  if (!root) return null;
+  if (!root) {
+    if (claim?.item?.actionGrant || claim?.item?.executionBinding)
+      throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
+    return null;
+  }
   const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
   if (!executionId) return null;
   const persisted = persistedNativeBinding(claim);

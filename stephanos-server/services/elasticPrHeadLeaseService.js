@@ -637,8 +637,19 @@ export async function reconcileCompletedElasticInspectionLeaseV1({
       const history = await readHistory(paths.workspaceRoot, {
         leaseKey: lease.leaseId, expectedHead: lease.headSha,
       }, { repoRoot: paths.repoRoot });
+      // A stale queue publisher may have recorded queued -> failed while the
+      // exact read-only result was subsequently consumed by the old contextless
+      // consumer. Preserve that failure, require its narrow publication shape,
+      // and use the independently retained result/event to reconcile custody.
+      const failedPublicationOnly = history?.receipts?.length === 2
+        && history.receipts[0].state === 'queued' && history.receipts[0].sequence === 1
+        && history.latestReceipt?.state === 'failed' && history.latestReceipt.sequence === 2
+        && history.latestReceipt.predecessorReceiptId === history.receipts[0].receiptId
+        && history.latestReceipt.phase === 'pr-head-queue-publication-failed'
+        && history.latestReceipt.blocker === 'action-grant-mismatch'
+        && Date.parse(result.execution.completedAt) >= Date.parse(history.latestReceipt.timestampUtc);
       if (history?.ok !== true || !history.receipts?.length || !history.latestReceipt
-          || !['queued', 'completed'].includes(history.latestReceipt.state)
+          || (!['queued', 'completed'].includes(history.latestReceipt.state) && !failedPublicationOnly)
           || history.receipts.some(receipt => receipt.executionId !== action.actionId
             || receipt.leaseKey !== lease.leaseId || receipt.sourceHead !== lease.headSha
             || receipt.repository?.toLowerCase() !== identity.repository.toLowerCase()
@@ -1493,7 +1504,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
   if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
     const publicationBlocker = text(publication?.reason, 'PR_HEAD_ACTION_NOT_PUBLISHED');
-    const failedReceipt = createFailedPublicationReceipt(executionReceipt, nowUtc, publicationBlocker);
+    const failedReceipt = createFailedPublicationReceipt(executionReceipt, new Date().toISOString(), publicationBlocker);
     try {
       const failedAppend = await appendReceipt(paths.workspaceRoot, failedReceipt, receiptOptions);
       if (failedAppend?.ok !== true) {

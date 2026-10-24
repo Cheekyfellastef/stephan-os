@@ -1335,3 +1335,49 @@ test('completed inspection pending and passing outcomes retain normal operator a
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 });
+
+
+test('consumed read-only publication-failure chain is preserved while exact custody is reconciled', async t => {
+  for (const variant of ['exact', 'wrong-stage', 'wrong-blocker', 'extra-record', 'failure-after-consumption']) await t.test(variant, async () => {
+    const f = await completedInspectionFixture();
+    try {
+      const queued = { ...f.history.latestReceipt, receiptId: 'inspection-queued', sequence: 1 };
+      const failed = { ...queued, receiptId: 'inspection-failed', sequence: 2, predecessorReceiptId: queued.receiptId,
+        state: 'failed', phase: 'pr-head-queue-publication-failed', blocker: 'action-grant-mismatch',
+        timestampUtc: new Date(NOW.getTime() - 2000).toISOString() };
+      if (variant === 'failure-after-consumption') failed.timestampUtc = NOW.toISOString();
+      if (variant === 'wrong-stage') failed.phase = 'readonly-inspection-failed';
+      if (variant === 'wrong-blocker') failed.blocker = 'different-failure';
+      f.history = { ok: true, receipts: [queued, failed], latestReceipt: failed };
+      if (variant === 'extra-record') f.history.receipts.push({ ...failed, state: 'started', receiptId: 'unexpected' });
+      await f.persist();
+      const before = JSON.stringify(f.history);
+      const result = await reconcileExpiredElasticReviewLeaseV1(f.args);
+      assert.equal(result.released, variant === 'exact', JSON.stringify(result));
+      assert.equal(f.releases.length, variant === 'exact' ? 1 : 0);
+      assert.equal(JSON.stringify(f.history), before);
+      if (variant === 'exact') {
+        assert.equal(result.terminalExecutionReceiptReconstructed, false);
+        assert.equal(result.sourceMutationAllowed, false);
+      }
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+test('publication failure terminal receipt follows the observed failure clock', async () => {
+  const candidate = mission(1802, 2096, HEAD_A);
+  const receipts = [];
+  let failedAt;
+  const result = await dispatchElasticPrHeadBuildsFromCanonicalLease(admission([candidate]), {
+    now: NOW, paths: PATHS, sourceRevision: SOURCE,
+    readSourceMutationLease: async () => ({ ok: true, present: false }),
+    claimSourceMutationLease: async input => ({ ok: true, record: input }),
+    readExecutionReceiptHistory: async () => ({ ok: true, receipts: [], latestReceipt: null }),
+    isActionInFlight: async () => false,
+    appendExecutionReceipt: async (root, receipt) => { receipts.push(receipt); return { ok: true }; },
+    publishWorkerAction: async () => { failedAt = Date.now(); return { published: false, reason: 'action-grant-mismatch' }; },
+  });
+  assert.equal(result.classification, 'ELASTIC_PR_HEAD_DISPATCH_BLOCKED');
+  assert.deepEqual(receipts.map(r => r.state), ['queued', 'failed']);
+  assert.ok(Date.parse(receipts[1].timestampUtc) >= failedAt, 'failure reused the admission snapshot clock');
+});
