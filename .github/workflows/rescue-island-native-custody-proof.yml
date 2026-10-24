@@ -54,6 +54,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release --no-build -- --run-adapter-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain actual restricted-child evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: island-native-child-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: src/windows/Stephanos.RescueIslandHost.Tests/bin/Release/net8.0-windows/island-adapter-ci-*
+          if-no-files-found: warn
       - name: Retain execution admission boundary
         if: always()
         shell: pwsh

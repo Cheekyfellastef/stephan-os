@@ -38,9 +38,13 @@ internal static class RestrictedAdapterTestRunner
             {
                 PreparePrivateTokenObjects(reduced, identity.User!);
                 using var desktop = new AdapterTestDesktop(identity);
-                string log = Path.Combine(Path.GetTempPath(), "island-adapter-ci-" + Guid.NewGuid().ToString("N") + ".log");
+                string log = Path.Combine(AppContext.BaseDirectory, "island-adapter-ci-" + Guid.NewGuid().ToString("N") + ".log");
                 using var output = new FileStream(log, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Inheritable);
+                // STARTF_USESTDHANDLES requires all three valid inheritable
+                // handles. The fixed suite receives a retained empty input file.
+                using var input = new FileStream(log + ".stdin", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Inheritable);
                 var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = 0x100, Desktop = desktop.Name,
+                    StdInput = input.SafeFileHandle.DangerousGetHandle(),
                     StdOutput = output.SafeFileHandle.DangerousGetHandle(), StdError = output.SafeFileHandle.DangerousGetHandle() };
                 var command = new StringBuilder("\"" + node + "\" --test --test-concurrency=1 \"" + suite + "\"");
                 if (!CreateProcessAsUserW(reduced, node, command, IntPtr.Zero, IntPtr.Zero, true, 0x08004000,
@@ -48,18 +52,27 @@ internal static class RestrictedAdapterTestRunner
                     throw new Exception("ADAPTER_TEST_RESTRICTED_CHILD_FAILED:" + Marshal.GetLastWin32Error());
                 try
                 {
-                    uint wait = WaitForSingleObject(process.Process, 180000);
-                    if (wait != 0) { TerminateProcess(process.Process, 124); throw new Exception("ADAPTER_TEST_TIMEOUT"); }
-                    if (!GetExitCodeProcess(process.Process, out uint exitCode)) throw new Exception("ADAPTER_TEST_EXIT_UNAVAILABLE");
-                    output.Flush();
                     Console.WriteLine("ISLAND_ADAPTER_TEST_RESTRICTED_CHILD_PID=" + process.ProcessId);
-                    output.Position = 0;
-                    using var reader = new StreamReader(output, Encoding.UTF8, leaveOpen: true);
-                    Console.Write(reader.ReadToEnd());
+                    uint wait = WaitForSingleObject(process.Process, 180000);
+                    if (wait != 0)
+                    {
+                        // Only the exact child created above and its descendants.
+                        using var owned = Process.GetProcessById((int)process.ProcessId);
+                        owned.Kill(entireProcessTree: true); owned.WaitForExit(10000);
+                        throw new Exception("ADAPTER_TEST_TIMEOUT");
+                    }
+                    if (!GetExitCodeProcess(process.Process, out uint exitCode)) throw new Exception("ADAPTER_TEST_EXIT_UNAVAILABLE");
                     Console.WriteLine("ISLAND_ADAPTER_TEST_CHILD_EXIT=0x" + exitCode.ToString("X8"));
                     return unchecked((int)exitCode);
                 }
-                finally { CloseHandle(process.Thread); CloseHandle(process.Process); }
+                finally
+                {
+                    output.Flush();
+                    output.Position = 0;
+                    using var reader = new StreamReader(output, Encoding.UTF8, leaveOpen: true);
+                    Console.Write(reader.ReadToEnd());
+                    CloseHandle(process.Thread); CloseHandle(process.Process);
+                }
             }
         }
         finally { Marshal.FreeHGlobal(sid); }
@@ -214,5 +227,4 @@ internal static class RestrictedAdapterTestRunner
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
     [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseHandle(IntPtr handle);
-    [DllImport("kernel32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool TerminateProcess(IntPtr process, uint code);
 }
