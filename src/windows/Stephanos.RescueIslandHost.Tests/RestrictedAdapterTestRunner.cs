@@ -7,8 +7,9 @@ using Stephanos.RescueIslandCustody;
 
 // TEST EXECUTABLE ONLY: hosted Windows runners have administrative tokens.
 // Launch exactly the checked-in adapter suite under a reduced copy of THIS
-// token. No account, policy, ACL, credential, service or production admission
-// is changed. The production observer must independently accept the child.
+// token. No account, policy, existing ACL, credential, service or production
+// admission is changed. Private test UI objects are disposed after the child.
+// The production observer must independently accept the child.
 internal static class RestrictedAdapterTestRunner
 {
     internal static int Run()
@@ -33,9 +34,10 @@ internal static class RestrictedAdapterTestRunner
                 throw new Exception("ADAPTER_TEST_RESTRICTED_TOKEN_FAILED:" + Marshal.GetLastWin32Error());
             using (reduced)
             {
+                using var desktop = new AdapterTestDesktop(identity);
                 string log = Path.Combine(Path.GetTempPath(), "island-adapter-ci-" + Guid.NewGuid().ToString("N") + ".log");
                 using var output = new FileStream(log, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Inheritable);
-                var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = 0x100, Desktop = "winsta0\\default",
+                var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = 0x100, Desktop = desktop.Name,
                     StdOutput = output.SafeFileHandle.DangerousGetHandle(), StdError = output.SafeFileHandle.DangerousGetHandle() };
                 var command = new StringBuilder("\"" + node + "\" --test --test-concurrency=1 \"" + suite + "\"");
                 if (!CreateProcessAsUserW(reduced, node, command, IntPtr.Zero, IntPtr.Zero, true, 0x08004000,
@@ -59,6 +61,83 @@ internal static class RestrictedAdapterTestRunner
         }
         finally { Marshal.FreeHGlobal(sid); }
     }
+
+    // Service-runner default desktops can exclude a LUA token and produce
+    // STATUS_DLL_INIT_FAILED before Node starts. Never widen that existing
+    // desktop's ACL. Use fresh, noninteractive test objects, accessible only
+    // to this same user, with a medium mandatory label for the reduced child.
+    private sealed class AdapterTestDesktop : IDisposable
+    {
+        private IntPtr station, desktop;
+        public string Name { get; private set; } = "";
+        public AdapterTestDesktop(WindowsIdentity identity)
+        {
+            string suffix = "island-test-" + Guid.NewGuid().ToString("N");
+            IntPtr original = GetProcessWindowStation();
+            if (original == IntPtr.Zero) throw new Exception("ADAPTER_TEST_STATION_UNAVAILABLE");
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                "D:P(A;;GA;;;" + identity.User!.Value + ")S:(ML;;NW;;;ME)", 1, out var descriptor, out _))
+                throw new Exception("ADAPTER_TEST_DESCRIPTOR_FAILED:" + Marshal.GetLastWin32Error());
+            try
+            {
+                var attributes = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Descriptor = descriptor };
+                string stationName;
+                // Naming a fresh window station requires the caller's existing
+                // administrator membership. Non-admin local proof needs only
+                // a private desktop within its already accessible station.
+                if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                {
+                    station = CreateWindowStationW(suffix, 1, 0x000F037F, ref attributes);
+                    if (station == IntPtr.Zero) throw new Exception("ADAPTER_TEST_PRIVATE_STATION_FAILED:" + Marshal.GetLastWin32Error());
+                    if (!SetProcessWindowStation(station)) throw new Exception("ADAPTER_TEST_STATION_SELECT_FAILED:" + Marshal.GetLastWin32Error());
+                    stationName = suffix;
+                }
+                else
+                {
+                    var name = new StringBuilder(512);
+                    if (!GetUserObjectInformationW(original, 2, name, 1024, out _))
+                        throw new Exception("ADAPTER_TEST_STATION_NAME_FAILED:" + Marshal.GetLastWin32Error());
+                    stationName = name.ToString();
+                }
+                try
+                {
+                    desktop = CreateDesktopW(suffix, IntPtr.Zero, IntPtr.Zero, 0, 0x000F01FF, ref attributes);
+                    if (desktop == IntPtr.Zero) throw new Exception("ADAPTER_TEST_PRIVATE_DESKTOP_FAILED:" + Marshal.GetLastWin32Error());
+                    Name = stationName + "\\" + suffix;
+                }
+                finally
+                {
+                    if (station != IntPtr.Zero && !SetProcessWindowStation(original))
+                        throw new Exception("ADAPTER_TEST_STATION_RESTORE_FAILED:" + Marshal.GetLastWin32Error());
+                }
+                Console.WriteLine("ISLAND_ADAPTER_TEST_PRIVATE_DESKTOP=true;EXISTING_DESKTOP_ACL_CHANGED=false");
+            }
+            catch { Dispose(); throw; }
+            finally { LocalFree(descriptor); }
+        }
+        public void Dispose()
+        {
+            if (desktop != IntPtr.Zero) { CloseDesktop(desktop); desktop = IntPtr.Zero; }
+            if (station != IntPtr.Zero) { CloseWindowStation(station); station = IntPtr.Zero; }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)] private struct SecurityAttributes
+    { public int Length; public IntPtr Descriptor; public int Inherit; }
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string value, uint revision, out IntPtr descriptor, out uint size);
+    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr value);
+    [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetProcessWindowStation(IntPtr value);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateWindowStationW(string name, uint flags, uint access, ref SecurityAttributes attributes);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateDesktopW(string name, IntPtr device, IntPtr mode, uint flags, uint access, ref SecurityAttributes attributes);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectInformationW(IntPtr handle, int index, StringBuilder value, uint length, out uint needed);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseDesktop(IntPtr handle);
+    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool CloseWindowStation(IntPtr handle);
 
     [StructLayout(LayoutKind.Sequential)] private struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

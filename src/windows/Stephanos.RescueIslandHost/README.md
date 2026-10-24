@@ -78,6 +78,12 @@ Its fixed test-only launcher reduces its own token and executes
 in the Windows job. GitHub transport and platform process inventories are test
 doubles; the canonical custom-game resolution function itself is exercised.
 Fixture commits are test evidence, not a commissioned live Island build.
+The launcher creates disposable noninteractive desktop objects for that same
+user, with a medium mandatory label. On an already administrative hosted runner
+it also creates a private window station; a non-admin local caller uses a private
+desktop within its existing accessible station. Handles are retained through
+the child's terminal result and then closed. Existing desktop ACLs, interactive
+desktop selection, accounts, policies and production admission stay unchanged.
 
 Passing and failing Node stdout is retained under `receipts/test-output`, with
 content-addressed log names. A TESTED receipt binds its exact log SHA-256,
