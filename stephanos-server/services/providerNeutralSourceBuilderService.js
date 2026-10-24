@@ -1168,6 +1168,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
           {
             phase: 'provider-neutral-result-blocked',
+            timestampUtc: new Date().toISOString(),
             blocker: failure,
             expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
           },

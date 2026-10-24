@@ -1504,7 +1504,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
   }
   if (publication?.published !== true || publication?.actionGrantAccepted !== true) {
     const publicationBlocker = text(publication?.reason, 'PR_HEAD_ACTION_NOT_PUBLISHED');
-    const failedReceipt = createFailedPublicationReceipt(executionReceipt, nowUtc, publicationBlocker);
+    const failedReceipt = createFailedPublicationReceipt(executionReceipt, new Date().toISOString(), publicationBlocker);
     try {
       const failedAppend = await appendReceipt(paths.workspaceRoot, failedReceipt, receiptOptions);
       if (failedAppend?.ok !== true) {

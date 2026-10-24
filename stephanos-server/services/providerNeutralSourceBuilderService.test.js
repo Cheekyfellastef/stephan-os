@@ -1359,3 +1359,36 @@ test('source completion and terminal receipt follow actual tests despite a captu
   assert.equal(h.latestReceipt.state, 'completed');
   assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
 });
+
+
+test('failed source terminal receipt follows test failure and result collection', async () => {
+  const fx = await fixture(['node --test missing.test.mjs']);
+  const started = new Date(Date.now() - 60000);
+  const actionId = fx.action.actionId;
+  const grant = { ...fx.actionGrant, grantId: 'grant-' + actionId, actionId,
+    missionId: fx.action.missionId, missionRevision: 1, repository: fx.action.repository,
+    issueNumber: 3001, prNumber: null, branch: fx.action.branch, headSha: fx.actionGrant.sourceRevision };
+  fx.claim.item = { ...fx.claim.item, schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    actionId, missionId: fx.action.missionId, actionGrant: grant,
+    executionBinding: { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId, leaseKey: fx.action.missionId + '-r1-lease' } };
+  const queued = createExecutionReceipt({ repository: grant.repository, issueNumber: 3001, prNumber: null,
+    branch: grant.branch, sourceHead: grant.sourceRevision, workerId: 'foundry-forge', workerType: 'orchestration-engine',
+    executionId: actionId, leaseKey: fx.claim.item.executionBinding.leaseKey, state: 'queued', phase: 'fixture-source-queued',
+    sequence: 1, timestampUtc: new Date(started.getTime() - 1000).toISOString(), proofRefs: ['fixture-source-proof'],
+    expectedNextAction: 'Source worker must record accepted before execution.' });
+  assert.equal((await appendExecutionReceipt(fx.sharedWorkspaceRoot, queued, { repoRoot: fx.repoRoot })).ok, true);
+  let collected, collectedAt;
+  const result = await processNextProviderNeutralSourceBuild({ preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot, actionGrant: grant, now: started,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
+    runCommand: run, claimNext: async () => fx.claim, goalContext: 'Bounded source repair.',
+    generatePatch: async () => ({ patch: PATCH, summary: 'Bounded change.' }),
+    collectAgentWorkerResult: async record => { collected = record; collectedAt = Date.now(); return { state: { revision: 1 } }; },
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  const h = await readExecutionReceiptHistory(fx.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: fx.repoRoot });
+  assert.equal(h.latestReceipt.state, 'failed');
+  assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
+});
