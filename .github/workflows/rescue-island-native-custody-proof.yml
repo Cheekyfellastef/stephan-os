@@ -50,7 +50,7 @@ jobs:
       - name: Run strict and supervised Island integration tests
         shell: pwsh
         run: |
-          node --test --test-concurrency=1 shared/agents/githubObservationBrokerV1.test.mjs shared/agents/rescueIslandSupervisedRunV1.test.mjs shared/agents/rescueIslandFirstCommitV1.test.mjs shared/agents/rescueIslandPilotOwnerIntakeV1.test.mjs shared/agents/rescueIslandAuthenticatedGithubReadV1.test.mjs shared/agents/rescueIslandPreflightV1.test.mjs shared/agents/rescueIslandPhysicalScopeObservationV1.test.mjs shared/agents/rescueIslandBoundaryReceiptV1.test.mjs shared/agents/sovereignCommanderVrResourceGovernor.test.mjs scripts/rescue-island-boundary-probe.test.mjs
+          node --test --test-concurrency=1 shared/agents/githubObservationBrokerV1.test.mjs shared/agents/rescueIslandSourceTaskV1.test.mjs shared/agents/rescueIslandNativeTestProvisionV1.test.mjs shared/agents/rescueIslandSupervisedRunV1.test.mjs shared/agents/rescueIslandFirstCommitV1.test.mjs shared/agents/rescueIslandPilotOwnerIntakeV1.test.mjs shared/agents/rescueIslandAuthenticatedGithubReadV1.test.mjs shared/agents/rescueIslandPreflightV1.test.mjs shared/agents/rescueIslandPhysicalScopeObservationV1.test.mjs shared/agents/rescueIslandBoundaryReceiptV1.test.mjs shared/agents/sovereignCommanderVrResourceGovernor.test.mjs scripts/rescue-island-boundary-probe.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release --no-build -- --run-adapter-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

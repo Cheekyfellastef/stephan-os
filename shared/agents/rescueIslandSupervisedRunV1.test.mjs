@@ -42,6 +42,12 @@ async function fixture(t, overrides = {}, options = {}) {
     "import test from 'node:test'; import assert from 'node:assert/strict';\n" +
     "import { fixtureOnly } from './rescueIslandPreflightV1.mjs';\n" +
     "test('disposable fixture test really executes', () => assert.equal(fixtureOnly, " + (options.badTest ? "false" : "true") + "));\n");
+  if(options.sourceTask) {
+    await writeFile(join(roots.repoRoot,'shared/agents/rescueIslandSecondLaneV1.mjs'),
+      (options.sourcePatch?'// '+('large reviewed baseline '.repeat(600))+'\n':'')+'export const lane = 1;\n');
+    for(const file of ['rescueIslandSourceTaskV1.test.mjs','rescueIslandSupervisedRunV1.test.mjs'])
+      await writeFile(join(roots.repoRoot,'shared/agents',file),"import test from 'node:test'; test('source fixture baseline only',()=>{});\n");
+  }
   git(roots.repoRoot, ['init', '-b', 'main']); git(roots.repoRoot, ['add', '.']);
   git(roots.repoRoot, ['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','Fixture baseline']);
   const baseHead = git(roots.repoRoot, ['rev-parse', 'HEAD']);
@@ -52,13 +58,30 @@ async function fixture(t, overrides = {}, options = {}) {
     content: '# Rescue Island pilot\nDisposable regression. This is not a production build.\n',
     testPath: 'shared/agents/rescueIslandPreflightV1.test.mjs', approvalSource: 'EXTERNAL_OWNER_ATTESTATION_REQUIRED',
     expiresAtUtc: new Date(Date.now()+5*60_000).toISOString(), ...overrides };
+  if(options.sourceTask) {
+    task.schemaVersion='stephanos.rescue-island-source-task.v1';
+    task.targetPath='shared/agents/rescueIslandSecondLaneV1.mjs';
+    task.content=JSON.stringify({scopeId:'ISLAND_BUILDERS_V1',changes:[
+      {path:task.targetPath,beforeBlob:git(roots.repoRoot,['rev-parse','HEAD:'+task.targetPath]),content:'export const lane = 2;\n'},
+      {path:'shared/agents/rescueIslandSecondLaneV1.test.mjs',beforeBlob:null,
+        content:"import test from 'node:test'; import assert from 'node:assert/strict'; import {lane} from './rescueIslandSecondLaneV1.mjs'; test('actual changed source exports lane two',()=>assert.equal(lane,2));\n"},
+    ]});
+  }
+  if(options.sourcePatch){
+    const manifest=JSON.parse(task.content);
+    const baseline=await readFile(join(roots.repoRoot,task.targetPath),'utf8');
+    manifest.changes[0]={path:task.targetPath,beforeBlob:manifest.changes[0].beforeBlob,
+      afterSha256:hash(baseline.replace('export const lane = 1;','export const lane = 2;')),
+      edits:[{before:'export const lane = 1;',after:'export const lane = 2;'}]};
+    task.content=JSON.stringify(manifest);
+  }
   const commentId = 123456789;
   const iso = new Date().toISOString();
   const issue = { number: 3109, title: ISSUE_TITLE, state: 'open', url: 'https://api.github.com/repos/'+REPO+'/issues/3109' };
   const comment = { id: commentId, url: 'https://api.github.com/repos/'+REPO+'/issues/comments/'+commentId,
     issue_url: issue.url, user: { login: 'Cheekyfellastef', type: 'User', id: 267490109 },
     author_association: 'OWNER', created_at: iso, updated_at: iso,
-    body: '/rescue-island-01 supervised-cooperative '+baseHead+' '+task.taskId+' '+hash(task.content) };
+    body: '/rescue-island-01 '+(options.sourceTask?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content) };
   const inventory = { reads: 0, stages: [], gateCalls: 0, brokerMode: 'UPSTREAM_REFRESH', brokerAge: 0 };
   const broker = { readBrokeredGithubJson: spec => {
     inventory.reads++;
@@ -71,7 +94,7 @@ async function fixture(t, overrides = {}, options = {}) {
   // adapters are replaced with explicit disposable fixtures.
   const harness = join(root, 'source-harness'); await mkdir(harness);
   for (const name of ['rescueIslandFirstCommitV1.mjs', 'rescueIslandAuthenticatedGithubReadV1.mjs',
-      'rescueIslandPilotOwnerIntakeV1.mjs', 'battleBridgeWindowsHosts.mjs']) {
+      'rescueIslandPilotOwnerIntakeV1.mjs', 'rescueIslandSourceTaskV1.mjs', 'rescueIslandNativeTestProvisionV1.mjs', 'battleBridgeWindowsHosts.mjs']) {
     const bytes = await readFile(join(sourceRoot, name));
     await writeFile(join(harness, name), bytes);
     assert.deepEqual(await readFile(join(harness, name)), bytes);
@@ -95,7 +118,8 @@ async function fixture(t, overrides = {}, options = {}) {
   const candidatePath = join(roots.worktreeRoot, task.taskId);
   const worktreeIdentity = hash(process.platform === 'win32' ? candidatePath.toLowerCase() : candidatePath);
   const own = { taskId: task.taskId, ownerIssueNumber: 3109, workerId: task.workerId,
-    worktreeBranch: 'rescue-island/pilot-'+task.taskId, worktreeIdentity, targetPaths:[task.targetPath] };
+    worktreeBranch: 'rescue-island/pilot-'+task.taskId, worktreeIdentity,
+    targetPaths:options.sourceTask?JSON.parse(task.content).changes.map(w=>w.path):[task.targetPath] };
   let lock = false;
   const host = {
     async withExistingOwnerAdmission(_expected, operation) {
@@ -262,4 +286,122 @@ test('ordinary owner intake stays strict and cannot accept the supervised comman
   f.comment.body=f.comment.body.replace('supervised-cooperative','pilot');
   assert.equal(intake.inspectRescueIslandPilotOwnerIntakeV1(facts).disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
   assert.equal(intake.inspectRescueIslandSupervisedOwnerIntakeV1(facts).disposition,'HELD');
+});
+
+
+test('supervised source performs a real existing-file edit, added test, Node run and exact-parent multi-file commit',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  const result=await f.run(f.request);assert.equal(result.ok,true);
+  const paths=JSON.parse(f.task.content).changes.map(w=>w.path);
+  assert.deepEqual(result.changedPaths,paths);
+  assert.equal(result.parent,f.baseHead);assert.equal(result.taskKind,'SOURCE_PROPOSAL_V1');
+  const wt=join(f.roots.worktreeRoot,f.task.taskId);
+  assert.equal(git(wt,['show','HEAD:'+f.task.targetPath]),'export const lane = 2;');
+  assert.deepEqual(git(wt,['diff-tree','--no-commit-id','--name-only','-r','HEAD']).split('\n'),paths);
+  assert.equal(git(wt,['status','--porcelain']),'');
+  const tested=result.receipts.find(r=>r.stage==='TESTED');
+  assert.ok(tested.testPaths.includes('shared/agents/rescueIslandSecondLaneV1.test.mjs'));
+  const output=await readFile(join(f.roots.receiptRoot,'test-output',tested.testOutputFile),'utf8');
+  assert.match(output,/actual changed source exports lane two/);assert.match(output,/fail 0/);
+  assert.equal(hash(output),tested.testResultHash);
+  assert.equal(result.approvedContentSha256,hash(f.task.content));
+  await assert.rejects(f.run(f.request)); // retained task claim, never a blind refill.
+  t.diagnostic('SOURCE_TASK_FIXTURE_COMMIT='+result.head+';LIVE_PROGRAMME_BUILD=false');
+});
+
+test('documentation consent cannot authorise source execution',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  f.comment.body=f.comment.body.replace('supervised-source-cooperative','supervised-cooperative');
+  await assert.rejects(f.run(f.request),/OWNER_APPROVAL_UNPROVEN/);
+  assert.equal(existsSync(f.roots.worktreeRoot),false);
+});
+
+test('source proposal rejects a wrong exact before-blob without editing its repository',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  const manifest=JSON.parse(f.task.content);manifest.changes[0].beforeBlob='0'.repeat(40);
+  f.task.content=JSON.stringify(manifest);
+  f.comment.body='/rescue-island-01 supervised-source-cooperative '+f.baseHead+' '+f.task.taskId+' '+hash(f.task.content);
+  await assert.rejects(f.run(f.request),/SOURCE_BEFORE_BLOB_CHANGED/);
+  assert.equal(git(f.roots.repoRoot,['show','HEAD:'+f.task.targetPath]),'export const lane = 1;');
+  assert.equal(existsSync(f.roots.worktreeRoot),false);
+});
+
+test('unregistered source paths stop before any GitHub read or physical mutation',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  const manifest=JSON.parse(f.task.content);manifest.changes[0].path='shared/agents/durableFlywheelControllerVNext.mjs';
+  f.task.content=JSON.stringify(manifest);f.task.targetPath=manifest.changes[0].path;
+  await assert.rejects(f.run(f.request),/EXTERNAL_TASK_INVALID/);
+  assert.equal(f.inventory.reads,0);assert.equal(existsSync(f.roots.worktreeRoot),false);
+});
+
+test('failed candidate source tests retain branch, worktree, log and BLOCKED without a commit',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  const manifest=JSON.parse(f.task.content);manifest.changes[1].content=manifest.changes[1].content.replace('assert.equal(lane,2)','assert.equal(lane,3)');
+  f.task.content=JSON.stringify(manifest);
+  f.comment.body='/rescue-island-01 supervised-source-cooperative '+f.baseHead+' '+f.task.taskId+' '+hash(f.task.content);
+  await assert.rejects(f.run(f.request),/FOCUSED_TEST_FAILED/);
+  const names=await stageFiles(f);assert.ok(names.some(n=>n.endsWith('.BLOCKED.json')));
+  assert.ok(!names.some(n=>n.endsWith('.TESTED.json')||n.endsWith('.ISOLATED_COMMIT.json')));
+  const wt=join(f.roots.worktreeRoot,f.task.taskId);assert.equal(git(wt,['rev-parse','HEAD']),f.baseHead);
+  assert.ok((await readdir(join(f.roots.receiptRoot,'test-output'))).length);
+});
+
+test('source mutation outside the approved plan after testing is held and retained',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true});
+  mutateObservation(f,async(observation,expected)=>{
+    if(expected.stage==='BEFORE_COMMIT')
+      await writeFile(join(f.roots.worktreeRoot,f.task.taskId,'unexplained.txt'),'must remain retained\n');
+    return observation;
+  });
+  await assert.rejects(f.run(f.request),/PRECOMMIT_SCOPE_CHANGED/);
+  assert.ok((await stageFiles(f)).some(n=>n.endsWith('.BLOCKED.json')));
+  assert.equal(await readFile(join(f.roots.worktreeRoot,f.task.taskId,'unexplained.txt'),'utf8'),'must remain retained\n');
+});
+
+
+test('bounded exact patch updates a larger source module, preserving full bytes and trailing newline',async t=>{
+  const f=await fixture(t,{}, {sourceTask:true,sourcePatch:true});
+  assert.ok(Buffer.byteLength(f.task.content)<8192);
+  const expected=JSON.parse(f.task.content).changes[0].afterSha256;
+  const result=await f.run(f.request);
+  const bytes=await readFile(join(f.roots.worktreeRoot,f.task.taskId,f.task.targetPath));
+  assert.ok(bytes.length>8192);assert.equal(hash(bytes),expected);
+  assert.equal(bytes.at(-1),10);assert.equal(result.parent,f.baseHead);
+  assert.equal(result.taskOwnerIssueNumber,3109);assert.equal(result.executionOwnerIssueNumber,3109);
+});
+test('patch fragments must match once and produce the exact approved full-content hash',async t=>{
+  for(const bad of ['fragment','digest']){
+    const f=await fixture(t,{}, {sourceTask:true,sourcePatch:true});
+    const manifest=JSON.parse(f.task.content);
+    if(bad==='fragment')manifest.changes[0].edits[0].before='absent unique source';
+    else manifest.changes[0].afterSha256='0'.repeat(64);
+    f.task.content=JSON.stringify(manifest);
+    f.comment.body='/rescue-island-01 supervised-source-cooperative '+f.baseHead+' '+f.task.taskId+' '+hash(f.task.content);
+    await assert.rejects(f.run(f.request),bad==='fragment'?/PATCH_NOT_UNIQUE/:/PATCH_CONTENT_MISMATCH/);
+    assert.equal(existsSync(f.roots.worktreeRoot),false);
+  }
+});
+
+for (const kind of ['module', 'test'])
+test('approved source '+kind+' drift during BEFORE_TEST stops before Node executes altered bytes', async t => {
+  const f = await fixture(t, {}, {sourceTask:true,sourcePatch:kind==='module'});
+  const manifest = JSON.parse(f.task.content);
+  const relative = manifest.changes[kind==='module'?0:1].path;
+  const wt = join(f.roots.worktreeRoot, f.task.taskId);
+  const sentinel = join(wt, 'unapproved-executed.txt');
+  mutateObservation(f, async (observation, expected) => {
+    if (expected.stage === 'BEFORE_TEST') {
+      const file = join(wt, relative);
+      await writeFile(file, "import {writeFileSync} from 'node:fs'; writeFileSync(new URL('../../unapproved-executed.txt', import.meta.url), 'UNAPPROVED EXECUTION');\n" + await readFile(file, 'utf8'));
+    }
+    return observation;
+  });
+  await assert.rejects(f.run(f.request), /RESCUE_ISLAND_PRETEST_APPROVED_CONTENT_CHANGED/);
+  assert.equal(existsSync(sentinel), false, 'altered source must never execute');
+  assert.equal(git(wt, ['rev-parse', 'HEAD']), f.baseHead);
+  const stages = await stageFiles(f);
+  assert.ok(stages.some(name => name.endsWith('.BLOCKED.json')));
+  assert.ok(stages.some(name => name.endsWith('.EDITED.json')));
+  assert.ok(!stages.some(name => /\.(TESTED|ISOLATED_COMMIT)\.json$/.test(name)));
+  assert.ok((await readFile(join(wt, relative), 'utf8')).includes('UNAPPROVED EXECUTION'), 'retain changed evidence');
 });
