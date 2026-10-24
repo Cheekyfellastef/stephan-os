@@ -241,9 +241,13 @@ async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
   const started=Date.now();
   const observation=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','ObserveAdmission'],
-    {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:18000,maxBuffer:32768,
+    {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:30000,maxBuffer:32768,
       env:rescueIslandGovernorEnvironmentV1(process.env)});
-  if(observation.error || observation.status!==0)held('ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED');
+  if(observation.error || observation.status!==0)
+    throw Object.assign(new Error('ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED'),{
+      code:'ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED',cause:{
+        durationMs:Date.now()-started,exitCode:observation.status,signal:observation.signal,
+        errorCode:observation.error?.code||null,stderrTail:String(observation.stderr||'').slice(-2048)}});
   let facts;
   try{facts=JSON.parse(observation.stdout);}catch{held('ISLAND_HOST_GOVERNOR_OBSERVATION_FAILED');}
   // The existing watcher remains the only state/model writer. This exact-source

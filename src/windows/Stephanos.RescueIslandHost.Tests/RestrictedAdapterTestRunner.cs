@@ -53,7 +53,11 @@ internal static class RestrictedAdapterTestRunner
                 try
                 {
                     Console.WriteLine("ISLAND_ADAPTER_TEST_RESTRICTED_CHILD_PID=" + process.ProcessId);
-                    uint wait = WaitForSingleObject(process.Process, 180000);
+                    // Hosted service-token PowerShell children are materially
+                    // slower: one measured passing full adapter test took 79s
+                    // (local 8s). Keep all 20 tests mandatory, within a finite
+                    // test-only bound; production ingress stays at three minutes.
+                    uint wait = WaitForSingleObject(process.Process, 1200000);
                     if (wait != 0)
                     {
                         // Only the exact child created above and its descendants.
