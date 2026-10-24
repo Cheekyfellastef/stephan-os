@@ -3,6 +3,8 @@ import process from 'node:process';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 
 import {
   AUTONOMY_BUILD_TRACK_STATUS_ID,
@@ -411,6 +413,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
+  readWorkerHeartbeatAgeMs = readCanonicalMissionWorkerHeartbeatAgeMs,
   readProcessingPickupMissionIdsFn = readProcessingPickupMissionIds,
   maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
@@ -443,41 +446,60 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   const effectiveBuilderOptions = Object.freeze({
     ...builderOptions,
     repoRoot: builderOptions.repoRoot || paths.repoRoot,
-    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot
-      || builderOptions.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-      || paths.workspaceRoot,
+    sharedWorkspaceRoot: resolveGoalDiscoveryWorkspaceV1({ builderOptions, paths }),
   });
+  const workerAllowed = () => {
+    try {
+      const age = readWorkerHeartbeatAgeMs({ workspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot });
+      return canonicalMissionWorkerEvidenceAllowsWork(age);
+    } catch { return false; }
+  };
+  const workerHold = () => Object.freeze({ schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
+    ok: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN', cycleId,
+    materialActionsSucceeded, sweepAttemptCount: sweepAttempts.length,
+    sweepAttempts: Object.freeze([...sweepAttempts]), sourceBuild: latestSourceBuild,
+    ...authorityBoundary(), finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED' });
+  if (!workerAllowed()) return workerHold();
 
   try {
     try {
       githubLifeboat = await refreshGithubLifeboat({
         ...githubLifeboatOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         gitCommand: githubLifeboatOptions.gitCommand || 'git',
         ghCommand: githubLifeboatOptions.ghCommand || BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
       });
     } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try {
       githubLifeboatClaimAck = await refreshGithubLifeboatClaimAck({
         ...githubLifeboatClaimAckOptions,
+        readWorkerHeartbeatAgeMs,
+        workerWorkspaceRoot: effectiveBuilderOptions.sharedWorkspaceRoot,
         sourceHead: githubLifeboat?.sourceHead || githubLifeboatClaimAckOptions.sourceHead || '',
       });
     } catch (error) { githubLifeboatClaimAck = unavailableGithubLifeboatClaimAck(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
+    if (!workerAllowed()) return workerHold();
     try { sovereignCapacity = await refreshSovereignCapacity({ paths, ...sovereignOptions }); }
     catch (error) { sovereignCapacity = { ok: false, available: false, reason: 'SOVEREIGN_BUILDER8_CAPACITY_REFRESH_EXCEPTION' }; }
 
+    if (!workerAllowed()) return workerHold();
     try { openClawCapacity = await refreshOpenClawCapacity(openClawOptions); }
     catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
+      if (!workerAllowed()) return workerHold();
       const result = await conveyor({
         allowLegacyMissionCreation: false,
         admissionOwner: 'battle-bridge-goal-discovery',
@@ -545,6 +567,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       for (const missionId of processingPickupMissionIds) pendingExternalPickupMissionIds.delete(String(missionId).trim().toLowerCase());
 
       let sourceBuild;
+      if (!workerAllowed()) return workerHold();
       try {
         sourceBuild = await buildClaimedGoal(effectiveBuilderOptions);
       } catch (error) {

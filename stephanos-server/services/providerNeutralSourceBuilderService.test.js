@@ -1,3 +1,4 @@
+import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -87,6 +88,58 @@ const PATCH = [
   '+export const value = 2;',
   '',
 ].join('\n');
+
+test('general verification cannot substitute for a required independent behavior test outside edit scope', async t => {
+  for (const candidateValue of [2, 3]) await t.test(candidateValue === 2 ? 'correct behavior is escrowed' : 'wrong behavior rolls back', async () => {
+  const command = 'node --test tests/independent.test.mjs';
+  const fx = await fixture(['npm run stephanos:verify', command]);
+  await mkdir(join(fx.repoRoot, 'tests'));
+  const oracle = "import assert from 'node:assert/strict'; import {value} from '../shared/agents/example.mjs'; assert.equal(value,2);\n";
+  await writeFile(join(fx.repoRoot, 'tests', 'independent.test.mjs'), oracle);
+  assert.equal(run('git.exe', ['add', '.'], { cwd: fx.repoRoot }).status, 0);
+  assert.equal(run('git.exe', ['commit', '-m', 'Independent acceptance baseline'], { cwd: fx.repoRoot }).status, 0);
+  fx.actionGrant.sourceRevision = run('git.exe', ['rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  const testsRun = [];
+  let independentResult;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant, claimNext: async () => fx.claim,
+    readMissionRecord: async () => ({ state: { cancelled: false } }),
+    generatePatch: async () => ({ patch: PATCH.replace('value = 2', `value = ${candidateValue}`), summary: 'Independent acceptance decides the candidate outcome.' }),
+    runCommand: (executable, args, options) => {
+      if (executable === 'node.exe' && args[0] === 'scripts/build-stephanos-ui.mjs') {
+        return { status: 0, stdout: 'fixture general build PASS', stderr: '' };
+      }
+      if (executable === 'node.exe' && args[0] === 'scripts/verify-stephanos-dist.mjs') {
+        testsRun.push('general'); return { status: 0, stdout: 'general PASS', stderr: '' };
+      }
+      if (executable === 'node.exe' && args[0] === '--test') {
+        // A nested fixture must actually run node:test, rather than inheriting
+        // the parent runner's recursive-test suppression marker.
+        const childEnv = { ...(options.env || process.env) };
+        delete childEnv.NODE_TEST_CONTEXT;
+        testsRun.push('independent'); independentResult = run(executable, args, { ...options, env: childEnv }); return independentResult;
+      }
+      return run(executable, args, options);
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.deepEqual(testsRun, ['general', 'independent'], result.error);
+  assert.equal(result.success, candidateValue === 2, JSON.stringify({ status: independentResult?.status,
+    stdout: independentResult?.stdout?.slice(0, 600), stderr: independentResult?.stderr?.slice(0, 300) }));
+  assert.equal(independentResult.status, candidateValue === 2 ? 0 : 1);
+  assert.equal(await readFile(join(fx.repoRoot, 'tests', 'independent.test.mjs'), 'utf8'), oracle);
+  if (candidateValue === 2) {
+    assert.equal(result.testsPassed, true);
+    assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+    assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).trim(), 'export const value = 2;');
+  } else {
+    assert.match(result.error, /TEST/);
+    assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).trim(), 'export const value = 1;');
+    assert.equal(run('git.exe', ['status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
+  }
+  });
+});
 
 test('cancellation observed after provider response prevents any source edit', async () => {
   const fx = await fixture(); fx.action.missionId = 'critical-3001-elastic-goal';
@@ -1322,3 +1375,72 @@ test(`local Forge builder rejects an existing ignored target during ${oldText ? 
   assert.equal(await readFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'utf8'), 'do not edit\n');
 });
 }
+
+
+test('source completion and terminal receipt follow actual tests despite a captured start-time option', async () => {
+  const fx = await fixture();
+  const started = new Date(Date.now() - 60000);
+  const actionId = fx.action.actionId;
+  const grant = { ...fx.actionGrant, grantId: 'grant-' + actionId, actionId,
+    missionId: fx.action.missionId, missionRevision: 1, repository: fx.action.repository,
+    issueNumber: 3001, prNumber: null, branch: fx.action.branch, headSha: fx.actionGrant.sourceRevision };
+  fx.claim.item = { ...fx.claim.item, schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    actionId, missionId: fx.action.missionId, actionGrant: grant,
+    executionBinding: { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId, leaseKey: fx.action.missionId + '-r1-lease' } };
+  const queued = createExecutionReceipt({ repository: grant.repository, issueNumber: 3001, prNumber: null,
+    branch: grant.branch, sourceHead: grant.sourceRevision, workerId: 'foundry-forge', workerType: 'orchestration-engine',
+    executionId: actionId, leaseKey: fx.claim.item.executionBinding.leaseKey, state: 'queued', phase: 'fixture-source-queued',
+    sequence: 1, timestampUtc: new Date(started.getTime() - 1000).toISOString(), proofRefs: ['fixture-source-proof'],
+    expectedNextAction: 'Source worker must record accepted before execution.' });
+  assert.equal((await appendExecutionReceipt(fx.sharedWorkspaceRoot, queued, { repoRoot: fx.repoRoot })).ok, true);
+  let collected, collectedAt;
+  const result = await processNextProviderNeutralSourceBuild({ preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot, actionGrant: grant, now: started,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
+    runCommand: run, claimNext: async () => fx.claim, goalContext: 'Bounded source repair.',
+    generatePatch: async () => ({ patch: PATCH, summary: 'Bounded change.' }),
+    collectAgentWorkerResult: async record => { collected = record; collectedAt = Date.now(); return { state: { revision: 1 } }; },
+  });
+  assert.equal(result.success, true, result.error);
+  const testAt = Math.max(...collected.evidenceReceipts.map(r => Date.parse(r.createdAt)));
+  assert.ok(Date.parse(collected.receipt.createdAt) >= testAt, 'source completion predates its test receipt');
+  const bundle = JSON.parse(await readFile(join(fx.sharedWorkspaceRoot, 'source-artifacts', collected.sourceArtifactEscrow.completeArtifactSha256 + '.json'), 'utf8'));
+  assert.ok(Date.parse(bundle.completedAtUtc) >= testAt, 'escrow completion predates testing');
+  const h = await readExecutionReceiptHistory(fx.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: fx.repoRoot });
+  assert.equal(h.latestReceipt.state, 'completed');
+  assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
+});
+
+
+test('failed source terminal receipt follows test failure and result collection', async () => {
+  const fx = await fixture(['node --test missing.test.mjs']);
+  const started = new Date(Date.now() - 60000);
+  const actionId = fx.action.actionId;
+  const grant = { ...fx.actionGrant, grantId: 'grant-' + actionId, actionId,
+    missionId: fx.action.missionId, missionRevision: 1, repository: fx.action.repository,
+    issueNumber: 3001, prNumber: null, branch: fx.action.branch, headSha: fx.actionGrant.sourceRevision };
+  fx.claim.item = { ...fx.claim.item, schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    actionId, missionId: fx.action.missionId, actionGrant: grant,
+    executionBinding: { ...grant, schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId, leaseKey: fx.action.missionId + '-r1-lease' } };
+  const queued = createExecutionReceipt({ repository: grant.repository, issueNumber: 3001, prNumber: null,
+    branch: grant.branch, sourceHead: grant.sourceRevision, workerId: 'foundry-forge', workerType: 'orchestration-engine',
+    executionId: actionId, leaseKey: fx.claim.item.executionBinding.leaseKey, state: 'queued', phase: 'fixture-source-queued',
+    sequence: 1, timestampUtc: new Date(started.getTime() - 1000).toISOString(), proofRefs: ['fixture-source-proof'],
+    expectedNextAction: 'Source worker must record accepted before execution.' });
+  assert.equal((await appendExecutionReceipt(fx.sharedWorkspaceRoot, queued, { repoRoot: fx.repoRoot })).ok, true);
+  let collected, collectedAt;
+  const result = await processNextProviderNeutralSourceBuild({ preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot, actionGrant: grant, now: started,
+    readMissionRecord: async () => ({ state: { missionId: fx.action.missionId, cancelled: false } }),
+    runCommand: run, claimNext: async () => fx.claim, goalContext: 'Bounded source repair.',
+    generatePatch: async () => ({ patch: PATCH, summary: 'Bounded change.' }),
+    collectAgentWorkerResult: async record => { collected = record; collectedAt = Date.now(); return { state: { revision: 1 } }; },
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  const h = await readExecutionReceiptHistory(fx.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: fx.repoRoot });
+  assert.equal(h.latestReceipt.state, 'failed');
+  assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
+});

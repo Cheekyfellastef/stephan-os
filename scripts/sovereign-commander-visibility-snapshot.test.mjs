@@ -6,10 +6,37 @@ import {
   buildSovereignVisibilitySnapshot,
   buildHeadSyncVisibility,
   collectRepositoryVisibility,
+  collectCoreDaemonVisibility,
   renderSovereignVisibilitySnapshotLine,
 } from './sovereign-commander-visibility-snapshot.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('Core visibility preserves unknown inventory as null rather than zero owners', () => {
+  for (const evidence of [
+    { processCount: null, processInventoryComplete: false },
+    { processCount: 0, processInventoryComplete: false },
+    { processCount: 0 },
+    { processCount: '0', processInventoryComplete: true },
+  ]) {
+    const result = collectCoreDaemonVisibility({ spawnSyncFn: () => ({
+      status: 0, stdout: JSON.stringify({
+        schemaVersion: 'stephanos.core-daemon-status.v1', ...evidence,
+        ok: true,
+        processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
+      }),
+    }) });
+    assert.equal(result.processCount, null);
+    assert.equal(result.ok, false);
+    assert.equal(result.processObservationBlocker, 'CORE_PROCESS_INVENTORY_UNPROVEN');
+  }
+  const absent = collectCoreDaemonVisibility({ spawnSyncFn: () => ({ status: 0,
+    stdout: JSON.stringify({ schemaVersion: 'stephanos.core-daemon-status.v1',
+      processCount: 0, processInventoryComplete: true }),
+  }) });
+  assert.equal(absent.processCount, 0);
+  assert.equal(absent.processInventoryComplete, true);
+});
 
 test('visibility snapshot is green only for exact-head awake healthy runtime', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
@@ -26,6 +53,8 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
     core: {
       available: true,
       ok: true,
+      processInventoryComplete: true,
+      processCount: 1,
       daemonHealthy: true,
       readiness: 'READY',
       wakeState: 'AWAKE',

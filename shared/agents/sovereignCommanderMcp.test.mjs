@@ -1,4 +1,6 @@
 import test from 'node:test';
+// The existing Sovereign Commander MCP CI job also exercises Starfield's read-only archive contract.
+import '../../scripts/starfield-vr-telemetry-archive.test.mjs';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';

@@ -7,7 +7,7 @@ import '../shared/runtime/goalConveyorGateStewardV1.test.mjs';
 import '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.test.mjs';
 
 const source = readFileSync(new URL('../apps/goal-dashboard/remote-live.js', import.meta.url), 'utf8');
-const deployWorkflow = readFileSync(new URL('../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+const deployWorkflow = readFileSync(new URL('../.github/workflows/deploy-stephanos-pages.yml', import.meta.url), 'utf8');
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'b'.repeat(40);
 const NOW = Date.parse('2026-09-12T12:35:00.000Z');

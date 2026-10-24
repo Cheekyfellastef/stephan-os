@@ -10,7 +10,10 @@ import {
 import {
   analyzeIndependentSecurityReviewWithFinalSourcePolicyV1,
 } from './operatorMergeApprovalGateV2IndependentReviewFinalSourceV1.mjs';
-import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
+import {
+  analyzeIndependentSecurityReview,
+  isApprovalBoundaryBootstrapAnalysis,
+} from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
   QUALIFIED_SPECIALIST_REVIEW_MARKER,
@@ -74,6 +77,7 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/operator-merge-approval-gate.yml',
     '.github/workflows/independent-merge-security-review.yml',
     '.github/workflows/build-stephanos-ui.yml',
+    '.github/workflows/deploy-stephanos-pages.yml',
     '.github/workflows/pr-clean.yml',
     '.github/workflows/exact-head-review-dispatch.yml',
     '.github/workflows/battle-bridge-publisher-proof.yml',
@@ -92,6 +96,9 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedMergeReadOnlyPriorFailureV1.mjs',
+    'shared/agents/protectedWorkflowDispatchMailboxV1.mjs',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
@@ -456,6 +463,53 @@ test('protects the live v2 policy engine and wrapper from clean self-attestation
       item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
       && item.path === path
     )));
+  }
+});
+
+test('Pages deployment retains qualified review when only its relocated workflow changes', () => {
+  for (const path of [
+    '.github/workflows/build-stephanos-ui.yml',
+    '.github/workflows/deploy-stephanos-pages.yml',
+  ]) {
+    const result = analyzeIndependentSecurityReview({
+      changedFiles: [{ filename: path, status: 'modified' }],
+      diff: diffFor(path, ['permissions:', '  pages: write', '  id-token: write']),
+    });
+    assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+    assert.ok(result.findings.some((item) => (
+      item.severity === 'P0'
+      && item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === path
+    )), `qualified review must protect ${path} independently`);
+  }
+});
+
+test('Pages deployment qualified review follows both sides of a GitHub workflow rename', () => {
+  const protectedPath = '.github/workflows/deploy-stephanos-pages.yml';
+  const otherPath = '.github/workflows/pages-renamed.yml';
+  for (const [previousPath, nextPath] of [
+    [protectedPath, otherPath],
+    [otherPath, protectedPath],
+  ]) {
+    const result = analyzeIndependentSecurityReview({
+      changedFiles: [{
+        filename: nextPath,
+        previous_filename: previousPath,
+        status: 'renamed',
+      }],
+      diff: [
+        `diff --git a/${previousPath} b/${nextPath}`,
+        'similarity index 100%',
+        `rename from ${previousPath}`,
+        `rename to ${nextPath}`,
+      ].join('\n'),
+    });
+    assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+    assert.ok(result.findings.some((item) => (
+      item.severity === 'P0'
+      && item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === protectedPath
+    )), `qualified review must survive rename ${previousPath} -> ${nextPath}`);
   }
 });
 

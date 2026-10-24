@@ -17,6 +17,9 @@ const observation = () => ({
   serviceStatus: 'NOT_INSTALLED',
   originalProcessCandidateCount: 0,
   relatedTaskCount: 6,
+  publisherTaskPresent: true,
+  publisherTaskState: 'READY',
+  publisherLastResultClass: 'NONZERO',
   unknownObservations: [],
   privilegedServiceSidVerified: false,
   sourceAclDenialEnforced: false,
@@ -30,6 +33,36 @@ const observation = () => ({
   finalVerdict: 'COMMISSIONING_NOT_PROVEN',
 });
 const inspect = input => project(input, { nowUtc: now });
+
+test('native publisher exact-name task is contextual evidence, not authenticated original R7 writer', () => {
+  const result = inspect(observation());
+  assert.equal(result.observable, true);
+  assert.equal(result.publisherTaskPresent, true);
+  assert.equal(result.publisherTaskState, 'READY');
+  assert.equal(result.publisherLastResultClass, 'NONZERO');
+  assert.equal(result.publisherOriginalWriterAuthenticated, false);
+  assert.equal(result.leaseReleaseAuthority, false);
+  const absent = inspect({ ...observation(),
+    publisherTaskPresent: false, publisherTaskState: 'NOT_FOUND',
+    publisherLastResultClass: 'UNKNOWN',
+  });
+  assert.equal(absent.observable, true);
+  assert.equal(absent.publisherOriginalWriterAuthenticated, false);
+});
+
+test('publisher scheduler never-run is NOT a successful execution or original writer proof', async () => {
+  const never = inspect({ ...observation(), publisherLastResultClass: 'NEVER_RUN' });
+  assert.equal(never.observable, true);
+  assert.equal(never.publisherTaskPresent, true);
+  assert.equal(never.publisherLastResultClass, 'NEVER_RUN');
+  assert.equal(never.authenticatedWitness, false);
+  assert.equal(never.leaseReleaseAuthority, false);
+  const { readFile } = await import('node:fs/promises');
+  const script = await readFile(new URL('../../scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1', import.meta.url), 'utf8');
+  assert.match(script, /Get-ScheduledTaskInfo -InputObject \$publisherMatches\[0\]/);
+  assert.match(script, /\[datetime\]\$info\.LastRunTime -eq \[datetime\]::MinValue/);
+  assert.doesNotMatch(script, /Get-ScheduledTaskInfo -TaskName 'Stephanos Native Capacity Publisher'/);
+});
 
 test('uncommissioned Windows witness remains an explicit hold', () => {
   const result = inspect(observation());
@@ -70,6 +103,18 @@ test('process candidates, absent task inventory and unsupported telemetry stay v
   ]) assert.ok(result.blockers.includes(blocker), blocker);
 });
 
+test('unreadable process command lines stay an explicit diagnostic blocker, never lease authority', () => {
+  const result = inspect({
+    ...observation(),
+    servicePresent: true, serviceStatus: 'RUNNING',
+    unknownObservations: ['PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE'],
+  });
+  assert.equal(result.observable, true);
+  assert.ok(result.blockers.includes('PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE'));
+  assert.equal(result.authenticatedWitness, false);
+  assert.equal(result.leaseReleaseAuthority, false);
+});
+
 test('forged eligibility, authority, wrong identity, unknown evidence or old snapshot fails closed', () => {
   const attempts = [
     { repository: 'different/repo' }, { originalLeaseId: 'another-lease' },
@@ -77,6 +122,9 @@ test('forged eligibility, authority, wrong identity, unknown evidence or old sna
     { servicePresent: 'true' }, { serviceStatus: 'GREEN' },
     { observedAtUtc: '2026-10-14T19:57:00.000Z' },
     { originalProcessCandidateCount: -1 }, { relatedTaskCount: -1 },
+    { publisherTaskPresent: 'true' }, { publisherTaskState: 'ACTIVE' },
+    { publisherLastResultClass: 1 },
+    { publisherTaskPresent: false, publisherTaskState: 'RUNNING' },
     { unknownObservations: ['CONTENTION_CLEARED'] },
     { privilegedServiceSidVerified: true }, { sourceAclDenialEnforced: true },
     { outOfJobWritersExcluded: true }, { wmiComRelaunchDenied: true },
