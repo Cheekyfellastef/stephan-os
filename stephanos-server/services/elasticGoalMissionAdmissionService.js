@@ -7,6 +7,7 @@ import {
 } from './missionOrchestratorStore.js';
 import {
   MAXIMUM_BUILD_LANES,
+  adjudicateResourceScopeOverlap,
   projectCanonicalResourceIds,
   selectResourceDisjointCandidates,
 } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -191,6 +192,46 @@ function schedulerEligible(scheduler = {}) {
   );
 }
 
+function missionSourceResources(state, goal = {}) {
+  const repository = text(state.repository || goal?.repository);
+  if (!SAFE_REPOSITORY.test(repository)) return [];
+  const paths = list(state.allowedFiles).map(value => text(value));
+  const supplied = paths.includes('**') ? ['repo:' + repository] : paths.map(path =>
+    'repo:' + repository + ':path:' + (path.endsWith('/**') ? path.slice(0, -3) : path));
+  const scope = projectCanonicalResourceIds([...new Set(supplied.length ? supplied : list(goal?.resourceIds))]);
+  // Unproven retained scope holds only its own repository.
+  return scope.valid && scope.resourceIds.length ? scope.resourceIds : ['repo:' + repository.toLowerCase()];
+}
+
+function retainedSourceReservations(records, goalRecords = [], scheduler = {}) {
+  return records.flatMap(state => {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    if (!issueNumber || state.missionId !== missionIdForIssue(issueNumber) || missionTerminal(state)) return [];
+    const retained = /^[a-f0-9]{64}$/i.test(text(state.sourcePublication?.artifactSha256))
+      || (positiveInteger(state.pullRequest?.number) && /^[a-f0-9]{40}$/i.test(text(state.pullRequest?.headSha)));
+    if (!retained) return [];
+    const goal = recordForIssue(goalRecords, issueNumber) || goalForIssue(scheduler, issueNumber);
+    const resources = missionSourceResources(state, goal);
+    return resources.length ? [{ missionId: state.missionId, resourceIds: resources }] : [];
+  });
+}
+function sourceReservationConflict(resourceIds, reservations, ownMissionId = '') {
+  const conflicts = reservations.filter(owner => owner.missionId !== ownMissionId)
+    .map(owner => ({ owner, overlap: adjudicateResourceScopeOverlap(owner.resourceIds, resourceIds) }))
+    .filter(row => row.overlap.valid && row.overlap.overlaps);
+  return conflicts.length ? { reason: 'RETAINED_SOURCE_SCOPE_RESERVED',
+    reservedMissionIds: [...new Set(conflicts.map(row => row.owner.missionId))],
+    resourceIds: [...new Set(conflicts.flatMap(row => row.overlap.conflictingResourceIds))] } : null;
+}
+
+function pendingSourceReservationConflict(state, reservations) {
+  if (state.dispatch?.status === 'running'
+      || !['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+        .includes(text(state.currentPhase).toUpperCase())) return null;
+  const resources = missionSourceResources(state);
+  return resources.length ? sourceReservationConflict(resources, reservations, state.missionId) : null;
+}
+
 function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssueReasons = new Map()) {
   const projectedCandidates = list(scheduler.parallelCandidateDetails);
   const candidates = projectedCandidates.filter((candidate) => !excludedIssueReasons.has(candidateIssue(candidate)));
@@ -309,6 +350,24 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     const reason = missionAdmissionExclusionReason(state);
     if (issueNumber && reason) excludedMissionIssueReasons.set(issueNumber, reason);
   }
+  const reservations = retainedSourceReservations(records, options.goalRecords, scheduler);
+  const reservationHolds = new Map();
+  for (const goal of list(scheduler.portfolio)) {
+    const issueNumber = positiveInteger(goal.issue);
+    if (!issueNumber || text(goal.lifecycle).toUpperCase() !== 'READY' || excludedMissionIssueReasons.has(issueNumber)) continue;
+    const existing = records.find(state => missionMatchesIssue(state, issueNumber));
+    if (existing && (existing.dispatch?.status === 'running'
+      || !['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'LIVE_RUNTIME_INVESTIGATION']
+        .includes(text(existing.currentPhase).toUpperCase()))) continue;
+    const record = recordForIssue(options.goalRecords, issueNumber);
+    const resources = projectCanonicalResourceIds(record?.resourceIds || goal.resourceIds);
+    if (!resources.valid || !resources.resourceIds.length) continue;
+    const conflict = sourceReservationConflict(resources.resourceIds, reservations, existing?.missionId);
+    if (conflict) {
+      excludedMissionIssueReasons.set(issueNumber, conflict.reason);
+      reservationHolds.set(issueNumber, conflict);
+    }
+  }
   const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, excludedMissionIssueReasons);
   const admitted = [];
   const held = inventory.held.map((item) => ({
@@ -316,9 +375,15 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     reason: text(item.reasonCode, 'ELASTIC_SELECTION_HELD'),
     resourceIds: list(item.conflictingResourceIds),
   }));
+  for (const [issueNumber, conflict] of reservationHolds) {
+    const prior = held.find(item => item.issueNumber === issueNumber && item.reason === conflict.reason);
+    if (prior) Object.assign(prior, conflict);
+    else held.push({ issueNumber, ...conflict });
+  }
   const runnableMissions = records.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
+    return missionRunnable(state) && !pendingSourceReservationConflict(state, reservations)
+      && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
   });
   for (const candidate of inventory.candidates) {
     const issueNumber = candidateIssue(candidate);
@@ -437,9 +502,16 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
+  const reservations = retainedSourceReservations(elasticMissions, goalRecords, input.scheduler);
+  for (const state of elasticMissions) {
+    const conflict = pendingSourceReservationConflict(state, reservations);
+    if (conflict && !held.some(item => item.issueNumber === issueFromMissionId(state.missionId) && item.reason === conflict.reason))
+      held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId, ...conflict });
+  }
   const runnableMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+    return missionRunnable(state) && !pendingSourceReservationConflict(state, reservations)
+      && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
   const activeMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
@@ -466,7 +538,8 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const eligibleRunnable = runnableMissions.filter((state) => !sourceConstructionAlreadyReplaced(state));
   const selectedMission = eligibleRunnable.find(grantablePhase)
     ?? eligibleRunnable[0]
-    ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state))
+    ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state)
+      && !pendingSourceReservationConflict(state, reservations))
     ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
