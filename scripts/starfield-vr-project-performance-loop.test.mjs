@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-performance-loop.mjs';
+import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-performance-recommendations.mjs';
 
 const repoRoot = new URL('..', import.meta.url).pathname;
 const identity = {
@@ -364,4 +365,73 @@ test('long-session drift is not ready without measured duration and a completed 
   }
   const observed = await project({ runtimeSeconds: 1800, longSessionDriftVerdict: 'STABLE' });
   assert.equal(observed.telemetryRequirements.find((item) => item.id === 'long-session-drift').available, true);
+});
+
+test('measured low game-drive capacity takes canonical advisory storage priority over generic VR techniques', async () => {
+  const diagnosis = { focus: 'STORAGE_PRESSURE', signals: ['drive-space-pressure-high'] };
+  const recommendationPlan = await buildStarfieldVrPerformanceRecommendations({
+    repoRoot, diagnosis, runIdentity: identity,
+  });
+  assert.equal(recommendationPlan.nextExperiment?.id, 'storage-pressure-first');
+  const metrics = {
+    minGameDriveFreePct: 6,
+    avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+  };
+  const loop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, diagnosis, metrics, recommendationPlan,
+  });
+  assert.equal(loop.nextExperiment.id, 'storage-pressure-first');
+  assert.equal(loop.nextExperiment.authority.advisoryOnly, true);
+  assert.equal(loop.nextExperiment.authority.automaticMutation, false);
+  assert.equal(loop.authority.automaticRuntimeMutation, false);
+  assert.equal(loop.authority.operatorAcceptancePreserved, true);
+});
+
+test('storage-priority advice refuses unknown measurements, foreign providers and expanded runtime authority', async () => {
+  const diagnosis = { focus: 'STORAGE_PRESSURE', signals: ['drive-space-pressure-high'] };
+  const plan = await buildStarfieldVrPerformanceRecommendations({
+    repoRoot, diagnosis, runIdentity: identity,
+  });
+  assert.equal(plan.nextExperiment?.id, 'storage-pressure-first');
+  const metrics = {
+    minGameDriveFreePct: 6,
+    avgApplicationFrameTimeMs: 15,
+    p95ApplicationFrameTimeMs: 18,
+    avgDeliveredCadenceHz: 72,
+    headsetRefreshRateHz: 72,
+  };
+  const cases = [
+    { metrics: { ...metrics, minGameDriveFreePct: undefined }, plan },
+    { metrics: { ...metrics, minGameDriveFreePct: '6' }, plan },
+    { metrics: { ...metrics, minGameDriveFreePct: 94 }, plan },
+    { metrics, plan: { ...plan, currentProvider: 'vorpx' } },
+    { metrics, plan: { ...plan, diagnosisFocus: 'CPU_LOAD' } },
+    { metrics, plan: { ...plan, boundaries: { ...plan.boundaries, automaticRuntimeMutation: true } } },
+    { metrics, plan: { ...plan, nextExperiment: { ...plan.nextExperiment,
+      authority: { ...plan.nextExperiment.authority, launchesGame: true } } } },
+    { metrics, plan: { ...plan, nextExperiment: { ...plan.nextExperiment,
+      id: 'untrusted-experiment' } } },
+  ];
+  for (const [index, item] of cases.entries()) {
+    const loop = await buildStarfieldVrProjectPerformanceLoop({
+      repoRoot, runIdentity: identity, diagnosis, metrics: item.metrics,
+      recommendationPlan: item.plan,
+    });
+    assert.notEqual(loop.nextExperiment.id, 'storage-pressure-first', 'case ' + index);
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const noSource = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, metrics, recommendationPlan: plan,
+    diagnosis: { focus: 'STORAGE_PRESSURE', signals: [] },
+  });
+  assert.notEqual(noSource.nextExperiment.id, 'storage-pressure-first');
+  const cpuFirst = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, metrics, recommendationPlan: plan,
+    diagnosis: { focus: 'STORAGE_PRESSURE',
+      signals: ['drive-space-pressure-high', 'system-cpu-load-high'] },
+  });
+  assert.equal(cpuFirst.nextExperiment.id, 'qualify-starfield-cpu-attribution-collector');
 });

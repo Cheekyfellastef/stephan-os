@@ -395,6 +395,39 @@ export async function buildStarfieldVrProjectPerformanceLoop({
     priority: 45,
   });
 
+  // The generic VR technique list is never empty, so it must not suppress a
+  // same-provider, measured storage diagnosis from the canonical recommendation
+  // planner. Do not accept an arbitrary or authority-widening caller packet.
+  const storageAdvice = recommendationPlan?.nextExperiment;
+  const storageAdviceQualified = focus === 'STORAGE_PRESSURE'
+    && signals.has('drive-space-pressure-high')
+    && measuredCpuPercent(metrics, 'minGameDriveFreePct')
+    && metrics.minGameDriveFreePct <= 10
+    && recommendationPlan?.schemaVersion === 'stephanos.starfield-vr-performance-recommendations.v1'
+    && recommendationPlan?.verdict === 'RECOMMENDATIONS_READY'
+    && recommendationPlan?.diagnosisFocus === focus
+    && recommendationPlan?.currentProvider === provider
+    && recommendationPlan?.boundaries?.advisoryOnly === true
+    && recommendationPlan?.boundaries?.automaticRuntimeMutation === false
+    && recommendationPlan?.boundaries?.providerAutoSwitch === false
+    && recommendationPlan?.boundaries?.graphicsAutoMutation === false
+    && storageAdvice?.id === 'storage-pressure-first'
+    && storageAdvice?.kind === 'system-diagnostic'
+    && storageAdvice?.authority?.advisoryOnly === true
+    && storageAdvice?.authority?.mutatesGameConfig === false
+    && storageAdvice?.authority?.switchesProvider === false
+    && storageAdvice?.authority?.launchesGame === false
+    && storageAdvice?.authority?.requiresOperatorAcceptanceForRuntimeChange === true;
+  const measuredStorageExperiment = storageAdviceQualified
+    ? technique({
+      id: 'storage-pressure-first',
+      title: 'Isolate measured game-drive pressure before renderer changes',
+      sources: [sources.installedCorpus],
+      rationale: 'The same-provider session has measured low drive headroom; first separate storage stalls from CPU, GPU, Air Link and AER instability.',
+      experiment: 'Observe drive capacity and I/O on the pinned playtest route. Do not delete, move or modify game data without separate operator approval and rollback proof.',
+      priority: 120,
+    })
+    : null;
   const ranked = techniques.sort((a, b) => b.priority - a.priority);
   const identityBlocked = identityStatus !== 'VERIFIED_PROVIDER';
   const nextExperiment = identityBlocked
@@ -417,7 +450,7 @@ export async function buildStarfieldVrProjectPerformanceLoop({
           rationale: 'The project requires these measurements before frame-pacing diagnosis can be considered complete.',
           sourceRef: sources.airLink.path,
         }
-      : ranked[0] || recommendationPlan?.nextExperiment || null;
+      : measuredStorageExperiment || ranked[0] || null;
 
   const benchmarkProtocol = Object.freeze({
     saveRoutePinned: true,
