@@ -9,6 +9,10 @@ on:
       - 'src/windows/Stephanos.RescueIslandCustody.Tests/**'
       - 'src/windows/Stephanos.RescueIslandHost/**'
       - 'src/windows/Stephanos.RescueIslandHost.Tests/**'
+      - 'shared/agents/rescueIsland*.mjs'
+      - 'shared/agents/githubObservationBrokerV1*.mjs'
+      - 'scripts/rescue-island-supervised-host.mjs'
+      - 'scripts/windows/run-vr-resource-governor.ps1'
       - '.github/workflows/rescue-island-native-custody-proof.yml'
 
 permissions:
@@ -21,7 +25,7 @@ concurrency:
 jobs:
   native-snapshot:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +34,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Run actual Windows adversarial native custody tests
         shell: pwsh
         env:
@@ -40,6 +47,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release -p:NuGetAudit=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run strict and supervised Island integration tests
+        shell: pwsh
+        run: |
+          node --test --test-concurrency=1 shared/agents/githubObservationBrokerV1.test.mjs shared/agents/rescueIslandSupervisedRunV1.test.mjs shared/agents/rescueIslandFirstCommitV1.test.mjs shared/agents/rescueIslandPilotOwnerIntakeV1.test.mjs shared/agents/rescueIslandAuthenticatedGithubReadV1.test.mjs shared/agents/rescueIslandPreflightV1.test.mjs shared/agents/rescueIslandPhysicalScopeObservationV1.test.mjs shared/agents/rescueIslandBoundaryReceiptV1.test.mjs shared/agents/sovereignCommanderVrResourceGovernor.test.mjs scripts/rescue-island-boundary-probe.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release --no-build -- --run-adapter-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain actual restricted-child evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: island-native-child-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: src/windows/Stephanos.RescueIslandHost.Tests/bin/Release/net8.0-windows/island-adapter-ci-*
+          if-no-files-found: warn
       - name: Retain execution admission boundary
         if: always()
         shell: pwsh
