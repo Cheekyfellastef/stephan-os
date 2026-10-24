@@ -232,6 +232,17 @@ function pendingSourceReservationConflict(state, reservations) {
   return resources.length ? sourceReservationConflict(resources, reservations, state.missionId) : null;
 }
 
+export function projectElasticRetainedSourceHoldsV1(missionRecords = [], options = {}) {
+  const records = list(missionRecords);
+  const reservations = retainedSourceReservations(records, options.goalRecords, options.scheduler);
+  return freeze(records.flatMap((state) => {
+    if (!issueFromMissionId(state?.missionId)) return [];
+    const conflict = pendingSourceReservationConflict(state, reservations);
+    return conflict ? [{ issueNumber: issueFromMissionId(state.missionId),
+      missionId: state.missionId, ...conflict }] : [];
+  }));
+}
+
 function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssueReasons = new Map()) {
   const projectedCandidates = list(scheduler.parallelCandidateDetails);
   const candidates = projectedCandidates.filter((candidate) => !excludedIssueReasons.has(candidateIssue(candidate)));
@@ -351,6 +362,8 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     if (issueNumber && reason) excludedMissionIssueReasons.set(issueNumber, reason);
   }
   const reservations = retainedSourceReservations(records, options.goalRecords, scheduler);
+  const sourceHolds = new Map(projectElasticRetainedSourceHoldsV1(records, { ...options, scheduler })
+    .map(hold => [hold.missionId, hold]));
   const reservationHolds = new Map();
   for (const goal of list(scheduler.portfolio)) {
     const issueNumber = positiveInteger(goal.issue);
@@ -382,7 +395,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
   }
   const runnableMissions = records.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !pendingSourceReservationConflict(state, reservations)
+    return missionRunnable(state) && !sourceHolds.has(state.missionId)
       && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
   });
   for (const candidate of inventory.candidates) {
@@ -502,15 +515,14 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
-  const reservations = retainedSourceReservations(elasticMissions, goalRecords, input.scheduler);
-  for (const state of elasticMissions) {
-    const conflict = pendingSourceReservationConflict(state, reservations);
-    if (conflict && !held.some(item => item.issueNumber === issueFromMissionId(state.missionId) && item.reason === conflict.reason))
-      held.push({ issueNumber: issueFromMissionId(state.missionId), missionId: state.missionId, ...conflict });
+  const sourceHolds = new Map(projectElasticRetainedSourceHoldsV1(elasticMissions,
+    { goalRecords, scheduler: input.scheduler }).map(hold => [hold.missionId, hold]));
+  for (const hold of sourceHolds.values()) {
+    if (!held.some(item => item.issueNumber === hold.issueNumber && item.reason === hold.reason)) held.push(hold);
   }
   const runnableMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return missionRunnable(state) && !pendingSourceReservationConflict(state, reservations)
+    return missionRunnable(state) && !sourceHolds.has(state.missionId)
       && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
   const activeMissions = elasticMissions.filter((state) => {
@@ -539,7 +551,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const selectedMission = eligibleRunnable.find(grantablePhase)
     ?? eligibleRunnable[0]
     ?? activeMissions.find((state) => !sourceConstructionAlreadyReplaced(state)
-      && !pendingSourceReservationConflict(state, reservations))
+      && !sourceHolds.has(state.missionId))
     ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
