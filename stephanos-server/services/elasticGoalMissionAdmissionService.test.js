@@ -1,11 +1,81 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import {
   ensureElasticGoalMissions,
   planElasticGoalMissionAdmissions,
 } from './elasticGoalMissionAdmissionService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+function acceptanceGoalRecord(requiredTests, overrides = {}) {
+  return { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+    goalId: 'goal-2314', issueNumber: 2314, repository: REPOSITORY, source: 'github-goal-estate-mirror',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1', mirrorIssueNumber: 2314,
+    mirrorRepository: REPOSITORY, mirrorBuildPickupAllowed: true, githubAdmissionState: 'ADMISSION_PROVEN',
+    requiredTests, resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'], ...overrides };
+}
+
+test('admitted owner tests stay independent of mutation scope and survive worktree phase and actual queue claim', async () => {
+  const command = 'node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs';
+  const record = acceptanceGoalRecord([command]);
+  const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds)]), [], { goalRecords: [record] });
+  assert.equal(plan.admitted.length, 1);
+  const input = plan.admitted[0].missionInput;
+  assert.deepEqual(input.requiredTests, ['npm run stephanos:verify', command]);
+  assert.equal(input.allowedFiles.some(path => path.startsWith('scripts/')), false);
+  const temporary = await mkdtemp(join(tmpdir(), 'goal-acceptance-claim-'));
+  const options = { root: join(temporary, 'missions'), queueRoot: join(temporary, 'queue'), env: {},
+    capacityRouting: { nowUtc: new Date().toISOString(), codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1', statusId: 'codex-capacity-current', truthState: 'CURRENT',
+      meterTruthUsable: true, observedAtUtc: new Date(Date.now() - 1000).toISOString(), remainingPercent: 90,
+      availability: 'AVAILABLE', confidence: 'high', naturalResetAtUtc: '',
+    } } };
+  try {
+    await createMissionRecord(input, options);
+    const ready = await appendMissionEvent(input.missionId, { eventId: 'acceptance-worktree', eventType: 'WORKTREE_READY',
+      worktreePath: join(temporary, 'worktree'), clean: true,
+      receipt: { receiptId: 'acceptance-worktree-proof', requirement: 'isolated worktree', source: 'fixture',
+        evidenceType: 'command-output', verified: true, exitCode: 0 } }, options);
+    const published = await publishMissionWorkerAction(ready.state, options);
+    assert.equal(published.published, true, JSON.stringify({ reason: published.reason, blockers: published.blockers }));
+    const queued = JSON.parse(await readFile(published.path, 'utf8'));
+    assert.deepEqual(queued.payload.requiredTests, input.requiredTests);
+    const claim = await claimNextMissionWorkerItem(published.adapter, options);
+    assert.ok(claim);
+    assert.deepEqual(claim.item.payload.requiredTests, input.requiredTests);
+    const after = (await readMissionRecord(input.missionId, options)).state;
+    assert.deepEqual(after.requiredTests, input.requiredTests);
+    assert.equal(after.dispatch.status, 'running');
+  } finally { await rm(temporary, { recursive: true, force: true }); }
+});
+
+test('explicit invalid or foreign test plans hold only the affected new goal', () => {
+  for (const record of [acceptanceGoalRecord([]), acceptanceGoalRecord(['npm run arbitrary']),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { mirrorIssueNumber: 9 }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { source: 'caller' }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { kind: 'status' }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { issue: 2314, issueNumber: 9 }),
+    acceptanceGoalRecord(['node --test scripts/a.test.mjs'], { mirrorBuildPickupAllowed: false })]) {
+    const good = goal(2315, ['repo:cheekyfellastef/stephan-os:path:shared/agents/other.mjs']);
+    const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds), good]), [], { goalRecords: [record] });
+    assert.deepEqual(plan.admitted.map(a => a.issueNumber), [2315]);
+    assert.ok(plan.held.some(h => h.issueNumber === 2314 && h.reason === 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN'));
+  }
+});
+
+test('changed goal acceptance never rewrites an existing consumed mission or its required tests', () => {
+  const record = acceptanceGoalRecord(['node --test scripts/a.test.mjs']);
+  const old = { missionId: 'critical-2314-elastic-goal', currentPhase: 'VERIFYING', requiredTests: ['npm run stephanos:verify'], dispatch: { status: 'complete' } };
+  const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds)]), [old], { goalRecords: [record] });
+  assert.equal(plan.admitted[0].mission, old);
+  assert.deepEqual(old.requiredTests, ['npm run stephanos:verify']);
+});
 
 function goal(issue, resourceIds, overrides = {}) {
   return {

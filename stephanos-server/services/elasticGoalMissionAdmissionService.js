@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -336,7 +337,7 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     worktreePath: resolve(worktreeRoot, missionId),
     allowedFiles: scope.allowedFiles,
     requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
-    requiredTests: ['npm run stephanos:verify'],
+    requiredTests: [...new Set(['npm run stephanos:verify', ...(goal.requiredTests || [])])],
     browserProofRequired: false,
   };
 }
@@ -429,11 +430,29 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: scope.reason, resourceIds: scope.resourceIds });
       continue;
     }
+    const tests = projectGoalAdmissionRequiredTestsV1(record?.requiredTests);
+    const testAuthority = !tests.supplied || (
+      record?.schemaVersion === 'shared-agent-workspace-record.v1'
+      && record?.kind === 'stephanos.shared_workspace.goal'
+      && record?.goalId === `goal-${issueNumber}`
+      && record?.issueNumber === issueNumber
+      && text(record?.repository).toLowerCase() === scope.repository.toLowerCase()
+      && record?.source === 'github-goal-estate-mirror'
+      && record?.mirrorSchema === 'stephanos.github-goal-mirror.v1'
+      && record?.githubAdmissionState === 'ADMISSION_PROVEN'
+      && record?.mirrorIssueNumber === issueNumber
+      && text(record?.mirrorRepository).toLowerCase() === scope.repository.toLowerCase()
+      && record?.mirrorBuildPickupAllowed === true
+    );
+    if (!tests.valid || !testAuthority) {
+      held.push({ issueNumber, reason: 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN' });
+      continue;
+    }
     admitted.push({
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, { ...goal, seedGrowthWork: record?.seedGrowthWork }, scope, options),
+      missionInput: missionInput(issueNumber, { ...goal, requiredTests: tests.commands, seedGrowthWork: record?.seedGrowthWork }, scope, options),
       resourceIds: scope.resourceIds,
     });
   }

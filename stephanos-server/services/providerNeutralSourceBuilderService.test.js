@@ -89,6 +89,58 @@ const PATCH = [
   '',
 ].join('\n');
 
+test('general verification cannot substitute for a required independent behavior test outside edit scope', async t => {
+  for (const candidateValue of [2, 3]) await t.test(candidateValue === 2 ? 'correct behavior is escrowed' : 'wrong behavior rolls back', async () => {
+  const command = 'node --test tests/independent.test.mjs';
+  const fx = await fixture(['npm run stephanos:verify', command]);
+  await mkdir(join(fx.repoRoot, 'tests'));
+  const oracle = "import assert from 'node:assert/strict'; import {value} from '../shared/agents/example.mjs'; assert.equal(value,2);\n";
+  await writeFile(join(fx.repoRoot, 'tests', 'independent.test.mjs'), oracle);
+  assert.equal(run('git.exe', ['add', '.'], { cwd: fx.repoRoot }).status, 0);
+  assert.equal(run('git.exe', ['commit', '-m', 'Independent acceptance baseline'], { cwd: fx.repoRoot }).status, 0);
+  fx.actionGrant.sourceRevision = run('git.exe', ['rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  const testsRun = [];
+  let independentResult;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant, claimNext: async () => fx.claim,
+    readMissionRecord: async () => ({ state: { cancelled: false } }),
+    generatePatch: async () => ({ patch: PATCH.replace('value = 2', `value = ${candidateValue}`), summary: 'Independent acceptance decides the candidate outcome.' }),
+    runCommand: (executable, args, options) => {
+      if (executable === 'node.exe' && args[0] === 'scripts/build-stephanos-ui.mjs') {
+        return { status: 0, stdout: 'fixture general build PASS', stderr: '' };
+      }
+      if (executable === 'node.exe' && args[0] === 'scripts/verify-stephanos-dist.mjs') {
+        testsRun.push('general'); return { status: 0, stdout: 'general PASS', stderr: '' };
+      }
+      if (executable === 'node.exe' && args[0] === '--test') {
+        // A nested fixture must actually run node:test, rather than inheriting
+        // the parent runner's recursive-test suppression marker.
+        const childEnv = { ...(options.env || process.env) };
+        delete childEnv.NODE_TEST_CONTEXT;
+        testsRun.push('independent'); independentResult = run(executable, args, { ...options, env: childEnv }); return independentResult;
+      }
+      return run(executable, args, options);
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.deepEqual(testsRun, ['general', 'independent'], result.error);
+  assert.equal(result.success, candidateValue === 2, JSON.stringify({ status: independentResult?.status,
+    stdout: independentResult?.stdout?.slice(0, 600), stderr: independentResult?.stderr?.slice(0, 300) }));
+  assert.equal(independentResult.status, candidateValue === 2 ? 0 : 1);
+  assert.equal(await readFile(join(fx.repoRoot, 'tests', 'independent.test.mjs'), 'utf8'), oracle);
+  if (candidateValue === 2) {
+    assert.equal(result.testsPassed, true);
+    assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+    assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).trim(), 'export const value = 2;');
+  } else {
+    assert.match(result.error, /TEST/);
+    assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).trim(), 'export const value = 1;');
+    assert.equal(run('git.exe', ['status', '--porcelain'], { cwd: fx.repoRoot }).stdout.trim(), '');
+  }
+  });
+});
+
 test('cancellation observed after provider response prevents any source edit', async () => {
   const fx = await fixture(); fx.action.missionId = 'critical-3001-elastic-goal';
   let providerReturned = false;
