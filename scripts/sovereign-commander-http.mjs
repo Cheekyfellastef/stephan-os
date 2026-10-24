@@ -380,7 +380,7 @@ small{display:block;margin-top:28px;opacity:.5}
 </head>
 <body>
 <main>
-<h1>?? Stephanos Ignition</h1>
+<h1>🔥 Stephanos Ignition</h1>
 <p>Private Battle Bridge control over your Tailscale network.</p>
 <button id="ignite" type="button">Ignite Stephanos</button>
 <div id="status" role="status" aria-live="polite"></div>
@@ -391,7 +391,7 @@ const nonce=${safeNonce};
 const button=document.getElementById('ignite');
 const status=document.getElementById('status');
 button.addEventListener('click',async()=>{
-  button.disabled=true; status.textContent='Igniting.';
+  button.disabled=true; status.textContent='Igniting…';
   try{
     const response=await fetch('/ignite',{
       method:'POST',
@@ -399,7 +399,7 @@ button.addEventListener('click',async()=>{
       body:JSON.stringify({action:'ignite-stephanos'})
     });
     const body=await response.json();
-    status.textContent=body.ok?'Ignition command accepted ?':('Blocked: '+(body.blocker||body.finalVerdict||response.status));
+    status.textContent=body.ok?'Ignition command accepted ✅':('Blocked: '+(body.blocker||body.finalVerdict||response.status));
   }catch{status.textContent='Could not reach Sovereign Commander.'}
   finally{button.disabled=false}
 });
