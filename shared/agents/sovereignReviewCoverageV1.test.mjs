@@ -1,4 +1,7 @@
 import test from 'node:test';
+// Hosted high-risk reviewer CI must execute the actual qualification-ladder tests,
+// including untrusted array/proxy evidence and Island/Seed no-authority guards.
+import './sovereignReviewerQualificationLadderV1.test.mjs';
 import assert from 'node:assert/strict';
 import {
   assessSovereignReviewCoverageV1 as assess,
