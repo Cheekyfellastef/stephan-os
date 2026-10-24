@@ -66,13 +66,18 @@ function git(cwd, args, run = spawnSync) {
     env: createBattleBridgeMinimalChildEnvironment(process.env, { git: true }),
   });
   if (x?.status !== 0 || x.error) fail('RESCUE_ISLAND_GIT_OPERATION_FAILED');
-  return text(x.stdout);
+  // Porcelain's first two columns are data: trimming them corrupts tracked
+  // modifications while untracked-only documentation happens to survive.
+  return args[0] === 'status' ? String(x.stdout || '').trimEnd()
+    : args[0] === 'show' ? String(x.stdout || '') : text(x.stdout);
 }
-function nodeTest(cwd, testFile, run = spawnSync) {
-  const x = run(process.execPath, ['--test', testFile], {
+function nodeTest(cwd, testFile, run = spawnSync, nativeSmoke = false) {
+  const files = Array.isArray(testFile) ? testFile : [testFile];
+  const x = run(process.execPath, ['--test', ...files], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
-    timeout: 60_000, maxBuffer: 128 * 1024,
-    env: createBattleBridgeMinimalChildEnvironment(process.env),
+    timeout: Array.isArray(testFile) ? 120_000 : 60_000, maxBuffer: 128 * 1024,
+    env: {...createBattleBridgeMinimalChildEnvironment(process.env),
+      ...(nativeSmoke?{STEPHANOS_ISLAND_SOURCE_HOST_SMOKE:'1'}:{})},
   });
   return { ok: x?.status === 0 && !x.error,
     hash: digest(x?.stdout || ''), output: x?.stdout || '' };
@@ -185,8 +190,13 @@ export async function constructIsolatedRescueIslandPilotV1({
 async function constructRescueIslandPilotWithAdmission({
   task, observed, repoRoot, worktreeRoot, receiptRoot,
   sameOwnerRecoveryAuthenticated = false, runGit = spawnSync, runTest = spawnSync,
-  recheck = async () => {}, receiptMetadata = {},
+  recheck = async () => {}, receiptMetadata = {}, sourcePlan = null, nativeTestHost = null,
 }) {
+  let writes = sourcePlan?.writes || [{path:task.targetPath,beforeBlob:null,content:task.content}];
+  const approvedPaths = writes.map(w=>w.path).sort();
+  const allowed = path=>approvedPaths.includes(path);
+  const expectedChanged = approvedPaths.join('\n');
+  const testPaths = sourcePlan?.testPaths || [task.testPath];
   // This demonstration does not claim that the two booleans constitute
   // external authentication. Only separately reviewed trusted adapters may
   // supply them; do not expose this function as a remote mailbox action.
@@ -215,8 +225,29 @@ async function constructRescueIslandPilotWithAdmission({
   if (git(canonicalRoot, ['rev-parse', 'HEAD'], runGit) !== task.baseHead
       || git(canonicalRoot, ['rev-parse', 'origin/main'], runGit) !== task.baseHead)
     fail('RESCUE_ISLAND_BASE_NOT_CURRENT_MAIN');
-  const existing = git(canonicalRoot, ['ls-tree', '--name-only', 'HEAD', '--', task.targetPath], runGit);
-  if (existing) fail('RESCUE_ISLAND_TARGET_ALREADY_EXISTS');
+  for (const change of writes) {
+    const existing = git(canonicalRoot, ['ls-tree', 'HEAD', '--', change.path], runGit);
+    if (change.beforeBlob === null && existing) fail('RESCUE_ISLAND_TARGET_ALREADY_EXISTS');
+    if (change.beforeBlob !== null && !existing.startsWith('100644 blob '+change.beforeBlob+'\t'))
+      fail('RESCUE_ISLAND_SOURCE_BEFORE_BLOB_CHANGED');
+  }
+  if(sourcePlan) writes=writes.map(change=>{
+    if(!change.edits)return change;
+    let content=git(canonicalRoot,['show',task.baseHead+':'+change.path],runGit);
+    if(Buffer.byteLength(content,'utf8')>65536)fail('RESCUE_ISLAND_SOURCE_PATCH_SIZE_HELD');
+    for(const edit of change.edits){
+      if(content.split(edit.before).length!==2)fail('RESCUE_ISLAND_SOURCE_PATCH_NOT_UNIQUE');
+      content=content.replace(edit.before,()=>edit.after);
+    }
+    if(!content.length || Buffer.byteLength(content,'utf8')>65536 || digest(content)!==change.afterSha256)
+      fail('RESCUE_ISLAND_SOURCE_PATCH_CONTENT_MISMATCH');
+    return Object.freeze({path:change.path,beforeBlob:change.beforeBlob,content});
+  });
+  if (sourcePlan) for (const testPath of testPaths) {
+    if (!writes.some(w=>w.path===testPath)
+        && !git(canonicalRoot,['ls-tree','--name-only','HEAD','--',testPath],runGit))
+      fail('RESCUE_ISLAND_SOURCE_TEST_PLAN_MISSING');
+  }
   const branch = 'rescue-island/pilot-' + task.taskId;
   const worktree = join(treeRoot, task.taskId);
   const claimDir = join(proofs, 'claims');
@@ -330,45 +361,72 @@ async function constructRescueIslandPilotWithAdmission({
       fail('RESCUE_ISLAND_WORKTREE_PHYSICAL_BOUNDARY_INVALID');
     await append('PHYSICAL_PICKUP', { worktreeCreated: true });
     await recheck('BEFORE_EDIT');
-    const output = resolve(worktree, task.targetPath);
-    if (!output.startsWith(resolve(worktree) + (process.platform === 'win32' ? '\\' : '/')))
-      fail('RESCUE_ISLAND_PATH_ESCAPES_WORKTREE');
-    await mkdir(dirname(output), { recursive: true });
-    if (lower(await physicalRoot(dirname(output))) !== lower(dirname(output))
-        || overlaps(await physicalRoot(dirname(output)), canonicalRoot)
-        || overlaps(await physicalRoot(dirname(output)), proofs))
-      fail('RESCUE_ISLAND_TARGET_PARENT_BOUNDARY_INVALID');
-    if (recovering && await exists(output)) {
-      if (await readFile(output, 'utf8') !== task.content)
-        fail('RESCUE_ISLAND_RECOVERY_SOURCE_MISMATCH');
-    } else {
-      await writeFile(output, task.content, { flag: 'wx' });
+    const outputs = new Map();
+    for (const change of writes) {
+      const output = resolve(worktree, change.path);outputs.set(change.path,output);
+      if (!output.startsWith(resolve(worktree) + (process.platform === 'win32' ? '\\' : '/')))
+        fail('RESCUE_ISLAND_PATH_ESCAPES_WORKTREE');
+      await mkdir(dirname(output), { recursive: true });
+      if (lower(await physicalRoot(dirname(output))) !== lower(dirname(output))
+          || overlaps(await physicalRoot(dirname(output)), canonicalRoot)
+          || overlaps(await physicalRoot(dirname(output)), proofs))
+        fail('RESCUE_ISLAND_TARGET_PARENT_BOUNDARY_INVALID');
+      if (recovering && await exists(output)) {
+        if (await readFile(output, 'utf8') !== change.content) fail('RESCUE_ISLAND_RECOVERY_SOURCE_MISMATCH');
+      } else if (change.beforeBlob === null) {
+        await writeFile(output, change.content, {flag:'wx'});
+      } else {
+        if (!(await lstat(output)).isFile() || lower(await physicalRoot(output)) !== lower(output)
+            || git(worktree,['hash-object','--no-filters','--',change.path],runGit)!==change.beforeBlob)
+          fail('RESCUE_ISLAND_SOURCE_BEFORE_BLOB_CHANGED');
+        await writeFile(output,change.content,{flag:'w'});
+      }
     }
-    await append('EDITED', { sha256: digest(task.content) });
+    const approvedBytesMatch = async()=> {
+      for (const change of writes) {
+        const file = outputs.get(change.path);
+        if (lower(await physicalRoot(file)) !== lower(file) || !(await lstat(file)).isFile()
+            || !(await readFile(file)).equals(Buffer.from(change.content, 'utf8'))) return false;
+      }
+      return true;
+    };
+    await append('EDITED', {sha256:digest(task.content),
+      ...(sourcePlan?{changedPaths:approvedPaths,sourceContentSha256:Object.fromEntries(writes.map(w=>[w.path,digest(w.content)]))}:{})});
     // Persisted recovery state is untrusted. Before executing any JavaScript,
-    // prove every tracked delta and every untracked file is the approved doc.
+    // prove every tracked delta and every untracked file belongs to the approved scope.
     // This covers the test and its imported dependency graph, not just testPath.
     await recheck('BEFORE_TEST');
     const beforeTestHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
     if (beforeTestHead !== task.baseHead && (!recovering
         || git(worktree, ['rev-parse', 'HEAD^'], runGit) !== task.baseHead
-        || git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit) !== task.targetPath))
+        || git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit) !== expectedChanged))
       fail('RESCUE_ISLAND_RECOVERY_HEAD_UNTRUSTED');
     const deltas = git(worktree, ['diff', '--name-only', task.baseHead, '--'], runGit)
       .split('\n').filter(Boolean);
     const pendingPaths = git(worktree, ['status', '--porcelain', '--untracked-files=all'], runGit)
       .split('\n').filter(Boolean).map(line => line.slice(3).trim());
-    if (deltas.some(path => path !== task.targetPath)
-        || pendingPaths.some(path => path !== task.targetPath))
+    if (deltas.some(path => !allowed(path))
+        || pendingPaths.some(path => !allowed(path)))
       fail('RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED');
-    for (const relative of [task.testPath, 'shared/agents/rescueIslandPreflightV1.mjs']) {
+    for (const relative of [...new Set([...testPaths, 'shared/agents/rescueIslandPreflightV1.mjs'])].filter(p=>!sourcePlan || !allowed(p))) {
       const file = join(worktree, relative);
       if (lower(await physicalRoot(file)) !== lower(file) || !(await lstat(file)).isFile()
           || git(worktree, ['hash-object', '--no-filters', '--', relative], runGit)
             !== git(worktree, ['rev-parse', task.baseHead + ':' + relative], runGit))
         fail('RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED');
     }
-    const testProof = nodeTest(worktree, task.testPath, runTest);
+    let nativeProvision;
+    if(sourcePlan?.needsNativeObserver){
+      const {provisionIslandNativeSourceTestsV1}=await import('./rescueIslandNativeTestProvisionV1.mjs');
+      nativeProvision=await provisionIslandNativeSourceTestsV1({descriptor:nativeTestHost,worktree,receiptRoot:proofs,taskId:task.taskId});
+      const pending=git(worktree,['status','--porcelain','--untracked-files=all'],runGit)
+        .split('\n').filter(Boolean).map(line=>line.slice(3).trim());
+      if(pending.some(path=>!allowed(path)))fail('RESCUE_ISLAND_NATIVE_TEST_SETUP_NOT_IGNORED');
+    }
+    // Admission and native provisioning await I/O. Verify every approved write
+    // after those boundaries, before executing any candidate source or test.
+    if (!await approvedBytesMatch()) fail('RESCUE_ISLAND_PRETEST_APPROVED_CONTENT_CHANGED');
+    const testProof = nodeTest(worktree, sourcePlan ? testPaths : task.testPath, runTest,Boolean(nativeProvision));
     const testResultHash = testProof.hash;
     const testOutputRoot = join(proofs, 'test-output');
     await mkdir(testOutputRoot, { recursive: true });
@@ -385,7 +443,8 @@ async function constructRescueIslandPilotWithAdmission({
       finally { await log.close(); }
     }
     if (!testProof.ok) fail('RESCUE_ISLAND_FOCUSED_TEST_FAILED');
-    await append('TESTED', { testResultHash, testExitCode: 0, testPath: task.testPath, testOutputFile });
+    await append('TESTED', { testResultHash, testExitCode: 0, testPath: task.testPath, testOutputFile, ...(sourcePlan?{testPaths,testProfile:sourcePlan.testProfile,
+      ...(nativeProvision?{nativeTestProvision:nativeProvision}:{})}: {}) });
     await recheck('BEFORE_COMMIT');
     const currentHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
     if (currentHead === task.baseHead) {
@@ -395,13 +454,13 @@ async function constructRescueIslandPilotWithAdmission({
         .split('\n').filter(Boolean);
       const commitPending = git(worktree, ['status', '--porcelain', '--untracked-files=all'], runGit)
         .split('\n').filter(Boolean).map(line => line.slice(3).trim());
-      if (commitDeltas.some(path => path !== task.targetPath)
-          || commitPending.some(path => path !== task.targetPath)
-          || await readFile(output, 'utf8') !== task.content)
+      if (commitDeltas.some(path => !allowed(path))
+          || commitPending.some(path => !allowed(path))
+          || !await approvedBytesMatch())
         fail('RESCUE_ISLAND_PRECOMMIT_SCOPE_CHANGED');
-      git(worktree, ['add', '--', task.targetPath], runGit);
+      git(worktree, ['add', '--', ...approvedPaths], runGit);
       const staged = git(worktree, ['diff', '--cached', '--name-only'], runGit);
-      if (staged !== task.targetPath) fail('RESCUE_ISLAND_STAGED_SCOPE_MISMATCH');
+      if (staged !== expectedChanged) fail('RESCUE_ISLAND_STAGED_SCOPE_MISMATCH');
       git(worktree, ['-c', 'core.hooksPath=' + (process.platform === 'win32' ? 'NUL' : '/dev/null'),
         '-c', 'user.name=Rescue Island Proposal',
         '-c', 'user.email=rescue-island@users.noreply.github.com',
@@ -412,23 +471,26 @@ async function constructRescueIslandPilotWithAdmission({
     const head = git(worktree, ['rev-parse', 'HEAD'], runGit);
     const parent = git(worktree, ['rev-parse', 'HEAD^'], runGit);
     const changed = git(worktree, ['diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD'], runGit);
-    const committedPathContent = await readFile(output, 'utf8');
+    const committedBytesMatch = await approvedBytesMatch();
     const dirty = git(worktree, ['status', '--porcelain'], runGit);
     if (!SHA.test(head) || parent !== task.baseHead
-        || changed !== task.targetPath || dirty
-        || committedPathContent !== task.content) {
+        || changed !== expectedChanged || dirty
+        || !committedBytesMatch) {
       fail('RESCUE_ISLAND_COMMITTED_TREE_NOT_PROVEN');
     }
-    const blob = git(worktree, ['rev-parse', 'HEAD:' + task.targetPath], runGit);
-    // Compare the exact approved bytes. Filter-aware hashing can silently
-    // normalize CRLF or apply attributes while hiding a changed committed blob.
-    const workingBlob = git(worktree, ['hash-object', '--no-filters', '--', task.targetPath], runGit);
-    if (!SHA.test(blob) || workingBlob !== blob)
-      fail('RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN');
-    await append('ISOLATED_COMMIT', { commitHead: head, sourceBlob: blob,
-      exactParentHead: parent, changedPath: changed });
+    const blobs={};
+    for(const change of writes){
+      const blob=git(worktree,['rev-parse','HEAD:'+change.path],runGit);
+      const workingBlob=git(worktree,['hash-object','--no-filters','--',change.path],runGit);
+      if(!SHA.test(blob)||workingBlob!==blob)fail('RESCUE_ISLAND_COMMIT_BLOB_UNPROVEN');
+      blobs[change.path]=blob;
+    }
+    await append('ISOLATED_COMMIT',{commitHead:head,sourceBlob:blobs[task.targetPath],
+      exactParentHead:parent,changedPath:task.targetPath,
+      ...(sourcePlan?{changedPaths:approvedPaths,sourceBlobs:blobs}:{})});
     return Object.freeze({ ok: true, workerId: task.workerId, taskId: task.taskId,
-      head, parent, changedPath: changed, testResultHash, receipts: stages,
+      head, parent, changedPath: task.targetPath, testResultHash, receipts: stages,
+      ...(sourcePlan?{changedPaths:approvedPaths,sourceBlobs:blobs,testPaths}:{ }),
       ...receiptMetadata,
       reviewRequired: true, published: false, merged: false, deployed: false });
   } catch (error) {
@@ -461,6 +523,8 @@ function copyPilotTask(task) {
   return Object.freeze(copy);
 }
 
+function sourcePlanClaimDisjoint(expected,claim) { return Array.isArray(expected.targetPaths) && claim.taskId !== expected.taskId; }
+
 function assertSupervisedObservation(value, expected, rootIdentity) {
   const now = Date.now();
   const observed = Date.parse(value?.observedAtUtc);
@@ -484,6 +548,12 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
       || !SHA256.test(value.worktreeIdentity || '')
       || !value.roots || Object.values(value.roots).some(v => typeof v !== 'string' || !isAbsolute(v)))
     fail('RESCUE_ISLAND_SUPERVISED_HOST_OBSERVATION_HELD');
+  if(expected.needsNativeObserver && (!value.nativeTestHost
+    || value.nativeTestHost.schemaVersion!=='stephanos.rescue-island-native-test-observation.v1'
+    || typeof value.nativeTestHost.directory!=='string' || !isAbsolute(value.nativeTestHost.directory)
+    || value.nativeTestHost.purpose!=='OBSERVED_NATIVE_HOST_SMOKE_ONLY'
+    || !value.nativeTestHost.files || Object.values(value.nativeTestHost.files).some(h=>typeof h!=='string'||!SHA256.test(h))))
+    fail('RESCUE_ISLAND_NATIVE_TEST_DESCRIPTOR_UNPROVEN');
   const roots = value.roots;
   if (Object.keys(roots).sort().join(',') !== 'canonicalRoot,receiptRoot,repoRoot,worktreeRoot')
     fail('RESCUE_ISLAND_SUPERVISED_ROOTS_UNPROVEN');
@@ -495,6 +565,7 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
   if (rootIdentity && rootIdentity !== JSON.stringify([
     roots.canonicalRoot, roots.repoRoot, roots.worktreeRoot, roots.receiptRoot,
     value.worktreeIdentity, value.canonicalPreservationDigest,
+    ...(expected.needsNativeObserver?[JSON.stringify(value.nativeTestHost)]:[]),
   ])) fail('RESCUE_ISLAND_SUPERVISED_BOUNDARY_CHANGED');
 
   const inventories = [value.canonicalClaims, value.seedClaims, value.islandClaims];
@@ -509,31 +580,33 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
           || typeof claim.worktreeBranch !== 'string'
           || typeof claim.worktreeIdentity !== 'string' || !SHA256.test(claim.worktreeIdentity)
           || !Array.isArray(claim.targetPaths) || !claim.targetPaths.length
-          || claim.targetPaths.length > 3 || claim.targetPaths.some(path => typeof path !== 'string'
+          || claim.targetPaths.length > 6 || claim.targetPaths.some(path => typeof path !== 'string'
             || !/^[A-Za-z0-9][A-Za-z0-9._/-]{1,219}$/.test(path)
             || path.split('/').some(part => ['.', '..', '.git', ''].includes(part))))
         fail('RESCUE_ISLAND_SUPERVISED_CLAIM_INVALID');
       const isOwn = domain === 2 && claim.taskId === expected.taskId
-        && claim.ownerIssueNumber === 3109 && claim.workerId === 'rescue-island-01'
+        && claim.ownerIssueNumber === (expected.ownerIssueNumber || 3109) && claim.workerId === 'rescue-island-01'
         && claim.worktreeBranch === value.sourceBranch
         && claim.worktreeIdentity === value.worktreeIdentity
-        && claim.targetPaths.length === 1 && claim.targetPaths[0] === expected.targetPath;
+        && JSON.stringify(claim.targetPaths) === JSON.stringify(expected.targetPaths || [expected.targetPath]);
       if (isOwn) { own++; continue; }
       const clash = (a, b) => {
         a = a.toLowerCase(); b = b.toLowerCase();
         return a === b || a.startsWith(b + '/') || b.startsWith(a + '/');
       };
-      if (claim.taskId === expected.taskId || claim.ownerIssueNumber === 3109
+      if (claim.taskId === expected.taskId || (!sourcePlanClaimDisjoint(expected,claim) && claim.ownerIssueNumber === 3109)
           || claim.worktreeBranch.toLowerCase() === value.sourceBranch.toLowerCase()
           || claim.worktreeIdentity.toLowerCase() === value.worktreeIdentity
-          || claim.targetPaths.some(path => clash(path, expected.targetPath)))
+          || claim.targetPaths.some(path => (expected.targetPaths || [expected.targetPath]).some(target=>clash(path,target))))
         fail('RESCUE_ISLAND_SUPERVISED_OWNER_CONFLICT');
     }
   }
   if (own !== 1) fail('RESCUE_ISLAND_SUPERVISED_EXISTING_OWNER_REQUIRED');
   return Object.freeze({ roots: Object.freeze({ ...roots }), worktreeIdentity: value.worktreeIdentity,
+    ...(expected.needsNativeObserver?{nativeTestHost:Object.freeze({...value.nativeTestHost,files:Object.freeze({...value.nativeTestHost.files})})}:{}),
     identity: JSON.stringify([roots.canonicalRoot, roots.repoRoot, roots.worktreeRoot,
-      roots.receiptRoot, value.worktreeIdentity, value.canonicalPreservationDigest]) });
+      roots.receiptRoot, value.worktreeIdentity, value.canonicalPreservationDigest,
+      ...(expected.needsNativeObserver?[JSON.stringify(value.nativeTestHost)]:[])]) });
 }
 
 /**
@@ -555,11 +628,15 @@ export function createRescueIslandSupervisedRunnerV1(host) {
         || !Number.isSafeInteger(request.commentId) || request.commentId < 1)
       fail('RESCUE_ISLAND_SUPERVISED_REQUEST_INVALID');
     const task = copyPilotTask(request.task);
-    if (!validateRescueIslandPilotTaskV1(task, new Date().toISOString()) || task.issueNumber !== 3109)
+    const sourcePlan = task.schemaVersion === 'stephanos.rescue-island-source-task.v1'
+      ? (await import('./rescueIslandSourceTaskV1.mjs')).inspectRescueIslandSourceTaskV1(task) : null;
+    if (sourcePlan ? !sourcePlan.valid
+      : (!validateRescueIslandPilotTaskV1(task, new Date().toISOString()) || task.issueNumber !== 3109))
       fail('RESCUE_ISLAND_EXTERNAL_TASK_INVALID');
     const expected = Object.freeze({ commentId: request.commentId,
       taskId: task.taskId, taskFingerprint: fingerprint(task), baseHead: task.baseHead,
-      targetPath: task.targetPath, assuranceProfile: SUPERVISED_PROFILE });
+      targetPath: task.targetPath, assuranceProfile: SUPERVISED_PROFILE,
+      ...(sourcePlan?{targetPaths:sourcePlan.targetPaths,ownerIssueNumber:task.issueNumber,taskKind:sourcePlan.taskKind,needsNativeObserver:sourcePlan.needsNativeObserver}:{}) });
     let invoked = false;
     let completed = false;
     let outcome;
@@ -595,12 +672,15 @@ export function createRescueIslandSupervisedRunnerV1(host) {
           fail('RESCUE_ISLAND_SUPERVISED_REDIRECTED_ROOT');
       }
       outcome = await constructRescueIslandPilotWithAdmission({
-        task, observed: { worktreeIdentity: first.worktreeIdentity },
+        task, sourcePlan, nativeTestHost:first.nativeTestHost, observed: { worktreeIdentity: first.worktreeIdentity },
         repoRoot: first.roots.repoRoot, worktreeRoot: first.roots.worktreeRoot,
         receiptRoot: first.roots.receiptRoot, recheck,
         receiptMetadata: Object.freeze({ assuranceProfile: SUPERVISED_PROFILE,
           ownerCommentId: expected.commentId, taskFingerprint: expected.taskFingerprint,
           processId: process.pid, hostileWriterContainmentProven: false,
+          ...(sourcePlan?{taskKind:sourcePlan.taskKind,taskOwnerIssueNumber:task.issueNumber,
+            taskOwnerIssueTitle:task.issueTitle,executionOwnerIssueNumber:3109,
+            approvedTargetPaths:sourcePlan.targetPaths,approvedContentSha256:digest(task.content)}:{}),
           independentlyCommissionedWorker: false, unattendedRefillsProven: false }),
       });
       completed = true;

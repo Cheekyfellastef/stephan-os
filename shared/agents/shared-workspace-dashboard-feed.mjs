@@ -292,7 +292,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
 }
 
 export async function readSharedWorkspaceDashboardFeed(input = {}) {
-  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
   const recordScope = safeRecordScope(input.recordScope);
@@ -316,6 +316,8 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const stephanosBuildTruthStatus = resolved.ok
     ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  // A live observation is sampled after the asynchronous record reads.
+  if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
   const latest = {
     goal: records.goalRecords[0] || null,
     status: records.statusRecords[0] || null,
