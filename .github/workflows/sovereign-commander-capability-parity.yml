@@ -15,6 +15,16 @@ on:
       - 'scripts/sovereign-commander-preservation-converge.test.mjs'
       - 'shared/agents/sovereignCommanderRepairVerbs.test.mjs'
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/monitorAdmissionRuntimeV2.mjs'
+      - 'shared/agents/logicalGoalPickupProofV1.mjs'
+      - 'shared/agents/logicalGoalPickupProofV1.test.mjs'
+      - 'shared/agents/controllerFleetTelemetryV1.mjs'
+      - 'shared/agents/controllerActivityPublisherV1.mjs'
+      - 'shared/agents/controllerActivityPublisherV1.test.mjs'
+      - 'scripts/stephanos-core-daemon.mjs'
+      - 'scripts/sovereign-controller-lane-status.mjs'
+      - 'shared/agents/logicalGoalControllerMultiplexerV1.test.mjs'
+      - 'shared/agents/monitorAdmissionRuntimeV2.test.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
@@ -134,6 +144,12 @@ jobs:
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
+          node --check shared/agents/monitorAdmissionRuntimeV2.mjs
+          node --check shared/agents/logicalGoalPickupProofV1.mjs
+          node --check shared/agents/controllerActivityPublisherV1.mjs
+          node --check shared/agents/controllerFleetTelemetryV1.mjs
+          node --check scripts/stephanos-core-daemon.mjs
+          node --check scripts/sovereign-controller-lane-status.mjs
       - name: Parse Windows PowerShell CPU and watchdog scripts
         shell: pwsh
         run: |
@@ -156,6 +172,10 @@ jobs:
           node --test scripts/sovereign-commander-preservation-converge.test.mjs
           node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
+          node --test shared/agents/logicalGoalControllerMultiplexerV1.test.mjs
+          node --test shared/agents/logicalGoalPickupProofV1.test.mjs
+          node --test shared/agents/controllerActivityPublisherV1.test.mjs
+          node --test shared/agents/monitorAdmissionRuntimeV2.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
           node --test shared/agents/sovereignCommanderHttp.test.mjs
