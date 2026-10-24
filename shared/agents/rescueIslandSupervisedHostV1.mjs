@@ -197,6 +197,26 @@ function nativePrincipal(nativeHostPath) {
   return p;
 }
 
+// Trusted operator configuration, not request assertions. These inputs only
+// ADD gaming signals in the canonical detector; they cannot disable built-ins.
+// Do not pass executable, credential, preload or generic environment selectors.
+export function rescueIslandGovernorEnvironmentV1(source=process.env) {
+  const environment={...createBattleBridgeMinimalChildEnvironment(source)};
+  for(const key of ['STEPHANOS_GAME_PROCESS_NAMES','STEPHANOS_GAME_LIBRARY_ROOTS']) {
+    const value=source[key];
+    if(value===undefined || value==='')continue;
+    if(typeof value!=='string' || value.length>4096 || /[\x00-\x1f\x7f]/.test(value))
+      held('ISLAND_HOST_GOVERNOR_CONFIGURATION_INVALID');
+    const entries=value.split(key.endsWith('NAMES')?/[;,]/:/;/).map(v=>v.trim()).filter(Boolean);
+    if(entries.length>64 || entries.some(v=>key.endsWith('NAMES')
+      ? !/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$/.test(v)
+      : !/^[A-Za-z]:\\/.test(v) || /[<>"|?*]/.test(v) || v.split(/[\\/]/).some(p=>p==='.'||p==='..')))
+      held('ISLAND_HOST_GOVERNOR_CONFIGURATION_INVALID');
+    environment[key]=value;
+  }
+  return environment;
+}
+
 async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
   const script='scripts/windows/run-vr-resource-governor.ps1';
   if(!(await physical(join(canonicalRoot,script))).isFile())held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
@@ -222,7 +242,7 @@ async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
   const reconciled=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
     ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','Reconcile'],
     {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:18000,maxBuffer:32768,
-      env:createBattleBridgeMinimalChildEnvironment(process.env)});
+      env:rescueIslandGovernorEnvironmentV1(process.env)});
   if(reconciled.error || reconciled.status!==0)held('ISLAND_HOST_GOVERNOR_RECONCILE_FAILED');
   // The canonical governor owns signal collection and reconciliation. Read its
   // actual persisted result separately; request data cannot supply idle truth.

@@ -60,7 +60,10 @@ try
         var inherited = start.Environment.ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
         start.Environment.Clear();
         foreach (string name in new[] { "APPDATA", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "PROGRAMDATA",
-            "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR" })
+            "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR",
+            // Additive canonical detector inputs; JS validates these as data
+            // and supplies them ONLY to the fixed governor, never GitHub.
+            "STEPHANOS_GAME_PROCESS_NAMES", "STEPHANOS_GAME_LIBRARY_ROOTS" })
             if (inherited.TryGetValue(name, out string? value) && !string.IsNullOrEmpty(value)) start.Environment[name] = value;
         using var child = Process.Start(start) ?? throw new HostHeldException("ISLAND_HOST_CHILD_START_FAILED");
         try

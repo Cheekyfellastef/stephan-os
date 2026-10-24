@@ -58,6 +58,27 @@ root identities stop the operation. Failed admissions, claims, commits and
 receipt-publication failures remain for operator reconciliation. No automatic
 recovery or refill is implemented.
 
+Fresh gaming admission runs the exact canonical governor Git bytes with its
+fixed Reconcile action. The trusted operator's additive custom-game settings
+(`STEPHANOS_GAME_PROCESS_NAMES` and `STEPHANOS_GAME_LIBRARY_ROOTS`) survive native
+ingress and are validated as bounded detector data before reaching that child.
+They cannot select a command or supply an idle observation. Other inherited
+executable, credential and preload selectors remain excluded. A change to the
+governor source, failed reconciliation or active game holds construction.
+
+The Windows-only real-adapter suite is explicitly launched by the existing
+native proof workflow, rather than collected by portable Node test globs:
+
+```
+dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release -- --run-adapter-tests
+```
+
+Its fixed test-only launcher reduces its own token and executes
+`shared/agents/rescueIslandSupervisedHostV1.windows.mjs`. Every test is mandatory
+in the Windows job. GitHub transport and platform process inventories are test
+doubles; the canonical custom-game resolution function itself is exercised.
+Fixture commits are test evidence, not a commissioned live Island build.
+
 Passing and failing Node stdout is retained under `receipts/test-output`, with
 content-addressed log names. A TESTED receipt binds its exact log SHA-256,
 test path and zero exit status. A failed test does not emit TESTED or COMMIT.

@@ -14,7 +14,7 @@ internal static class RestrictedAdapterTestRunner
     internal static int Run()
     {
         string root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.."));
-        string suite = Path.Combine(root, "shared", "agents", "rescueIslandSupervisedHostV1.test.mjs");
+        string suite = Path.Combine(root, "shared", "agents", "rescueIslandSupervisedHostV1.windows.mjs");
         string node = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
         if (!Directory.Exists(Path.Combine(root, ".git")) || !File.Exists(suite) || !File.Exists(node))
             throw new Exception("ADAPTER_TEST_SOURCE_LAYOUT_INVALID");
@@ -35,7 +35,7 @@ internal static class RestrictedAdapterTestRunner
             {
                 string log = Path.Combine(Path.GetTempPath(), "island-adapter-ci-" + Guid.NewGuid().ToString("N") + ".log");
                 using var output = new FileStream(log, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Inheritable);
-                var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = 0x100,
+                var startup = new StartupInfo { Size = Marshal.SizeOf<StartupInfo>(), Flags = 0x100, Desktop = "winsta0\\default",
                     StdOutput = output.SafeFileHandle.DangerousGetHandle(), StdError = output.SafeFileHandle.DangerousGetHandle() };
                 var command = new StringBuilder("\"" + node + "\" --test --test-concurrency=1 \"" + suite + "\"");
                 if (!CreateProcessAsUserW(reduced, node, command, IntPtr.Zero, IntPtr.Zero, true, 0x08004000,
@@ -51,7 +51,8 @@ internal static class RestrictedAdapterTestRunner
                     output.Position = 0;
                     using var reader = new StreamReader(output, Encoding.UTF8, leaveOpen: true);
                     Console.Write(reader.ReadToEnd());
-                    return checked((int)exitCode);
+                    Console.WriteLine("ISLAND_ADAPTER_TEST_CHILD_EXIT=0x" + exitCode.ToString("X8"));
+                    return unchecked((int)exitCode);
                 }
                 finally { CloseHandle(process.Thread); CloseHandle(process.Process); }
             }

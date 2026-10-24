@@ -9,7 +9,8 @@ import {mkdtemp,mkdir,writeFile,readFile,readdir,realpath,stat,rm,rename} from '
 import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {createRescueIslandSupervisedHostV1,readIslandCanonicalClaimsV1,readIslandSeedClaimsV1} from './rescueIslandSupervisedHostV1.mjs';
+import {createRescueIslandSupervisedHostV1,readIslandCanonicalClaimsV1,readIslandSeedClaimsV1,
+  rescueIslandGovernorEnvironmentV1} from './rescueIslandSupervisedHostV1.mjs';
 import {resolveBattleBridgeGitExecutable,battleBridgeGitFixedConfigArgs,
   createBattleBridgeMinimalChildEnvironment} from './battleBridgeExecutionBoundaryV1.mjs';
 
@@ -26,7 +27,7 @@ function git(cwd,args) {
   assert.equal(r.status,0,r.stderr);return r.stdout.trim();
 }
 async function save(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value));}
-async function fixture(t) {
+async function fixture(t,{realFlatSignal=false}={}) {
   assert.equal(process.platform,'win32','This suite requires the real native Windows token observer.');
   await stat(nativeHostPath); // No skip or fabricated principal if the host was not built.
   const root=await realpath(await mkdtemp(join(tmpdir(),'island-real-adapters-')));
@@ -39,9 +40,23 @@ async function fixture(t) {
     await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
   await mkdir(join(canonicalRoot,'scripts/windows'),{recursive:true});
   const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
+  let detector='';
+  if(realFlatSignal) {
+    const canonical=await readFile(join(repo,'scripts/windows/run-vr-resource-governor.ps1'),'utf8');
+    const start=canonical.indexOf('function Get-FlatGameSignal {'),end=canonical.indexOf('function Get-GamingSignal {',start);
+    assert.ok(start>0&&end>start);
+    // Real canonical signal-resolution code, isolated from reconciliation and
+    // all live platform/model operations. Only the process inventory is doubled.
+    detector=canonical.slice(start,end)+
+      "\nfunction Get-Process { [pscustomobject]@{ProcessName='IslandCustomGame';Path='Q:\\Custom Library\\title\\game.exe';MainWindowHandle=1;Id=123} }\n"+
+      "function Get-ParentProcessInfo { param([int]$ProcessId) [pscustomobject]@{processId=0;processName='';executablePath=''} }\n"+
+      "function Test-WindowsGamePresenceActive { $false }\n";
+  }
   await writeFile(join(canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1'),
     "param([ValidateSet('Reconcile')][string]$Action)\n$ErrorActionPreference='Stop'\n"+
+    detector+
     "$path='"+governorFile+"'\n$state=[IO.File]::ReadAllText($path)|ConvertFrom-Json\n"+
+    (realFlatSignal?"$signal=Get-FlatGameSignal\nif($signal.active){$state.active=$true;$state.phase='GAMING';$state.localModelAllowed=$false}\n":'')+
     "$state.updatedAtUtc=[DateTime]::UtcNow.ToString('o')\n"+
     "$encoded=$state|ConvertTo-Json -Depth 8\n[IO.File]::WriteAllText($path,$encoded,(New-Object Text.UTF8Encoding($false)))\n$encoded\n");
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
@@ -144,6 +159,31 @@ test('idle governor transition timestamps are refreshed through the fixed source
   const result=await f.run(f.request);assert.equal(result.ok,true);
   const state=JSON.parse(await readFile(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),'utf8'));
   assert.ok(Date.now()-Date.parse(state.updatedAtUtc)<10000);
+});
+
+test('canonical custom game-name and library detection revoke real adapter admission',async t=>{
+  const names='STEPHANOS_GAME_PROCESS_NAMES',roots='STEPHANOS_GAME_LIBRARY_ROOTS';
+  const oldNames=process.env[names],oldRoots=process.env[roots];
+  t.after(()=>{for(const [key,value] of [[names,oldNames],[roots,oldRoots]])
+    if(value===undefined)delete process.env[key];else process.env[key]=value;});
+  for(const [key,value] of [[names,'IslandCustomGame'],[roots,'Q:\\Custom Library']]) {
+    delete process.env[names];delete process.env[roots];process.env[key]=value;
+    const f=await fixture(t,{realFlatSignal:true});
+    await assert.rejects(f.run(f.request),/GAMING_ADMISSION_REVOKED_OR_STALE/);
+    assert.equal(git(f.config.canonicalRoot,['rev-parse','HEAD']),f.task.baseHead);
+    assert.equal(await readFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
+  }
+});
+
+test('governor detector settings are bounded data and do not restore executable selectors',()=>{
+  const env=rescueIslandGovernorEnvironmentV1({...process.env,STEPHANOS_GAME_PROCESS_NAMES:'Custom Game;Title_2',
+    STEPHANOS_GAME_LIBRARY_ROOTS:'Q:\\Custom Library',STEPHANOS_GH_COMMAND:'untrusted.exe',NODE_OPTIONS:'--require untrusted'});
+  assert.equal(env.STEPHANOS_GAME_PROCESS_NAMES,'Custom Game;Title_2');
+  assert.equal(env.STEPHANOS_GAME_LIBRARY_ROOTS,'Q:\\Custom Library');
+  assert.equal(env.STEPHANOS_GH_COMMAND,undefined);assert.equal(env.NODE_OPTIONS,undefined);
+  for(const [key,value] of [['STEPHANOS_GAME_PROCESS_NAMES','*'],['STEPHANOS_GAME_LIBRARY_ROOTS','relative\\path'],
+    ['STEPHANOS_GAME_LIBRARY_ROOTS','Q:\\safe\\..\\escape'],['STEPHANOS_GAME_PROCESS_NAMES','bad\nname']])
+    assert.throws(()=>rescueIslandGovernorEnvironmentV1({[key]:value}),/GOVERNOR_CONFIGURATION_INVALID/);
 });
 test('changed governor source is rejected before that script executes',async t=>{
   const f=await fixture(t),path=join(f.config.canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1');
