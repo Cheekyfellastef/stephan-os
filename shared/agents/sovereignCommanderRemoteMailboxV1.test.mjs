@@ -2688,11 +2688,41 @@ test('Core daemon status stays observational underneath but Sovereign fails stal
   assert.equal(result.coreDaemonStatus.repairRequired, true);
 });
 
+test('public Core status preserves inaccessible process inventory as unknown without leaking raw evidence', async () => {
+  for (const inventory of [
+    { processCount: null, processInventoryComplete: false },
+    { processCount: 0, processInventoryComplete: false },
+    { processCount: 0 },
+    { processCount: 0, processInventoryComplete: true },
+  ]) {
+    const maintenance = {
+      ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'status-stephanos-core-daemon' } },
+      structuredContent: { ok: true, status: 0, stdout: JSON.stringify({
+        schemaVersion: 'stephanos.core-daemon-status.v1', ok: false,
+        ...inventory, processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
+        processId: 12345, commandLine: 'PRIVATE_RAW_COMMAND_LINE', sourceHead: HEAD,
+      }) },
+    };
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(result.coreDaemonStatus.processCount, inventory.processInventoryComplete === true ? 0 : null);
+    assert.equal(result.coreDaemonStatus.processInventoryComplete, inventory.processInventoryComplete === true);
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_RAW_COMMAND_LINE|12345/);
+  }
+});
+
 test('fresh exact-head Core daemon status remains a successful read-only Sovereign observation', async () => {
   const freshStatus = {
     schemaVersion: 'stephanos.core-daemon-status.v1',
     ok: true,
     processCount: 1,
+    processInventoryComplete: true,
     daemonHealthy: true,
     singleWriterProven: true,
     writerProcessObserved: true,
@@ -2742,6 +2772,20 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.available, true);
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+  for (const complete of [false, undefined]) {
+    const contradictory = { ...maintenance, structuredContent: {
+      ...maintenance.structuredContent,
+      stdout: JSON.stringify({ ...freshStatus, processInventoryComplete: complete }),
+    } };
+    const { fetchFn: incompleteFetch } = mcpFetch({ maintenance: contradictory });
+    const held = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'status-stephanos-core-daemon' }),
+      { spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn: incompleteFetch, env: { USERPROFILE: 'C:\\Users\\Operator' } },
+    );
+    assert.equal(held.ok, false);
+    assert.equal(held.coreDaemonStatus.ok, false);
+    assert.equal(held.coreDaemonStatus.processCount, null);
+  }
 });
 
 test('remote Core health refuses missing or false custody proofs despite fresh status', async () => {
