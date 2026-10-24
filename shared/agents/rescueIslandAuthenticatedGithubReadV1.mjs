@@ -2,6 +2,8 @@
 // independently observed owner comment/issue/current-main identity. No writer.
 // This does NOT authenticate canonical/Seed/Island ownership or allow pickup.
 import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import { inspectRescueIslandPilotOwnerIntakeV1, inspectRescueIslandSupervisedOwnerIntakeV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 export const RESCUE_ISLAND_GITHUB_READ_SCHEMA = 'stephanos.rescue-island-github-read.v1';
@@ -100,6 +102,8 @@ function trustedSharedGithubObservation(spec, commentId, nowMs) {
     maxStaleMs: 1000,
     timeoutMs: BROKER_TIMEOUT_MS,
     nowMs,
+    ghCommand: process.platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.githubCli : '/usr/bin/gh',
+    childEnv: createBattleBridgeMinimalChildEnvironment(process.env),
   });
   // Never use stale/error-cache observations for approval-bearing evidence.
   // The common broker persists cooldown; a future controller invocation must

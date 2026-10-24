@@ -62,8 +62,15 @@ Passing and failing Node stdout is retained under `receipts/test-output`, with
 content-addressed log names. A TESTED receipt binds its exact log SHA-256,
 test path and zero exit status. A failed test does not emit TESTED or COMMIT.
 
-The first pilot uses the governor's existing fresh NORMAL/idle admission for
-fixed CPU-only work, expiring at the observed governor timestamp + 10 seconds.
+The first pilot invokes the existing canonical governor's fixed `Reconcile`
+action for a fresh NORMAL/idle observation for CPU-only work, expiring at the
+observed timestamp + 10 seconds. A stale transition timestamp is not a heartbeat.
+The exact governor Git blob is materialised into the Island's private input
+evidence; standard CRLF checkout differences are accepted for comparison, while
+only the exact Git bytes are executed. The fixed Windows PowerShell child uses
+the existing per-process execution-policy argument; no machine policy is changed.
+Long clone/preservation operations refresh the same governor again before
+returning admission.
 It is checked before claims/worktrees/edit/tests/commit; no model is loaded.
 This is an ordinary cooperative governor observation, not an independently
 signed resource grant. It cannot qualify hostile-writer custody or unattended
@@ -86,6 +93,20 @@ Every construction receipt is labelled `SUPERVISED_COOPERATIVE_V1`, with
 and `unattendedRefillsProven=false`. This is **less assurance** than strict
 containment, assuming a trusted operator and cooperative workers. Island 02,
 general-purpose model building and unattended refill remain unimplemented.
+
+Approval reads use the canonical absolute GitHub CLI path and an explicit
+minimal child environment. Inherited `STEPHANOS_GH_COMMAND`, PATH, GitHub host,
+token/config selectors and Node preload settings cannot nominate an executable
+or substitute the owner-authentication transport. Native ingress also uses an
+environment allowlist.
+
+Hosted Windows CI uses a test-executable-only launcher for the fixed adapter
+suite under a LUA/maximum-privilege-disabled copy of its own primary token.
+The real production token observer must accept that child; no account, ACL,
+policy or credential is provisioned. GitHub reads and the governor's platform
+signal collector are explicit fixture doubles in that suite; lock/file/Git/Node,
+PowerShell invocation and native token observation are real. Live gaming/model
+reconciliation remains separate qualification under exact operator consent.
 
 The JSON is diagnostic and unauthenticated outside the observing process.
 Even a plausible distinct SID and non-elevated token do not authenticate host

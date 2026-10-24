@@ -1,5 +1,6 @@
 // Real Windows token observer, operation locks, claim readers, preservation,
-// independent clone, Node tests and Git commit. Only GitHub is a test double.
+// independent clone, Node tests and Git commit. GitHub and the platform signal
+// collector in the canonical governor script are explicit fixture doubles.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
@@ -36,6 +37,13 @@ async function fixture(t) {
   await mkdir(join(sharedWorkspaceRoot,'worktrees'),{recursive:true});await mkdir(missionRoot);
   for(const name of ['rescueIslandPreflightV1.mjs','rescueIslandPreflightV1.test.mjs'])
     await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
+  await mkdir(join(canonicalRoot,'scripts/windows'),{recursive:true});
+  const governorFile=join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json').replaceAll("'","''");
+  await writeFile(join(canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1'),
+    "param([ValidateSet('Reconcile')][string]$Action)\n$ErrorActionPreference='Stop'\n"+
+    "$path='"+governorFile+"'\n$state=[IO.File]::ReadAllText($path)|ConvertFrom-Json\n"+
+    "$state.updatedAtUtc=[DateTime]::UtcNow.ToString('o')\n"+
+    "$encoded=$state|ConvertTo-Json -Depth 8\n[IO.File]::WriteAllText($path,$encoded,(New-Object Text.UTF8Encoding($false)))\n$encoded\n");
   git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
   git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
   git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
@@ -70,7 +78,7 @@ async function fixture(t) {
       user:{login:'Cheekyfellastef',type:'User',id:267490109},author_association:'OWNER',
       created_at:now,updated_at:now,body:'/rescue-island-01 supervised-cooperative '+baseHead+' '+task.taskId+' '+hash(task.content)}};
   await writeFile(join(harness,'githubObservationBrokerV1.mjs'),
-    'const facts='+JSON.stringify(facts)+'; export function readBrokeredGithubJson(s){return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
+    'import {writeFileSync} from "node:fs"; const facts='+JSON.stringify(facts)+'; export function readBrokeredGithubJson(s){writeFileSync('+JSON.stringify(join(root,'broker-call.json'))+',JSON.stringify(s));return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
   const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(harness,'rescueIslandFirstCommitV1.mjs')));
   return {root,task,expected,config,host,governor,
     run:createRescueIslandSupervisedRunnerV1(host.host),request:{commentId:expected.commentId,task}};
@@ -109,11 +117,48 @@ test('real cross-process primitive excludes a second host, retaining exact task 
 test('fixed native ingress reaches real runner validation without accepting authority or paths',async t=>{
   await stat(nativeHostPath);
   const result=spawnSync(nativeHostPath,['--supervised-once'],{input:JSON.stringify({commentId:1234,task:{}}),
-    encoding:'utf8',shell:false,windowsHide:true,timeout:15000});
+    encoding:'utf8',shell:false,windowsHide:true,timeout:15000,
+    env:{...process.env,NODE_OPTIONS:'--require C:\\untrusted-fixture-preload.cjs',
+      STEPHANOS_GH_COMMAND:'C:\\untrusted-fixture-gh.exe',GH_HOST:'untrusted.invalid',PATH:'UNTRUSTED_FIXTURE_OVERRIDE'}});
   assert.equal(result.status,3,result.stderr);
   const facts=JSON.parse(result.stdout);
   assert.equal(facts.blocker,'RESCUE_ISLAND_SUPERVISED_TASK_NOT_PLAIN');
   assert.equal(facts.assuranceProfile,'SUPERVISED_COOPERATIVE_V1');
+});
+test('GitHub approval reader ignores inherited executable, host and credential selectors',async t=>{
+  const f=await fixture(t);
+  const keys=['STEPHANOS_GH_COMMAND','GH_HOST','GH_TOKEN','NODE_OPTIONS','PATH'];
+  const old=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  t.after(()=>{for(const key of keys)if(old[key]===undefined)delete process.env[key];else process.env[key]=old[key];});
+  for(const key of keys)process.env[key]='UNTRUSTED_FIXTURE_OVERRIDE';
+  await f.run(f.request);
+  const observed=JSON.parse(await readFile(join(f.root,'broker-call.json'),'utf8'));
+  assert.equal(observed.ghCommand,'C:\\Program Files\\GitHub CLI\\gh.exe');
+  for(const key of keys.filter(k=>k!=='PATH'))assert.equal(observed.childEnv[key],undefined);
+  assert.notEqual(observed.childEnv.PATH,'UNTRUSTED_FIXTURE_OVERRIDE');
+});
+test('idle governor transition timestamps are refreshed through the fixed source-verified action',async t=>{
+  const f=await fixture(t);
+  await save(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),{
+    ...f.governor,updatedAtUtc:'2000-01-01T00:00:00Z'});
+  const result=await f.run(f.request);assert.equal(result.ok,true);
+  const state=JSON.parse(await readFile(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),'utf8'));
+  assert.ok(Date.now()-Date.parse(state.updatedAtUtc)<10000);
+});
+test('changed governor source is rejected before that script executes',async t=>{
+  const f=await fixture(t),path=join(f.config.canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1');
+  await writeFile(path,'throw "UNTRUSTED GOVERNOR"\n');
+  await assert.rejects(f.run(f.request),/GOVERNOR_SOURCE_CHANGED/);
+});
+test('Windows CRLF checkout executes only the preserved exact governor Git blob',async t=>{
+  const f=await fixture(t),script=join(f.config.canonicalRoot,'scripts/windows/run-vr-resource-governor.ps1');
+  const approved=await readFile(script,'utf8');await writeFile(script,approved.replace(/\n/g,'\r\n'));
+  await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
+    await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
+  });
+  const inputs=join(f.config.sharedWorkspaceRoot,'proof/rescue-island-01-inputs');
+  const files=await readdir(inputs);assert.equal(files.length,1);
+  assert.equal(await readFile(join(inputs,files[0]),'utf8'),approved);
 });
 test('replacing a physical estate root between observations is held',async t=>{
   const f=await fixture(t);

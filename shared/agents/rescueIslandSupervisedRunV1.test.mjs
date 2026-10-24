@@ -71,7 +71,7 @@ async function fixture(t, overrides = {}, options = {}) {
   // adapters are replaced with explicit disposable fixtures.
   const harness = join(root, 'source-harness'); await mkdir(harness);
   for (const name of ['rescueIslandFirstCommitV1.mjs', 'rescueIslandAuthenticatedGithubReadV1.mjs',
-      'rescueIslandPilotOwnerIntakeV1.mjs']) {
+      'rescueIslandPilotOwnerIntakeV1.mjs', 'battleBridgeWindowsHosts.mjs']) {
     const bytes = await readFile(join(sourceRoot, name));
     await writeFile(join(harness, name), bytes);
     assert.deepEqual(await readFile(join(harness, name)), bytes);

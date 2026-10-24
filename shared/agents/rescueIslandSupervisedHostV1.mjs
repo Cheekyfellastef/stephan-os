@@ -11,6 +11,7 @@ import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mj
 import { createRescueIslandSupervisedRunnerV1 } from './rescueIslandFirstCommitV1.mjs';
 import { observeRescueIslandPhysicalScopesV1 } from './rescueIslandPhysicalScopeObservationV1.mjs';
 import { parallelSeedBranchNameV1 } from '../runtime/seedCanopyParallelForgeV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 import { resolveBattleBridgeGitExecutable, battleBridgeGitFixedConfigArgs,
   createBattleBridgeMinimalChildEnvironment, inspectBattleBridgeGitTopology,
   validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
@@ -196,6 +197,48 @@ function nativePrincipal(nativeHostPath) {
   return p;
 }
 
+async function refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
+  const script='scripts/windows/run-vr-resource-governor.ps1';
+  if(!(await physical(join(canonicalRoot,script))).isFile())held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
+  const expectedBlob=git(canonicalRoot,['rev-parse',sourceHead+':'+script]).trim();
+  const bytes=Buffer.from(git(canonicalRoot,['show',sourceHead+':'+script]),'utf8');
+  const workingBytes=await readFile(join(canonicalRoot,script));
+  // Git's ordinary Windows CRLF checkout is permitted, but is never executed
+  // as an unauthenticated replacement. Materialise and execute the exact Git
+  // blob below. No content filters or arbitrary command string are evaluated.
+  if(!workingBytes.equals(bytes) && !Buffer.from(workingBytes.toString('utf8').replace(/\r\n/g,'\n'),'utf8').equals(bytes))
+    held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
+  const inputs=join(sharedWorkspaceRoot,'proof','rescue-island-01-inputs');
+  await mkdir(inputs,{recursive:true});
+  if(!(await physical(inputs)).isDirectory())held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
+  const pinnedScript=join(inputs,'governor-'+expectedBlob+'.ps1');
+  if(!await present(pinnedScript)) {
+    const file=await open(pinnedScript,'wx');
+    try{await file.writeFile(bytes);await file.sync();}finally{await file.close();}
+  }
+  if(!(await physical(pinnedScript)).isFile() || !bytes.equals(await readFile(pinnedScript)))
+    held('ISLAND_HOST_GOVERNOR_SOURCE_CHANGED');
+  const started=Date.now();
+  const reconciled=spawnSync(BATTLE_BRIDGE_WINDOWS_HOST.powershell,
+    ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',pinnedScript,'-Action','Reconcile'],
+    {cwd:canonicalRoot,shell:false,windowsHide:true,encoding:'utf8',timeout:18000,maxBuffer:32768,
+      env:createBattleBridgeMinimalChildEnvironment(process.env)});
+  if(reconciled.error || reconciled.status!==0)held('ISLAND_HOST_GOVERNOR_RECONCILE_FAILED');
+  // The canonical governor owns signal collection and reconciliation. Read its
+  // actual persisted result separately; request data cannot supply idle truth.
+  return {started,path:join(sharedWorkspaceRoot,'vr','vr-resource-governor-current.json')};
+}
+
+async function currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead) {
+  const refreshed=await refreshGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHead);
+  const governor=await json(refreshed.path), observed=Date.parse(governor.updatedAtUtc);
+  if(governor.schemaVersion!=='stephanos.vr-resource-governor.v1' || governor.active!==false
+    || governor.phase!=='NORMAL' || governor.localModelAllowed!==true
+    || !Number.isFinite(observed) || observed<refreshed.started-1000 || observed>Date.now()
+    || Date.now()-observed>10000)held('ISLAND_HOST_GAMING_ADMISSION_REVOKED_OR_STALE');
+  return observed;
+}
+
 /** Internal bootstrap configuration, never a remote request or authority flags. */
 export function createRescueIslandSupervisedHostV1(configuration={}) {
   const canonicalRoot=resolve(configuration.canonicalRoot||fileURLToPath(new URL('../..',import.meta.url)));
@@ -229,16 +272,11 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         || Object.keys(active.expected).some(key=>active.expected[key]!==expected[key]))
         held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
       nativePrincipal(nativeHostPath);
-      const governor=await json(join(sharedWorkspaceRoot,'vr','vr-resource-governor-current.json'));
-      const observed=Date.parse(governor.updatedAtUtc);
-      if(governor.schemaVersion!=='stephanos.vr-resource-governor.v1' || governor.active!==false
-        || governor.phase!=='NORMAL' || governor.localModelAllowed!==true
-        || !Number.isFinite(observed) || observed>Date.now() || Date.now()-observed>10000)
-        held('ISLAND_HOST_GAMING_ADMISSION_REVOKED_OR_STALE');
       if(!(await physical(canonicalRoot)).isDirectory() || !inspectBattleBridgeGitTopology(canonicalRoot).ok
         || git(canonicalRoot,['rev-parse','HEAD']).trim()!==expected.baseHead
         || git(canonicalRoot,['rev-parse','origin/main']).trim()!==expected.baseHead)
         held('ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+      let observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead);
       const canonicalClaims=await readIslandCanonicalClaimsV1({canonicalRoot,sharedWorkspaceRoot,missionRoot});
       const seedClaims=await readIslandSeedClaimsV1(seedRoot);
       const sourceScope=[...new Map([expected.targetPath,...canonicalClaims.flatMap(c=>c.targetPaths),
@@ -328,6 +366,10 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
           join(roots.worktreeRoot,saved.taskId),sourcePaths([saved.targetPath]),{workerId:'rescue-island-01'}));
       }
       if(!(await active.lock.verifyOwnership()))held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
+      // Cloning/preservation can take longer than one observation's budget.
+      // Refresh through the SAME governor again before returning admission.
+      if(Date.now()-observed>1000)
+        observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead);
       return {schemaVersion:'stephanos.rescue-island-supervised-host-observation.v1',
         assuranceProfile:PROFILE,repository:REPOSITORY,...active.expected,workerId:'rescue-island-01',
         sourceHead:expected.baseHead,sourceBranch:'rescue-island/pilot-'+expected.taskId,

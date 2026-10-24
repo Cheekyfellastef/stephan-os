@@ -57,10 +57,11 @@ try
         };
         start.ArgumentList.Add(script);
         // Inherited authority flags and Node preload settings are not inputs.
-        foreach (string name in start.Environment.Keys.ToArray())
-            if (name.StartsWith("NODE_", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("ISLAND_", StringComparison.OrdinalIgnoreCase)) start.Environment.Remove(name);
+        var inherited = start.Environment.ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+        start.Environment.Clear();
+        foreach (string name in new[] { "APPDATA", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA", "PROGRAMDATA",
+            "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP", "USERDOMAIN", "USERNAME", "USERPROFILE", "WINDIR" })
+            if (inherited.TryGetValue(name, out string? value) && !string.IsNullOrEmpty(value)) start.Environment[name] = value;
         using var child = Process.Start(start) ?? throw new HostHeldException("ISLAND_HOST_CHILD_START_FAILED");
         try
         {
