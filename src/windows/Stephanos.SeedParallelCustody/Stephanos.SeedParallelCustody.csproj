@@ -5,4 +5,9 @@
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Reuse the existing stateless PinnedFileSnapshot component only. The
+         dependency grants no Island execution, ownership or commissioning. -->
+    <ProjectReference Include="../Stephanos.RescueIslandCustody/Stephanos.RescueIslandCustody.csproj" />
+  </ItemGroup>
 </Project>
