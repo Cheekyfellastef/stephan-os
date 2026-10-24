@@ -344,8 +344,22 @@ export function reconcileStaleAcceptedMailboxReceipts({
       continue;
     }
 
+    // The outbox guard hard-stops its one mailbox child after 15 minutes.
+    // A heartbeat refreshed by the index/status sidecar is *not* evidence
+    // that the original guarded child still exists after the 16-minute
+    // recovery boundary. Bound ACCEPTED ownership by its immutable original
+    // acceptedAt timestamp, not only the most recently published heartbeat.
+    // If the original admission timestamp is unavailable or in the future,
+    // retain the conservative heartbeat-based path instead of guessing.
+    const acceptedAtMs = Date.parse(String(localReceipt?.acceptedAt || ''));
+    const originalAcceptanceExpired = Number.isFinite(acceptedAtMs)
+      && acceptedAtMs <= nowMs
+      && nowMs - acceptedAtMs > leaseMs;
     const heartbeatMs = Date.parse(String(localReceipt?.heartbeatAt || localReceipt?.acceptedAt || ''));
-    if (Number.isFinite(heartbeatMs) && nowMs - heartbeatMs <= leaseMs) {
+    const heartbeatFresh = Number.isFinite(heartbeatMs)
+      && heartbeatMs <= nowMs + 60_000
+      && nowMs - heartbeatMs <= leaseMs;
+    if (!originalAcceptanceExpired && heartbeatFresh) {
       freshCount += 1;
       continue;
     }

@@ -11,7 +11,7 @@ import {
 const HEAD = 'a'.repeat(40);
 
 test('repair-stephanos requires the current continuous-repair liveness capability', () => {
-  assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-05-continuous-repair-reporting-v4');
+  assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-13-private-mcp-batch-metadata-v5');
 });
 
 function result(payload, status = 0) {
@@ -384,4 +384,23 @@ test('repair-stephanos rejects a fresh but degraded Core that still requires rep
   assert.equal(repaired.ok, false);
   assert.equal(repaired.blocker, 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR');
   assert.equal(repaired.finalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED');
+});
+
+test('repair-stephanos does not mistake missing or null heartbeat age for a fresh Core', () => {
+  for (const heartbeatAgeSeconds of [undefined, null, -1, NaN]) {
+    const queue = [
+      result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),
+      result({ ok: true, finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN' }),
+      result({
+        ok: true, daemonHealthy: true, heartbeatAgeSeconds,
+        sourceHead: HEAD, readiness: 'READY', wakeState: 'AWAKE',
+        awake: true, repairRequired: false,
+      }),
+    ];
+    const repaired = runSovereignCommanderStephanosRepair({
+      readHead: () => HEAD, runStep: () => queue.shift(),
+    });
+    assert.equal(repaired.ok, false, `invalid heartbeat age ${String(heartbeatAgeSeconds)}`);
+    assert.equal(repaired.finalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED');
+  }
 });

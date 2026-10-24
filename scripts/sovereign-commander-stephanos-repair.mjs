@@ -12,7 +12,7 @@ export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 export const REQUIRED_COMMANDER_CAPABILITY_VERSION =
-  '2026-10-05-continuous-repair-reporting-v4';
+  '2026-10-13-private-mcp-batch-metadata-v5';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
@@ -232,9 +232,13 @@ export function runSovereignCommanderStephanosRepair({
   const status = runStep(coreStatusStep);
   const core = parseJsonPayload(status?.stdout);
   steps.push(compactStep(coreStatusStep, status, core));
+  // Missing/null heartbeat ages must never coerce to zero and prove a live Core.
+  const heartbeatAge = core?.heartbeatAgeSeconds;
+  const heartbeatAgeValid = typeof heartbeatAge === 'number'
+    && Number.isFinite(heartbeatAge) && heartbeatAge >= 0;
   const coreHeartbeatHealthy = core?.heartbeatFresh === true
     || core?.busyGraceActive === true
-    || Number(core?.heartbeatAgeSeconds) <= 60;
+    || (heartbeatAgeValid && heartbeatAge <= 60);
   const coreGreen = status?.ok === true
     && core?.ok === true
     && core?.daemonHealthy === true
@@ -267,8 +271,8 @@ export function runSovereignCommanderStephanosRepair({
       wakeState: text(core.wakeState),
       awake: core.awake === true,
       repairRequired: core.repairRequired === true,
-      heartbeatAgeSeconds: Number(core.heartbeatAgeSeconds),
-      heartbeatFresh: core.heartbeatFresh === true || Number(core.heartbeatAgeSeconds) <= 60,
+      heartbeatAgeSeconds: heartbeatAgeValid ? heartbeatAge : null,
+      heartbeatFresh: core.heartbeatFresh === true || (heartbeatAgeValid && heartbeatAge <= 60),
       busyGraceActive: core.busyGraceActive === true,
     }),
     openClawSupportActions: Object.freeze(['repair-openclaw-local', 'repair-openclaw-standalone']),

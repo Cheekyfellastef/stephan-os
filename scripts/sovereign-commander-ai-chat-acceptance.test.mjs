@@ -4,6 +4,7 @@ import {
   AI_COMMANDER_ACCEPTANCE_MARKER,
   AI_COMMANDER_ACCEPTANCE_SCHEMA,
   verifyStephanosAiCommanderTool,
+  runStephanosAiCommanderToolAcceptance,
 } from './sovereign-commander-ai-chat-acceptance.mjs';
 
 const OBSERVATION = {
@@ -95,4 +96,25 @@ test('malformed/unreachable/oversized responses do not invent a proof', async ()
     assert.equal(result.toolCalled, false);
     assert.equal(JSON.stringify(result).includes('never-echo'), false);
   }
+});
+
+
+test('offline HTTP state remains typed BLOCKED yet preserves a completed script receipt', async () => {
+  let received = '';
+  const previousExitCode = process.exitCode;
+  const actual = await runStephanosAiCommanderToolAcceptance({
+    fetchFn: async () => mockResult(RESPONSE, 404),
+    emitLine: (line) => { received += line; },
+  });
+  assert.equal(actual.ok, false);
+  assert.equal(actual.blocker, 'AI_COMMANDER_CHAT_HTTP_404');
+  assert.equal(actual.finalVerdict, 'STEPHANOS_AI_COMMANDER_TOOL_CALL_BLOCKED');
+  assert.equal(process.exitCode, previousExitCode);
+  assert.equal(received.split('\n').filter(Boolean).length, 1);
+  assert.ok(received.startsWith(AI_COMMANDER_ACCEPTANCE_MARKER));
+  const receipt = JSON.parse(received.trim().slice(AI_COMMANDER_ACCEPTANCE_MARKER.length));
+  assert.equal(receipt.ok, false);
+  assert.match(receipt.proofHash, /^[a-f0-9]{64}$/);
+  assert.equal(receipt.mergeAuthority, false);
+  assert.equal(receipt.physicalWorkerPickupProven, false);
 });

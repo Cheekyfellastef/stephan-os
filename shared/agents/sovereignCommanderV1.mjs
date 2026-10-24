@@ -1,19 +1,24 @@
 import { createHash } from 'node:crypto';
-import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import process from 'node:process';
+import { sovereignExactCommitLoaderV1 } from './sovereignExactCommitLoaderV1.mjs';
+import { resolveBattleBridgeGitExecution, createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
   READ_FILE: 'READ_FILE',
+  READ_MULTIPLE_FILES: 'READ_MULTIPLE_FILES',
+  GET_FILE_INFO: 'GET_FILE_INFO',
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
@@ -82,6 +87,99 @@ function pathWithin(root, candidate) {
   return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
 }
 
+// Source-bound reviewer metadata is a bounded input to the existing fixed
+// calibration binary, NEVER independent signer identity or reviewer authority.
+// Reject inherited properties, accessors and unknown keys before observation.
+export function validateSovereignWindowsReviewIdentityV1(raw) {
+  const keys = [
+    'schemaVersion', 'repository', 'issueNumber', 'prNumber', 'branch',
+    'sourceHead', 'baseSha', 'implementerProvider', 'implementerSessionId',
+    'reviewerSessionId', 'implementerPrincipal', 'reviewerPrincipal',
+  ];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.getPrototypeOf(raw) !== Object.prototype
+    || Object.keys(raw).length !== keys.length
+    || keys.some(k => !Object.hasOwn(raw, k)
+      || !Object.hasOwn(Object.getOwnPropertyDescriptor(raw, k), 'value'))) {
+    return null;
+  }
+  const v = Object.fromEntries(keys.map(k => [k, raw[k]]));
+  const ref = /^[0-9a-f]{40}$/;
+  const id = /^[a-z0-9][a-z0-9._-]{0,79}$/i;
+  const branch = /^[a-z0-9][a-z0-9._/-]{0,159}$/i;
+  if (v.schemaVersion !== 'stephanos.sovereign-review-exact-request.v1'
+    || v.repository !== 'Cheekyfellastef/stephan-os'
+    || !Number.isSafeInteger(v.issueNumber) || v.issueNumber < 1
+    || !Number.isSafeInteger(v.prNumber) || v.prNumber < 1
+    || !branch.test(v.branch) || v.branch.includes('..') || v.branch.includes('//')
+    || v.branch.endsWith('/') || v.branch.startsWith('refs/')
+    || !ref.test(v.sourceHead) || !ref.test(v.baseSha)
+    || v.sourceHead === v.baseSha
+    || ['implementerProvider', 'implementerSessionId', 'reviewerSessionId',
+      'implementerPrincipal', 'reviewerPrincipal'].some(k => !id.test(v[k]))
+    || v.implementerSessionId === v.reviewerSessionId
+    || v.implementerPrincipal === v.reviewerPrincipal) {
+    return null;
+  }
+  return frozen(v);
+}
+const REVIEWER_ENV_KEYS = Object.freeze([
+  'STEPHANOS_REVIEW_REPOSITORY', 'STEPHANOS_REVIEW_ISSUE',
+  'STEPHANOS_REVIEW_PR', 'STEPHANOS_REVIEW_EXACT_BRANCH',
+  'STEPHANOS_REVIEW_EXACT_HEAD', 'STEPHANOS_REVIEW_EXACT_BASE',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER',
+  'STEPHANOS_REVIEW_IMPLEMENTER_SESSION', 'STEPHANOS_REVIEW_SESSION',
+  'STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL',
+  'STEPHANOS_REVIEW_REVIEWER_PRINCIPAL',
+]);
+export const WINDOWS_CALIBRATION_SOURCE_PATHS = Object.freeze([
+  'scripts/sovereign-high-risk-advisory-launcher-v1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1-engine.mjs',
+  'scripts/sovereign-review-coverage-v1-engine.mjs',
+  'shared/agents/sovereignExactCommitLoaderV1.mjs',
+  'shared/agents/sovereignAuthenticatedReviewDiffV1.mjs',
+  'scripts/sovereign-windows-review-calibration-v1.mjs',
+  'scripts/sovereign-high-risk-advisory-v1.mjs',
+  'shared/agents/sovereignWindowsCalibrationV1.mjs',
+  'shared/agents/sovereignWindowsCalibrationRemoteV1.mjs',
+  'shared/agents/sovereignHighRiskReviewCandidateV1.mjs',
+  'shared/agents/sovereignReviewCoverageV1.mjs',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs',
+  'shared/agents/battleBridgeWindowsHosts.mjs',
+  'shared/agents/sharedAgentWorkspaceStore.mjs',
+  'shared/agents/sharedWorkspaceRuntimeConfig.mjs',
+  'shared/agents/sharedAgentWorkspace.mjs',
+  'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+  'shared/agents/closedLoopLearningV1.mjs',
+]);
+function fixedReviewerEnvironment(identity, inherited) {
+  const sourceEnv = inherited || process.env;
+  const env = { ...createBattleBridgeMinimalChildEnvironment(sourceEnv) };
+  // The inference settings are data; never inherit Node preload/loader options.
+  for (const key of ['STEPHANOS_SHARED_AGENT_WORKSPACE', 'STEPHANOS_SOVEREIGN_REVIEW_MODEL',
+    'STEPHANOS_SOVEREIGN_REVIEW_MODEL_CLASS']) {
+    if (typeof sourceEnv[key] === 'string') env[key] = sourceEnv[key];
+  }
+  // Never fall back to the long-lived daemon's ambient review metadata.
+  for (const key of REVIEWER_ENV_KEYS) delete env[key];
+  const p = validateSovereignWindowsReviewIdentityV1(identity);
+  if (!p) return null;
+  return {
+    ...env,
+    STEPHANOS_REVIEW_REPOSITORY: p.repository,
+    STEPHANOS_REVIEW_ISSUE: String(p.issueNumber),
+    STEPHANOS_REVIEW_PR: String(p.prNumber),
+    STEPHANOS_REVIEW_EXACT_BRANCH: p.branch,
+    STEPHANOS_REVIEW_EXACT_HEAD: p.sourceHead,
+    STEPHANOS_REVIEW_EXACT_BASE: p.baseSha,
+    STEPHANOS_REVIEW_IMPLEMENTER_PROVIDER: p.implementerProvider,
+    STEPHANOS_REVIEW_IMPLEMENTER_SESSION: p.implementerSessionId,
+    STEPHANOS_REVIEW_SESSION: p.reviewerSessionId,
+    STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL: p.implementerPrincipal,
+    STEPHANOS_REVIEW_REVIEWER_PRINCIPAL: p.reviewerPrincipal,
+  };
+}
+
 function fixedRegistry(repoRoot) {
   const root = normalizedAbsolutePath(repoRoot);
   if (!root) return frozen({});
@@ -110,6 +208,11 @@ function fixedRegistry(repoRoot) {
       // Snapshot only. No Shared Workspace file/lock mutation over remote MCP.
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs'), '--snapshot-only']),
       timeoutMs: 20_000,
+    }),
+    'rescue-island-readonly-boundary': frozen({
+      executable: node,
+      args: frozen([nodeFile('rescue-island-boundary-probe.mjs')]),
+      timeoutMs: 10_000,
     }),
     'visibility-snapshot': frozen({
       executable: node,
@@ -150,6 +253,11 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
       timeoutMs: 10_000,
+    }),
+    'sovereign-windows-reviewer-calibration': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-windows-review-calibration-v1.mjs'), '--commander-once']),
+      timeoutMs: 180_000,
     }),
     'qwen35-canary': frozen({
       executable: node,
@@ -221,6 +329,11 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-starfield-vr-performance-diagnosis.ps1')]),
       timeoutMs: 20_000,
+    }),
+    'starfield-vr-telemetry-archive': frozen({
+      executable: node,
+      args: frozen([nodeFile('starfield-vr-telemetry-archive.mjs')]),
+      timeoutMs: 30_000,
     }),
     'report-starfield-vr-telemetry': frozen({
       executable: node,
@@ -388,6 +501,22 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
       length: safeInteger(payload.length, 200, 1, 1000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.READ_MULTIPLE_FILES) {
+    const paths = targetPaths.map(normalizedAbsolutePath);
+    if (paths.length < 1 || paths.length > 8 || paths.some((path) => !path)) {
+      blockers.push('sovereign-commander-multiple-read-requires-1-to-8-absolute-targets');
+    } else {
+      plan = frozen({
+        kind: 'read-multiple-files',
+        paths: frozen(paths),
+        offset: safeInteger(payload.offset, 0, 0, 100_000_000),
+        length: safeInteger(payload.length, 100, 1, 200),
+      });
+    }
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.GET_FILE_INFO) {
+    const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
+    if (!path) blockers.push('sovereign-commander-file-info-requires-one-absolute-target');
+    else plan = frozen({ kind: 'get-file-info', path });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     const content = typeof payload.content === 'string' ? payload.content : null;
@@ -447,7 +576,21 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'publish-controller-activity') {
+      if (processId === 'starfield-vr-telemetry-archive') {
+        const offset = payload.offset === undefined ? 0 : payload.offset;
+        const limit = payload.limit === undefined ? 12 : payload.limit;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000
+            || !Number.isSafeInteger(limit) || limit < 1 || limit > 12) {
+          blockers.push('sovereign-starfield-telemetry-archive-page-invalid');
+        } else {
+          args = [...args, '--offset', String(offset), '--limit', String(limit)];
+        }
+      } else if (processId === 'sovereign-windows-reviewer-calibration') {
+        // An absent per-review identity must not borrow daemon startup env.
+        if (!validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity)) {
+          blockers.push('sovereign-windows-review-identity-required');
+        }
+      } else if (processId === 'publish-controller-activity') {
         const encoded = text(payload.controllerActivityPayloadBase64);
         let decoded = null;
         try {
@@ -496,7 +639,12 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
           ];
         }
       }
-      if (blockers.length === 0) plan = frozen({ kind: 'fixed-process', processId, ...fixed, args: frozen(args) });
+      if (blockers.length === 0) plan = frozen({
+        kind: 'fixed-process', processId, ...fixed, args: frozen(args),
+        ...(processId === 'sovereign-windows-reviewer-calibration'
+          ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
+          : {}),
+      });
     }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
@@ -628,15 +776,42 @@ function fixedProcessStructuredBlocker(result) {
   return '';
 }
 
-function runFixedProcess(plan, options = {}) {
-  const runner = options.spawnSyncFn || spawnSync;
+// Both observation and owner-reserved asynchronous execution use this same
+// admission and launch preparation. Moving a fixed action between runners
+// must never lose its request identity, authenticated transport or loader.
+function prepareFixedProcessLaunch(plan, options = {}) {
   const routeEnvironment = fixedProcessRouteEnvironment(options);
-  const result = runner(plan.executable, [...plan.args], {
+  const reviewer = plan.processId === 'sovereign-windows-reviewer-calibration';
+  const candidateEnvironment = reviewer
+    ? fixedReviewerEnvironment(plan.reviewIdentity, routeEnvironment)
+    : routeEnvironment;
+  if (reviewer && (!candidateEnvironment || !routeEnvironment
+      || options?.routeProof?.authenticatedMcp !== true
+      || options?.routeProof?.mcpSessionReady !== true)) {
+    return frozen({ ok: false, status: null, stdout: '', stderr: '',
+      errorCode: 'SOVEREIGN_WINDOWS_REVIEW_IDENTITY_OR_TRANSPORT_UNPROVEN' });
+  }
+  // This loader is supplied by the independently installed Commander parent,
+  // not by the candidate script. No candidate module evaluates before its
+  // complete import closure has been authenticated and captured in memory.
+  const args = reviewer ? ['--experimental-loader', sovereignExactCommitLoaderV1({
+    root: normalizedAbsolutePath(options.repoRoot), head: plan.reviewIdentity.sourceHead,
+    files: WINDOWS_CALIBRATION_SOURCE_PATHS,
+    git: resolveBattleBridgeGitExecution({ environment: candidateEnvironment }),
+  }), ...plan.args] : [...plan.args];
+  return frozen({ ok: true, args: frozen(args), environment: candidateEnvironment });
+}
+
+function runFixedProcess(plan, options = {}) {
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return launch;
+  const runner = options.spawnSyncFn || spawnSync;
+  const result = runner(plan.executable, launch.args, {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
-    ...(routeEnvironment ? { env: routeEnvironment } : {}),
+    ...(launch.environment ? { env: launch.environment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
@@ -649,6 +824,83 @@ function runFixedProcess(plan, options = {}) {
     stdout,
     stderr,
     errorCode: text(result?.error?.code || result?.error?.message).slice(0, 160),
+  });
+}
+
+// Only an actual pre-spawn reviewer failure may release the maintenance owner's
+// custody reservation. Public blocker strings or a fabricated result never suffice.
+const provenReviewerPreExecution = new WeakSet();
+export function isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result) {
+  const execution = result?.structuredContent;
+  return command?.plan?.kind === 'fixed-process'
+    && command.plan.processId === 'sovereign-windows-reviewer-calibration'
+    && result?.ok === false
+    && result?.blocker === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE'
+    && result?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    && execution && typeof execution === 'object'
+    && provenReviewerPreExecution.has(execution)
+    && execution.ok === false && execution.status === null
+    && !execution.signal && execution.stdout === '' && execution.stderr === ''
+    && execution.errorCode === 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+}
+
+function runOwnedFixedProcess(plan, options = {}) {
+  // Source-only executor fixtures inject the synchronous primitive explicitly.
+  if (options.spawnSyncFn) return Promise.resolve(runFixedProcess(plan, options));
+  const launch = prepareFixedProcessLaunch(plan, options);
+  if (!launch.ok) return Promise.resolve(launch);
+  return new Promise(resolveResult => {
+    let child, timer, settled = false, spawned = false, stdout = '', stderr = '';
+    const finish = (status, signal = '', errorCode = '', provenPreSpawn = false) => {
+      if (settled) return;
+      settled = true;
+      if (timer) (options.clearTimeoutFn || clearTimeout)(timer);
+      // Unknown/signal/error completion is never a calibration receipt. Apply
+      // redaction at the shared terminal boundary, including close and timeout,
+      // while preserving known-exit structured HOLD reports and custody state.
+      if (plan.processId === 'sovereign-windows-reviewer-calibration'
+          && (!Number.isInteger(status) || signal || errorCode)) {
+        stdout = ''; stderr = '';
+      }
+      const execution = frozen({ ok: status === 0 && !signal && !errorCode, status,
+        signal, errorCode, stdout, stderr });
+      if (provenPreSpawn) provenReviewerPreExecution.add(execution);
+      resolveResult(execution);
+    };
+    const failSpawn = error => {
+      if (settled) return;
+      if (plan.processId === 'sovereign-windows-reviewer-calibration') {
+        // ChildProcess emits 'spawn' only after successful creation. An error
+        // after that event cannot exclude surviving Windows descendants.
+        // Redact calibration output in either case; never convert a post-spawn
+        // error into safe pre-execution evidence.
+        stdout = ''; stderr = '';
+        finish(null, '', spawned
+          ? 'SOVEREIGN_WINDOWS_REVIEW_EXECUTION_CUSTODY_UNPROVEN'
+          : 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE', !spawned);
+      } else {
+        finish(null, '', text(error?.code || 'FIXED_PROCESS_SPAWN_FAILED'));
+      }
+    };
+    try {
+      child = (options.spawnFn || spawn)(plan.executable, launch.args, {
+        cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
+        shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+        ...(launch.environment ? { env: launch.environment } : {}),
+      });
+      child.stdout?.on('data', bytes => { stdout = (stdout + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.stderr?.on('data', bytes => { stderr = (stderr + String(bytes)).slice(0, MAX_RESULT_TEXT); });
+      child.once('spawn', () => { spawned = true; });
+      child.once('error', failSpawn);
+      child.once('close', (code, signal) => finish(Number.isInteger(code) ? code : null, text(signal)));
+      timer = (options.setTimeoutFn || setTimeout)(() => {
+        if (settled) return;
+        // Settle as unknown custody before a synchronous close can look green.
+        finish(null, '', 'ETIMEDOUT');
+        try { child.kill(); } catch {}
+      }, safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS));
+      timer?.unref?.();
+    } catch (error) { failSpawn(error); }
   });
 }
 
@@ -691,6 +943,33 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
     });
   }
 
+  const run = () => executeAdmittedSovereignCommandV1(command, options);
+  if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
+    if (typeof options.withMaintenanceOwner === 'function') {
+      return options.withMaintenanceOwner(command, run);
+    }
+    // Local Core/stdio callers never launch beside an independently scheduled
+    // guardian. The existing authenticated HTTP owner performs the operation.
+    try {
+      const callOwner = options.callMaintenanceOwner || (await import('./sovereignCommanderRemoteMailboxV1.mjs')).callSovereignMaintenanceOwnerV1;
+      const owned = await callOwner({ actionId: command.plan.processId,
+        arguments: envelope.payload, timeoutMs: command.plan.timeoutMs });
+      if (!owned || owned.command?.plan?.processId !== command.plan.processId) {
+        return frozen({ ok: false, command, blocker: owned?.blocker || 'SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID',
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      }
+      const structuredContent = frozen({ ...owned.structuredContent,
+        ownerCommandId: owned.command.commandId, ownerProofHash: owned.proofHash || '' });
+      return frozen({ ...owned, command, structuredContent,
+        proofHash: hash({ commandId: command.commandId, missionId: command.missionId,
+          operation: command.operation, plan: command.plan, contentText: owned.contentText, structuredContent }) });
+    } catch { return frozen({ ok: false, command, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+      finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }); }
+  }
+  return run();
+}
+
+async function executeAdmittedSovereignCommandV1(command, options) {
   try {
     let contentText = '';
     let structuredContent = null;
@@ -722,6 +1001,40 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         length: selected.length,
         totalLines: lines.length,
       });
+    } else if (command.plan.kind === 'read-multiple-files') {
+      const files = [];
+      let remainingCharacters = MAX_RESULT_TEXT;
+      for (const path of command.plan.paths) {
+        const raw = await readFile(path, 'utf8');
+        const lines = raw.split(/\r?\n/);
+        const selected = lines.slice(command.plan.offset, command.plan.offset + command.plan.length);
+        const fullContent = selected.join('\n');
+        const content = fullContent.slice(0, remainingCharacters);
+        remainingCharacters -= content.length;
+        files.push(frozen({
+          path,
+          offset: command.plan.offset,
+          length: selected.length,
+          totalLines: lines.length,
+          content,
+          truncated: content.length < fullContent.length,
+        }));
+      }
+      structuredContent = frozen({
+        files: frozen(files),
+        totalFiles: files.length,
+        contentBudgetExhausted: remainingCharacters === 0,
+      });
+      contentText = files.map((file) => `${file.path}\n${file.content}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'get-file-info') {
+      const info = await lstat(command.plan.path);
+      structuredContent = frozen({
+        path: command.plan.path,
+        type: info.isSymbolicLink() ? 'SYMLINK' : info.isFile() ? 'FILE' : info.isDirectory() ? 'DIRECTORY' : 'OTHER',
+        bytes: info.size,
+        modifiedAtUtc: info.mtime.toISOString(),
+      });
+      contentText = JSON.stringify(structuredContent);
     } else if (command.plan.kind === 'write-file') {
       if (command.plan.mode === 'append') await appendFile(command.plan.path, command.plan.content, 'utf8');
       else await writeFile(command.plan.path, command.plan.content, 'utf8');
@@ -813,7 +1126,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         });
       }
     } else if (command.plan.kind === 'fixed-process') {
-      const result = runFixedProcess(command.plan, options);
+      const result = isSovereignMaintenanceObservationV1(command.plan.processId)
+        ? runFixedProcess(command.plan, options) : await runOwnedFixedProcess(command.plan, options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
       structuredContent = result;
       if (!result.ok) {
@@ -851,6 +1165,23 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     });
   } catch (error) {
+    // Fixed high-risk reviewer failure may happen before child spawn or before
+    // a terminal calibration marker exists. Never expose the raw thrown value,
+    // executable paths, Git arguments, model output, or loader implementation.
+    // Retain only one closed-world denial for the existing authenticated MCP
+    // mailbox, preserving explicit status:null and no authority on exceptions.
+    if (command.plan?.kind === 'fixed-process'
+      && command.plan.processId === 'sovereign-windows-reviewer-calibration') {
+      const errorCode = 'SOVEREIGN_WINDOWS_REVIEW_PREEXECUTION_UNAVAILABLE';
+      return frozen({
+        ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA, command,
+        contentText: '',
+        structuredContent: frozen({ ok: false, status: null,
+          stdout: '', stderr: '', errorCode }),
+        blocker: errorCode,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+      });
+    }
     return frozen({
       ok: false,
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,

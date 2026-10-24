@@ -65,7 +65,7 @@ test('protected workflow relay derives the canonical mailbox authority and rejec
   assert.equal(retired.blocker, 'PROTECTED_WORKFLOW_DISPATCH_ISSUE_MISMATCH');
 
   const workflow = readFileSync('.github/workflows/protected-workflow-dispatch-mailbox.yml', 'utf8');
-  assert.match(workflow, new RegExp(`github\\.event\\.issue\\.number == ${CANONICAL_MAILBOX_ISSUE}`));
+  assert.match(workflow, /canonical-mailbox-workflow-event-gate\.mjs protected/);
   assert.doesNotMatch(workflow, new RegExp(`github\\.event\\.issue\\.number == ${RETIRED_MAILBOX_ISSUE}`));
   assert.match(workflow, /stephanos-protected-workflow-dispatch/);
 });

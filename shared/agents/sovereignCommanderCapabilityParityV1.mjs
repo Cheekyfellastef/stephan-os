@@ -16,6 +16,8 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
   'read-file': 'read_file',
+  'read-multiple-files': 'read_multiple_files',
+  'get-file-info': 'get_file_info',
   'write-file': 'write_file',
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',

@@ -14,6 +14,21 @@ import {
   readBrokeredGithubJson,
 } from './githubObservationBrokerV1.mjs';
 
+test('an authority reader can bind its exact executable and explicit child environment',async()=>{
+  const workspaceRoot=await mkdtemp(join(tmpdir(),'stephanos-fixed-gh-reader-'));
+  const childEnv=Object.freeze({SystemRoot:process.env.SystemRoot||'/fixture'});
+  try {
+    const result=readBrokeredGithubJson({key:'fixed-island-reader',endpoint:'repos/Cheekyfellastef/stephan-os/git/ref/heads/main',
+      workspaceRoot,ghCommand:'fixed-authorised-gh',childEnv,
+      spawnSyncFn:(command,args,options)=>{
+        assert.equal(command,'fixed-authorised-gh');assert.equal(options.env,childEnv);
+        assert.equal(options.shell,false);assert.deepEqual(args.slice(0,2),['api','repos/Cheekyfellastef/stephan-os/git/ref/heads/main']);
+        return {status:0,stdout:'{}',stderr:''};
+      }});
+    assert.equal(result.source,'UPSTREAM_REFRESH');
+  }finally{await rm(workspaceRoot,{recursive:true,force:true});}
+});
+
 test('shared GitHub observation cache makes one upstream read inside the TTL', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-github-broker-'));
   let calls = 0;

@@ -60,7 +60,11 @@ export async function verifyStephanosAiCommanderTool({
       signal: controller.signal,
     });
     if (!response || response.ok !== true || response.status !== 200) {
-      return wrap({ ok: false, blocker: 'AI_COMMANDER_CHAT_ENDPOINT_UNAVAILABLE' });
+      const safeStatus = Number.isSafeInteger(response?.status)
+        && response.status >= 400 && response.status <= 599
+        ? `AI_COMMANDER_CHAT_HTTP_${response.status}`
+        : 'AI_COMMANDER_CHAT_ENDPOINT_UNAVAILABLE';
+      return wrap({ ok: false, blocker: safeStatus });
     }
     const length = response.headers?.get?.('content-length');
     if (length !== null && length !== undefined
@@ -112,8 +116,13 @@ export async function verifyStephanosAiCommanderTool({
 }
 export async function runStephanosAiCommanderToolAcceptance(options = {}) {
   const result = await verifyStephanosAiCommanderTool(options);
-  process.stdout.write(AI_COMMANDER_ACCEPTANCE_MARKER + JSON.stringify(result) + '\n');
-  if (!result.ok) process.exitCode = 1;
+  const emit = typeof options.emitLine === 'function' ? options.emitLine : (line) => process.stdout.write(line);
+  emit(AI_COMMANDER_ACCEPTANCE_MARKER + JSON.stringify(result) + '\n');
+  // Probe execution can complete even when the observed AI tool call is blocked.
+  // Exit 0 so the fixed Commander process envelope preserves the typed, public-safe
+  // failed-acceptance receipt. The remote mailbox must still mark such outcomes
+  // BLOCKED using its independent receipt-validation gate.
+  // Non-zero here collapsed the actual cause into REMOTE_RECEIPT_INVALID.
   return result;
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

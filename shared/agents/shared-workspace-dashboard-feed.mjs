@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
@@ -250,10 +251,11 @@ export function createSharedWorkspaceDashboardPollingContract(input = {}) {
   });
 }
 
-function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs, proofRecords = [], goalGateTrust = {}) {
   return Object.freeze({
     ...projection,
     autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, proofRecords, ...goalGateTrust, nowMs, staleAfterMs }),
   });
 }
 
@@ -290,7 +292,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
 }
 
 export async function readSharedWorkspaceDashboardFeed(input = {}) {
-  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
   const recordScope = safeRecordScope(input.recordScope);
@@ -314,6 +316,8 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const stephanosBuildTruthStatus = resolved.ok
     ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  // A live observation is sampled after the asynchronous record reads.
+  if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
   const latest = {
     goal: records.goalRecords[0] || null,
     status: records.statusRecords[0] || null,
@@ -332,7 +336,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
-  }), records.statusRecords, nowMs, staleAfterMs);
+  }), records.statusRecords, nowMs, staleAfterMs, records.proofRecords, input.goalGateTrust || {});
   const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
   const brainState = resolved.ok
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
