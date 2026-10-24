@@ -1614,6 +1614,24 @@ test('GitHub goal close adapter emits only the canonical completed-state PATCH',
 });
 
 
+test('canonical mirror refresh carries, replaces and removes only current admitted acceptance tests', () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const live = requiredTests => ({ ok: true, retrievedAt: NOW, issues: [{ issueNumber: 2314, repository: REPOSITORY,
+    title: 'Bounded acceptance task', retrievedAt: NOW, admission: {
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'],
+      ...(requiredTests === undefined ? {} : { requiredTests }),
+    } }], discoveredIssues: [{ issueNumber: 2314 }] });
+  const first = buildGithubGoalMirrorEstate([], live(commands), NOW);
+  assert.deepEqual(first.records[0].requiredTests, commands);
+  assert.equal(first.records[0].mirrorBuildPickupAllowed, true);
+  assert.deepEqual(first.records[0].resourceIds, ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs']);
+  const second = buildGithubGoalMirrorEstate(first.records, live(['node --test scripts/other.test.mjs']), NOW);
+  assert.deepEqual(second.records[0].requiredTests, ['node --test scripts/other.test.mjs']);
+  const removed = buildGithubGoalMirrorEstate(second.records, live(undefined), NOW);
+  assert.equal(removed.records[0].requiredTests, undefined);
+  assert.deepEqual(first.records[0].requiredTests, commands, 'prior observations remain immutable');
+});
+
 test('GitHub goal estate is mirrored durably with a bounded outage lease', async () => {
   const goalEstate = {
     ok: true,
