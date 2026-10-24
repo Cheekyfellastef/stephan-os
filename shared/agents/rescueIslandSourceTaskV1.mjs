@@ -7,7 +7,7 @@ const fields=['schemaVersion','repository','issueNumber','issueTitle','taskId','
   'baseHead','targetPath','content','testPath','approvalSource','expiresAtUtc'];
 const islandNames=['rescueIslandFirstCommitV1','rescueIslandPilotOwnerIntakeV1',
   'rescueIslandAuthenticatedGithubReadV1','rescueIslandPreflightV1','rescueIslandSourceTaskV1',
-  'rescueIslandSecondLaneV1'];
+  'rescueIslandSecondLaneV1','rescueIslandNativeTestProvisionV1'];
 const islandPaths=islandNames.flatMap(n=>['shared/agents/'+n+'.mjs','shared/agents/'+n+'.test.mjs']);
 islandPaths.push('shared/agents/rescueIslandSupervisedHostV1.mjs',
   'shared/agents/rescueIslandSupervisedHostV1.windows.mjs',
@@ -87,5 +87,7 @@ export function inspectRescueIslandSourceTaskV1(task,nowUtc=new Date().toISOStri
     return denied('SOURCE_TEST_PLAN_NOT_ALLOWLISTED');
   return Object.freeze({valid:true,scopeId:content.scopeId,issueNumber:plan.issueNumber,
     taskKind:'SOURCE_PROPOSAL_V1',writes:Object.freeze(writes),targetPaths:Object.freeze(paths),
-    testPaths:Object.freeze([...tests].sort()),executionAuthority:false});
+    testPaths:Object.freeze([...tests].sort()),needsNativeObserver:[...tests].some(p=>p.endsWith('.windows.mjs')),
+    testProfile:[...tests].some(p=>p.endsWith('.windows.mjs'))?'NODE_AND_OBSERVED_NATIVE_HOST_SMOKE_V1':'NODE_SOURCE_V1',
+    executionAuthority:false});
 }

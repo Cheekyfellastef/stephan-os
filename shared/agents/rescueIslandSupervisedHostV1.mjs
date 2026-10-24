@@ -1,6 +1,7 @@
 // #3109: real local adapters for the explicitly cooperative supervised pilot.
 // Ordinary files and repeated observations are NOT hostile-writer containment.
 import { createHash } from 'node:crypto';
+import {observeIslandNativeTestHostV1} from './rescueIslandNativeTestProvisionV1.mjs';
 import { spawnSync } from 'node:child_process';
 import { lstat, mkdir, open, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -374,6 +375,7 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         || Object.keys(active.expected).some(key=>active.expected[key]!==expected[key]))
         held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
       nativePrincipal(nativeHostPath);
+      const nativeTestHost=expected.needsNativeObserver?await observeIslandNativeTestHostV1(nativeHostPath):null;
       if(!(await physical(canonicalRoot)).isDirectory() || !inspectBattleBridgeGitTopology(canonicalRoot).ok
         || git(canonicalRoot,['rev-parse','HEAD']).trim()!==expected.baseHead
         || git(canonicalRoot,['rev-parse','origin/main']).trim()!==expected.baseHead)
@@ -494,7 +496,8 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         resourceAdmissionSource:'EXISTING_GAMING_GOVERNOR_COOPERATIVE_ADMISSION',existingOwnerAdmissionHeld:true,
         canonicalCheckoutPreserved:true,canonicalPreservationDigest:current.digest,
         worktreeIdentity:digest(folded(join(roots.worktreeRoot,expected.taskId))),roots,
-        claimInventoriesComplete:true,canonicalClaims,seedClaims,islandClaims};
+        claimInventoriesComplete:true,canonicalClaims,seedClaims,islandClaims,
+        ...(nativeTestHost?{nativeTestHost}:{})};
     },
   };
   return Object.freeze({run:createRescueIslandSupervisedRunnerV1(host),host,roots});

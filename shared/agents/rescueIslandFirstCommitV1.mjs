@@ -71,12 +71,13 @@ function git(cwd, args, run = spawnSync) {
   return args[0] === 'status' ? String(x.stdout || '').trimEnd()
     : args[0] === 'show' ? String(x.stdout || '') : text(x.stdout);
 }
-function nodeTest(cwd, testFile, run = spawnSync) {
+function nodeTest(cwd, testFile, run = spawnSync, nativeSmoke = false) {
   const files = Array.isArray(testFile) ? testFile : [testFile];
   const x = run(process.execPath, ['--test', ...files], {
     cwd, shell: false, windowsHide: true, encoding: 'utf8',
     timeout: Array.isArray(testFile) ? 120_000 : 60_000, maxBuffer: 128 * 1024,
-    env: createBattleBridgeMinimalChildEnvironment(process.env),
+    env: {...createBattleBridgeMinimalChildEnvironment(process.env),
+      ...(nativeSmoke?{STEPHANOS_ISLAND_SOURCE_HOST_SMOKE:'1'}:{})},
   });
   return { ok: x?.status === 0 && !x.error,
     hash: digest(x?.stdout || ''), output: x?.stdout || '' };
@@ -189,7 +190,7 @@ export async function constructIsolatedRescueIslandPilotV1({
 async function constructRescueIslandPilotWithAdmission({
   task, observed, repoRoot, worktreeRoot, receiptRoot,
   sameOwnerRecoveryAuthenticated = false, runGit = spawnSync, runTest = spawnSync,
-  recheck = async () => {}, receiptMetadata = {}, sourcePlan = null,
+  recheck = async () => {}, receiptMetadata = {}, sourcePlan = null, nativeTestHost = null,
 }) {
   let writes = sourcePlan?.writes || [{path:task.targetPath,beforeBlob:null,content:task.content}];
   const approvedPaths = writes.map(w=>w.path).sort();
@@ -410,7 +411,15 @@ async function constructRescueIslandPilotWithAdmission({
             !== git(worktree, ['rev-parse', task.baseHead + ':' + relative], runGit))
         fail('RESCUE_ISLAND_RECOVERY_TEST_TREE_UNTRUSTED');
     }
-    const testProof = nodeTest(worktree, sourcePlan ? testPaths : task.testPath, runTest);
+    let nativeProvision;
+    if(sourcePlan?.needsNativeObserver){
+      const {provisionIslandNativeSourceTestsV1}=await import('./rescueIslandNativeTestProvisionV1.mjs');
+      nativeProvision=await provisionIslandNativeSourceTestsV1({descriptor:nativeTestHost,worktree,receiptRoot:proofs,taskId:task.taskId});
+      const pending=git(worktree,['status','--porcelain','--untracked-files=all'],runGit)
+        .split('\n').filter(Boolean).map(line=>line.slice(3).trim());
+      if(pending.some(path=>!allowed(path)))fail('RESCUE_ISLAND_NATIVE_TEST_SETUP_NOT_IGNORED');
+    }
+    const testProof = nodeTest(worktree, sourcePlan ? testPaths : task.testPath, runTest,Boolean(nativeProvision));
     const testResultHash = testProof.hash;
     const testOutputRoot = join(proofs, 'test-output');
     await mkdir(testOutputRoot, { recursive: true });
@@ -427,7 +436,8 @@ async function constructRescueIslandPilotWithAdmission({
       finally { await log.close(); }
     }
     if (!testProof.ok) fail('RESCUE_ISLAND_FOCUSED_TEST_FAILED');
-    await append('TESTED', { testResultHash, testExitCode: 0, testPath: task.testPath, testOutputFile, ...(sourcePlan?{testPaths}: {}) });
+    await append('TESTED', { testResultHash, testExitCode: 0, testPath: task.testPath, testOutputFile, ...(sourcePlan?{testPaths,testProfile:sourcePlan.testProfile,
+      ...(nativeProvision?{nativeTestProvision:nativeProvision}:{})}: {}) });
     await recheck('BEFORE_COMMIT');
     const currentHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
     if (currentHead === task.baseHead) {
@@ -531,6 +541,12 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
       || !SHA256.test(value.worktreeIdentity || '')
       || !value.roots || Object.values(value.roots).some(v => typeof v !== 'string' || !isAbsolute(v)))
     fail('RESCUE_ISLAND_SUPERVISED_HOST_OBSERVATION_HELD');
+  if(expected.needsNativeObserver && (!value.nativeTestHost
+    || value.nativeTestHost.schemaVersion!=='stephanos.rescue-island-native-test-observation.v1'
+    || typeof value.nativeTestHost.directory!=='string' || !isAbsolute(value.nativeTestHost.directory)
+    || value.nativeTestHost.purpose!=='OBSERVED_NATIVE_HOST_SMOKE_ONLY'
+    || !value.nativeTestHost.files || Object.values(value.nativeTestHost.files).some(h=>typeof h!=='string'||!SHA256.test(h))))
+    fail('RESCUE_ISLAND_NATIVE_TEST_DESCRIPTOR_UNPROVEN');
   const roots = value.roots;
   if (Object.keys(roots).sort().join(',') !== 'canonicalRoot,receiptRoot,repoRoot,worktreeRoot')
     fail('RESCUE_ISLAND_SUPERVISED_ROOTS_UNPROVEN');
@@ -542,6 +558,7 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
   if (rootIdentity && rootIdentity !== JSON.stringify([
     roots.canonicalRoot, roots.repoRoot, roots.worktreeRoot, roots.receiptRoot,
     value.worktreeIdentity, value.canonicalPreservationDigest,
+    ...(expected.needsNativeObserver?[JSON.stringify(value.nativeTestHost)]:[]),
   ])) fail('RESCUE_ISLAND_SUPERVISED_BOUNDARY_CHANGED');
 
   const inventories = [value.canonicalClaims, value.seedClaims, value.islandClaims];
@@ -579,8 +596,10 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
   }
   if (own !== 1) fail('RESCUE_ISLAND_SUPERVISED_EXISTING_OWNER_REQUIRED');
   return Object.freeze({ roots: Object.freeze({ ...roots }), worktreeIdentity: value.worktreeIdentity,
+    ...(expected.needsNativeObserver?{nativeTestHost:Object.freeze({...value.nativeTestHost,files:Object.freeze({...value.nativeTestHost.files})})}:{}),
     identity: JSON.stringify([roots.canonicalRoot, roots.repoRoot, roots.worktreeRoot,
-      roots.receiptRoot, value.worktreeIdentity, value.canonicalPreservationDigest]) });
+      roots.receiptRoot, value.worktreeIdentity, value.canonicalPreservationDigest,
+      ...(expected.needsNativeObserver?[JSON.stringify(value.nativeTestHost)]:[])]) });
 }
 
 /**
@@ -610,7 +629,7 @@ export function createRescueIslandSupervisedRunnerV1(host) {
     const expected = Object.freeze({ commentId: request.commentId,
       taskId: task.taskId, taskFingerprint: fingerprint(task), baseHead: task.baseHead,
       targetPath: task.targetPath, assuranceProfile: SUPERVISED_PROFILE,
-      ...(sourcePlan?{targetPaths:sourcePlan.targetPaths,ownerIssueNumber:task.issueNumber,taskKind:sourcePlan.taskKind}:{}) });
+      ...(sourcePlan?{targetPaths:sourcePlan.targetPaths,ownerIssueNumber:task.issueNumber,taskKind:sourcePlan.taskKind,needsNativeObserver:sourcePlan.needsNativeObserver}:{}) });
     let invoked = false;
     let completed = false;
     let outcome;
@@ -646,7 +665,7 @@ export function createRescueIslandSupervisedRunnerV1(host) {
           fail('RESCUE_ISLAND_SUPERVISED_REDIRECTED_ROOT');
       }
       outcome = await constructRescueIslandPilotWithAdmission({
-        task, sourcePlan, observed: { worktreeIdentity: first.worktreeIdentity },
+        task, sourcePlan, nativeTestHost:first.nativeTestHost, observed: { worktreeIdentity: first.worktreeIdentity },
         repoRoot: first.roots.repoRoot, worktreeRoot: first.roots.worktreeRoot,
         receiptRoot: first.roots.receiptRoot, recheck,
         receiptMetadata: Object.freeze({ assuranceProfile: SUPERVISED_PROFILE,

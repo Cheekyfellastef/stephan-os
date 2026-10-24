@@ -1,7 +1,7 @@
 // Real Windows token observer, operation locks, claim readers, preservation,
 // independent clone, Node tests and Git commit. GitHub and the platform signal
 // collector in the canonical governor script are explicit fixture doubles.
-import test from 'node:test';
+import nodeTest from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
@@ -14,6 +14,14 @@ import {createRescueIslandSupervisedHostV1,readIslandCanonicalClaimsV1,readIslan
 import {resolveBattleBridgeGitExecutable,battleBridgeGitFixedConfigArgs,
   createBattleBridgeMinimalChildEnvironment} from './battleBridgeExecutionBoundaryV1.mjs';
 
+const sourceSmoke=process.env.STEPHANOS_ISLAND_SOURCE_HOST_SMOKE;
+if(sourceSmoke!==undefined && sourceSmoke!=='1')throw Error('SOURCE_SMOKE_FLAG_INVALID');
+const smokeNames=new Set(['real adapters hold one owner through actual clone, preservation, Node tests and exact-parent commit',
+  'real cross-process primitive excludes a second host, retaining exact task admission',
+  'fresh read-only governor admission preserves idle transition bytes and timestamp']);
+let smokeRegistered=0;
+const test=(name,fn)=>{if(sourceSmoke==='1' && !smokeNames.has(name))return;
+  if(sourceSmoke==='1')smokeRegistered++;return nodeTest(name,fn);};
 const source=dirname(fileURLToPath(import.meta.url));
 const repo=join(source,'../..');
 const nativeHostPath=join(repo,'src/windows/Stephanos.RescueIslandHost/bin/Release/net8.0-windows/Stephanos.RescueIslandHost.exe');
@@ -27,7 +35,7 @@ function git(cwd,args) {
   assert.equal(r.status,0,r.stderr);return r.stdout.trim();
 }
 async function save(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value));}
-async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=false,sourcePatch=false}={}) {
+async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=false,sourcePatch=false,sourceNative=false}={}) {
   assert.equal(process.platform,'win32','This suite requires the real native Windows token observer.');
   await stat(nativeHostPath); // No skip or fabricated principal if the host was not built.
   const root=await realpath(await mkdtemp(join(tmpdir(),'island-real-adapters-')));
@@ -65,12 +73,16 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
     (realFlatSignal?"function Get-GamingSignal { Get-FlatGameSignal }\n":
       "function Get-GamingSignal { [pscustomobject]@{active=[bool]$state.active} }\n")+
     admissionAction);
-  if(sourceTask || sourceBaseline) {
+  if(sourceTask || sourceBaseline || sourceNative) {
     for(const name of ['rescueIslandSourceTaskV1.mjs','rescueIslandSourceTaskV1.test.mjs',
       'rescueIslandSupervisedRunV1.test.mjs','rescueIslandFirstCommitV1.mjs',
       'rescueIslandAuthenticatedGithubReadV1.mjs','rescueIslandPilotOwnerIntakeV1.mjs',
-      'battleBridgeWindowsHosts.mjs'])
+      'battleBridgeWindowsHosts.mjs','rescueIslandNativeTestProvisionV1.mjs'])
       await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
+  }
+  if(sourceNative){
+    await writeFile(join(canonicalRoot,'.gitignore'),'src/windows/**/bin/\n');
+    await writeFile(join(canonicalRoot,'shared/agents/rescueIslandSupervisedHostV1.mjs'),'export const fixtureHostVersion = 1;\n');
   }
   if(sourcePatch) await writeFile(join(canonicalRoot,'shared/agents/rescueIslandSecondLaneV1.mjs'),
     '// '+('actual large Windows baseline '.repeat(500))+'\nexport const lane = 1;\n');
@@ -88,6 +100,7 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
     testPath:'shared/agents/rescueIslandPreflightV1.test.mjs',approvalSource:'EXTERNAL_OWNER_ATTESTATION_REQUIRED',
     expiresAtUtc:new Date(Date.now()+300000).toISOString()};
   if(sourceTask) Object.assign(task,sourceTaskFields(task));
+  if(sourceNative) Object.assign(task,sourceNativeFields(task,canonicalRoot));
   if(sourcePatch){
     const manifest=JSON.parse(task.content),before=await readFile(join(canonicalRoot,task.targetPath),'utf8');
     manifest.changes[0]={path:task.targetPath,beforeBlob:git(canonicalRoot,['rev-parse','HEAD:'+task.targetPath]),
@@ -97,7 +110,7 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   }
   const expected={commentId:6380000001,taskId:task.taskId,taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),
     baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1',
-    ...(sourceTask?{targetPaths:JSON.parse(task.content).changes.map(w=>w.path),ownerIssueNumber:task.issueNumber,taskKind:'SOURCE_PROPOSAL_V1'}:{})};
+    ...(sourceTask || sourceNative?{targetPaths:JSON.parse(task.content).changes.map(w=>w.path),ownerIssueNumber:task.issueNumber,taskKind:'SOURCE_PROPOSAL_V1',needsNativeObserver:sourceNative}:{})};
   const config={canonicalRoot,sharedWorkspaceRoot,missionRoot,seedRoot,nativeHostPath};
   const host=createRescueIslandSupervisedHostV1(config);
   const governor={schemaVersion:'stephanos.vr-resource-governor.v1',active:false,phase:'NORMAL',
@@ -107,7 +120,7 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
   // its four fixed GitHub reads have a deterministic test transport.
   const harness=join(root,'harness');await mkdir(harness);
   for(const name of ['rescueIslandFirstCommitV1.mjs','rescueIslandAuthenticatedGithubReadV1.mjs',
-    'rescueIslandPilotOwnerIntakeV1.mjs', 'rescueIslandSourceTaskV1.mjs','rescueIslandPreflightV1.mjs',
+    'rescueIslandPilotOwnerIntakeV1.mjs', 'rescueIslandSourceTaskV1.mjs', 'rescueIslandNativeTestProvisionV1.mjs','rescueIslandPreflightV1.mjs',
     'battleBridgeExecutionBoundaryV1.mjs','battleBridgeWindowsHosts.mjs'])
     await writeFile(join(harness,name),await readFile(join(source,name)));
   const now=new Date().toISOString(),issueUrl='https://api.github.com/repos/'+task.repository+'/issues/3109';
@@ -115,7 +128,7 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
     main:{ref:'refs/heads/main',object:{sha:baseHead}},comment:{id:expected.commentId,
       url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+expected.commentId,issue_url:issueUrl,
       user:{login:'Cheekyfellastef',type:'User',id:267490109},author_association:'OWNER',
-      created_at:now,updated_at:now,body:'/rescue-island-01 '+(sourceTask?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content)}};
+      created_at:now,updated_at:now,body:'/rescue-island-01 '+(sourceTask || sourceNative?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content)}};
   const factsFile=join(root,'github-facts.json');await save(factsFile,facts);
   await writeFile(join(harness,'githubObservationBrokerV1.mjs'),
     'import {readFileSync,writeFileSync} from "node:fs"; export function readBrokeredGithubJson(s){const facts=JSON.parse(readFileSync('+JSON.stringify(factsFile)+',"utf8"));writeFileSync('+JSON.stringify(join(root,'broker-call.json'))+',JSON.stringify(s));return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
@@ -426,3 +439,46 @@ test('existing owner guard advances only the known clean detached base while pre
   assert.equal(await readFile(join(root,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
   t.diagnostic('ADAPTER_BASE_ADVANCE_TEST_ONLY=true;LIVE_PROGRAMME_BUILD=false');
 });
+
+
+function sourceNativeFields(task,canonicalRoot){
+  const code='shared/agents/rescueIslandSupervisedHostV1.mjs';
+  const suite='shared/agents/rescueIslandSupervisedHostV1.windows.mjs';
+  const nativeTest=[
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import {spawnSync} from 'node:child_process';",
+    "import {readFileSync} from 'node:fs';",
+    "import {fixtureHostVersion} from './rescueIslandSupervisedHostV1.mjs';",
+    "import {fileURLToPath} from 'node:url';",
+    "test('candidate host source uses a provisioned real native observer',()=>{",
+    " assert.equal(fixtureHostVersion,2); assert.equal(process.env.STEPHANOS_ISLAND_SOURCE_HOST_SMOKE,'1');",
+    " const path=fileURLToPath(new URL('../../src/windows/Stephanos.RescueIslandHost/bin/Release/net8.0-windows/Stephanos.RescueIslandHost.exe',import.meta.url));",
+    " assert.ok(readFileSync(path).length>100);",
+    " const r=spawnSync(path,['--inspect-principal'],{encoding:'utf8',shell:false,windowsHide:true,timeout:10000});",
+    " assert.equal(r.status,3,r.stderr);const facts=JSON.parse(r.stdout);",
+    " assert.equal(facts.processId,r.pid);assert.equal(facts.principal.elevated,false);assert.equal(facts.principal.threadImpersonating,false);",
+    "});",
+  ].join('\n')+'\n';
+  return {schemaVersion:'stephanos.rescue-island-source-task.v1',targetPath:code,
+    content:JSON.stringify({scopeId:'ISLAND_BUILDERS_V1',changes:[
+      {path:code,beforeBlob:git(canonicalRoot,['rev-parse','HEAD:'+code]),content:'export const fixtureHostVersion = 2;\n'},
+      {path:suite,beforeBlob:null,content:nativeTest},
+    ]})};
+}
+test('source host plan provisions the observed real native binary before its fixed Windows smoke test',async t=>{
+  const f=await fixture(t,{sourceNative:true}),result=await f.run(f.request);
+  const tested=result.receipts.find(r=>r.stage==='TESTED');
+  assert.equal(tested.testProfile,'NODE_AND_OBSERVED_NATIVE_HOST_SMOKE_V1');
+  assert.equal(tested.nativeTestProvision.fullWindowsQualification,false);
+  assert.equal(tested.nativeTestProvision.operatingSystemChanged,false);
+  const log=await readFile(join(f.host.roots.receiptRoot,'test-output',tested.testOutputFile),'utf8');
+  assert.match(log,/candidate host source uses a provisioned real native observer/);
+  assert.equal(hash(log),tested.testResultHash);assert.equal(result.changedPaths.length,2);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['status','--porcelain']),'');
+  t.diagnostic('NATIVE_PROVISION_SOURCE_FIXTURE='+result.head+';LIVE_PROGRAMME_BUILD=false;FULL_WINDOWS_QUALIFICATION=false');
+});
+if(sourceSmoke==='1'){
+  nodeTest('source host smoke registers every required real adapter check',()=>assert.equal(smokeRegistered,smokeNames.size));
+  console.log('SOURCE_HOST_SMOKE_ONLY=true;FULL_WINDOWS_QUALIFICATION=false');
+}

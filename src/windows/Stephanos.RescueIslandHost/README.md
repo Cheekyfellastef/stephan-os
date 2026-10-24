@@ -249,3 +249,20 @@ construction. This change does not commission Island 02, general model
 authoring, Seed execution, an Octopus worker or unattended refill. The catalogue
 allows a future reviewed Island 02 module/test proposal; its presence is not an
 operating second lane. The original strict construction refusal remains.
+
+
+For a host-source plan, the admitted host observes five fixed files belonging
+to its existing native observer (EXE, two DLLs, deps and runtime JSON), binding
+their actual SHA-256 values into repeated admission identity. The source
+constructor copies only those observed bytes into the proposal worktree's
+ignored native-test directory with exclusive creation, flush and hash readback.
+A changed or missing artifact holds the attempt and leaves copied evidence.
+
+That plan sets one internal, non-request environment value to select the three
+fixed real adapter smoke cases plus a coverage sentinel. The profile is
+NODE_AND_OBSERVED_NATIVE_HOST_SMOKE_V1; its receipt explicitly records
+fullWindowsQualification=false. The caller cannot select a binary, test filter
+or test mode. Source smoke exercises real token, lock, file, Git, Node and
+read-only governor boundaries; it is not the complete Windows qualification.
+The full unfiltered adapter suite remains mandatory in hosted protected CI.
+No copied binary is installed on the OS or granted runtime authority.

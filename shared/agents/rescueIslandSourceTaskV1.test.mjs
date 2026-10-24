@@ -1,3 +1,5 @@
+import {inspectRescueIslandSupervisedOwnerIntakeV1 as intake} from './rescueIslandPilotOwnerIntakeV1.mjs';
+import {createHash} from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectRescueIslandSourceTaskV1 as inspect,RESCUE_ISLAND_SOURCE_TASK_SCHEMA,
@@ -54,8 +56,6 @@ test('source task refuses accessor authority, unknown fields and prototype plans
   assert.equal(inspect(mutate(fixture(),m=>m.changes.reverse()),now).valid,false);
 });
 
-import {createHash} from 'node:crypto';
-import {inspectRescueIslandSupervisedOwnerIntakeV1 as intake} from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 test('source patch plan permits only exact before/after strings and a bound full-content digest',()=>{
   const task=fixture();

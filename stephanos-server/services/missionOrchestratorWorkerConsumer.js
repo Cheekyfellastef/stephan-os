@@ -763,7 +763,7 @@ function requireSourceEscrowBeforeCompletion(execution = {}) {
   }
 }
 
-async function applyClaimResult(claim, action, execution, inspection) {
+async function applyClaimResult(claim, action, execution, inspection, executionReceipt = null) {
   const event = buildMissionEventFromWorkerResult(action, execution, inspection);
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
   const result = {
@@ -772,8 +772,14 @@ async function applyClaimResult(claim, action, execution, inspection) {
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
   };
+  if (executionReceipt) executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+    executionReceipt, execution.success === true ? 'completed' : 'failed', claim.options, {
+      phase: 'readonly-inspection-result-consumed',
+      proofRefs: [...executionReceipt.proofRefs, event.eventId],
+      expectedNextAction: 'Reconcile only this completed read-only lease against the consumed mission event.',
+    });
   const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
-  return { processed: true, claim, event, applied, result, resultPath };
+  return { processed: true, claim, event, applied, result, resultPath, executionReceipt };
 }
 
 async function failClaim(claim, action, error) {
@@ -1009,10 +1015,18 @@ export async function processNextGitHubInspectionItem(options = {}) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  let executionReceipt = null;
   try {
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
     const inspected = await options.inspectGitHub(action, claim);
-    return await applyClaimResult(claim, action, inspected.execution, inspected.inspection);
+    return await applyClaimResult(claim, action, inspected.execution, inspected.inspection, executionReceipt);
   } catch (error) {
+    if (executionReceipt && !EXECUTION_RECEIPT_TERMINAL_STATES.includes(executionReceipt.state)) {
+      try { await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
+        phase: 'readonly-inspection-failed', blocker: error.message,
+        expectedNextAction: 'Keep custody held until canonical failed inspection reconciliation.',
+      }); } catch (receiptError) { error.executionReceiptFailure = receiptError; }
+    }
     return failClaim(claim, action, error);
   }
 }

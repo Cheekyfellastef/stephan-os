@@ -1256,3 +1256,59 @@ test('failed exact-owner stale review lease recovery cannot bypass authority HOL
   assert.equal(result.elasticReviewLeaseRecovery.released, false);
   assert.equal(result.mergeAuthority, false);
 });
+
+test('completed-inspection revision HOLD triggers one guarded recovery then rereads real Programme Authority before admission', async () => {
+  const paths = await roots();
+  const sourceRevision = 'a'.repeat(40);
+  let authorityReads = 0;
+  let recoveryCalls = 0;
+  let admissionCalls = 0;
+  const existingGoal = {
+    missionId: 'critical-2955-elastic-goal',
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    issueNumber: 2955,
+  };
+  const result = await ensureCriticalBacklogMission({
+    allowLegacyMissionCreation: false, paths,
+    now: new Date('2026-10-10T02:24:39.000Z'),
+    readProgrammeProjection: async () => {
+      authorityReads += 1;
+      return {
+        status: authorityReads === 1 ? 'HOLD' : 'READY',
+        blockers: authorityReads === 1 ? ['lane:elastic-mission-phase-binding-unproven'] : [],
+        scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+        machineryInventory: { sourceHead: sourceRevision },
+      };
+    },
+    listMissions: async () => [{
+      missionId: 'critical-2956-elastic-goal', revision: 6,
+      currentPhase: 'CHECK_PULL_REQUEST', dispatch: { status: 'idle' },
+    }],
+    reconcileExpiredReviewLease: async (payload) => {
+      recoveryCalls += 1;
+      assert.equal(payload.sourceRevision, sourceRevision);
+      assert.equal(payload.missionRecords[0].missionId, 'critical-2956-elastic-goal');
+      return { ok: true, released: true, classification: 'ELASTIC_CONSUMED_READONLY_INSPECTION_LEASE_RELEASED' };
+    },
+    ensureElasticMissions: async () => {
+      admissionCalls += 1;
+      return {
+        ok: true, desiredWidth: 15, selectedMission: existingGoal,
+        elasticMissions: [existingGoal], activeMissions: [existingGoal],
+        runnableMissions: [existingGoal],
+      };
+    },
+    readCapacityRouting: async () => ({ ok: true }),
+    dispatchElasticBuilds: async () => ({ ok: true, dispatchCount: 1, held: [] }),
+    publishProjection: async () => ({ ok: true }),
+  });
+  assert.equal(recoveryCalls, 1);
+  assert.equal(authorityReads, 2);
+  assert.equal(admissionCalls, 1);
+  assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
+  assert.equal(result.programmeStatus, 'READY');
+  assert.equal(result.elasticReviewLeaseRecovery.released, true);
+  assert.equal(result.elasticAdmission.selectedMission.missionId, 'critical-2955-elastic-goal');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.duplicateActiveMissionAllowed, false);
+});
