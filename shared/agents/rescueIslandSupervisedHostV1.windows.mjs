@@ -35,7 +35,8 @@ function git(cwd,args) {
   assert.equal(r.status,0,r.stderr);return r.stdout.trim();
 }
 async function save(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value));}
-async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=false,sourcePatch=false,sourceNative=false}={}) {
+async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=false,sourcePatch=false,sourceNative=false,worker02=false}={}) {
+  if(worker02){const first=await fixture(t);await first.run(first.request);return secondLaneFixture(first);}
   assert.equal(process.platform,'win32','This suite requires the real native Windows token observer.');
   await stat(nativeHostPath); // No skip or fabricated principal if the host was not built.
   const root=await realpath(await mkdtemp(join(tmpdir(),'island-real-adapters-')));
@@ -109,9 +110,9 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
     task.content=JSON.stringify(manifest);
   }
   const expected={commentId:6380000001,taskId:task.taskId,taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),
-    baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1',
+    baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1',workerId:task.workerId,ownerIssueNumber:task.issueNumber,
     ...(sourceTask || sourceNative?{targetPaths:JSON.parse(task.content).changes.map(w=>w.path),ownerIssueNumber:task.issueNumber,taskKind:'SOURCE_PROPOSAL_V1',needsNativeObserver:sourceNative}:{})};
-  const config={canonicalRoot,sharedWorkspaceRoot,missionRoot,seedRoot,nativeHostPath};
+  const config={canonicalRoot,sharedWorkspaceRoot,missionRoot,seedRoot,nativeHostPath,...(worker02?{workerId:'rescue-island-02'}:{})};
   const host=createRescueIslandSupervisedHostV1(config);
   const governor={schemaVersion:'stephanos.vr-resource-governor.v1',active:false,phase:'NORMAL',
     localModelAllowed:true,updatedAtUtc:new Date().toISOString()};
@@ -123,18 +124,38 @@ async function fixture(t,{realFlatSignal=false,sourceTask=false,sourceBaseline=f
     'rescueIslandPilotOwnerIntakeV1.mjs', 'rescueIslandSourceTaskV1.mjs', 'rescueIslandNativeTestProvisionV1.mjs','rescueIslandPreflightV1.mjs',
     'battleBridgeExecutionBoundaryV1.mjs','battleBridgeWindowsHosts.mjs'])
     await writeFile(join(harness,name),await readFile(join(source,name)));
-  const now=new Date().toISOString(),issueUrl='https://api.github.com/repos/'+task.repository+'/issues/3109';
-  const facts={issue:{number:3109,title:task.issueTitle,state:'open',url:issueUrl},
+  const now=new Date().toISOString(),issueUrl='https://api.github.com/repos/'+task.repository+'/issues/'+task.issueNumber;
+  const facts={issue:{number:task.issueNumber,title:task.issueTitle,state:'open',url:issueUrl},
     main:{ref:'refs/heads/main',object:{sha:baseHead}},comment:{id:expected.commentId,
       url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+expected.commentId,issue_url:issueUrl,
       user:{login:'Cheekyfellastef',type:'User',id:267490109},author_association:'OWNER',
-      created_at:now,updated_at:now,body:'/rescue-island-01 '+(sourceTask || sourceNative?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content)}};
+      created_at:now,updated_at:now,body:'/'+task.workerId+' '+(sourceTask || sourceNative?'supervised-source-cooperative':'supervised-cooperative')+' '+baseHead+' '+task.taskId+' '+hash(task.content)}};
   const factsFile=join(root,'github-facts.json');await save(factsFile,facts);
   await writeFile(join(harness,'githubObservationBrokerV1.mjs'),
     'import {readFileSync,writeFileSync} from "node:fs"; export function readBrokeredGithubJson(s){const facts=JSON.parse(readFileSync('+JSON.stringify(factsFile)+',"utf8"));writeFileSync('+JSON.stringify(join(root,'broker-call.json'))+',JSON.stringify(s));return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
   const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(harness,'rescueIslandFirstCommitV1.mjs')));
   return {root,task,expected,config,host,governor,factsFile,
     run:createRescueIslandSupervisedRunnerV1(host.host),request:{commentId:expected.commentId,task}};
+}
+
+
+async function secondLaneFixture(first){
+  const task={...first.task,workerId:'rescue-island-02',issueNumber:3103,
+    issueTitle:'Rescue Island: two independent proof-gated builders outside Goal Conveyor',
+    taskId:'real-adapter-3103-02',targetPath:'docs/architecture/rescue-island-pilot-real-adapter-3103-02.md',
+    expiresAtUtc:new Date(Date.now()+300000).toISOString()};
+  const expected={...first.expected,commentId:first.expected.commentId+1,taskId:task.taskId,
+    workerId:task.workerId,ownerIssueNumber:task.issueNumber,targetPath:task.targetPath,
+    taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k])))};
+  const facts=JSON.parse(await readFile(first.factsFile,'utf8')),now=new Date().toISOString();
+  facts.issue={...facts.issue,number:3103,title:task.issueTitle,url:facts.issue.url.replace('/3109','/3103')};
+  facts.comment={...facts.comment,id:expected.commentId,url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+expected.commentId,
+    issue_url:facts.issue.url,created_at:now,updated_at:now,
+    body:'/rescue-island-02 supervised-cooperative '+task.baseHead+' '+task.taskId+' '+hash(task.content)};
+  await save(first.factsFile,facts);
+  const config={...first.config,workerId:'rescue-island-02'},host=createRescueIslandSupervisedHostV1(config);
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(first.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  return {...first,task,expected,config,host,firstLane:first,request:{commentId:expected.commentId,task},run:createRescueIslandSupervisedRunnerV1(host.host)};
 }
 
 test('real adapters hold one owner through actual clone, preservation, Node tests and exact-parent commit',async t=>{
@@ -482,3 +503,105 @@ if(sourceSmoke==='1'){
   nodeTest('source host smoke registers every required real adapter check',()=>assert.equal(smokeRegistered,smokeNames.size));
   console.log('SOURCE_HOST_SMOKE_ONLY=true;FULL_WINDOWS_QUALIFICATION=false');
 }
+
+// Disposable qualification of actual adapters, never a live second-lane claim.
+test('worker02 real adapters build in their own estate with exact parent and retained proof',async t=>{
+  const f=await fixture(t,{worker02:true}),result=await f.run(f.request);
+  assert.equal(result.workerId,'rescue-island-02');assert.equal(result.parent,f.task.baseHead);
+  assert.ok(f.host.roots.repoRoot.includes('rescue-island-02'));
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['show','HEAD:'+f.task.targetPath]),f.task.content.trim());
+  assert.notEqual(f.host.roots.repoRoot,f.firstLane.host.roots.repoRoot);
+  assert.equal(git(f.firstLane.host.roots.repoRoot,['status','--porcelain']),'');
+  assert.equal(await readFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
+  assert.ok(result.receipts.some(r=>r.stage==='TESTED'&&r.testExitCode===0));
+});
+test('the original operation lock excludes simultaneous cooperative lanes',async t=>{
+  const f=await fixture(t,{worker02:true}),other=createRescueIslandSupervisedHostV1({...f.config,workerId:'rescue-island-01'});
+  await other.host.withExistingOwnerAdmission({...f.expected,workerId:'rescue-island-01',ownerIssueNumber:3109},async()=>{
+    await assert.rejects(f.run(f.request),/BUSY/);
+  });
+  await assert.rejects(stat(join(f.host.roots.receiptRoot,'claims')),/ENOENT/);
+});
+test('unknown peer estate and cross-worker host selection hold before creating worker02 estate',async t=>{
+  const f=await fixture(t,{worker02:true});
+  const wrong=createRescueIslandSupervisedHostV1({...f.config,workerId:'rescue-island-01'});
+  await assert.rejects(wrong.host.withExistingOwnerAdmission(f.expected,()=>assert.fail('wrong worker ran')),/OWNER_IDENTITY_INVALID/);
+  await save(join(f.firstLane.host.roots.receiptRoot,'estate.json'),{unknown:'retained fixture mutation'});
+  await assert.rejects(f.run(f.request),/PEER_ESTATE_NOT_ADMITTED/);
+  await assert.rejects(stat(f.host.roots.repoRoot),/ENOENT/);
+});
+
+test('actual retained Island01 claims block worker02 without rewriting the first lane proof',async t=>{
+  const f=await fixture(t),first=await f.run(f.request);
+  const claimPath=join(f.host.roots.receiptRoot,'claims',f.task.taskId+'.ISOLATED_COMMIT.json');
+  const before=await readFile(claimPath),task={...f.task,workerId:'rescue-island-02',issueNumber:3103,
+    issueTitle:'Rescue Island: two independent proof-gated builders outside Goal Conveyor'};
+  const facts=JSON.parse(await readFile(f.factsFile,'utf8'));
+  facts.issue={...facts.issue,number:3103,title:task.issueTitle,url:facts.issue.url.replace('/3109','/3103')};
+  facts.comment={...facts.comment,issue_url:facts.issue.url,body:facts.comment.body.replace('/rescue-island-01','/rescue-island-02')};
+  await save(f.factsFile,facts);
+  const second=createRescueIslandSupervisedHostV1({...f.config,workerId:'rescue-island-02'});
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  await assert.rejects(createRescueIslandSupervisedRunnerV1(second.host)({commentId:f.expected.commentId,task}),/COMPETING_SOURCE_OWNER/);
+  assert.deepEqual(await readFile(claimPath),before);assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),first.head);
+  await assert.rejects(stat(second.roots.repoRoot),/ENOENT/);
+});
+test('worker02 gaming revocation retains admission and actual edit without a commit',async t=>{
+  const f=await fixture(t,{worker02:true}),observe=f.host.host.observeSupervisedAdmission;
+  f.host.host.observeSupervisedAdmission=async expected=>{
+    if(expected.stage==='BEFORE_TEST')await save(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),{...f.governor,active:true});
+    return observe(expected);
+  };
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  await assert.rejects(createRescueIslandSupervisedRunnerV1(f.host.host)(f.request),/GAMING_ADMISSION_REVOKED_OR_STALE/);
+  const entries=await readdir(join(f.host.roots.receiptRoot,'claims'));
+  assert.ok(entries.includes(f.task.taskId+'.ADMITTED.json'));assert.ok(entries.includes(f.task.taskId+'.EDITED.json'));
+  assert.ok(!entries.includes(f.task.taskId+'.ISOLATED_COMMIT.json'));
+});
+
+test('worker02 requires actual first-lane commit and passing-test artifacts before estate setup',async t=>{
+  const first=await fixture(t),second=await secondLaneFixture(first);
+  await assert.rejects(second.run(second.request),/FIRST_WORKER_MATERIAL_PROOF_REQUIRED/);
+  await assert.rejects(stat(second.host.roots.repoRoot),/ENOENT/);
+});
+
+test('peer physical estate replacement between observations holds worker02 and retains the original directory',async t=>{
+  const f=await fixture(t,{worker02:true}),observe=f.host.host.observeSupervisedAdmission;
+  const path=f.firstLane.host.roots.worktreeRoot,moved=path+'.preserved';
+  assert.ok((await realpath(path)).toLowerCase().startsWith((await realpath(f.root)).toLowerCase()+'\\'));
+  assert.ok(moved.toLowerCase().startsWith(f.root.toLowerCase()+'\\'));
+  f.host.host.observeSupervisedAdmission=async expected=>{
+    if(expected.stage==='BEFORE_TEST'){await rename(path,moved);await mkdir(path);}
+    return observe(expected);
+  };
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  await assert.rejects(createRescueIslandSupervisedRunnerV1(f.host.host)(f.request),/PEER_ESTATE_IDENTITY_CHANGED/);
+  assert.ok((await stat(moved)).isDirectory());
+  const claims=await readdir(join(f.host.roots.receiptRoot,'claims'));
+  assert.ok(!claims.includes(f.task.taskId+'.ISOLATED_COMMIT.json'));
+});
+
+test('default narrow host dispatch executes worker02 through the real adapters and rejects extra request authority',async t=>{
+  const f=await fixture(t,{worker02:true});
+  // Exact host body; only imports are rebound to absolute dependencies so the
+  // existing explicit GitHub test transport can feed the real guarded runner.
+  const sourceUrl=new URL('./rescueIslandSupervisedHostV1.mjs',import.meta.url);
+  const moduleText=(await readFile(sourceUrl,'utf8')).replace(/from (['"])(\.[^'"]+)\1/g,(_all,_quote,spec)=>{
+    const url=spec==='./rescueIslandFirstCommitV1.mjs'
+      ?pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')).href:new URL(spec,sourceUrl).href;
+    return 'from '+JSON.stringify(url);
+  });
+  const module=await import('data:text/javascript;base64,'+Buffer.from(moduleText).toString('base64'));
+  const {workerId,...configuration}=f.config;
+  const host=module.createRescueIslandSupervisedHostV1(configuration);
+  await assert.rejects(host.run({...f.request,repoRoot:f.root}),/SUPERVISED_REQUEST_INVALID/);
+  const result=await host.run(f.request);
+  assert.equal(result.workerId,'rescue-island-02');assert.equal(result.parent,f.task.baseHead);
+  assert.equal(git(join(f.host.roots.worktreeRoot,f.task.taskId),['rev-parse','HEAD']),result.head);
+  for(const receipt of result.receipts){
+    assert.equal(receipt.executionOwnerIssueNumber,3103);
+    assert.equal(receipt.taskOwnerIssueNumber,3103);
+    assert.equal(receipt.resourceScheduling,'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK');
+    assert.equal(receipt.hostileWriterContainmentProven,false);
+  }
+});
