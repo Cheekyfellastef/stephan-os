@@ -4,6 +4,7 @@ import '../../scripts/starfield-vr-telemetry-archive.test.mjs';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
+import { evaluateSkillForgeBrowserObservation } from '../../scripts/sovereign-commander-skill-forge-runtime-proof.mjs';
 import {
   createSovereignCommanderMcpHandler,
   runSovereignCommanderStdioMcpServer,
@@ -187,6 +188,7 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('prove-skill-forge-runtime'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('rescue-island-readonly-boundary'));
   const island = await handler('tools/call', {
     name: 'maintenance_action',
@@ -209,6 +211,26 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.equal(physical.plan.args.length, 1);
   assert.equal(physical.mergeAuthority, false);
   assert.equal(physical.leaseSeizureAllowed, false);
+  await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: {
+      actionId: 'prove-skill-forge-runtime',
+      url: 'https://untrusted.example',
+      command: 'UNTRUSTED_ARBITRARY_COMMAND',
+      path: 'C:\\untrusted',
+      releaseLease: true,
+    },
+  }, { id: 7, isRequest: true, isNotification: false });
+  const skillForge = observed.at(-1);
+  assert.deepEqual(skillForge.payload, { actionId: 'prove-skill-forge-runtime' });
+  assert.deepEqual(skillForge.targetPaths, []);
+  assert.doesNotMatch(JSON.stringify(skillForge), /untrusted|releaseLease|UNTRUSTED/);
+  const skillForgePhysical = buildSovereignCommanderCommandV1(skillForge, { repoRoot: 'C:\\repo' });
+  assert.equal(skillForgePhysical.dispatchAllowed, true);
+  assert.equal(skillForgePhysical.plan.kind, 'fixed-process');
+  assert.equal(skillForgePhysical.plan.processId, 'prove-skill-forge-runtime');
+  assert.equal(skillForgePhysical.mergeAuthority, false);
+  assert.equal(skillForgePhysical.leaseSeizureAllowed, false);
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {
@@ -272,4 +294,43 @@ test('private MCP exposes bounded metadata and batch-reading parity without shel
   assert.equal(observed[1].operation, 'GET_FILE_INFO');
   assert.deepEqual(observed[1].targetPaths, [paths[0]]);
   assert.equal(JSON.stringify(observed).includes('do-not-forward'), false);
+});
+
+test('fixed Skill Forge browser receipt fails closed on stale head, asset, route and hydration', () => {
+  const head = 'a'.repeat(40);
+  const ready = {
+    exactHeadProofOk: true, sourceHead: head, servedBuildHead: head,
+    servedAssetFingerprint: 'b'.repeat(64), expectedAssetFingerprint: 'b'.repeat(64),
+    currentSourceFingerprint: 'c'.repeat(64), servedSourceFingerprint: 'c'.repeat(64),
+    forgeHttpStatus: 200, commandHttpStatus: 200,
+    forgeUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html?surface=skill-forge',
+    commandUrl: 'http://127.0.0.1:4173/apps/stephanos/dist/index.html',
+    forgeTitleVisible: true, forgeConstructionLineVisible: true,
+    forgeLearningViewVisible: true, forgeTransferGateVisible: true,
+    commandObservatoryVisible: true, commandNavigationVisible: true,
+    forgeFeedTruth: 'REPORTED', backendState: 'ready', backendHttpStatus: 200,
+    consoleErrorCount: 0, pageErrorCount: 0,
+  };
+  assert.equal(evaluateSkillForgeBrowserObservation(ready).accepted, true);
+  for (const [key, bad] of [
+    ['exactHeadProofOk', false],
+    ['servedBuildHead', 'c'.repeat(40)],
+    ['servedAssetFingerprint', ''],
+    ['expectedAssetFingerprint', 'd'.repeat(64)],
+    ['servedSourceFingerprint', 'e'.repeat(64)],
+    ['forgeHttpStatus', 404],
+    ['forgeUrl', 'http://example.org'],
+    ['forgeConstructionLineVisible', false],
+    ['forgeLearningViewVisible', false],
+    ['forgeTransferGateVisible', false],
+    ['commandObservatoryVisible', false],
+    ['backendState', 'stale'],
+    ['forgeFeedTruth', 'STALE'],
+    ['consoleErrorCount', 1],
+    ['pageErrorCount', 1],
+  ]) {
+    const verdict = evaluateSkillForgeBrowserObservation({ ...ready, [key]: bad });
+    assert.equal(verdict.accepted, false, key);
+    assert.ok(verdict.blockers.length > 0, key);
+  }
 });

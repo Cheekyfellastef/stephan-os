@@ -446,6 +446,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
       timeoutMs: 60_000,
     }),
+    'prove-skill-forge-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-skill-forge-runtime-proof.mjs')]),
+      timeoutMs: 90_000,
+    }),
     'reconcile-remote-commander-parity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
