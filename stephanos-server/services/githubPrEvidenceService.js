@@ -7,13 +7,14 @@ import {
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import { evaluateOperatorLaneContainmentV1 } from '../../shared/agents/operatorLaneContainmentV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
 
 const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'arbitraryShellAllowed', 'deploymentAuthority', 'issueNumber', 'mergeAuthority', 'prerequisites',
-  'repository', 'resourceIds', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
+  'repository', 'resourceIds', 'requiredTests', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
 ]);
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
@@ -28,12 +29,13 @@ function parseRepoSlug(repoSlug = '') { const match = asText(repoSlug).match(/^(
 function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': userAgent }; }
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
 
-function sourceImplementationAdmission(issueNumber, repository, resourceIds = []) {
+function sourceImplementationAdmission(issueNumber, repository, resourceIds = [], requiredTests) {
   return Object.freeze({
     schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
     issueNumber,
     repository,
     resourceIds: Object.freeze([...resourceIds]),
+    ...(requiredTests === undefined ? {} : { requiredTests: Object.freeze([...requiredTests]) }),
     state: 'READY',
     route: 'OPENCLAW_LOCAL',
     prerequisites: Object.freeze([]),
@@ -92,7 +94,9 @@ function parseGoalAdmissionBody(body, issueNumber, repository) {
   if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) return null;
   const resourceIds = goalAdmissionResourceIds(payload.resourceIds, repository);
   if (resourceIds === null) return null;
-  return sourceImplementationAdmission(issueNumber, repository, resourceIds);
+  const tests = projectGoalAdmissionRequiredTestsV1(payload.requiredTests);
+  if (!tests.valid) return null;
+  return sourceImplementationAdmission(issueNumber, repository, resourceIds, tests.supplied ? tests.commands : undefined);
 }
 
 function normalizeGoalDiscovery(issue, repository, retrievedAt) {
@@ -133,13 +137,15 @@ function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, rep
     ? []
     : goalAdmissionResourceIds(prior?.resourceIds, repository);
   if (priorResourceIds === null) return null;
+  const tests = projectGoalAdmissionRequiredTestsV1(prior.requiredTests);
+  if (!tests.valid) return null;
   const derivedBodyResourceIds = deriveGoalBodyResourceIds(issueBody, repository);
   const resourceIds = priorResourceIds.length > 0 ? priorResourceIds : derivedBodyResourceIds;
   const operatorLaneContainment = plainObject(prior?.operatorLaneContainment)
     ? prior.operatorLaneContainment
     : { active: false };
   return Object.freeze({
-    admission: sourceImplementationAdmission(discovery.issueNumber, repository, resourceIds),
+    admission: sourceImplementationAdmission(discovery.issueNumber, repository, resourceIds, tests.supplied ? tests.commands : undefined),
     operatorLaneContainment,
     admissionProofSource: 'PRIOR_MIRROR_ADMISSION_REVALIDATED',
   });
@@ -157,11 +163,23 @@ function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repos
 
 function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   const candidates = [];
+  let explicitTestPlan = false;
   for (const comment of Array.isArray(comments) ? comments : []) {
     if (asText(comment?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) continue;
     if (asText(comment?.author_association).toUpperCase() !== 'OWNER') continue;
-    const admission = parseGoalAdmissionBody(comment?.body, issueNumber, repository); if (admission) candidates.push(admission);
+    const body = String(comment?.body ?? '');
+    const blocks = [...body.matchAll(new RegExp('```' + GITHUB_GOAL_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g'))];
+    const requestsTests = body.includes('```' + GITHUB_GOAL_ADMISSION_MARKER) && (
+      /"requiredTests"\s*:/.test(body) || blocks.some(block => {
+        try { return Object.hasOwn(JSON.parse(block[1]) || {}, 'requiredTests'); } catch { return false; }
+      })
+    );
+    explicitTestPlan ||= requestsTests;
+    const admission = parseGoalAdmissionBody(body, issueNumber, repository);
+    if (requestsTests && !admission) return { invalidRequiredTests: true };
+    if (admission) candidates.push(admission);
   }
+  if (explicitTestPlan && candidates.length !== 1) return { invalidRequiredTests: true };
   return candidates.length === 1 ? candidates[0] : null;
 }
 
@@ -169,7 +187,9 @@ function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, eve
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
   const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
-  const scopedCommentAdmission = commentAdmission?.resourceIds?.length && comments.length === 1 ? commentAdmission : null;
+  if (commentAdmission?.invalidRequiredTests) return null;
+  const scopedCommentAdmission = (commentAdmission?.requiredTests
+    || (commentAdmission?.resourceIds?.length && comments.length === 1)) ? commentAdmission : null;
   const priorAdmission = priorMirrorAdmission?.admission || null;
   const admission = scopedCommentAdmission || priorAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;

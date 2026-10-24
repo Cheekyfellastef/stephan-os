@@ -50,6 +50,41 @@ function priorMirror(overrides = {}) {
 }
 async function observe(issue, comments = [], commentStatus = 200, events = [ownerGoalLabelEvent()]) { return fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (url) => { if (url.includes('/events?')) return response(events); if (url.includes('/comments?')) return response(comments, commentStatus); return response([issue]); }, maxPages: 1 }); }
 
+test('one authenticated owner acceptance plan keeps tests outside mutation scope despite unrelated comments', async () => {
+  const requiredTests = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const resourceIds = ['repo:cheekyfellastef/stephan-os:path:shared/agents/canonicalMissionWorkerEvidenceV1.mjs'];
+  const result = await observe(canonicalGoal({ comments: 2 }), [ownerAdmissionComment({ body: admissionBody({ resourceIds, requiredTests }) }),
+    { user: { login: 'contributor' }, author_association: 'CONTRIBUTOR', body: 'ordinary discussion' }]);
+  assert.deepEqual(result.issues[0].admission.requiredTests, requiredTests);
+  assert.deepEqual(result.issues[0].admission.resourceIds, resourceIds);
+  assert.equal(result.issues[0].admissionProofSource, 'OWNER_AUTHENTICATED_COMMENT');
+});
+
+test('invalid or ambiguous owner acceptance cannot silently fall back to general-only label admission', async () => {
+  for (const commands of [[], ['node --test ../escape.test.mjs'], ['npm run arbitrary']]) {
+    const result = await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ body: admissionBody({ requiredTests: commands }) })]);
+    assert.deepEqual(result.issues, []);
+  }
+  const body = admissionBody({ requiredTests: ['node --test scripts/a.test.mjs'] });
+  assert.deepEqual((await observe(canonicalGoal({ comments: 2 }), [ownerAdmissionComment({ body }), ownerAdmissionComment({ body })])).issues, []);
+  const escaped = admissionBody({ requiredTests: [] }).replace('requiredTests', 'required\\u0054ests');
+  assert.deepEqual((await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ body: escaped })])).issues, []);
+});
+
+test('contributor test plans never acquire owner test execution authority', async () => {
+  const result = await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ user: { login: 'contributor' },
+    author_association: 'CONTRIBUTOR', body: admissionBody({ requiredTests: ['node --test scripts/a.test.mjs'] }) })]);
+  assert.equal(result.issues[0].admission.requiredTests, undefined);
+});
+
+test('unchanged canonical mirror retains the admitted acceptance plan on bounded revalidation', async () => {
+  const requiredTests = ['node --test scripts/a.test.mjs'];
+  const result = await fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only' },
+    fetchImpl: async url => { assert.equal(url.includes('/comments?'), false); return response([canonicalGoal()]); },
+    priorGoalRecords: [priorMirror({ requiredTests })], maxPages: 1, cacheEnabled: false });
+  assert.deepEqual(result.issues[0].admission.requiredTests, requiredTests);
+});
+
 test('derives bounded canonical resource scopes only from explicit repo-relative files in goal text', () => {
   const result = deriveGoalBodyResourceIds([
     'Reuse shared/agents/platformStatusProofFlow.mjs.',

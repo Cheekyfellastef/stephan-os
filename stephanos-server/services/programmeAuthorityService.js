@@ -78,6 +78,8 @@ import {
 } from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
 import { getSharedWorkspaceSpecializedStatusRecord } from '../../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
+import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
 export const PROGRAMME_CONTROLLER_HEARTBEAT_FILE = `${PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID}.json`;
@@ -315,7 +317,8 @@ function validGithubGoalEstateSnapshotIssue(issue = {}) {
     || admission.arbitraryShellAllowed !== false
     || resourceIds === null
     || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
-    || new Set(resourceIds).size !== resourceIds.length) return false;
+    || new Set(resourceIds).size !== resourceIds.length
+    || !projectGoalAdmissionRequiredTestsV1(admission.requiredTests).valid) return false;
 
   return true;
 }
@@ -602,7 +605,10 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
     const existingIndex = issueIndex.get(issueNumber);
 
     if (existingIndex !== undefined) {
-      const existing = observedRecords[existingIndex];
+      const { requiredTests: _previousTests, ...existingWithoutTests } = observedRecords[existingIndex];
+      const existing = Object.freeze({ ...existingWithoutTests,
+        ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }) });
+      observedRecords[existingIndex] = existing;
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
@@ -705,6 +711,7 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       prerequisites: [],
       route: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'OPENCLAW_LOCAL',
       resourceIds: Object.freeze(admittedResourceIds),
+      ...(issue.admission?.requiredTests === undefined ? {} : { requiredTests: issue.admission.requiredTests }),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
@@ -868,6 +875,7 @@ export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead
         title: text(live.title, text(record.title, `Goal #${issueNumber}`)),
         sourceUrl: text(live.htmlUrl, text(record.sourceUrl)),
         operatorLaneContainment: live.operatorLaneContainment ?? record.operatorLaneContainment ?? null,
+        requiredTests: live.admission?.requiredTests,
       }, {
         issueNumber,
         observedAtUtc,
