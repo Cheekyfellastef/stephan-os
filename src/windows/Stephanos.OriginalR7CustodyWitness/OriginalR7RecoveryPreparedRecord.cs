@@ -76,28 +76,58 @@ internal static class OriginalR7RecoveryPreparedRecord
     private static void Descriptor(byte[] bytes, bool protectedDaclRequired)
     {
         // Validate descriptor-relative component bounds before allowing the
-        // managed decoder to follow offsets. These records contain OWNER+DACL
-        // captures only. Group/SACL material is outside this version's scope.
+        // managed decoder to follow offsets. OWNER+DACL are required; valid
+        // ancillary group/SACL fields and a present NULL SACL are not proof
+        // that the capture requested or authenticated those additional rights.
         ReadOnlySpan<byte> value = bytes;
         Require(value[0] == 1, "SD_REVISION");
         ushort control = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(2, 2));
         // Sbz1 carries a real resource-manager control byte when the native
         // SE_RM_CONTROL_VALID bit is set. The kernel capture preserves it.
         Require(value[1] == 0 || (control & 0x4000) != 0, "SD_RESOURCE_MANAGER_CONTROL");
-        Require((control & 0x8004) == 0x8004 && (control & 0x0010) == 0
-            && (!protectedDaclRequired || (control & 0x1000) != 0)
-            && U32(value, 8) == 0 && U32(value, 12) == 0, "SD_CONTROL");
+        Require((control & 0x8004) == 0x8004
+            && (!protectedDaclRequired || (control & 0x1000) != 0), "SD_CONTROL");
         uint ownerOffset = U32(value, 4), daclOffset = U32(value, 16);
         Require(Offset(ownerOffset, value.Length, 8) && Offset(daclOffset, value.Length, 8), "SD_OFFSETS");
         int owner = (int)ownerOffset, dacl = (int)daclOffset;
         Require(value[owner] == 1 && value[owner + 1] <= 15, "OWNER_SID");
         int ownerLength = 8 + 4 * value[owner + 1];
         Require(ownerLength <= value.Length - owner, "OWNER_LENGTH");
+        ValidateSid(value, ownerOffset);
+        uint groupOffset = U32(value, 8), saclOffset = U32(value, 12);
+        Require((control & 0x0010) != 0 || saclOffset == 0, "SD_SACL_PRESENCE");
+        if (groupOffset != 0) ValidateSid(value, groupOffset);
+        if (saclOffset != 0) ValidateAcl(value, saclOffset);
+        ValidateAcl(value, daclOffset);
+        int aclLength = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(dacl + 2, 2));
+        Require(owner + ownerLength <= dacl || dacl + aclLength <= owner, "SD_OVERLAP");
+        try
+        {
+            var descriptor = new RawSecurityDescriptor(bytes, 0);
+            Require(descriptor.Owner is not null && descriptor.DiscretionaryAcl is not null, "SD_COMPONENTS");
+        }
+        catch (ArgumentException) { throw Invalid("SD_ENCODING"); }
+        catch (IndexOutOfRangeException) { throw Invalid("SD_ENCODING"); }
+        // Managed structural decoding is not a native policy readback, an
+        // authorization to restore, or proof the current object matches it.
+    }
+
+    private static void ValidateSid(ReadOnlySpan<byte> value, uint offset)
+    {
+        Require(Offset(offset, value.Length, 8), "SID_OFFSET");
+        int at = (int)offset;
+        Require(value[at] == 1 && value[at + 1] <= 15
+            && 8 + 4 * value[at + 1] <= value.Length - at, "SID_LENGTH");
+    }
+
+    private static void ValidateAcl(ReadOnlySpan<byte> value, uint offset)
+    {
+        Require(Offset(offset, value.Length, 8), "ACL_OFFSET");
+        int dacl = (int)offset;
         int aclLength = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(dacl + 2, 2));
         Require((value[dacl] == 2 || value[dacl] == 4) && value[dacl + 1] == 0
             && value[dacl + 6] == 0 && value[dacl + 7] == 0
-            && aclLength >= 8 && aclLength <= value.Length - dacl
-            && (owner + ownerLength <= dacl || dacl + aclLength <= owner), "DACL_LENGTH");
+            && aclLength >= 8 && aclLength <= value.Length - dacl, "DACL_LENGTH");
         int cursor = dacl + 8, limit = dacl + aclLength;
         int aceCount = BinaryPrimitives.ReadUInt16LittleEndian(value.Slice(dacl + 4, 2));
         for (int index = 0; index < aceCount; index++)
@@ -107,16 +137,11 @@ internal static class OriginalR7RecoveryPreparedRecord
             Require(size >= 4 && size % 4 == 0 && size <= limit - cursor, "ACE_LENGTH");
             cursor += size;
         }
-        try
-        {
-            var descriptor = new RawSecurityDescriptor(bytes, 0);
-            Require(descriptor.Owner is not null && descriptor.DiscretionaryAcl is not null
-                && descriptor.Group is null && descriptor.SystemAcl is null, "SD_COMPONENTS");
-        }
-        catch (ArgumentException) { throw Invalid("SD_ENCODING"); }
-        catch (IndexOutOfRangeException) { throw Invalid("SD_ENCODING"); }
-        // Managed structural decoding is not a native policy readback, an
-        // authorization to restore, or proof the current object matches it.
+        // Independently decode the bounded ACL body as well. This is structural
+        // parsing, without authenticating any policy or additional rights.
+        try { _ = new RawAcl(value.Slice(dacl, aclLength).ToArray(), 0); }
+        catch (ArgumentException) { throw Invalid("ACL_ENCODING"); }
+        catch (IndexOutOfRangeException) { throw Invalid("ACL_ENCODING"); }
     }
 
     private static bool Offset(uint offset, int length, int minimum) =>

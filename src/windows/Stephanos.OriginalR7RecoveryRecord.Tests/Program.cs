@@ -76,7 +76,7 @@ try
         Alter(x => x[start + 3] &= 0x7f, "ABSOLUTE_SD"); Alter(x => x[start + 2] &= 0xfb, "NO_DACL_PRESENT");
         foreach (int field in new[] { 4, 16 })
             foreach (uint value in new uint[] { 0, 4, 21, 0x80000000, uint.MaxValue }) Alter(x => U32(x, start + field, value), "COMPONENT_OFFSET");
-        Alter(x => U32(x, start + 8, 20), "GROUP_OUTSIDE_VERSION"); Alter(x => U32(x, start + 12, 20), "SACL_OUTSIDE_VERSION");
+        Alter(x => U32(x, start + 8, uint.MaxValue), "GROUP_OUT_OF_BOUNDS"); Alter(x => U32(x, start + 12, uint.MaxValue), "SACL_OUT_OF_BOUNDS");
         int owner = start + (int)BinaryPrimitives.ReadUInt32LittleEndian(valid.AsSpan(start + 4, 4));
         int acl = start + (int)BinaryPrimitives.ReadUInt32LittleEndian(valid.AsSpan(start + 16, 4));
         Alter(x => x[owner + 1] = 255, "SID_OVERFLOW"); Alter(x => U32(x, start + 16, (uint)(owner - start)), "OVERLAPPING_COMPONENTS");
@@ -99,6 +99,23 @@ try
     Check(Inspect(Fixture(padded)).Outcome == "UNKNOWN", "VALID_ACL_FREE_PADDING");
     Check(Inspect(Fixture(Descriptor("O:SYD:"))).Outcome == "UNKNOWN", "EMPTY_ORIGINAL_DACL");
     Check(Inspect(Fixture(Descriptor("O:SYD:P(A;;FA;;;SY)"))).Outcome == "UNKNOWN", "PROTECTED_ORIGINAL_DACL");
+    byte[] nullSacl = original.ToArray(); nullSacl[2] |= 0x10;
+    Check(Inspect(Fixture(nullSacl)).Outcome == "UNKNOWN", "VALID_PRESENT_NULL_SACL");
+    Check(Inspect(Fixture(Descriptor("O:SYG:BAD:(A;;FA;;;SY)"))).Outcome == "UNKNOWN", "VALID_OPTIONAL_GROUP");
+    Check(Inspect(Fixture(Descriptor("O:SYG:BAD:(A;;FA;;;SY)S:(AU;SA;FA;;;WD)"))).Outcome == "UNKNOWN", "VALID_OPTIONAL_SACL");
+    byte[] ancillary = Descriptor("O:SYG:BAD:(A;;FA;;;SY)S:(AU;SA;FA;;;WD)");
+    int groupAt = (int)BinaryPrimitives.ReadUInt32LittleEndian(ancillary.AsSpan(8, 4));
+    int saclAt = (int)BinaryPrimitives.ReadUInt32LittleEndian(ancillary.AsSpan(12, 4));
+    byte[] badGroup = Fixture(ancillary); badGroup[176 + groupAt + 1] = 255; Rehash(badGroup);
+    Reject(badGroup, "ANCILLARY_GROUP_BODY_BOUNDED");
+    byte[] badSacl = Fixture(ancillary); BinaryPrimitives.WriteUInt16LittleEndian(badSacl.AsSpan(176 + saclAt + 10, 2), 0); Rehash(badSacl);
+    Reject(badSacl, "ANCILLARY_SACL_ACE_BOUNDED");
+    byte[] badSaclSid = Fixture(ancillary); badSaclSid[176 + saclAt + 8 + 8 + 1] = 255; Rehash(badSaclSid);
+    Reject(badSaclSid, "ANCILLARY_SACL_SID_BOUNDED");
+    byte[] inactiveSacl = Fixture(ancillary); inactiveSacl[176 + 2] &= 0xef; Rehash(inactiveSacl);
+    Reject(inactiveSacl, "SACL_OFFSET_WITHOUT_PRESENCE_INCONSISTENT");
+    inactiveSacl[176 + saclAt + 8 + 8 + 1] = 255; Rehash(inactiveSacl);
+    Reject(inactiveSacl, "INACTIVE_SACL_BODY_STILL_BOUNDED");
     byte[] ordinaryFile = valid.ToArray(); U32(ordinaryFile, 160, 0); Rehash(ordinaryFile);
     Check(!Inspect(ordinaryFile).Directory, "FILE_NOT_DIRECTORY");
     int originalOwner = (int)BinaryPrimitives.ReadUInt32LittleEndian(original.AsSpan(4, 4));
@@ -140,7 +157,11 @@ try
     {
         using (var file = new FileStream(scratch, FileMode.CreateNew, FileAccess.Write, FileShare.None)) file.WriteByte(1);
         var actual = new FileInfo(scratch).GetAccessControl(AccessControlSections.Owner | AccessControlSections.Access);
-        byte[] observed = actual.GetSecurityDescriptorBinaryForm(); var native = Inspect(Fixture(observed));
+        byte[] observed = actual.GetSecurityDescriptorBinaryForm();
+        Console.WriteLine("R7_OWNED_DESCRIPTOR_CONTROL=" + BinaryPrimitives.ReadUInt16LittleEndian(observed.AsSpan(2, 2)).ToString("x4")
+            + ";GROUP_PRESENT=" + (BinaryPrimitives.ReadUInt32LittleEndian(observed.AsSpan(8, 4)) != 0)
+            + ";SACL_OFFSET_PRESENT=" + (BinaryPrimitives.ReadUInt32LittleEndian(observed.AsSpan(12, 4)) != 0));
+        var native = Inspect(Fixture(observed));
         Check(native.OriginalDescriptorSha256 == Convert.ToHexString(SHA256.HashData(observed)).ToLowerInvariant(), "OWNED_NATIVE_BEFORE_IMAGE");
         Check(native.Outcome == "UNKNOWN", "NATIVE_READBACK_CANNOT_PROVE_OUTCOME");
     }
