@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { MUSIC_CARD_PROOF_SCENARIO, collectMusicCardEvidence, evaluateMusicCardEvidence } from './music-card-browser-proof.mjs';
 import {
   STEPHANOS_DIST_MANIFEST_MAX_FILE_BYTES,
   STEPHANOS_DIST_MANIFEST_MAX_FILES,
@@ -24,7 +25,7 @@ const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
 const MUSIC_RATING_PRESERVES_PLAYBACK = 'MUSIC_RATING_PRESERVES_PLAYBACK';
-const ALLOWED_PROOF_SCENARIOS = new Set([MUSIC_RATING_PRESERVES_PLAYBACK]);
+const ALLOWED_PROOF_SCENARIOS = new Set([MUSIC_RATING_PRESERVES_PLAYBACK, MUSIC_CARD_PROOF_SCENARIO]);
 const ALLOWED_PROOF_TARGETS = new Set(['PULL_REQUEST_HEAD', 'MERGED_MAIN']);
 const MUSIC_RATING_SCENARIO_EVIDENCE_SCHEMA = 'stephanos.browser-scenario-evidence.music-rating-preserves-playback.v2';
 const BROWSER_RUNTIME_PROOF_SCHEMA = 'stephanos.browser-runtime-exact-head-proof.v3';
@@ -446,6 +447,11 @@ export function evaluateBrowserProofResult(result = {}, {
     if (!ALLOWED_PROOF_SCENARIOS.has(normalizedProofScenario)) {
       blocking.push('BROWSER_PROOF_SCENARIO_INVALID');
       scenarioEvidenceAccepted = false;
+    } else if (normalizedProofScenario === MUSIC_CARD_PROOF_SCENARIO) {
+      scenarioEvaluation = evaluateMusicCardEvidence(result.scenarioEvidence,
+        { expectedHead: normalizedExpectedHead, proofTarget: normalizedProofTarget });
+      scenarioEvidenceAccepted = scenarioEvaluation.accepted;
+      blocking.push(...scenarioEvaluation.blocking);
     } else if (normalizedProofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
       scenarioEvaluation = evaluateMusicRatingPreservesPlaybackScenarioEvidence(
         result.scenarioEvidence,
@@ -2032,7 +2038,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
       checks.runtimeDistResponseBinding = servedDist.responseBinding;
     }
     let scenarioEvidence = null;
-    if (proofScenario === MUSIC_RATING_PRESERVES_PLAYBACK) {
+    if (proofScenario === MUSIC_RATING_PRESERVES_PLAYBACK || proofScenario === MUSIC_CARD_PROOF_SCENARIO) {
       const scenarioPage = await context.newPage();
       const scenarioResponses = [];
       const scenarioConsoleErrors = [];
@@ -2045,7 +2051,10 @@ async function collectWithBrowser(url = DEFAULT_URL, {
         scenarioPageErrors.push(String(error?.message || error || 'unknown page error'));
       });
       try {
-        scenarioEvidence = await collectMusicRatingPreservesPlaybackEvidence(scenarioPage, url, {
+        const collector = proofScenario === MUSIC_CARD_PROOF_SCENARIO
+          ? collectMusicCardEvidence : collectMusicRatingPreservesPlaybackEvidence;
+        scenarioEvidence = await collector(scenarioPage, url, {
+          bindSourceResponses: collectScenarioSourceResponseBinding,
           capturedResponses: scenarioResponses,
           consoleErrors: scenarioConsoleErrors,
           pageErrors: scenarioPageErrors,
