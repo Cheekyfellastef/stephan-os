@@ -329,6 +329,7 @@ function payloadForTool(name, args = {}) {
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
+  withMaintenanceOwner,
   now = () => new Date().toISOString(),
 } = {}) {
   let session = null;
@@ -402,7 +403,7 @@ export function createSovereignCommanderMcpHandler({
         transport: text(message.transportKind) || 'mcp-session',
         authenticatedMcp: message.transportAuthenticated === true,
       });
-      const result = await executor(envelope, { repoRoot, routeProof });
+      const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
       return asTextResult(result, result?.ok !== true);
     }
 

@@ -1,3 +1,4 @@
+import { writeFileSync, unlinkSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
@@ -638,4 +639,50 @@ test('retry ownership proof requires released failed claim plus terminal executi
   assert.equal(proven.ok, true);
   assert.equal(proven.classification, 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN');
   assert.equal(proven.executionReceiptId, 'terminal-receipt');
+});
+
+test('claim custody is sampled after queue reads immediately before pending rename', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('claim-custody-expiry'), options);
+  await publishMissionWorkerAction(created.state, options);
+  let checks = 0;
+  await assert.rejects(claimNextMissionWorkerItem('openclaw-signed', {
+    ...options, assertClaimCustody: () => { checks++; throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN'); },
+  }), /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  assert.equal(checks, 1);
+  assert.deepEqual(await readdir(join(options.queueRoot, 'openclaw-signed', 'processing')), []);
+  assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
+});
+
+test('custody expiring while the actual pickup store waits for its lock never publishes running', async () => {
+  const options = await runtime(); options.capacityRouting = freshCodexCapacityRouting();
+  const missionId = 'pickup-lock-custody-expiry';
+  await createMissionRecord(intent(missionId), options);
+  const ready = await appendMissionEvent(missionId, { eventId: 'pickup-lock-worktree', eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'pickup-lock-worktree') }, options);
+  const published = await publishMissionWorkerAction(ready.state, options);
+  assert.equal(published.adapter, 'codex');
+  const before = (await readMissionRecord(missionId, options)).state;
+  let fresh = true; let samples = 0; let released;
+  const release = new Promise(resolve => { released = resolve; });
+  const lockPath = join(options.root, `${missionId}.lock`);
+  const claim = await claimNextMissionWorkerItem('codex', { ...options,
+    assertClaimCustody: () => {
+      samples++;
+      if (!fresh) throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN');
+      if (samples === 2) {
+        // The second sample is immediately before appendMissionEvent. Its
+        // actual lock acquisition must await this independently held lock.
+        writeFileSync(lockPath, 'owned-test-lock', { flag: 'wx' });
+        setTimeout(() => { fresh = false; unlinkSync(lockPath); released(); }, 25);
+      }
+    },
+  });
+  await release;
+  assert.equal(claim, null); assert.equal(samples, 3);
+  const after = (await readMissionRecord(missionId, options)).state;
+  assert.equal(after.dispatch.status, 'pending'); assert.equal(after.revision, before.revision);
+  assert.deepEqual(await readdir(join(options.queueRoot, 'codex', 'processing')), []);
+  assert.equal((await readdir(join(options.queueRoot, 'codex', 'pending'))).length, 1);
+  assert.ok(await claimNextMissionWorkerItem('codex', options));
 });

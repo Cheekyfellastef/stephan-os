@@ -398,7 +398,8 @@ async function proveProcessingClaim(claim, options = {}) {
       // lock after rename. A preflight read alone can race fence commit.
       const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
         if (state.cancelled === true || state.currentPhase === 'CANCELLED'
-            || state.storeMetadata?.originalSourceAttemptFence) {
+            || state.storeMetadata?.originalSourceAttemptFence
+            || state.storeMetadata?.supervisedRecoveryMaintenance) {
           throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
         }
         return Object.freeze({ proven: true, state: 'NON_AGENT_MISSION_FENCE_CHECKED' });
@@ -411,7 +412,8 @@ async function proveProcessingClaim(claim, options = {}) {
   const adapter = normalizedText(claim?.adapter).toLowerCase();
   const record = await readMissionRecord(missionId, options);
   if (record.state.cancelled === true || record.state.currentPhase === 'CANCELLED'
-      || record.state.storeMetadata?.originalSourceAttemptFence) {
+      || record.state.storeMetadata?.originalSourceAttemptFence
+      || record.state.storeMetadata?.supervisedRecoveryMaintenance) {
     throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
   }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
@@ -429,6 +431,7 @@ async function proveProcessingClaim(claim, options = {}) {
     throw new Error(`MISSION_WORKER_PROCESSING_CLAIM_STATE_INVALID:${status || 'unknown'}`);
   }
 
+  if (options.assertClaimCustody) options.assertClaimCustody();
   const claimed = await appendMissionEvent(missionId, {
     eventId: `pickup-${normalizedText(claim?.item?.actionId)}`.slice(0, 128),
     eventType: 'AGENT_DISPATCHED',
@@ -526,6 +529,8 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
           'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
         continue;
       }
+      // Lane 7 admission must survive the awaited queue and source-fence reads.
+      if (options.assertClaimCustody) options.assertClaimCustody();
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
       try {

@@ -16,6 +16,9 @@ test('boot recovery installers parse with the Windows PowerShell used by the boo
     'install-sovereign-commander.ps1',
     'install-sovereign-boot-daemon-tasks-elevated.ps1',
     'install-battle-bridge-recovery-mesh.ps1',
+    'stephanos-core-process-observation.ps1',
+    'status-stephanos-core-daemon.ps1',
+    'run-sovereign-commander-hidden.ps1',
   ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
   const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
   const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
