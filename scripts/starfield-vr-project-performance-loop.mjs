@@ -31,10 +31,16 @@ const NUMERIC_TELEMETRY_CONTRACTS = Object.freeze({
   openXrRenderWidth: 'positive-integer',
   openXrRenderHeight: 'positive-integer',
   renderScalePct: 'positive',
+  runtimeSeconds: 'positive',
 });
 
 function metricPresent(metrics, key) {
   const value = metrics?.[key];
+  if (key === 'longSessionDriftVerdict') {
+    // Unknown/pending producer states are not a completed drift observation.
+    return typeof value === 'string' && value.trim().length > 0
+      && !['UNKNOWN', 'UNAVAILABLE', 'NOT_OBSERVED', 'WAITING', 'PENDING'].includes(value.trim().toUpperCase());
+  }
   if (key === 'reprojectionState') {
     // The Windows runtime producer emits NONE_OBSERVED both for measured zero
     // and for an unavailable reprojection count. Do not turn missing source
@@ -272,7 +278,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       metricKeys: ['runtimeSeconds', 'longSessionDriftVerdict'],
       sourceRef: sources.airLink.path,
       rationale: 'The project requires stability evidence beyond a successful launch or short smooth burst.',
-      available: metricPresent(metrics, 'longSessionDriftVerdict'),
+      available: ['runtimeSeconds', 'longSessionDriftVerdict']
+        .every((key) => metricPresent(metrics, key)),
     }),
   ];
 

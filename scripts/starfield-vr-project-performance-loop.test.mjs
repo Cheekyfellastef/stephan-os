@@ -336,3 +336,32 @@ test('application frame-time readiness requires measured average and p95 from th
   const measured = await project(base);
   assert.equal(measured.telemetryRequirements.find((entry) => entry.id === 'application-frame-time').available, true);
 });
+
+test('long-session drift is not ready without measured duration and a completed verdict', async () => {
+  const project = (metrics) => buildStarfieldVrProjectPerformanceLoop({
+    repoRoot, runIdentity: identity, diagnosis: { focus: 'FRAME_TIME_PROOF', signals: [] }, metrics,
+  });
+  const unavailable = [
+    {},
+    { runtimeSeconds: 1800 },
+    { longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: 0, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: -1, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: '1800', longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: Number.NaN, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: Number.POSITIVE_INFINITY, longSessionDriftVerdict: 'STABLE' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'UNKNOWN' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'UNAVAILABLE' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: 'PENDING' },
+    { runtimeSeconds: 1800, longSessionDriftVerdict: {} },
+  ];
+  for (const metrics of unavailable) {
+    const loop = await project(metrics);
+    const entry = loop.telemetryRequirements.find((item) => item.id === 'long-session-drift');
+    assert.equal(entry.available, false, JSON.stringify(metrics));
+    assert.ok(loop.missingTelemetry.some((item) => item.id === 'long-session-drift'));
+    assert.equal(loop.authority.automaticRuntimeMutation, false);
+  }
+  const observed = await project({ runtimeSeconds: 1800, longSessionDriftVerdict: 'STABLE' });
+  assert.equal(observed.telemetryRequirements.find((item) => item.id === 'long-session-drift').available, true);
+});
