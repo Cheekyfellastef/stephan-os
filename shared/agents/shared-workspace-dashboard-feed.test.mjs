@@ -372,3 +372,24 @@ test('known specialized status projections stay outside dashboard authority with
   assert.equal(rejected.errors.length, 1);
   assert.match(rejected.errors[0], /attacker-selected-specialized-record\.json:PARSE_FAILED/);
 });
+
+
+test('live feed observes the clock after asynchronous record reads and retains explicit future refusal', async t => {
+  const start = Date.parse('2026-07-07T00:00:00.000Z');
+  const root = await tempWorkspace();
+  await writeJson(root, 'status', 'status-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current', timestampUtc: new Date(start + 90000).toISOString(), status: 'CURRENT',
+  }));
+  t.mock.timers.enable({ apis: ['Date'], now: start });
+  const reading = readSharedWorkspaceDashboardFeed({ root });
+  t.mock.timers.tick(90000);
+  const live = await reading;
+  assert.equal(live.state, DASHBOARD_FEED_STATES.READY, 'a record read after admission was called future-dated');
+  const frozen = await readSharedWorkspaceDashboardFeed({ root, nowMs: start });
+  assert.equal(frozen.state, DASHBOARD_FEED_STATES.STALE, 'an explicit observation snapshot must stay strict');
+  await writeJson(root, 'status', 'status-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current', timestampUtc: new Date(start + 180000).toISOString(), status: 'CURRENT',
+  }));
+  const future = await readSharedWorkspaceDashboardFeed({ root });
+  assert.equal(future.state, DASHBOARD_FEED_STATES.STALE, 'genuinely future-dated evidence must remain refused');
+});
