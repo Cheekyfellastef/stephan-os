@@ -12,6 +12,10 @@ const PROTECTED_MERGE_NEUTRAL_SKIPPED_CHECKS = new Set([
   'Build Stephanos UI\0pages-deploy',
   'Exact-Head Review Dispatch\0coordinate',
   'Exact-Head Review Dispatch\0retry',
+  // PR build proof succeeds while GitHub Pages deployment intentionally
+  // runs only on main/schedule/operator deployment triggers. Its PR skip is
+  // neutral, never a substitute for a successful UI build or required proof.
+  'Build Stephanos UI\0pages-deploy',
 ]);
 
 export function validateProtectedMergeCheckRows(checks) {
