@@ -13,6 +13,7 @@ export const GOAL_CONVEYOR_FLEET_CARE_OWNER_GOALS_V1 = Object.freeze([
   Object.freeze({ issue: '#1858', role: 'Closed-chat unattended endurance' }),
   Object.freeze({ issue: '#2519', role: 'Meter-free Commander safe parity' }),
   Object.freeze({ issue: '#2954', role: 'GitHub 403/cooldown and anti-hammer discipline' }),
+  Object.freeze({ issue: '#2972', role: 'Core loop closure pickup-to-execution gap repair' }),
 ]);
 
 export const GOAL_CONVEYOR_FLEET_CARE_RUNGS_V1 = Object.freeze([
