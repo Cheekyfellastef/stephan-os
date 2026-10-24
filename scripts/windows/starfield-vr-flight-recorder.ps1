@@ -252,12 +252,21 @@ function Get-StarfieldVrCpuConsumerSample {
     }
     $processes = @()
     $inventoryAvailable = $true
-    try { $processes = @(Get-Process -Name @($families.Values) -ErrorAction Stop) }
-    catch {
-        # -ErrorAction Stop also rejects a missing app. A missing app is normal;
-        # retry best-effort and record unavailable values if access is denied.
-        try { $processes = @(Get-Process -Name @($families.Values) -ErrorAction SilentlyContinue) }
-        catch { $inventoryAvailable = $false }
+    $processLookupErrors = @()
+    try {
+        # A missing optional app is normal. One inventory per sample avoids
+        # repeating the entire Get-Process scan for every absent family.
+        $processes = @(Get-Process -Name @($families.Values) -ErrorAction SilentlyContinue -ErrorVariable +processLookupErrors)
+        foreach ($lookupError in @($processLookupErrors)) {
+            # Only 'no process by this name' is evidence of an absent app.
+            # Access denial or another inventory error cannot certify zero CPU.
+            if ([string]$lookupError.FullyQualifiedErrorId -notlike 'NoProcessFoundForGivenName*') {
+                $inventoryAvailable = $false
+                break
+            }
+        }
+    } catch {
+        $inventoryAvailable = $false
     }
     $next = @{}
     foreach ($p in $processes) {

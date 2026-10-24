@@ -109,6 +109,48 @@ test('Starfield diagnosis carries actual sampled CPU attribution counts into pla
   assert.match(reporter, /cpuConsumersAvailableSampleCount: metrics\?\.cpuConsumersAvailableSampleCount/);
 });
 
+
+test('Starfield fixed-family CPU lookup is single-pass and fails closed on unexpected inventory errors', () => {
+  const sampler = recorder.split('function Get-StarfieldVrCpuConsumerSample {')[1]
+    ?.split('function Get-StarfieldVrGameThreadCpuSample')[0];
+  assert.ok(sampler, 'bounded CPU family sampler must be present');
+  assert.equal((sampler.match(/Get-Process -Name @\(\$families\.Values\)/g) || []).length, 1,
+    'missing optional apps must not double the process inventory cost');
+  assert.match(sampler, /-ErrorAction SilentlyContinue -ErrorVariable \+processLookupErrors/);
+  assert.match(sampler, /NoProcessFoundForGivenName/);
+  assert.match(sampler, /\$lookupError\.FullyQualifiedErrorId -notlike/);
+  assert.match(sampler, /\$inventoryAvailable = \$false/);
+  assert.match(sampler, /\$out\["\$\{key\}CpuPct"\] = if \(-not \$inventoryAvailable\) \{ \$null \}/,
+    'an ambiguous inventory cannot be turned into measured zero');
+});
+
+test('Starfield fixed-family CPU lookup native Windows regression: missing app versus denied inventory',
+  { skip: process.platform !== 'win32' }, () => {
+  const file = fileURLToPath(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url)).replaceAll("'", "''");
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    ". '" + file + "'",
+    "$script:attempts = 0",
+    "$script:mode = 'missing'",
+    "function Get-Process {",
+    " [CmdletBinding()] param([string[]]$Name)",
+    " $script:attempts++",
+    " if ($script:mode -eq 'missing') { Write-Error -Message 'not running' -ErrorId 'NoProcessFoundForGivenName' -Category ObjectNotFound }",
+    " else { Write-Error -Message 'access denied' -ErrorId 'AccessDenied' -Category PermissionDenied }",
+    "}",
+    "$missing = Get-StarfieldVrCpuConsumerSample -Previous @{}",
+    "if ($script:attempts -ne 1 -or -not $missing.available -or $missing.chatGptCpuPct -ne 0) { throw 'ordinary missing app must be one measured inventory' }",
+    "$script:attempts = 0",
+    "$script:mode = 'denied'",
+    "$denied = Get-StarfieldVrCpuConsumerSample -Previous @{}",
+    "if ($script:attempts -ne 1 -or $denied.available -or $null -ne $denied.chatGptCpuPct) { throw 'denied inventory must be unmeasured, never zero' }",
+  ].join('\n');
+  const result = spawnSync('powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+    { encoding: 'utf8', timeout: 20000, windowsHide: true });
+  assert.equal(result.status, 0, [result.error?.message, result.stdout, result.stderr].filter(Boolean).join('\n'));
+});
+
 test('Starfield whole-game CPU sample rejects PID reuse, counter rollback and stale baseline', () => {
   const cpuBlock = performance.match(/\$starfieldCpuPct = \$null[\s\S]*?# Same-session fixed-name CPU attribution/)?.[0];
   assert.ok(cpuBlock, 'locate the same-session game CPU delta block');
