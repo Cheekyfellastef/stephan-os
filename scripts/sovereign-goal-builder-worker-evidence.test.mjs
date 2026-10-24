@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { createMissionWorkerHeartbeatRecord, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
+import { createMissionWorkerHeartbeatRecord, projectMissionWorkerHeartbeat, resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
 import { readGoalBuilderSourceIdentity, readGoalBuilderWorkerHeartbeatAgeMs, runSovereignCommanderGoalBuilderRepair } from './sovereign-commander-goal-builder-repair.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from '../shared/agents/stephanosCoreDaemonV1.mjs';
@@ -27,6 +27,75 @@ test('actual bounded reader admits a valid canonical worker record, independent 
   writeFileSync(paths.heartbeatPath, JSON.stringify(record));
   utimesSync(paths.heartbeatPath, new Date(0), new Date(0));
   assert.equal(read(), 1000);
+}));
+
+test('pending handoff permits the existing consumer without asserting material progress', () => fixture(async ({ paths, record, read }) => {
+  const pending = { ...record, lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING' };
+  writeFileSync(paths.heartbeatPath, JSON.stringify(pending));
+  const projected = projectMissionWorkerHeartbeat(pending, {
+    nowUtc: new Date(nowMs).toISOString(), expectedRepositoryRoot: paths.repositoryRoot, expectedHeadSha: HEAD,
+  });
+  assert.equal(projected.lastTickOperational, true);
+  assert.equal(projected.lastTickAffirmative, false);
+  assert.equal(pending.sourceMutationAllowed, false);
+  assert.equal(read(), 1000);
+  const steps = [];
+  const ready = async () => ({ ok: true });
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot },
+    readWorkerHeartbeatAgeMs: read, maxWorkConservingAttempts: 1,
+    refreshGithubLifeboat: ready, refreshGithubLifeboatClaimAck: ready,
+    refreshLifeboatCapacity: ready, refreshCommanderCapacity: ready,
+    refreshSovereignCapacity: ready, refreshOpenClawCapacity: ready,
+    conveyor: async () => { steps.push('conveyor'); return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }; },
+    readProcessingPickupMissionIdsFn: async () => [],
+    buildClaimedGoal: async () => { steps.push('consumer'); return { processed: false, reason: 'queue-empty' }; },
+    publishTrack: async () => ({ ok: true }),
+  });
+  assert.deepEqual(steps, ['conveyor', 'consumer']);
+  assert.equal(result.materialActionsSucceeded, 0);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(projected.lastTickAffirmative, false);
+}));
+
+test('pending readiness retains every identity, clock and failure refusal', () => fixture(({ paths, record, read }) => {
+  const pending = { ...record, lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING' };
+  for (const change of [
+    { lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' },
+    { lastTickVerdict: 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED' },
+    { lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS' },
+    { lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' },
+    { lastTickVerdict: 'MISSION_WORKER_STALLED_MISSION_SIDELINED' },
+    { lastTickVerdict: 'unknown' }, { schemaVersion: 'other' },
+    { timestampUtc: new Date(nowMs - 120001).toISOString() },
+    { timestampUtc: new Date(nowMs + 1).toISOString() },
+    { branch: 'other' }, { headSha: 'c'.repeat(40) }, { repositoryRoot: join(paths.repositoryRoot, 'other') },
+    { taskName: 'other' }, { pid: 0 }, { launchIdentityId: 'bad' },
+    { workerStartedAtUtc: pending.timestampUtc }, { arbitraryShellAllowed: true }, { sourceMutationAllowed: true },
+  ]) {
+    writeFileSync(paths.heartbeatPath, JSON.stringify({ ...pending, ...change }));
+    assert.equal(read(), null, JSON.stringify(change));
+  }
+}));
+
+test('pending consumer rechecks after awaited capacity work before any source execution', () => fixture(async ({ paths, record, read }) => {
+  writeFileSync(paths.heartbeatPath, JSON.stringify({ ...record, lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING' }));
+  let refreshes = 0;
+  const forbidden = () => assert.fail('invalidated pending evidence reached execution');
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    paths: { repoRoot: paths.repositoryRoot, workspaceRoot: paths.workspaceRoot }, readWorkerHeartbeatAgeMs: read,
+    refreshGithubLifeboat: async () => {
+      refreshes++;
+      writeFileSync(paths.heartbeatPath, JSON.stringify({ ...record, lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' }));
+      return { ok: true };
+    },
+    refreshGithubLifeboatClaimAck: forbidden, refreshLifeboatCapacity: forbidden,
+    refreshCommanderCapacity: forbidden, refreshSovereignCapacity: forbidden,
+    refreshOpenClawCapacity: forbidden, conveyor: forbidden, buildClaimedGoal: forbidden,
+    publishTrack: forbidden,
+  });
+  assert.equal(refreshes, 1);
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
 }));
 
 test('fresh malformed, oversized, unrelated, stale, failed and invalid-launch records cannot start even the supervisor', () => fixture(({ paths, record, read }) => {
@@ -78,6 +147,10 @@ test('actual Core sampler and direct refill share validated bytes; malformed fre
     probe: async () => true, gamingActive: async () => false, workspaceRoot: paths.workspaceRoot,
     readCanonicalMissionWorkerHeartbeatAgeMs: read, projectStephanosCoreDaemonState });
   vm.runInContext(source.slice(start, end), context);
+  writeFileSync(paths.heartbeatPath, JSON.stringify({ ...record, lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING' }));
+  const pendingState = await context.sample(HEAD);
+  assert.equal(pendingState.missionWorkerHealthy, true);
+  assert.equal(coreWorkerDependentWorkAllowed(pendingState), true);
   for (const bytes of ['{bad', JSON.stringify({ ...record, headSha: 'c'.repeat(40) }), JSON.stringify({ ...record, taskName: 'other' })]) {
     writeFileSync(paths.heartbeatPath, bytes);
     const state = await context.sample(HEAD);
