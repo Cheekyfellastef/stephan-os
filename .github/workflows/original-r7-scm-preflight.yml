@@ -5,6 +5,7 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
+      - 'global.json'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness/**'
       - 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/**'
       - 'scripts/windows/inspect-original-r7-witness-readiness-readonly.ps1'
@@ -12,6 +13,11 @@ on:
       - 'shared/agents/originalR7WitnessCommissioningAuditV1.mjs'
       - 'shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs'
       - 'shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs'
+      - 'shared/agents/r7CustodyPolicyContractsV1.*'
+      - 'shared/agents/r7FirstRoot*.mjs'
+      - 'shared/agents/r7UntrustedSourcePackageV1.mjs'
+      - 'shared/agents/r7-custody-contract-proposals/**'
+      - 'stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - '.github/workflows/original-r7-scm-preflight.yml'
@@ -28,13 +34,31 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4; immutable upstream commit
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4; immutable upstream commit
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.426'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4; immutable upstream commit
+        with:
+          node-version: 24
+      - name: Select and assert the exact R7 SDK for this job
+        shell: pwsh
+        run: |
+          $pin = @{ sdk = @{ version = '8.0.426'; rollForward = 'disable'; allowPrerelease = $false } }
+          $path = Join-Path $PWD 'global.json'
+          if (Test-Path -LiteralPath $path) {
+            $existing = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            if ($existing.sdk.version -cne '8.0.426' -or $existing.sdk.rollForward -cne 'disable' -or $existing.sdk.allowPrerelease -ne $false) {
+              throw 'R7_EXISTING_SDK_PIN_MISMATCH'
+            }
+          } else {
+            [IO.File]::WriteAllText($path, ($pin | ConvertTo-Json -Depth 3), [Text.UTF8Encoding]::new($false))
+          }
+          $selected = (& dotnet --version).Trim()
+          if ($LASTEXITCODE -ne 0 -or $selected -cne '8.0.426') { throw 'R7_EXACT_DOTNET_SDK_NOT_SELECTED' }
       - name: Compile actual SCM witness service binary
         shell: pwsh
         run: |
@@ -44,6 +68,25 @@ jobs:
         shell: pwsh
         run: |
           dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prove fixture failures stay noninteractive and return a failing exit
+        shell: pwsh
+        run: |
+          $testExe = Join-Path $PWD 'src/windows/Stephanos.OriginalR7CustodyWitness.Tests/bin/Release/net8.0-windows/Stephanos.OriginalR7CustodyWitness.Tests.exe'
+          $stderr = Join-Path $env:RUNNER_TEMP 'r7-caught-fixture-failure.stderr.txt'
+          $stdout = Join-Path $env:RUNNER_TEMP 'r7-caught-fixture-failure.stdout.txt'
+          $child = Start-Process -FilePath $testExe -ArgumentList '--probe-harness-failure' -WindowStyle Hidden -Wait -PassThru -RedirectStandardError $stderr -RedirectStandardOutput $stdout
+          if ($child.ExitCode -ne 1) { throw 'R7_CAUGHT_FIXTURE_FAILURE_EXIT_NOT_PRESERVED' }
+          $failure = (Get-Content -LiteralPath $stderr -Raw).Trim()
+          if ($failure -cne 'R7_SCM_NATIVE_TEST_FAILED=InvalidOperationException:R7_EXPECTED_NONINTERACTIVE_HARNESS_PROBE') {
+            throw 'R7_CAUGHT_FIXTURE_FAILURE_NOT_OBSERVED'
+          }
+          # The test process sets only its own error mode. No machine-wide WER
+          # setting, production witness failure or service policy is changed.
+      - name: Verify pinned software signatures with public test keys and canonical verifier
+        shell: pwsh
+        run: |
+          dotnet run --project src/windows/Stephanos.OriginalR7CustodyWitness.Tests/Stephanos.OriginalR7CustodyWitness.Tests.csproj --configuration Release -- --signing-provider-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prove bundled payload identity and sidecar independence without commissioning
         shell: pwsh
@@ -128,7 +171,7 @@ jobs:
       - name: Test bounded Sovereign receipt against forged authority
         shell: pwsh
         run: |
-          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs
+          node --test shared/agents/originalR7WitnessReadinessRemote.test.mjs shared/agents/originalR7WitnessCommissioningAuditV1.test.mjs shared/agents/originalR7WindowsWitnessNativeHostV1.test.mjs shared/agents/r7CustodyPolicyContractsV1.test.mjs shared/agents/r7FirstRootOwnerIntakeProposalV1.test.mjs shared/agents/r7FirstRootSourceEvidenceResolverV1.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package source-only Windows witness binary with exact source checksum
         shell: pwsh
@@ -162,9 +205,9 @@ jobs:
           @(
             'schemaVersion=stephanos.original-r7-source-only-package.v1',
             'repository=Cheekyfellastef/stephan-os',
-            'sourceHead=' + $head,
-            'imageFile=' + $name,
-            'imageSha256=' + $digest,
+            ('sourceHead=' + $head),
+            ('imageFile=' + $name),
+            ('imageSha256=' + $digest),
             'managedPayloadLayout=SINGLE_FILE_WIN_X64_SELF_CONTAINED',
             'binaryStatus=UNSIGNED_UNCOMMISSIONED',
             'protectedServiceSidQualified=false',
@@ -176,12 +219,31 @@ jobs:
             'originalLeaseReleased=false',
             'historicalOutcome=UNKNOWN'
           ) | Set-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt') -Encoding UTF8
+          # Read the retained file back: PowerShell array/comma precedence can
+          # silently split unparenthesized concatenations across separate lines.
+          $manifestFields = @{}
+          foreach ($line in @(Get-Content -LiteralPath (Join-Path $stage 'UNTRUSTED-CI-PACKAGE-MANIFEST.txt'))) {
+            if ($line -cnotmatch '^([A-Za-z][A-Za-z0-9]*)=(.*)$' -or $manifestFields.ContainsKey($Matches[1])) {
+              throw 'R7_PACKAGE_MANIFEST_RECORD_INVALID'
+            }
+            $manifestFields[$Matches[1]] = $Matches[2]
+          }
+          if ($manifestFields['schemaVersion'] -cne 'stephanos.original-r7-source-only-package.v1' -or
+              $manifestFields['repository'] -cne 'Cheekyfellastef/stephan-os' -or
+              $manifestFields['sourceHead'] -cne $head -or
+              $manifestFields['imageFile'] -cne $name -or
+              $manifestFields['imageSha256'] -cne $digest -or
+              $manifestFields['binaryStatus'] -cne 'UNSIGNED_UNCOMMISSIONED' -or
+              $manifestFields['physicalBattleBridgeCommissioned'] -cne 'false' -or
+              $manifestFields['originalLeaseReleased'] -cne 'false') {
+            throw 'R7_PACKAGE_MANIFEST_BINDING_INVALID'
+          }
           # SHA256 in an unsigned CI manifest is not trusted code identity.
           Write-Output 'R7_WINDOWS_BINARY_SOURCE_ONLY_STAGED=true'
           Write-Output 'R7_WINDOWS_BINARY_IS_TRUSTED_ATTESTER=false'
           Write-Output 'R7_WINDOWS_BINARY_INSTALLED_ON_BATTLE_BRIDGE=false'
       - name: Retain uncommissioned Windows binary for independent audit
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4; immutable upstream commit
         with:
           name: r7-witness-uncommissioned-source-only
           path: r7-witness-ci-staging/

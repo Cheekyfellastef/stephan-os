@@ -1671,6 +1671,26 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
   }
 }
 
+// Shared by the advisory preflight and the final protected evidence validator.
+// Keep the accepted review/conversation states identical at both boundaries.
+export function validatePersonalRepositoryConversationState(input = {}) {
+  const blockers = [];
+  const reviewDecisionObserved = Object.hasOwn(input, 'reviewDecision');
+  const reviewDecision = text(input.reviewDecision).toUpperCase();
+  const mergeable = text(input.mergeable).toUpperCase();
+  if (!reviewDecisionObserved) blockers.push('personal-repository-review-decision-missing');
+  if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
+  else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
+  if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
+  if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
+    blockers.push('personal-repository-conversations-not-resolved');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+  });
+}
+
 export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
   const blockers = [];
   const repository = text(input.repository);
@@ -1683,9 +1703,6 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   const prNumber = strictPositiveInteger(pullRequest?.number);
   const workflowRunId = strictPositiveInteger(input.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(input.workflowRunAttempt);
-  const reviewDecisionObserved = Object.hasOwn(input, 'reviewDecision');
-  const reviewDecision = text(input.reviewDecision).toUpperCase();
-  const mergeable = text(input.mergeable).toUpperCase();
   const mergeStateStatus = text(input.mergeStateStatus).toUpperCase();
   const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
   const reviewEscalationChecksProved = options.reviewEscalationChecksProved === true;
@@ -1710,10 +1727,7 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   if (!SHA_PATTERN.test(baseSha)) blockers.push('personal-repository-base-sha-invalid');
   if (liveMainRef !== baseSha) blockers.push('personal-repository-live-main-mismatch');
   if (sourceHead && sourceHead === baseSha) blockers.push('personal-repository-head-equals-base');
-  if (!reviewDecisionObserved) blockers.push('personal-repository-review-decision-missing');
-  if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
-  else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
-  if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
+  blockers.push(...validatePersonalRepositoryConversationState(input).blockers);
   if (mergeStateStatus !== 'CLEAN'
     && !(mergeStateStatus === 'UNSTABLE'
       && cleanIndependentReviewProved
@@ -1722,9 +1736,6 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
       && cleanIndependentReviewProved
       && reviewEscalationChecksProved)) {
     blockers.push('personal-repository-pr-not-clean');
-  }
-  if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
-    blockers.push('personal-repository-conversations-not-resolved');
   }
   const exactForwardComparison = text(comparison.status).toLowerCase() === 'ahead'
     && Number.isSafeInteger(comparison.ahead_by)
