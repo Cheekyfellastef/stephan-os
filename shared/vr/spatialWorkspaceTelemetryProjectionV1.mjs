@@ -25,7 +25,8 @@ function hasProvenance(evidence) {
   const rendererMatches = !Object.hasOwn(evidence ?? {}, 'rendererSourceHead')
     || (typeof sourceHead === 'string' && typeof rendererHead === 'string'
       && SHA40.test(rendererHead) && rendererHead.toLowerCase() === sourceHead.toLowerCase());
-  return SAFE_RUN_ID.test(evidence?.runId ?? '')
+  return typeof evidence?.runId === 'string'
+    && SAFE_RUN_ID.test(evidence.runId)
     && SAFE_PHASES.has(evidence?.phase)
     && Number.isFinite(time)
     && new Date(time).toISOString() === stamp

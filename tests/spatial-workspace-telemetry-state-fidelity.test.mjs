@@ -84,6 +84,24 @@ test('invalid consumer projection state fails closed on reprojection', () => {
   assert.equal(twice.operatorAcceptance, false);
 });
 
+
+for (const [label, invalidRunId] of [['numeric', 123], ['boolean', true]]) {
+  test(`Spatial canonical READY rejects ${label} run identity despite valid string coercion`, () => {
+    const malformed = { ...latest.evidence, runId: invalidRunId };
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready', { evidence: malformed }));
+    assert.equal(result.available, false);
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.operatorAcceptance, false);
+  });
+  test(`Spatial consumer READY cannot requalify ${label} run identity`, () => {
+    const valid = projectSpatialWorkspaceTelemetryForConsumersV1(canonical('ready'));
+    const result = projectSpatialWorkspaceTelemetryForConsumersV1({ ...valid, runId: invalidRunId });
+    assert.equal(result.available, false);
+    assert.equal(result.state, 'waiting');
+    assert.equal(result.operatorAcceptance, false);
+  });
+}
+
 for (const property of ['runId', 'phase', 'observedAtUtc', 'sourceHead']) {
   test(`canonical READY requires provenance ${property}`, () => {
     const malformed = { ...latest.evidence, [property]: '' };
