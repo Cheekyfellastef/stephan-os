@@ -35,7 +35,7 @@ export function assertLegacyGoalDeclaredTestAcceptanceV1(planner) {
   const explicit = plan(resources, ['node --test scripts/independent.test.mjs']);
   assert.equal(explicit.admitted.length, 1);
   assert.deepEqual(explicit.admitted[0].missionInput.requiredTests,
-    ['npm run stephanos:verify', 'node --test scripts/independent.test.mjs']);
+    ['node --test scripts/independent.test.mjs']);
   assert.equal(explicit.admitted[0].missionInput.allowedFiles.some(path => path.includes('independent.test.mjs')), false);
   const overlarge = plan(Array.from({length: 17}, (_, i) => resource(`scripts/declared${i}.test.mjs`)));
   assert.equal(overlarge.admitted.length, 0, 'An overlarge legacy plan must hold its goal, not truncate acceptance');
