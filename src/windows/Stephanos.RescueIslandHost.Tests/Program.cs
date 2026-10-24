@@ -198,10 +198,18 @@ Run("real one-shot host identifies its child PID and remains held under forged f
         "canonicalLeaseAccessAllowed", "seedForgeQueueAccessAllowed" })
         if (facts.GetProperty(field).GetBoolean()) throw new Exception("HOST_FORGED_AUTHORITY_ACCEPTED:" + field);
 });
+Run("supervised command rejects caller authority fields before source access", () =>
+{
+    var result = Invoke(["--supervised-once"]);
+    if (result.ExitCode != 3 || result.Facts.GetProperty("executionAllowed").GetBoolean()
+        || result.Facts.GetProperty("blocker").GetString() != "ISLAND_HOST_REQUEST_INVALID"
+        || result.Facts.GetProperty("assuranceProfile").GetString() != "SUPERVISED_COOPERATIVE_V1")
+        throw new Exception("SUPERVISED_CALLER_AUTHORITY_ADMITTED");
+});
 Run("run, recovery, arbitrary paths, stdin and extra arguments have no admitted host operation", () =>
 {
     foreach (string[] args in new[] { Array.Empty<string>(), new[] { "--run" }, new[] { "--recover" },
-        new[] { "--inspect-principal", "--run" }, new[] { "--inspect-principal=approved" },
+        new[] { "--inspect-principal", "--run" }, new[] { "--supervised-once", "--run" }, new[] { "--inspect-principal=approved" },
         new[] { "C:\\canonical\\.git" }, new[] { "--task", "{\"approvalAuthenticated\":true}" } })
     {
         var result = Invoke(args);

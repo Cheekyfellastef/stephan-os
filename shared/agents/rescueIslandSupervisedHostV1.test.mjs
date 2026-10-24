@@ -1,0 +1,205 @@
+// Real Windows token observer, operation locks, claim readers, preservation,
+// independent clone, Node tests and Git commit. Only GitHub is a test double.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,realpath,stat,rm,rename} from 'node:fs/promises';
+import {join,dirname} from 'node:path';
+import {tmpdir} from 'node:os';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {createRescueIslandSupervisedHostV1,readIslandCanonicalClaimsV1,readIslandSeedClaimsV1} from './rescueIslandSupervisedHostV1.mjs';
+import {resolveBattleBridgeGitExecutable,battleBridgeGitFixedConfigArgs,
+  createBattleBridgeMinimalChildEnvironment} from './battleBridgeExecutionBoundaryV1.mjs';
+
+const source=dirname(fileURLToPath(import.meta.url));
+const repo=join(source,'../..');
+const nativeHostPath=join(repo,'src/windows/Stephanos.RescueIslandHost/bin/Release/net8.0-windows/Stephanos.RescueIslandHost.exe');
+const hash=x=>createHash('sha256').update(x).digest('hex');
+const fields=['schemaVersion','repository','issueNumber','issueTitle','taskId','workerId','baseHead',
+  'targetPath','content','testPath','approvalSource','expiresAtUtc'];
+function git(cwd,args) {
+  const r=spawnSync(resolveBattleBridgeGitExecutable(),[...battleBridgeGitFixedConfigArgs(),'-C',cwd,...args],
+    {encoding:'utf8',shell:false,windowsHide:true,timeout:30000,
+      env:createBattleBridgeMinimalChildEnvironment(process.env,{git:true})});
+  assert.equal(r.status,0,r.stderr);return r.stdout.trim();
+}
+async function save(path,value){await mkdir(dirname(path),{recursive:true});await writeFile(path,JSON.stringify(value));}
+async function fixture(t) {
+  assert.equal(process.platform,'win32','This suite requires the real native Windows token observer.');
+  await stat(nativeHostPath); // No skip or fabricated principal if the host was not built.
+  const root=await realpath(await mkdtemp(join(tmpdir(),'island-real-adapters-')));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const canonicalRoot=join(root,'canonical'),sharedWorkspaceRoot=join(root,'shared');
+  const missionRoot=join(root,'missions'),seedRoot=join(root,'seed');
+  await mkdir(join(canonicalRoot,'shared/agents'),{recursive:true});
+  await mkdir(join(sharedWorkspaceRoot,'worktrees'),{recursive:true});await mkdir(missionRoot);
+  for(const name of ['rescueIslandPreflightV1.mjs','rescueIslandPreflightV1.test.mjs'])
+    await writeFile(join(canonicalRoot,'shared/agents',name),await readFile(join(source,name)));
+  git(canonicalRoot,['init','-b','main']);git(canonicalRoot,['add','.']);
+  git(canonicalRoot,['-c','user.name=Adapter Fixture','-c','user.email=fixture@example.invalid','commit','-m','Adapter fixture baseline']);
+  git(canonicalRoot,['remote','add','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
+  const baseHead=git(canonicalRoot,['rev-parse','HEAD']);
+  git(canonicalRoot,['update-ref','refs/remotes/origin/main',baseHead]);
+  await writeFile(join(canonicalRoot,'preserve-dirty.txt'),'Original operator bytes\n');
+  const task={schemaVersion:'stephanos.rescue-island-pilot-task.v1',repository:'Cheekyfellastef/stephan-os',
+    issueNumber:3109,issueTitle:'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)',
+    taskId:'real-adapter-3109',workerId:'rescue-island-01',baseHead,
+    targetPath:'docs/architecture/rescue-island-pilot-real-adapter-3109.md',
+    content:'# Rescue Island pilot\nTest-only validation of the real production adapters.\n',
+    testPath:'shared/agents/rescueIslandPreflightV1.test.mjs',approvalSource:'EXTERNAL_OWNER_ATTESTATION_REQUIRED',
+    expiresAtUtc:new Date(Date.now()+300000).toISOString()};
+  const expected={commentId:6380000001,taskId:task.taskId,taskFingerprint:hash(JSON.stringify(fields.map(k=>task[k]))),
+    baseHead,targetPath:task.targetPath,assuranceProfile:'SUPERVISED_COOPERATIVE_V1'};
+  const config={canonicalRoot,sharedWorkspaceRoot,missionRoot,seedRoot,nativeHostPath};
+  const host=createRescueIslandSupervisedHostV1(config);
+  const governor={schemaVersion:'stephanos.vr-resource-governor.v1',active:false,phase:'NORMAL',
+    localModelAllowed:true,updatedAtUtc:new Date().toISOString()};
+  await save(join(sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),governor);
+  // Copy the runner byte-for-byte with REAL boundary/preflight modules. Only
+  // its four fixed GitHub reads have a deterministic test transport.
+  const harness=join(root,'harness');await mkdir(harness);
+  for(const name of ['rescueIslandFirstCommitV1.mjs','rescueIslandAuthenticatedGithubReadV1.mjs',
+    'rescueIslandPilotOwnerIntakeV1.mjs','rescueIslandPreflightV1.mjs',
+    'battleBridgeExecutionBoundaryV1.mjs','battleBridgeWindowsHosts.mjs'])
+    await writeFile(join(harness,name),await readFile(join(source,name)));
+  const now=new Date().toISOString(),issueUrl='https://api.github.com/repos/'+task.repository+'/issues/3109';
+  const facts={issue:{number:3109,title:task.issueTitle,state:'open',url:issueUrl},
+    main:{ref:'refs/heads/main',object:{sha:baseHead}},comment:{id:expected.commentId,
+      url:'https://api.github.com/repos/'+task.repository+'/issues/comments/'+expected.commentId,issue_url:issueUrl,
+      user:{login:'Cheekyfellastef',type:'User',id:267490109},author_association:'OWNER',
+      created_at:now,updated_at:now,body:'/rescue-island-01 supervised-cooperative '+baseHead+' '+task.taskId+' '+hash(task.content)}};
+  await writeFile(join(harness,'githubObservationBrokerV1.mjs'),
+    'const facts='+JSON.stringify(facts)+'; export function readBrokeredGithubJson(s){return {ok:true,source:"UPSTREAM_REFRESH",ageMs:0,payload:s.endpoint.includes("comments")?facts.comment:s.endpoint.includes("git/ref")?facts.main:facts.issue};}\n');
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(harness,'rescueIslandFirstCommitV1.mjs')));
+  return {root,task,expected,config,host,governor,
+    run:createRescueIslandSupervisedRunnerV1(host.host),request:{commentId:expected.commentId,task}};
+}
+
+test('real adapters hold one owner through actual clone, preservation, Node tests and exact-parent commit',async t=>{
+  const f=await fixture(t),result=await f.run(f.request);
+  assert.equal(result.ok,true);assert.equal(result.parent,f.task.baseHead);
+  assert.equal(result.assuranceProfile,'SUPERVISED_COOPERATIVE_V1');
+  assert.equal(result.hostileWriterContainmentProven,false);
+  assert.equal(await readFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
+  assert.equal(git(f.config.canonicalRoot,['rev-parse','HEAD']),f.task.baseHead);
+  const worktree=join(f.host.roots.worktreeRoot,f.task.taskId);
+  assert.equal(git(worktree,['show','HEAD:'+f.task.targetPath]),f.task.content.trim());
+  assert.equal(git(worktree,['rev-parse','HEAD^']),f.task.baseHead);
+  assert.equal(git(worktree,['diff-tree','--no-commit-id','--name-only','-r','HEAD']),f.task.targetPath);
+  assert.equal(git(worktree,['status','--porcelain']),'');
+  const preserved=JSON.parse(await readFile(join(f.host.roots.receiptRoot,'preservation',f.task.taskId+'.json')));
+  const row=preserved.rows.find(r=>r.path==='preserve-dirty.txt');
+  assert.equal(await readFile(join(f.host.roots.receiptRoot,'preservation',row.sha256),'utf8'),'Original operator bytes\n');
+  assert.ok(result.receipts.some(r=>r.stage==='TESTED'&&/^[a-f0-9]{64}$/.test(r.testResultHash)));
+  const tested=result.receipts.find(r=>r.stage==='TESTED');
+  const testOutput=await readFile(join(f.host.roots.receiptRoot,'test-output',tested.testOutputFile));
+  assert.equal(hash(testOutput),tested.testResultHash);assert.equal(tested.testExitCode,0);
+  await assert.rejects(f.run(f.request)); // Preserved prior admission/claim, never automatic retry.
+  t.diagnostic('REAL_ADAPTER_TEST_ONLY_COMMIT='+result.head+';LIVE_PROGRAMME_BUILD=false');
+});
+test('real cross-process primitive excludes a second host, retaining exact task admission',async t=>{
+  const f=await fixture(t),other=createRescueIslandSupervisedHostV1(f.config);
+  await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
+    await assert.rejects(other.host.withExistingOwnerAdmission(f.expected,async()=>assert.fail('competing owner ran')),/BUSY/);
+    const wrong={...f.expected,taskFingerprint:'0'.repeat(64),stage:'BEFORE_PREPARATION'};
+    await assert.rejects(f.host.host.observeSupervisedAdmission(wrong),/OWNER_ADMISSION_CHANGED/);
+  });
+});
+test('fixed native ingress reaches real runner validation without accepting authority or paths',async t=>{
+  await stat(nativeHostPath);
+  const result=spawnSync(nativeHostPath,['--supervised-once'],{input:JSON.stringify({commentId:1234,task:{}}),
+    encoding:'utf8',shell:false,windowsHide:true,timeout:15000});
+  assert.equal(result.status,3,result.stderr);
+  const facts=JSON.parse(result.stdout);
+  assert.equal(facts.blocker,'RESCUE_ISLAND_SUPERVISED_TASK_NOT_PLAIN');
+  assert.equal(facts.assuranceProfile,'SUPERVISED_COOPERATIVE_V1');
+});
+test('replacing a physical estate root between observations is held',async t=>{
+  const f=await fixture(t);
+  await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
+    await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
+    await rename(f.host.roots.worktreeRoot,f.host.roots.worktreeRoot+'.preserved');
+    await mkdir(f.host.roots.worktreeRoot);
+    await assert.rejects(f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_CLAIM'}),/ESTATE_IDENTITY_CHANGED/);
+  });
+});
+test('actual canonical lease uses original mission allowedFiles and remains byte-identical',async t=>{
+  const f=await fixture(t);
+  const lease={schema:'stephanos.source-mutation-lease.v1',repository:f.task.repository,laneId:'critical-2962-elastic-goal',
+    headSha:'a'.repeat(40),branch:'openclaw/elastic-goal-2962'};
+  const path=join(f.config.sharedWorkspaceRoot,'status/source-mutation-lease-current.json');await save(path,lease);
+  await save(join(f.config.missionRoot,lease.laneId+'.state.json'),{schemaVersion:'stephanos.mission-orchestrator.v1',repository:f.task.repository,missionId:lease.laneId,
+    repositoryRoot:f.config.canonicalRoot,currentPhase:'REPAIR_REQUIRED',activeWriter:'foundry-forge',
+    allowedFiles:['scripts/publisher.mjs','scripts/publisher.mjs/**'],
+    git:{branch:lease.branch,commitSha:lease.headSha,worktreePath:join(f.root,'original-r7-worktree')}});
+  const before=await readFile(path);
+  const claims=await readIslandCanonicalClaimsV1(f.config);
+  assert.equal(claims.length,1);assert.deepEqual(claims[0].targetPaths,['scripts/publisher.mjs']);
+  await f.run(f.request);assert.deepEqual(await readFile(path),before);
+});
+test('unknown canonical lease owner and malformed scope fail closed',async t=>{
+  const f=await fixture(t);
+  await save(join(f.config.sharedWorkspaceRoot,'status/source-mutation-lease-current.json'),
+    {schema:'stephanos.source-mutation-lease.v1',repository:f.task.repository,laneId:'unobserved',headSha:'a'.repeat(40),branch:'original'});
+  await assert.rejects(f.run(f.request),/CANONICAL_LEASE_OWNER_AMBIGUOUS/);
+  assert.deepEqual(await readdir(join(f.config.sharedWorkspaceRoot,'worktrees')),[]);
+});
+test('existing non-elastic canonical mission ownership is retained from its exact issue identity',async t=>{
+  const f=await fixture(t);
+  await save(join(f.config.missionRoot,'critical-1291-worker-watchdog-repair.state.json'),{
+    schemaVersion:'stephanos.mission-orchestrator.v1',repository:f.task.repository,
+    missionId:'critical-1291-worker-watchdog-repair',repositoryRoot:f.config.canonicalRoot,
+    currentPhase:'AGENT_IMPLEMENTATION',activeWriter:'Codex',allowedFiles:['scripts/watchdog.mjs'],
+    git:{branch:'openclaw/critical-1291-worker-watchdog-repair',worktreePath:join(f.root,'old-canonical-worktree')}});
+  const claims=await readIslandCanonicalClaimsV1(f.config);
+  assert.equal(claims[0].ownerIssueNumber,1291);assert.deepEqual(claims[0].targetPaths,['scripts/watchdog.mjs']);
+});
+test('actual Seed task and orphan target claims are inventoried without clearing either',async t=>{
+  const f=await fixture(t),root=join(f.config.seedRoot,'a'.repeat(12));
+  const saved={seedId:'seed-one',ownerIssue:'#1234',baseSha:f.task.baseHead,targetPath:f.task.targetPath};
+  await save(join(root,'receipts/seed-task.claim'),saved);
+  const claims=await readIslandSeedClaimsV1(f.config.seedRoot);assert.equal(claims.length,1);
+  assert.equal(claims[0].worktreeBranch,'seed-parallel/seed-one/seed-task');
+  await assert.rejects(f.run(f.request),/COMPETING_SOURCE_OWNER/);
+  await save(join(root,'target-claims',hash('other')+'.claim'),{taskId:'orphan-task',targetPath:'docs/other.md'});
+  await assert.rejects(readIslandSeedClaimsV1(f.config.seedRoot),/ORPHAN_SEED_TARGET_CLAIM/);
+});
+for(const stage of ['BEFORE_CLAIM','BEFORE_TEST','BEFORE_COMMIT'])test('real governor revocation at '+stage+' prevents a commit',async t=>{
+  const f=await fixture(t),original=f.host.host.observeSupervisedAdmission;
+  f.host.host.observeSupervisedAdmission=async e=>{
+    if(e.stage===stage)await save(join(f.config.sharedWorkspaceRoot,'vr/vr-resource-governor-current.json'),{...f.governor,active:true});
+    return original(e);
+  };
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  await assert.rejects(createRescueIslandSupervisedRunnerV1(f.host.host)(f.request),/GAMING_ADMISSION_REVOKED_OR_STALE/);
+  if(stage!=='BEFORE_CLAIM') {
+    const stages=await readdir(join(f.host.roots.receiptRoot,'claims'));
+    assert.ok(stages.includes(f.task.taskId+'.BLOCKED.json'));assert.ok(!stages.includes(f.task.taskId+'.ISOLATED_COMMIT.json'));
+  }
+});
+test('real preservation detects changed bytes between observations and keeps the original copy',async t=>{
+  const f=await fixture(t);
+  await f.host.host.withExistingOwnerAdmission(f.expected,async()=>{
+    await f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_PREPARATION'});
+    await writeFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'Unexplained replacement\n');
+    await assert.rejects(f.host.host.observeSupervisedAdmission({...f.expected,stage:'BEFORE_CLAIM'}),/PRESERVATION_CHANGED/);
+    assert.equal(await readFile(join(f.host.roots.receiptRoot,'preservation',hash('Original operator bytes\n')),'utf8'),'Original operator bytes\n');
+  });
+});
+test('interrupted terminal receipt publication retains commit, admission and failed-run evidence',async t=>{
+  const f=await fixture(t),original=f.host.host.observeSupervisedAdmission;
+  f.host.host.observeSupervisedAdmission=async e=>{
+    const value=await original(e);
+    if(e.stage==='BEFORE_COMMIT')await writeFile(join(f.host.roots.receiptRoot,'claims',f.task.taskId+'.ISOLATED_COMMIT.json'),'interrupted incumbent');
+    return value;
+  };
+  const {createRescueIslandSupervisedRunnerV1}=await import(pathToFileURL(join(f.root,'harness/rescueIslandFirstCommitV1.mjs')));
+  await assert.rejects(createRescueIslandSupervisedRunnerV1(f.host.host)(f.request),/EEXIST/);
+  const worktree=join(f.host.roots.worktreeRoot,f.task.taskId);
+  assert.notEqual(git(worktree,['rev-parse','HEAD']),f.task.baseHead);
+  assert.equal(await readFile(join(f.host.roots.receiptRoot,'claims',f.task.taskId+'.ISOLATED_COMMIT.json'),'utf8'),'interrupted incumbent');
+  const entries=await readdir(join(f.host.roots.receiptRoot,'claims'));
+  assert.ok(entries.includes(f.task.taskId+'.BLOCKED.json'));assert.ok(entries.includes(f.task.taskId+'.json'));
+  await assert.rejects(f.run(f.request));
+});

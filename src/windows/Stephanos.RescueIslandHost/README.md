@@ -1,9 +1,8 @@
-# Rescue Island one-shot native host bootstrap
+# Rescue Island one-shot native host
 
 Owner: #3109 — Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)
 
-This builds the Island's own native executable entry point. Its only admitted
-operation, `--inspect-principal`, reads the actual primary process token with
+The observation operation, `--inspect-principal`, reads the actual primary process token with
 `TOKEN_QUERY`, checks for a separate impersonating thread, and emits its own
 PID/start time, SID, elevation type, administrators-group presence and the complete
 assigned privilege inventory. Group presence comes from bounded native `TokenGroups`,
@@ -24,21 +23,79 @@ The complete inventory retains both exemptions. Any future admission policy must
 inspect that full inventory; an empty compatibility projection proves no eligibility
 or isolation. A default/unobserved inventory is not evidence of absent privileges.
 
-Every invocation remains **HELD**, with exit code 3 for an observation and 64
-for an unregistered operation. `--run`, recovery, task/path arguments, stdin and
-environment flags cannot enable execution. Nothing is installed or registered:
-no account, ACL, service, scheduler, claim, lease, queue, source write, child
-builder, Git/Node command or resource grant is created by this host.
+Inspection remains **HELD**, with exit code 3 for an observation and 64 for an
+unregistered operation. Strict construction still refuses
+`RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED`. `--run`, recovery, task/path
+arguments and authority environment flags cannot waive that refusal.
+
+## Separate supervised cooperative pilot
+
+`--supervised-once` accepts at most 16 KiB of UTF-8 JSON on stdin, containing
+only `{commentId, task}`. It verifies the actual non-administrative process token
+and launches one fixed Node executable and `scripts/rescue-island-supervised-host.mjs`
+from its build's repository layout. Copied binaries cannot nominate another
+source root. The owned child runs at BelowNormal priority; timeout cancellation
+is restricted to that child and its descendants. No Windows account, ACL,
+service, scheduler, model, driver, signing root or credential is created.
+
+The JS adapter uses the existing Shared Workspace operation-lock primitive for
+the whole authenticated operation and the original Island task-claim estate.
+It reads the canonical source lease and original missions' declared `allowedFiles`,
+every observed Seed estate's task/target reservations and retained Island claims.
+It neither acquires nor retires the original R7 lease. Missing, malformed,
+conflicting or unbounded inventories fail closed. Canonical/Seed ownership is
+observed again at every stage; these cooperative observations do not physically
+exclude a privileged or undiscovered writer.
+
+After authenticated exact GitHub intake and current gaming/token/claim checks,
+the first run can create the minimum fixed Island estate under the configured
+Shared Workspace's `worktrees/rescue-island-01`: an independent `--no-hardlinks`
+Git clone, separate worktrees and receipts. An existing unmarked or partial
+estate is held for reconciliation. Canonical refs/index/worktrees are never
+used for pilot mutation. Every original dirty file and the canonical index are
+copied and hashed before construction; changed bytes, source heads or physical
+root identities stop the operation. Failed admissions, claims, commits and
+receipt-publication failures remain for operator reconciliation. No automatic
+recovery or refill is implemented.
+
+Passing and failing Node stdout is retained under `receipts/test-output`, with
+content-addressed log names. A TESTED receipt binds its exact log SHA-256,
+test path and zero exit status. A failed test does not emit TESTED or COMMIT.
+
+The first pilot uses the governor's existing fresh NORMAL/idle admission for
+fixed CPU-only work, expiring at the observed governor timestamp + 10 seconds.
+It is checked before claims/worktrees/edit/tests/commit; no model is loaded.
+This is an ordinary cooperative governor observation, not an independently
+signed resource grant. It cannot qualify hostile-writer custody or unattended
+operation. Source changes during a bounded child are rejected at the subsequent
+boundary; this mode does not promise prevention of malicious check/use races.
+
+The owner must post a fresh exact command on original issue #3109:
+
+```
+/rescue-island-01 supervised-cooperative <current-main-SHA> <task-id> <content-SHA256>
+```
+
+The full task is validated against that independently fetched owner comment,
+the exact issue, current main, fixed documentation target/test and ten-minute
+expiry. Ordinary `pilot` approval does not consent to this profile. Review and
+protected integration precede live use. Exact live consent is separate.
+
+Every construction receipt is labelled `SUPERVISED_COOPERATIVE_V1`, with
+`hostileWriterContainmentProven=false`, `independentlyCommissionedWorker=false`
+and `unattendedRefillsProven=false`. This is **less assurance** than strict
+containment, assuming a trusted operator and cooperative workers. Island 02,
+general-purpose model building and unattended refill remain unimplemented.
 
 The JSON is diagnostic and unauthenticated outside the observing process.
 Even a plausible distinct SID and non-elevated token do not authenticate host
 enrollment, complete original-writer inventory, process protection, executable
 dependency closure, or estate ACLs. Administrator deny-only group membership
 and assigned privileges are observations, not a complete isolation decision.
-Do not ingest these fields as proof or remove the production engine's
+Do not ingest caller copies of these fields as proof or remove the strict engine's
 `RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED` hold.
 
-The remaining implementation and independent commissioning gates are in
+The remaining strict-mode implementation and independent commissioning gates are in
 `docs/architecture/rescue-island-execution-custody.md`. In particular, the host
 still needs authenticated atomic canonical/Seed/Island task and owner-comment
 reservation, a protected principal and complete execution/Git/target/receipt

@@ -9,6 +9,8 @@ on:
       - 'src/windows/Stephanos.RescueIslandCustody.Tests/**'
       - 'src/windows/Stephanos.RescueIslandHost/**'
       - 'src/windows/Stephanos.RescueIslandHost.Tests/**'
+      - 'shared/agents/rescueIsland*.mjs'
+      - 'scripts/rescue-island-supervised-host.mjs'
       - '.github/workflows/rescue-island-native-custody-proof.yml'
 
 permissions:
@@ -30,6 +32,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Run actual Windows adversarial native custody tests
         shell: pwsh
         env:
@@ -39,6 +44,11 @@ jobs:
           dotnet run --project src/windows/Stephanos.RescueIslandCustody.Tests --configuration Release -p:NuGetAudit=false
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet run --project src/windows/Stephanos.RescueIslandHost.Tests --configuration Release -p:NuGetAudit=false
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run strict and supervised Island integration tests
+        shell: pwsh
+        run: |
+          node --test --test-concurrency=1 shared/agents/rescueIslandSupervisedRunV1.test.mjs shared/agents/rescueIslandSupervisedHostV1.test.mjs shared/agents/rescueIslandFirstCommitV1.test.mjs shared/agents/rescueIslandPilotOwnerIntakeV1.test.mjs shared/agents/rescueIslandAuthenticatedGithubReadV1.test.mjs shared/agents/rescueIslandPreflightV1.test.mjs shared/agents/rescueIslandPhysicalScopeObservationV1.test.mjs shared/agents/rescueIslandBoundaryReceiptV1.test.mjs scripts/rescue-island-boundary-probe.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain execution admission boundary
         if: always()
