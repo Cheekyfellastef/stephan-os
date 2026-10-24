@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const VERSION = '2026-10-13-private-mcp-batch-metadata-v5';
+const VERSION = '2026-10-20-starfield-vr-archive-v6';
 const RUNTIME_CALLERS = [
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
@@ -19,6 +19,7 @@ test('service, explicit ignition calls and watchdog require the current private 
     const body = await source(path);
     assert.ok(body.includes(VERSION), path + ' must use this capability generation');
     assert.equal(body.includes('2026-10-05-continuous-repair-reporting-v4'), false, path + ' must not demand the older generation');
+    assert.equal(body.includes('2026-10-13-private-mcp-batch-metadata-v5'), false, path + ' must not demand the previous generation');
   }
 });
 test('existing specialist-pinned Windows starter accepts the required generation from guarded callers', async () => {
@@ -28,9 +29,10 @@ test('existing specialist-pinned Windows starter accepts the required generation
     source('scripts/sovereign-commander-ignition-autoheal.mjs'),
     source('scripts/windows/run-sovereign-commander-hidden.ps1'),
   ]);
-  assert.ok(http.includes("SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-13-private-mcp-batch-metadata-v5'"));
+  assert.ok(http.includes("SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-20-starfield-vr-archive-v6'"));
   assert.ok(mcp.includes("name: 'read_multiple_files'"));
   assert.ok(mcp.includes("name: 'get_file_info'"));
+  assert.ok(mcp.includes("name: 'starfield_vr_telemetry_archive'"));
   assert.ok(autoheal.includes("'-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION"));
   assert.ok(runner.includes('[string]$RequireCapabilityVersion'));
   assert.ok(runner.includes('$staleCapability = [bool]'));
@@ -44,7 +46,7 @@ test('scheduled S4U launcher and post-sync refresh explicitly require same gener
     source('scripts/battle-bridge-post-sync-refresh.mjs'),
   ]);
   assert.ok(launcher.includes('Case "sovereign-commander-watchdog"'));
-  assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-13-private-mcp-batch-metadata-v5"'));
+  assert.ok(launcher.includes('Quote(targetPath) & " -RequireCapabilityVersion 2026-10-20-starfield-vr-archive-v6"'));
   const refresh = postSync.slice(postSync.indexOf('refreshSovereignCommander({ afterHead, paths })'), postSync.indexOf('restartGitHubMailbox({ afterHead, paths })'));
-  assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5'"));
+  assert.ok(refresh.includes("'-RequireCapabilityVersion', '2026-10-20-starfield-vr-archive-v6'"));
 });
