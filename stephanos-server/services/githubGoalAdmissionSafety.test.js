@@ -71,6 +71,15 @@ test('invalid or ambiguous owner acceptance cannot silently fall back to general
   assert.deepEqual((await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ body: escaped })])).issues, []);
 });
 
+test('an owner test-only admission preserves the label-derived mutation scope', async () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const result = await observe(canonicalGoal({ comments: 1, body: 'Repair shared/agents/canonicalMissionWorkerEvidenceV1.mjs.' }),
+    [ownerAdmissionComment({ body: admissionBody({ requiredTests: commands }) })]);
+  assert.deepEqual(result.issues[0].admission.requiredTests, commands);
+  assert.deepEqual(result.issues[0].admission.resourceIds,
+    ['repo:cheekyfellastef/stephan-os:path:shared/agents/canonicalMissionWorkerEvidenceV1.mjs']);
+});
+
 test('contributor test plans never acquire owner test execution authority', async () => {
   const result = await observe(canonicalGoal({ comments: 1 }), [ownerAdmissionComment({ user: { login: 'contributor' },
     author_association: 'CONTRIBUTOR', body: admissionBody({ requiredTests: ['node --test scripts/a.test.mjs'] }) })]);

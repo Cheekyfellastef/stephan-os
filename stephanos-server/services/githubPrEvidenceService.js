@@ -188,11 +188,16 @@ function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, eve
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
   const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
   if (commentAdmission?.invalidRequiredTests) return null;
-  const scopedCommentAdmission = (commentAdmission?.requiredTests
-    || (commentAdmission?.resourceIds?.length && comments.length === 1)) ? commentAdmission : null;
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length
+    && (comments.length === 1 || commentAdmission.requiredTests) ? commentAdmission : null;
   const priorAdmission = priorMirrorAdmission?.admission || null;
-  const admission = scopedCommentAdmission || priorAdmission || ownerLabelAdmission || commentAdmission;
+  let admission = scopedCommentAdmission || priorAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
+  // A test plan without an explicit mutation scope must retain the already
+  // admitted scope; declaring read-only checks cannot widen source authority.
+  if (commentAdmission?.requiredTests) admission = sourceImplementationAdmission(
+    discovery.issueNumber, repository, admission.resourceIds, commentAdmission.requiredTests,
+  );
   const operatorLaneContainment = priorMirrorAdmission?.operatorLaneContainment || evaluateOperatorLaneContainmentV1({
     comments,
     repository,
@@ -200,7 +205,7 @@ function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, eve
     trustedOperatorLogin: owner,
   });
   const contained = operatorLaneContainment.active === true;
-  const admissionProofSource = scopedCommentAdmission
+  const admissionProofSource = scopedCommentAdmission || commentAdmission?.requiredTests
     ? 'OWNER_AUTHENTICATED_COMMENT'
     : priorMirrorAdmission?.admissionProofSource
       || ((!ownerLabelAdmission && commentAdmission)
