@@ -36,6 +36,7 @@ function compactTitle(seed = {}) {
   if (seed.missionId === 'sovereign-commander-safe-parity') return 'Sovereign Commander Parity';
   if (seed.missionId === 'stephanos-sovereign-meter-independence') return 'Meter Independence';
   if (seed.missionId === 'stephanos-full-sovereignty-every-function') return 'Full Sovereignty';
+  if (seed.missionId === 'openclaw-local-standalone-continuous-excellence') return 'OpenClaw Excellence';
   if (seed.missionId === 'goal-conveyor-fleet-care') return 'Conveyor & Fleet Care';
   return seed.title || seed.missionId || 'Outcome seed';
 }
