@@ -381,3 +381,27 @@ test('patch fragments must match once and produce the exact approved full-conten
     assert.equal(existsSync(f.roots.worktreeRoot),false);
   }
 });
+
+for (const kind of ['module', 'test'])
+test('approved source '+kind+' drift during BEFORE_TEST stops before Node executes altered bytes', async t => {
+  const f = await fixture(t, {}, {sourceTask:true,sourcePatch:kind==='module'});
+  const manifest = JSON.parse(f.task.content);
+  const relative = manifest.changes[kind==='module'?0:1].path;
+  const wt = join(f.roots.worktreeRoot, f.task.taskId);
+  const sentinel = join(wt, 'unapproved-executed.txt');
+  mutateObservation(f, async (observation, expected) => {
+    if (expected.stage === 'BEFORE_TEST') {
+      const file = join(wt, relative);
+      await writeFile(file, "import {writeFileSync} from 'node:fs'; writeFileSync(new URL('../../unapproved-executed.txt', import.meta.url), 'UNAPPROVED EXECUTION');\n" + await readFile(file, 'utf8'));
+    }
+    return observation;
+  });
+  await assert.rejects(f.run(f.request), /RESCUE_ISLAND_PRETEST_APPROVED_CONTENT_CHANGED/);
+  assert.equal(existsSync(sentinel), false, 'altered source must never execute');
+  assert.equal(git(wt, ['rev-parse', 'HEAD']), f.baseHead);
+  const stages = await stageFiles(f);
+  assert.ok(stages.some(name => name.endsWith('.BLOCKED.json')));
+  assert.ok(stages.some(name => name.endsWith('.EDITED.json')));
+  assert.ok(!stages.some(name => /\.(TESTED|ISOLATED_COMMIT)\.json$/.test(name)));
+  assert.ok((await readFile(join(wt, relative), 'utf8')).includes('UNAPPROVED EXECUTION'), 'retain changed evidence');
+});

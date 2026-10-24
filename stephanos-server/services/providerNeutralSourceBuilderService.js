@@ -909,7 +909,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   // command route, under its original lease and cancellation fences.
   const run = options.runCommand || defaultRun;
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
-  const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
+  let completedAt = '';
   let patchPath = '';
   let mutationApplied = false;
   let structuredEditsApplied = false;
@@ -1027,6 +1027,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       }
 
       const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // options.now is an admission snapshot, not the completion clock.
+      completedAt = new Date().toISOString();
       const receipt = Object.freeze({
         receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
         requirement: 'provider-neutral bounded source change',
@@ -1105,7 +1107,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         options,
         {
           phase: 'provider-neutral-result-validated',
-          timestampUtc: completedAt,
+          timestampUtc: new Date().toISOString(),
           proofRefs: [receipt.receiptId, ...sourceTestReceipts.map((item) => item.receiptId)],
           expectedNextAction: 'Release/refill may consume this terminal receipt after canonical completion gates pass.',
         },
@@ -1166,6 +1168,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
           {
             phase: 'provider-neutral-result-blocked',
+            timestampUtc: new Date().toISOString(),
             blocker: failure,
             expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
           },

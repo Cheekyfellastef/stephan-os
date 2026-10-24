@@ -1,3 +1,4 @@
+import { runMissionWorkerTick } from '../../scripts/mission-orchestrator-worker.mjs';
 import { appendExecutionReceipt, createExecutionReceipt, readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import test from 'node:test';
@@ -9,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, appendMissionWorkerExecutionReceiptTransition, processNextGitHubInspectionItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -691,11 +692,11 @@ test('custody expiring while the actual pickup store waits for its lock never pu
 
 async function queuedInspectionReceiptFixture() {
   const options = await runtime();
-  options.sharedWorkspaceRoot = join(options.root, '..', 'workspace');
+  options.sharedWorkspaceRoot = join(options.root, '..', 'Documents', 'Stephanos-openclaw-workspace');
   options.repoRoot = join(options.root, '..', 'repo');
   const created = await createMissionRecord(intent('inspection-receipt-test'), options);
   const state = created.state;
-  state.revision = 6; state.currentPhase = 'CHECK_PULL_REQUEST';
+  state.revision = 6; state.currentPhase = 'CHECK_PULL_REQUEST'; state.issueNumber = 1802;
   state.git = { ...state.git, worktreeReady: true, commitSha: 'a'.repeat(40), pushed: true };
   state.dispatch = { ...state.dispatch, status: 'complete', startedAt: new Date().toISOString() };
   state.evidenceReceipts = [proof('focused evidence', 'inspection-fixture-source-proof')];
@@ -705,6 +706,7 @@ async function queuedInspectionReceiptFixture() {
   assert.equal(published.published, true);
   const item = JSON.parse(await readFile(published.path, 'utf8'));
   const grant = { schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller', boundedActionCount: 1, actionKind: 'github-inspection', adapter: 'openclaw-github-readonly', operation: 'check-pr', currentPhase: 'CHECK_PULL_REQUEST', laneId: state.missionId, mergeAuthority: false, leaseSeizureAllowed: false,
     grantId: 'grant-' + item.actionId, missionId: state.missionId, missionRevision: state.revision,
     actionId: item.actionId, repository: state.repository, issueNumber: 1802, prNumber: 2096,
     branch: state.git.branch, headSha: state.pullRequest.headSha, sourceRevision: 'b'.repeat(40) };
@@ -749,4 +751,40 @@ test('GitHub inspector exception records failed truth and retains mission revisi
   assert.equal(result.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
   assert.equal((await f.history()).latestReceipt.state, 'failed', result.error?.stack);
   assert.equal((await readMissionRecord(f.state.missionId, f.options)).state.revision, 6);
+});
+
+
+test('production tick binds receipt workspace with env absent and refuses terminal-chain inspection', async t => {
+  for (const terminal of [false, true]) await t.test(terminal ? 'already terminal is refused before inspector' : 'canonical workspace reaches the actual consumer', async () => {
+    const f = await queuedInspectionReceiptFixture();
+    if (terminal) await appendMissionWorkerExecutionReceiptTransition((await f.history()).latestReceipt, 'failed', f.options, {
+      phase: 'fixture-prior-terminal', blocker: 'fixture terminal', expectedNextAction: 'Do not execute a terminal action again.',
+    });
+    const env = { USERPROFILE: join(f.options.root, '..'), STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: f.options.repoRoot,
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'b'.repeat(40) };
+    const { sharedWorkspaceRoot: _notSupplied, ...options } = f.options;
+    let inspectorCalls = 0;
+    const result = await runMissionWorkerTick({ ...options, env, actionGrant: f.item.actionGrant,
+      sourceRevision: 'b'.repeat(40), runCommand: (_exe, args) => {
+        assert.deepEqual(args.slice(0, 2), ['pr', 'view']); inspectorCalls += 1;
+        return { status: 0, stdout: JSON.stringify({ number: 2096, headRefOid: 'a'.repeat(40), mergeable: 'MERGEABLE',
+          state: 'OPEN', statusCheckRollup: [{ name: 'verify', status: 'IN_PROGRESS' }] }), stderr: '' };
+      } });
+    const h = await f.history();
+    assert.equal(inspectorCalls, terminal ? 0 : 1, result.processed?.error?.stack);
+    assert.equal(h.latestReceipt.state, terminal ? 'failed' : 'completed');
+    assert.deepEqual(h.receipts.map(r => r.state), terminal ? ['queued', 'failed'] : ['queued', 'accepted', 'started', 'progress', 'completed']);
+  });
+});
+
+test('native inspection missing its receipt workspace refuses before execution', async () => {
+  const f = await queuedInspectionReceiptFixture();
+  const { sharedWorkspaceRoot: _notSupplied, ...options } = f.options;
+  let calls = 0;
+  const result = await processNextGitHubInspectionItem({ ...options, env: {}, inspectGitHub: async () => {
+    calls += 1; throw Error('inspector must not be invoked without native receipt custody');
+  } });
+  assert.equal(calls, 0);
+  assert.match(result.error?.message || '', /EXECUTION_RECEIPT_WORKSPACE_REQUIRED/);
+  assert.equal((await f.history()).latestReceipt.state, 'queued');
 });

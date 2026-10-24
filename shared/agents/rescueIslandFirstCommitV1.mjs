@@ -383,13 +383,17 @@ async function constructRescueIslandPilotWithAdmission({
       }
     }
     const approvedBytesMatch = async()=> {
-      for(const change of writes) if(await readFile(outputs.get(change.path),'utf8')!==change.content)return false;
+      for (const change of writes) {
+        const file = outputs.get(change.path);
+        if (lower(await physicalRoot(file)) !== lower(file) || !(await lstat(file)).isFile()
+            || !(await readFile(file)).equals(Buffer.from(change.content, 'utf8'))) return false;
+      }
       return true;
     };
     await append('EDITED', {sha256:digest(task.content),
       ...(sourcePlan?{changedPaths:approvedPaths,sourceContentSha256:Object.fromEntries(writes.map(w=>[w.path,digest(w.content)]))}:{})});
     // Persisted recovery state is untrusted. Before executing any JavaScript,
-    // prove every tracked delta and every untracked file is the approved doc.
+    // prove every tracked delta and every untracked file belongs to the approved scope.
     // This covers the test and its imported dependency graph, not just testPath.
     await recheck('BEFORE_TEST');
     const beforeTestHead = git(worktree, ['rev-parse', 'HEAD'], runGit);
@@ -419,6 +423,9 @@ async function constructRescueIslandPilotWithAdmission({
         .split('\n').filter(Boolean).map(line=>line.slice(3).trim());
       if(pending.some(path=>!allowed(path)))fail('RESCUE_ISLAND_NATIVE_TEST_SETUP_NOT_IGNORED');
     }
+    // Admission and native provisioning await I/O. Verify every approved write
+    // after those boundaries, before executing any candidate source or test.
+    if (!await approvedBytesMatch()) fail('RESCUE_ISLAND_PRETEST_APPROVED_CONTENT_CHANGED');
     const testProof = nodeTest(worktree, sourcePlan ? testPaths : task.testPath, runTest,Boolean(nativeProvision));
     const testResultHash = testProof.hash;
     const testOutputRoot = join(proofs, 'test-output');
