@@ -101,6 +101,7 @@ function runSourceCollectorFixture({
   originHeadFinal = originHeadAfter,
   divergence = '0\t0\n',
   failOperation = '',
+  failCallNumber = 0,
   fetchAuthorityState = null,
   topologyAfter = null,
   platform = 'win32',
@@ -125,6 +126,8 @@ function runSourceCollectorFixture({
     const operation = String(operationArgs[0] || '');
     counts[operation] = Number(counts[operation] || 0) + 1;
     calls.push({ command, args, operationArgs, options });
+    if (calls.length === failCallNumber) return { status: 1, stdout: '', stderr: 'PRIVATE source failure',
+      error: Object.assign(new Error('PRIVATE source path'), { code: 'PRIVATE_ERROR' }) };
     if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
     if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
     if (operation === 'ls-files') {
@@ -535,7 +538,26 @@ test('live source collector fails closed when current origin/main cannot be fetc
   assert.equal(verdict.ok, false);
   assert.equal(verdict.blocker.id, 'source-truth-unproven');
   assert.equal(verdict.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+  assert.equal(verdict.blocker.sourceStep, 'source-fetch');
   assert.deepEqual(calls.slice(0, 7).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status', 'branch', 'rev-parse', 'rev-parse', 'fetch']);
+});
+
+test('failed fixed Git captures retain only their literal diagnostic step without changing the stop boundary', () => {
+  const steps = [
+    'source-config-before-fetch', 'source-tracked-visibility-before-fetch', 'source-status-before-fetch',
+    'source-branch-before-fetch', null, 'source-head-before-fetch', 'source-fetch', 'source-origin-head',
+    'source-divergence', 'source-status-after-fetch', 'source-config-after-fetch', 'source-branch-after-fetch',
+    null, 'source-head-after-fetch', 'source-origin-head-after-fetch', 'source-tracked-visibility-after-fetch',
+    'source-status-final', 'source-tracked-visibility-final', 'source-heads-final',
+  ];
+  for (const [index, sourceStep] of steps.entries()) {
+    if (!sourceStep) continue; // The two optional upstream reads retain their existing nonthrowing semantics.
+    const { result, calls } = runSourceCollectorFixture({ failCallNumber: index + 1 });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+    assert.equal(result.blocker.sourceStep, sourceStep);
+    assert.equal(calls.length, index + 1, sourceStep);
+  }
 });
 
 test('standalone supervisor housekeeping ignores hostile PATH and uses only the fixed Git boundary', () => {

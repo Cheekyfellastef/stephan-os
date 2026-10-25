@@ -1,4 +1,6 @@
 // Fixed adapter to the existing maintenance recovery owner, never a shell route.
+import { projectMaintenanceSourceDiagnosticV1 } from './sovereignMaintenanceSourceDiagnosticV1.mjs';
+
 export const MAINTENANCE_RECOVERY_OPERATIONS = Object.freeze([
   'OBSERVE_SOVEREIGN_MAINTENANCE_RECOVERY',
   'PREPARE_SOVEREIGN_MAINTENANCE_RECOVERY',
@@ -31,13 +33,17 @@ const filesystemDiagnosticCodes = new Set([
   'ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EISDIR', 'EEXIST', 'ELOOP', 'EBUSY', 'EIO', 'ENOSPC', 'EROFS',
 ]);
 const diagnosticCodes = new Set([...fixedDiagnosticCodes, ...filesystemDiagnosticCodes, 'TIMEOUT', 'UNKNOWN']);
-const diagnostic = code => Object.freeze({
-  code: typeof code === 'string' && diagnosticCodes.has(code) ? code : 'UNKNOWN', diagnosticOnly: true,
-});
+const diagnostic = (code, source = {}) => {
+  const safeCode = typeof code === 'string' && diagnosticCodes.has(code) ? code : 'UNKNOWN';
+  return Object.freeze({ code: safeCode, diagnosticOnly: true,
+    ...(safeCode === 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN'
+      ? projectMaintenanceSourceDiagnosticV1(source?.sourceCode, source?.sourceStep) : {}),
+  });
+};
 const blockerDiagnostic = code => diagnostic(fixedDiagnosticCodes.has(code) ? code : 'UNKNOWN');
 function caughtDiagnostic(error) {
   try {
-    if (fixedDiagnosticCodes.has(error?.message)) return diagnostic(error.message);
+    if (fixedDiagnosticCodes.has(error?.message)) return diagnostic(error.message, error);
     if (error?.name === 'TimeoutError' || error?.code === 'ETIMEDOUT') return diagnostic('TIMEOUT');
     if (filesystemDiagnosticCodes.has(error?.code)) return diagnostic(error.code);
   } catch { /* Malformed errors are unknown, never a reason to expose raw data. */ }
@@ -57,7 +63,7 @@ export function projectMaintenanceRecoveryReceiptV1(value = {}, operation = '') 
     cycleId: uuid.test(value.cycleId ?? '') ? value.cycleId : '',
     reportSha256: hash.test(value.reportSha256 ?? '') ? value.reportSha256 : '',
     ...(Object.hasOwn(value, 'diagnostic') ? {
-      diagnostic: diagnostic(typedDiagnostic ? detail.code : 'UNKNOWN'),
+      diagnostic: diagnostic(typedDiagnostic ? detail.code : 'UNKNOWN', typedDiagnostic ? detail : undefined),
     } : {}),
     custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false,
   }) };

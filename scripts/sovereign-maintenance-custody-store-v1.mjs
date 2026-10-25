@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 import { collectCanonicalIgnitionSourceTruth, evaluateCanonicalIgnitionSourceTruth } from './battle-bridge-ignition-supervisor.mjs';
 import { createMaintenanceOsAnchorV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
+import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
 
 export const MAINTENANCE_CUSTODY_SCHEMA = 'stephanos.sovereign-maintenance-custody.v1';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -21,7 +22,8 @@ export function readMaintenanceRecoverySourceV1() {
   const verdict = evaluateCanonicalIgnitionSourceTruth(source);
   const head = verdict?.sourceTruth?.head || source.head;
   if (!verdict.ok || !/^[a-f0-9]{40}$/.test(head ?? ''))
-    throw new Error('MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN');
+    throw Object.assign(new Error('MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN'),
+      projectMaintenanceSourceDiagnosticV1(verdict?.blocker?.code, verdict?.blocker?.sourceStep));
   return head;
 }
 
