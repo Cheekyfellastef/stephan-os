@@ -1225,8 +1225,25 @@ while ($true) {
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
     $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
+    # Keep an independently observed idle-state heartbeat fresh for bounded
+    # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
+    # transitions and a safe idle state ages past the reviewer's 30s window.
+    # The watcher still scans game/headset signals on every tick BEFORE this.
+    $idleHeartbeatDue = $false
+    if (-not $effective.active) {
+        try {
+            $observedUtc = [DateTime]::Parse(
+                [string]$prior.updatedAtUtc,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind
+            ).ToUniversalTime()
+            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 15
+        } catch {
+            $idleHeartbeatDue = $true
+        }
+    }
 
-    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
+    if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue -or $idleHeartbeatDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
         if ($state.active) { $lastGuardAt = $now }
     }
