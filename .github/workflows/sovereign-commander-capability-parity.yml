@@ -103,6 +103,7 @@ on:
       - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - 'shared/agents/sovereignCommanderCanonicalGitConfigRepairV1.test.mjs'
       - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
