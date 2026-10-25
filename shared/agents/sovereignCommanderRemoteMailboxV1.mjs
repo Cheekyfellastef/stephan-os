@@ -2498,6 +2498,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   existsFn = existsSync,
+  remainingTimeoutMsFn = () => 10_000,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
   const held = (blocker, details = {}) => Object.freeze({
@@ -2530,23 +2531,40 @@ export function inspectCanonicalGitWorktreeConfigV1({
     ...git.fixedConfigArgs,
     ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
   ];
+  const nextProbeTimeoutMs = () => {
+    let remaining = 0;
+    try { remaining = Number(remainingTimeoutMsFn()); } catch { return 0; }
+    if (!Number.isFinite(remaining) || remaining <= 0) return 0;
+    return Math.max(1, Math.min(10_000, Math.floor(remaining)));
+  };
+  const deadlineResult = () => Object.freeze({
+    ok: false,
+    status: null,
+    stdout: '',
+    deadlineExceeded: true,
+  });
   const captureCanonical = (args) => {
+    const timeout = nextProbeTimeoutMs();
+    if (timeout <= 0) return deadlineResult();
     const result = spawnSyncFn(git.executable, [...canonicalPrefix, ...args], {
       cwd: repositoryRoot,
       env: git.environment,
       encoding: 'utf8',
       shell: false,
       windowsHide: true,
-      timeout: 10_000,
+      timeout,
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
       ok: !result?.error && Number(result?.status) === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
+      deadlineExceeded: false,
     });
   };
   const captureAtWorktree = (worktreeRoot, args) => {
+    const timeout = nextProbeTimeoutMs();
+    if (timeout <= 0) return deadlineResult();
     const result = spawnSyncFn(git.executable, [
       ...git.fixedConfigArgs, '-C', worktreeRoot, ...args,
     ], {
@@ -2555,29 +2573,39 @@ export function inspectCanonicalGitWorktreeConfigV1({
       encoding: 'utf8',
       shell: false,
       windowsHide: true,
-      timeout: 10_000,
+      timeout,
       maxBuffer: 64 * 1024,
     });
     return Object.freeze({
       ok: !result?.error && Number(result?.status) === 0,
       status: Number.isInteger(result?.status) ? result.status : null,
       stdout: String(result?.stdout || ''),
+      deadlineExceeded: false,
     });
   };
 
   const head = captureCanonical(['rev-parse', 'HEAD']);
   const branch = captureCanonical(['branch', '--show-current']);
+  if (head.deadlineExceeded || branch.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
   if (!head.ok || text(head.stdout).toLowerCase() !== normalizedHead
       || !branch.ok || text(branch.stdout) !== 'main') {
     return held('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
   }
 
+  if (nextProbeTimeoutMs() <= 0) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
   const topology = inspectTopologyFn(repositoryRoot);
   if (topology?.ok !== true) {
     return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
   const listed = captureCanonical(['worktree', 'list', '--porcelain']);
+  if (listed.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
   if (!listed.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_WORKTREE_LIST_UNPROVEN');
 
   const records = [];
@@ -2610,6 +2638,11 @@ export function inspectCanonicalGitWorktreeConfigV1({
   }
 
   const localConfig = captureCanonical(['config', '--local', '--null', '--list']);
+  if (localConfig.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+    });
+  }
   if (!localConfig.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
   const policy = validateBattleBridgeLocalGitConfiguration(localConfig.stdout);
   const riskCategories = Object.freeze(
@@ -2622,6 +2655,12 @@ export function inspectCanonicalGitWorktreeConfigV1({
   ]);
   let extensionValues = [];
   let extensionValueState = 'ABSENT';
+  if (configured.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+      riskCategories,
+    });
+  }
   if (configured.ok) {
     const raw = configured.stdout.endsWith('\0')
       ? configured.stdout.slice(0, -1) : configured.stdout;
@@ -2643,6 +2682,15 @@ export function inspectCanonicalGitWorktreeConfigV1({
   let allWorktreeConfigsObserved = true;
   for (const record of records) {
     const gitPath = captureAtWorktree(record.root, ['rev-parse', '--git-path', 'config.worktree']);
+    if (gitPath.deadlineExceeded) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount,
+      });
+    }
     if (!gitPath.ok || !text(gitPath.stdout)) {
       allWorktreeConfigsObserved = false;
       continue;
@@ -2654,6 +2702,15 @@ export function inspectCanonicalGitWorktreeConfigV1({
     const config = captureAtWorktree(record.root, [
       'config', '--file', configPath, '--null', '--list',
     ]);
+    if (config.deadlineExceeded) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount,
+      });
+    }
     if (!config.ok) {
       allWorktreeConfigsObserved = false;
       continue;
@@ -2964,8 +3021,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       platform: process.platform,
       environment: env,
       spawnSyncFn,
+      remainingTimeoutMsFn: () => remainingPlanTimeoutMs(10_000),
     });
     if (!inspection.ok) {
+      if (inspection.blocker === 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED') {
+        return planDeadlineFailure({
+          inspectionComplete: false,
+          registeredWorktreeCount: inspection.registeredWorktreeCount ?? null,
+          riskCategories: inspection.riskCategories || Object.freeze([]),
+        });
+      }
       return fail(inspection.blocker, {
         remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
         sourceHead: observedHead,
