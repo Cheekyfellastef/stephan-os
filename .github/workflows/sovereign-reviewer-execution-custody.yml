@@ -1,0 +1,36 @@
+name: Sovereign Reviewer Execution Custody
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'shared/agents/**'
+      - '.github/workflows/sovereign-reviewer-execution-custody.yml'
+permissions:
+  contents: read
+jobs:
+  custody:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Exact committed module custody and hostile checkout regressions
+        run: node --test shared/agents/sovereignExactCommitLoaderV1.test.mjs shared/agents/sovereignAuthenticatedReviewDiffV1.test.mjs scripts/sovereign-reviewer-wsl-bridge-v1.test.mjs scripts/sovereign-windows-review-calibration-v1.test.mjs
+      - name: Trusted Commander fixed launcher boundary
+        run: node --test --test-name-pattern="Windows calibration" shared/agents/sovereignCommanderV1.test.mjs
+      - name: Signed baseline and adversarial reviewer exam contracts (source only)
+        run: node --test shared/agents/sovereignCalibrationV1.test.mjs shared/agents/localReviewCapabilityExamV1.test.mjs
+      - name: Calibration Git boundary including real hostile repository
+        if: runner.os == 'Linux'
+        run: node --test scripts/sovereign-reviewer-ollama-calibration-v1.test.mjs
+      - name: Complete source snapshot and publication contracts on POSIX
+        if: runner.os == 'Linux'
+        run: node --test scripts/sovereign-reviewer-v1.test.mjs scripts/sovereign-high-risk-advisory-v1.test.mjs

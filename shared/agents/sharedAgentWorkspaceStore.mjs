@@ -391,7 +391,7 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
-    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600, ...(options.durable ? { flush: true } : {}) });
     const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
     if (!publicationAncestors.ok) {
       try { await unlink(tempPath); } catch {}

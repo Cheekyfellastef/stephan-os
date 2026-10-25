@@ -789,6 +789,35 @@ test('Sovereign Commander blocked receipts preserve only bounded failure diagnos
   assert.doesNotMatch(JSON.stringify(serialized), /PRIVATE RAW|secret-path/i);
 });
 
+test('native Windows calibration denial preserves the exact bounded exit status in the public mailbox', () => {
+  const head='a'.repeat(40);
+  const receipt={
+    schemaVersion:'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId:'sovereign-reviewer-denial-3199',
+    operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository:'Cheekyfellastef/stephan-os',
+    issueNumber:3149,branch:'main',expectedHead:head,state:'BLOCKED',
+    blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+    result:{
+      ok:false,verdict:'BLOCKED',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId:'sovereign-reviewer-denial-3199',
+      blocker:'SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID',
+      remoteAction:'sovereign-windows-reviewer-calibration',
+      status:2,errorCode:'REVIEWER_RUNNER_EXIT_2',executionBlocker:'',
+      publicReceiptSafe:true,secretMaterialReturned:false,
+      stdout:'PRIVATE_NATIVE_OUTPUT',stderr:'PRIVATE_NATIVE_STDERR',
+    },
+  };
+  const result=createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(result.operationResult.maintenanceStatus,2);
+  assert.equal(result.operationResult.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.equal(result.operationResult.remoteAction,'sovereign-windows-reviewer-calibration');
+  const publicReceipt=JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(publicReceipt.result.result.maintenanceStatus,2);
+  assert.equal(publicReceipt.result.result.errorCode,'REVIEWER_RUNNER_EXIT_2');
+  assert.doesNotMatch(JSON.stringify(publicReceipt),/PRIVATE_NATIVE_OUTPUT|PRIVATE_NATIVE_STDERR/);
+});
+
 test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
   const head = 'c'.repeat(40);
   const query = 'Remote Commander';
@@ -3597,4 +3626,21 @@ test('mobile custody census survives normal and core public receipt projections 
   const injected = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(injected.result.result.originalSourceCustodyCensus, null);
   assert.doesNotMatch(JSON.stringify(injected), /SECRET_PATH_C:/);
+});
+
+test('native Windows reviewer exam survives bounded public receipt without identity or authority', async()=>{
+  const {projectWindowsCalibrationForRemoteV1:project}=await import('../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs');
+  const denial=Object.fromEntries(Object.entries(project()).filter(([,v])=>v===false));
+  const calibration=project({status:'WINDOWS_CALIBRATION_HELD',reason:'EXACT_LOCAL_SOURCE_UNPROVEN',...denial});
+  const receipt={requestId:'windows-calibration-public-1',operation:'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state:'BLOCKED',expectedHead:'a'.repeat(40),result:{
+      remoteAction:'sovereign-windows-reviewer-calibration',calibration,contentText:'PRIVATE',
+    }};
+  const safe=createSanitizedMailboxReceiptProjection(receipt);
+  assert.ok(JSON.stringify(safe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
+  assert.doesNotMatch(JSON.stringify(safe),/PRIVATE/);
+  const unsafe=createSanitizedMailboxReceiptProjection({...receipt,result:{...receipt.result,
+    calibration:{...calibration,reviewerPrincipal:'PRIVATE'}}});
+  assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE/);
+  assert.ok(!JSON.stringify(unsafe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
 });

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
+  compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1640,6 +1643,18 @@ const ORIGINAL_R7_MANDATORY_HOLDS = [
   'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
   'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
 ];
+function originalR7WitnessReadinessGuardProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return {};
+  // These guards qualify the summary again after local checkpointing and
+  // public compaction. Preserve actual booleans; missing evidence stays null.
+  return {
+    originalLeaseReleased: safeBoolean(result.originalLeaseReleased),
+    privilegedWindowsWitnessCommissioned: safeBoolean(result.privilegedWindowsWitnessCommissioned),
+    sourceMutationAllowed: safeBoolean(result.sourceMutationAllowed),
+    arbitraryShellAllowed: safeBoolean(result.arbitraryShellAllowed),
+  };
+}
+
 function safeOriginalR7WitnessReadinessProjection(result = {}) {
   if (result.remoteAction !== 'original-r7-witness-readiness') return null;
   const value = result.witnessReadiness;
@@ -1737,11 +1752,22 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     : [];
   if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
 
-  const status = Number(operationResult?.status);
+  // Fleet checkpoints already renamed status to maintenanceStatus. Preserve
+  // that exact observed exit across repeated publication; never coerce null or
+  // resolve contradictory raw/checkpoint exits into a valid fleet packet.
+  const fleetExits = remoteAction === FLEET_SUPERVISOR_ACTION
+    ? ['status', 'maintenanceStatus'].filter(key => Object.hasOwn(operationResult, key))
+      .map(key => operationResult[key]) : [];
+  const fleetExit = fleetExits.length > 0 && fleetExits.every(value => [0, 2].includes(value))
+    && fleetExits.every(value => value === fleetExits[0]) ? fleetExits[0] : null;
+  const status = remoteAction === FLEET_SUPERVISOR_ACTION ? fleetExit : Number(operationResult?.status);
+  const fleetSupervisor = remoteAction === FLEET_SUPERVISOR_ACTION && fleetExit !== null
+    ? projectFleetSupervisorReceiptV1(operationResult?.fleetSupervisor, fleetExit) : null;
   const completedSteps = Array.isArray(operationResult?.completedSteps)
     ? operationResult.completedSteps.slice(0, 6).map((step) => {
       const stepIndex = Number(step?.stepIndex);
-      const stepStatus = Number(step?.status);
+      const stepStatus = step?.remoteAction === FLEET_SUPERVISOR_ACTION
+        ? ([0, 2].includes(step?.status) ? step.status : null) : Number(step?.status);
       return Object.freeze({
         stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
         remoteAction: safeTelemetryText(step?.remoteAction, 120),
@@ -1749,6 +1775,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
         processId: safeTelemetryId(step?.processId),
         status: Number.isInteger(stepStatus) ? stepStatus : null,
         errorCode: safeTelemetryText(step?.errorCode, 120),
+        ...(step?.remoteAction === FLEET_SUPERVISOR_ACTION && [0, 2].includes(step?.status)
+          && projectFleetSupervisorReceiptV1(step?.fleetSupervisor, step?.status)
+          ? { fleetSupervisor: projectFleetSupervisorReceiptV1(step.fleetSupervisor, step.status) } : {}),
       });
     })
     : [];
@@ -1756,12 +1785,16 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === 'sovereign-windows-reviewer-calibration'
+      && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
+      ? { calibration: operationResult.calibration } : {}),
     remotePlan: Object.freeze(remotePlan),
     stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
     completedSteps: Object.freeze(completedSteps),
     planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
     ...(remoteAction === 'status' ? {
       continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
@@ -1786,6 +1819,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
     originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
     witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
+    ...originalR7WitnessReadinessGuardProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
@@ -2625,7 +2659,7 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   });
 }
 
-function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
@@ -2657,6 +2691,19 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
+          ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
+        ...(Array.isArray(inner?.completedSteps)
+          && inner.completedSteps.some(step => step?.remoteAction === FLEET_SUPERVISOR_ACTION) ? {
+            remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+            completedSteps: inner.completedSteps.slice(0, 6).map(step => Object.freeze({
+              stepIndex: step.stepIndex, remoteAction: step.remoteAction,
+              proofHash: step.proofHash, processId: step.processId,
+              status: step.status, errorCode: step.errorCode,
+              ...(step.remoteAction === FLEET_SUPERVISOR_ACTION && step.fleetSupervisor
+                ? { fleetSupervisor: compactFleetSupervisorReceiptV1(step.fleetSupervisor, fleetHeldLimit) } : {}),
+            })),
+          } : {}),
         stepCount: inner?.stepCount ?? null,
         proofHash: inner?.proofHash || '',
         planProofHash: inner?.planProofHash || '',
@@ -2671,6 +2718,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
         originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
         witnessReadiness: inner?.witnessReadiness ?? null,
+        ...originalR7WitnessReadinessGuardProjection(inner),
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
@@ -2831,8 +2879,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const denseCompactJson = JSON.stringify(compactReceipt);
   if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
 
-  for (const meterLimit of [24, 12, 6, 0]) {
-    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+  for (const [meterLimit, fleetHeldLimit] of [[24, 8], [12, 4], [6, 1], [0, 0]]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit, fleetHeldLimit);
     const coreJson = JSON.stringify(coreReceipt);
     if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }

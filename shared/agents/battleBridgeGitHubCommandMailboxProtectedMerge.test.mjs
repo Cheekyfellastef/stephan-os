@@ -228,6 +228,7 @@ function successfulRequiredChecks() {
     name: workflow === 'Build Stephanos UI' ? 'build' : 'proof',
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
@@ -283,7 +284,7 @@ test('protected merge ignores non-required workflow conclusions but rejects malf
 
 test('protected merge check inspection requests exact name, state and workflow identities', () => {
   const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
-  assert.match(source, /'--json', 'name,state,workflow'/);
+  assert.match(source, /'--json', 'name,state,workflow,event'/);
   assert.doesNotMatch(source, /'--json', 'state'/);
 });
 

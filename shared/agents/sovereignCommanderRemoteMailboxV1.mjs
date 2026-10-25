@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
+import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -8,6 +10,9 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, readSovereignMaintenanceTerminalReceiptV1,
+  sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -30,6 +35,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-recovery-mesh',
   'status-worker-watchdog',
   'status-stephanos-core-daemon',
+  'sovereign-windows-reviewer-calibration',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -91,6 +97,7 @@ const ALLOWED_FIELDS = new Set([
   'targetBranch',
   'targetHead',
   'controllerActivity',
+  'reviewIdentity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const CPU_SNAPSHOT_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -436,6 +443,57 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
     body,
     transportTimedOut: false,
   });
+}
+
+// Private local callers reuse the existing bounded authenticated MCP transport.
+// No health snapshot grants admission, no local child fallback, and no attempt
+// to start/recycle an unavailable owner is permitted on this delegation path.
+export async function callSovereignMaintenanceOwnerV1(request, options = {}) {
+  const fetchFn = options.fetchFn || globalThis.fetch;
+  const readFileFn = options.readFileFn || readFile;
+  let token = '', sessionId = '';
+  try {
+    const healthExchange = await fetchTextWithDeadline(fetchFn, HEALTH_URL, { method: 'GET' }, 3_000);
+    const health = JSON.parse(healthExchange.bodyText || 'null');
+    if (!healthExchange.response.ok || health?.ok !== true || health.service !== 'stephanos-sovereign-commander'
+        || health.maintenanceOwnerAdmissionVersion !== SOVEREIGN_MAINTENANCE_OWNER_VERSION) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_PROTOCOL_REQUIRED');
+    }
+    token = text(await readFileFn(fixedTokenPath(options.env || process.env), 'utf8'));
+    if (token.length < 32) return fail('SOVEREIGN_MAINTENANCE_OWNER_TOKEN_UNAVAILABLE');
+    const init = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 1, method: 'initialize',
+      params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'sovereign-existing-owner-delegation', version: '1' } } }, '', 3_000);
+    if (!init.ok || !init.sessionId || init.body?.error) return fail('SOVEREIGN_MAINTENANCE_OWNER_INITIALIZE_FAILED');
+    sessionId = init.sessionId;
+    const initialized = await postMcp(fetchFn, token, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.sessionId, 3_000);
+    const listed = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, init.sessionId, 3_000);
+    if (!initialized.ok || !listed.ok || !listed.body?.result?.tools?.some(tool => tool.name === 'maintenance_action')) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_TOOL_UNAVAILABLE');
+    }
+    const timeoutMs = Number.isSafeInteger(request.timeoutMs) ? Math.min(285_000, request.timeoutMs + 15_000) : 285_000;
+    const called = await postMcp(fetchFn, token, { jsonrpc: '2.0', id: 3, method: 'tools/call',
+      params: { name: 'maintenance_action', arguments: { ...request.arguments, actionId: request.actionId } } }, init.sessionId, timeoutMs);
+    const result = called.body?.result?.structuredContent;
+    if (!called.ok || !result || result.command?.plan?.processId !== request.actionId) {
+      return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+    }
+    if (result.ok === true) {
+      const expected = createHash('sha256').update(JSON.stringify({ commandId: result.command.commandId,
+        missionId: result.command.missionId, operation: result.command.operation, plan: result.command.plan,
+        contentText: result.contentText, structuredContent: result.structuredContent })).digest('hex');
+      if (result.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' || result.proofHash !== expected) {
+        return fail('SOVEREIGN_MAINTENANCE_OWNER_RECEIPT_INVALID');
+      }
+    }
+    return result;
+  } catch { return fail('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'); }
+  finally {
+    if (sessionId && token) {
+      try { await fetchTextWithDeadline(fetchFn, MCP_URL, { method: 'DELETE', headers: {
+        authorization: `Bearer ${token}`, 'mcp-session-id': sessionId,
+      } }, 3_000); } catch {}
+    }
+  }
 }
 
 function safeAiCommanderAcceptanceProjection(value = {}, processId = '') {
@@ -1724,6 +1782,23 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function safeFleetSupervisorExecutionProjection(value = {}) {
+  const source = findMaintenanceExecutionEnvelope(value);
+  const execution = source?.structuredContent;
+  if (source?.command?.plan?.processId !== FLEET_SUPERVISOR_ACTION
+    || !execution || ![0, 2].includes(execution.status)
+    || execution.ok !== (execution.status === 0)
+    || (execution.signal !== undefined && execution.signal !== '')
+    || (execution.errorCode !== undefined && execution.errorCode !== '')
+    || source.ok !== (execution.status === 0)
+    || source.finalVerdict !== (source.ok
+      ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_FAILED')
+    || (source.ok && !PROOF_HASH_PATTERN.test(text(source.proofHash)))) return null;
+  const receipt = readSovereignMaintenanceTerminalReceiptV1(execution.stdout, FLEET_SUPERVISOR_ACTION);
+  if (sovereignMaintenanceCustodyUnprovenV1(execution, receipt, FLEET_SUPERVISOR_ACTION)) return null;
+  return projectFleetSupervisorReceiptV1(receipt, execution.status);
+}
+
 function findMaintenanceExecutionEnvelope(value = {}) {
   let candidate = value;
   for (let depth = 0; depth < 5; depth += 1) {
@@ -1956,10 +2031,14 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
-    ok: parsed.ok === true,
-    processCount: Number.isSafeInteger(Number(parsed.processCount)) && Number(parsed.processCount) >= 0 && Number(parsed.processCount) <= 100
-      ? Number(parsed.processCount)
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true
+      && Number.isSafeInteger(parsed.processCount) && parsed.processCount >= 0 && parsed.processCount <= 100
+      ? parsed.processCount
       : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: /^[A-Z0-9_:-]{0,120}$/.test(text(parsed.processObservationBlocker))
+      ? text(parsed.processObservationBlocker) : '',
     daemonHealthy: parsed.daemonHealthy === true,
     reportedDaemonHealthy: parsed.reportedDaemonHealthy === true,
     // Public projection contains only bounded custody verdicts, never PIDs,
@@ -2072,6 +2151,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     }
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
+      || actionId === 'sovereign-windows-reviewer-calibration'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'original-source-custody-census'
@@ -2108,6 +2188,26 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
       remoteAction,
+    });
+  }
+  // Only the fixed reviewed calibration may accept per-review identity.
+  // The outer authenticated mailbox HEAD and repository must agree; a
+  // caller-supplied identity cannot create high-risk reviewer authority.
+  if (remoteAction === 'sovereign-windows-reviewer-calibration'
+    || Object.hasOwn(command, 'reviewIdentity')) {
+    if (remoteAction !== 'sovereign-windows-reviewer-calibration') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_ACTION_MISMATCH', { requested: true });
+    }
+    const identity = validateSovereignWindowsReviewIdentityV1(command.reviewIdentity);
+    if (!identity || identity.sourceHead !== expectedHead
+      || identity.repository !== text(command.repository)
+      || identity.branch !== text(command.branch)) {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_IDENTITY_UNBOUND', { requested: true });
+    }
+    return Object.freeze({
+      ok: true, requested: true, expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction,
+        reviewIdentity: identity }),
     });
   }
   if (remoteAction === 'starfield-vr-telemetry-archive') {
@@ -3022,6 +3122,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         actionCall.body?.result?.structuredContent,
         actionId,
       );
+      const fleetSupervisor = actionId === FLEET_SUPERVISOR_ACTION
+        ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+      if (actionId === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
+          stepIndex: index, remoteAction: actionId, remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length, completedSteps: Object.freeze(completedSteps),
+          executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+          publicReceiptSafe: true, secretMaterialReturned: false,
+        });
+      }
       if (boundedFailure) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
           stepIndex: index,
@@ -3031,7 +3141,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           status: boundedFailure.status,
           processId: boundedFailure.processId,
           errorCode: boundedFailure.errorCode,
-          executionBlocker: boundedFailure.executionBlocker,
+          executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+          ...(fleetSupervisor ? { fleetSupervisor } : {}),
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3047,6 +3158,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
         && projection.status === 0
+        && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
@@ -3073,6 +3185,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
+        ...(fleetSupervisor ? { fleetSupervisor } : {}),
       }));
     }
 
@@ -3138,7 +3251,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
               'utf8',
             ).toString('base64url'),
           }
-          : { actionId: shape.command.remoteAction },
+          : shape.command.remoteAction === 'sovereign-windows-reviewer-calibration'
+            ? { actionId: shape.command.remoteAction, reviewIdentity: shape.command.reviewIdentity }
+            : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
@@ -3147,24 +3262,79 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
     .includes(shape.command.remoteAction);
-  const boundedFailure = dedicatedBoundedFailureAction
+  const boundedFailure = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  const fleetSupervisor = shape.command.remoteAction === FLEET_SUPERVISOR_ACTION
+    ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+  if (shape.command.remoteAction === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction,
+      executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
   if (boundedFailure) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
       remoteAction: shape.command.remoteAction,
       status: boundedFailure.status,
       processId: boundedFailure.processId,
       errorCode: boundedFailure.errorCode,
-      executionBlocker: boundedFailure.executionBlocker,
+      executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+      ...(fleetSupervisor ? { fleetSupervisor } : {}),
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
   }
-  const rawMaintenance = dedicatedBoundedFailureAction
+  const rawMaintenance = (dedicatedBoundedFailureAction
+    || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
+  if (shape.command.remoteAction === 'sovereign-windows-reviewer-calibration') {
+    const calibration = parseWindowsCalibrationRemoteV1(
+      findMaintenanceExecutionEnvelope(rawMaintenance), shape.expectedHead,
+      shape.command.reviewIdentity.baseSha);
+    if (!calibration) {
+      // The calibration may fail before it can emit a typed, signed-source
+      // candidate/HOLD projection. Keep receipt admission fail-closed while
+      // exposing only the pre-existing strict token-filtered native failure.
+      // Never echo native stdout, stderr, command arguments, identities or paths.
+      const nativeFailure = safeMaintenanceFailureProjection(
+        rawMaintenance, shape.command.remoteAction);
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        ...(nativeFailure ? {
+          // The canonical public mailbox reads operationResult.status.
+          // Missing native exit status remains absent, never coerced to zero.
+          ...(Number.isInteger(nativeFailure.status)
+            ? { status: nativeFailure.status } : {}),
+          errorCode: nativeFailure.errorCode,
+          executionBlocker: nativeFailure.executionBlocker,
+        } : {}),
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    // DONE means candidate exam completed, not that a specialist was admitted.
+    if (calibration.status !== 'WINDOWS_CALIBRATION_CANDIDATE_PASSED_UNATTESTED') {
+      return fail('SOVEREIGN_WINDOWS_CALIBRATION_HELD', {
+        remoteAction: shape.command.remoteAction, calibration,
+        publicReceiptSafe: true, secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true, finalVerdict: 'SOVEREIGN_WINDOWS_CALIBRATION_CANDIDATE_OBSERVED',
+      remoteAction: shape.command.remoteAction, sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash, calibration,
+      qualifiedWindowsSpecialist: false, mergeAuthority: false, leaseReleaseAuthority: false,
+      vendorMeterRequired: false, publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+    return Object.freeze({ ...result, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId), result });
+  }
+
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;
@@ -3921,6 +4091,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
     && projection.status === 0
+    && (shape.command.remoteAction !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
     && runtimeProofComplete
     && observationComplete
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
@@ -3953,6 +4124,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,
     capabilityParity: projection.capabilityParity,
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,

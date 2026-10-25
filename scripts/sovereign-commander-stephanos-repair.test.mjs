@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { startSovereignCommanderContinuousRepairGuardian } from './sovereign-commander-http.mjs';
 
 import {
   CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS,
@@ -34,7 +36,56 @@ test('production continuous steps never launch Windows descendants without nativ
   assert.equal(steps[0].requiresWindowsJobCustody, true);
   assert.equal(out.independentCoreRepair.dispatchAllowed, false);
   assert.equal(out.independentCoreRepair.originalR7Authority, false);
-  assert.equal(out.steps[0].custodyReleased, false);
+  assert.equal(out.steps[0].custodyReleased, true);
+  assert.equal(out.steps[0].executionState, 'NOT_STARTED');
+  assert.equal(Object.hasOwn(out.steps[0], 'status'), false);
+});
+
+test('real pre-spawn denial stays BLOCKED without starving manual owner admission; unknown execution stays held', async () => {
+  for (const mode of ['not-started', 'gaming-before-observation', 'spawn-timeout', 'forged-not-started']) {
+    let processCalls = 0;
+    let governorReads = 0;
+    const repair = runSovereignCommanderStephanosRepair({
+      readHead: () => HEAD, continuousRepairCycle: true,
+      gamingSafe: () => mode !== 'gaming-before-observation' || ++governorReads < 3,
+      runStep(step) {
+        if (mode === 'forged-not-started') return {
+          ok: false, status: null, executionState: 'NOT_STARTED', custodyReleased: true,
+          errorCode: 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE', stdout: '',
+        };
+        return runFixedStephanosRepairStep(step, { spawnSyncFn() {
+          processCalls++;
+          assert.equal(step.id, 'status-stephanos-core-daemon');
+          return mode === 'spawn-timeout'
+            ? { status: null, error: { code: 'ETIMEDOUT' } }
+            : { status: 0, stdout: '{}' };
+        } });
+      },
+    });
+    assert.equal(processCalls, ['forged-not-started', 'gaming-before-observation'].includes(mode) ? 0 : 1);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      spawnImpl: () => child,
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+    });
+    assert.equal(guardian.runNow(), true);
+    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
+      + JSON.stringify({ ...repair, reporting: { ok: true, outcome: 'BLOCKED' } }) + '\n');
+    child.emit('close', 2);
+    const shouldHold = ['spawn-timeout', 'forged-not-started'].includes(mode);
+    assert.equal(guardian.status().timeoutCustodyHeld, shouldHold, mode);
+    assert.equal(guardian.status().lastOk, false);
+    assert.equal(guardian.status().scheduled, !shouldHold);
+    let manualCalls = 0;
+    await guardian.withMaintenanceOwner({ plan: { processId: 'repair-ui-4173' } }, async () => {
+      manualCalls++;
+      return { ok: true, structuredContent: { status: 0, stdout: '' } };
+    });
+    assert.equal(manualCalls, shouldHold ? 0 : 1, mode);
+    guardian.stop();
+  }
 });
 
 test('timeout, missing exit status and parent exit never prove Windows descendant exclusion', () => {

@@ -19,6 +19,14 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const git = 'C:\\Program Files\\Git\\cmd\\git.exe';
+// Private in-process proof: only the fixed runner's pre-spawn denial can carry
+// this identity. A child-authored JSON flag cannot manufacture it.
+const NO_CHILD_LAUNCHED = Symbol('sovereign-fixed-step-not-launched');
+function denyBeforeLaunch(errorCode) {
+  return Object.freeze({ ok: false, status: null, stdout: '', errorCode,
+    [NO_CHILD_LAUNCHED]: true,
+    custodyReleased: false, descendantExclusionProven: false });
+}
 
 export const CONTINUOUS_REPAIR_STEP_TIMEOUTS = Object.freeze({
   caretaker: 30_000,
@@ -95,9 +103,7 @@ export function runFixedStephanosRepairStep(step, { spawnSyncFn = spawnSync } = 
   // not executable. Do not accept a caller flag or child's self-attestation as
   // a substitute. Read-only fixed Core status remains available.
   if (step.requiresWindowsJobCustody === true) {
-    return Object.freeze({ ok: false, status: null, stdout: '',
-      errorCode: 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE',
-      custodyReleased: false, descendantExclusionProven: false });
+    return denyBeforeLaunch('SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
   }
   const result = spawnSyncFn(step.executable, [...step.args], {
     encoding: 'utf8',
@@ -139,6 +145,14 @@ function boundedContinuousStep(step, timeoutMs, enabled) {
 }
 
 function compactStep(step, result, payload = null) {
+  if (result?.[NO_CHILD_LAUNCHED] === true) {
+    // There is no child exit status to report. Keep the denial distinct from
+    // a launched process with unknown status, which must retain custody.
+    return Object.freeze({ actionId: step.id, ok: false,
+      executionState: 'NOT_STARTED',
+      errorCode: result.errorCode,
+      custodyReleased: true, descendantExclusionProven: false });
+  }
   return Object.freeze({
     actionId: step.id,
     ok: result?.ok === true,
@@ -212,7 +226,7 @@ export function runSovereignCommanderStephanosRepair({
   // before checking gaming at all. Recheck the on-host governor before each
   // fixed step as well as inside the control-plane subprocess.
   const guardedRunStep = step => continuousRepairCycle && !governorSafe()
-    ? { ok: false, status: null, stdout: '', errorCode: guardBlocker }
+    ? denyBeforeLaunch(guardBlocker)
     : runStep(step);
 
   const caretakerStep = boundedContinuousStep(STEPS.caretaker, CONTINUOUS_REPAIR_STEP_TIMEOUTS.caretaker, continuousRepairCycle);

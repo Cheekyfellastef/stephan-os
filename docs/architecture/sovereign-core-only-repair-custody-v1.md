@@ -1,5 +1,40 @@
 # Core-only repair custody (#2961 / PR #3188)
 
+## 25 October 2026 live timeout and current-main convergence
+
+At installed main `ca1dc9a8f634df7703e4d4815679d9d8fecdcdd4`, continuous cycle
+`0a23c41a-124f-4776-97e8-e45ab0309b0b` ran from 09:55:02.674 to
+09:55:56.241 UTC. Its canonical repair report records a successful caretaker
+followed by `repair-goal-builder-flow` returning `ETIMEDOUT`. The HTTP owner
+correctly retained `SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN`.
+Manual `repair-ui-4173` is consequently unavailable. An idle health snapshot,
+elapsed time, direct-child close or service reload cannot discharge that hold.
+
+This continuation retains the existing branch/PR and integrates current main's
+shared maintenance owner, terminal-receipt validation, worker admission and
+reviewer pre-execution denial guards. Gaming checks and native-action
+unenrollment are retained. No live process, task, lease or hold is changed.
+
+The integrated source also distinguishes a fixed action rejected *before*
+launch from a process whose exit status is unknown. A private in-process
+identity marks the fixed runner's own no-launch denial. Its receipt records
+`NOT_STARTED` without inventing a process exit code; actual launched failures
+still carry their real status or null. Caller/child JSON flags cannot create
+that private identity. The real repair-to-guardian regression verifies that
+this denial stays BLOCKED while preserving manual admission, whereas an
+actual observation timeout or forged no-launch claim retains the hold.
+
+This prevents a new false hold after qualified activation; it does not recover
+the already-held live cycle. That cycle still needs independently qualified
+original-process exclusion and an admitted owner handoff. Existing Windows
+native fixtures prove candidate containment only, not retroactive custody of
+the uncontained live child. Do not add a clear-hold endpoint, substitute a new
+request, restart around the hold, or enable the unenrolled native worker.
+
+Durable invariant: no execution and unknown execution are different facts;
+only the executor's own pre-launch decision can establish the former. Neither
+fact may be turned into historical descendant-exclusion proof.
+
 **Current disposition: SOURCE CANDIDATE ONLY, MUTATION UNENROLLED.** This
 supersedes the earlier private-registration continuation below. Specialist
 review of `085d0cd8087f038b26ab6d49c7d5462e59538b46` found uncontained Add-Type

@@ -9,6 +9,8 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
+import { isProvenSovereignWindowsReviewerPreExecutionDenialV1 } from '../shared/agents/sovereignCommanderV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
@@ -19,9 +21,10 @@ export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS = 15 * 60_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
 export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
-const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
+const REPAIR_TIMEOUT_CUSTODY_BLOCKER = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -29,21 +32,6 @@ function text(value) {
 
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
-}
-
-function parseContinuousRepairReceipt(stdout = '') {
-  const line = String(stdout || '')
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter((value) => value.startsWith(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER))
-    .at(-1);
-  if (!line) return {};
-  try {
-    const parsed = JSON.parse(line.slice(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER.length));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 function appendBoundedOutput(current, chunk, maxBytes) {
@@ -79,13 +67,17 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   let scheduledTimer = null;
   let killTimer = null;
   let child = null;
+  let lastFailureKey = '';
   const state = {
-    enabled: true,
+    enabled: options.enabled !== false,
+    maintenanceInFlight: false,
     running: false,
     scheduled: false,
     cycleCount: 0,
     successCount: 0,
     failureCount: 0,
+    consecutiveFailureCount: 0,
+    nextDelayMs: null,
     currentCycleId: '',
     lastCycleId: '',
     lastStartedAtUtc: '',
@@ -97,25 +89,34 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     lastReportOutcome: '',
     lastReportStatus: '',
     lastReportBlocker: '',
+    // Node child kill is not proof that spawned Windows descendants have exited.
+    timeoutCustodyHeld: false,
   };
 
-  const status = () => Object.freeze({ ...state });
+  const status = () => Object.freeze({ ...state, running: state.running || state.maintenanceInFlight });
 
   const schedule = (delayMs) => {
-    if (stopped) return;
+    if (stopped || !state.enabled || state.timeoutCustodyHeld || state.maintenanceInFlight) return;
     state.scheduled = true;
+    state.nextDelayMs = delayMs;
     scheduledTimer = setTimeoutImpl(() => {
       scheduledTimer = null;
       state.scheduled = false;
+      state.nextDelayMs = null;
       runNow();
     }, delayMs);
     scheduledTimer?.unref?.();
   };
 
   const runNow = () => {
-    if (stopped || child) return false;
+    if (stopped || !state.enabled || child || state.maintenanceInFlight || state.timeoutCustodyHeld) return false;
+    if (scheduledTimer) {
+      clearTimeoutImpl(scheduledTimer);
+      scheduledTimer = null;
+    }
     state.running = true;
     state.scheduled = false;
+    state.nextDelayMs = null;
     state.cycleCount += 1;
     state.currentCycleId = randomUUID();
     state.lastStartedAtUtc = now();
@@ -126,36 +127,61 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     let stderr = '';
     let settled = false;
     let currentChild;
-    const finish = (code, fallbackBlocker = '') => {
+    const finish = (code, fallbackBlocker = '', signal = '') => {
       if (settled) return;
       settled = true;
       if (killTimer) {
         clearTimeoutImpl(killTimer);
         killTimer = null;
       }
-      const receipt = parseContinuousRepairReceipt(stdout);
+      const receipt = readSovereignMaintenanceTerminalReceiptV1(stdout, 'repair-stephanos');
+      state.timeoutCustodyHeld ||= sovereignMaintenanceCustodyUnprovenV1(
+        { status: code, signal, errorCode: fallbackBlocker },
+        receipt, 'repair-stephanos',
+      );
       const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
         ? receipt.reporting
         : {};
       const reportOk = reporting?.ok === true;
-      const ok = Number(code) === 0 && receipt?.ok === true && reportOk;
+      const ok = !state.timeoutCustodyHeld && code === 0 && receipt?.ok === true && reportOk;
       state.running = false;
       state.lastCycleId = state.currentCycleId;
       state.currentCycleId = '';
       state.lastCompletedAtUtc = now();
       state.lastOk = ok;
-      state.lastFinalVerdict = text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
+      state.lastFinalVerdict = !ok
+        ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'
+        : text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
       state.lastReportOk = reportOk;
       state.lastReportOutcome = text(reporting?.outcome).slice(0, 64);
       state.lastReportStatus = text(reporting?.status).slice(0, 64);
       state.lastReportBlocker = reportOk ? '' : text(reporting?.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING').slice(0, 160);
       state.lastBlocker = ok
         ? ''
-        : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
-      if (ok) state.successCount += 1;
-      else state.failureCount += 1;
-      child = null;
-      schedule(intervalMs);
+        : state.timeoutCustodyHeld ? REPAIR_TIMEOUT_CUSTODY_BLOCKER
+          : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
+      if (ok) {
+        state.successCount += 1;
+        state.consecutiveFailureCount = 0;
+        lastFailureKey = '';
+      } else {
+        state.failureCount += 1;
+        // Repeated attempts against the same source/blocker are observations,
+        // not progress. Pace them without changing the original repair owner,
+        // lease, or authority. A new source/blocker starts a fresh retry window.
+        const failureKey = JSON.stringify([text(receipt?.sourceHead), state.lastBlocker]);
+        state.consecutiveFailureCount = failureKey === lastFailureKey
+          ? Math.min(1_000_000, state.consecutiveFailureCount + 1) : 1;
+        lastFailureKey = failureKey;
+      }
+      // A timed-out direct child may have live descendants. Retain its handle
+      // until close, and NEVER schedule another cycle without separate custody
+      // qualification (including when a user explicitly wakes the guardian).
+      child = state.timeoutCustodyHeld ? currentChild : null;
+      if (!state.timeoutCustodyHeld) schedule(ok ? intervalMs : Math.min(
+        Math.max(intervalMs, SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS),
+        intervalMs * 2 ** Math.min(20, state.consecutiveFailureCount - 1),
+      ));
     };
 
     try {
@@ -180,10 +206,16 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       currentChild.once?.('error', (error) => {
         finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
       });
-      currentChild.once?.('close', (code) => finish(code));
+      currentChild.once?.('close', (code, signal) => {
+        if (state.timeoutCustodyHeld) child = null;
+        finish(code, '', text(signal));
+      });
       killTimer = setTimeoutImpl(() => {
+        if (settled) return;
+        state.timeoutCustodyHeld = true;
         try { currentChild.kill?.(); } catch {}
-        finish(null, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
+        // A termination request cannot attest Windows descendant exclusion.
+        finish(null, REPAIR_TIMEOUT_CUSTODY_BLOCKER);
       }, maxRuntimeMs);
       killTimer?.unref?.();
     } catch (error) {
@@ -197,10 +229,60 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   return Object.freeze({
     status,
     runNow,
+    withMaintenanceOwner: async (command, run) => {
+      const blocked = blocker => Object.freeze({ ok: false, command,
+        blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      // Reserve synchronously BEFORE the first await. This is the existing
+      // guardian owner, shared by all authenticated HTTP sessions and its timer.
+      if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
+      if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
+      const resumeDelayMs = state.nextDelayMs ?? intervalMs;
+      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+      scheduledTimer = null;
+      state.scheduled = false;
+      state.nextDelayMs = null;
+      state.maintenanceInFlight = true;
+      try {
+        const result = await run();
+        // A direct-child timeout/unknown result cannot release Windows
+        // descendant custody. No caller retry or timer clears this hold.
+        const execution = result?.structuredContent;
+        const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
+        if (!provenPreExecutionDenial
+            && sovereignMaintenanceCustodyUnprovenV1(execution,
+              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId), command?.plan?.processId)) {
+          state.timeoutCustodyHeld = true;
+          state.lastOk = false;
+          state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+          return Object.freeze({ ...result, ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+            finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+        }
+        if (provenPreExecutionDenial) {
+          // Keep the typed independent reviewer HOLD visible and allow only
+          // the guardian's ordinary scheduled retry, never reviewer authority.
+          state.lastOk = false;
+          state.lastBlocker = result.blocker;
+          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+        }
+        return result;
+      } catch (error) {
+        state.timeoutCustodyHeld = true;
+        state.lastOk = false;
+        state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+        return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      } finally {
+        state.maintenanceInFlight = false;
+        if (!state.timeoutCustodyHeld) schedule(resumeDelayMs);
+      }
+    },
     stop: () => {
       stopped = true;
       state.enabled = false;
       state.scheduled = false;
+      state.nextDelayMs = null;
       state.running = false;
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       if (killTimer) clearTimeoutImpl(killTimer);
@@ -394,14 +476,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 
   const sessions = new Map();
   const ignitionNonces = new Map();
-  const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({ repoRoot: options.repoRoot }));
+  const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({
+    repoRoot: options.repoRoot, executor: options.commandExecutor,
+    // HTTP sessions reserve the actual existing owner directly. External local
+    // callers delegate here; owned fixed mutation leaves health responsive.
+    withMaintenanceOwner: (command, run) => continuousRepairGuardian.withMaintenanceOwner(command, run),
+  }));
   const now = options.now || (() => new Date().toISOString());
   const nowMs = options.nowMs || (() => {
     const value = Date.parse(now());
     return Number.isFinite(value) ? value : Date.now();
   });
-  const continuousRepairGuardian = options.continuousRepairEnabled === true
-    ? startSovereignCommanderContinuousRepairGuardian({
+  const continuousRepairGuardian = startSovereignCommanderContinuousRepairGuardian({
+      enabled: options.continuousRepairEnabled === true,
       repoRoot: options.repoRoot,
       spawnImpl: options.continuousRepairSpawnImpl,
       setTimeoutImpl: options.continuousRepairSetTimeoutImpl,
@@ -410,8 +497,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
       startDelayMs: options.continuousRepairStartDelayMs,
       intervalMs: options.continuousRepairIntervalMs,
       maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
-    })
-    : null;
+    });
 
   const server = createServer(async (req, res) => {
     try {
@@ -421,6 +507,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           ok: true,
           service: 'stephanos-sovereign-commander',
           capabilityVersion: SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION,
+          maintenanceOwnerAdmissionVersion: SOVEREIGN_MAINTENANCE_OWNER_VERSION,
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
           remoteIgnitionPath: SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH,
@@ -429,6 +516,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           remoteIgnitionCsrfProtected: true,
           continuousRepairGuardian: continuousRepairGuardian?.status() || {
             enabled: false,
+            timeoutCustodyHeld: false,
             running: false,
             scheduled: false,
             cycleCount: 0,

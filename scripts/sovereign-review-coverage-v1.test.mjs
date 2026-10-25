@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {runSovereignReviewCoverageV1 as run} from './sovereign-review-coverage-v1.mjs';
+import {runSovereignReviewCoverageV1 as run} from './sovereign-review-coverage-v1-engine.mjs';
 
 const snapshot={
   repository:'Cheekyfellastef/stephan-os',prNumber:3168,

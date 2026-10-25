@@ -182,6 +182,7 @@ const TOOLS = Object.freeze([
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
+            'sovereign-windows-reviewer-calibration',
             'qwen35-canary',
             'vr-resource-governor',
             'gaming-resource-status',
@@ -226,6 +227,26 @@ const TOOLS = Object.freeze([
         targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         controllerActivityPayloadBase64: { type: 'string', minLength: 1, maxLength: 48000, pattern: '^[A-Za-z0-9_-]+$' },
+        reviewIdentity: {
+          type: 'object', additionalProperties: false,
+          required: ['schemaVersion','repository','issueNumber','prNumber','branch',
+            'sourceHead','baseSha','implementerProvider','implementerSessionId',
+            'reviewerSessionId','implementerPrincipal','reviewerPrincipal'],
+          properties: {
+            schemaVersion: { const: 'stephanos.sovereign-review-exact-request.v1' },
+            repository: { const: 'Cheekyfellastef/stephan-os' },
+            issueNumber: { type: 'integer', minimum: 1 },
+            prNumber: { type: 'integer', minimum: 1 },
+            branch: { type: 'string', minLength: 1, maxLength: 160 },
+            sourceHead: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+            baseSha: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+            implementerProvider: { type: 'string', minLength: 1, maxLength: 80 },
+            implementerSessionId: { type: 'string', minLength: 1, maxLength: 80 },
+            reviewerSessionId: { type: 'string', minLength: 1, maxLength: 80 },
+            implementerPrincipal: { type: 'string', minLength: 1, maxLength: 80 },
+            reviewerPrincipal: { type: 'string', minLength: 1, maxLength: 80 },
+          },
+        },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -287,6 +308,9 @@ function payloadForTool(name, args = {}) {
         throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');
       return { actionId: args.actionId, expectedMain: args.expectedMain };
     }
+    if (args.actionId === 'sovereign-windows-reviewer-calibration') {
+      return { actionId: args.actionId, reviewIdentity: args.reviewIdentity };
+    }
     if (args.actionId === 'publish-controller-activity') {
       return {
         actionId: args.actionId,
@@ -328,6 +352,7 @@ function explicitCoreCustodyReleased(result) {
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
+  withMaintenanceOwner,
   now = () => new Date().toISOString(),
 } = {}) {
   let session = null;
@@ -411,7 +436,7 @@ export function createSovereignCommanderMcpHandler({
       });
       const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
       if (!isCoreRepair) {
-        const result = await executor(envelope, { repoRoot, routeProof });
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
         return asTextResult(result, result?.ok !== true);
       }
       if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
@@ -426,7 +451,7 @@ export function createSovereignCommanderMcpHandler({
       message.signal?.addEventListener('abort', cancel, { once: true });
       if (message.signal?.aborted) cancel();
       try {
-        const result = await executor(envelope, { repoRoot, routeProof, signal: controller.signal });
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal });
         retainCustody = !explicitCoreCustodyReleased(result);
         return asTextResult(result, result?.ok !== true);
       } finally {

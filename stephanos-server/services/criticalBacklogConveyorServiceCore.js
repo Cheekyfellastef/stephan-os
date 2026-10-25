@@ -666,7 +666,8 @@ export async function ensureCriticalBacklogMission({
     // in-flight work. Never remove a lease based on timeout alone.
     if (text(authoritative?.status).toUpperCase() === 'HOLD'
         && Array.isArray(authoritative?.blockers)
-        && authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+        && (authoritative.blockers.includes('lane:elastic-lease-expired-or-not-active')
+          || authoritative.blockers.includes('lane:elastic-mission-phase-binding-unproven'))
         && SHA_40.test(sourceRevision)) {
       const originalMissions = await listMissions({
         root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env,

@@ -7,7 +7,18 @@ function bool(value) {
 }
 
 function finiteAge(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  // fileAgeMs returns null on a missing/unreadable heartbeat. Coercing it
+  // to zero suppresses dependency repair by falsely proving a fresh worker.
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value : null;
+}
+
+// Worker-dependent Core orchestration may reach lifecycle maintenance through
+// the Flywheel/Octopus repair graph. Unknown/stale worker evidence cannot admit
+// that graph merely because the direct dependency sweep returned a HOLD.
+export function coreWorkerDependentWorkAllowed(state = {}) {
+  const age = finiteAge(state?.missionWorkerHeartbeatAgeMs);
+  return state?.missionWorkerHealthy === true && age !== null && age <= 300_000;
 }
 
 // The Windows gaming governor publishes to Shared Workspace/vr, not status.
