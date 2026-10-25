@@ -10,6 +10,7 @@ import {
   executeBattleBridgeGitHubCommand,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
+import { createSanitizedMailboxReceiptProjection } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 
 const HEAD = 'a'.repeat(40);
 const EXPIRES = '2026-10-25T18:00:00.000Z';
@@ -110,9 +111,31 @@ test('does not attest an observed source head when native execution fails', asyn
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
+  assert.equal(result.finalVerdict, 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_BLOCKED');
+  assert.equal(result.result.ok, false);
+  assert.equal(result.result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(result.result.publicReceiptSafe, true);
+  assert.equal(result.result.secretMaterialReturned, false);
   assert.equal(Object.hasOwn(result, 'sourceHead'), false);
   assert.equal(Object.hasOwn(result, 'expectedHeadMatch'), false);
+  assert.equal(Object.hasOwn(result.result, 'sourceHead'), false);
+  assert.equal(Object.hasOwn(result.result, 'expectedHeadMatch'), false);
   assert.equal(result.proofCompleted, false);
+  const publicReceipt = createSanitizedMailboxReceiptProjection({
+    operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+    requestId: command().requestId,
+    state: 'BLOCKED',
+    expectedHead: HEAD,
+    blocker: result.blocker,
+    result,
+  });
+  assert.equal(publicReceipt.state, 'BLOCKED');
+  assert.equal(publicReceipt.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(publicReceipt.operationResult.ok, false);
+  assert.equal(publicReceipt.operationResult.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(publicReceipt.operationResult.sourceHead, '');
+  assert.equal(publicReceipt.operationResult.expectedHeadMatch, false);
 });
 
 test('mailbox composition retains exact custom operation and executor', async () => {
