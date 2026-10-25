@@ -42,7 +42,7 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, requested: true, ...details });
 }
 
-function executionFail(command, blocker, details = {}) {
+function executionFail(command, blocker) {
   const result = Object.freeze({
     ok: false,
     blocker,
@@ -53,7 +53,6 @@ function executionFail(command, blocker, details = {}) {
     proofCompleted: false,
     publicReceiptSafe: true,
     secretMaterialReturned: false,
-    ...details,
   });
   return Object.freeze({
     ...result,
