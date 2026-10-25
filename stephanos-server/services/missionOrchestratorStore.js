@@ -20,6 +20,7 @@ const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const EVENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{7,127}$/;
 const LOCK_ATTEMPTS = 40;
 const LOCK_DELAY_MS = 50;
+export const MISSION_STATE_LOCK_BUSY = 'MISSION_STATE_LOCK_BUSY';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -188,7 +189,10 @@ async function acquireLock(lockPath) {
       return handle;
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
-      if (attempt === LOCK_ATTEMPTS - 1) throw new Error('Mission state lock is busy.');
+      if (attempt === LOCK_ATTEMPTS - 1) throw Object.assign(new Error('Mission state lock is busy.'), {
+        code: MISSION_STATE_LOCK_BUSY,
+        missionId: basename(lockPath, '.lock'),
+      });
       await delay(LOCK_DELAY_MS);
     }
   }

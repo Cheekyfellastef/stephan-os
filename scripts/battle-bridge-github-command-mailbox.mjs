@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
+  compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1570,6 +1572,52 @@ function safeCpuPressureReceiptProjection(operationResult = {}) {
   });
 }
 
+// The authenticated local /health guardian is already projected by Commander,
+// but the public GitHub mailbox formerly dropped it. Publish only this bounded
+// allowlist; a healthy HTTP listener or a cycleCount > 0 is NOT material repair.
+function safeSovereignGuardianReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'status'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false) return null;
+  const value = operationResult?.continuousRepairGuardian;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const count = v => Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000 ? v : null;
+  const token = v => typeof v === 'string'
+    && /^[A-Z0-9][A-Z0-9_.:-]{0,159}$/.test(v) ? v : '';
+  const stamp = v => typeof v === 'string' && v.length > 0 && v.length <= 40
+    && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : '';
+  const state = ['UNKNOWN', 'DISABLED', 'AWAITING_FIRST_CYCLE',
+    'NOT_SCHEDULED', 'CYCLES_OBSERVED'].includes(value.loopState)
+    ? value.loopState : 'UNKNOWN';
+  const available = value.available === true
+    && typeof value.enabled === 'boolean'
+    && typeof value.running === 'boolean'
+    && typeof value.scheduled === 'boolean'
+    && count(value.cycleCount) !== null
+    && count(value.successCount) !== null
+    && count(value.failureCount) !== null;
+  return Object.freeze({
+    available,
+    enabled: available ? value.enabled : null,
+    running: available ? value.running : null,
+    scheduled: available ? value.scheduled : null,
+    cycleCount: available ? count(value.cycleCount) : null,
+    successCount: available ? count(value.successCount) : null,
+    failureCount: available ? count(value.failureCount) : null,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk: available && typeof value.lastOk === 'boolean' ? value.lastOk : null,
+    lastBlocker: available ? token(value.lastBlocker) : '',
+    lastFinalVerdict: available ? token(value.lastFinalVerdict) : '',
+    loopState: available ? state : 'UNKNOWN',
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
 // Closed-world public summary for the fixed original-r7 Windows witness readiness
 // observation. A source-only preflight is never permission to install, sign,
 // release the lease, or infer exclusion from an empty process census.
@@ -1704,11 +1752,22 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     : [];
   if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
 
-  const status = Number(operationResult?.status);
+  // Fleet checkpoints already renamed status to maintenanceStatus. Preserve
+  // that exact observed exit across repeated publication; never coerce null or
+  // resolve contradictory raw/checkpoint exits into a valid fleet packet.
+  const fleetExits = remoteAction === FLEET_SUPERVISOR_ACTION
+    ? ['status', 'maintenanceStatus'].filter(key => Object.hasOwn(operationResult, key))
+      .map(key => operationResult[key]) : [];
+  const fleetExit = fleetExits.length > 0 && fleetExits.every(value => [0, 2].includes(value))
+    && fleetExits.every(value => value === fleetExits[0]) ? fleetExits[0] : null;
+  const status = remoteAction === FLEET_SUPERVISOR_ACTION ? fleetExit : Number(operationResult?.status);
+  const fleetSupervisor = remoteAction === FLEET_SUPERVISOR_ACTION && fleetExit !== null
+    ? projectFleetSupervisorReceiptV1(operationResult?.fleetSupervisor, fleetExit) : null;
   const completedSteps = Array.isArray(operationResult?.completedSteps)
     ? operationResult.completedSteps.slice(0, 6).map((step) => {
       const stepIndex = Number(step?.stepIndex);
-      const stepStatus = Number(step?.status);
+      const stepStatus = step?.remoteAction === FLEET_SUPERVISOR_ACTION
+        ? ([0, 2].includes(step?.status) ? step.status : null) : Number(step?.status);
       return Object.freeze({
         stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
         remoteAction: safeTelemetryText(step?.remoteAction, 120),
@@ -1716,6 +1775,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
         processId: safeTelemetryId(step?.processId),
         status: Number.isInteger(stepStatus) ? stepStatus : null,
         errorCode: safeTelemetryText(step?.errorCode, 120),
+        ...(step?.remoteAction === FLEET_SUPERVISOR_ACTION && [0, 2].includes(step?.status)
+          && projectFleetSupervisorReceiptV1(step?.fleetSupervisor, step?.status)
+          ? { fleetSupervisor: projectFleetSupervisorReceiptV1(step.fleetSupervisor, step.status) } : {}),
       });
     })
     : [];
@@ -1732,7 +1794,11 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
+    } : {}),
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     // Archive diagnostics only: expose a typed, minimal failure shape so an
@@ -2593,7 +2659,7 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   });
 }
 
-function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
@@ -2625,6 +2691,19 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
+          ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
+        ...(Array.isArray(inner?.completedSteps)
+          && inner.completedSteps.some(step => step?.remoteAction === FLEET_SUPERVISOR_ACTION) ? {
+            remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+            completedSteps: inner.completedSteps.slice(0, 6).map(step => Object.freeze({
+              stepIndex: step.stepIndex, remoteAction: step.remoteAction,
+              proofHash: step.proofHash, processId: step.processId,
+              status: step.status, errorCode: step.errorCode,
+              ...(step.remoteAction === FLEET_SUPERVISOR_ACTION && step.fleetSupervisor
+                ? { fleetSupervisor: compactFleetSupervisorReceiptV1(step.fleetSupervisor, fleetHeldLimit) } : {}),
+            })),
+          } : {}),
         stepCount: inner?.stepCount ?? null,
         proofHash: inner?.proofHash || '',
         planProofHash: inner?.planProofHash || '',
@@ -2800,8 +2879,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const denseCompactJson = JSON.stringify(compactReceipt);
   if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
 
-  for (const meterLimit of [24, 12, 6, 0]) {
-    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+  for (const [meterLimit, fleetHeldLimit] of [[24, 8], [12, 4], [6, 1], [0, 0]]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit, fleetHeldLimit);
     const coreJson = JSON.stringify(coreReceipt);
     if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }

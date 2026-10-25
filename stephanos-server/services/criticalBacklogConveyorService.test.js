@@ -3,6 +3,9 @@ import test from 'node:test';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import { projectElasticAdmissionGateV1 } from './criticalBacklogConveyorServiceCore.js';
@@ -250,6 +253,74 @@ test('continuity parking can see an elastic blocked goal outside the static back
   assert.equal(result.classification, 'BLOCKED_MISSION_PROOF_PARKED');
   assert.equal(result.missionId, 'critical-1818-elastic-goal');
   assert.equal(observedEvent.eventType, 'MISSION_PARKED_FOR_REPAIR');
+});
+
+test('a busy blocked mission parking transition does not stop independently admitted elastic work', async () => {
+  const paths = await roots();
+  const blocked = { ...elasticImplementationMission(3036), revision: 3, currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' }, continuity: { parkingStatus: 'ACTIVE' },
+    blockers: ['SOURCE_ARTIFACT_PARENT_HEAD_GRANT_MISMATCH'] };
+  const independent = { ...elasticImplementationMission(4008), currentPhase: 'VERIFYING',
+    dispatch: { status: 'complete' }, continuity: { parkingStatus: 'ACTIVE' } };
+  const before = JSON.stringify([blocked, independent]);
+  let transitions = 0, admissions = 0, dispatches = 0;
+  for (const authorityStatus of ['READY', 'HOLD']) {
+    const result = await ensureCriticalBacklogMission({
+      paths, allowLegacyMissionCreation: false,
+      listMissions: async () => [blocked, independent],
+      appendMissionEvent: async (id, event) => {
+        transitions += 1;
+        assert.equal(id, blocked.missionId);
+        assert.equal(event.eventType, 'MISSION_PARKED_FOR_REPAIR');
+        throw Object.assign(new Error('Mission state lock is busy.'), {
+          code: 'MISSION_STATE_LOCK_BUSY', missionId: id,
+        });
+      },
+      readProgrammeProjection: async () => ({ status: authorityStatus,
+        blockers: authorityStatus === 'HOLD' ? ['source-lease-custody-unproven'] : [],
+        machineryInventory: { sourceHead: 'a'.repeat(40) },
+        scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } } }),
+      ensureElasticMissions: async () => { admissions += 1; return {
+        ok: true, selectedMission: independent, elasticMissions: [independent],
+        activeMissions: [independent], runnableMissions: [independent], desiredWidth: 1,
+      }; },
+      readCapacityRouting: async () => null,
+      dispatchElasticBuilds: async () => { dispatches += 1; return { ok: true, dispatchCount: 0, held: [] }; },
+      publishProjection: async () => ({ ok: true }),
+      dispatchActiveCriticalMission: async () => ({ ok: true }),
+    });
+    assert.equal(result.parking.classification, 'BLOCKED_MISSION_PARKING_LOCK_BUSY');
+    assert.equal(result.parking.missionId, blocked.missionId);
+    assert.equal(result.parking.parked, false);
+    assert.equal(result.parking.stateTransitionDeferred, true);
+    if (authorityStatus === 'READY') {
+      assert.equal(result.classification, 'ELASTIC_GOAL_MISSION_SELECTED');
+      assert.equal(result.elasticAdmission.selectedMission.missionId, independent.missionId);
+    } else {
+      assert.equal(result.programmeStatus, 'HOLD');
+      assert.deepEqual(result.programmeBlockers, ['source-lease-custody-unproven']);
+      assert.equal(result.elasticAdmission, null);
+    }
+    assert.equal(JSON.stringify([blocked, independent]), before);
+    assert.equal(result.mergeAuthority, false);
+  }
+  assert.equal(transitions, 2);
+  assert.equal(admissions, 1);
+  assert.equal(dispatches, 1);
+});
+
+test('parking deferral does not suppress fenced originals, I/O errors or untyped exceptions', async () => {
+  const blocked = { ...elasticImplementationMission(3036), currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' }, continuity: { parkingStatus: 'ACTIVE' }, blockers: ['source-parent-mismatch'] };
+  for (const error of [Object.assign(new Error('I/O failed'), { code: 'EACCES' }),
+    new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED'), new Error('Mission state lock is busy.')]) {
+    let authorityReads = 0;
+    await assert.rejects(ensureCriticalBacklogMission({ paths: await roots(),
+      listMissions: async () => [blocked], appendMissionEvent: async () => { throw error; },
+      readProgrammeProjection: async () => { authorityReads += 1; return {}; },
+    }), actual => actual === error);
+    assert.equal(authorityReads, 0);
+  }
 });
 
 test('continuity re-entry can see a repaired elastic goal outside the static backlog', async () => {
@@ -1311,4 +1382,211 @@ test('completed-inspection revision HOLD triggers one guarded recovery then rere
   assert.equal(result.elasticAdmission.selectedMission.missionId, 'critical-2955-elastic-goal');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateActiveMissionAllowed, false);
+});
+
+test('parked diff failure retries only with fresh stronger owner acceptance and terminal released ownership', async t => {
+  const expectedGate = {
+    valid: 'RETRY_READMITTED', 'unchanged-plan': 'OWNER_TEST_SET_UNCHANGED',
+    'untrusted-owner': 'OWNER_PLAN_INVALID', 'editable-oracle': 'OWNER_SOURCE_SCOPE_MISMATCH',
+    'ownership-held': 'OWNERSHIP_RELEASE_UNPROVEN', 'worktree-dirty': 'WORKTREE_REFRESH_BLOCKED',
+    'duplicate-owner': 'OWNER_MIRROR_AMBIGUOUS', 'unknown-failure': 'CONTINUITY_NOT_RETRYABLE',
+    'budget-exhausted': 'REPAIR_BUDGET_EXHAUSTED', 'revision-moved': 'RETRY_PRECONDITION_MOVED',
+    'source-scope-changed': 'OWNER_SOURCE_SCOPE_MISMATCH', 'missing-owner': 'OWNER_MIRROR_MISSING',
+    'unsupplied-plan': 'OWNER_TEST_PLAN_UNSUPPLIED', 'missing-previous': 'PREVIOUS_TESTS_NOT_RETAINED',
+    'editable-oracle-matched-scope': 'STRENGTHENED_PLAN_REJECTED', 'terminal-missing': 'TERMINAL_IDENTITY_UNPROVEN',
+    'already-running': 'PHASE_NOT_BLOCKED', 'invalid-budget': 'REPAIR_BUDGET_INVALID',
+    'invalid-revision': 'REVISION_UNPROVEN',
+  };
+  for (const mode of Object.keys(expectedGate)) await t.test(mode, async () => {
+    const paths = await roots();
+    let state = createMissionOrchestratorState({
+      missionId: 'critical-2964-elastic-goal', title: 'Original goal', operatorIntent: 'Build bounded source',
+      intendedOutcome: 'Real behavior', missionKind: 'implementation', repository: 'Cheekyfellastef/stephan-os',
+      branch: 'openclaw/elastic-goal-2964', worktreePath: join(paths.repoRoot, 'worker'),
+      allowedFiles: ['stephanos-server/services/example.js'], requiredEvidence: ['focused tests'],
+      requiredTests: ['npm run stephanos:verify', 'node --test scripts/previous.test.mjs'],
+    });
+    const event = (eventType, fields) => {state = applyMissionOrchestratorEvent(state, {missionId: state.missionId, eventType, ...fields});};
+    const receipt = id => ({receiptId: id, requirement: 'proof', source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0, createdAt: new Date().toISOString()});
+    event('WORKTREE_READY', {worktreePath: state.git.worktreePath, clean: true, receipt: receipt('retry-fixture-worktree')});
+    event('AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+    event('AGENT_RESULT_RECEIVED', {success: false, resultId: 'critical-2964-elastic-goal-r1-original', error: mode === 'unknown-failure' ? 'UNKNOWN_EXECUTION' : 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+    event('MISSION_PARKED_FOR_REPAIR', {reason: 'Failed attempt preserved', repairOwner: '#2961', receipt: receipt('retry-fixture-park')});
+    const oracle = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+    if (['editable-oracle', 'editable-oracle-matched-scope'].includes(mode)) state.allowedFiles.push('scripts/acceptance/**');
+    if (mode === 'budget-exhausted') state.repair.currentRound = state.repair.maximumRounds;
+    if (mode === 'invalid-budget') state.repair.maximumRounds = -1;
+    if (mode === 'invalid-revision') state.revision = -1;
+    if (mode === 'terminal-missing') state.dispatch.resultId = '';
+    if (mode === 'already-running') { state.currentPhase = 'AGENT_IMPLEMENTATION'; state.dispatch.status = 'running'; }
+    const original = structuredClone(state);
+    const record = {schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+      goalId: 'goal-2964', issueNumber: 2964, repository: state.repository,
+      source: mode === 'untrusted-owner' ? 'untrusted-contributor' : 'github-goal-estate-mirror',
+      mirrorSchema: 'stephanos.github-goal-mirror.v1', githubAdmissionState: 'ADMISSION_PROVEN',
+      mirrorIssueNumber: 2964, mirrorRepository: state.repository, mirrorBuildPickupAllowed: true,
+      requiredTests: [...state.requiredTests, ...(mode === 'unchanged-plan' ? [] : [oracle])],
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:' + (mode === 'source-scope-changed' ? 'shared/agents/other.mjs' : 'stephanos-server/services/example.js')]};
+    if (mode === 'unsupplied-plan') delete record.requiredTests;
+    if (mode === 'missing-previous') record.requiredTests = ['npm run stephanos:verify', oracle];
+    if (mode === 'editable-oracle-matched-scope') record.resourceIds.push('repo:cheekyfellastef/stephan-os:path:scripts/acceptance');
+    let ownershipCalls = 0, refreshCalls = 0, appendCalls = 0, authorityCalls = 0;
+    const result = await retrySafelyBlockedAgentFailure({paths, backlog: [], env: {},
+      listMissions: async () => [structuredClone(state)],
+      readProgrammeProjection: async () => { authorityCalls++; return {goalMirrorEstate: {
+        records: mode === 'missing-owner' ? [] : mode === 'duplicate-owner' ? [record, record] : [record]}}; },
+      proveRetryOwnershipReleased: async input => {ownershipCalls++; assert.equal(input.actionId, original.dispatch.resultId); return {ok: mode !== 'ownership-held'};},
+      refreshRetryWorktree: async () => {refreshCalls++; return {ok: mode !== 'worktree-dirty', clean: mode !== 'worktree-dirty'};},
+      appendEvent: async (_id, retryEvent) => {
+        appendCalls++;
+        assert.equal(retryEvent.expectedRevision, original.revision);
+        assert.equal(retryEvent.expectedCurrentPhase, 'BLOCKED');
+        assert.deepEqual(retryEvent.retryRequiredTests, [...original.requiredTests, oracle]);
+        if (mode === 'revision-moved') return {preconditionFailed: true};
+        state = applyMissionOrchestratorEvent(state, retryEvent);
+        return {state};
+      },
+    });
+    const scan = result.retryScan;
+    assert.equal(scan.snapshotStage, 'BEFORE_RETRY');
+    assert.equal(scan.recovery.gateCode, expectedGate[mode]);
+    assert.equal(scan.recovery.matchCount, 1);
+    assert.equal(scan.recovery.state.phase, original.currentPhase);
+    assert.equal(scan.recovery.state.revision, original.revision < 0 ? null : original.revision);
+    assert.equal(scan.recovery.state.dispatchStatus, original.dispatch.status);
+    assert.equal(scan.recordCount, 1);
+    const beforeCandidate = ['unknown-failure', 'budget-exhausted', 'already-running', 'invalid-budget'].includes(mode);
+    assert.equal(scan.candidateCount, beforeCandidate ? 0 : 1);
+    assert.equal(scan.evaluatedCount, beforeCandidate ? 0 : 1);
+    assert.equal(authorityCalls, beforeCandidate || mode === 'invalid-revision' ? 0 : 1,
+      'diagnostics must not add an authority read or evaluate an unreached gate');
+    assert.equal(result.retried, mode === 'valid');
+    if (mode === 'valid') {
+      assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+      assert.equal(state.repair.currentRound, 1);
+      assert.deepEqual(state.requiredTests, [...original.requiredTests, oracle]);
+      assert.deepEqual(state.repair.history[0].previousDispatch, original.dispatch);
+      assert.deepEqual(state.allowedFiles, original.allowedFiles);
+      assert.equal(ownershipCalls, 1); assert.equal(refreshCalls, 1); assert.equal(appendCalls, 1);
+    } else {
+      assert.deepEqual(state, original);
+      if (mode !== 'revision-moved') assert.equal(appendCalls, 0);
+      if (!['ownership-held', 'worktree-dirty', 'revision-moved'].includes(mode)) assert.equal(ownershipCalls, 0);
+    }
+  });
+});
+
+test('retry diagnostics preserve later admission and mark unreached original-task guards unevaluated', async t => {
+  for (const earlierWins of [false, true]) await t.test(earlierWins ? 'earlier candidate admitted' : 'earlier acceptance held', async () => {
+    const paths = await roots();
+    const blocked = issueNumber => ({ ...elasticImplementationMission(issueNumber), currentPhase: 'BLOCKED',
+      requiredTests: ['npm run stephanos:verify', ...elasticImplementationMission(issueNumber).requiredTests],
+      updatedAt: '2026-10-25T09:50:00.000Z', continuity: { parkingStatus: 'PARKED_BLOCKED' },
+      blockers: ['SOURCE_ARTIFACT_DIFF_CHECK_FAILED'], repair: { currentRound: 0, maximumRounds: 3 },
+      dispatch: { status: 'failed', adapter: 'foundry-forge', resultId: 'critical-' + issueNumber + '-elastic-goal-r1-old' } });
+    const earlier = blocked(1557), original = blocked(2964);
+    if (earlierWins) {
+      earlier.blockers = ['PROVIDER_NEUTRAL_MODEL_PATCH_MISSING'];
+      earlier.continuity.parkingStatus = 'ACTIVE';
+    }
+    const oracle = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+    const mirror = state => ({schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+      goalId: 'goal-' + state.missionId.split('-')[1], issueNumber: Number(state.missionId.split('-')[1]), repository: state.repository,
+      source: 'github-goal-estate-mirror', mirrorSchema: 'stephanos.github-goal-mirror.v1', githubAdmissionState: 'ADMISSION_PROVEN',
+      mirrorIssueNumber: Number(state.missionId.split('-')[1]), mirrorRepository: state.repository, mirrorBuildPickupAllowed: true,
+      requiredTests: [...state.requiredTests, ...(state === original ? [oracle] : [])],
+      resourceIds: state.allowedFiles.map(file => 'repo:cheekyfellastef/stephan-os:path:' + file)});
+    const calls = [], selected = earlierWins ? earlier : original;
+    const result = await retrySafelyBlockedAgentFailure({ paths, backlog: [], env: {},
+      listMissions: async () => [original, earlier],
+      readProgrammeProjection: async () => { calls.push('authority'); return {goalMirrorEstate: {records: [mirror(earlier), mirror(original)]}}; },
+      proveRetryOwnershipReleased: async ({missionId}) => { calls.push('custody:' + missionId); return {ok: true}; },
+      refreshRetryWorktree: async ({mission}) => { calls.push('worktree:' + mission.missionId); return {ok: true}; },
+      appendEvent: async (missionId, event) => {
+        calls.push('append:' + missionId);
+        assert.equal(missionId, selected.missionId);
+        assert.equal(event.expectedRevision, selected.revision);
+        assert.equal(event.expectedCurrentPhase, 'BLOCKED');
+        assert.deepEqual(event.retryRequiredTests, earlierWins ? undefined : [...original.requiredTests, oracle]);
+        return {state: {...selected, currentPhase: 'AGENT_IMPLEMENTATION', blockers: [],
+          continuity: {parkingStatus: 'ACTIVE'}, dispatch: {...selected.dispatch, status: 'pending'}}};
+      },
+    });
+    assert.deepEqual(calls, [...(earlierWins ? [] : ['authority']), 'custody:' + selected.missionId,
+      'worktree:' + selected.missionId, 'append:' + selected.missionId]);
+    assert.equal(result.retried, true); assert.equal(result.missionId, selected.missionId);
+    assert.deepEqual(result.retryScan.reasons.map(row => row.issueNumber), [1557, 2964]);
+    assert.equal(result.retryScan.candidateCount, 2);
+    assert.equal(result.retryScan.evaluatedCount, earlierWins ? 1 : 2);
+    assert.equal(result.retryScan.recovery.gateCode, earlierWins ? 'NOT_EVALUATED' : 'RETRY_READMITTED');
+    assert.equal(result.retryScan.recovery.state.phase, 'BLOCKED');
+    assert.equal(original.currentPhase, 'BLOCKED'); assert.equal(original.dispatch.status, 'failed');
+  });
+});
+
+test('original-task budget exclusion is visible beyond bounded rows without evaluating admission or custody', async () => {
+  const paths = await roots();
+  const completed = Array.from({length: 12}, (_, index) => ({...elasticImplementationMission(1000 + index), currentPhase: 'COMPLETE'}));
+  const original = {...elasticImplementationMission(2964), currentPhase: 'BLOCKED',
+    continuity: {parkingStatus: 'PARKED_BLOCKED'}, blockers: ['SOURCE_ARTIFACT_DIFF_CHECK_FAILED'],
+    dispatch: {status: 'failed'}, repair: {currentRound: 3, maximumRounds: 3}};
+  const forbidden = async () => assert.fail('excluded mission must not trigger a proof read or mutation');
+  const result = await retrySafelyBlockedAgentFailure({ paths, backlog: [], env: {},
+    listMissions: async () => [...completed, original], readProgrammeProjection: forbidden,
+    proveRetryOwnershipReleased: forbidden, refreshRetryWorktree: forbidden, appendEvent: forbidden });
+  assert.equal(result.classification, 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE');
+  assert.equal(result.retryScan.recordCount, 13);
+  assert.equal(result.retryScan.candidateCount, 0); assert.equal(result.retryScan.evaluatedCount, 0);
+  assert.deepEqual(result.retryScan.reasons, []); assert.equal(result.retryScan.truncated, false);
+  assert.equal(result.retryScan.recovery.matchCount, 1);
+  assert.equal(result.retryScan.recovery.gateCode, 'REPAIR_BUDGET_EXHAUSTED');
+  assert.equal(result.retryScan.recovery.state.phase, 'BLOCKED');
+});
+
+test('strengthened retry contract persists before actual queue publication and claim', async () => {
+  const paths = await roots();
+  const options = {root: paths.orchestratorRoot, queueRoot: join(paths.orchestratorRoot, 'queue'), env: {},
+    capacityRouting: {nowUtc: new Date().toISOString(), codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1', statusId: 'codex-capacity-current', truthState: 'CURRENT',
+      meterTruthUsable: true, observedAtUtc: new Date(Date.now() - 1000).toISOString(), remainingPercent: 90,
+      availability: 'AVAILABLE', confidence: 'high', naturalResetAtUtc: '',
+    }}};
+  let {state} = await createMissionRecord({missionId: 'critical-2964-elastic-goal', title: 'Original bounded goal',
+    operatorIntent: 'Real source and independent tests', intendedOutcome: 'Implemented behavior', missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/elastic-goal-2964',
+    worktreePath: join(paths.repoRoot, 'worker'), allowedFiles: ['stephanos-server/services/example.js'],
+    requiredEvidence: ['focused test'], requiredTests: ['npm run stephanos:verify']}, options);
+  const proof = receiptId => ({receiptId, requirement: 'bounded proof', source: 'fixture', evidenceType: 'command-output', verified: true, exitCode: 0});
+  for (const event of [
+    {eventType: 'WORKTREE_READY', worktreePath: state.git.worktreePath, clean: true, receipt: proof('retry-queue-worktree')},
+    {eventType: 'AGENT_DISPATCHED', agentId: 'foundry-forge'},
+    {eventType: 'AGENT_RESULT_RECEIVED', success: false, resultId: 'critical-2964-elastic-goal-r1-old', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'},
+    {eventType: 'MISSION_PARKED_FOR_REPAIR', reason: 'Preserved failure', repairOwner: '#2961', receipt: proof('retry-queue-park')},
+  ]) ({state} = await appendMissionEvent(state.missionId, {eventId: `queue-fixture-${event.eventType.toLowerCase()}`, ...event}, options));
+  const original = structuredClone(state);
+  const extra = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  const record = {schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+    goalId: 'goal-2964', issueNumber: 2964, repository: state.repository, source: 'github-goal-estate-mirror',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1', mirrorIssueNumber: 2964, mirrorRepository: state.repository,
+    mirrorBuildPickupAllowed: true, githubAdmissionState: 'ADMISSION_PROVEN', requiredTests: [extra],
+    resourceIds: ['repo:cheekyfellastef/stephan-os:path:stephanos-server/services/example.js']};
+  const result = await retrySafelyBlockedAgentFailure({paths, env: {}, backlog: [],
+    listMissions: async () => [(await readMissionRecord(state.missionId, options)).state],
+    readProgrammeProjection: async () => ({goalMirrorEstate: {records: [record]}}),
+    proveRetryOwnershipReleased: async () => ({ok: true}),
+    refreshRetryWorktree: async () => ({ok: true, clean: true}),
+  });
+  assert.equal(result.retried, true, JSON.stringify(result));
+  const persisted = (await readMissionRecord(state.missionId, options)).state;
+  const expected = [...original.requiredTests, extra];
+  assert.deepEqual(persisted.requiredTests, expected);
+  assert.deepEqual(persisted.repair.history[0].previousDispatch, original.dispatch);
+  const publication = await publishMissionWorkerAction(persisted, options);
+  assert.equal(publication.published, true, JSON.stringify(publication));
+  const queued = JSON.parse(await readFile(publication.path, 'utf8'));
+  assert.deepEqual(queued.payload.requiredTests, expected);
+  const claim = await claimNextMissionWorkerItem(publication.adapter, options);
+  assert.ok(claim);
+  assert.deepEqual(claim.item.payload.requiredTests, expected);
+  assert.equal(claim.item.payload.allowedFiles.includes('scripts/acceptance/**'), false);
 });

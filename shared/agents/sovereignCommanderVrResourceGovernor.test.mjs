@@ -26,6 +26,15 @@ const gamingTile = await readFile(new URL('../../stephanos-ui/src/components/Gam
 const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
 const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
+test('idle VR governor refreshes its verified state before reviewer freshness budget expires', () => {
+  assert.match(governor, /\$idleHeartbeatDue = \$false/);
+  assert.match(governor, /if \(-not \$effective\.active\)/);
+  assert.match(governor, /\$idleHeartbeatDue = \(\$now\.ToUniversalTime\(\) - \$observedUtc\)\.TotalSeconds -ge 15/);
+  assert.match(governor, /\$guardDue -or \$idleHeartbeatDue/);
+  assert.match(governor, /Get-GamingSignal -ThrottleFlatGameScan/);
+  assert.match(governor, /Start-Sleep -Milliseconds \$poll/);
+});
+
 test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
   assert.match(governor, /'vrcompositor', 'vrdashboard'/);
   assert.match(governor, /function Test-StaleOculusDashAfterCrash/);

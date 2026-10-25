@@ -303,6 +303,11 @@ function payloadForTool(name, args = {}) {
     return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
   }
   if (name === 'maintenance_action') {
+    if (args.actionId === 'repair-core-publication-directories') {
+      if (Object.keys(args).some(key => !['actionId','expectedMain'].includes(key)))
+        throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');
+      return { actionId: args.actionId, expectedMain: args.expectedMain };
+    }
     if (args.actionId === 'sovereign-windows-reviewer-calibration') {
       return { actionId: args.actionId, reviewIdentity: args.reviewIdentity };
     }
@@ -326,6 +331,24 @@ function payloadForTool(name, args = {}) {
   return {};
 }
 
+// Admission belongs to the existing server, not to an individual HTTP session.
+// Session-local maps below still own cancellation; matching JSON-RPC IDs in a
+// different authenticated session cannot cancel or replace the original.
+const activeCoreRequests = new Map();
+
+function explicitCoreCustodyReleased(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  let witnesses = 0;
+  for (const container of [result, result.structuredContent]) {
+    if (container && Object.hasOwn(container, 'executionCustodyReleased')) {
+      if (typeof container !== 'object' || Array.isArray(container)
+        || container.executionCustodyReleased !== true) return false;
+      witnesses++;
+    }
+  }
+  return witnesses > 0;
+}
+
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
@@ -334,6 +357,9 @@ export function createSovereignCommanderMcpHandler({
 } = {}) {
   let session = null;
   let toolsListed = false;
+  // Ephemeral cancellation for this session's existing requests; no durable
+  // queue, lease, retry or second executor is introduced.
+  const coreRequests = new Map();
 
   return async function handle(method, params = {}, message = {}) {
     const request = message.isRequest === true && message.isNotification !== true;
@@ -368,6 +394,11 @@ export function createSovereignCommanderMcpHandler({
       return undefined;
     }
 
+    if (method === 'notifications/cancelled') {
+      if (notification && session?.ready && message.transportAuthenticated === true)
+        coreRequests.get(params.requestId)?.abort();
+      return undefined;
+    }
     if (method.startsWith('notifications/')) return undefined;
     if (!session?.ready) throw new Error('MCP_SESSION_NOT_READY');
 
@@ -403,8 +434,33 @@ export function createSovereignCommanderMcpHandler({
         transport: text(message.transportKind) || 'mcp-session',
         authenticatedMcp: message.transportAuthenticated === true,
       });
-      const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
-      return asTextResult(result, result?.ok !== true);
+      const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
+      if (!isCoreRepair) {
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
+        return asTextResult(result, result?.ok !== true);
+      }
+      if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
+        || activeCoreRequests.size !== 0)
+        return asTextResult({ ok: false, blocker: 'CORE_DIRECTORY_ORIGINAL_REQUEST_REQUIRED_OR_BUSY' }, true);
+      const controller = new AbortController();
+      const admission = Symbol('original-core-request');
+      let retainCustody = true;
+      const cancel = () => controller.abort();
+      coreRequests.set(message.id, controller);
+      activeCoreRequests.set(admission, controller);
+      message.signal?.addEventListener('abort', cancel, { once: true });
+      if (message.signal?.aborted) cancel();
+      try {
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal });
+        retainCustody = !explicitCoreCustodyReleased(result);
+        return asTextResult(result, result?.ok !== true);
+      } finally {
+        message.signal?.removeEventListener('abort', cancel);
+        coreRequests.delete(message.id);
+        // A timeout, missing OS witness or thrown executor does not release
+        // the server lane. No payload or subsequent session may clear it.
+        if (!retainCustody) activeCoreRequests.delete(admission);
+      }
     }
 
     throw new Error(`Unsupported MCP method: ${method}`);

@@ -10,7 +10,9 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
-import { SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, readSovereignMaintenanceTerminalReceiptV1,
+  sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -1780,6 +1782,23 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function safeFleetSupervisorExecutionProjection(value = {}) {
+  const source = findMaintenanceExecutionEnvelope(value);
+  const execution = source?.structuredContent;
+  if (source?.command?.plan?.processId !== FLEET_SUPERVISOR_ACTION
+    || !execution || ![0, 2].includes(execution.status)
+    || execution.ok !== (execution.status === 0)
+    || (execution.signal !== undefined && execution.signal !== '')
+    || (execution.errorCode !== undefined && execution.errorCode !== '')
+    || source.ok !== (execution.status === 0)
+    || source.finalVerdict !== (source.ok
+      ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' : 'SOVEREIGN_COMMANDER_EXECUTION_FAILED')
+    || (source.ok && !PROOF_HASH_PATTERN.test(text(source.proofHash)))) return null;
+  const receipt = readSovereignMaintenanceTerminalReceiptV1(execution.stdout, FLEET_SUPERVISOR_ACTION);
+  if (sovereignMaintenanceCustodyUnprovenV1(execution, receipt, FLEET_SUPERVISOR_ACTION)) return null;
+  return projectFleetSupervisorReceiptV1(receipt, execution.status);
+}
+
 function findMaintenanceExecutionEnvelope(value = {}) {
   let candidate = value;
   for (let depth = 0; depth < 5; depth += 1) {
@@ -3103,6 +3122,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         actionCall.body?.result?.structuredContent,
         actionId,
       );
+      const fleetSupervisor = actionId === FLEET_SUPERVISOR_ACTION
+        ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+      if (actionId === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
+          stepIndex: index, remoteAction: actionId, remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length, completedSteps: Object.freeze(completedSteps),
+          executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+          publicReceiptSafe: true, secretMaterialReturned: false,
+        });
+      }
       if (boundedFailure) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
           stepIndex: index,
@@ -3112,7 +3141,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           status: boundedFailure.status,
           processId: boundedFailure.processId,
           errorCode: boundedFailure.errorCode,
-          executionBlocker: boundedFailure.executionBlocker,
+          executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+          ...(fleetSupervisor ? { fleetSupervisor } : {}),
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -3128,6 +3158,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
         && projection.status === 0
+        && (actionId !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
         && runtimeProofComplete
         && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
       if (!proofComplete) {
@@ -3154,6 +3185,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         errorCode: projection.errorCode,
         runtimeProof: projection.runtimeProof,
         aiCommanderAcceptance: projection.aiCommanderAcceptance,
+        ...(fleetSupervisor ? { fleetSupervisor } : {}),
       }));
     }
 
@@ -3234,13 +3266,23 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     || shape.command.remoteAction === 'sovereign-windows-reviewer-calibration')
     ? null
     : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  const fleetSupervisor = shape.command.remoteAction === FLEET_SUPERVISOR_ACTION
+    ? safeFleetSupervisorExecutionProjection(actionCall.body?.result?.structuredContent) : null;
+  if (shape.command.remoteAction === FLEET_SUPERVISOR_ACTION && !fleetSupervisor) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_FLEET_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction,
+      executionBlocker: 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID',
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
+  }
   if (boundedFailure) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
       remoteAction: shape.command.remoteAction,
       status: boundedFailure.status,
       processId: boundedFailure.processId,
       errorCode: boundedFailure.errorCode,
-      executionBlocker: boundedFailure.executionBlocker,
+      executionBlocker: fleetSupervisor ? 'FLEET_SUPERVISOR_REPORTED_BLOCKED' : boundedFailure.executionBlocker,
+      ...(fleetSupervisor ? { fleetSupervisor } : {}),
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -4049,6 +4091,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
     && projection.status === 0
+    && (shape.command.remoteAction !== FLEET_SUPERVISOR_ACTION || fleetSupervisor?.ok === true)
     && runtimeProofComplete
     && observationComplete
     && (!aiProofRequired || projection.aiCommanderAcceptance?.toolCalled === true);
@@ -4081,6 +4124,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     controllerLaneStatus: projection.controllerLaneStatus,
     controllerActivityPublication: projection.controllerActivityPublication,
     capabilityParity: projection.capabilityParity,
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,

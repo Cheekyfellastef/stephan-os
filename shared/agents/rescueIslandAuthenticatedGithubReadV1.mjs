@@ -5,7 +5,7 @@ import { readBrokeredGithubJson } from './githubObservationBrokerV1.mjs';
 import {inspectRescueIslandSourceTaskV1} from './rescueIslandSourceTaskV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from './battleBridgeExecutionBoundaryV1.mjs';
-import { inspectRescueIslandPilotOwnerIntakeV1, inspectRescueIslandSupervisedOwnerIntakeV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
+import { inspectRescueIslandPilotOwnerIntakeV1, inspectRescueIslandSupervisedOwnerIntakeV1, resolveRescueIslandSupervisedDocumentWorkerV1 } from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 export const RESCUE_ISLAND_GITHUB_READ_SCHEMA = 'stephanos.rescue-island-github-read.v1';
 const SUPERVISED_READ = Symbol('supervised-cooperative-read');
@@ -68,6 +68,8 @@ export function inspectRescueIslandGithubReadFactsV1({
     blockers: Object.freeze([]),
     nextRequiredProof: 'EXTERNAL_OS_AND_OWNERSHIP_PROOF_REQUIRED',
     sourceHead: first,
+    workerId: intake.workerId,
+    ownerIssueNumber: intake.issueNumber,
     commentId,
     taskId: task.taskId,
     readOnlyRequestCount: 4,
@@ -144,7 +146,9 @@ export async function readRescueIslandPilotGithubFactsV1({
   const source = supervised && task?.schemaVersion==='stephanos.rescue-island-source-task.v1';
   const sourcePlan = source ? inspectRescueIslandSourceTaskV1(task,new Date().toISOString()) : null;
   if(source && !sourcePlan.valid)return blocker('SOURCE_TASK_PLAN_HELD');
-  const issueNumber=sourcePlan?.issueNumber || ISSUE;
+  const documentWorker=!source && supervised ? resolveRescueIslandSupervisedDocumentWorkerV1(task) : null;
+  if(supervised && !source && !documentWorker)return blocker('DOCUMENT_TASK_WORKER_BINDING_HELD');
+  const issueNumber=sourcePlan?.issueNumber || documentWorker?.issueNumber || ISSUE;
   const payloads = [];
   for (const spec of BROKER_READS) {
     const result = trustedSharedGithubObservation(spec, commentId, liveNowMs, issueNumber);

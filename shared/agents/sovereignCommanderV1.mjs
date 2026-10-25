@@ -10,6 +10,7 @@ import {
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
+import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
@@ -188,6 +189,8 @@ function fixedRegistry(repoRoot) {
   const psFile = (name) => resolve(root, 'scripts', 'windows', name);
   const nodeFile = (name) => resolve(root, 'scripts', name);
   return frozen({
+    // Core directory mutation is deliberately unenrolled. The candidate lacks
+    // qualified installed-parent/compiler and cross-process Windows custody.
     'battle-bridge-status': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
@@ -639,7 +642,13 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
           ];
         }
       }
-      if (blockers.length === 0) plan = frozen({
+      if (processId === 'repair-core-publication-directories') {
+        if (operation !== SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION
+          || !/^[a-f0-9]{40}$/.test(payload.expectedMain ?? '')
+          || Object.keys(payload).some(key => !['actionId', 'expectedMain'].includes(key)))
+          blockers.push('sovereign-core-directory-fixed-scope-required');
+        if (blockers.length === 0) plan = frozen({ kind: 'core-publication-repair', processId, expectedMain: payload.expectedMain });
+      } else if (blockers.length === 0) plan = frozen({
         kind: 'fixed-process', processId, ...fixed, args: frozen(args),
         ...(processId === 'sovereign-windows-reviewer-calibration'
           ? { reviewIdentity: validateSovereignWindowsReviewIdentityV1(payload.reviewIdentity) }
@@ -939,6 +948,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
       command,
       blocker: command.blockers[0] || 'sovereign-commander-command-blocked',
+      ...(envelope.payload?.actionId === 'repair-core-publication-directories'
+        ? { executionCustodyReleased: true } : {}), // rejected before any execution
       finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
     });
   }
@@ -1125,6 +1136,13 @@ async function executeAdmittedSovereignCommandV1(command, options) {
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }
+    } else if (command.plan.kind === 'core-publication-repair') {
+      const result = await executeCorePublicationDirectoryActionV1(command, options);
+      contentText = JSON.stringify(result);
+      structuredContent = result;
+      if (!result.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+        command, contentText, structuredContent, blocker: result.reason,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
     } else if (command.plan.kind === 'fixed-process') {
       const result = isSovereignMaintenanceObservationV1(command.plan.processId)
         ? runFixedProcess(command.plan, options) : await runOwnedFixedProcess(command.plan, options);

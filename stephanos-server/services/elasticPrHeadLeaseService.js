@@ -25,6 +25,7 @@ import {
 } from './missionOrchestratorWorkerService.js';
 import { readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { verifyOriginalSourceAttemptFence } from './originalSourceAttemptFenceService.js';
+import { projectElasticRetainedSourceHoldsV1 } from './elasticGoalMissionAdmissionService.js';
 
 export const ELASTIC_PR_HEAD_LEASE_DISPATCH_SCHEMA = 'stephanos.elastic-pr-head-lease-dispatch.v1';
 
@@ -971,6 +972,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     .filter((entry) => entry.identity)
     .sort((left, right) => left.identity.missionId.localeCompare(right.identity.missionId));
   const handledMissionIds = exactMissions.map(({ identity }) => identity.missionId);
+  // PR-head fallback reads the complete inventory, not just runnableMissions.
+  // Recompute the same source hold before selection/renewal; keep inventory
+  // intact so an existing lease and running writer never disappear.
+  const sourceHolds = projectElasticRetainedSourceHoldsV1(missions)
+    .filter(hold => handledMissionIds.includes(hold.missionId));
+  const sourceHeldIds = new Set(sourceHolds.map(hold => hold.missionId));
   if (!exactMissions.length) return baseResult({ handledMissionIds });
   if (!SHA_40.test(sourceRevision)) {
     return baseResult({
@@ -1117,6 +1124,12 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
     leaseRead = { ok: true, present: false, reason: 'SOURCE_MUTATION_LEASE_RELEASED' };
   }
 
+  if (currentLease && leasedEntry && sourceHeldIds.has(leasedEntry.identity.missionId)) {
+    return baseResult({
+      classification: 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD',
+      handledMissionIds, held: sourceHolds, activeLease: currentLease, releasedLease,
+    });
+  }
   if (currentLease) {
     if (!leaseRead?.ok || !leasedEntry) {
       return baseResult({
@@ -1196,13 +1209,16 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
       });
     }
     const selectedId = text(admission?.selectedMission?.missionId).toLowerCase();
-    leasedEntry = exactMissions.find(({ identity, mission }) => (
+    const dispatchable = exactMissions.filter(({ identity, mission }) =>
+      !sourceHeldIds.has(identity.missionId) && !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission)));
+    leasedEntry = dispatchable.find(({ identity }) => (
       identity.missionId === selectedId
-      && !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission))
-    )) ?? exactMissions.find(({ mission }) => !PARKED_OR_TERMINAL_PHASES.has(phaseOf(mission))) ?? null;
+    )) ?? dispatchable[0] ?? null;
     if (!leasedEntry) {
       return baseResult({
-        classification: releasedLease ? 'ELASTIC_PR_HEAD_PARKED_LEASE_RELEASED' : 'ELASTIC_PR_HEAD_LEASE_NOT_REQUIRED',
+        classification: sourceHolds.length ? 'ELASTIC_PR_HEAD_RETAINED_SOURCE_SCOPE_HELD'
+          : releasedLease ? 'ELASTIC_PR_HEAD_PARKED_LEASE_RELEASED' : 'ELASTIC_PR_HEAD_LEASE_NOT_REQUIRED',
+        held: sourceHolds,
         handledMissionIds,
         releasedLease,
       });
@@ -1539,6 +1555,7 @@ export async function dispatchElasticPrHeadBuildsFromCanonicalLease(admission = 
 
   return baseResult({
     classification: 'ELASTIC_PR_HEAD_DISPATCH_LIVE',
+    held: sourceHolds,
     handledMissionIds,
     dispatched: [{
       missionId: leasedEntry.identity.missionId,
