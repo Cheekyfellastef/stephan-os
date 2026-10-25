@@ -42,8 +42,9 @@ test('source-bound native operation sends the exact Unicode path as data to one 
     assert.equal(settings.windowsHide, true);
     assert.equal(settings.timeout, 15_000);
     assert.equal(settings.env.NODE_OPTIONS, undefined);
+    assert.equal(settings.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
     return { status: 0, stdout: JSON.stringify(receipt()) };
-  }, environment: { ...process.env, NODE_OPTIONS: '--require attacker.js' } });
+  }, environment: { ...process.env, NODE_OPTIONS: '--require attacker.js', PSModulePath: 'C:\\untrusted-modules' } });
   assert.equal(calls, 1);
   assert.equal(result.ok, true);
   assert.equal(result.path, TARGET);
@@ -114,6 +115,9 @@ test('real Windows create is Unicode-exact, create-only, nonrecursive and reject
         let program = Buffer.from(args.at(-1), 'base64').toString('utf16le');
         for (const [statement, label] of [
           ["$ErrorActionPreference = 'Stop'", 'START'],
+          ['Set-StrictMode -Version Latest', 'STRICT_MODE'],
+          ['[Console]::InputEncoding =', 'INPUT_ENCODING'],
+          ['[Console]::OutputEncoding =', 'OUTPUT_ENCODING'],
           ['$raw = [Console]::In.ReadToEnd()', 'READ_INPUT'],
           ['$request = $raw | ConvertFrom-Json', 'PARSE_INPUT'],
           ['$sha = [Security.Cryptography.SHA256]::Create()', 'HASH_SOURCE'],

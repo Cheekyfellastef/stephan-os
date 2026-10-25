@@ -10,7 +10,7 @@ const SCRIPT = fileURLToPath(new URL('../../scripts/windows/sovereign-create-dir
 const NATIVE = fileURLToPath(new URL('../../scripts/windows/SovereignDirectoryCreateV1.cs', import.meta.url));
 // Reviewed helper-byte identities. Read once, verify, and execute only the
 // captured buffers; a later on-disk replacement cannot alter the launched code.
-const SCRIPT_SHA256 = '26b0e50b68df2a3af481366aa74d5a3701d5c32c94e36dd4eb4a742e8b3059d1';
+const SCRIPT_SHA256 = '327d29c2fbfdf6b6949e35f279e694bd05143c036c6bad1281f40e30ee3aa621';
 const NATIVE_SHA256 = 'f522113d39222214dfe89c3ff8d9248d25584aecc66e1ce5ff1c83324344526b';
 
 export function validateSovereignDirectoryTargetV1(path) {
@@ -43,7 +43,11 @@ export function executeSovereignDirectoryCreateV1(path, options = {}) {
       Buffer.from(script.toString('utf8'), 'utf16le').toString('base64')],
     { input: JSON.stringify({ path, nativeSource: nativeSource.toString('utf8') }), encoding: 'utf8', shell: false, windowsHide: true,
       timeout: 15_000, maxBuffer: 16 * 1024,
-      env: createBattleBridgeMinimalChildEnvironment(options.environment || process.env) });
+      // Keep module discovery on the same fixed Windows installation as
+      // the executable. Reconstructed/ambient module paths can stall before
+      // stdin is read and can resolve commands from user-installed modules.
+      env: { ...createBattleBridgeMinimalChildEnvironment(options.environment || process.env),
+        PSModulePath: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules' } });
   } catch { return blocked('SOVEREIGN_DIRECTORY_TERMINAL_UNPROVEN', 'UNKNOWN'); }
   // Missing terminal output cannot authorize retry or assert that nothing ran.
   if (result?.error || result?.signal || !Number.isInteger(result?.status))
