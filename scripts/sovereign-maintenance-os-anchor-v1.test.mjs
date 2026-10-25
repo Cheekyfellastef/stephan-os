@@ -37,6 +37,14 @@ test('missing/failed OS evidence never falls back to a local green record or exp
   payload = { ok: false };
   assert.throws(() => anchor.readLatest(), /IDENTITY_INVALID/);
 });
+test('a stalled adapter reports only closed diagnostic codes without exposing native errors or credentials', () => {
+  const anchor = createMaintenanceOsAnchorV1({ workspaceRoot, signingKey: key, platform: 'win32',
+    spawnFn: () => ({ status: null, error: { code: 'ETIMEDOUT', message: key },
+      stderr: 'private native error ' + key + '\nSOVEREIGN_ANCHOR_STAGE=QUERY_OPEN\n' }) });
+  assert.throws(() => anchor.readLatest(), error => error.message === 'MAINTENANCE_OS_ANCHOR_UNPROVEN'
+    && error.stage === 'QUERY_OPEN' && error.failureKind === 'TIMEOUT'
+    && !JSON.stringify(error).includes(key));
+});
 test('actual Windows fixture appends and retrieves an OS-owned anchor in an isolated non-production namespace',
   { skip: process.platform !== 'win32' }, () => {
     const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: join(tmpdir(), 'custody-os-proof-' + randomUUID()), signingKey: key });

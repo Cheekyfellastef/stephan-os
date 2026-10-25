@@ -34,7 +34,13 @@ export function createMaintenanceOsAnchorV1({ workspaceRoot, signingKey, spawnFn
         env: createBattleBridgeMinimalChildEnvironment(process.env, { platform: 'win32' }),
         input: mode === 'Read' ? scope + '\n' : [scope, extra.stateBase64, extra.transitionId,
           Buffer.from(signingKey, 'utf8').toString('base64')].join('\n') + '\n' });
-    if (result.error || result.status !== 0) throw new Error('MAINTENANCE_OS_ANCHOR_UNPROVEN');
+    if (result.error || result.status !== 0) {
+      const stages = [...String(result.stderr || '').matchAll(/^SOVEREIGN_ANCHOR_STAGE=(START|INPUT|CONFIG|ACL|QUERY_OPEN|QUERY|NEXT)\r?$/gm)];
+      throw Object.assign(new Error('MAINTENANCE_OS_ANCHOR_UNPROVEN'), {
+        stage: stages.at(-1)?.[1] || 'UNKNOWN',
+        failureKind: result.error?.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'FAILED',
+      });
+    }
     return decode(JSON.parse(result.stdout));
   };
   return Object.freeze({

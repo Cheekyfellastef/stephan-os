@@ -4,6 +4,7 @@ $logName = 'Windows PowerShell'
 $eventId = 62517
 $marker = 'SOVEREIGN_MAINTENANCE_ANCHOR_V1='
 try {
+    [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=START')
     # Read the key through .NET only, never through a cmdlet/pipeline that
     # PowerShell module logging could record with expanded input values.
     $request = @{scope=[Console]::ReadLine()}
@@ -15,7 +16,9 @@ try {
         $request.authKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($keyLine))
     }
     if ($request.scope -cnotmatch '^[a-f0-9]{64}$') { throw 'INVALID_SCOPE' }
+    [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=INPUT')
     $logInfo = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new($logName)
+    [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=CONFIG')
     if (-not $logInfo.IsEnabled) { throw 'AUDIT_DISABLED' }
     # Reuse the existing OS channel. Do not register a source or modify its ACL.
     $acl = [Security.AccessControl.RawSecurityDescriptor]::new($logInfo.SecurityDescriptor)
@@ -32,23 +35,29 @@ try {
         }
     }
     $logInfo.Dispose()
+    [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=ACL')
     function Read-NewestRecordId {
         $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($logName, [Diagnostics.Eventing.Reader.PathType]::LogName, '*')
         $query.ReverseDirection = $true
         $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY')
         try {
             $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=NEXT')
             if ($null -eq $row) { throw 'AUDIT_SEQUENCE_UNKNOWN' }
             try { return [long]$row.RecordId } finally { $row.Dispose() }
         } finally { $reader.Dispose() }
     }
     function Read-Anchor {
+        [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY_OPEN')
         $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($logName, [Diagnostics.Eventing.Reader.PathType]::LogName,
             "*[System[(EventID=62517) and Provider[@Name='PowerShell']]]")
         $query.ReverseDirection = $true
         $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=QUERY')
         try { for ($index=0; $index -lt 256; $index++) {
             $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_STAGE=NEXT')
             if ($null -eq $row) { return $null }
             try {
             $raw = [string]$row.Properties[0].Value
