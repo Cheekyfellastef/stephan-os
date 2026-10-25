@@ -224,6 +224,9 @@ test('fleet empty, malformed, ambiguous, mismatched and wrong-process terminal r
     { stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, finalVerdict: 'UNKNOWN' }) },
     { stdout: FLEET_SUPERVISOR_MARKER + JSON.stringify({ ...raw, mergeAuthority: true }) },
     { stdout: wire, status: 2 }, { processId: 'battle-bridge-status' },
+    ...[{ dispatchCount: 'UNKNOWN' }, { retryAdmission: null },
+      { admission: undefined }, { held: null }, { provenPickupCount: 1 }]
+      .map(variant => ({ raw: fleetReceiptRaw({ daemonMayReportGreen: true, ...variant }) })),
   ];
   for (const variant of invalid) {
     const result = await runFleetRemote(fleetMaintenanceEnvelope(variant));
