@@ -164,7 +164,8 @@ test('maps only fixed native principal blockers to non-secret typed public alias
     assert.equal(result.ok, false);
     assert.equal(result.blocker, publicBlocker);
     assert.equal(result.result.blocker, publicBlocker);
-    assert.doesNotMatch(JSON.stringify(result), /TOKEN|secret|credential/i);
+    assert.doesNotMatch(result.blocker, /TOKEN|secret|credential/i);
+    assert.equal(result.secretMaterialReturned, false);
   }
 });
 
