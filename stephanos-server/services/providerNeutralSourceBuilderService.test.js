@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { processNextProviderNeutralSourceBuild } from './providerNeutralSourceBuilderService.js';
 
 function run(executable, args, options = {}) {
+  const childEnv = { ...(options.env || process.env) };
+  delete childEnv.NODE_TEST_CONTEXT;
   const normalized = executable === 'git.exe'
     ? 'git'
     : executable === 'node.exe'
@@ -17,7 +19,7 @@ function run(executable, args, options = {}) {
       : executable;
   return spawnSync(normalized, args, {
     cwd: options.cwd,
-    env: options.env || process.env,
+    env: childEnv,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -428,6 +430,11 @@ test('local Forge builder rejects a protected patch target even under repository
 
 test('local Forge builder permits an empty source snapshot for a scoped new file', async () => {
   const fx = await fixture();
+  await writeFile(join(fx.repoRoot, 'focused.test.mjs'),
+    "import assert from 'node:assert/strict'; import {created} from './shared/agents/new-file.mjs'; assert.equal(created, true);\n");
+  assert.equal(run('git.exe', ['add', 'focused.test.mjs'], {cwd: fx.repoRoot}).status, 0);
+  assert.equal(run('git.exe', ['commit', '-m', 'Bind new-file behavior acceptance'], {cwd: fx.repoRoot}).status, 0);
+  fx.actionGrant.sourceRevision = run('git.exe', ['rev-parse', 'HEAD'], {cwd: fx.repoRoot}).stdout.trim();
   fx.action.allowedFiles = ['shared/agents/new-file.mjs'];
   const newFilePatch = [
     'diff --git a/shared/agents/new-file.mjs b/shared/agents/new-file.mjs',
@@ -1443,4 +1450,53 @@ test('failed source terminal receipt follows test failure and result collection'
   const h = await readExecutionReceiptHistory(fx.sharedWorkspaceRoot, { executionId: actionId }, { repoRoot: fx.repoRoot });
   assert.equal(h.latestReceipt.state, 'failed');
   assert.ok(Date.parse(h.latestReceipt.timestampUtc) >= collectedAt, 'terminal receipt reused the invocation start time');
+});
+
+test('EOF-only model response is corrected within the existing bounded retry before source mutation', async t => {
+  for (const corrected of [true, false]) await t.test(corrected ? 'next response implements behavior' : 'exhaustion preserves source', async () => {
+    const fx = await fixture();
+    fx.action.missionId = 'critical-3001-elastic-goal';
+    let calls = 0;
+    const original = (await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8')).replace(/\r\n/g, '\n');
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+      repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+      claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+      loadGoalContext: async () => 'Implement the requested value change; acceptance requires value 2.',
+      localModelFetchImpl: async (_url, request) => {
+        calls += 1;
+        assert.equal((await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8')).replace(/\r\n/g, '\n'), original);
+        if (calls === 2) assert.match(JSON.parse(request.body).messages[0].content, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID/);
+        const newText = calls === 2 && corrected ? 'export const value = 2;\n' : original + '\n';
+        return {ok: true, json: async () => ({message: {content: JSON.stringify({edits: [
+          {path: 'shared/agents/example.mjs', old: original, new: newText}], summary: 'Bounded edit'})}})};
+      },
+      collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.success, corrected, result.error);
+    if (!corrected) {
+      assert.match(result.error, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID/);
+      assert.equal(run('git.exe', ['status', '--porcelain'], {cwd: fx.repoRoot}).stdout.trim(), '');
+      assert.equal(result.sourceArtifact ?? null, null);
+    }
+  });
+});
+
+test('adding a missing single final newline remains a permitted structured source edit', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'export const value = 2;');
+  assert.equal(run('git.exe', ['add', '.'], {cwd: fx.repoRoot}).status, 0);
+  assert.equal(run('git.exe', ['commit', '-m', 'Missing final newline fixture'], {cwd: fx.repoRoot}).status, 0);
+  fx.actionGrant.sourceRevision = run('git.exe', ['rev-parse', 'HEAD'], {cwd: fx.repoRoot}).stdout.trim();
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+    repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+    claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({edits: [{path: 'shared/agents/example.mjs', old: 'export const value = 2;', new: 'export const value = 2;\n'}]}),
+    collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+  });
+  assert.equal(result.success, true, result.error);
 });
