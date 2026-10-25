@@ -10,7 +10,7 @@ export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = Object.freeze([
 // The textual checks below add defense in depth, but may not approve a
 // modified script merely because familiar safe snippets still occur.
 const REVIEWED_CORE_SOURCE_BLOBS = Object.freeze({
-  'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['43ea1940733bfa7bfa470109fd32c296f5db956a', '4a95894ec4e6f454e48be2e9be8f961eaf918a58']),
+  'scripts/windows/run-sovereign-commander-hidden.ps1': Object.freeze(['9e2d84e59e10632224212a3257ae74a6414c6efa', '47022203dd3948fe1744327ca0d94eeb91ef60c2']),
   'scripts/windows/status-stephanos-core-daemon.ps1': Object.freeze(['523aca4b93fe9adf434fd157137c7cb4ef52fbca']),
   'scripts/windows/stephanos-core-process-observation.ps1': Object.freeze(['9e00ce659859b0274fce36e13cb20045b1b337b1']),
 });
