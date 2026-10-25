@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { MAINTENANCE_RECOVERY_OPERATIONS, projectMaintenanceRecoveryReceiptV1 } from '../shared/agents/sovereignMaintenanceRecoveryMailboxV1.mjs';
+import { FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_START_OPERATION,
+  projectFrontendVisibilityReceiptV1 } from '../shared/agents/sovereignFrontendVisibilityMailboxV1.mjs';
 import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
   compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
@@ -105,6 +107,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   GUARDED_CODEX_TASK_READBACK_OPERATION,
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  FRONTEND_VISIBILITY_START_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -2278,7 +2281,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     ? nestedOperationResult
     : (
       (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
-        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation))
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation)
+        || FRONTEND_VISIBILITY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -2375,6 +2379,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
+      ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -2699,6 +2704,8 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
       result: Object.freeze({
         ok: inner?.ok !== false,
         ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
+        ...projectFrontendVisibilityReceiptV1(inner?.frontendVisibility, compactReceipt.operation,
+          { expectedHead: compactReceipt.expectedHead, expectedDistFingerprint: inner?.expectedDistFingerprint }),
         blocker: inner?.blocker || '',
         finalVerdict: inner?.finalVerdict || '',
         expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
@@ -2762,7 +2769,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     ? nestedOperationResult
     : (
       (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
-        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation))
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation)
+        || FRONTEND_VISIBILITY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -2857,6 +2865,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
+      ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),

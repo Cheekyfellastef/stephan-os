@@ -146,6 +146,16 @@ captured source head, existing build head, approved input fingerprint and served
 fingerprint (which includes a visible restriction notice). Stale build metadata
 is reported honestly. It does not claim current runtime, backend or builder health.
 
+Every validation Git read uses `resolveBattleBridgeGitExecution()` with the
+canonical fixed overrides and minimal environment, including disabled fsmonitor,
+hooks, replacement objects, grafts and lazy fetch. Diff additionally disables
+external diff and text conversion. Launcher trust is authenticated from the
+pinned commit's actual Git object hash through its root tree, every path's tree
+entries and each blob's Git object hash. Batch requests use immutable object
+IDs, never mutable `HEAD:path` expressions. Header shape and a clean worktree
+alone cannot authenticate served JavaScript. Regressions retain repository-local
+helper and blob/tree replacement attacks as explicit adversarial cases.
+
 The visibility profile has no arbitrary filesystem fallback, proxy, POST,
 restart or OpenClaw-probe route. CSP restricts connections to its own origin;
 external backend/gateway connections and controls are disabled. These restrictions
@@ -165,3 +175,37 @@ Reusable invariant: loss of mutation authority must retain truthful observation;
 resource-disjoint static visibility may be separately admitted only with a
 closed executable, asset, listener and HTTP authority contract. It must never
 turn the broad building repair into an observation operation.
+
+## Fixed remote visibility admission
+
+The canonical mailbox exposes the separate visibility resource through two
+bounded operations, after their protected source update is installed:
+
+- `OBSERVE_STEPHANOS_FRONTEND_VISIBILITY` accepts the standard authenticated
+  canonical envelope and exact installed `expectedHead`. It validates the fixed
+  source closure and existing assets, observes the native listener, and returns
+  the existing build identity and asset fingerprint. Validation is not startup.
+- `START_STEPHANOS_FRONTEND_VISIBILITY` additionally requires the exact observed
+  `expectedDistFingerprint` and actual operator activation authority. It invokes
+  only the existing fixed starter with those bindings. It has no caller-supplied
+  executable, script path, command arguments, environment, URL or port.
+
+Both operations target canonical main and retain the ordinary mailbox identity,
+expiry and once-only request contract. They do not enter the shared maintenance
+owner: their resource remains captured static assets and the exclusive loopback
+listener. This is not an exception for ordinary `repair-ui-4173`, a custody
+release, or a grant to build or synchronize source.
+
+Before launching the fixed child, admission authenticates the installed code it
+will execute. The child retains the original source, asset and listener checks.
+An existing foreign listener is never stopped. Changed source or assets require
+a new observation and an appropriately bound activation; an ambiguous startup
+result is not a reason to create a second request or kill a process.
+
+Public `frontendVisibility` receipts contain only bounded status, source/build
+identities, fingerprints and listener counts. Controls and external connections
+must remain disabled in accepted child evidence. HTTP page verification is
+reported separately from browser verification; a successful HTTP probe does not
+certify browser usability, normal controls, current backend health or completed
+maintenance recovery. Source publication and a dispatch acknowledgement do not
+prove that the installed host has activated either operation.

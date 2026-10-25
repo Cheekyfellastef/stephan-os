@@ -15,6 +15,11 @@ import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShap
   isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
 } from './sovereignMaintenanceRecoveryMailboxV1.mjs';
 import {
+  FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_OBSERVE_OPERATION,
+  validateFrontendVisibilityCommandShape, isTerminalizableFrontendVisibilityBlocker,
+  executeFrontendVisibilityOnBattleBridge,
+} from './sovereignFrontendVisibilityMailboxV1.mjs';
+import {
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   executeOperatorEnvironmentApprovalOnBattleBridge,
   isTerminalizableOperatorEnvironmentApprovalBlocker,
@@ -44,6 +49,7 @@ export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   ...MAINTENANCE_RECOVERY_OPERATIONS,
+  ...FRONTEND_VISIBILITY_OPERATIONS,
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
@@ -71,6 +77,7 @@ function fail(blocker, details = {}) {
 function customOperationKind(operation = '') {
   const normalized = String(operation || '');
   if (MAINTENANCE_RECOVERY_OPERATIONS.includes(normalized)) return 'maintenance-recovery';
+  if (FRONTEND_VISIBILITY_OPERATIONS.includes(normalized)) return 'frontend-visibility';
   if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
   if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
   if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
@@ -83,6 +90,7 @@ function customOperationKind(operation = '') {
 function validateCustomCommandShape(command = {}) {
   const kind = customOperationKind(command?.operation);
   if (kind === 'maintenance-recovery') return validateMaintenanceRecoveryCommandShape(command);
+  if (kind === 'frontend-visibility') return validateFrontendVisibilityCommandShape(command);
   if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
   if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
   if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
@@ -109,7 +117,8 @@ function translateForCore(command = {}, shape = {}) {
   for (const field of STANDARD_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
   }
-  translated.operation = CORE_TRANSLATION_OPERATION;
+  translated.operation = command.operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION
+    ? 'READ_DEPLOYMENT_STATUS' : CORE_TRANSLATION_OPERATION;
   translated.expectedHead = shape?.ok === true
     ? String(shape?.command?.expectedHead || shape?.expectedHead || command?.expectedHead || '')
     : 'invalid';
@@ -125,6 +134,7 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 
 export function isTerminalizableOwnerCommandBlocker(value) {
   return isTerminalizableMaintenanceRecoveryBlocker(value)
+    || isTerminalizableFrontendVisibilityBlocker(value)
     || isTerminalizableOperatorEnvironmentApprovalBlocker(value)
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
     || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
@@ -152,6 +162,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
+  if (operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION;
   if (customOperationKind(operation)) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   return core.classifyBattleBridgeMailboxOperation(operation);
 }
@@ -178,7 +189,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       return Object.freeze({
         ...entry,
         command: projectCustomCommand(original.command, original.shape),
-        partition: core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+        partition: classifyBattleBridgeMailboxOperation(original.command.operation),
       });
     })
     : [];
@@ -256,6 +267,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
   if (!shape.ok) return shape;
   try {
     if (kind === 'maintenance-recovery') return await executeMaintenanceRecoveryOnBattleBridge(shape.command, options);
+    if (kind === 'frontend-visibility') return await executeFrontendVisibilityOnBattleBridge(shape.command, options);
     if (kind === 'environment') {
       const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
         ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn

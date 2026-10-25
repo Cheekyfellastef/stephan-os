@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -90,4 +90,41 @@ test('HTTP self-description cannot qualify a foreign Windows process or a differ
   assert.equal(isExactFrontendListenerV1({ ...witness, owners: [{ ...row, commandLine: row.commandLine + ' arbitrary' }] }, options), false);
   assert.equal(isExactFrontendListenerV1({ ...witness, owners: [{ ...row, executablePath: 'C:\\foreign.exe' }] }, options), false);
   assert.equal(isExactFrontendListenerV1({ ...witness, owners: [row, row] }, options), false);
+});
+
+test('repository fsmonitor cannot execute a helper during read-only validation', t => {
+  const f = fixture(t), marker = join(f.root, 'helper-executed');
+  const helper = join(f.root, '.git', 'fsmonitor-fixture');
+  const shellMarker = marker.replace(/\\/g, '/').replace(/'/g, "'\\''");
+  writeFileSync(helper, `#!/bin/sh\nprintf executed > '${shellMarker}'\nprintf 'fixture-token\\0'\n`);
+  chmodSync(helper, 0o755);
+  f.git('config', 'core.fsmonitor', `"${helper.replace(/\\/g, '/')}"`);
+  const snapshot = collectFrontendVisibilitySnapshotV1(f);
+  assert.equal(snapshot.files.get('main.js').toString(), 'globalThis.fixture=true;');
+  assert.equal(existsSync(marker), false, 'the fixed Git read boundary must not execute repository-controlled helpers');
+});
+
+test('blob replacement refs cannot substitute launcher bytes at the pinned head', t => {
+  const f = fixture(t);
+  const original = f.git('rev-parse', `${f.expectedHead}:main.js`);
+  const replacementFile = join(f.root, '.git', 'replacement-fixture.js');
+  writeFileSync(replacementFile, 'globalThis.substituted=true;');
+  const replacement = f.git('hash-object', '-w', replacementFile);
+  f.git('replace', original, replacement);
+  const snapshot = collectFrontendVisibilitySnapshotV1(f);
+  assert.equal(snapshot.files.get('main.js').toString(), 'globalThis.fixture=true;');
+  assert.equal(f.git('rev-parse', 'HEAD'), f.expectedHead);
+});
+
+test('tree replacement refs cannot alter the authenticated commit/tree/blob chain', t => {
+  const f = fixture(t);
+  const originalTree = f.git('rev-parse', `${f.expectedHead}^{tree}`);
+  writeFileSync(join(f.root, 'main.js'), 'globalThis.substitutedTree=true;');
+  f.git('add', 'main.js');
+  const replacementTree = f.git('write-tree');
+  f.git('reset', '--mixed', f.expectedHead);
+  f.git('checkout', '--', 'main.js');
+  f.git('replace', originalTree, replacementTree);
+  const snapshot = collectFrontendVisibilitySnapshotV1(f);
+  assert.equal(snapshot.files.get('main.js').toString(), 'globalThis.fixture=true;');
 });
