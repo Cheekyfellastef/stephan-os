@@ -204,8 +204,6 @@ export async function executeRescueIslandSupervisedDocumentOnBattleBridge(comman
       operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
       requestId: text(shape.command.requestId),
       taskId: shape.command.task.taskId,
-      sourceHead: shape.command.expectedHead,
-      expectedHeadMatch: true,
       proofCompleted: false,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
