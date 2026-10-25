@@ -120,3 +120,48 @@ Physical acceptance must preserve the original incident, prove the new Windows
 boot and guardian identity, perform the existing UI repair, and obtain served
 head plus browser proof. The durable lesson is: retaining custody needs a
 persistent owner record and an explicit evidence-bearing recovery transition.
+# Independent frontend visibility during custody recovery
+
+The original unknown maintenance owner and R7 remain held. Frontend visibility
+is a different resource: validated static bytes and an exclusive 4173 listener.
+It must not depend on a healthy builder, shared-workspace publisher, backend,
+OpenClaw gateway, or remote GitHub fetch. The full `repair-ui-4173` action still
+builds and retains normal maintenance admission; it is never an exception.
+
+`scripts/sovereign-frontend-start-only.mjs` is a fixed, local start-only adapter
+of the existing dist server. Production requires the canonical Windows main
+checkout and fixed installed Node executable. Its exact local source head and
+existing dist manifest fingerprint must be included in the operator activation
+packet. `status` validates without binding; `start` additionally requires
+`--operator-approved`, and launches only its fixed `serve` invocation. No source
+sync, build, install, service/lease mutation, broad process kill or custody
+transition is available. The source-only protected update and runtime activation
+gates remain prerequisites; adding this script does not install it.
+
+The server captures launcher files from exact local Git objects and bounded
+dist bytes from the already approved manifest. It checks each dist byte hash
+again while capturing and retains immutable in-memory bytes. It preserves the
+root launcher and separate built-runtime entry. The served receipt distinguishes
+captured source head, existing build head, approved input fingerprint and served
+fingerprint (which includes a visible restriction notice). Stale build metadata
+is reported honestly. It does not claim current runtime, backend or builder health.
+
+The visibility profile has no arbitrary filesystem fallback, proxy, POST,
+restart or OpenClaw-probe route. CSP restricts connections to its own origin;
+external backend/gateway connections and controls are disabled. These restrictions
+are an explicit interim visibility posture, not completion of process recovery
+or normal frontend usability. A fixed native listener observation plus exact
+fixed-executable/argv identity is required before reusing a matching profile.
+A different listener is refused and never stopped; exclusive bind handles races.
+No failed startup result is proof of process exclusion or custody release.
+
+The original legacy process-custody recovery still requires its separately
+approved full-boot witness and exact recovery receipt. A full boot also ends
+the temporary visibility process. Normal frontend repair then remains behind
+the original recovered maintenance owner; do not leave the visibility profile
+or disabled repair capability as the parent goal's terminal outcome.
+
+Reusable invariant: loss of mutation authority must retain truthful observation;
+resource-disjoint static visibility may be separately admitted only with a
+closed executable, asset, listener and HTTP authority contract. It must never
+turn the broad building repair into an observation operation.
