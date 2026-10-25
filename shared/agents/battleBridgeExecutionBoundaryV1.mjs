@@ -398,3 +398,5 @@ export function inspectBattleBridgeGitTopology(repoRoot, { lstatFn = lstatSync, 
   }
   return Object.freeze({ ok: true, blocker: '', stableIdentities: Object.freeze(stableIdentities) });
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.
