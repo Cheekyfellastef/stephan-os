@@ -5,6 +5,8 @@ import { executeMaintenanceRecoveryOnBattleBridge as execute, MAINTENANCE_RECOVE
 import { validateBattleBridgeGitHubCommand, selectBattleBridgeGitHubCommandBatch,
   executeBattleBridgeGitHubCommand } from './battleBridgeGitHubCommandMailbox.mjs';
 import { BATTLE_BRIDGE_GITHUB_COMMAND_MARKER } from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
+import { serializeBoundedReceiptJson, createSanitizedMailboxReceiptProjection,
+  checkpointTerminalMailboxReceipt } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 const head = 'a'.repeat(40), digest = 'b'.repeat(64);
 const cycle = '0a23c41a-124f-4776-97e8-e45ab0309b0b';
 const now = new Date('2026-10-25T14:00:00Z');
@@ -74,5 +76,43 @@ test('prepare cannot report success without exact durable incident readback', as
     const result = await execute(command({ operation: ops[1], expectedCycle: cycle, expectedReportSha256: digest }),
       { ...options, runMaintenanceCustodyRecoveryFn: async () => ({ ok: true, prepared: true, persistentCustody: status }) });
     assert.equal(result.ok, false); assert.equal(result.prepared, false);
+  }
+});
+test('real mailbox serialization, checkpoint and sanitized readback preserve recovery bindings', async () => {
+  for (const operation of ops) {
+    const c = command(operation === ops[1] ? { operation, expectedCycle: cycle, expectedReportSha256: digest } : {});
+    const result = await executeBattleBridgeGitHubCommand(c, { ...options,
+      runMaintenanceCustodyRecoveryFn: async () => ({ ok: true, prepared: operation === ops[1],
+        cycleId: cycle, reportSha256: digest, originalHoldMatched: true,
+        persistentCustody: { held: true, digest, reservationId: cycle } }) });
+    const receipt = { schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+      requestId: c.requestId, operation, state: 'DONE', expectedHead: head, result };
+    const wire = serializeBoundedReceiptJson(receipt);
+    const serialized = JSON.parse(wire);
+    const expected = { originalHoldMatched: true, prepared: operation === ops[1], held: true,
+      digest, cycleId: cycle, reportSha256: digest, custodyReleased: false,
+      pcRestartAllowed: false, sourceLeaseReleased: false };
+    assert.deepEqual(serialized.result.result.maintenanceRecovery, expected);
+    assert.deepEqual(createSanitizedMailboxReceiptProjection(receipt).operationResult.maintenanceRecovery, expected);
+    assert.deepEqual(createSanitizedMailboxReceiptProjection(serialized).operationResult.maintenanceRecovery, expected);
+    const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+    checkpointTerminalMailboxReceipt(state, receipt, { persist() {} });
+    assert.deepEqual(state.lastReceipt.result.result.maintenanceRecovery, expected);
+    assert.deepEqual(JSON.parse(serializeBoundedReceiptJson(serialized)).result.result.maintenanceRecovery, expected);
+    const core = JSON.parse(serializeBoundedReceiptJson(receipt, 3000));
+    assert.deepEqual(core.result.result.maintenanceRecovery, expected);
+    assert.deepEqual(createSanitizedMailboxReceiptProjection(core).operationResult.maintenanceRecovery, expected);
+  }
+});
+test('recovery projections reject malformed bindings and never expose nested private data', () => {
+  const result = { ok: true, cycleId: 'SECRET', reportSha256: 'SECRET', digest: 'SECRET',
+    held: 'true', prepared: 'true', originalHoldMatched: 'true', bootWitness: { machineHash: 'SECRET' },
+    signingKey: 'SECRET', rawReport: 'SECRET', custodyReleased: true, pcRestartAllowed: true };
+  const receipt = { operation: ops[0], requestId: 'recovery-public-redaction', result };
+  for (const projected of [JSON.parse(serializeBoundedReceiptJson(receipt)), createSanitizedMailboxReceiptProjection(receipt)]) {
+    assert.equal(JSON.stringify(projected).includes('SECRET'), false);
+    const fields = projected.result?.result?.maintenanceRecovery || projected.operationResult.maintenanceRecovery;
+    assert.equal(fields.held, false); assert.equal(fields.prepared, false);
+    assert.equal(fields.custodyReleased, false); assert.equal(fields.pcRestartAllowed, false);
   }
 });

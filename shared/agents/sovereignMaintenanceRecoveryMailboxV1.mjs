@@ -12,6 +12,19 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const fail = blocker => Object.freeze({ ok: false, requested: true, verdict: 'BLOCKED', blocker,
   custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false });
 
+export function projectMaintenanceRecoveryReceiptV1(value = {}, operation = '') {
+  if (!MAINTENANCE_RECOVERY_OPERATIONS.includes(operation)) return {};
+  value = value?.maintenanceRecovery || value || {};
+  return { maintenanceRecovery: Object.freeze({
+    originalHoldMatched: value.originalHoldMatched === true,
+    prepared: value.prepared === true, held: value.held === true,
+    digest: hash.test(value.digest ?? '') ? value.digest : '',
+    cycleId: uuid.test(value.cycleId ?? '') ? value.cycleId : '',
+    reportSha256: hash.test(value.reportSha256 ?? '') ? value.reportSha256 : '',
+    custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false,
+  }) };
+}
+
 export function validateMaintenanceRecoveryCommandShape(command = {}) {
   if (!MAINTENANCE_RECOVERY_OPERATIONS.includes(command?.operation))
     return Object.freeze({ ok: true, requested: false });
