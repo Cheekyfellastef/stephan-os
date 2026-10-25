@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, opendirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -2481,6 +2481,42 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
 const CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION = 'inspect-canonical-git-worktree-config';
 const CANONICAL_GIT_WORKTREE_CONFIG_ACTION = 'repair-canonical-git-worktree-config';
 
+// A registration namespace is not a registration. Inspect at most one entry
+// under the already-authenticated canonical .git directory; never resolve or
+// expose linked paths, delete metadata, or infer writer/lease ownership.
+export function inspectCanonicalLinkedWorktreeMetadataV1(repositoryRoot, {
+  lstatFn = lstatSync,
+  openDirectoryFn = opendirSync,
+} = {}) {
+  const metadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  const result = state => Object.freeze({ state,
+    linkedWorktreesExcluded: state === 'ABSENT' || state === 'EMPTY' });
+  let before;
+  try { before = lstatFn(metadataPath); }
+  catch (error) { return result(error?.code === 'ENOENT' ? 'ABSENT' : 'UNPROVEN'); }
+  if (!before.isDirectory() || before.isSymbolicLink()) return result('UNPROVEN');
+  let directory;
+  try {
+    directory = openDirectoryFn(metadataPath);
+    if (directory.readSync() !== null) return result('PRESENT');
+    const after = lstatFn(metadataPath);
+    if (!after.isDirectory() || after.isSymbolicLink()
+        || ['dev', 'ino', 'mode', 'mtimeMs', 'ctimeMs'].some(key => before[key] !== after[key])) {
+      return result('UNPROVEN');
+    }
+    return result('EMPTY');
+  } catch { return result('UNPROVEN'); }
+  finally { if (directory) { try { directory.closeSync(); } catch { /* read verdict remains conservative */ } } }
+}
+
+function linkedMetadataBlocker(evidence) {
+  return evidence?.linkedWorktreesExcluded === true
+    && ['ABSENT', 'EMPTY'].includes(evidence.state) ? ''
+    : evidence?.state === 'PRESENT'
+      ? 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT'
+      : 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_METADATA_UNPROVEN';
+}
+
 function finiteGitConfigRepairFailure(blocker, details = {}) {
   return Object.freeze({
     ok: false,
@@ -2498,6 +2534,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
   remainingTimeoutMsFn = () => 10_000,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
@@ -2562,28 +2599,6 @@ export function inspectCanonicalGitWorktreeConfigV1({
       deadlineExceeded: false,
     });
   };
-  const captureAtWorktree = (worktreeRoot, args) => {
-    const timeout = nextProbeTimeoutMs();
-    if (timeout <= 0) return deadlineResult();
-    const result = spawnSyncFn(git.executable, [
-      ...git.fixedConfigArgs, '-C', worktreeRoot, ...args,
-    ], {
-      cwd: worktreeRoot,
-      env: git.environment,
-      encoding: 'utf8',
-      shell: false,
-      windowsHide: true,
-      timeout,
-      maxBuffer: 64 * 1024,
-    });
-    return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
-      status: Number.isInteger(result?.status) ? result.status : null,
-      stdout: String(result?.stdout || ''),
-      deadlineExceeded: false,
-    });
-  };
-
   const head = captureCanonical(['rev-parse', 'HEAD']);
   const branch = captureCanonical(['branch', '--show-current']);
   if (head.deadlineExceeded || branch.deadlineExceeded) {
@@ -2602,40 +2617,11 @@ export function inspectCanonicalGitWorktreeConfigV1({
     return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const listed = captureCanonical(['worktree', 'list', '--porcelain']);
-  if (listed.deadlineExceeded) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
-  }
-  if (!listed.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_WORKTREE_LIST_UNPROVEN');
-
-  const records = [];
-  let current = null;
-  for (const rawLine of listed.stdout.split(/\r?\n/)) {
-    const line = String(rawLine || '');
-    if (line.startsWith('worktree ')) {
-      if (current) records.push(current);
-      current = { root: line.slice('worktree '.length), locked: false, prunable: false };
-    } else if (current && (line === 'locked' || line.startsWith('locked '))) {
-      current.locked = true;
-    } else if (current && (line === 'prunable' || line.startsWith('prunable '))) {
-      current.prunable = true;
-    }
-  }
-  if (current) records.push(current);
-  if (records.length < 1 || records.length > 256) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_WORKTREE_LIST_UNPROVEN');
-  }
-
-  const normalizedRoot = resolve(repositoryRoot);
-  const sameRoot = value => platform === 'win32'
-    ? resolve(value).toLowerCase() === normalizedRoot.toLowerCase()
-    : resolve(value) === normalizedRoot;
-  const canonicalWorktreeCount = records.filter(record => sameRoot(record.root)).length;
-  if (canonicalWorktreeCount !== 1) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_CANONICAL_WORKTREE_UNPROVEN', {
-      registeredWorktreeCount: records.length,
-    });
-  }
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return held(metadataBlocker);
+  const records = Object.freeze([
+    Object.freeze({ root: repositoryRoot, locked: false, prunable: false }),
+  ]);
 
   const localConfig = captureCanonical(['config', '--local', '--null', '--list']);
   if (localConfig.deadlineExceeded) {
@@ -2680,27 +2666,11 @@ export function inspectCanonicalGitWorktreeConfigV1({
   let nonEmptyWorktreeConfigFileCount = 0;
   let worktreeConfigEntryCount = 0;
   let allWorktreeConfigsObserved = true;
-  for (const record of records) {
-    const gitPath = captureAtWorktree(record.root, ['rev-parse', '--git-path', 'config.worktree']);
-    if (gitPath.deadlineExceeded) {
-      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
-        registeredWorktreeCount: records.length,
-        riskCategories,
-        worktreeConfigFileCount,
-        nonEmptyWorktreeConfigFileCount,
-        worktreeConfigEntryCount,
-      });
-    }
-    if (!gitPath.ok || !text(gitPath.stdout)) {
-      allWorktreeConfigsObserved = false;
-      continue;
-    }
-    const candidate = text(gitPath.stdout);
-    const configPath = resolve(record.root, candidate);
-    if (!existsFn(configPath)) continue;
-    worktreeConfigFileCount += 1;
-    const config = captureAtWorktree(record.root, [
-      'config', '--file', configPath, '--null', '--list',
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  if (existsFn(worktreeConfigPath)) {
+    worktreeConfigFileCount = 1;
+    const config = captureCanonical([
+      'config', '--file', worktreeConfigPath, '--null', '--list',
     ]);
     if (config.deadlineExceeded) {
       return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
@@ -2712,12 +2682,15 @@ export function inspectCanonicalGitWorktreeConfigV1({
       });
     }
     if (!config.ok) {
-      allWorktreeConfigsObserved = false;
-      continue;
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+      });
     }
     const entries = config.stdout.split('\0').filter(Boolean);
-    worktreeConfigEntryCount += entries.length;
-    if (entries.length > 0) nonEmptyWorktreeConfigFileCount += 1;
+    worktreeConfigEntryCount = entries.length;
+    if (entries.length > 0) nonEmptyWorktreeConfigFileCount = 1;
   }
 
   const linkedWorktreeCount = Math.max(0, records.length - 1);
@@ -2788,6 +2761,7 @@ export function repairCanonicalGitWorktreeConfigV1({
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
   if (!SHA_PATTERN.test(normalizedHead)) {
@@ -2833,17 +2807,8 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const worktreeList = capture(['worktree', 'list', '--porcelain']);
-  const worktreeRoots = worktreeList.ok
-    ? worktreeList.stdout.split(/\r?\n/).filter(line => line.startsWith('worktree '))
-      .map(line => line.slice('worktree '.length)) : [];
-  const normalizedRoot = resolve(repositoryRoot);
-  const sameRoot = value => platform === 'win32'
-    ? resolve(value).toLowerCase() === normalizedRoot.toLowerCase()
-    : resolve(value) === normalizedRoot;
-  if (!worktreeList.ok || worktreeRoots.length !== 1 || !sameRoot(worktreeRoots[0])) {
-    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
-  }
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return finiteGitConfigRepairFailure(metadataBlocker);
 
   const beforeConfig = capture(['config', '--local', '--null', '--list']);
   if (!beforeConfig.ok) {
@@ -2895,6 +2860,10 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
   }
 
+  // Recheck after the config/value probes: a newly registered worker holds
+  // this repair. This is not a claim of hostile privileged-writer exclusion.
+  const finalMetadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (finalMetadataBlocker) return finiteGitConfigRepairFailure(finalMetadataBlocker);
   const unset = capture(['config', '--local', '--unset-all', 'extensions.worktreeConfig']);
   if (!unset.ok) {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_UNSET_FAILED');

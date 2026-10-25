@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
   executeRescueIslandSupervisedDocumentOnBattleBridge,
   validateRescueIslandSupervisedDocumentCommandShape,
 } from './rescueIslandSupervisedMailboxV1.mjs';
@@ -64,6 +65,26 @@ const success = () => ({
   published: false,
   merged: false,
   deployed: false,
+});
+const statusCommand = overrides => ({
+  schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+  requestId: 'island02-mailbox-proof-01-status',
+  operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
+  repository: 'Cheekyfellastef/stephan-os',
+  issueNumber: 3149,
+  branch: 'main',
+  operatorApproval: 'operator-approved',
+  expectedHead: 'e'.repeat(40),
+  expiresAt: EXPIRES,
+  taskId: task().taskId,
+  workerId: 'rescue-island-02',
+  ownerIssueNumber: 3103,
+  ownerCommentId: 6399501164,
+  baseHead: HEAD,
+  targetPath: task().targetPath,
+  taskFingerprint: 'd'.repeat(64),
+  contentSha256: 'f'.repeat(64),
+  ...overrides,
 });
 
 test('validates only the exact Island02 documentation envelope', () => {
@@ -182,6 +203,70 @@ test('mailbox composition retains exact custom operation and executor', async ()
       called += 1;
       assert.equal(observed.commentId, 6399501164);
       return { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', result: { ok: true } };
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(result.ok, true);
+});
+
+test('reconciles only retained exact-owner completion without source mutation authority', async () => {
+  const observed = [];
+  const result = await executeRescueIslandSupervisedDocumentOnBattleBridge(statusCommand(), {
+    platform: 'win32',
+    createRescueIslandSupervisedHostV1Fn: () => ({host: {
+      async withExistingOwnerAdmission(expected, operation) {
+        observed.push(expected);
+        return operation();
+      },
+      async observeRetainedSupervisedCompletion(expected, contentSha256) {
+        observed.push({expected, contentSha256});
+        return {
+          ...success(),
+          schemaVersion: 'stephanos.rescue-island-retained-completion.v1',
+          ownerIssueNumber: 3103,
+          sourceHead: HEAD,
+          commitHead: 'b'.repeat(40),
+          targetPath: task().targetPath,
+          contentSha256,
+          stages: success().receipts.map(value => value.stage),
+          resourceScheduling: 'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK',
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        };
+      },
+    }}),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.proofCompleted, true);
+  assert.equal(result.result.sourceMutationAuthority, false);
+  assert.equal(result.result.rescueIslandBuild.commitHead, 'b'.repeat(40));
+  assert.equal(result.result.rescueIslandBuild.contentSha256, 'f'.repeat(64));
+  assert.equal(observed[0].taskId, task().taskId);
+  assert.equal(observed[1].contentSha256, 'f'.repeat(64));
+  const projected=createSanitizedMailboxReceiptProjection({operation:statusCommand().operation,
+    requestId:statusCommand().requestId,state:'DONE',expectedHead:'e'.repeat(40),result});
+  assert.equal(projected.rescueIslandBuild.commitHead,'b'.repeat(40));
+  assert.equal(projected.rescueIslandBuild.contentSha256,'f'.repeat(64));
+  assert.equal(projected.proofCompleted,true);
+});
+
+test('retained completion status remains exact and fail closed', async () => {
+  assert.equal(validateRescueIslandSupervisedDocumentCommandShape(statusCommand()).ok, true);
+  assert.equal(validateRescueIslandSupervisedDocumentCommandShape(statusCommand({
+    contentSha256: 'not-a-digest',
+  })).blocker, 'RESCUE_ISLAND_REMOTE_STATUS_IDENTITY_INVALID');
+  const validated = validateBattleBridgeGitHubCommand(statusCommand(), {
+    authorLogin: 'Cheekyfellastef',
+    now: new Date('2026-10-25T17:55:00.000Z'),
+    currentHead: 'e'.repeat(40),
+  });
+  assert.equal(validated.ok, true);
+  let called = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    executeRescueIslandSupervisedDocumentOnBattleBridgeFn: async observed => {
+      called += 1;
+      assert.equal(observed.operation, RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION);
+      return {ok:true,verdict:'COMMAND_EXECUTION_COMPLETE',result:{ok:true}};
     },
   });
   assert.equal(called, 1);

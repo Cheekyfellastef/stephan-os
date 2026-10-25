@@ -552,6 +552,42 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         claimInventoriesComplete:true,canonicalClaims,seedClaims,islandClaims:[...islandClaims,...peerClaims],
         ...(nativeTestHost?{nativeTestHost}:{})};
     },
+    async observeRetainedSupervisedCompletion(expected,contentSha256) {
+      if(!active || !(await active.lock.verifyOwnership())
+        || Object.keys(active.expected).some(key=>active.expected[key]!==expected[key]))
+        held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
+      if(!HASH.test(contentSha256||''))held('ISLAND_HOST_RETAINED_CONTENT_IDENTITY_INVALID');
+      const admissions=await admissionInventory();
+      const saved=admissions.find(value=>value.taskId===expected.taskId);
+      if(!saved)held('ISLAND_HOST_RETAINED_ADMISSION_MISSING');
+      if(saved.workerId!==workerId || saved.ownerIssueNumber!==(expected.ownerIssueNumber||owner)
+        || saved.commentId!==expected.commentId || saved.baseHead!==expected.baseHead
+        || saved.targetPath!==expected.targetPath || saved.taskFingerprint!==expected.taskFingerprint
+        || saved.assuranceProfile!==PROFILE || JSON.stringify(saved.roots)!==JSON.stringify(roots))
+        held('ISLAND_HOST_RETAINED_ADMISSION_IDENTITY_CHANGED');
+      // Reapply the closed-world Git configuration gate immediately before
+      // any retained worktree inspection. `git status` may otherwise invoke a
+      // clean filter introduced after the original admission.
+      if(!validateBattleBridgeLocalGitConfiguration(
+        git(roots.repoRoot,['config','--local','--null','--list'])).ok)
+        held('ISLAND_HOST_RETAINED_REPOSITORY_CONFIGURATION_CHANGED');
+      if(!await retainedCompletion(saved))held('ISLAND_HOST_RETAINED_ADMISSION_INCOMPLETE');
+      const claimsRoot=join(roots.receiptRoot,'claims');
+      const committed=await json(join(claimsRoot,saved.taskId+'.ISOLATED_COMMIT.json'));
+      const tested=await json(join(claimsRoot,saved.taskId+'.TESTED.json'));
+      const content=git(roots.repoRoot,['show',committed.commitHead+':'+saved.targetPath]);
+      if(digest(content)!==contentSha256)held('ISLAND_HOST_RETAINED_CONTENT_IDENTITY_CHANGED');
+      return Object.freeze({schemaVersion:'stephanos.rescue-island-retained-completion.v1',
+        workerId,taskId:saved.taskId,ownerIssueNumber:saved.ownerIssueNumber,
+        ownerCommentId:saved.commentId,sourceHead:saved.baseHead,commitHead:committed.commitHead,
+        targetPath:saved.targetPath,contentSha256,taskFingerprint:saved.taskFingerprint,
+        testResultHash:tested.testResultHash,stages:['SELECTED','CLAIMED','BRANCH_RESERVED',
+          'PHYSICAL_PICKUP','EDITED','TESTED','ISOLATED_COMMIT'],
+        assuranceProfile:PROFILE,resourceScheduling:'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK',
+        hostileWriterContainmentProven:false,independentlyCommissionedWorker:false,
+        unattendedRefillsProven:false,reviewRequired:true,published:false,merged:false,deployed:false,
+        publicReceiptSafe:true,secretMaterialReturned:false});
+    },
   };
   const run=createRescueIslandSupervisedRunnerV1(host);
   return Object.freeze({run:request=>{
