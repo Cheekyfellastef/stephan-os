@@ -23,7 +23,8 @@ Some tool names are equal but capabilities may still be narrower. The 13 October
 | list_processes | Implemented source | Fresh local process snapshot |
 | get_config | Implemented source | Privacy-safe local config status |
 | start_search, get_more_search_results, stop_search, list_searches | PARTIAL only for repo `search_project` | Scoped whole-PC file/content search with bounded paginated sessions and cancellation |
-| create_directory | SOURCE CANDIDATE, NOT LIVE-PROVEN | Explicit private MCP absolute-path create-only mkdir; no recursive parents, symlinked ancestor, network path or overwrite. Requires independent review, protected merge and Battle Bridge proof |\n| move_file | GAP | Source-controlled private rename/move with path consent, symlink checks, no-overwrite and rollback |
+| create_directory | SOURCE CANDIDATE, NOT LIVE-PROVEN | One literal Windows target on a fixed local volume. Captured source-bound helper, held ancestor handles and native handle-relative create-only operation; refuses existing targets, reparse parents, aliases, unexpected arguments and path normalization. Requires independent review, protected merge and Battle Bridge proof |
+| move_file | GAP | Source-controlled private rename/move with path consent, symlink checks, no-overwrite and rollback |
 | write_pdf | GAP | Bounded local PDF workflow, explicitly permitted inputs/outputs |
 | start_process, read_process_output, interact_with_process, list_sessions | PARTIAL fixed maintenance only | Approved process registry, bounded output, tracked sessions and operator permission; no generic arbitrary shell |
 | kill_process, force_terminate | GAP by default | Narrow PID/identity guarded lifecycle, protected services and proof, separate approval |
@@ -35,6 +36,15 @@ Some tool names are equal but capabilities may still be narrower. The 13 October
 | give_feedback_to_desktop_commander | Vendor-specific | Sovereign user feedback and improvement intake, not third-party feedback impersonation |
 
 Follow the real registry rather than the table when a new source head has landed. Do not describe the GAP row as installed. Do not count a skill draft or an accepted dispatch as a functioning executable.
+
+The parity ledger and compiler must preserve this distinction too: repository-only
+`search_project` does not complete `start_search`, `search_files` or paginated
+`get_more_search_results`. Older entries carrying that incorrect full-parity label
+are downgraded without losing their provenance or creating a new goal. Existing
+search-session cancellation and inventory gaps stay with the same observation
+primitive and #2573 owner; a missing implementation is not a new authority grant.
+
+For the directory candidate, use [the source and acceptance contract](../../../../docs/architecture/sovereign-directory-create-parity-v1.md).
 
 ## Proposed sequence and graduation gates
 

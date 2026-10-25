@@ -1,3 +1,11 @@
+import {
+  PERSONAL_REPOSITORY_EVIDENCE_JOB,
+  PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_MERGE_JOB,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
+  validatePersonalRepositoryPriorJobEnvelope,
+  validatePersonalRepositoryReadOnlyPriorFailure
+} from './protectedMergeReadOnlyPriorFailureV1.mjs';
 import { PROTECTED_WORKFLOW_MAILBOX_TRANSPORT_ACTOR } from './protectedWorkflowDispatchMailboxV1.mjs';
 import { inflateRawSync } from 'node:zlib';
 import {
@@ -6,13 +14,28 @@ import {
   validateProtectedEnvironment,
 } from './operatorMergeApprovalGate.mjs';
 
+export {
+  PERSONAL_REPOSITORY_EVIDENCE_JOB,
+  PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_MERGE_JOB,
+  PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
+  validatePersonalRepositoryPriorJobEnvelope,
+  validatePersonalRepositoryReadOnlyPriorFailure
+} from './protectedMergeReadOnlyPriorFailureV1.mjs';
+
 const SHA_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ARTIFACT_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress']);
+// A protected environment may keep the run at GitHub's `waiting` state
+// briefly after the owner approves it, even when the protected merge job
+// has begun. This is a run-identity observation only. The actual merge job
+// remains gated by the environment's authenticated owner approval, exact
+// head/base/tree checks, independent review and replay/lease protections.
+// Never admit a terminal or cancelled run through this observation.
+const PERSONAL_REPOSITORY_ACTIVE_RUN_STATUSES = new Set(['queued', 'in_progress', 'waiting']);
 const PERSONAL_REPOSITORY_RULESET_PROOF_PATHS = Object.freeze([
   /^\/repos\/[^/?]+\/[^/?]+$/,
   /^\/repos\/[^/?]+\/[^/?]+\/rules\/branches\/main\?per_page=100&page=(?:[1-9]|1[0-9]|20)$/,
@@ -21,9 +44,6 @@ const PERSONAL_REPOSITORY_RULESET_PROOF_PATHS = Object.freeze([
 
 export const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
 export const PERSONAL_REPOSITORY_WORKFLOW_NAME = 'Protected Operator Merge Queue Boundary';
-export const PERSONAL_REPOSITORY_EVIDENCE_JOB = 'personal-repository-evidence';
-export const PERSONAL_REPOSITORY_APPROVAL_JOB = 'operator-personal-repository-approval';
-export const PERSONAL_REPOSITORY_MERGE_JOB = 'operator-personal-repository-squash-merge';
 export const PERSONAL_REPOSITORY_REQUIRED_CHECK = 'protected-merge-source-proof';
 export const PERSONAL_REPOSITORY_MODE = 'user-owned-protected-squash';
 export const PERSONAL_REPOSITORY_AUTHORITY = 'github-actions-protected-environment-exact-head-squash-only';
@@ -32,131 +52,6 @@ export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_CONVERGENCE_TIMEOUT_MS = 120_000
 export const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_POLL_INTERVAL_MS = 5_000;
 export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
-export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
-
-export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
-  const blockers = [];
-  const repository = workflowRepository(run);
-  const runId = strictPositiveInteger(run?.id);
-  const runAttempt = strictPositiveInteger(job?.run_attempt);
-  const jobId = strictPositiveInteger(job?.id);
-  const expectedJobUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}`;
-  const expectedRunUrl = `https://api.github.com/repos/${repository}/actions/runs/${runId}`;
-  const expectedCheckRunUrl = `https://api.github.com/repos/${repository}/check-runs/${jobId}`;
-  const expectedHtmlUrl = `https://github.com/${repository}/actions/runs/${runId}/job/${jobId}`;
-  if (!REPOSITORY_PATTERN.test(repository)) blockers.push('prior-job-repository-invalid');
-  if (!runId) blockers.push('prior-run-id-invalid');
-  if (!jobId) blockers.push('prior-job-id-invalid');
-  if (!runAttempt || runAttempt > strictPositiveInteger(run?.run_attempt)) blockers.push('prior-job-attempt-invalid');
-  if (strictPositiveInteger(job?.run_id) !== runId) blockers.push('prior-job-parent-run-mismatch');
-  if (text(job?.workflow_name) !== text(run?.name)) blockers.push('prior-job-workflow-name-mismatch');
-  if (text(job?.head_branch) !== text(run?.head_branch)) blockers.push('prior-job-head-branch-mismatch');
-  if (text(job?.head_sha).toLowerCase() !== text(run?.head_sha).toLowerCase()) blockers.push('prior-job-head-sha-mismatch');
-  if (text(job?.url) !== expectedJobUrl) blockers.push('prior-job-api-url-mismatch');
-  if (text(job?.run_url) !== expectedRunUrl) blockers.push('prior-job-run-url-mismatch');
-  if (text(job?.check_run_url) !== expectedCheckRunUrl) blockers.push('prior-job-check-run-url-mismatch');
-  if (text(job?.html_url) !== expectedHtmlUrl) blockers.push('prior-job-html-url-mismatch');
-  return Object.freeze({
-    valid: blockers.length === 0,
-    receipt: blockers.length === 0 ? Object.freeze({
-      id: jobId,
-      runId,
-      runAttempt,
-      workflowName: text(job?.workflow_name),
-      headBranch: text(job?.head_branch),
-      headSha: text(job?.head_sha).toLowerCase(),
-      name: text(job?.name),
-      status: text(job?.status).toLowerCase(),
-      conclusion: text(job?.conclusion).toLowerCase(),
-      url: text(job?.url),
-      runUrl: text(job?.run_url),
-      checkRunUrl: text(job?.check_run_url),
-      htmlUrl: text(job?.html_url),
-    }) : null,
-    blockers: Object.freeze(unique(blockers)),
-    finalVerdict: blockers.length
-      ? 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_BLOCKED'
-      : 'PERSONAL_REPOSITORY_PRIOR_JOB_ENVELOPE_READY',
-  });
-}
-
-export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
-  const blockers = [];
-  const runId = strictPositiveInteger(run?.id);
-  const runAttempt = strictPositiveInteger(run?.run_attempt);
-  if (!runId) blockers.push('prior-run-id-invalid');
-  if (!runAttempt) blockers.push('prior-run-attempt-invalid');
-  if (runAttempt > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX) {
-    blockers.push('prior-run-attempt-limit-exceeded');
-  }
-  const boundedRunAttempt = runAttempt > 0 && runAttempt <= PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX
-    ? runAttempt
-    : 0;
-  if (text(run?.status).toLowerCase() !== 'completed') blockers.push('prior-run-not-completed');
-  if (text(run?.conclusion).toLowerCase() !== 'failure') blockers.push('prior-run-not-failed');
-  if (!Array.isArray(jobs)) blockers.push('prior-run-jobs-invalid');
-  const jobList = Array.isArray(jobs) ? jobs : [];
-  const authorityJobNames = new Set([
-    PERSONAL_REPOSITORY_EVIDENCE_JOB,
-    PERSONAL_REPOSITORY_APPROVAL_JOB,
-    PERSONAL_REPOSITORY_MERGE_JOB,
-  ]);
-  const authorityJobs = jobList.filter((job) => authorityJobNames.has(text(job?.name)));
-  if (boundedRunAttempt && authorityJobs.length !== boundedRunAttempt * authorityJobNames.size) {
-    blockers.push('prior-run-authority-job-estate-not-exact');
-  }
-  const exactJob = (name, attempt) => {
-    const matches = authorityJobs.filter((job) => (
-      text(job?.name) === name && strictPositiveInteger(job?.run_attempt) === attempt
-    ));
-    if (matches.length !== 1) blockers.push(`prior-run-job-not-exact:${attempt}:${name}`);
-    return matches.length === 1 ? matches[0] : {};
-  };
-  const selectedJobs = [];
-  for (let attempt = 1; attempt <= boundedRunAttempt; attempt += 1) {
-    const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB, attempt);
-    const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB, attempt);
-    const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB, attempt);
-    selectedJobs.push(evidence, approval, merge);
-    if (text(evidence?.status).toLowerCase() !== 'completed'
-      || text(evidence?.conclusion).toLowerCase() !== 'failure') {
-      blockers.push(`prior-run-evidence-job-not-failed:${attempt}`);
-    }
-    if (text(approval?.status).toLowerCase() !== 'completed'
-      || text(approval?.conclusion).toLowerCase() !== 'skipped') {
-      blockers.push(`prior-run-approval-job-not-skipped:${attempt}`);
-    }
-    if (text(merge?.status).toLowerCase() !== 'completed'
-      || text(merge?.conclusion).toLowerCase() !== 'skipped') {
-      blockers.push(`prior-run-merge-job-not-skipped:${attempt}`);
-    }
-  }
-  const jobIds = selectedJobs.map((job) => strictPositiveInteger(job?.id));
-  if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
-    blockers.push('prior-run-job-id-invalid');
-  }
-  const jobEnvelopeReceipts = [];
-  for (const job of selectedJobs) {
-    const envelope = validatePersonalRepositoryPriorJobEnvelope(run, job);
-    if (!envelope.valid) {
-      blockers.push(...envelope.blockers.map((blocker) => `prior-run-job-envelope:${blocker}`));
-    } else jobEnvelopeReceipts.push(envelope.receipt);
-  }
-  return Object.freeze({
-    valid: blockers.length === 0,
-    receipt: blockers.length === 0 ? Object.freeze({
-      runId,
-      runAttempt,
-      status: 'completed',
-      conclusion: 'failure',
-      jobs: Object.freeze(jobEnvelopeReceipts),
-    }) : null,
-    blockers: Object.freeze(unique(blockers)),
-    finalVerdict: blockers.length
-      ? 'PERSONAL_REPOSITORY_PRIOR_FAILURE_NOT_RETRYABLE'
-      : 'PERSONAL_REPOSITORY_PRIOR_FAILURE_READ_ONLY',
-  });
-}
 
 const PERSONAL_REPOSITORY_CHECK_SNAPSHOT_TRANSIENT_BLOCKERS = new Set([
   // GitHub exposes check runs and workflow runs through separate eventually-consistent collections.
@@ -1665,6 +1560,26 @@ export async function validatePersonalRepositoryCheckRunsWithBoundedReread({
   }
 }
 
+// Shared by the advisory preflight and the final protected evidence validator.
+// Keep the accepted review/conversation states identical at both boundaries.
+export function validatePersonalRepositoryConversationState(input = {}) {
+  const blockers = [];
+  const reviewDecisionObserved = Object.hasOwn(input, 'reviewDecision');
+  const reviewDecision = text(input.reviewDecision).toUpperCase();
+  const mergeable = text(input.mergeable).toUpperCase();
+  if (!reviewDecisionObserved) blockers.push('personal-repository-review-decision-missing');
+  if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
+  else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
+  if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
+  if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
+    blockers.push('personal-repository-conversations-not-resolved');
+  }
+  return Object.freeze({
+    valid: blockers.length === 0,
+    blockers: Object.freeze(blockers),
+  });
+}
+
 export function validatePersonalRepositoryEvidence(input = {}, expected = {}, options = {}) {
   const blockers = [];
   const repository = text(input.repository);
@@ -1677,9 +1592,6 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   const prNumber = strictPositiveInteger(pullRequest?.number);
   const workflowRunId = strictPositiveInteger(input.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(input.workflowRunAttempt);
-  const reviewDecisionObserved = Object.hasOwn(input, 'reviewDecision');
-  const reviewDecision = text(input.reviewDecision).toUpperCase();
-  const mergeable = text(input.mergeable).toUpperCase();
   const mergeStateStatus = text(input.mergeStateStatus).toUpperCase();
   const cleanIndependentReviewProved = options.cleanIndependentReviewProved === true;
   const reviewEscalationChecksProved = options.reviewEscalationChecksProved === true;
@@ -1704,10 +1616,7 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   if (!SHA_PATTERN.test(baseSha)) blockers.push('personal-repository-base-sha-invalid');
   if (liveMainRef !== baseSha) blockers.push('personal-repository-live-main-mismatch');
   if (sourceHead && sourceHead === baseSha) blockers.push('personal-repository-head-equals-base');
-  if (!reviewDecisionObserved) blockers.push('personal-repository-review-decision-missing');
-  if (reviewDecision === 'CHANGES_REQUESTED') blockers.push('personal-repository-changes-requested');
-  else if (!['', 'APPROVED'].includes(reviewDecision)) blockers.push('personal-repository-review-decision-unsupported');
-  if (mergeable !== 'MERGEABLE') blockers.push('personal-repository-pr-not-mergeable');
+  blockers.push(...validatePersonalRepositoryConversationState(input).blockers);
   if (mergeStateStatus !== 'CLEAN'
     && !(mergeStateStatus === 'UNSTABLE'
       && cleanIndependentReviewProved
@@ -1716,9 +1625,6 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
       && cleanIndependentReviewProved
       && reviewEscalationChecksProved)) {
     blockers.push('personal-repository-pr-not-clean');
-  }
-  if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
-    blockers.push('personal-repository-conversations-not-resolved');
   }
   const exactForwardComparison = text(comparison.status).toLowerCase() === 'ahead'
     && Number.isSafeInteger(comparison.ahead_by)

@@ -65,3 +65,64 @@ the reviewer itself; it cannot use its own output to approve itself.
 node --test shared/agents/sovereignHighRiskReviewCandidateV1.test.mjs scripts/sovereign-high-risk-advisory-v1.test.mjs
 
 Never mark autonomous builder recovery green from advisory evidence alone.
+
+## Execution and reviewed-content custody continuation
+
+The supported high-risk candidate entry is now the independently installed
+`scripts/sovereign-high-risk-advisory-launcher-v1.mjs --once`. It reuses the
+canonical exact-commit loader: authenticate and capture the complete closed
+module graph before candidate imports, including the Git verifier and transitive
+workspace modules. The advisory implementation remains an importable library;
+direct source-checkout invocation returns HOLD without inference/publication.
+The launcher, loader, Git boundary and OS binaries are an externally protected
+installed-parent prerequisite. A writable copy cannot certify its own trust.
+The canonical coverage projection points at this launcher. No new scheduler,
+qualification identity, signer or authority is introduced.
+
+Both review commits and the complete base/head tree estate are hash-verified.
+Every changed old/new blob is captured and hash-verified, and a bounded conservative
+unified diff is derived in memory. Ordinary Git diff is not a content trust
+root. Unsupported/binary/oversize content holds; nothing is silently truncated.
+The reviewed-object closure hash binds the source packet. This shared reader is
+also used in the #3090 native high-risk snapshot correction. The standard reader separately authenticates the same raw-object invariant.
+
+One independently observed installed-model digest is pinned for the entire
+advisory. Every adapter chunk receipt binds that digest, chunk ID and content
+hash; a replacement between chunks holds. The digest is retained in each
+reviewed-chunk record, candidate evidence, final packet hash and status summary.
+The tag is also reobserved after the complete run. These remain unqualified
+observations, not independent model provenance or signer enrollment.
+
+Real fixture tests substitute entry, Git verifier and transitive module bytes
+before launch; none evaluate. A reviewed non-executable Git blob is corrupted
+only while read and restored immediately: authentication still refuses it.
+Multi-chunk digest substitution, absent receipt binding, source drift and
+no-authority regressions remain fail-closed. Hosted Linux validates the complete
+POSIX snapshot/governor fixtures; Windows runs the actual object/loader fixtures
+and portable contracts. No live model inference, installation or R7 change is
+part of these tests.
+
+### Direct-consumer execution custody continuation
+
+Native Windows calibration and coverage intake now use the same independently
+protected installed-parent launcher as high-risk advisory. Their public entries
+import no candidate snapshot or diff implementation. The launcher authenticates
+the complete fixed native/coverage/advisory engine graph from raw exact-commit
+objects before ESM evaluation, including the authenticated diff reader and all
+transitive imports. Only fixed entry identifiers are admitted; no caller path,
+module, command or preload option is accepted. Private Commander remote output
+projection also executes inside that immutable graph.
+
+The #3090 source lineage is integrated into this candidate so that native digest
+addressing, total deadline, base-bound readback and original WSL/Commander loader
+fixes remain intact. #3090 itself remains unchanged. Unit tests import engine
+libraries as test subjects; production/public CLI entries use the trusted parent.
+The protected installation closure now includes those public entries, common
+launcher, serialized loader, Git boundary and OS binaries. An ordinary writable
+copy cannot establish that trust. No installation or signer enrollment is claimed.
+
+Real temporary Git fixtures exercise each route with hidden entry, Git verifier,
+diff reader and transitive workspace substitutions. The public coverage/native
+CLIs are exercised too; hostile bytes never evaluate. Clean coverage must still
+produce its bounded candidate scope. Windows/Linux exact-head CI runs these
+fixtures and native deadline/digest tests. All results retain no authority.

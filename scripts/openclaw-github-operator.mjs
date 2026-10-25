@@ -149,7 +149,7 @@ if (String(input.operation || '').toLowerCase() === 'merge-pr') {
   ]);
   const checks = run('gh.exe', [
     'pr', 'checks', String(input.prNumber), '--repo', String(input.repository),
-    '--json', 'name,state,workflow',
+    '--json', 'name,state,workflow,event',
   ]);
   const mergeObservation = parseOpenClawGitHubMergeObservation({ view, checks });
   if (!mergeObservation.valid) {

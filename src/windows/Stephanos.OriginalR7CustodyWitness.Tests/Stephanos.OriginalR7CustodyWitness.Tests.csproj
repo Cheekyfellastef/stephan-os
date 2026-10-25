@@ -4,10 +4,36 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerPeerPairing.cs" Link="OriginalR7OwnerPeerPairing.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OperatingSystemPeerDecision.cs" Link="OriginalR7OperatingSystemPeerDecision.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerEnvelopeTransport.cs" Link="OriginalR7OwnerEnvelopeTransport.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7OwnerWorkflowAuthentication.cs" Link="OriginalR7OwnerWorkflowAuthentication.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7CommissioningOwnerContext.cs" Link="OriginalR7CommissioningOwnerContext.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ProtectedKeyMetadata.cs" Link="OriginalR7ProtectedKeyMetadata.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7SigningPrimitives.cs" Link="OriginalR7SigningPrimitives.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7FixedSigningHostProfile.cs" Link="OriginalR7FixedSigningHostProfile.cs" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="[2.7.0]" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ObservationSession.cs" Link="OriginalR7ObservationSession.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7AuditJournal.cs" Link="OriginalR7AuditJournal.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7AuditStorage.cs" Link="OriginalR7AuditStorage.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7RegistryProtection.cs"
+             Link="OriginalR7RegistryProtection.cs" />
     <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ScmPreflight.cs"
              Link="OriginalR7ScmPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7ImagePinPreflight.cs"
+             Link="OriginalR7ImagePinPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterAccessPreflight.cs"
+             Link="OriginalR7WriterAccessPreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7WriterScopePreflight.cs"
+             Link="OriginalR7WriterScopePreflight.cs" />
+    <Compile Include="../Stephanos.OriginalR7CustodyWitness/OriginalR7DirectoryRightsPreflight.cs"
+             Link="OriginalR7DirectoryRightsPreflight.cs" />
+    <ProjectReference Include="../Stephanos.OriginalR7DaclReadback/Stephanos.OriginalR7DaclReadback.csproj" />
   </ItemGroup>
 </Project>
