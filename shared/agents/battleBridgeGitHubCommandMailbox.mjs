@@ -11,6 +11,9 @@ import {
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
+import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShape,
+  isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
+} from './sovereignMaintenanceRecoveryMailboxV1.mjs';
 import {
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   executeOperatorEnvironmentApprovalOnBattleBridge,
@@ -40,6 +43,7 @@ export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
+  ...MAINTENANCE_RECOVERY_OPERATIONS,
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
@@ -66,6 +70,7 @@ function fail(blocker, details = {}) {
 
 function customOperationKind(operation = '') {
   const normalized = String(operation || '');
+  if (MAINTENANCE_RECOVERY_OPERATIONS.includes(normalized)) return 'maintenance-recovery';
   if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
   if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
   if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
@@ -77,6 +82,7 @@ function customOperationKind(operation = '') {
 
 function validateCustomCommandShape(command = {}) {
   const kind = customOperationKind(command?.operation);
+  if (kind === 'maintenance-recovery') return validateMaintenanceRecoveryCommandShape(command);
   if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
   if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
   if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
@@ -118,7 +124,8 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 }
 
 export function isTerminalizableOwnerCommandBlocker(value) {
-  return isTerminalizableOperatorEnvironmentApprovalBlocker(value)
+  return isTerminalizableMaintenanceRecoveryBlocker(value)
+    || isTerminalizableOperatorEnvironmentApprovalBlocker(value)
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
     || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
     || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
@@ -248,6 +255,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
   const shape = validateCustomCommandShape(command);
   if (!shape.ok) return shape;
   try {
+    if (kind === 'maintenance-recovery') return await executeMaintenanceRecoveryOnBattleBridge(shape.command, options);
     if (kind === 'environment') {
       const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
         ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
