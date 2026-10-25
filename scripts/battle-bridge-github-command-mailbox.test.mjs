@@ -3674,7 +3674,7 @@ test('canonical Git worktree inspection survives bounded mailbox publication wit
           canonicalGitConfigurationValid: false,
           originCount: 'ONE',
           originMatch: 'CANONICAL',
-          riskCategories: ['EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+          riskCategories: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
           extensionValueCount: 1,
           extensionValueState: 'TRUE',
           registeredWorktreeCount: 1,
@@ -3699,7 +3699,7 @@ test('canonical Git worktree inspection survives bounded mailbox publication wit
   assert.equal(evidence.safeForFixedUnset, true);
   assert.equal(evidence.registeredWorktreeCount, 1);
   assert.equal(evidence.linkedWorktreeCount, 0);
-  assert.deepEqual(evidence.riskCategories, ['EXTENSIONS_WORKTREE_CONFIG']);
+  assert.deepEqual(evidence.riskCategories, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
   assert.equal(projected.operationResult.gitConfigurationMutationPerformed, false);
 
   const serialized = serializeBoundedReceiptJson(receipt);
@@ -3707,7 +3707,7 @@ test('canonical Git worktree inspection survives bounded mailbox publication wit
   assert.equal(compact.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
   assert.equal(compact.canonicalGitWorktreeConfigInspection.extensionValueState, 'TRUE');
   assert.deepEqual(compact.canonicalGitWorktreeConfigInspection.riskCategories,
-    ['EXTENSIONS_WORKTREE_CONFIG']);
+    ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
   assert.doesNotMatch(serialized, /C:\\\\Users|PRIVATE_RISK|rawConfigValue|SECRET/);
 });
 
@@ -3733,7 +3733,7 @@ test('canonical Git repair publication preserves completed mutation on failed po
         expectedHeadMatch: true,
         gitConfigurationMutationPerformed: true,
         gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
-        riskCategoriesBefore: ['EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+        riskCategoriesBefore: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
         canonicalGitConfigurationValid: false,
       },
     },
@@ -3742,14 +3742,14 @@ test('canonical Git repair publication preserves completed mutation on failed po
   const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
   assert.equal(projected.gitConfigurationMutationPerformed, true);
   assert.equal(projected.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
-  assert.deepEqual(projected.riskCategoriesBefore, ['EXTENSIONS_WORKTREE_CONFIG']);
+  assert.deepEqual(projected.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
   assert.equal(projected.canonicalGitConfigurationValid, false);
 
   const serialized = serializeBoundedReceiptJson(receipt);
   const compact = JSON.parse(serialized).result.result;
   assert.equal(compact.gitConfigurationMutationPerformed, true);
   assert.equal(compact.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
-  assert.deepEqual(compact.riskCategoriesBefore, ['EXTENSIONS_WORKTREE_CONFIG']);
+  assert.deepEqual(compact.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
   assert.equal(compact.canonicalGitConfigurationValid, false);
   assert.doesNotMatch(serialized, /PRIVATE_RISK/);
 });
