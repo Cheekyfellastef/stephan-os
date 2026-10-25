@@ -144,7 +144,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1')) {
+          foreach ($file in @('scripts/windows/run-sovereign-commander-hidden.ps1', 'scripts/windows/read-battle-bridge-cpu-pressure.ps1', 'scripts/windows/sovereign-create-directory.ps1')) {
             $tokens = $null
             $parseErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors)

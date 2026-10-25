@@ -10,8 +10,8 @@ try {
     if ($raw.Length -gt 65536) { throw 'SOVEREIGN_DIRECTORY_TARGET_INVALID' }
     $request = $raw | ConvertFrom-Json
     $keys = @($request.PSObject.Properties.Name)
-    if ($keys.Count -ne 2 -or 'path' -cnotin $keys -or 'nativeSource' -cnotin $keys
-        -or $request.path -isnot [string] -or $request.nativeSource -isnot [string]) {
+    if ($keys.Count -ne 2 -or 'path' -cnotin $keys -or 'nativeSource' -cnotin $keys -or
+        $request.path -isnot [string] -or $request.nativeSource -isnot [string]) {
         throw 'SOVEREIGN_DIRECTORY_TARGET_INVALID'
     }
     $sha = [Security.Cryptography.SHA256]::Create()

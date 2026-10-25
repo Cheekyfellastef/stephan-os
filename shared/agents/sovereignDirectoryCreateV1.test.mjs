@@ -102,8 +102,14 @@ test('real Windows create is Unicode-exact, create-only, nonrecursive and reject
     const root = await realpath(await mkdtemp(join(tmpdir(), 'sovereign-directory-')));
     try {
       const target = join(root, 'José-测试-🚀');
-      const result = create(target);
-      assert.equal(result.ok, true, JSON.stringify(result));
+      let terminal;
+      const result = create(target, { spawnSyncFn: (...args) => { terminal = spawnSync(...args); return terminal; } });
+      // This fixture contains only a disposable CI path and committed source.
+      // Keep production failures sanitized; retain the actual test subprocess
+      // diagnostic here so platform failures can be fixed without guessing.
+      assert.equal(result.ok, true, JSON.stringify({ result, terminal: {
+        status: terminal?.status, stdout: terminal?.stdout, stderr: terminal?.stderr,
+      } }));
       assert.equal((await lstat(target)).isDirectory(), true);
       const sentinel = join(target, 'keep.txt');
       await writeFile(sentinel, 'preserve');

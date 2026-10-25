@@ -10,7 +10,7 @@ const SCRIPT = fileURLToPath(new URL('../../scripts/windows/sovereign-create-dir
 const NATIVE = fileURLToPath(new URL('../../scripts/windows/SovereignDirectoryCreateV1.cs', import.meta.url));
 // Reviewed helper-byte identities. Read once, verify, and execute only the
 // captured buffers; a later on-disk replacement cannot alter the launched code.
-const SCRIPT_SHA256 = '0e69bb7133e2ecf7b364e38b8a30d5a8446bc906e0e867545e3e354dfc8a9a97';
+const SCRIPT_SHA256 = '26b0e50b68df2a3af481366aa74d5a3701d5c32c94e36dd4eb4a742e8b3059d1';
 const NATIVE_SHA256 = 'f522113d39222214dfe89c3ff8d9248d25584aecc66e1ce5ff1c83324344526b';
 
 export function validateSovereignDirectoryTargetV1(path) {
