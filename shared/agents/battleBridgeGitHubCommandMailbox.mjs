@@ -12,6 +12,7 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import {
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
   executeRescueIslandSupervisedDocumentOnBattleBridge,
   isTerminalizableRescueIslandSupervisedDocumentBlocker,
   validateRescueIslandSupervisedDocumentCommandShape,
@@ -63,6 +64,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -91,7 +93,10 @@ function customOperationKind(operation = '') {
   if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
   if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
   if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
-  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION) return 'rescue-island-supervised-document';
+  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION
+      || normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
+    return 'rescue-island-supervised-document';
+  }
   return '';
 }
 

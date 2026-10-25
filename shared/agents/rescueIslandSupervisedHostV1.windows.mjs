@@ -514,6 +514,12 @@ test('worker02 real adapters build in their own estate with exact parent and ret
   assert.equal(git(f.firstLane.host.roots.repoRoot,['status','--porcelain']),'');
   assert.equal(await readFile(join(f.config.canonicalRoot,'preserve-dirty.txt'),'utf8'),'Original operator bytes\n');
   assert.ok(result.receipts.some(r=>r.stage==='TESTED'&&r.testExitCode===0));
+  const retained=await f.host.host.withExistingOwnerAdmission(f.expected,
+    ()=>f.host.host.observeRetainedSupervisedCompletion(f.expected,hash(f.task.content)));
+  assert.equal(retained.commitHead,result.head);assert.equal(retained.sourceHead,f.task.baseHead);
+  assert.equal(retained.contentSha256,hash(f.task.content));
+  assert.deepEqual(retained.stages,['SELECTED','CLAIMED','BRANCH_RESERVED','PHYSICAL_PICKUP',
+    'EDITED','TESTED','ISOLATED_COMMIT']);
 });
 test('the original operation lock excludes simultaneous cooperative lanes',async t=>{
   const f=await fixture(t,{worker02:true}),other=createRescueIslandSupervisedHostV1({...f.config,workerId:'rescue-island-01'});

@@ -3,10 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
-import { rescueIslandGovernorEnvironmentV1 } from './rescueIslandSupervisedHostV1.mjs';
+import { createRescueIslandSupervisedHostV1,
+  rescueIslandGovernorEnvironmentV1 } from './rescueIslandSupervisedHostV1.mjs';
 
 export const RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION =
   'RUN_RESCUE_ISLAND_SUPERVISED_DOCUMENT_TASK';
+export const RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION =
+  'READ_RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const ISSUE_NUMBER = 3103;
@@ -34,6 +37,12 @@ const PUBLIC_BLOCKER_ALIASES = Object.freeze(new Map([
 const ALLOWED_FIELDS = Object.freeze([
   'schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber',
   'branch', 'operatorApproval', 'expectedHead', 'expiresAt', 'commentId', 'task',
+]);
+const STATUS_ALLOWED_FIELDS = Object.freeze([
+  'schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber',
+  'branch', 'operatorApproval', 'expectedHead', 'expiresAt', 'taskId',
+  'workerId', 'ownerIssueNumber', 'ownerCommentId', 'baseHead', 'targetPath',
+  'taskFingerprint', 'contentSha256',
 ]);
 const TASK_FIELDS = Object.freeze([
   'schemaVersion', 'repository', 'issueNumber', 'issueTitle', 'taskId',
@@ -64,9 +73,9 @@ function executionFail(command, blocker) {
     ok: false,
     blocker,
     finalVerdict: 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_BLOCKED',
-    operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+    operation: text(command?.operation) || RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
     requestId: text(command?.requestId),
-    taskId: text(command?.task?.taskId),
+    taskId: text(command?.task?.taskId || command?.taskId),
     proofCompleted: false,
     publicReceiptSafe: true,
     secretMaterialReturned: false,
@@ -108,8 +117,35 @@ function validateTask(task, expectedHead, commandExpiresAt) {
 }
 
 export function validateRescueIslandSupervisedDocumentCommandShape(command = {}) {
-  if (text(command.operation) !== RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION) {
+  const operation = text(command.operation);
+  if (operation !== RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION
+      && operation !== RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
     return Object.freeze({ ok: true, requested: false });
+  }
+  if (operation === RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
+    const unexpected = Object.keys(command).find(field => !STATUS_ALLOWED_FIELDS.includes(field));
+    if (unexpected) return fail('RESCUE_ISLAND_REMOTE_FIELD_NOT_ALLOWED', { field: unexpected });
+    const expectedHead = text(command.expectedHead).toLowerCase();
+    const baseHead = text(command.baseHead).toLowerCase();
+    const taskId = text(command.taskId);
+    const targetPath = text(command.targetPath);
+    const ownerCommentId = Number(command.ownerCommentId);
+    if (!SHA.test(expectedHead) || !SHA.test(baseHead)) {
+      return fail('RESCUE_ISLAND_REMOTE_EXPECTED_HEAD_REQUIRED');
+    }
+    if (!TASK_ID.test(taskId) || command.workerId !== WORKER_ID
+        || command.ownerIssueNumber !== ISSUE_NUMBER
+        || !Number.isSafeInteger(ownerCommentId) || ownerCommentId < 1
+        || !TARGET.test(targetPath)
+        || targetPath !== 'docs/architecture/rescue-island-pilot-' + taskId + '.md'
+        || !SHA256.test(text(command.taskFingerprint))
+        || !SHA256.test(text(command.contentSha256))) {
+      return fail('RESCUE_ISLAND_REMOTE_STATUS_IDENTITY_INVALID');
+    }
+    return Object.freeze({ok:true,requested:true,expectedHead,command:Object.freeze({
+      ...command,expectedHead,baseHead,taskId,targetPath,ownerCommentId,
+      taskFingerprint:text(command.taskFingerprint),contentSha256:text(command.contentSha256),
+    })});
   }
   const unexpected = Object.keys(command).find(field => !ALLOWED_FIELDS.includes(field));
   if (unexpected) return fail('RESCUE_ISLAND_REMOTE_FIELD_NOT_ALLOWED', { field: unexpected });
@@ -141,6 +177,7 @@ export function isTerminalizableRescueIslandSupervisedDocumentBlocker(value) {
     'RESCUE_ISLAND_REMOTE_COMMENT_ID_INVALID',
     'RESCUE_ISLAND_REMOTE_TASK_FIELDS_INVALID',
     'RESCUE_ISLAND_REMOTE_TASK_INVALID',
+    'RESCUE_ISLAND_REMOTE_STATUS_IDENTITY_INVALID',
   ].includes(text(value));
 }
 
@@ -200,6 +237,36 @@ function projectSuccessfulBuild(result, task, commentId) {
 export async function executeRescueIslandSupervisedDocumentOnBattleBridge(command, options = {}) {
   const shape = validateRescueIslandSupervisedDocumentCommandShape(command);
   if (!shape.ok) return shape;
+  if (shape.command.operation === RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
+    if ((options.platform || process.platform) !== 'win32') {
+      return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_WINDOWS_REQUIRED');
+    }
+    const expected = Object.freeze({commentId:shape.command.ownerCommentId,
+      taskId:shape.command.taskId,taskFingerprint:shape.command.taskFingerprint,
+      baseHead:shape.command.baseHead,targetPath:shape.command.targetPath,
+      assuranceProfile:ASSURANCE_PROFILE,workerId:WORKER_ID,ownerIssueNumber:ISSUE_NUMBER});
+    const island = (typeof options.createRescueIslandSupervisedHostV1Fn === 'function'
+      ? options.createRescueIslandSupervisedHostV1Fn : createRescueIslandSupervisedHostV1)({workerId:WORKER_ID});
+    let retained;
+    try {
+      retained = await island.host.withExistingOwnerAdmission(expected,
+        () => island.host.observeRetainedSupervisedCompletion(expected,shape.command.contentSha256));
+    } catch (error) {
+      return executionFail(shape.command, publicBlocker(error?.code || error?.message));
+    }
+    const build=Object.freeze({...retained,
+      schemaVersion:'stephanos.rescue-island-supervised-document-build.v1',
+      finalVerdict:'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_COMPLETE'});
+    const operationResult=Object.freeze({ok:true,
+      finalVerdict:'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_RECONCILED',
+      operation:RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
+      requestId:text(shape.command.requestId),taskId:build.taskId,sourceHead:build.sourceHead,
+      branch:'rescue-island/pilot-'+build.taskId,expectedHeadMatch:true,
+      localHead:build.commitHead,executionProvider:WORKER_ID,proofCompleted:true,
+      rescueIslandBuild:build,sourceMutationAuthority:false,mergeAuthority:false,
+      arbitraryShellAllowed:false,publicReceiptSafe:true,secretMaterialReturned:false});
+    return Object.freeze({...operationResult,verdict:'COMMAND_EXECUTION_COMPLETE',result:operationResult});
+  }
   const platform = options.platform || process.platform;
   if (platform !== 'win32') return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_WINDOWS_REQUIRED');
   const run = typeof options.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
