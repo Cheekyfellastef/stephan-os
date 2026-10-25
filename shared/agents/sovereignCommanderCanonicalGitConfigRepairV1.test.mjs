@@ -72,7 +72,7 @@ function fixture({
     calls,
     inspectTopologyFn: () => ({ ok: true, blocker: '', stableIdentities: {} }),
     existsFn: candidate => {
-      const normalized = String(candidate || '').replaceAll('\\\\', '/');
+      const normalized = String(candidate || '').replaceAll('\\', '/');
       if (normalized.endsWith('/.git/worktrees')) return linkedMetadataPresent;
       if (normalized.endsWith('/.git/config.worktree')) return worktreeConfigPresent;
       return false;
