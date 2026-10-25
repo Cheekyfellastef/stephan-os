@@ -253,6 +253,19 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   return Object.freeze({
     status,
     runNow,
+    prepareAfterAuditLoss: async (request) => {
+      if (!custodyStore?.prepareAfterAuditLoss || state.running || state.maintenanceInFlight
+          || !state.timeoutCustodyHeld
+          || (state.lastCycleId && state.lastCycleId !== request.expectedReservationId))
+        return { ok: false, blocker: 'MAINTENANCE_AUDIT_LOSS_OWNER_UNPROVEN', custodyReleased: false };
+      state.maintenanceInFlight = true;
+      try {
+        const result = await custodyStore.prepareAfterAuditLoss(request);
+        if (result.ok) state.lastCycleId = result.reservationId;
+        return result;
+      }
+      finally { state.maintenanceInFlight = false; }
+    },
     recoverAfterBoot: async (request) => {
       if (!custodyStore || state.running || state.maintenanceInFlight)
         return { ok: false, blocker: 'MAINTENANCE_CUSTODY_RECOVERY_OWNER_BUSY' };
@@ -616,6 +629,18 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         });
       }
 
+      if (url.pathname === '/maintenance-custody/prepare-after-audit-loss') {
+        if (!safeTokenEqual(bearerToken(req), token))
+          return sendJson(res, 401, { ok: false, blocker: 'SOVEREIGN_COMMANDER_AUTH_REQUIRED' });
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, blocker: 'METHOD_NOT_ALLOWED' });
+        const request = await readJsonBody(req, 1024);
+        if (Object.keys(request).sort().join(',') !== 'expectedDigest,expectedMain,expectedReservationId,operatorApproval')
+          return sendJson(res, 400, { ok: false, blocker: 'MAINTENANCE_AUDIT_LOSS_SCHEMA_INVALID' });
+        if (!options.recoverySourceAdmission?.(request.expectedMain))
+          return sendJson(res, 409, { ok: false, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
+        const result = await continuousRepairGuardian.prepareAfterAuditLoss(request);
+        return sendJson(res, result.ok ? 200 : 409, result);
+      }
       if (url.pathname === '/maintenance-custody/recover-after-boot') {
         if (!safeTokenEqual(bearerToken(req), token))
           return sendJson(res, 401, { ok: false, blocker: 'SOVEREIGN_COMMANDER_AUTH_REQUIRED' });
