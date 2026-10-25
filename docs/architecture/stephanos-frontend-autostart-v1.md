@@ -46,6 +46,14 @@ completion and READY publication. Each awaited operation checks local HEAD befor
 and after, including its exception path. Source change or unreadability is a
 distinct terminal `FRONTEND_AUTOSTART_SOURCE_CHANGED` state; it can never become
 an invitation to claim/dispatch because a readiness probe returned false.
+After the third related finding, structural review established that exceptions
+alone were insufficient: a catch could discard a transient read failure. The
+boundary now privately latches its first invalidation. Local and full-admission
+readers derive from that same state, with no reset operation. INVALIDATED is
+absorbing even if source later becomes readable/current. The dispatch catch
+propagates invalidation; only genuine transport uncertainty may be observed late.
+Final publication failure removes current success flags and retains prior served
+proof only as explicitly historical information in the failed final result.
 
 Adversarial sequence tests inject invalidation into every pre-dispatch awaited
 observation and require zero boot claims and zero maintenance calls. The existing

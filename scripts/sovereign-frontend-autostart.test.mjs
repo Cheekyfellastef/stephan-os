@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { claimFrontendBootAttempt, createFrontendSourceBoundary, publishFrontendStartupResult, runFrontendAutostart } from './sovereign-frontend-autostart.mjs';
+import { claimFrontendBootAttempt, createFrontendSourceBoundary, finalizeFrontendStartupResult, publishFrontendStartupResult, runFrontendAutostart } from './sovereign-frontend-autostart.mjs';
 
 const head = 'a'.repeat(40);
 const witness = { machineHash: 'b'.repeat(64), bootStartedAtUtc: '2026-10-25T22:59:27.5000000Z' };
@@ -207,4 +207,72 @@ test('read-only transport awaits do not repeatedly fetch canonical remote truth'
   const f = fixture(); let admissions = 0;
   const result = await runFrontendAutostart({ ...f.options, admissionReader: () => { admissions++; return head; } });
   assert.equal(result.ok, true); assert.equal(admissions, 3);
+});
+
+for (const fault of ['unprovable', 'mismatch']) {
+  test(`shared invalidation is absorbing after a transient ${fault}, including derived readers`, async () => {
+    let fail = false, reads = 0;
+    const reader = () => { reads++; if (fail) { fail = false; if (fault === 'unprovable') throw new Error('temporary'); return 'c'.repeat(40); } return head; };
+    const boundary = createFrontendSourceBoundary(head, reader);
+    const admission = boundary.withReader(reader);
+    admission.assertCurrent(); fail = true;
+    let first;
+    try { admission.assertCurrent(); } catch (error) { first = error; }
+    assert.equal(first?.code, 'FRONTEND_AUTOSTART_SOURCE_CHANGED');
+    const readsAtFailure = reads;
+    for (const check of [boundary, admission, boundary.withReader(() => head)]) {
+      assert.throws(check.assertCurrent, error => error === first);
+      await assert.rejects(check.observe(async () => { throw new Error('must not run'); }), error => error === first);
+    }
+    assert.equal(reads, readsAtFailure);
+  });
+  for (const stage of ['call-fetch', 'call-body', 'late-proof', 'late-wait', 'full-admission']) {
+    test(`post-dispatch model: transient ${fault} at ${stage} cannot recover to READY`, async () => {
+      const f = fixture(); let fail = false, observed = 0, admissions = 0;
+      const setFault = () => { fail = true; };
+      const read = () => { if (fail) { fail = false; observed++; if (fault === 'unprovable') throw new Error('temporary'); return 'c'.repeat(40); } return head; };
+      const fetchFn = async (url, request) => {
+        const response = await f.options.fetchFn(url, request);
+        if (!url.endsWith('/health') && JSON.parse(request.body).method === 'tools/call') {
+          if (stage === 'call-fetch') setFault();
+          const text = response.text;
+          response.text = async () => { const value = await text(); if (stage === 'call-body') setFault(); return value; };
+        }
+        return response;
+      };
+      const result = await runFrontendAutostart({ ...f.options, fetchFn, sourceReader: read,
+        admissionReader: () => { admissions++; if (stage === 'full-admission' && admissions === 3) setFault(); return read(); },
+        proof: async () => { const value = await f.options.proof(); if (value.ready && stage === 'late-proof') setFault(); return stage === 'late-wait' && value.ready ? { ready: false } : value; },
+        sleep: async () => { if (stage === 'late-wait') setFault(); },
+      });
+      assert.equal(observed, 1); assert.equal(result.ok, false);
+      assert.equal(result.blocker, 'FRONTEND_AUTOSTART_SOURCE_CHANGED'); assert.equal(result.actionAttempted, true);
+      assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 1);
+      assert.equal(result.servedExactHeadProven, undefined);
+    });
+  }
+}
+test('genuine transport uncertainty may still reconcile late proof without source invalidation', async () => {
+  const f = fixture({ commandThrows: true, postProof: true });
+  const result = await runFrontendAutostart(f.options);
+  assert.equal(result.ok, true); assert.equal(result.commandVerdict, 'UNKNOWN'); assert.equal(result.commandOk, false);
+  assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 1);
+});
+test('publication invalidation cannot retain current success flags in the final result', async () => {
+  let fail = false, writes = 0;
+  const result = await finalizeFrontendStartupResult({ ok: true, expectedHead: head, actionAttempted: true, servedExactHeadProven: true }, {
+    publish: value => publishFrontendStartupResult(value, {
+      sourceReader: () => { if (fail) { fail = false; throw new Error('temporary'); } return head; },
+      bootReader: async () => { fail = true; return witness; },
+      writer: async () => { writes++; return { ok: true }; },
+    }),
+  });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_SOURCE_CHANGED');
+  assert.equal(result.servedExactHeadProven, undefined); assert.equal(result.runtimeReady, undefined);
+  assert.equal(result.priorServedProofPassed, true); assert.equal(writes, 0);
+});
+test('ordinary publication failure retains only historical served proof', async () => {
+  const result = await finalizeFrontendStartupResult({ ok: true, expectedHead: head, servedExactHeadProven: true }, { publish: async () => ({ ok: false }) });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_RECEIPT_UNPROVEN');
+  assert.equal(result.servedExactHeadProven, undefined); assert.equal(result.priorServedProofPassed, true);
 });

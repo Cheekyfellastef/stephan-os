@@ -20,17 +20,38 @@ const blocked = (blocker, extra = {}) => ({ schemaVersion: SCHEMA, ok: false, bl
 // A changed/unprovable source is an invalidated attempt, not an unavailable
 // service. Keep that state distinct across every awaited observation.
 export function createFrontendSourceBoundary(expectedHead, sourceReader) {
-  const assertCurrent = () => {
+  let invalidation;
+  const assertUsing = reader => {
+    if (invalidation) throw invalidation;
     let current;
-    try { current = sourceReader(); } catch { /* Unprovable is invalidated. */ }
-    if (!SHA.test(expectedHead || '') || current !== expectedHead)
-      throw Object.assign(new Error('FRONTEND_AUTOSTART_SOURCE_CHANGED'), { code: 'FRONTEND_AUTOSTART_SOURCE_CHANGED' });
+    try { current = reader(); } catch { /* Unprovable is invalidated. */ }
+    if (!SHA.test(expectedHead || '') || current !== expectedHead) {
+      invalidation = Object.assign(new Error('FRONTEND_AUTOSTART_SOURCE_CHANGED'), { code: 'FRONTEND_AUTOSTART_SOURCE_CHANGED' });
+      throw invalidation;
+    }
   };
-  return Object.freeze({ assertCurrent, observe: async operation => {
-    assertCurrent();
-    try { const value = await operation(); assertCurrent(); return value; }
-    catch (error) { assertCurrent(); throw error; }
-  } });
+  const bind = reader => Object.freeze({
+    assertCurrent: () => assertUsing(reader),
+    observe: async operation => {
+      assertUsing(reader);
+      try { const value = await operation(); assertUsing(reader); return value; }
+      catch (error) { assertUsing(reader); throw error; }
+    },
+    // Derived full/local readers share the private latch; there is no reset.
+    withReader: bind,
+  });
+  return bind(sourceReader);
+}
+
+export async function finalizeFrontendStartupResult(result, { publish = publishFrontendStartupResult } = {}) {
+  try {
+    if (!(await publish(result))?.ok) throw new Error('PUBLICATION_REFUSED');
+    return result;
+  } catch (error) {
+    return blocked(error?.code === 'FRONTEND_AUTOSTART_SOURCE_CHANGED' ? error.code : 'FRONTEND_AUTOSTART_RECEIPT_UNPROVEN',
+      { expectedHead: result.expectedHead, actionAttempted: result.actionAttempted === true,
+        priorServedProofPassed: result.ok === true });
+  }
 }
 
 export async function publishFrontendStartupResult(result, { workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
@@ -84,7 +105,7 @@ export async function runFrontendAutostart({
   const boundary = createFrontendSourceBoundary(expectedHead, sourceReader);
   // Full canonical admission (including fixed fetch/source hygiene) is distinct
   // from cheap local HEAD continuity. Do not fetch on every transport await.
-  const admission = createFrontendSourceBoundary(expectedHead, admissionReader);
+  const admission = boundary.withReader(admissionReader);
   let actionAttempted = false;
   try {
   const ready = async () => {
@@ -154,7 +175,10 @@ export async function runFrontendAutostart({
       response = await post({ jsonrpc: '2.0', id: 3, method: 'tools/call',
         params: { name: 'maintenance_action', arguments: { actionId: 'repair-ui-4173' } } }, 240000);
       command = response.body?.result?.structuredContent;
-    } catch { /* Uncertain transport never authorizes another dispatch. */ }
+    } catch (error) {
+      if (error?.code === 'FRONTEND_AUTOSTART_SOURCE_CHANGED') throw error;
+      // Genuine transport uncertainty never authorizes another dispatch.
+    }
     // Cold build can finish after the registered repair's readiness timeout.
     // Observe the same attempt; never spawn another build to repair a timeout.
     for (let i = 0; i < 12; i++) {
@@ -174,9 +198,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       || process.argv.slice(2).join(' ') !== '--operator-approved') result = blocked('FRONTEND_AUTOSTART_FIXED_WINDOWS_ENTRY_REQUIRED');
   else {
     result = await runFrontendAutostart({ approved: true });
-    try {
-      if (!(await publishFrontendStartupResult(result))?.ok) throw new Error('PUBLICATION_REFUSED');
-    } catch { result = { ...result, ok: false, blocker: 'FRONTEND_AUTOSTART_RECEIPT_UNPROVEN', runtimeReady: result.ok === true }; }
+    result = await finalizeFrontendStartupResult(result);
   }
   console.log(JSON.stringify(result));
   process.exitCode = result.ok ? 0 : 2;
