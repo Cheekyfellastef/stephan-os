@@ -10,3 +10,5 @@ foreach ($owner in $owners) {
     $rows += [pscustomobject]@{ pid = [uint32]$owner; executablePath = [string]$process.ExecutablePath; commandLine = [string]$process.CommandLine }
 }
 @{ schemaVersion = 'stephanos.frontend-listener.v1'; owners = @($rows) } | ConvertTo-Json -Depth 4 -Compress
+
+# Fixed frontend source admission requires canonical LF deployment bytes.

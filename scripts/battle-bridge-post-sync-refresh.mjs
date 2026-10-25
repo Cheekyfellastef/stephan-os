@@ -220,7 +220,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         '-NonInteractive',
         '-ExecutionPolicy', 'Bypass',
         '-File', runnerPath,
-        '-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5',
+        '-RequireCapabilityVersion', '2026-10-18-island-action-contract-v6',
       ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
       const payload = parseJsonOutput(result.stdout);
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
