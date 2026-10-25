@@ -211,6 +211,28 @@ test('read-only inspection reports nonempty worktree config as repair-held witho
   assert.equal(f.mutationCount(), 0);
 });
 
+test('read-only inspection stops on the total action deadline before further worktree probes', () => {
+  const f = fixture({
+    worktreeRoots: ['/fixture/Documents/GitHub/stephan-os', '/fixture/linked'],
+  });
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: f.spawnSyncFn,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+    remainingTimeoutMsFn: () => f.calls.length < 5 ? 10_000 : 0,
+  });
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  assert.equal(inspected.inspectionComplete, false);
+  assert.equal(inspected.safeForFixedUnset, false);
+  assert.equal(inspected.mutationPerformed, false);
+  assert.equal(f.mutationCount(), 0);
+});
+
 test('mailbox serves read-only Git worktree/config inspection before Commander health', async t => {
   const f = realMailboxRepository(t);
   const env = { ...process.env, USERPROFILE: f.home };
