@@ -375,4 +375,3 @@ test('the summed all-attempt proof bound is enforced before job hydration', asyn
   assertHeld(result, 'personal-repository-prior-run-attempt-limit-exceeded');
   assert.equal(result.jobRequests.length, 0);
 });
-
