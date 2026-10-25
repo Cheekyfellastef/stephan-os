@@ -3,6 +3,7 @@ import { MAINTENANCE_RECOVERY_OPERATIONS, projectMaintenanceRecoveryReceiptV1 } 
 import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
   compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -2664,6 +2665,17 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
 
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
+  // Preserve only the existing typed owner failure, including its unknown exit,
+  // when byte-budget compaction removes optional diagnostics. This is no grant
+  // or fleet completion proof; command identities and native output stay private.
+  const fleetOwnerFailure = inner.remoteAction === FLEET_SUPERVISOR_ACTION && inner.ok === false
+    && inner.processId === FLEET_SUPERVISOR_ACTION && inner.maintenanceStatus === null
+    && inner.publicReceiptSafe === true && inner.secretMaterialReturned === false
+    && [SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+      'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'].includes(inner.executionBlocker)
+    && ['', 'ETIMEDOUT', 'ABORT_ERR'].includes(inner.errorCode)
+    ? { processId: FLEET_SUPERVISOR_ACTION, errorCode: inner.errorCode,
+      executionBlocker: inner.executionBlocker } : null;
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
     requestId: compactReceipt.requestId,
@@ -2695,6 +2707,10 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...(fleetOwnerFailure ? {
+          ...fleetOwnerFailure,
+          remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+        } : {}),
         ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
           ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
         ...(Array.isArray(inner?.completedSteps)

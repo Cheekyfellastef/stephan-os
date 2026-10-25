@@ -206,6 +206,53 @@ test('the terminal protocol requires one canonical final fleet marker and matchi
   assert.equal(custody({ status: 2 }, read(MARKER + JSON.stringify(failed), ACTION), ACTION), false);
 });
 
+test('rejected mandatory evidence cannot survive CLI serialization as successful maintenance', async () => {
+  const invalid = [];
+  for (const key of ['activeMissionCount', 'runningMissionCount', 'runnableGoalCount',
+    'availableSlotCount', 'dispatchCount', 'pickupPendingCount', 'provenPickupCount', 'heldGoalCount']) {
+    for (const value of [undefined, 'UNKNOWN', -1, 1.5, NaN, Infinity, 1_000_001]) {
+      invalid.push({ [key]: value });
+    }
+  }
+  invalid.push({ retryAdmission: null }, { admission: undefined }, { held: null },
+    { held: { count: 1, reasons: [], truncated: false } },
+    { dispatchCount: 0, provenPickupCount: 1 },
+    { dispatchCount: 1, pickupPendingCount: 0 }, { diagnosticOnly: false });
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+    spawnImpl() { assert.fail('fixture must not start a runtime process'); },
+  });
+  const root = '/tmp/stephanos-fleet-invalid-receipt-test';
+  const command = buildStephanosExecutionCommandEnvelopeV1({
+    catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: 'fleet-invalid-receipt-test', missionId: 'same-owner-mission',
+    operation: 'MAINTENANCE_ACTION', payload: { actionId: ACTION },
+  });
+  try {
+    for (const variant of invalid) {
+      const raw = receipt({ daemonMayReportGreen: true, ...variant });
+      assert.equal(project(raw, 0), null);
+      assert.equal(custody({ status: 0 }, raw, ACTION), false);
+      const terminal = serialize(raw), parsed = read(terminal.stdout, ACTION);
+      assert.equal(terminal.exitCode, 2, JSON.stringify(variant));
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.daemonMayReportGreen, false);
+      assert.equal(parsed.blocker, 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID');
+      assert.equal(custody({ status: 2 }, parsed, ACTION), false,
+        'invalid evidence is not proof of an unterminated process');
+      assert.equal(project(parsed, 2), null, 'public boundary rejects invalid protocol');
+      const executed = await executeSovereignCommanderCommandV1(command, {
+        repoRoot: root, withMaintenanceOwner: (request, run) => guardian.withMaintenanceOwner(request, run),
+        spawnSyncFn: () => ({ status: terminal.exitCode, stdout: terminal.stdout, stderr: '' }),
+      });
+      assert.equal(executed.ok, false);
+      assert.equal(executed.structuredContent.status, 2);
+      assert.equal(guardian.status().timeoutCustodyHeld, false);
+    }
+  } finally { guardian.stop(); }
+});
+
 test('compact terminal preserves every traversed custody-negative branch and actual held exit', () => {
   const variants = [];
   for (const field of ['errorCode', 'blocker', 'controlPlaneResidualBlocker']) {
