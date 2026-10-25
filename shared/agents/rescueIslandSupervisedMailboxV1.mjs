@@ -42,6 +42,25 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, requested: true, ...details });
 }
 
+function executionFail(command, blocker) {
+  const result = Object.freeze({
+    ok: false,
+    blocker,
+    finalVerdict: 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_BLOCKED',
+    operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+    requestId: text(command?.requestId),
+    taskId: text(command?.task?.taskId),
+    proofCompleted: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  });
+  return Object.freeze({
+    ...result,
+    verdict: 'COMMAND_EXECUTION_BLOCKED',
+    result,
+  });
+}
+
 function validateTask(task, expectedHead, commandExpiresAt) {
   if (!exactKeys(task, TASK_FIELDS)) return fail('RESCUE_ISLAND_REMOTE_TASK_FIELDS_INVALID');
   const expires = Date.parse(text(task.expiresAtUtc));
@@ -165,7 +184,7 @@ export async function executeRescueIslandSupervisedDocumentOnBattleBridge(comman
   const shape = validateRescueIslandSupervisedDocumentCommandShape(command);
   if (!shape.ok) return shape;
   const platform = options.platform || process.platform;
-  if (platform !== 'win32') return fail('RESCUE_ISLAND_REMOTE_WINDOWS_REQUIRED');
+  if (platform !== 'win32') return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_WINDOWS_REQUIRED');
   const run = typeof options.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
   const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
   const nativeHost = join(repositoryRoot, 'src', 'windows', 'Stephanos.RescueIslandHost',
@@ -187,30 +206,23 @@ export async function executeRescueIslandSupervisedDocumentOnBattleBridge(comman
       env: rescueIslandGovernorEnvironmentV1(options.env || process.env),
     });
   } catch {
-    return fail('RESCUE_ISLAND_REMOTE_NATIVE_LAUNCH_FAILED');
+    return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_NATIVE_LAUNCH_FAILED');
   }
   const stdout = String(execution?.stdout || '');
   if (Buffer.byteLength(stdout, 'utf8') > 262144 || stdout.trim().split(/\r?\n/).length !== 1) {
-    return fail('RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
+    return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
   }
   let result;
   try { result = JSON.parse(stdout.trim()); } catch {
-    return fail('RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
+    return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
   }
   if (execution?.error || execution?.status !== 0) {
     const blocker = BLOCKER.test(text(result?.blocker))
       ? text(result.blocker) : 'RESCUE_ISLAND_REMOTE_EXECUTION_HELD';
-    return fail(blocker, {
-      operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
-      requestId: text(shape.command.requestId),
-      taskId: shape.command.task.taskId,
-      proofCompleted: false,
-      publicReceiptSafe: true,
-      secretMaterialReturned: false,
-    });
+    return executionFail(shape.command, blocker);
   }
   const build = projectSuccessfulBuild(result, shape.command.task, shape.command.commentId);
-  if (!build) return fail('RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
+  if (!build) return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
   const operationResult = Object.freeze({
     ok: true,
     finalVerdict: build.finalVerdict,
