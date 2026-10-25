@@ -28,6 +28,7 @@ import {
   validateBattleBridgeLocalGitConfiguration,
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
@@ -88,6 +89,7 @@ function structuredSourceTruthBlocker({
   behindCount = 0,
   workingTreeDirty = false,
   statusAssessment = null,
+  sourceStep = '',
   extra = {},
 } = {}) {
   return Object.freeze({
@@ -108,6 +110,8 @@ function structuredSourceTruthBlocker({
     blocker: Object.freeze({
       id,
       code,
+      ...(code === 'FIXED_AUTHORITY_GIT_FAILED'
+        ? { sourceStep: projectMaintenanceSourceDiagnosticV1(code, sourceStep).sourceStep } : {}),
       detail,
       nextOperatorAction: 'Use the bounded Battle Bridge source-recovery route to restore a clean canonical main checkout, then retry Ignition.',
     }),
@@ -169,6 +173,7 @@ export function collectCanonicalIgnitionSourceTruth({
       if (allowFailure) return null;
       const error = new Error(`${label}:${result?.error?.message || result?.status || 'UNKNOWN_FIXED_GIT_FAILURE'}`);
       error.code = 'FIXED_AUTHORITY_GIT_FAILED';
+      error.sourceStep = label;
       throw error;
     }
     return String(result?.stdout || '');
@@ -472,6 +477,7 @@ export function collectCanonicalIgnitionSourceTruth({
   } catch (error) {
     return structuredSourceTruthBlocker({
       code: error?.code || 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
+      sourceStep: error?.sourceStep,
       detail: `Canonical source truth could not be proven through fixed Git (${error?.message || 'unknown failure'}).`,
       extra: { error: error?.message || String(error) },
     });
