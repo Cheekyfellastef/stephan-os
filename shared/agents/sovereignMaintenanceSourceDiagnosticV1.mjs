@@ -1,5 +1,6 @@
 // Diagnostic vocabulary from the canonical source collector and its existing
 // topology/configuration/runtime-directory checks. No source or custody proof.
+import { projectBattleBridgeGitConfigurationDiagnosticV1 } from './battleBridgeGitConfigurationDiagnosticV1.mjs';
 const sourceCodes = new Set([
   'CANONICAL_CHECKOUT_DIRTY', 'CANONICAL_GIT_CONFIGURATION_CHANGED', 'CANONICAL_GIT_CONFIGURATION_INVALID',
   'CANONICAL_GIT_METADATA_SCAN_FAILED', 'CANONICAL_GIT_METADATA_SCAN_LIMIT_EXCEEDED',
@@ -19,11 +20,14 @@ const sourceSteps = new Set([
   'source-status-final', 'source-tracked-visibility-final', 'source-heads-final',
 ]);
 
-export function projectMaintenanceSourceDiagnosticV1(code, step) {
+export function projectMaintenanceSourceDiagnosticV1(code, step, configuration) {
   const sourceCode = typeof code === 'string' && sourceCodes.has(code) ? code : 'UNKNOWN';
   return Object.freeze({ sourceCode,
     ...(sourceCode === 'FIXED_AUTHORITY_GIT_FAILED' ? {
       sourceStep: typeof step === 'string' && sourceSteps.has(step) ? step : 'UNKNOWN',
+    } : {}),
+    ...(['CANONICAL_GIT_CONFIGURATION_INVALID', 'CANONICAL_GIT_CONFIGURATION_CHANGED'].includes(sourceCode) ? {
+      sourceConfiguration: projectBattleBridgeGitConfigurationDiagnosticV1(configuration),
     } : {}),
   });
 }

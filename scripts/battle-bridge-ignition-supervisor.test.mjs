@@ -414,6 +414,49 @@ test('attacker-configured origin is rejected before fetch even when PATH and amb
   assert.equal(calls[0].options.env.GIT_SSH_COMMAND, undefined);
 });
 
+test('configuration refusal reports only closed predicates and the actual existing read phase', () => {
+  const baseline = 'remote.origin.url\n' + BATTLE_BRIDGE_CANONICAL_REMOTE_URL + '\0';
+  const privateConfiguration = baseline
+    + 'remote.origin.url\nhttps://PRIVATE:SECRET@example.invalid/repo.git\0'
+    + 'credential.https://PRIVATE:SECRET@example.invalid.helper\nPRIVATE command\0'
+    + 'core.untrackedcache\ntrue\0';
+  for (const [fixture, stage, code, diagnostic] of [
+    [{ configurationBefore: privateConfiguration }, 'BEFORE_FETCH', 'CANONICAL_GIT_CONFIGURATION_INVALID',
+      { originCount: 'MULTIPLE', originMatch: 'NONCANONICAL', riskCategories: ['CORE_UNTRACKED_CACHE', 'CREDENTIAL'] }],
+    [{ configurationAfter: privateConfiguration }, 'AFTER_FETCH', 'CANONICAL_GIT_CONFIGURATION_INVALID',
+      { originCount: 'MULTIPLE', originMatch: 'NONCANONICAL', riskCategories: ['CORE_UNTRACKED_CACHE', 'CREDENTIAL'] }],
+    [{ configurationAfter: baseline + 'core.autocrlf\ntrue\0' }, 'AFTER_FETCH', 'CANONICAL_GIT_CONFIGURATION_CHANGED',
+      { originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [] }],
+  ]) {
+    const { result, calls } = runSourceCollectorFixture(fixture);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.code, code);
+    assert.deepEqual(result.blocker.sourceConfiguration, { stage, ...diagnostic });
+    assert.equal(calls.filter(call => call.operationArgs[0] === 'config').length, stage === 'BEFORE_FETCH' ? 1 : 2);
+    if (stage === 'BEFORE_FETCH') assert.deepEqual(calls.map(call => call.operationArgs[0]), ['config']);
+    const writes = [];
+    assert.equal(runCanonicalIgnitionSourceTruthReport({
+      sourceTruthFn: () => result, stdout: { write: chunk => writes.push(String(chunk)) },
+    }), 2);
+    const wire = writes.join('');
+    assert.deepEqual(JSON.parse(wire).blocker.sourceConfiguration, { stage, ...diagnostic });
+    assert.doesNotMatch(wire, /PRIVATE|SECRET|configurationProof|riskyKeys|https/);
+  }
+});
+
+test('allowed configuration diagnostics leave successful source truth and every fixed Git call unchanged', () => {
+  const baseline = runSourceCollectorFixture();
+  const configuration = 'remote.origin.url\n' + BATTLE_BRIDGE_CANONICAL_REMOTE_URL + '\0'
+    + 'core.hooksPath\n.githooks\0commit.gpgSign\nfalse\0tag.gpgSign\nFALSE\0'
+    + 'harmless.PRIVATE_SECRET\nPRIVATE SECRET value\0';
+  const allowed = runSourceCollectorFixture({ configurationBefore: configuration, configurationAfter: configuration });
+  assert.equal(allowed.result.ok, true);
+  assert.deepEqual(allowed.result, baseline.result);
+  assert.deepEqual(allowed.calls, baseline.calls);
+  assert.equal(allowed.topologyCalls, baseline.topologyCalls);
+  assert.deepEqual(allowed.topologyOptions, baseline.topologyOptions);
+});
+
 test('missing or noncanonical upstream blocks before the canonical fetch', () => {
   for (const upstreamBefore of [null, 'origin/feature']) {
     const { result, calls } = runSourceCollectorFixture({ upstreamBefore });
