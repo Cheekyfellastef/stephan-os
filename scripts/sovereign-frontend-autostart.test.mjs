@@ -76,6 +76,20 @@ test('source advancement before dispatch prevents mutation', async () => {
   const result = await runFrontendAutostart({ ...f.options, sourceReader: () => ++reads > 2 ? 'c'.repeat(40) : head });
   assert.equal(result.blocker, 'FRONTEND_AUTOSTART_SOURCE_CHANGED'); assert.equal(f.calls.some(call => call.method === 'tools/call'), false);
 });
+test('source advancement during an awaited reuse proof cannot publish ready', async () => {
+  const f = fixture(); let currentHead = head;
+  const result = await runFrontendAutostart({ ...f.options, sourceReader: () => currentHead,
+    proof: async () => { currentHead = 'c'.repeat(40); return { ready: true }; } });
+  assert.equal(result.ok, false); assert.equal(f.calls.some(call => call.method === 'tools/call'), false);
+});
+test('source advancement during awaited late completion proof cannot turn a failed command green', async () => {
+  const f = fixture(); let currentHead = head;
+  const originalProof = f.options.proof;
+  const result = await runFrontendAutostart({ ...f.options, sourceReader: () => currentHead,
+    proof: async () => { const served = await originalProof(); if (served.ready) currentHead = 'c'.repeat(40); return served; } });
+  assert.equal(result.ok, false); assert.equal(result.actionAttempted, true);
+  assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 1);
+});
 test('existing boot attempt prevents startup/logon duplicate mutation', async () => {
   const f = fixture();
   const result = await runFrontendAutostart({ ...f.options, claim: () => false });
@@ -123,9 +137,17 @@ test('real atomic workspace publication accepts both ready and blocked startup e
   const workspaceRoot = mkdtempSync(resolve(tmpdir(), 'stephanos-frontend-receipt-'));
   for (const actual of [{ ok: true, expectedHead: head, reusedExisting: true, actionAttempted: false },
     { ok: false, expectedHead: head, actionAttempted: true, commandVerdict: 'UNKNOWN', blocker: 'FRONTEND_AUTOSTART_SERVED_HEAD_UNPROVEN' }]) {
-    const written = await publishFrontendStartupResult(actual, { workspaceRoot, bootReader: () => witness });
+    const written = await publishFrontendStartupResult(actual, { workspaceRoot, bootReader: () => witness, sourceReader: () => head });
     assert.equal(written.ok, true, JSON.stringify(written));
     const record = JSON.parse(readFileSync(resolve(workspaceRoot, 'status/stephanos-frontend-autostart-current.json')));
     assert.deepEqual(record.result, actual);
   }
+});
+test('source change during the awaited publication boot probe refuses a READY receipt', async () => {
+  let currentHead = head, writes = 0;
+  await assert.rejects(publishFrontendStartupResult({ ok: true, expectedHead: head }, {
+    sourceReader: () => currentHead, bootReader: async () => { currentHead = 'c'.repeat(40); return witness; },
+    writer: async () => { writes++; return { ok: true }; },
+  }), /PUBLICATION_SOURCE_CHANGED/);
+  assert.equal(writes, 0);
 });

@@ -18,13 +18,16 @@ const wait = ms => new Promise(done => setTimeout(done, ms));
 const blocked = (blocker, extra = {}) => ({ schemaVersion: SCHEMA, ok: false, blocker, ...extra });
 
 export async function publishFrontendStartupResult(result, { workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
-  bootReader = readMaintenanceBootWitnessV1, writer = writeAtomicJson } = {}) {
+  bootReader = readMaintenanceBootWitnessV1, writer = writeAtomicJson,
+  sourceReader = readMaintenanceRecoverySourceV1 } = {}) {
+  const bootWitness = await bootReader();
+  if (result.ok && sourceReader() !== result.expectedHead) throw new Error('FRONTEND_STARTUP_PUBLICATION_SOURCE_CHANGED');
   const record = { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'stephanos-frontend-autostart-current',
     participantId: 'sovereign-commander', timestampUtc: new Date().toISOString(),
     status: result.ok ? 'READY' : 'ATTENTION_REQUIRED',
     summary: result.ok ? 'Normal frontend exact-head startup verified.' : 'Normal frontend startup remains unproven.',
-    reportSchema: SCHEMA, bootWitness: await bootReader(), result,
+    reportSchema: SCHEMA, bootWitness, result,
   };
   return writer(workspaceRoot, ['status', 'stephanos-frontend-autostart-current.json'], record, { durable: true });
 }
@@ -61,7 +64,11 @@ export async function runFrontendAutostart({
   try { expectedHead = sourceReader(); } catch { return blocked('FRONTEND_AUTOSTART_CANONICAL_SOURCE_UNPROVEN'); }
   if (!SHA.test(expectedHead || '')) return blocked('FRONTEND_AUTOSTART_CANONICAL_SOURCE_UNPROVEN');
   const ready = async () => {
-    try { return sourceReader() === expectedHead && (await proof(expectedHead))?.ready === true; }
+    try {
+      if (sourceReader() !== expectedHead) return false;
+      const served = await proof(expectedHead);
+      return served?.ready === true && sourceReader() === expectedHead;
+    }
     catch { return false; }
   };
   if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, reusedExisting: true, actionAttempted: false };
