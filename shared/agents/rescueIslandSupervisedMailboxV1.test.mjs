@@ -1,0 +1,135 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  executeRescueIslandSupervisedDocumentOnBattleBridge,
+  validateRescueIslandSupervisedDocumentCommandShape,
+} from './rescueIslandSupervisedMailboxV1.mjs';
+import {
+  executeBattleBridgeGitHubCommand,
+  validateBattleBridgeGitHubCommand,
+} from './battleBridgeGitHubCommandMailbox.mjs';
+
+const HEAD = 'a'.repeat(40);
+const EXPIRES = '2026-10-25T18:00:00.000Z';
+const CONTENT = '# Rescue Island pilot\n\nBounded Island02 documentation proof.\n';
+const task = () => ({
+  schemaVersion: 'stephanos.rescue-island-pilot-task.v1',
+  repository: 'Cheekyfellastef/stephan-os',
+  issueNumber: 3103,
+  issueTitle: 'Rescue Island: two independent proof-gated builders outside Goal Conveyor',
+  taskId: 'island02-mailbox-proof-01',
+  workerId: 'rescue-island-02',
+  baseHead: HEAD,
+  targetPath: 'docs/architecture/rescue-island-pilot-island02-mailbox-proof-01.md',
+  content: CONTENT,
+  testPath: 'shared/agents/rescueIslandPreflightV1.test.mjs',
+  approvalSource: 'EXTERNAL_OWNER_ATTESTATION_REQUIRED',
+  expiresAtUtc: EXPIRES,
+});
+const command = overrides => ({
+  schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+  requestId: 'island02-mailbox-proof-01',
+  operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  repository: 'Cheekyfellastef/stephan-os',
+  issueNumber: 3149,
+  branch: 'main',
+  operatorApproval: 'operator-approved',
+  expectedHead: HEAD,
+  expiresAt: EXPIRES,
+  commentId: 6399501164,
+  task: task(),
+  ...overrides,
+});
+const success = () => ({
+  ok: true,
+  workerId: 'rescue-island-02',
+  taskId: task().taskId,
+  head: 'b'.repeat(40),
+  parent: HEAD,
+  changedPath: task().targetPath,
+  testResultHash: 'c'.repeat(64),
+  receipts: ['SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP',
+    'EDITED', 'TESTED', 'ISOLATED_COMMIT'].map(stage => ({ stage })),
+  assuranceProfile: 'SUPERVISED_COOPERATIVE_V1',
+  ownerCommentId: 6399501164,
+  taskFingerprint: 'd'.repeat(64),
+  hostileWriterContainmentProven: false,
+  independentlyCommissionedWorker: false,
+  unattendedRefillsProven: false,
+  resourceScheduling: 'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK',
+  reviewRequired: true,
+  published: false,
+  merged: false,
+  deployed: false,
+});
+
+test('validates only the exact Island02 documentation envelope', () => {
+  assert.equal(validateRescueIslandSupervisedDocumentCommandShape(command()).ok, true);
+  assert.equal(validateRescueIslandSupervisedDocumentCommandShape(command({ path: 'C:\\private' })).blocker,
+    'RESCUE_ISLAND_REMOTE_FIELD_NOT_ALLOWED');
+  assert.equal(validateRescueIslandSupervisedDocumentCommandShape(command({
+    task: { ...task(), workerId: 'rescue-island-01' },
+  })).blocker, 'RESCUE_ISLAND_REMOTE_TASK_INVALID');
+});
+
+test('executes only the fixed native supervised ingress and projects all material stages', async () => {
+  let observed;
+  const result = await executeRescueIslandSupervisedDocumentOnBattleBridge(command(), {
+    platform: 'win32',
+    env: {},
+    spawnSyncFn(executable, args, options) {
+      observed = { executable, args, options };
+      return { status: 0, stdout: JSON.stringify(success()) + '\n', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(observed.args, ['--supervised-once']);
+  assert.equal(observed.options.shell, false);
+  assert.equal(JSON.parse(observed.options.input).commentId, 6399501164);
+  assert.deepEqual(result.result.rescueIslandBuild.stages, [
+    'SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP',
+    'EDITED', 'TESTED', 'ISOLATED_COMMIT',
+  ]);
+  assert.equal(result.result.rescueIslandBuild.commitHead, 'b'.repeat(40));
+  assert.equal(result.result.mergeAuthority, false);
+});
+
+test('does not attest an observed source head when native execution fails', async () => {
+  const result = await executeRescueIslandSupervisedDocumentOnBattleBridge(command(), {
+    platform: 'win32',
+    env: {},
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({ blocker: 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED' }) + '\n',
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(Object.hasOwn(result, 'sourceHead'), false);
+  assert.equal(Object.hasOwn(result, 'expectedHeadMatch'), false);
+  assert.equal(result.proofCompleted, false);
+});
+
+test('mailbox composition retains exact custom operation and executor', async () => {
+  const validated = validateBattleBridgeGitHubCommand(command(), {
+    authorLogin: 'Cheekyfellastef',
+    now: new Date('2026-10-25T17:55:00.000Z'),
+    currentHead: HEAD,
+  });
+  assert.equal(validated.ok, true);
+  let called = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    executeRescueIslandSupervisedDocumentOnBattleBridgeFn: async observed => {
+      called += 1;
+      assert.equal(observed.commentId, 6399501164);
+      return { ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE', result: { ok: true } };
+    },
+  });
+  assert.equal(called, 1);
+  assert.equal(result.ok, true);
+});
