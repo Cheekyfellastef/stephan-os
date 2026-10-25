@@ -74,7 +74,13 @@ async function captureWorkspaces(capture) {
   if (capture && (!active || !admittedOrigin(active.url, profile.allowedOrigins)))
     return { ok:false, blocker:'ACTIVE_STEPHANOS_WORKSPACE_REQUIRED' };
   const tabs = await chrome.tabs.query({});
-  const admitted = tabs.filter(t=>admittedOrigin(t.url, profile.allowedOrigins)).slice(0, MAX_TABS);
+  const candidates = tabs.filter(t=>admittedOrigin(t.url, profile.allowedOrigins));
+  // Keep the requested foreground capture inside the bound even when the
+  // browser returns many background workspaces before its active tab.
+  const admitted = (capture ? [
+    ...candidates.filter(t=>t.id === active.id),
+    ...candidates.filter(t=>t.id !== active.id),
+  ] : candidates).slice(0, MAX_TABS);
   const snapshots = [];
   for (const tab of admitted) {
     const origin = new URL(tab.url).origin;

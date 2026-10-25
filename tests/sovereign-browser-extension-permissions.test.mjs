@@ -40,12 +40,15 @@ test('permission request is synchronous with click, uses port-free pattern, and 
 });
 
 function setupWorker({ switchDuringScreenshot = false, childFrames = false, rejectAllFrames = false, realFrameOrigins,
-  captureTransition, screenshotError = false } = {}) {
+  captureTransition, screenshotError = false, backgroundWorkspaceCount = 0 } = {}) {
   const listeners = {};
   const calls = { permissions: [], native: [], screenshots: 0, injected: [], domReadOrigins: [] };
   const configuredTab = { id: 7, windowId: 2, url: configuredOrigin + '/apps/music-tile/index.html' };
   const otherTab = { id: 8, windowId: 2, url: 'https://private.example/account' };
   const sameHostOtherPort = { id: 9, windowId: 3, url: 'http://localhost:8787/admin' };
+  const backgroundTabs = Array.from({length:backgroundWorkspaceCount},(_,index)=>({
+    id:100+index, windowId:2, url:`${configuredOrigin}/workspace/${index}`,
+  }));
   const browserListeners = { activated:new Set(), updated:new Set() };
   const event = listeners => ({addListener:fn=>listeners.add(fn),removeListener:fn=>listeners.delete(fn)});
   let activeQueries = 0;
@@ -70,7 +73,7 @@ function setupWorker({ switchDuringScreenshot = false, childFrames = false, reje
           return [switchDuringScreenshot && activeQueries > 1 ? otherTab : configuredTab];
         }
         if (args.currentWindow) return [configuredTab];
-        return [configuredTab, otherTab, sameHostOtherPort];
+        return [...backgroundTabs, configuredTab, otherTab, sameHostOtherPort];
       },
       captureVisibleTab: async () => {
         calls.screenshots++;
@@ -196,6 +199,26 @@ test('capture refuses changed active tab and never sends screenshot bytes to hos
   assert.equal(result.blocker, 'BROWSER_ACTIVE_TAB_CHANGED');
   assert.equal(calls.screenshots, 1);
   assert.equal(calls.native.filter((item) => item.action === 'record').length, 0);
+});
+test('capture reserves a bounded slot for the active workspace after eight background tabs',async()=>{
+  const {calls,message}=setupWorker({backgroundWorkspaceCount:8});
+  assert.equal((await message('witness-capture')).ok,true);
+  assert.equal(calls.screenshots,1);
+  const recorded=calls.native.find(item=>item.action==='record');
+  assert.equal(recorded.snapshots.length,8);
+  assert.equal(recorded.snapshots[0].active,true);
+  assert.equal(recorded.snapshots.filter(row=>row.active).length,1);
+  assert.equal(recorded.snapshots.filter(row=>row.screenshot).length,1);
+  assert.deepEqual(calls.injected.map(call=>call.target.tabId),[7,100,101,102,103,104,105,106]);
+});
+test('diagnostic scans retain the eight-tab bound without taking a foreground screenshot',async()=>{
+  const {calls,message}=setupWorker({backgroundWorkspaceCount:8});
+  assert.equal((await message('witness-scan')).ok,true);
+  assert.equal(calls.screenshots,0);
+  const recorded=calls.native.find(item=>item.action==='record');
+  assert.equal(recorded.snapshots.length,8);
+  assert.equal(recorded.snapshots.filter(row=>row.screenshot).length,0);
+  assert.deepEqual(calls.injected.map(call=>call.target.tabId),[100,101,102,103,104,105,106,107]);
 });
 for(const captureTransition of ['activation-aba','navigation-aba']) {
   test(`capture discards ${captureTransition} even when before and after tab IDs and URLs match`,async()=>{
