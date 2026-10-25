@@ -104,7 +104,13 @@ try {
     $entry=$replacements[$index]
     try {
       if($entry.existed -and [System.IO.File]::Exists($entry.backup)) {
-        if([System.IO.File]::Exists($entry.target)) { [System.IO.File]::Replace($entry.backup,$entry.target,$null) }
+        if([System.IO.File]::Exists($entry.target)) {
+          # PowerShell 5.1 converts $null string arguments to empty strings.
+          # Keep the replaced candidate in our stage instead of passing an
+          # invalid empty backup path to File.Replace during restoration.
+          $discardPath=Join-Path $stageRoot ('discard-' + $index)
+          [System.IO.File]::Replace($entry.backup,$entry.target,$discardPath)
+        }
         else { [System.IO.File]::Move($entry.backup,$entry.target) }
       } elseif(-not $entry.existed -and $entry.committed) { [System.IO.File]::Delete($entry.target) }
     } catch { [void]$rollbackFailures.Add('file') }
