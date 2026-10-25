@@ -63,6 +63,13 @@
       "issue": "#2972",
       "source": "shared/runtime/goalConveyorFleetCareSeedV1.mjs",
       "firstRung": "SEED_PLANTED"
+    },
+    {
+      "seedId": "openclaw-local-standalone-continuous-excellence",
+      "title": "OpenClaw Local & Standalone Continuous Excellence and Codex Task Parity",
+      "issue": "#3094",
+      "source": "shared/runtime/openClawExcellenceSeedV1.mjs",
+      "firstRung": "INVENTORY_BOTH_AGENTS"
     }
   ]
 }
