@@ -35,3 +35,25 @@ Windows/security review, protected merge and approved installation, real task
 definition readback, manual task reuse proof and a separately approved later full
 boot proving normal HTML/JS MIME/current marker and ignition. Source tests and a
 task definition alone do not prove restart-on-boot operation.
+
+## Source observation invariant after independent review
+
+Two related review findings exposed the same model error: an invalidated source
+observation was represented as ordinary frontend-not-ready, allowing fallthrough
+to mutation. The startup client now shares one source-bound observation model
+across reuse, guardian health, token/session setup, boot witness, waits, late
+completion and READY publication. Each awaited operation checks local HEAD before
+and after, including its exception path. Source change or unreadability is a
+distinct terminal `FRONTEND_AUTOSTART_SOURCE_CHANGED` state; it can never become
+an invitation to claim/dispatch because a readiness probe returned false.
+
+Adversarial sequence tests inject invalidation into every pre-dispatch awaited
+observation and require zero boot claims and zero maintenance calls. The existing
+guardian independently revalidates canonical source inside the registered repair;
+this client model does not replace that authority or seize a source lease.
+Full canonical admission (including fixed remote fetch and source hygiene) is
+required initially, again before boot claim/dispatch, and before returning READY.
+The local continuity checks reuse the existing fixed Git HEAD reader and do not
+fetch remotely on every transport await. READY publication retains full source
+admission around its native boot observation. A stable HEAD cannot excuse dirty
+or otherwise unprovable canonical source at an admission transition.

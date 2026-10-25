@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 import { loadSovereignCommanderToken } from './sovereign-commander-http.mjs';
 import { readMaintenanceBootWitnessV1, readMaintenanceRecoverySourceV1 } from './sovereign-maintenance-custody-store-v1.mjs';
-import { collectUi4173ServedExactHeadProof } from './battle-bridge-ui-4173-repair.mjs';
+import { collectUi4173ServedExactHeadProof, getUi4173RepairCurrentGitHead } from './battle-bridge-ui-4173-repair.mjs';
 import { sovereignControlPlaneGamingSafeV1 } from './sovereign-commander-control-plane-repair.mjs';
 import { writeAtomicJson, SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, SHARED_WORKSPACE_RECORD_KINDS } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
@@ -17,11 +17,28 @@ const SCHEMA = 'stephanos.frontend-autostart.v1';
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const blocked = (blocker, extra = {}) => ({ schemaVersion: SCHEMA, ok: false, blocker, ...extra });
 
+// A changed/unprovable source is an invalidated attempt, not an unavailable
+// service. Keep that state distinct across every awaited observation.
+export function createFrontendSourceBoundary(expectedHead, sourceReader) {
+  const assertCurrent = () => {
+    let current;
+    try { current = sourceReader(); } catch { /* Unprovable is invalidated. */ }
+    if (!SHA.test(expectedHead || '') || current !== expectedHead)
+      throw Object.assign(new Error('FRONTEND_AUTOSTART_SOURCE_CHANGED'), { code: 'FRONTEND_AUTOSTART_SOURCE_CHANGED' });
+  };
+  return Object.freeze({ assertCurrent, observe: async operation => {
+    assertCurrent();
+    try { const value = await operation(); assertCurrent(); return value; }
+    catch (error) { assertCurrent(); throw error; }
+  } });
+}
+
 export async function publishFrontendStartupResult(result, { workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
   bootReader = readMaintenanceBootWitnessV1, writer = writeAtomicJson,
   sourceReader = readMaintenanceRecoverySourceV1 } = {}) {
-  const bootWitness = await bootReader();
-  if (result.ok && sourceReader() !== result.expectedHead) throw new Error('FRONTEND_STARTUP_PUBLICATION_SOURCE_CHANGED');
+  const bootWitness = result.ok
+    ? await createFrontendSourceBoundary(result.expectedHead, sourceReader).observe(bootReader)
+    : await bootReader();
   const record = { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'stephanos-frontend-autostart-current',
     participantId: 'sovereign-commander', timestampUtc: new Date().toISOString(),
@@ -52,7 +69,8 @@ export function claimFrontendBootAttempt({ workspaceRoot, witness, expectedHead 
 }
 
 export async function runFrontendAutostart({
-  approved = false, sourceReader = readMaintenanceRecoverySourceV1,
+  approved = false, admissionReader = readMaintenanceRecoverySourceV1,
+  sourceReader = getUi4173RepairCurrentGitHead,
   bootReader = readMaintenanceBootWitnessV1, tokenReader = loadSovereignCommanderToken,
   workspaceRoot = resolveGoalDiscoveryWorkspaceV1(), claim = claimFrontendBootAttempt,
   fetchFn = fetch, sleep = wait, attempts = 12, gamingSafe = sovereignControlPlaneGamingSafeV1,
@@ -61,15 +79,25 @@ export async function runFrontendAutostart({
 } = {}) {
   if (approved !== true) return blocked('FRONTEND_AUTOSTART_INSTALL_APPROVAL_REQUIRED');
   let expectedHead;
-  try { expectedHead = sourceReader(); } catch { return blocked('FRONTEND_AUTOSTART_CANONICAL_SOURCE_UNPROVEN'); }
+  try { expectedHead = admissionReader(); } catch { return blocked('FRONTEND_AUTOSTART_CANONICAL_SOURCE_UNPROVEN'); }
   if (!SHA.test(expectedHead || '')) return blocked('FRONTEND_AUTOSTART_CANONICAL_SOURCE_UNPROVEN');
+  const boundary = createFrontendSourceBoundary(expectedHead, sourceReader);
+  // Full canonical admission (including fixed fetch/source hygiene) is distinct
+  // from cheap local HEAD continuity. Do not fetch on every transport await.
+  const admission = createFrontendSourceBoundary(expectedHead, admissionReader);
+  let actionAttempted = false;
+  try {
   const ready = async () => {
     try {
-      if (sourceReader() !== expectedHead) return false;
-      const served = await proof(expectedHead);
-      return served?.ready === true && sourceReader() === expectedHead;
+      const served = await boundary.observe(() => proof(expectedHead));
+      if (served?.ready !== true) return false;
+      admission.assertCurrent();
+      return true;
     }
-    catch { return false; }
+    catch (error) {
+      if (error?.code === 'FRONTEND_AUTOSTART_SOURCE_CHANGED') throw error;
+      return false;
+    }
   };
   if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, reusedExisting: true, actionAttempted: false };
   // Commander has its existing boot task. This adapter cannot bootstrap or
@@ -77,32 +105,30 @@ export async function runFrontendAutostart({
   let guardianReady = false;
   for (let i = 0; i < attempts; i++) {
     try {
-      const response = await fetchFn(BASE + '/health', { signal: AbortSignal.timeout(5000) });
-      const health = await response.json();
+      const response = await boundary.observe(() => fetchFn(BASE + '/health', { signal: AbortSignal.timeout(5000) }));
+      const health = await boundary.observe(() => response.json());
       const guardian = health.continuousRepairGuardian;
       guardianReady = response.ok && health.service === 'stephanos-sovereign-commander'
         && health.ok === true && guardian?.timeoutCustodyHeld === false
         && guardian.persistentCustody?.held === false && guardian.running === false
         && guardian.maintenanceInFlight === false;
-    } catch { guardianReady = false; }
+    } catch (error) { if (error?.code === 'FRONTEND_AUTOSTART_SOURCE_CHANGED') throw error; guardianReady = false; }
     if (guardianReady && gamingSafe()) break;
     guardianReady = false;
-    if (i + 1 < attempts) await sleep(5000);
+    if (i + 1 < attempts) await boundary.observe(() => sleep(5000));
   }
   if (!guardianReady) return blocked('FRONTEND_AUTOSTART_GUARDIAN_NOT_ADMITTED', { expectedHead, actionAttempted: false });
   let token, sessionId;
   const post = async (message, timeoutMs = 10000) => {
-    const response = await fetchFn(BASE + '/mcp', {
+    const response = await boundary.observe(() => fetchFn(BASE + '/mcp', {
       method: 'POST', signal: AbortSignal.timeout(timeoutMs),
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json', ...(sessionId ? { 'mcp-session-id': sessionId } : {}) },
       body: JSON.stringify(message),
-    });
-    const raw = await response.text();
+    }));
+    const raw = await boundary.observe(() => response.text());
     return { ok: response.ok, sessionId: response.headers.get('mcp-session-id'), body: raw ? JSON.parse(raw) : null };
   };
-  let actionAttempted = false;
-  try {
-    token = await tokenReader();
+    token = await boundary.observe(tokenReader);
     if (typeof token !== 'string' || token.length < 32) throw new Error('TOKEN_UNAVAILABLE');
     const init = await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
       protocolVersion: '2025-11-25', clientInfo: { name: 'stephanos-frontend-autostart', version: '1.0.0' }, capabilities: {},
@@ -114,10 +140,12 @@ export async function runFrontendAutostart({
     const maintenance = listed.body?.result?.tools?.find(tool => tool.name === 'maintenance_action');
     if (!initialized.ok || !listed.ok || !maintenance?.inputSchema?.properties?.actionId?.enum?.includes('repair-ui-4173'))
       throw new Error('FIXED_FRONTEND_ACTION_UNAVAILABLE');
-    if (sourceReader() !== expectedHead) return blocked('FRONTEND_AUTOSTART_SOURCE_CHANGED', { expectedHead, actionAttempted: false });
+    boundary.assertCurrent();
     if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, reusedExisting: true, actionAttempted: false };
-    const witness = await bootReader();
+    const witness = await boundary.observe(bootReader);
+    admission.assertCurrent();
     if (!gamingSafe()) return blocked('FRONTEND_AUTOSTART_GAMING_PROTECTION_HELD', { expectedHead, actionAttempted: false });
+    boundary.assertCurrent();
     if (!claim({ workspaceRoot, witness, expectedHead }))
       return blocked('FRONTEND_BOOT_ATTEMPT_ALREADY_RESERVED', { expectedHead, actionAttempted: false });
     actionAttempted = true;
@@ -133,10 +161,11 @@ export async function runFrontendAutostart({
       if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, actionAttempted,
         commandOk: response?.ok === true && response.body?.result?.isError !== true && command?.ok === true,
         commandVerdict: command?.finalVerdict || 'UNKNOWN', proofHash: command?.proofHash || '', servedExactHeadProven: true };
-      if (i + 1 < 12) await sleep(5000);
+      if (i + 1 < 12) await boundary.observe(() => sleep(5000));
     }
     return blocked('FRONTEND_AUTOSTART_SERVED_HEAD_UNPROVEN', { expectedHead, actionAttempted, commandVerdict: command?.finalVerdict || 'UNKNOWN' });
-  } catch { return blocked('FRONTEND_AUTOSTART_TRANSPORT_UNPROVEN', { expectedHead, actionAttempted }); }
+  } catch (error) { return blocked(error?.code === 'FRONTEND_AUTOSTART_SOURCE_CHANGED'
+    ? error.code : 'FRONTEND_AUTOSTART_TRANSPORT_UNPROVEN', { expectedHead, actionAttempted }); }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
