@@ -9,6 +9,7 @@ import {
   executeSovereignCommanderRemoteOnBattleBridge,
   inspectCanonicalGitWorktreeConfigV1,
   repairCanonicalGitWorktreeConfigV1,
+  validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -109,6 +110,30 @@ function realMailboxRepository(t) {
   git('commit', '--allow-empty', '-m', 'fixture');
   return { home, repositoryRoot, head: git('rev-parse', 'HEAD').trim(), git };
 }
+
+test('direct pre-admission Git config actions are excluded from remote plans', () => {
+  for (const actionId of [
+    'inspect-canonical-git-worktree-config',
+    'repair-canonical-git-worktree-config',
+  ]) {
+    const validated = validateSovereignCommanderRemoteCommandShape({
+      schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+      requestId: 'git-config-direct-only-plan-test',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      repository: 'Cheekyfellastef/stephan-os',
+      issueNumber: 3149,
+      branch: 'main',
+      operatorApproval: 'operator-approved',
+      expectedHead: HEAD,
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      remoteAction: '',
+      remotePlan: [actionId],
+    });
+    assert.equal(validated.ok, false);
+    assert.equal(validated.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+    assert.equal(validated.remoteAction, actionId);
+  }
+});
 
 test('the reusable read-only worktree/config inspection action is registered', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('inspect-canonical-git-worktree-config'));
