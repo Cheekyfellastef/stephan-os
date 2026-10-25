@@ -108,7 +108,7 @@ export function validateRescueIslandPilotTaskV1(task, nowUtc) {
     && Object.hasOwn(PILOT_ISSUES, task.issueNumber)
     && task.issueTitle === PILOT_ISSUES[task.issueNumber]
     && typeof task.taskId === 'string' && TASK.test(task.taskId)
-    && task.workerId === 'rescue-island-01'
+    && (task.workerId === 'rescue-island-01' || (task.workerId === 'rescue-island-02' && task.issueNumber === 3103))
     && typeof task.baseHead === 'string' && SHA.test(task.baseHead)
     && typeof task.targetPath === 'string' && SAFE_DOC.test(task.targetPath)
     && task.targetPath === 'docs/architecture/rescue-island-pilot-' + task.taskId + '.md'
@@ -531,7 +531,7 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
   if (value?.schemaVersion !== HOST_SNAPSHOT_SCHEMA
       || value.assuranceProfile !== SUPERVISED_PROFILE
       || value.repository !== REPO || value.taskId !== expected.taskId
-      || value.workerId !== 'rescue-island-01'
+      || value.workerId !== expected.workerId
       || value.taskFingerprint !== expected.taskFingerprint
       || value.commentId !== expected.commentId || value.sourceHead !== expected.baseHead
       || value.targetPath !== expected.targetPath
@@ -585,7 +585,7 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
             || path.split('/').some(part => ['.', '..', '.git', ''].includes(part))))
         fail('RESCUE_ISLAND_SUPERVISED_CLAIM_INVALID');
       const isOwn = domain === 2 && claim.taskId === expected.taskId
-        && claim.ownerIssueNumber === (expected.ownerIssueNumber || 3109) && claim.workerId === 'rescue-island-01'
+        && claim.ownerIssueNumber === (expected.ownerIssueNumber || 3109) && claim.workerId === expected.workerId
         && claim.worktreeBranch === value.sourceBranch
         && claim.worktreeIdentity === value.worktreeIdentity
         && JSON.stringify(claim.targetPaths) === JSON.stringify(expected.targetPaths || [expected.targetPath]);
@@ -594,7 +594,7 @@ function assertSupervisedObservation(value, expected, rootIdentity) {
         a = a.toLowerCase(); b = b.toLowerCase();
         return a === b || a.startsWith(b + '/') || b.startsWith(a + '/');
       };
-      if (claim.taskId === expected.taskId || (!sourcePlanClaimDisjoint(expected,claim) && claim.ownerIssueNumber === 3109)
+      if (claim.taskId === expected.taskId || (!sourcePlanClaimDisjoint(expected,claim) && claim.ownerIssueNumber === expected.ownerIssueNumber)
           || claim.worktreeBranch.toLowerCase() === value.sourceBranch.toLowerCase()
           || claim.worktreeIdentity.toLowerCase() === value.worktreeIdentity
           || claim.targetPaths.some(path => (expected.targetPaths || [expected.targetPath]).some(target=>clash(path,target))))
@@ -630,12 +630,15 @@ export function createRescueIslandSupervisedRunnerV1(host) {
     const task = copyPilotTask(request.task);
     const sourcePlan = task.schemaVersion === 'stephanos.rescue-island-source-task.v1'
       ? (await import('./rescueIslandSourceTaskV1.mjs')).inspectRescueIslandSourceTaskV1(task) : null;
+    const documentWorker = sourcePlan ? null : (await import('./rescueIslandPilotOwnerIntakeV1.mjs'))
+      .resolveRescueIslandSupervisedDocumentWorkerV1(task);
     if (sourcePlan ? !sourcePlan.valid
-      : (!validateRescueIslandPilotTaskV1(task, new Date().toISOString()) || task.issueNumber !== 3109))
+      : (!validateRescueIslandPilotTaskV1(task, new Date().toISOString()) || documentWorker?.issueNumber !== task.issueNumber))
       fail('RESCUE_ISLAND_EXTERNAL_TASK_INVALID');
     const expected = Object.freeze({ commentId: request.commentId,
       taskId: task.taskId, taskFingerprint: fingerprint(task), baseHead: task.baseHead,
       targetPath: task.targetPath, assuranceProfile: SUPERVISED_PROFILE,
+      workerId:task.workerId, ownerIssueNumber:task.issueNumber,
       ...(sourcePlan?{targetPaths:sourcePlan.targetPaths,ownerIssueNumber:task.issueNumber,taskKind:sourcePlan.taskKind,needsNativeObserver:sourcePlan.needsNativeObserver}:{}) });
     let invoked = false;
     let completed = false;
@@ -678,8 +681,10 @@ export function createRescueIslandSupervisedRunnerV1(host) {
         receiptMetadata: Object.freeze({ assuranceProfile: SUPERVISED_PROFILE,
           ownerCommentId: expected.commentId, taskFingerprint: expected.taskFingerprint,
           processId: process.pid, hostileWriterContainmentProven: false,
-          ...(sourcePlan?{taskKind:sourcePlan.taskKind,taskOwnerIssueNumber:task.issueNumber,
-            taskOwnerIssueTitle:task.issueTitle,executionOwnerIssueNumber:3109,
+          taskOwnerIssueNumber:task.issueNumber,taskOwnerIssueTitle:task.issueTitle,
+          executionOwnerIssueNumber:task.workerId==='rescue-island-02'?3103:3109,
+          resourceScheduling:'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK',
+          ...(sourcePlan?{taskKind:sourcePlan.taskKind,
             approvedTargetPaths:sourcePlan.targetPaths,approvedContentSha256:digest(task.content)}:{}),
           independentlyCommissionedWorker: false, unattendedRefillsProven: false }),
       });
