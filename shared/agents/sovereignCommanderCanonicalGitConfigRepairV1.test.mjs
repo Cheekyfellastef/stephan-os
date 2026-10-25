@@ -26,9 +26,11 @@ function fixture({
   extraRisk = '',
   configuredValues = ['true'],
   worktreeRoots = ['/fixture/Documents/GitHub/stephan-os'],
+  linkedWorktreeMetadataPresent = null,
   failAfterUnsetRead = false,
 } = {}) {
   let extensionPresent = true;
+  const linkedMetadataPresent = linkedWorktreeMetadataPresent ?? worktreeRoots.length > 1;
   const calls = [];
   const spawnSyncFn = (_command, args, options = {}) => {
     calls.push([...args]);
@@ -69,7 +71,12 @@ function fixture({
     spawnSyncFn,
     calls,
     inspectTopologyFn: () => ({ ok: true, blocker: '', stableIdentities: {} }),
-    existsFn: () => worktreeConfigPresent,
+    existsFn: candidate => {
+      const normalized = String(candidate || '').replaceAll('\\', '/');
+      if (normalized.endsWith('/.git/worktrees')) return linkedMetadataPresent;
+      if (normalized.endsWith('/.git/config.worktree')) return worktreeConfigPresent;
+      return false;
+    },
     mutationCount: () => calls.filter(args =>
       args.join('\u0001').endsWith('config\u0001--local\u0001--unset-all\u0001extensions.worktreeConfig')).length,
   };
@@ -169,7 +176,7 @@ test('read-only inspection proves one-worktree repair eligibility without mutati
   assert.equal(JSON.stringify(inspected).includes('/fixture/'), false);
 });
 
-test('read-only inspection exposes linked worktree state without paths and never mutates', () => {
+test('read-only inspection fails closed on any linked-worktree metadata without paths or mutation', () => {
   const f = fixture({
     worktreeRoots: ['/fixture/Documents/GitHub/stephan-os', '/fixture/linked'],
   });
@@ -182,9 +189,8 @@ test('read-only inspection exposes linked worktree state without paths and never
     inspectTopologyFn: f.inspectTopologyFn,
     existsFn: f.existsFn,
   });
-  assert.equal(inspected.ok, true);
-  assert.equal(inspected.registeredWorktreeCount, 2);
-  assert.equal(inspected.linkedWorktreeCount, 1);
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
   assert.equal(inspected.safeForFixedUnset, false);
   assert.equal(inspected.mutationPerformed, false);
   assert.equal(JSON.stringify(inspected).includes('/fixture/linked'), false);
@@ -211,10 +217,9 @@ test('read-only inspection reports nonempty worktree config as repair-held witho
   assert.equal(f.mutationCount(), 0);
 });
 
-test('read-only inspection stops on the total action deadline before further worktree probes', () => {
-  const f = fixture({
-    worktreeRoots: ['/fixture/Documents/GitHub/stephan-os', '/fixture/linked'],
-  });
+test('read-only inspection stops on the total action deadline before config probes', () => {
+  const f = fixture();
+  let budgetChecks = 0;
   const inspected = inspectCanonicalGitWorktreeConfigV1({
     repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
     expectedHead: HEAD,
@@ -223,7 +228,7 @@ test('read-only inspection stops on the total action deadline before further wor
     spawnSyncFn: f.spawnSyncFn,
     inspectTopologyFn: f.inspectTopologyFn,
     existsFn: f.existsFn,
-    remainingTimeoutMsFn: () => f.calls.length < 5 ? 10_000 : 0,
+    remainingTimeoutMsFn: () => ++budgetChecks < 4 ? 10_000 : 0,
   });
   assert.equal(inspected.ok, false);
   assert.equal(inspected.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
@@ -457,8 +462,53 @@ test('real Git: linked worktree is refused before repository-wide extension muta
 });
 
 
-test('worktree-aware inspection resolves the verified repository with -C rather than forced git-dir/work-tree', () => {
+
+test('inspection never invokes git worktree list after canonical topology proof', () => {
   const f = fixture();
+  const guarded = (_command, args, options) => {
+    if (args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain')) {
+      throw new Error('git worktree list must not be invoked');
+    }
+    return f.spawnSyncFn(_command, args, options);
+  };
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: guarded,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.safeForFixedUnset, true);
+  assert.equal(f.calls.some(args => args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain')), false);
+});
+
+test('fixed repair never invokes git worktree list and still performs the sole safe mutation', () => {
+  const f = fixture();
+  const guarded = (_command, args, options) => {
+    if (args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain')) {
+      throw new Error('git worktree list must not be invoked');
+    }
+    return f.spawnSyncFn(_command, args, options);
+  };
+  const repaired = repairCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: guarded,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.mutationPerformed, true);
+  assert.equal(f.mutationCount(), 1);
+});
+
+test('linked-worktree metadata alone is sufficient to hold inspection and repair before mutation', () => {
+  const f = fixture({ linkedWorktreeMetadataPresent: true });
   const inspected = inspectCanonicalGitWorktreeConfigV1({
     repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
     expectedHead: HEAD,
@@ -468,55 +518,10 @@ test('worktree-aware inspection resolves the verified repository with -C rather 
     inspectTopologyFn: f.inspectTopologyFn,
     existsFn: f.existsFn,
   });
-  assert.equal(inspected.ok, true);
-  const call = f.calls.find(args => args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain'));
-  assert.ok(call);
-  assert.equal(call.includes('-C'), true);
-  assert.equal(call[call.indexOf('-C') + 1], '/fixture/Documents/GitHub/stephan-os');
-  assert.equal(call.some(arg => arg.startsWith('--git-dir=')), false);
-  assert.equal(call.some(arg => arg.startsWith('--work-tree=')), false);
-});
-
-test('fixed one-key repair uses the same worktree-aware enumeration before mutation', () => {
-  const f = fixture();
+  assert.equal(inspected.ok, false);
+  assert.equal(inspected.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
   const repaired = invoke(f);
-  assert.equal(repaired.ok, true);
-  const call = f.calls.find(args => args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain'));
-  assert.ok(call);
-  assert.equal(call.includes('-C'), true);
-  assert.equal(call.some(arg => arg.startsWith('--git-dir=')), false);
-  assert.equal(call.some(arg => arg.startsWith('--work-tree=')), false);
-  assert.equal(f.mutationCount(), 1);
-});
-
-test('worktree inspection and repair do not depend on the failing forced git-dir worktree-list form', () => {
-  const base = fixture();
-  const guarded = (_command, args, options) => {
-    const tail = args.join('\u0001');
-    if (tail.endsWith('worktree\u0001list\u0001--porcelain')
-        && args.some(arg => arg.startsWith('--git-dir='))) {
-      return result(128, '');
-    }
-    return base.spawnSyncFn(_command, args, options);
-  };
-  const inspected = inspectCanonicalGitWorktreeConfigV1({
-    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
-    expectedHead: HEAD,
-    platform: 'linux',
-    environment: {},
-    spawnSyncFn: guarded,
-    inspectTopologyFn: base.inspectTopologyFn,
-    existsFn: base.existsFn,
-  });
-  assert.equal(inspected.ok, true);
-  const repaired = repairCanonicalGitWorktreeConfigV1({
-    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
-    expectedHead: HEAD,
-    platform: 'linux',
-    environment: {},
-    spawnSyncFn: guarded,
-    inspectTopologyFn: base.inspectTopologyFn,
-    existsFn: base.existsFn,
-  });
-  assert.equal(repaired.ok, true);
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
+  assert.equal(f.mutationCount(), 0);
 });
