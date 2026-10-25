@@ -12,15 +12,53 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const fail = blocker => Object.freeze({ ok: false, requested: true, verdict: 'BLOCKED', blocker,
   custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false });
 
+// Exact native failure vocabulary only. A diagnostic is never custody, source,
+// boot, approval or execution proof, and cannot reveal an error's private text.
+const fixedDiagnosticCodes = new Set([
+  'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+  'NATIVE_WINDOWS_BOOT_WITNESS_REQUIRED', 'WINDOWS_BOOT_WITNESS_UNAVAILABLE', 'WINDOWS_BOOT_WITNESS_INVALID',
+  'CUSTODY_DIRECTORY_UNSAFE', 'CUSTODY_AUTHENTICATION_REQUIRED',
+  'CUSTODY_RECORD_AUTHENTICATION_FAILED', 'CUSTODY_RECORD_UNSAFE', 'CUSTODY_RECORD_INVALID', 'CUSTODY_RECORD_UNBOUNDED',
+  'MAINTENANCE_OS_ANCHOR_UNAVAILABLE', 'MAINTENANCE_OS_ANCHOR_IDENTITY_INVALID',
+  'MAINTENANCE_OS_ANCHOR_ENCODING_INVALID', 'MAINTENANCE_OS_ANCHOR_AUTHENTICATION_FAILED',
+  'MAINTENANCE_OS_ANCHOR_UNPROVEN', 'MAINTENANCE_OS_ANCHOR_UNBOUNDED',
+  'MAINTENANCE_OS_ANCHOR_PREVIOUS_ID_REQUIRED', 'MAINTENANCE_OS_ANCHOR_APPEND_UNPROVEN',
+  'MAINTENANCE_CUSTODY_STATE_MISSING', 'MAINTENANCE_CUSTODY_RESERVED', 'MAINTENANCE_CUSTODY_STATE_UNPROVEN',
+  'MAINTENANCE_CUSTODY_RESERVATION_UNPROVEN',
+  'LEGACY_MAINTENANCE_REPORT_UNBOUNDED', 'LEGACY_MAINTENANCE_EXACT_LIVE_HOLD_REQUIRED',
+]);
+const filesystemDiagnosticCodes = new Set([
+  'ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EISDIR', 'EEXIST', 'ELOOP', 'EBUSY', 'EIO', 'ENOSPC', 'EROFS',
+]);
+const diagnosticCodes = new Set([...fixedDiagnosticCodes, ...filesystemDiagnosticCodes, 'TIMEOUT', 'UNKNOWN']);
+const diagnostic = code => Object.freeze({
+  code: typeof code === 'string' && diagnosticCodes.has(code) ? code : 'UNKNOWN', diagnosticOnly: true,
+});
+const blockerDiagnostic = code => diagnostic(fixedDiagnosticCodes.has(code) ? code : 'UNKNOWN');
+function caughtDiagnostic(error) {
+  try {
+    if (fixedDiagnosticCodes.has(error?.message)) return diagnostic(error.message);
+    if (error?.name === 'TimeoutError' || error?.code === 'ETIMEDOUT') return diagnostic('TIMEOUT');
+    if (filesystemDiagnosticCodes.has(error?.code)) return diagnostic(error.code);
+  } catch { /* Malformed errors are unknown, never a reason to expose raw data. */ }
+  return diagnostic('UNKNOWN');
+}
+
 export function projectMaintenanceRecoveryReceiptV1(value = {}, operation = '') {
   if (!MAINTENANCE_RECOVERY_OPERATIONS.includes(operation)) return {};
   value = value?.maintenanceRecovery || value || {};
+  const detail = value.diagnostic;
+  const typedDiagnostic = detail && typeof detail === 'object' && !Array.isArray(detail)
+    && detail.diagnosticOnly === true;
   return { maintenanceRecovery: Object.freeze({
     originalHoldMatched: value.originalHoldMatched === true,
     prepared: value.prepared === true, held: value.held === true,
     digest: hash.test(value.digest ?? '') ? value.digest : '',
     cycleId: uuid.test(value.cycleId ?? '') ? value.cycleId : '',
     reportSha256: hash.test(value.reportSha256 ?? '') ? value.reportSha256 : '',
+    ...(Object.hasOwn(value, 'diagnostic') ? {
+      diagnostic: diagnostic(typedDiagnostic ? detail.code : 'UNKNOWN'),
+    } : {}),
     custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false,
   }) };
 }
@@ -71,7 +109,9 @@ export async function executeMaintenanceRecoveryOnBattleBridge(command, options 
     return Object.freeze({ ok: proven,
       verdict: proven ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
       operation: command.operation, requestId: command.requestId, expectedHead: command.expectedHead,
-      ...(proven ? {} : { blocker: 'RECOVERY_MAILBOX_RECOVERY_UNPROVEN' }),
+      ...(proven ? (status?.held === true && Object.hasOwn(status, 'blocker')
+        ? { diagnostic: blockerDiagnostic(status.blocker) } : {})
+        : { blocker: 'RECOVERY_MAILBOX_RECOVERY_UNPROVEN', diagnostic: blockerDiagnostic(result?.blocker) }),
       originalHoldMatched: result?.originalHoldMatched === true,
       prepared: preparing && proven, held: status?.held === true,
       digest: hash.test(status?.digest ?? '') ? status.digest : '',
@@ -80,5 +120,7 @@ export async function executeMaintenanceRecoveryOnBattleBridge(command, options 
       custodyReleased: false, pcRestartAllowed: false, sourceLeaseReleased: false,
       arbitraryShellAllowed: false, mergeAuthority: false,
     });
-  } catch { return fail('RECOVERY_MAILBOX_RECOVERY_UNPROVEN'); }
+  } catch (error) {
+    return Object.freeze({ ...fail('RECOVERY_MAILBOX_RECOVERY_UNPROVEN'), diagnostic: caughtDiagnostic(error) });
+  }
 }
