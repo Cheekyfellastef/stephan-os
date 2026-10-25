@@ -88,18 +88,26 @@ test('worker health requires a measured age within the existing five minute wind
 });
 
 test('Core gaming posture uses canonical VR governor state and never admits unknown local work', async () => {
+  const now = Date.now();
   const normal = {
     schemaVersion: 'stephanos.vr-resource-governor.v1',
-    active: false, phase: 'NORMAL',
+    governorVersion: 3, updatedAtUtc: new Date(now).toISOString(),
+    active: false, phase: 'NORMAL', flatGameActive: false, airLinkActive: false,
+    realAirLinkActive: false, virtualAirLinkTestActive: false, prepareLeaseActive: false,
   };
-  assert.equal(coreGamingProtectionFromGovernor(normal), false);
+  assert.equal(coreGamingProtectionFromGovernor(normal, now), false);
   for (const state of [
     null, {}, { ...normal, active: 'false' },
     { ...normal, schemaVersion: 'other' },
     { ...normal, active: true, phase: 'GAMING' },
     { ...normal, active: true, phase: 'COOLDOWN' },
     { ...normal, active: false, phase: 'GAMING' },
-  ]) assert.equal(coreGamingProtectionFromGovernor(state), true);
+    { ...normal, updatedAtUtc: new Date(now - 15001).toISOString() },
+    { ...normal, updatedAtUtc: new Date(now + 1).toISOString() },
+    { ...normal, updatedAtUtc: undefined }, { ...normal, governorVersion: 2 },
+    ...['flatGameActive','airLinkActive','realAirLinkActive','virtualAirLinkTestActive','prepareLeaseActive']
+      .flatMap(key => [{ ...normal, [key]: true }, { ...normal, [key]: undefined }]),
+  ]) assert.equal(coreGamingProtectionFromGovernor(state, now), true);
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /gamingStatePath = resolve\(workspaceRoot, 'vr', 'vr-resource-governor-current\.json'\)/);
   assert.match(source, /coreGamingProtectionFromGovernor\(JSON\.parse\(await readFile\(gamingStatePath, 'utf8'\)\)\)/);
@@ -107,4 +115,19 @@ test('Core gaming posture uses canonical VR governor state and never admits unkn
   assert.match(source, /if \(state\.gamingActive === true\) \{/);
   assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_GAMING_PROTECTED/);
   assert.doesNotMatch(source, /resolve\(workspaceRoot, 'status', 'vr-resource-governor-current\.json'\)/);
+});
+
+test('unknown heartbeat ages never coerce to fresh worker evidence', () => {
+  for (const age of [null, undefined, '', false, true, '0', NaN, Infinity, -1]) {
+    const state = projectStephanosCoreDaemonState({ sourceHead: HEAD,
+      sovereignCommanderHealthy: true, backendHealthy: true, gamingActive: false,
+      missionWorkerHeartbeatAgeMs: age });
+    assert.equal(state.missionWorkerHeartbeatAgeMs, null);
+    assert.equal(state.missionWorkerHealthy, false);
+    assert.equal(state.readiness, 'DEGRADED');
+  }
+  for (const gamingActive of [undefined, null, 'false', 0]) {
+    const state = projectStephanosCoreDaemonState({ sourceHead: HEAD, gamingActive });
+    assert.equal(state.computePosture, 'GAMING_PROTECTED');
+  }
 });

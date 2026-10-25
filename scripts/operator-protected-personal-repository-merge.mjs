@@ -289,7 +289,7 @@ async function currentWorkflowExecution(context) {
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
   const authorization = await proveMailboxAuthorization(context, run);
   const dispatchRuns = (await apiCollection(
-    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
+    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch&head_sha=${context.dispatch.identity.baseSha}`,
     'workflow_runs',
   )).items;
   let execution = validatePersonalRepositoryDispatchExecution({
