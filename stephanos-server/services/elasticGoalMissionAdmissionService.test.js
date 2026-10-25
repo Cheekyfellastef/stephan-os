@@ -23,7 +23,7 @@ function acceptanceGoalRecord(requiredTests, overrides = {}) {
 
 test('admitted owner tests stay independent of mutation scope and survive worktree phase and actual queue claim', async () => {
   const command = 'node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs';
-  const record = acceptanceGoalRecord([command]);
+  const record = acceptanceGoalRecord(['npm run stephanos:verify', command]);
   const plan = planElasticGoalMissionAdmissions(scheduler([goal(2314, record.resourceIds)]), [], { goalRecords: [record] });
   assert.equal(plan.admitted.length, 1);
   const input = plan.admitted[0].missionInput;
