@@ -16,15 +16,34 @@ const DEFAULT_ORIGINS = Object.freeze([
 const MAX_TABS = 8;
 const REPO_ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DEFAULT_PROOF_ROOT = resolve(REPO_ROOT, '.stephanos', 'local-state-checkpoints', 'sovereign-browser-observation');
-const DEFAULT_NATIVE_RECEIPTS = resolve(REPO_ROOT, '.stephanos', 'local-state-checkpoints', 'sovereign-browser-native-host', 'receipts');
+const NATIVE_HOST_ROOT = resolve(REPO_ROOT, '.stephanos', 'local-state-checkpoints', 'sovereign-browser-native-host');
+const DEFAULT_NATIVE_RECEIPT_ROOTS = Object.freeze([
+  ...['chrome', 'edge', 'brave'].map(browser => resolve(NATIVE_HOST_ROOT, browser, 'receipts')),
+  // Continue reading a prior single-browser install without changing its files
+  // or registry entry when a different browser is installed.
+  resolve(NATIVE_HOST_ROOT, 'receipts'),
+]);
 const NATIVE_MAX_AGE_MS = 10 * 60 * 1000;
+// Keep this order aligned with the fixed native host's unsigned sample.
+// This validates receipt integrity; it is not a signer or hostile-writer proof.
+const NATIVE_SAMPLE_KEYS = Object.freeze([
+  'schemaVersion', 'observedAtUtc', 'mechanism', 'readOnly', 'observationOnly',
+  'servedHeadVerified', 'functionalAcceptanceVerified', 'connectedTabCount',
+  'admittedTabCount', 'observedTabCount', 'diagnosticTabCount', 'screenshotCount',
+  'scanOnly', 'observations', 'screenshots',
+]);
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const clean = (value) => String(value ?? '').trim();
 const safeCount = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0;
 
 export function parseBrowserObservationArguments(args = []) {
-  // The remote fixed action accepts no URL, CDP endpoint, shell, profile, or flag.
-  return Object.freeze(args.length === 0 ? { ok: true } : { ok: false, blocker: 'BROWSER_OBSERVATION_ARGUMENT_NOT_ALLOWED' });
+  // The remote registry fixes the read-only mode. Its caller cannot request
+  // another mode, URL, endpoint, shell or profile. Empty args remain the local
+  // operator's separately opted-in diagnostic CLI.
+  if (args.length === 0) return Object.freeze({ ok: true, nativeReceiptOnly: false });
+  if (args.length === 1 && args[0] === '--native-receipt-only')
+    return Object.freeze({ ok: true, nativeReceiptOnly: true });
+  return Object.freeze({ ok: false, blocker: 'BROWSER_OBSERVATION_ARGUMENT_NOT_ALLOWED' });
 }
 
 export function admittedBrowserOrigins(env = {}) {
@@ -93,40 +112,65 @@ export function summarizeDomObservation(dom = {}) {
 }
 
 export async function readNativeBrowserObservation({
-  nativeReceiptRoot = DEFAULT_NATIVE_RECEIPTS,
+  nativeReceiptRoot,
   now = () => new Date(),
 } = {}) {
-  let names;
-  try { names = await readdir(nativeReceiptRoot); }
-  catch { return null; }
-  for (const name of names.filter((item) => /^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.json$/.test(item)).sort().reverse().slice(0, 24)) {
+  const roots = nativeReceiptRoot === undefined ? DEFAULT_NATIVE_RECEIPT_ROOTS : [nativeReceiptRoot];
+  const candidates = [];
+  for (const root of roots) {
     try {
-      const full = resolve(nativeReceiptRoot, name);
+      const names = await readdir(root);
+      candidates.push(...names.filter((item) => /^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.json$/.test(item))
+        .sort().reverse().slice(0, 24).map(name => ({ root, name })));
+    } catch { /* A browser need not be installed. */ }
+  }
+  for (const { root, name } of candidates.sort((a, b) => b.name.localeCompare(a.name)).slice(0, 24)) {
+    try {
+      const full = resolve(root, name);
       const metadata = await lstat(full);
       if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 70_000) continue;
       const receipt = JSON.parse(await readFile(full, 'utf8'));
-      if (receipt.schemaVersion !== BROWSER_OBSERVATION_SCHEMA
+      if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+        || Object.keys(receipt).length !== NATIVE_SAMPLE_KEYS.length + 1
+        || NATIVE_SAMPLE_KEYS.some(key => !Object.hasOwn(receipt, key))
+        || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')
+        || !name.endsWith(`-${receipt.evidenceHash.slice(0, 16)}.json`)
+        || sha256(JSON.stringify(Object.fromEntries(NATIVE_SAMPLE_KEYS.map(key => [key, receipt[key]])))) !== receipt.evidenceHash
+        || receipt.schemaVersion !== BROWSER_OBSERVATION_SCHEMA
         || receipt.mechanism !== 'operator-permissioned-chromium-native-messaging'
         || receipt.readOnly !== true || receipt.observationOnly !== true
         || receipt.servedHeadVerified !== false || receipt.functionalAcceptanceVerified !== false
         || typeof receipt.scanOnly !== 'boolean') continue;
+      if (typeof receipt.observedAtUtc !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(receipt.observedAtUtc)
+        || !Number.isFinite(Date.parse(receipt.observedAtUtc))
+        || new Date(receipt.observedAtUtc).toISOString() !== receipt.observedAtUtc) continue;
       const age = now().getTime() - Date.parse(receipt.observedAtUtc);
       if (!Number.isFinite(age) || age < -60_000 || age > NATIVE_MAX_AGE_MS) continue;
       const diagnosticOnly = receipt.scanOnly === true;
       if (!Number.isSafeInteger(receipt.diagnosticTabCount) || receipt.diagnosticTabCount < 1
         || receipt.diagnosticTabCount > 8
-        || !/^[a-f0-9]{64}$/.test(receipt.evidenceHash || '')
+        || receipt.connectedTabCount !== receipt.diagnosticTabCount
+        || receipt.admittedTabCount !== receipt.diagnosticTabCount
+        || !Array.isArray(receipt.observations)
+        || receipt.observations.length !== receipt.diagnosticTabCount
         || !Array.isArray(receipt.screenshots)) continue;
+      const imageClaims = receipt.observations.map(row => row?.screenshotSha256);
+      if (imageClaims.some(value => typeof value !== 'string'
+        || (value !== '' && !/^[a-f0-9]{64}$/.test(value)))) continue;
       if (diagnosticOnly) {
         if (receipt.observedTabCount !== 0 || receipt.screenshotCount !== 0
-          || receipt.screenshots.length !== 0) continue;
+          || receipt.screenshots.length !== 0 || imageClaims.some(Boolean)) continue;
       } else {
         if (receipt.observedTabCount !== 1 || receipt.screenshotCount !== 1
           || receipt.screenshots.length !== 1) continue;
         const item = receipt.screenshots[0];
         if (!/^[0-9]{8}T[0-9]{9}-[a-f0-9]{16}\.jpg$/.test(item?.imageName || '')
-          || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')) continue;
-        const imageFile = resolve(nativeReceiptRoot, item.imageName);
+          || !/^[a-f0-9]{64}$/.test(item?.sha256 || '')
+          || !item.imageName.endsWith(`-${item.sha256.slice(0, 16)}.jpg`)
+          || imageClaims.filter(Boolean).length !== 1
+          || !imageClaims.includes(item.sha256)) continue;
+        const imageFile = resolve(root, item.imageName);
         const imageStat = await lstat(imageFile);
         if (!imageStat.isFile() || imageStat.isSymbolicLink() || imageStat.size > 2_800_000) continue;
         if (sha256(await readFile(imageFile)) !== item.sha256) continue;
@@ -172,15 +216,16 @@ export async function observeSovereignBrowser({
   env = process.env,
   now = () => new Date(),
   proofRoot = DEFAULT_PROOF_ROOT,
-  nativeReceiptRoot = DEFAULT_NATIVE_RECEIPTS,
+  nativeReceiptRoot,
   maxTabs = MAX_TABS,
+  nativeReceiptOnly = false,
 } = {}) {
   const observedAtUtc = now().toISOString();
   const native = await readNativeBrowserObservation({ nativeReceiptRoot, now });
   if (native) return native;
   // The normal route is the operator-permissioned extension. A legacy
   // debug-enabled CDP browser is never inspected by default.
-  if (env.STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP !== '1') {
+  if (nativeReceiptOnly || env.STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP !== '1') {
     return Object.freeze({
       ok: false, observedAtUtc, blocker: 'BROWSER_NATIVE_WITNESS_NOT_READY',
       finalVerdict: 'BROWSER_OBSERVATION_BLOCKED',
@@ -207,25 +252,40 @@ export async function observeSovereignBrowser({
   const observations = [];
   await mkdir(proofRoot, { recursive: true });
   for (const page of admitted.slice(0, limit)) {
-    const id = safeBrowserPageId(page.url());
+    const initialUrl = page.url();
+    const id = safeBrowserPageId(initialUrl);
     const errors = { console: 0, page: 0, network: 0 };
+    let mainDocumentChanged = false;
     const onConsole = (msg) => { if (msg.type() === 'error') errors.console += 1; };
     const onPageError = () => { errors.page += 1; };
     const onRequestFailed = () => { errors.network += 1; };
+    const onNavigation = (frame) => {
+      if (!frame.parentFrame()) mainDocumentChanged = true;
+    };
     page.on('console', onConsole);
     page.on('pageerror', onPageError);
     page.on('requestfailed', onRequestFailed);
+    page.on('framenavigated', onNavigation);
     try {
+      if (!admittedBrowserTab(initialUrl, allowedOrigins)) throw new Error('BROWSER_ORIGIN_CHANGED');
       // Passive only: no reload, click, goto, storage/cookie access, form entry or script mutation.
-      const dom = await page.evaluate(() => ({
-        readyState: document.readyState,
-        images: [...document.querySelectorAll('img')].slice(0, 500).map((el) => ({ complete: el.complete, naturalWidth: el.naturalWidth })),
-        links: [...document.querySelectorAll('a')].slice(0, 1000).map((el) => ({ href: el.href })),
-        buttonCount: document.querySelectorAll('button').length,
-        disabledButtonCount: document.querySelectorAll('button:disabled').length,
-        headingCount: document.querySelectorAll('h1,h2,h3').length,
-      }));
+      const dom = await page.evaluate((origins) => {
+        if (!origins.includes(location.origin)
+          || !['http:', 'https:'].includes(location.protocol)) return null;
+        return {
+          readyState: document.readyState,
+          images: [...document.querySelectorAll('img')].slice(0, 500).map((el) => ({ complete: el.complete, naturalWidth: el.naturalWidth })),
+          links: [...document.querySelectorAll('a')].slice(0, 1000).map((el) => ({ href: el.href })),
+          buttonCount: document.querySelectorAll('button').length,
+          disabledButtonCount: document.querySelectorAll('button:disabled').length,
+          headingCount: document.querySelectorAll('h1,h2,h3').length,
+        };
+      }, [...allowedOrigins]);
+      if (!dom || mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
       const screenshot = await page.screenshot({ type: 'png', timeout: 7_000 });
+      // Discard bytes when a navigation occurred during capture, including an
+      // away-and-back transition whose final URL equals the original URL.
+      if (mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
       const screenshotHash = sha256(screenshot);
       const screenshotName = `${observedAtUtc.replace(/[:.]/g, '-')}-${id}.png`;
       await writeFile(resolve(proofRoot, screenshotName), screenshot);
@@ -244,6 +304,7 @@ export async function observeSovereignBrowser({
       page.off('console', onConsole);
       page.off('pageerror', onPageError);
       page.off('requestfailed', onRequestFailed);
+      page.off('framenavigated', onNavigation);
     }
   }
   const capturedCount = observations.filter((item) => item.captured).length;
@@ -297,7 +358,8 @@ export function publicBrowserObservationProjection(result = {}) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const parsed = parseBrowserObservationArguments(process.argv.slice(2));
-  const result = parsed.ok ? await observeSovereignBrowser() : { ...parsed, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' };
+  const result = parsed.ok ? await observeSovereignBrowser({ nativeReceiptOnly: parsed.nativeReceiptOnly })
+    : { ...parsed, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' };
   const projection = publicBrowserObservationProjection(result);
   process.stdout.write(`${BROWSER_OBSERVATION_MARKER}${JSON.stringify(projection)}\n`);
   process.exitCode = result.ok ? 0 : 2;

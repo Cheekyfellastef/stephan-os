@@ -20,7 +20,7 @@ const base = Object.freeze({
   ok: true,
   finalVerdict: 'BROWSER_OBSERVATION_CAPTURED',
   observedAtUtc: '2026-10-18T19:00:00.000Z',
-  connectedTabCount: 2,
+  connectedTabCount: 1,
   admittedTabCount: 1,
   observedTabCount: 1,
   screenshotCount: 1,
@@ -54,7 +54,7 @@ test('diagnostic-only receipts are accepted as diagnostics, never screenshots', 
     ...base,
     finalVerdict:'BROWSER_OBSERVATION_DIAGNOSTIC',
     screenshotCount:0, observedTabCount:0,
-    diagnosticTabCount:3
+    connectedTabCount:3, admittedTabCount:3, diagnosticTabCount:3
   }), 'observe-open-stephanos-tabs');
   assert.equal(scanned.ok,true);
   assert.equal(scanned.finalVerdict,'BROWSER_OBSERVATION_DIAGNOSTIC');
@@ -70,4 +70,44 @@ test('partial evidence or forged functionality does not pass acceptance', () => 
   const partial = safeBrowserObservationProjection(envelope({ ...base, finalVerdict: 'BROWSER_OBSERVATION_PARTIAL' }), 'observe-open-stephanos-tabs');
   assert.equal(partial.ok, false);
   assert.equal(browserObservationCompleteForAction(partial), false);
+});
+
+function assertRejected(value, reason) {
+  assert.equal(browserObservationCompleteForAction(value), false, reason);
+  const projected = safeBrowserObservationProjection(envelope(value), 'observe-open-stephanos-tabs');
+  assert.notEqual(projected?.ok, true, reason);
+  assert.equal(browserObservationCompleteForAction(projected), false, reason);
+}
+
+test('mailbox completion requires a canonical native UTC timestamp', () => {
+  for (const observedAtUtc of [undefined, null, '', 0, 'invalid', '2026-02-30T19:00:00.000Z',
+    '2026-10-18', '2026-10-18T19:00:00Z', '2026-10-18T19:00:00.000+00:00']) {
+    assertRejected({ ...base, observedAtUtc }, `timestamp ${String(observedAtUtc)}`);
+  }
+});
+
+test('mailbox completion rejects every missing, null, mistyped or out-of-bounds count', () => {
+  for (const field of ['connectedTabCount', 'admittedTabCount', 'diagnosticTabCount', 'observedTabCount', 'screenshotCount']) {
+    for (const value of [undefined, null, '1', -1, 9, 1.5]) {
+      assertRejected({ ...base, [field]: value }, `${field}=${String(value)}`);
+    }
+  }
+});
+
+test('mailbox completion matches the native count relationships and verdict', () => {
+  for (const change of [
+    { connectedTabCount: 2 }, { admittedTabCount: 2 }, { diagnosticTabCount: 2 },
+    { connectedTabCount: 0, admittedTabCount: 0, diagnosticTabCount: 0 },
+    { connectedTabCount: 9, admittedTabCount: 9, diagnosticTabCount: 9 },
+    { observedTabCount: 2, screenshotCount: 2 },
+    { observedTabCount: 0, screenshotCount: 0 },
+    { finalVerdict: 'BROWSER_OBSERVATION_DIAGNOSTIC' },
+    { blocker: 'BROWSER_ACTIVE_TAB_CHANGED' },
+  ]) assertRejected({ ...base, ...change }, JSON.stringify(change));
+
+  const largestScan = { ...base, finalVerdict: 'BROWSER_OBSERVATION_DIAGNOSTIC',
+    connectedTabCount: 8, admittedTabCount: 8, diagnosticTabCount: 8,
+    observedTabCount: 0, screenshotCount: 0 };
+  assert.equal(browserObservationCompleteForAction(largestScan), true);
+  assert.equal(safeBrowserObservationProjection(envelope(largestScan), 'observe-open-stephanos-tabs').ok, true);
 });

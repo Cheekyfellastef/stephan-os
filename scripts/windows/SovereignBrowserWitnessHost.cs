@@ -79,8 +79,8 @@ public static class StephanosBrowserWitnessHost {
     var origins=Origins();
     var observed=new List<object>();
     var screenshots=new List<object>();
+    var pendingImages=new List<KeyValuePair<string,byte[]>>();
     int captured=0, total=0;
-    Directory.CreateDirectory(ProofRoot);
     var now=DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
     foreach(var element in snapshots) {
       total++; if(total>8) return Error("NATIVE_TOO_MANY_TABS");
@@ -119,13 +119,17 @@ public static class StephanosBrowserWitnessHost {
         if(image.Length<4 || image.Length>2800000 || image[0]!=0xff || image[1]!=0xd8) return Error("NATIVE_IMAGE_BYTES_INVALID");
         imageHash=Hash(image);
         var imageName=DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + imageHash.Substring(0,16) + ".jpg";
-        File.WriteAllBytes(Path.Combine(ProofRoot,imageName),image);
+        pendingImages.Add(new KeyValuePair<string,byte[]>(imageName,image));
         screenshots.Add(new { imageName=imageName,sha256=imageHash });
         captured++;
       }
       observed.Add(new { originHash=ShaText(origin).Substring(0,16), metrics=safeMetrics, screenshotSha256=imageHash });
     }
     if(observed.Count==0 || (mode=="capture" && captured!=1)) return Error("NATIVE_CAPTURE_INCOMPLETE");
+    // Validate the complete request before retaining any screenshot. A later
+    // invalid origin, extra screenshot or ninth tab must leave no partial proof.
+    Directory.CreateDirectory(ProofRoot);
+    foreach(var pending in pendingImages) File.WriteAllBytes(Path.Combine(ProofRoot,pending.Key),pending.Value);
     var sample=new {
       schemaVersion=ObservationSchema, observedAtUtc=now,
       mechanism="operator-permissioned-chromium-native-messaging",

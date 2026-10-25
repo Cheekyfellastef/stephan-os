@@ -16,6 +16,9 @@ test('boot recovery installers parse with the Windows PowerShell used by the boo
     'install-sovereign-commander.ps1',
     'install-sovereign-boot-daemon-tasks-elevated.ps1',
     'install-battle-bridge-recovery-mesh.ps1',
+    'stephanos-core-process-observation.ps1',
+    'status-stephanos-core-daemon.ps1',
+    'run-sovereign-commander-hidden.ps1',
   ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
   const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
   const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
@@ -145,7 +148,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '(?:2026-10-05-continuous-repair-reporting-v4|2026-10-18-island-action-contract-v6)'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);

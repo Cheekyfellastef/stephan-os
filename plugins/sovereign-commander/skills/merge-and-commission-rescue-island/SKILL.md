@@ -32,7 +32,7 @@ identities. This skill adds preparation guidance, not a new tool or authority.
    unauthenticated, and every execution-authority flag stays false. If absent,
    inspect the canonical predicates directly; do not invent an action ID.
 6. Carry the operator's already-given merge request into one exact owner-authored
-   canonical #2808 protected workflow packet. Keep a stable request ID through
+   canonical the current source-defined canonical mailbox protected workflow packet. Keep a stable request ID through
    transport retries. Use the existing bounded environment-approval operation
    only for the exact pending run/PR/head/main admitted by its verifier.
 7. Wait for the actual protected merge result and verify GitHub PR/main state.

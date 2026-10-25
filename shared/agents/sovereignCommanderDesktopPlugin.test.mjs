@@ -74,7 +74,7 @@ test('desktop skill preserves the bounded authority contract', () => {
   assert.match(skill, /no arbitrary shell, force-push, merge authority/i);
   assert.match(skill, /iPad and iPhone/i);
   assert.match(skill, /Never put Sovereign Commander bearer tokens/i);
-  assert.match(skill, /canonical issue #2808 mailbox/i);
+  assert.match(skill, /source-defined canonical mailbox/i);
   assert.match(skill, /battle-bridge-observe/i);
   assert.match(skill, /Do not ask the operator to copy telemetry/i);
 });
@@ -91,7 +91,7 @@ test('Plus/cloud orchestration contract is source-pinned to the private plugin s
   assert.match(skill, /BOUNDED_MAINTENANCE/);
   assert.match(skill, /MISSION_BUILD/);
   assert.match(skill, /ACCEPTED.*is not terminal completion/i);
-  assert.match(skill, /GitHub issue #2808 command mailbox/);
+  assert.match(skill, /current source-defined canonical GitHub command mailbox/);
   assert.match(skill, /source-binding\/custody\/lease disagreements remain held/i);
   assert.match(skill, /Do not use the public mailbox to transport source file contents/i);
   assert.match(skill, /same execution command fabric/);

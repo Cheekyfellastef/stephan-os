@@ -33,6 +33,25 @@ const noAuthority=r=>{
     'protectedMergeAuthority','sourceMutationAuthority','leaseReleaseAuthority',
     'windowsCommissioningAuthority','physicalPickupProven']) assert.equal(r[p],false,p);
 };
+test('candidate gets a general vocabulary but never an answer key or case labels', async () => {
+  let observed = 0;
+  const result = await evaluate(input, { invokeModel: async (prompt, meta) => {
+    observed++;
+    assert.match(prompt, /general taxonomy/);
+    for (const code of [
+      'credential-exposure', 'dynamic-code-execution', 'unbounded-retry',
+      'lease-authorization-bypass', 'false-worker-pickup', 'sql-injection',
+      'dom-xss', 'unrestricted-file-path', 'other-regression',
+    ]) assert.ok(prompt.includes(code), code);
+    assert.doesNotMatch(prompt, /expectedCode|expectedLabel|seeded defect/);
+    assert.doesNotMatch(prompt, /safe-null-guard|safe-bounded-retry|secret-logging|unsafe-eval|infinite-retry|lease-cas-bypass|fake-worker-pickup|sql-concatenation|unsafe-inner-html|unbounded-file-path/);
+    return correct(prompt, meta);
+  }});
+  assert.equal(observed, 10);
+  assert.equal(result.passedCases, 10);
+  assert.equal(result.status, 'CALIBRATION_CANDIDATE_PASSED_UNATTESTED');
+  noAuthority(result);
+});
 test('fixed ten-case examiner tests eight unsafe changes and two safe changes',()=>{
   assert.equal(count,10);
   assert.equal(manifest().challengeCount,10);

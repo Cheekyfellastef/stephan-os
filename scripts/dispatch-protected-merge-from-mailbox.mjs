@@ -141,8 +141,24 @@ async function rejectPriorProtectedDispatch(command) {
     }
     // Never decide from a truncated first page; complete all exact-base runs.
     if (runs.length === expectedTotal) {
-      const classification = inspectProtectedWorkflowDuplicateDispatchRuns(runs, command);
-      if (!classification.ok) fail(classification.blocker);
+      let classification = inspectProtectedWorkflowDuplicateDispatchRuns(runs, command);
+      const retryIds = classification.details?.retryCandidateRunIds;
+      if (!classification.ok && Array.isArray(retryIds) && retryIds.length > 0) {
+        const priorRunJobSets = [];
+        // At most eight exact failed runs, one complete bounded all-attempt
+        // job inventory each. Missing/truncated/foreign jobs remain a hold.
+        for (const runId of retryIds) {
+          const result = await github('/repos/' + PROTECTED_WORKFLOW_DISPATCH_REPOSITORY
+            + '/actions/runs/' + runId + '/jobs?filter=all&per_page=100');
+          if (!result || !Number.isSafeInteger(result.total_count)
+              || result.total_count < 1 || result.total_count > 100
+              || !Array.isArray(result.jobs) || result.jobs.length !== result.total_count)
+            fail('PROTECTED_WORKFLOW_DISPATCH_PRIOR_JOBS_UNVERIFIABLE');
+          priorRunJobSets.push({ runId, jobs: result.jobs });
+        }
+        classification = inspectProtectedWorkflowDuplicateDispatchRuns(runs, command, { priorRunJobSets });
+      }
+      if (!classification.ok) fail(classification.blocker, classification.details);
       return;
     }
     if (result.workflow_runs.length !== DUPLICATE_PROBE_PAGE_SIZE

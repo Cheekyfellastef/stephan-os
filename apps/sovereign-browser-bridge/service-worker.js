@@ -32,7 +32,12 @@ async function allowedOrigins() {
   if (!response.ok || !Array.isArray(response.allowedOrigins)) return { ok:false, blocker:response.blocker || 'NATIVE_HOST_UNAVAILABLE' };
   return { ok:true, allowedOrigins:response.allowedOrigins.slice(0, 16) };
 }
-function extractDomMetrics() {
+function extractDomMetrics(origins) {
+  // Chromium host grants omit ports and allFrames can include cross-origin
+  // descendants. Admit the actual document inside each isolated-world call
+  // before touching its DOM, including when the selected tab just navigated.
+  if (!Array.isArray(origins) || !origins.includes(location.origin)
+    || !['http:', 'https:'].includes(location.protocol)) return null;
   const imgs = Array.from(document.querySelectorAll('img')).slice(0, 500);
   const anchors = Array.from(document.querySelectorAll('a')).slice(0, 1000);
   let genericSpotifyLinks=0, spotifyTrackLinks=0, spotifySearchLinks=0, emptyLinks=0;
@@ -82,11 +87,13 @@ async function captureWorkspaces(capture) {
         // coverage. Browser-granted host access still controls injection.
         injected = await chrome.scripting.executeScript({
           target:{ tabId:tab.id, allFrames:true }, func:extractDomMetrics,
+          args:[profile.allowedOrigins],
         });
       } catch {
         // A restricted third-party iframe must not suppress safe top-level
         // diagnostics. We never claim complete frame coverage.
-        injected = await chrome.scripting.executeScript({ target:{ tabId:tab.id }, func:extractDomMetrics });
+        injected = await chrome.scripting.executeScript({ target:{ tabId:tab.id },
+          func:extractDomMetrics, args:[profile.allowedOrigins] });
       }
       const frames = injected.slice(0, 20).map(item => item?.result).filter(value => value && typeof value === 'object');
       if (!frames.length) continue;
@@ -108,20 +115,36 @@ async function captureWorkspaces(capture) {
     } catch { continue; }
     const record = { origin, metrics, active:tab.id === active?.id, screenshot:'' };
     if (capture && record.active) {
+      let transitioned = false;
+      const onActivated = (info) => {
+        if (info.windowId === tab.windowId) transitioned = true;
+      };
+      const onUpdated = (tabId, change) => {
+        if (tabId === tab.id && (Object.hasOwn(change, 'url') || change.status === 'loading'))
+          transitioned = true;
+      };
       try {
+        // Latch changes before querying. Matching endpoints cannot detect an
+        // A -> private tab/document -> A transition during screenshot capture.
+        chrome.tabs.onActivated.addListener(onActivated);
+        chrome.tabs.onUpdated.addListener(onUpdated);
         const [before] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
-        if (before?.id !== tab.id || before?.url !== tab.url) {
+        if (transitioned || before?.id !== tab.id || before?.url !== tab.url) {
           return { ok:false, blocker:'BROWSER_ACTIVE_TAB_CHANGED' };
         }
         const image = await chrome.tabs.captureVisibleTab(tab.windowId, { format:'jpeg', quality:62 });
         const [after] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
         // A foreground switch or navigation during capture must discard the
         // bytes before native messaging, even if the screenshot succeeded.
-        if (after?.id !== tab.id || after?.url !== tab.url || !admittedOrigin(after?.url, profile.allowedOrigins)) {
+        if (transitioned || after?.id !== tab.id || after?.url !== tab.url || !admittedOrigin(after?.url, profile.allowedOrigins)) {
           return { ok:false, blocker:'BROWSER_ACTIVE_TAB_CHANGED' };
         }
         record.screenshot = image;
       } catch { return { ok:false, blocker:'BROWSER_SCREENSHOT_FAILED' }; }
+      finally {
+        chrome.tabs.onActivated.removeListener(onActivated);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+      }
     }
     snapshots.push(record);
   }

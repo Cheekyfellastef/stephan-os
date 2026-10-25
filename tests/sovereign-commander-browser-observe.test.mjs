@@ -3,6 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import vm from 'node:vm';
+import { executeSovereignCommanderCommandV1 } from '../shared/agents/sovereignCommanderV1.mjs';
+import {
+  buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1,
+  STEPHANOS_EXECUTION_SURFACE,
+} from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 import {
   admittedBrowserOrigins, admittedBrowserTab,
   observeSovereignBrowser, parseBrowserObservationArguments,
@@ -11,6 +17,8 @@ import {
 
 test('remote entry forbids arbitrary URLs, debugger ports and shell flags', () => {
   assert.equal(parseBrowserObservationArguments([]).ok, true);
+  assert.equal(parseBrowserObservationArguments(['--native-receipt-only']).nativeReceiptOnly, true);
+  assert.equal(parseBrowserObservationArguments(['--native-receipt-only','--cdp']).ok, false);
   for (const arg of ['--url', '--cdp-endpoint', '--shell', '--profile', 'http://example.com']) {
     assert.equal(parseBrowserObservationArguments([arg]).ok, false);
   }
@@ -85,6 +93,46 @@ test('unconnected CDP session fails closed, not green', async () => {
   assert.equal(publicBrowserObservationProjection(result).finalVerdict, 'BROWSER_OBSERVATION_BLOCKED');
 });
 
+for (const transition of ['before-dom', 'during-screenshot', 'away-and-back']) {
+  test(`CDP discards a document that navigates ${transition} without persisting private pixels`,async()=>{
+    const proofRoot=await mkdtemp(join(tmpdir(),'sc-browser-navigation-'));
+    const initial='http://localhost:4173/workspace';
+    let url=initial,domReads=0,screenshots=0;
+    const handlers=new Map();
+    const page={
+      url:()=>url,
+      on(name,cb){handlers.set(name,cb);},
+      off(name){handlers.delete(name);},
+      async evaluate(fn,origins){
+        if(transition==='before-dom') url='http://localhost:8787/private';
+        return vm.runInNewContext('('+fn.toString()+')(origins)',{
+          origins,location:new URL(url),document:{readyState:'complete',
+            querySelectorAll(){domReads++;return [];},},
+        });
+      },
+      async screenshot(){
+        screenshots++;
+        url='https://private.example/account';
+        handlers.get('framenavigated')({parentFrame:()=>null});
+        if(transition==='away-and-back') url=initial;
+        return Buffer.from('private-pixels-must-not-persist');
+      },
+    };
+    try {
+      const result=await observeSovereignBrowser({
+        connect:async()=>({contexts:()=>[{pages:()=>[page]}]}),
+        env:{STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP:'1'},proofRoot,
+      });
+      assert.equal(result.ok,false);
+      assert.equal(result.screenshotCount,0);
+      assert.equal((await readdir(proofRoot)).filter(name=>name.endsWith('.png')).length,0);
+      assert.equal(handlers.size,0);
+      if(transition==='before-dom') {assert.equal(domReads,0);assert.equal(screenshots,0);}
+      else assert.equal(screenshots,1);
+    } finally {await rm(proofRoot,{recursive:true,force:true});}
+  });
+}
+
 test('CDP browser is not attached or screenshotted without explicit local opt-in', async () => {
   let connected = false;
   const result = await observeSovereignBrowser({
@@ -94,4 +142,42 @@ test('CDP browser is not attached or screenshotted without explicit local opt-in
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'BROWSER_NATIVE_WITNESS_NOT_READY');
   assert.equal(result.finalVerdict, 'BROWSER_OBSERVATION_BLOCKED');
+});
+
+test('fixed native-receipt-only mode cannot inherit ambient CDP or create evidence directories',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'sc-browser-readonly-'));
+  try {
+    const result=await observeSovereignBrowser({
+      nativeReceiptOnly:true,env:{STEPHANOS_BROWSER_OBSERVE_ENABLE_CDP:'1'},
+      nativeReceiptRoot:join(root,'missing'),proofRoot:join(root,'must-not-create'),
+      connect:async()=>{assert.fail('read-only remote action attempted browser attachment');},
+    });
+    assert.equal(result.ok,false);
+    assert.equal(result.blocker,'BROWSER_NATIVE_WITNESS_NOT_READY');
+    assert.deepEqual(await readdir(root),[]);
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+
+test('native browser observation remains available without releasing or reserving held maintenance',async()=>{
+  const repoRoot=process.cwd();
+  const envelope=buildStephanosExecutionCommandEnvelopeV1({
+    catalog:buildStephanosExecutionSurfaceCatalogV1({repositoryRoot:repoRoot}),
+    surface:STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    operation:'MAINTENANCE_ACTION',missionId:'browser-observation',actionId:'read-native-evidence',
+    payload:{actionId:'observe-open-stephanos-tabs'},
+  });
+  let executions=0;
+  const result=await executeSovereignCommanderCommandV1(envelope,{
+    repoRoot,
+    withMaintenanceOwner(){assert.fail('native observation must not change maintenance ownership');},
+    callMaintenanceOwner(){assert.fail('native observation must not need held mutation admission');},
+    spawnSyncFn(_exe,args){
+      executions++;
+      assert.match(args[0],/sovereign-commander-browser-observe\.mjs$/);
+      assert.deepEqual(args.slice(1),['--native-receipt-only']);
+      return {status:0,stdout:'{}',stderr:''};
+    },
+  });
+  assert.equal(result.ok,true);
+  assert.equal(executions,1);
 });

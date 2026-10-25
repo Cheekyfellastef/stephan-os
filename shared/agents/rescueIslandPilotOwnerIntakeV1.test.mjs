@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { inspectRescueIslandPilotOwnerIntakeV1 as inspect } from './rescueIslandPilotOwnerIntakeV1.mjs';
+import { inspectRescueIslandPilotOwnerIntakeV1 as inspect, inspectRescueIslandSupervisedOwnerIntakeV1 as supervised, resolveRescueIslandSupervisedDocumentWorkerV1 as documentWorker } from './rescueIslandPilotOwnerIntakeV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const CONTENT = '# Rescue Island pilot\n\nFirst production-intake security proof, no live authority.\n';
@@ -40,6 +40,28 @@ function fixture() {
     consumedCommentIds: [],
   };
 }
+function secondLaneFacts(){
+  const x=fixture(),title='Rescue Island: two independent proof-gated builders outside Goal Conveyor';
+  Object.assign(x.task,{workerId:'rescue-island-02',issueNumber:3103,issueTitle:title});
+  Object.assign(x.issue,{number:3103,title,url:URL.replace('3109','3103')});
+  x.comment.issue_url=x.issue.url;
+  x.comment.body='/rescue-island-02 supervised-cooperative '+HEAD+' '+x.task.taskId+' '+hash;
+  return x;
+}
+test('Island02 binds its own exact parent issue and cooperative command without execution authority',()=>{
+  const x=secondLaneFacts(),r=supervised(x);
+  assert.equal(r.disposition,'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');assert.equal(r.workerId,'rescue-island-02');assert.equal(r.issueNumber,3103);
+  for(const key of ['approvalAuthenticated','ownershipAuthenticated','productionAdmissionAllowed','physicalPickupAllowed','sourceMutationAllowed','canonicalLeaseAccessAllowed'])assert.equal(r[key],false);
+  assert.equal(inspect(x).disposition,'HELD');
+});
+test('second-lane intake refuses cross-worker consent, wrong issue and unknown worker',()=>{
+  for(const alter of [x=>x.comment.body=x.comment.body.replace('island-02','island-01'),x=>x.task.workerId='rescue-island-01',x=>x.issue.number=3109,x=>x.task.issueNumber=999,x=>x.task.workerId='rescue-island-03']){
+    const x=secondLaneFacts();alter(x);assert.equal(supervised(x).disposition,'HELD');
+  }
+  const task=secondLaneFacts().task;Object.defineProperty(task,'workerId',{get(){assert.fail('untrusted getter');}});
+  assert.equal(documentWorker(task),null);
+});
+
 test('exact owner issue/comment/content reaches only structural admission without source authority', () => {
   const result = inspect(fixture());
   assert.equal(result.disposition, 'STRUCTURALLY_ELIGIBLE_UNAUTHENTICATED');
