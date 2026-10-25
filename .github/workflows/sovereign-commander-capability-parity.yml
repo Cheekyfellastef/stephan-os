@@ -52,6 +52,8 @@ on:
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
       - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/read-starfield-vr-performance-diagnosis.ps1'
+      - 'scripts/starfield-vr-flight-recorder.test.mjs'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
@@ -110,6 +112,8 @@ on:
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
       - 'shared/agents/sovereignCommanderCpuPressure.test.mjs'
       - 'scripts/windows/read-battle-bridge-cpu-pressure.ps1'
+      - 'scripts/windows/read-starfield-vr-performance-diagnosis.ps1'
+      - 'scripts/starfield-vr-flight-recorder.test.mjs'
       - 'scripts/windows/run-sovereign-commander-hidden.ps1'
       - 'shared/agents/sovereignCommanderWindows.test.mjs'
       - 'scripts/sovereign-commander-ignition-autoheal.mjs'
@@ -186,3 +190,5 @@ jobs:
         run: node --test shared/agents/sovereignDirectoryCreateV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs
       - name: Windows temporary-store supervised R7 recovery regressions
         run: node --experimental-vm-modules --test --test-concurrency=1 stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js
+      - name: Windows VR diagnosis empty and single-value array regression
+        run: node --test scripts/starfield-vr-flight-recorder.test.mjs
