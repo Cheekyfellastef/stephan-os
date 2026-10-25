@@ -90,6 +90,7 @@ function structuredSourceTruthBlocker({
   workingTreeDirty = false,
   statusAssessment = null,
   sourceStep = '',
+  sourceConfiguration,
   extra = {},
 } = {}) {
   return Object.freeze({
@@ -112,6 +113,8 @@ function structuredSourceTruthBlocker({
       code,
       ...(code === 'FIXED_AUTHORITY_GIT_FAILED'
         ? { sourceStep: projectMaintenanceSourceDiagnosticV1(code, sourceStep).sourceStep } : {}),
+      ...(['CANONICAL_GIT_CONFIGURATION_INVALID', 'CANONICAL_GIT_CONFIGURATION_CHANGED'].includes(code)
+        ? { sourceConfiguration: projectMaintenanceSourceDiagnosticV1(code, undefined, sourceConfiguration).sourceConfiguration } : {}),
       detail,
       nextOperatorAction: 'Use the bounded Battle Bridge source-recovery route to restore a clean canonical main checkout, then retry Ignition.',
     }),
@@ -196,6 +199,7 @@ export function collectCanonicalIgnitionSourceTruth({
       return structuredSourceTruthBlocker({
         code: configurationProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID',
         detail: 'Local Git configuration or origin identity is outside the canonical closed-world policy.',
+        sourceConfiguration: { ...configurationProof?.diagnostic, stage: 'BEFORE_FETCH' },
         extra: { configurationProof: configurationProof || null },
       });
     }
@@ -313,6 +317,7 @@ export function collectCanonicalIgnitionSourceTruth({
       return structuredSourceTruthBlocker({
         code: configurationAfterProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_CHANGED',
         detail: 'Canonical Git configuration changed during source proof.',
+        sourceConfiguration: { ...configurationAfterProof?.diagnostic, stage: 'AFTER_FETCH' },
         branch: branchAfter,
         upstreamBranch: upstreamAfter,
         head: headAfter,
