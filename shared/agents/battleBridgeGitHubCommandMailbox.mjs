@@ -10,6 +10,12 @@ import {
   isTerminalizableSovereignCommanderRemoteBlocker,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  executeRescueIslandSupervisedDocumentOnBattleBridge,
+  isTerminalizableRescueIslandSupervisedDocumentBlocker,
+  validateRescueIslandSupervisedDocumentCommandShape,
+} from './rescueIslandSupervisedMailboxV1.mjs';
 import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShape,
   isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
@@ -56,6 +62,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   GUARDED_CODEX_TASK_READBACK_OPERATION,
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -84,6 +91,7 @@ function customOperationKind(operation = '') {
   if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
   if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
   if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
+  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION) return 'rescue-island-supervised-document';
   return '';
 }
 
@@ -97,6 +105,7 @@ function validateCustomCommandShape(command = {}) {
   if (kind === 'codex-readback') return validateGuardedCodexTaskReadbackCommandShape(command);
   if (kind === 'sovereign-install') return validateSovereignCommanderInstallCommandShape(command);
   if (kind === 'sovereign-remote') return validateSovereignCommanderRemoteCommandShape(command);
+  if (kind === 'rescue-island-supervised-document') return validateRescueIslandSupervisedDocumentCommandShape(command);
   return Object.freeze({ ok: true, requested: false });
 }
 
@@ -141,6 +150,7 @@ export function isTerminalizableOwnerCommandBlocker(value) {
     || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
     || isTerminalizableSovereignCommanderInstallBlocker(value)
     || isTerminalizableSovereignCommanderRemoteBlocker(value)
+    || isTerminalizableRescueIslandSupervisedDocumentBlocker(value)
     || core.isTerminalizableOwnerCommandBlocker(value);
 }
 
@@ -301,6 +311,12 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         : executeSovereignCommanderInstallOnBattleBridge;
       return await executor(shape.command, options);
     }
+    if (kind === 'rescue-island-supervised-document') {
+      const executor = typeof options?.executeRescueIslandSupervisedDocumentOnBattleBridgeFn === 'function'
+        ? options.executeRescueIslandSupervisedDocumentOnBattleBridgeFn
+        : executeRescueIslandSupervisedDocumentOnBattleBridge;
+      return await executor(shape.command, options);
+    }
     if (kind === 'sovereign-remote') {
       const executor = typeof options?.executeSovereignCommanderRemoteOnBattleBridgeFn === 'function'
         ? options.executeSovereignCommanderRemoteOnBattleBridgeFn
@@ -320,7 +336,9 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
           ? 'SOVEREIGN_COMMANDER_INSTALL_EXECUTION_FAILED'
           : kind === 'sovereign-remote'
             ? 'SOVEREIGN_COMMANDER_REMOTE_EXECUTION_FAILED'
-            : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
+            : kind === 'rescue-island-supervised-document'
+              ? 'RESCUE_ISLAND_REMOTE_EXECUTION_FAILED'
+              : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
       operation: command?.operation || '',
       requestId: String(command?.requestId || ''),
     });

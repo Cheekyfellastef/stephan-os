@@ -2212,6 +2212,59 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   });
 }
 
+function projectRescueIslandBuild(operationResult = {}) {
+  const value = operationResult?.rescueIslandBuild;
+  const stages = ['SELECTED', 'CLAIMED', 'BRANCH_RESERVED', 'PHYSICAL_PICKUP',
+    'EDITED', 'TESTED', 'ISOLATED_COMMIT'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || value.schemaVersion !== 'stephanos.rescue-island-supervised-document-build.v1'
+      || value.workerId !== 'rescue-island-02'
+      || !safeTelemetryId(value.taskId)
+      || value.ownerIssueNumber !== 3103
+      || !Number.isSafeInteger(value.ownerCommentId) || value.ownerCommentId < 1
+      || !safeTelemetrySha(value.sourceHead)
+      || !safeTelemetrySha(value.commitHead)
+      || !safeTelemetryFingerprint(value.contentSha256)
+      || !safeTelemetryFingerprint(value.taskFingerprint)
+      || !safeTelemetryFingerprint(value.testResultHash)
+      || JSON.stringify(value.stages) !== JSON.stringify(stages)
+      || value.assuranceProfile !== 'SUPERVISED_COOPERATIVE_V1'
+      || value.resourceScheduling !== 'CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK'
+      || value.hostileWriterContainmentProven !== false
+      || value.independentlyCommissionedWorker !== false
+      || value.unattendedRefillsProven !== false
+      || value.reviewRequired !== true
+      || value.published !== false || value.merged !== false || value.deployed !== false
+      || value.publicReceiptSafe !== true || value.secretMaterialReturned !== false
+      || value.finalVerdict !== 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_COMPLETE') return null;
+  return Object.freeze({
+    schemaVersion: value.schemaVersion,
+    workerId: value.workerId,
+    taskId: safeTelemetryId(value.taskId),
+    ownerIssueNumber: 3103,
+    ownerCommentId: value.ownerCommentId,
+    sourceHead: safeTelemetrySha(value.sourceHead),
+    commitHead: safeTelemetrySha(value.commitHead),
+    targetPath: safeTelemetryText(value.targetPath, 240),
+    contentSha256: safeTelemetryFingerprint(value.contentSha256),
+    taskFingerprint: safeTelemetryFingerprint(value.taskFingerprint),
+    testResultHash: safeTelemetryFingerprint(value.testResultHash),
+    stages: Object.freeze(stages),
+    assuranceProfile: value.assuranceProfile,
+    resourceScheduling: value.resourceScheduling,
+    hostileWriterContainmentProven: false,
+    independentlyCommissionedWorker: false,
+    unattendedRefillsProven: false,
+    reviewRequired: true,
+    published: false,
+    merged: false,
+    deployed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    finalVerdict: value.finalVerdict,
+  });
+}
+
 function projectNativeBrowserProof(operationResult = {}) {
   const proof = operationResult?.nativeProof;
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
@@ -2320,6 +2373,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     ...dispatchRoutingTelemetryProjection(operationResult),
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -2374,6 +2428,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ...dispatchRoutingTelemetryProjection(operationResult),
       proofCompleted: operationResult?.proofCompleted === true,
       nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -2809,6 +2864,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -2860,6 +2916,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
         proofCompleted: operationResult?.proofCompleted === true,
         nativeProof: projectNativeBrowserProof(operationResult),
+    rescueIslandBuild: projectRescueIslandBuild(operationResult),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
