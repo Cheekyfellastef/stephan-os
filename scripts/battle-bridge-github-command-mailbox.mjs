@@ -1572,6 +1572,52 @@ function safeCpuPressureReceiptProjection(operationResult = {}) {
   });
 }
 
+// The authenticated local /health guardian is already projected by Commander,
+// but the public GitHub mailbox formerly dropped it. Publish only this bounded
+// allowlist; a healthy HTTP listener or a cycleCount > 0 is NOT material repair.
+function safeSovereignGuardianReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'status'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false) return null;
+  const value = operationResult?.continuousRepairGuardian;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const count = v => Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000 ? v : null;
+  const token = v => typeof v === 'string'
+    && /^[A-Z0-9][A-Z0-9_.:-]{0,159}$/.test(v) ? v : '';
+  const stamp = v => typeof v === 'string' && v.length > 0 && v.length <= 40
+    && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : '';
+  const state = ['UNKNOWN', 'DISABLED', 'AWAITING_FIRST_CYCLE',
+    'NOT_SCHEDULED', 'CYCLES_OBSERVED'].includes(value.loopState)
+    ? value.loopState : 'UNKNOWN';
+  const available = value.available === true
+    && typeof value.enabled === 'boolean'
+    && typeof value.running === 'boolean'
+    && typeof value.scheduled === 'boolean'
+    && count(value.cycleCount) !== null
+    && count(value.successCount) !== null
+    && count(value.failureCount) !== null;
+  return Object.freeze({
+    available,
+    enabled: available ? value.enabled : null,
+    running: available ? value.running : null,
+    scheduled: available ? value.scheduled : null,
+    cycleCount: available ? count(value.cycleCount) : null,
+    successCount: available ? count(value.successCount) : null,
+    failureCount: available ? count(value.failureCount) : null,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk: available && typeof value.lastOk === 'boolean' ? value.lastOk : null,
+    lastBlocker: available ? token(value.lastBlocker) : '',
+    lastFinalVerdict: available ? token(value.lastFinalVerdict) : '',
+    loopState: available ? state : 'UNKNOWN',
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
 // Closed-world public summary for the fixed original-r7 Windows witness readiness
 // observation. A source-only preflight is never permission to install, sign,
 // release the lease, or infer exclusion from an empty process census.
@@ -1750,6 +1796,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     processId: safeTelemetryId(operationResult?.processId),
     ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
+    } : {}),
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     // Archive diagnostics only: expose a typed, minimal failure shape so an

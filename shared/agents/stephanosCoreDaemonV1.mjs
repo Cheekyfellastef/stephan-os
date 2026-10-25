@@ -24,11 +24,15 @@ export function coreWorkerDependentWorkAllowed(state = {}) {
 // The Windows gaming governor publishes to Shared Workspace/vr, not status.
 // Missing, corrupt, or contradictory state must never authorise a local CPU
 // build. External GitHub runners are independent of this Core admission gate.
-export function coreGamingProtectionFromGovernor(state) {
+export function coreGamingProtectionFromGovernor(state, nowMs = Date.now()) {
   if (!state || typeof state !== 'object' || Array.isArray(state)
     || state.schemaVersion !== 'stephanos.vr-resource-governor.v1'
-    || typeof state.active !== 'boolean') return true;
-  return state.active !== false || state.phase !== 'NORMAL';
+    || state.governorVersion !== 3 || !Number.isFinite(nowMs)) return true;
+  const when = typeof state.updatedAtUtc === 'string' ? Date.parse(state.updatedAtUtc) : NaN;
+  const flags = ['active','flatGameActive','airLinkActive','realAirLinkActive',
+    'virtualAirLinkTestActive','prepareLeaseActive'];
+  return state.phase !== 'NORMAL' || flags.some(key => state[key] !== false)
+    || !Number.isFinite(when) || when > nowMs || nowMs - when > 15000;
 }
 
 export function shouldReloadStephanosCoreDaemon(initialHead, currentHead) {
@@ -44,7 +48,7 @@ export function projectStephanosCoreDaemonState(input = {}) {
     && missionWorkerHeartbeatAgeMs <= 5 * 60 * 1000;
   const sovereignCommanderHealthy = bool(input.sovereignCommanderHealthy);
   const backendHealthy = bool(input.backendHealthy);
-  const gamingActive = bool(input.gamingActive);
+  const gamingActive = input.gamingActive !== false;
   const observedHealthyCount = [
     sovereignCommanderHealthy,
     backendHealthy,
