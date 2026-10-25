@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, opendirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -2481,6 +2481,42 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
 const CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION = 'inspect-canonical-git-worktree-config';
 const CANONICAL_GIT_WORKTREE_CONFIG_ACTION = 'repair-canonical-git-worktree-config';
 
+// A registration namespace is not a registration. Inspect at most one entry
+// under the already-authenticated canonical .git directory; never resolve or
+// expose linked paths, delete metadata, or infer writer/lease ownership.
+export function inspectCanonicalLinkedWorktreeMetadataV1(repositoryRoot, {
+  lstatFn = lstatSync,
+  openDirectoryFn = opendirSync,
+} = {}) {
+  const metadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  const result = state => Object.freeze({ state,
+    linkedWorktreesExcluded: state === 'ABSENT' || state === 'EMPTY' });
+  let before;
+  try { before = lstatFn(metadataPath); }
+  catch (error) { return result(error?.code === 'ENOENT' ? 'ABSENT' : 'UNPROVEN'); }
+  if (!before.isDirectory() || before.isSymbolicLink()) return result('UNPROVEN');
+  let directory;
+  try {
+    directory = openDirectoryFn(metadataPath);
+    if (directory.readSync() !== null) return result('PRESENT');
+    const after = lstatFn(metadataPath);
+    if (!after.isDirectory() || after.isSymbolicLink()
+        || ['dev', 'ino', 'mode', 'mtimeMs', 'ctimeMs'].some(key => before[key] !== after[key])) {
+      return result('UNPROVEN');
+    }
+    return result('EMPTY');
+  } catch { return result('UNPROVEN'); }
+  finally { if (directory) { try { directory.closeSync(); } catch { /* read verdict remains conservative */ } } }
+}
+
+function linkedMetadataBlocker(evidence) {
+  return evidence?.linkedWorktreesExcluded === true
+    && ['ABSENT', 'EMPTY'].includes(evidence.state) ? ''
+    : evidence?.state === 'PRESENT'
+      ? 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT'
+      : 'CANONICAL_GIT_WORKTREE_CONFIG_LINKED_METADATA_UNPROVEN';
+}
+
 function finiteGitConfigRepairFailure(blocker, details = {}) {
   return Object.freeze({
     ok: false,
@@ -2498,6 +2534,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
   remainingTimeoutMsFn = () => 10_000,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
@@ -2580,15 +2617,8 @@ export function inspectCanonicalGitWorktreeConfigV1({
     return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  // Canonical topology has already proven that repositoryRoot/.git is the
-  // real Git directory, not a redirecting .git file. Linked worktrees are
-  // represented under that canonical directory. Treat any such metadata as a
-  // hard hold rather than depending on `git worktree list`, which is itself
-  // sensitive to the repository configuration we are trying to diagnose.
-  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
-  if (existsFn(linkedWorktreeMetadataPath)) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
-  }
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return held(metadataBlocker);
   const records = Object.freeze([
     Object.freeze({ root: repositoryRoot, locked: false, prunable: false }),
   ]);
@@ -2731,6 +2761,7 @@ export function repairCanonicalGitWorktreeConfigV1({
   spawnSyncFn = spawnSync,
   inspectTopologyFn = inspectBattleBridgeGitTopology,
   existsFn = existsSync,
+  inspectLinkedMetadataFn = inspectCanonicalLinkedWorktreeMetadataV1,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
   if (!SHA_PATTERN.test(normalizedHead)) {
@@ -2776,14 +2807,8 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  // The topology proof above authenticates repositoryRoot/.git as the
-  // canonical directory. Any linked-worktree metadata is therefore sufficient
-  // to hold the repository-wide extension repair. Do not invoke
-  // `git worktree list` while the configuration itself is under repair.
-  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
-  if (existsFn(linkedWorktreeMetadataPath)) {
-    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
-  }
+  const metadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (metadataBlocker) return finiteGitConfigRepairFailure(metadataBlocker);
 
   const beforeConfig = capture(['config', '--local', '--null', '--list']);
   if (!beforeConfig.ok) {
@@ -2835,6 +2860,10 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
   }
 
+  // Recheck after the config/value probes: a newly registered worker holds
+  // this repair. This is not a claim of hostile privileged-writer exclusion.
+  const finalMetadataBlocker = linkedMetadataBlocker(inspectLinkedMetadataFn(repositoryRoot));
+  if (finalMetadataBlocker) return finiteGitConfigRepairFailure(finalMetadataBlocker);
   const unset = capture(['config', '--local', '--unset-all', 'extensions.worktreeConfig']);
   if (!unset.ok) {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_UNSET_FAILED');
