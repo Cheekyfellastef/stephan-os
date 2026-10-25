@@ -1,5 +1,6 @@
 param([ValidateSet('Read', 'Append')][string]$Mode = 'Read')
 $ErrorActionPreference = 'Stop'
+$PSModuleAutoLoadingPreference = 'None'
 $logName = 'Windows PowerShell'
 $eventId = 62517
 $marker = 'SOVEREIGN_MAINTENANCE_ANCHOR_V1='
@@ -63,21 +64,28 @@ try {
             $raw = [string]$row.Properties[0].Value
             if (-not $raw.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
             # Never skip malformed newer custody evidence in favor of old green.
-            $envelope = $raw.Substring($marker.Length) | ConvertFrom-Json
-            if ($envelope -isnot [pscustomobject] -or $envelope.scope -cnotmatch '^[a-f0-9]{64}$') {
+            $envelopeRaw = $raw.Substring($marker.Length)
+            $scopeMatch = [regex]::Match($envelopeRaw, '^\{"scope":"([a-f0-9]{64})",')
+            if (-not $scopeMatch.Success) {
                 throw 'AUDIT_ENVELOPE_INVALID'
             }
-            if ($envelope.scope -ceq $request.scope) {
-                return @{found=$true;eventRecordId=[long]$row.RecordId;envelope=$envelope}
+            if ($scopeMatch.Groups[1].Value -ceq $request.scope) {
+                return @{found=$true;eventRecordId=[long]$row.RecordId;raw=$envelopeRaw}
             }
             } finally { $row.Dispose() }
         } } finally { $reader.Dispose() }
         return $null
     }
+    function Write-AnchorResult($result) {
+        if ($null -eq $result) { [Console]::WriteLine('{"found":false}'); return }
+        # Frame untrusted event data as base64; it cannot inject or replace the
+        # independently read native EventRecordId in the response envelope.
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($result.raw))
+        [Console]::WriteLine('{"found":true,"eventRecordId":' + [string]$result.eventRecordId + ',"envelopeBase64":"' + $encoded + '"}')
+    }
     if ($Mode -eq 'Read') {
         $result = Read-Anchor
-        if ($null -eq $result) { $result = @{found=$false} }
-        $result | ConvertTo-Json -Compress -Depth 5
+        Write-AnchorResult $result
         exit 0
     }
     if ($request.authKey -isnot [string] -or $request.authKey.Length -lt 32 -or
@@ -93,12 +101,15 @@ try {
             $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($request.authKey))
             try { $signature = ([BitConverter]::ToString($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($signingText)))).Replace('-','').ToLowerInvariant() }
             finally { $hmac.Dispose() }
-            $entry = [ordered]@{scope=$request.scope;recordId=$nextId;transitionId=$request.transitionId;stateBase64=$request.stateBase64;mac=$signature}
-            $writer.WriteEntry($marker + ($entry | ConvertTo-Json -Compress), [Diagnostics.EventLogEntryType]::Information, $eventId)
+            # Every interpolated field is a fixed number or validated ASCII
+            # token/base64 value. No general JSON/module dependency is loaded.
+            $entry = '{"scope":"' + $request.scope + '","recordId":' + [string]$nextId +
+                ',"transitionId":"' + $request.transitionId + '","stateBase64":"' + $request.stateBase64 + '","mac":"' + $signature + '"}'
+            $writer.WriteEntry($marker + $entry, [Diagnostics.EventLogEntryType]::Information, $eventId)
             $result = Read-Anchor
             if ($null -ne $result -and $result.eventRecordId -eq $nextId -and
-                $result.envelope.transitionId -ceq $request.transitionId) {
-                $result | ConvertTo-Json -Compress -Depth 5
+                $result.raw -ceq $entry) {
+                Write-AnchorResult $result
                 exit 0
             }
         }

@@ -10,8 +10,16 @@ export function createMaintenanceOsAnchorV1({ workspaceRoot, signingKey, spawnFn
     throw new Error('MAINTENANCE_OS_ANCHOR_UNAVAILABLE');
   const scope = createHash('sha256').update(resolve(workspaceRoot).toLowerCase()).digest('hex');
   const decode = result => {
-    if (result?.found === false) return null;
-    const row = result?.envelope;
+    if (result?.found === false && Object.keys(result).join(',') === 'found') return null;
+    if (result?.found !== true || Object.keys(result).sort().join(',') !== 'envelopeBase64,eventRecordId,found'
+        || typeof result.envelopeBase64 !== 'string' || result.envelopeBase64.length > 28000)
+      throw new Error('MAINTENANCE_OS_ANCHOR_IDENTITY_INVALID');
+    let row;
+    try {
+      const bytes = Buffer.from(result.envelopeBase64, 'base64');
+      if (bytes.toString('base64') !== result.envelopeBase64) throw new Error();
+      row = JSON.parse(bytes.toString('utf8'));
+    } catch { throw new Error('MAINTENANCE_OS_ANCHOR_ENCODING_INVALID'); }
     if (!row || Object.keys(row).sort().join(',') !== 'mac,recordId,scope,stateBase64,transitionId'
         || row.scope !== scope || !Number.isSafeInteger(row.recordId) || row.recordId < 1
         || result.eventRecordId !== row.recordId || !/^[a-f0-9-]{36}$/.test(row.transitionId ?? '')
