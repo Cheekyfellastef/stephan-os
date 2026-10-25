@@ -11,6 +11,10 @@ on:
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
       - 'shared/agents/mailboxReceiptIndexWorkflow.test.mjs'
       - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
       - 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
@@ -22,6 +26,9 @@ on:
     paths:
       - 'shared/agents/mailboxReceiptIndex.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
+      - 'shared/agents/canonicalMailboxAuthorityV1.mjs'
+      - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
+      - 'scripts/canonical-mailbox-rollover-github-adapter.mjs'
       - '.github/workflows/mailbox-receipt-index.yml'
   workflow_dispatch:
 
@@ -57,6 +64,8 @@ jobs:
           shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
           shared/agents/mailboxReceiptIndexWorkflow.test.mjs
           shared/agents/mailboxReceiptTruthIssue.test.mjs
+          shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs
+          scripts/canonical-mailbox-rollover-github-adapter.test.mjs
           scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
 
@@ -149,3 +158,15 @@ jobs:
               state: 'open',
             });
             core.info(`Updated receipt truth issue ${truthIssueNumber}.`);
+
+      - name: Observe capacity and prepare one inactive successor through existing owner
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = await import('node:url');
+            const { resolve } = await import('node:path');
+            const { observeCanonicalMailboxRolloverOnGitHub } = await import(
+              pathToFileURL(resolve('scripts/canonical-mailbox-rollover-github-adapter.mjs')).href);
+            const result = await observeCanonicalMailboxRolloverOnGitHub({ github, context });
+            core.info(JSON.stringify(result));
+            if (!result.ok) core.setFailed(result.blocker);
