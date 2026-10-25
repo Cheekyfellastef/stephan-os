@@ -152,7 +152,7 @@ test('untrusted manifest, scope, gaming and approval paths remain held', async (
   for (const bad of [
     { content: '# unrelated\n' },
     { targetPath: '../bad.md' },
-    { workerId: 'rescue-island-02' },
+    { workerId: 'rescue-island-03' },
     { approvalSource: 'self-approved' },
     { issueTitle: '' },
     { expiresAtUtc: '2026-10-13T23:00:00.000Z' },
@@ -493,4 +493,12 @@ nodeTest('installed same-owner recovery preserves previous claims and blocked ev
   await assert.rejects(access(join(claims, ctx.task.taskId + '.recovery.lock')), { code: 'ENOENT' });
   await assert.rejects(access(ctx.worktreeRoot), { code: 'ENOENT' });
   assert.equal(git(ctx.repoRoot, 'status', '--porcelain'), '');
+});
+
+nodeTest('production worker02 document validation binds the parent owner and keeps strict custody refused',async()=>{
+  const ctx=await fixture(),task={...ctx.task,workerId:'rescue-island-02'};
+  assert.equal(validate(task,ctx.nowUtc),true);
+  assert.equal(validate({...task,issueNumber:3109,issueTitle:'Rescue Island 01: authenticated one-shot intake and first physical source pickup (#3103)'},ctx.nowUtc),false);
+  await assert.rejects(productionBuild({...ctx,task,observed:{...ctx.observed,firstWorkerMaterialProof:true}}),/RESCUE_ISLAND_EXECUTION_CUSTODY_UNIMPLEMENTED/);
+  await assert.rejects(access(join(ctx.receiptRoot,'claims')));
 });

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { acquireSharedWorkspaceOperationLock } from './executionReceiptV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
 import { createRescueIslandSupervisedRunnerV1 } from './rescueIslandFirstCommitV1.mjs';
+import {resolveRescueIslandSupervisedDocumentWorkerV1} from './rescueIslandPilotOwnerIntakeV1.mjs';
 import { observeRescueIslandPhysicalScopesV1 } from './rescueIslandPhysicalScopeObservationV1.mjs';
 import { parallelSeedBranchNameV1 } from '../runtime/seedCanopyParallelForgeV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
@@ -284,7 +285,10 @@ async function currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,sourceHe
 export function createRescueIslandSupervisedHostV1(configuration={}) {
   const canonicalRoot=resolve(configuration.canonicalRoot||fileURLToPath(new URL('../..',import.meta.url)));
   const sharedWorkspaceRoot=resolve(configuration.sharedWorkspaceRoot||getDefaultSharedWorkspaceRoot());
-  const estate=join(sharedWorkspaceRoot,'worktrees','rescue-island-01');
+  const workerId=configuration.workerId || 'rescue-island-01';
+  if(!['rescue-island-01','rescue-island-02'].includes(workerId))held('ISLAND_HOST_WORKER_NOT_ADMITTED');
+  const owner=workerId==='rescue-island-01'?3109:3103;
+  const estate=join(sharedWorkspaceRoot,'worktrees',workerId);
   const roots=Object.freeze({canonicalRoot,repoRoot:join(estate,'repository'),
     worktreeRoot:join(estate,'worktrees'),receiptRoot:join(estate,'receipts')});
   const missionRoot=configuration.missionRoot||join(homedir(),'Documents','OpenClaw-Standalone','mission-runner','orchestrator');
@@ -292,17 +296,17 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
   const nativeHostPath=configuration.nativeHostPath||join(canonicalRoot,'src','windows','Stephanos.RescueIslandHost',
     'bin','Release','net8.0-windows','Stephanos.RescueIslandHost.exe');
   let active=null, savedPreservation=null;
-  async function admissionInventory() {
-    const claimsRoot=join(roots.receiptRoot,'claims');
+  async function admissionInventory(scopeRoots=roots,scopeWorker=workerId) {
+    const claimsRoot=join(scopeRoots.receiptRoot,'claims');
     const entries=await directoryEntries(claimsRoot,true),records=new Map();
     for(const entry of entries) {
       if(!entry.isFile() || !entry.name.endsWith('.json'))held('ISLAND_HOST_ISLAND_CLAIM_AMBIGUOUS');
       if(!entry.name.endsWith('.ADMITTED.json'))continue;
       const saved=await json(join(claimsRoot,entry.name));
       if(saved.schemaVersion!=='stephanos.rescue-island-supervised-admission.v1'
-        || !TASK.test(saved.taskId||'') || saved.workerId!=='rescue-island-01'
-        || ![3109,3096].includes(saved.ownerIssueNumber)
-        || entry.name!==saved.taskId+'.ADMITTED.json' || JSON.stringify(saved.roots)!==JSON.stringify(roots)
+        || !TASK.test(saved.taskId||'') || saved.workerId!==scopeWorker
+        || !(scopeWorker==='rescue-island-01'?[3109,3096]:[3103]).includes(saved.ownerIssueNumber)
+        || entry.name!==saved.taskId+'.ADMITTED.json' || JSON.stringify(saved.roots)!==JSON.stringify(scopeRoots)
         || saved.assuranceProfile!==PROFILE || !Number.isSafeInteger(saved.commentId) || saved.commentId<1
         || !HASH.test(saved.canonicalPreservationDigest||'')
         || !HASH.test(saved.taskFingerprint||'') || !SHA.test(saved.baseHead||''))
@@ -331,8 +335,8 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
     }
     return [...records.values()];
   }
-  async function retainedCompletion(saved) {
-    const claimsRoot=join(roots.receiptRoot,'claims');
+  async function retainedCompletion(saved,scopeRoots=roots) {
+    const claimsRoot=join(scopeRoots.receiptRoot,'claims');
     if(await present(join(claimsRoot,saved.taskId+'.BLOCKED.json')))return false;
     for(const suffix of ['json','SELECTED.json','CLAIMED.json','BRANCH_RESERVED.json','PHYSICAL_PICKUP.json','EDITED.json','TESTED.json','ISOLATED_COMMIT.json'])
       if(!await present(join(claimsRoot,saved.taskId+'.'+suffix)))return false;
@@ -348,16 +352,21 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       || tested.ownerCommentId!==saved.commentId || tested.taskFingerprint!==saved.taskFingerprint
       || tested.testExitCode!==0 || !HASH.test(tested.testResultHash||'')
       || tested.testOutputFile!==saved.taskId+'.'+tested.testResultHash+'.log')return false;
-    if(git(roots.repoRoot,['show','-s','--format=%P',committed.commitHead]).trim()!==saved.baseHead
-      || git(roots.repoRoot,['diff-tree','--no-commit-id','--name-only','-r',committed.commitHead]).trim()!==[...paths].sort().join('\n'))return false;
-    for(const path of paths)if(git(roots.repoRoot,['rev-parse',committed.commitHead+':'+path]).trim()
+    if(git(scopeRoots.repoRoot,['show','-s','--format=%P',committed.commitHead]).trim()!==saved.baseHead
+      || git(scopeRoots.repoRoot,['diff-tree','--no-commit-id','--name-only','-r',committed.commitHead]).trim()!==[...paths].sort().join('\n'))return false;
+    for(const path of paths)if(git(scopeRoots.repoRoot,['rev-parse',committed.commitHead+':'+path]).trim()
       !==(committed.sourceBlobs?.[path] || (path===saved.targetPath?committed.sourceBlob:null)))return false;
-    return digest(await readFile(join(roots.receiptRoot,'test-output',tested.testOutputFile)))===tested.testResultHash;
+    const worktree=join(scopeRoots.worktreeRoot,saved.taskId);
+    if(!(await physical(worktree)).isDirectory() || git(worktree,['rev-parse','HEAD']).trim()!==committed.commitHead
+      || git(worktree,['status','--porcelain']).trim())held('ISLAND_HOST_RETAINED_WORKTREE_CHANGED');
+    return digest(await readFile(join(scopeRoots.receiptRoot,'test-output',tested.testOutputFile)))===tested.testResultHash;
   }
   const host={
     async withExistingOwnerAdmission(expected,operation) {
       if(active)held('ISLAND_HOST_EXISTING_OWNER_BUSY');
-      if(expected.assuranceProfile!==PROFILE || !TASK.test(expected.taskId||'')
+      if((expected.workerId || 'rescue-island-01')!==workerId
+        || (expected.ownerIssueNumber && !(workerId==='rescue-island-01'?[3109,3096]:[3103]).includes(expected.ownerIssueNumber))
+        || expected.assuranceProfile!==PROFILE || !TASK.test(expected.taskId||'')
         || !HASH.test(expected.taskFingerprint||'') || !SHA.test(expected.baseHead||''))
         held('ISLAND_HOST_OWNER_IDENTITY_INVALID');
       // Reuse Shared Workspace's identity-checked cross-process exclusion;
@@ -387,10 +396,54 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       let observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead,governorExecutable);
       const canonicalClaims=await readIslandCanonicalClaimsV1({canonicalRoot,sharedWorkspaceRoot,missionRoot});
       const seedClaims=await readIslandSeedClaimsV1(seedRoot);
+      // Both lanes reuse the original cross-process operation lock. CPU work
+      // is serial in this cooperative profile; each lane owns a separate estate.
+      const peer=workerId==='rescue-island-01'?'rescue-island-02':'rescue-island-01';
+      const peerEstate=join(sharedWorkspaceRoot,'worktrees',peer);
+      const peerRoots={canonicalRoot,repoRoot:join(peerEstate,'repository'),
+        worktreeRoot:join(peerEstate,'worktrees'),receiptRoot:join(peerEstate,'receipts')};
+      if(await present(peerEstate)) {
+        const marker=await json(join(peerRoots.receiptRoot,'estate.json'));
+        if(marker.schemaVersion!=='stephanos.rescue-island-estate.v1' || marker.assuranceProfile!==PROFILE || marker.workerId!==peer
+          || marker.ownerIssueNumber!==(peer==='rescue-island-01'?3109:3103)
+          || JSON.stringify(marker.roots)!==JSON.stringify(peerRoots))held('ISLAND_HOST_PEER_ESTATE_NOT_ADMITTED');
+      }
+      const peerAdmissions=await admissionInventory(peerRoots,peer);
+      const peerIdentities=[];
+      if(await present(peerEstate)) {
+        for(const path of [...Object.values(peerRoots),join(peerRoots.repoRoot,'.git')]) {
+          const info=await physical(path);
+          if(!info.isDirectory())held('ISLAND_HOST_PEER_ESTATE_CHANGED');
+          peerIdentities.push([path,info.dev,info.ino]);
+        }
+        if(!inspectBattleBridgeGitTopology(peerRoots.repoRoot).ok
+          || !validateBattleBridgeLocalGitConfiguration(git(peerRoots.repoRoot,['config','--local','--null','--list'])).ok
+          || git(peerRoots.repoRoot,['status','--porcelain']).trim()
+          || git(peerRoots.repoRoot,['rev-parse','--abbrev-ref','HEAD']).trim()!=='HEAD'
+          || !peerAdmissions.some(saved=>saved.baseHead===git(peerRoots.repoRoot,['rev-parse','HEAD']).trim()))
+          held('ISLAND_HOST_PEER_REPOSITORY_CHANGED');
+      }
+      const peerIdentity=JSON.stringify(peerIdentities);
+      if(active.peerIdentity!==undefined && active.peerIdentity!==peerIdentity)
+        held('ISLAND_HOST_PEER_ESTATE_IDENTITY_CHANGED');
+      active.peerIdentity=peerIdentity;
+      // Retained proof is an admission invariant for BOTH directions. A valid
+      // first result cannot hide a later peer's changed worktree or test log.
+      let peerMaterial=false;
+      for(const saved of peerAdmissions) {
+        if(!await retainedCompletion(saved,peerRoots))held('ISLAND_HOST_PEER_RETAINED_PROOF_UNPROVEN');
+        peerMaterial=true;
+      }
+      if(workerId==='rescue-island-02' && !peerMaterial)
+        held('ISLAND_HOST_FIRST_WORKER_MATERIAL_PROOF_REQUIRED');
+      const peerClaims=peerAdmissions.map(saved=>({...claim(saved.taskId,saved.ownerIssueNumber,
+        'rescue-island/pilot-'+saved.taskId,join(peerRoots.worktreeRoot,saved.taskId),
+        sourcePaths(saved.targetPaths || [saved.targetPath]),{workerId:peer})[0],
+        targetPaths:sourcePaths(saved.targetPaths || [saved.targetPath])}));
       const targets=expected.targetPaths || [expected.targetPath];
       if(targets.length<1 || targets.length>6 || targets.some(p=>typeof p!=='string'))held('ISLAND_HOST_SOURCE_SCOPE_INVALID');
       const sourceScope=[...new Map([...targets,...canonicalClaims.flatMap(c=>c.targetPaths),
-        ...seedClaims.flatMap(c=>c.targetPaths)].map(p=>[p.toLowerCase(),p])).values()];
+        ...seedClaims.flatMap(c=>c.targetPaths),...peerClaims.flatMap(c=>c.targetPaths)].map(p=>[p.toLowerCase(),p])).values()];
       for(let start=0;start<sourceScope.length;start+=64) {
         const scan=await observeRescueIslandPhysicalScopesV1({repositoryRoot:canonicalRoot,paths:sourceScope.slice(start,start+64)});
         if(!scan.ok)held('ISLAND_HOST_PHYSICAL_SOURCE_SCOPE_UNPROVEN');
@@ -399,8 +452,8 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         const a=path.toLowerCase();
         return targets.some(target=>{const b=target.toLowerCase();return a===b || a.startsWith(b+'/') || b.startsWith(a+'/');});
       };
-      if([...canonicalClaims,...seedClaims].some(c=>c.taskId===expected.taskId
-        || (!expected.targetPaths && c.ownerIssueNumber===3109) || c.targetPaths.some(conflict)))held('ISLAND_HOST_COMPETING_SOURCE_OWNER');
+      if([...canonicalClaims,...seedClaims,...peerClaims].some(c=>c.taskId===expected.taskId
+        || (!expected.targetPaths && c.ownerIssueNumber===(expected.ownerIssueNumber || owner)) || c.targetPaths.some(conflict)))held('ISLAND_HOST_COMPETING_SOURCE_OWNER');
       // Minimum independent estate setup happens only AFTER authenticated
       // GitHub intake (the runner invokes this first observer afterward).
       const marker=join(roots.receiptRoot,'estate.json');
@@ -410,12 +463,12 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         git(canonicalRoot,['clone','--no-hardlinks','--no-checkout','--template=','--',canonicalRoot,roots.repoRoot],{localClone:true});
         git(roots.repoRoot,['remote','set-url','origin','https://github.com/Cheekyfellastef/stephan-os.git']);
         git(roots.repoRoot,['checkout','--detach',expected.baseHead]);
-        await durable(marker,{schemaVersion:'stephanos.rescue-island-estate.v1',ownerIssueNumber:3109,
-          workerId:'rescue-island-01',roots,assuranceProfile:PROFILE});
+        await durable(marker,{schemaVersion:'stephanos.rescue-island-estate.v1',ownerIssueNumber:owner,
+          workerId,roots,assuranceProfile:PROFILE});
       }
       const estateRecord=await json(marker);
       if(estateRecord.schemaVersion!=='stephanos.rescue-island-estate.v1'
-        || estateRecord.ownerIssueNumber!==3109 || estateRecord.workerId!=='rescue-island-01'
+        || estateRecord.ownerIssueNumber!==owner || estateRecord.workerId!==workerId
         || JSON.stringify(estateRecord.roots)!==JSON.stringify(roots))held('ISLAND_HOST_ESTATE_NOT_ADMITTED');
       const identities=[];
       for(const path of [...Object.values(roots),join(canonicalRoot,'.git'),join(roots.repoRoot,'.git')]) {
@@ -464,7 +517,7 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         // An admission receipt in the ORIGINAL claim estate, not a second
         // lease. Retain it on failure and require explicit reconciliation.
         await durable(admittedPath,{schemaVersion:'stephanos.rescue-island-supervised-admission.v1',
-          ...active.expected,workerId:'rescue-island-01',ownerIssueNumber:expected.ownerIssueNumber || 3109,roots,
+          ...active.expected,workerId,ownerIssueNumber:expected.ownerIssueNumber || owner,roots,
           canonicalPreservationDigest:current.digest});
         active.admitted=true;
       }
@@ -474,13 +527,13 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
           || saved.commentId!==expected.commentId || saved.baseHead!==expected.baseHead
           || saved.targetPath!==expected.targetPath || JSON.stringify(saved.roots)!==JSON.stringify(roots)
           || saved.canonicalPreservationDigest!==current.digest
-          || saved.ownerIssueNumber!==(expected.ownerIssueNumber || 3109)
+          || saved.ownerIssueNumber!==(expected.ownerIssueNumber || owner)
           || JSON.stringify(saved.targetPaths || [saved.targetPath])!==JSON.stringify(targets)))
           held('ISLAND_HOST_ADMISSION_RECEIPT_CHANGED');
         const savedTargets=sourcePaths(saved.targetPaths || [saved.targetPath]);
         if(saved.taskId!==expected.taskId && savedTargets.some(conflict))held('ISLAND_HOST_COMPETING_SOURCE_OWNER');
         const row=claim(saved.taskId,saved.ownerIssueNumber,'rescue-island/pilot-'+saved.taskId,
-          join(roots.worktreeRoot,saved.taskId),savedTargets,{workerId:'rescue-island-01'})[0];
+          join(roots.worktreeRoot,saved.taskId),savedTargets,{workerId})[0];
         islandClaims.push({...row,targetPaths:savedTargets});
       }
       if(!(await active.lock.verifyOwnership()))held('ISLAND_HOST_OWNER_ADMISSION_CHANGED');
@@ -489,16 +542,22 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
       if(Date.now()-observed>1000)
         observed=await currentGamingAdmission(canonicalRoot,sharedWorkspaceRoot,expected.baseHead,governorExecutable);
       return {schemaVersion:'stephanos.rescue-island-supervised-host-observation.v1',
-        assuranceProfile:PROFILE,repository:REPOSITORY,...active.expected,workerId:'rescue-island-01',
+        assuranceProfile:PROFILE,repository:REPOSITORY,...active.expected,workerId,
         sourceHead:expected.baseHead,sourceBranch:'rescue-island/pilot-'+expected.taskId,
         observedAtUtc:new Date().toISOString(),nonAdministrativeProcess:true,runnerResourceMode:'CPU_ONLY',
         gamingState:'IDLE_FRESH_VERIFIED',resourceGrantExpiresAtUtc:new Date(observed+10000).toISOString(),
         resourceAdmissionSource:'EXISTING_GAMING_GOVERNOR_COOPERATIVE_ADMISSION',existingOwnerAdmissionHeld:true,
         canonicalCheckoutPreserved:true,canonicalPreservationDigest:current.digest,
         worktreeIdentity:digest(folded(join(roots.worktreeRoot,expected.taskId))),roots,
-        claimInventoriesComplete:true,canonicalClaims,seedClaims,islandClaims,
+        claimInventoriesComplete:true,canonicalClaims,seedClaims,islandClaims:[...islandClaims,...peerClaims],
         ...(nativeTestHost?{nativeTestHost}:{})};
     },
   };
-  return Object.freeze({run:createRescueIslandSupervisedRunnerV1(host),host,roots});
+  const run=createRescueIslandSupervisedRunnerV1(host);
+  return Object.freeze({run:request=>{
+    const documentWorker=resolveRescueIslandSupervisedDocumentWorkerV1(request?.task);
+    if(!configuration.workerId && documentWorker?.workerId==='rescue-island-02')
+      return createRescueIslandSupervisedHostV1({...configuration,workerId:'rescue-island-02'}).run(request);
+    return run(request);
+  },host,roots});
 }
