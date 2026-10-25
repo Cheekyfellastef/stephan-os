@@ -13,6 +13,7 @@ import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { battleBridgeCanonicalRepositoryArgs, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -27,6 +28,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'repair-canonical-git-worktree-config',
   'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
@@ -2471,6 +2473,135 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
   return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
 }
 
+
+const CANONICAL_GIT_WORKTREE_CONFIG_ACTION = 'repair-canonical-git-worktree-config';
+
+function finiteGitConfigRepairFailure(blocker, details = {}) {
+  return Object.freeze({
+    ok: false,
+    blocker,
+    mutationPerformed: false,
+    ...details,
+  });
+}
+
+export function repairCanonicalGitWorktreeConfigV1({
+  repositoryRoot = fixedRepositoryRoot(),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const normalizedHead = text(expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(normalizedHead)) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_EXPECTED_HEAD_REQUIRED');
+  }
+
+  let git;
+  try {
+    git = resolveBattleBridgeGitExecution({ platform, environment });
+  } catch {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_GIT_UNAVAILABLE');
+  }
+  const prefix = [
+    ...git.fixedConfigArgs,
+    ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
+  ];
+  const capture = (args) => {
+    const result = spawnSyncFn(git.executable, [...prefix, ...args], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+    });
+  };
+
+  const beforeHead = capture(['rev-parse', 'HEAD']);
+  const branch = capture(['branch', '--show-current']);
+  if (!beforeHead.ok || text(beforeHead.stdout).toLowerCase() !== normalizedHead
+      || !branch.ok || text(branch.stdout) !== 'main') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
+  }
+
+  const beforeConfig = capture(['config', '--local', '--null', '--list']);
+  if (!beforeConfig.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
+  }
+  const beforeProof = validateBattleBridgeLocalGitConfiguration(beforeConfig.stdout);
+  if (beforeProof.ok === true) {
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      mutationPerformed: false,
+      finalVerdict: 'CANONICAL_GIT_CONFIGURATION_ALREADY_VALID',
+      riskCategoriesBefore: Object.freeze([]),
+      canonicalAfter: true,
+    });
+  }
+
+  const categories = Array.isArray(beforeProof?.diagnostic?.riskCategories)
+    ? beforeProof.diagnostic.riskCategories : [];
+  if (beforeProof.blocker !== 'CANONICAL_GIT_CONFIGURATION_INVALID'
+      || beforeProof?.diagnostic?.originCount !== 'ONE'
+      || beforeProof?.diagnostic?.originMatch !== 'CANONICAL'
+      || categories.length !== 1
+      || categories[0] !== 'EXTENSIONS_WORKTREE_CONFIG') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SCOPE_MISMATCH', {
+      riskCategoriesBefore: Object.freeze(categories.slice(0, 8)),
+    });
+  }
+
+  const configured = capture(['config', '--local', '--get-all', 'extensions.worktreeConfig']);
+  const configuredValues = configured.ok
+    ? configured.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean) : [];
+  if (!configured.ok || configuredValues.length !== 1
+      || configuredValues[0].toLowerCase() !== 'true') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNEXPECTED');
+  }
+
+  const worktreeConfig = capture(['config', '--worktree', '--null', '--list']);
+  const worktreeEntries = worktreeConfig.ok
+    ? worktreeConfig.stdout.split('\0').filter(Boolean) : [];
+  if (!worktreeConfig.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN');
+  }
+  if (worktreeEntries.length !== 0) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
+  }
+
+  const unset = capture(['config', '--local', '--unset-all', 'extensions.worktreeConfig']);
+  if (!unset.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_UNSET_FAILED');
+  }
+
+  const afterConfig = capture(['config', '--local', '--null', '--list']);
+  const afterHead = capture(['rev-parse', 'HEAD']);
+  if (!afterConfig.ok || !afterHead.ok || text(afterHead.stdout).toLowerCase() !== normalizedHead) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN');
+  }
+  const afterProof = validateBattleBridgeLocalGitConfiguration(afterConfig.stdout);
+  if (afterProof.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_INVALID');
+  }
+
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    mutationPerformed: true,
+    finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_REPAIRED',
+    riskCategoriesBefore: Object.freeze(['EXTENSIONS_WORKTREE_CONFIG']),
+    canonicalAfter: true,
+  });
+}
+
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
   const shape = validateSovereignCommanderRemoteCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -2557,6 +2688,64 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH', {
       expectedHead: shape.expectedHead,
       observedHead,
+    });
+  }
+
+
+  if (shape.command.remoteAction === CANONICAL_GIT_WORKTREE_CONFIG_ACTION) {
+    const repair = repairCanonicalGitWorktreeConfigV1({
+      repositoryRoot,
+      expectedHead: observedHead,
+      platform: process.platform,
+      environment: env,
+      spawnSyncFn,
+    });
+    if (!repair.ok) {
+      return fail(repair.blocker, {
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        sourceHead: observedHead,
+        expectedHeadMatch: true,
+        riskCategoriesBefore: repair.riskCategoriesBefore || Object.freeze([]),
+        gitConfigurationMutationPerformed: false,
+        sourceMutationAllowed: false,
+        arbitraryShellAllowed: false,
+        mergeAuthority: false,
+        pcRestartAuthority: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: repair.finalVerdict,
+      remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+      sourceHead: observedHead,
+      expectedHeadMatch: true,
+      gitConfigurationMutationPerformed: repair.mutationPerformed === true,
+      gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+      riskCategoriesBefore: repair.riskCategoriesBefore,
+      canonicalGitConfigurationValid: repair.canonicalAfter === true,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        sourceHead: observedHead,
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        mutationPerformed: repair.mutationPerformed === true,
+        canonicalAfter: repair.canonicalAfter === true,
+      })).digest('hex'),
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 
