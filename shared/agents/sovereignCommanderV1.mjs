@@ -443,6 +443,13 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
       timeoutMs: 60_000,
     }),
+    'observe-open-stephanos-tabs': frozen({
+      executable: node,
+      // Read existing native evidence only. Ambient local CDP opt-in cannot
+      // turn a remote observation into browser capture or filesystem mutation.
+      args: frozen([nodeFile('sovereign-commander-browser-observe.mjs'), '--native-receipt-only']),
+      timeoutMs: 10_000,
+    }),
     'prove-stephanos-ai-commander': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ai-chat-acceptance.mjs')]),

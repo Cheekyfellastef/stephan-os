@@ -43,6 +43,16 @@ on:
       - 'shared/agents/goalDiscoveryWorkspaceV1*'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-commander-browser-observe.mjs'
+      - 'tests/sovereign-commander-browser-observe.test.mjs'
+      - 'tests/sovereign-commander-browser-mailbox-projection.test.mjs'
+      - 'tests/sovereign-browser-native-receipt.test.mjs'
+      - 'tests/sovereign-browser-extension-permissions.test.mjs'
+      - 'tests/sovereign-browser-host-windows.test.mjs'
+      - 'apps/sovereign-browser-bridge/**'
+      - 'scripts/windows/SovereignBrowserWitnessHost.cs'
+      - 'scripts/windows/install-sovereign-browser-witness.ps1'
+      - 'scripts/windows/uninstall-sovereign-browser-witness.ps1'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
       - 'scripts/sovereign-commander-http.mjs'
       - 'shared/agents/sovereignCommanderHttp.test.mjs'
@@ -103,6 +113,16 @@ on:
       - 'shared/agents/goalDiscoveryWorkspaceV1*'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-commander-browser-observe.mjs'
+      - 'tests/sovereign-commander-browser-observe.test.mjs'
+      - 'tests/sovereign-commander-browser-mailbox-projection.test.mjs'
+      - 'tests/sovereign-browser-native-receipt.test.mjs'
+      - 'tests/sovereign-browser-extension-permissions.test.mjs'
+      - 'tests/sovereign-browser-host-windows.test.mjs'
+      - 'apps/sovereign-browser-bridge/**'
+      - 'scripts/windows/SovereignBrowserWitnessHost.cs'
+      - 'scripts/windows/install-sovereign-browser-witness.ps1'
+      - 'scripts/windows/uninstall-sovereign-browser-witness.ps1'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
       - 'scripts/sovereign-commander-http.mjs'
       - 'shared/agents/sovereignCommanderHttp.test.mjs'
@@ -140,6 +160,9 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/sovereign-commander-browser-observe.mjs
+          node --check apps/sovereign-browser-bridge/service-worker.js
+          node --check apps/sovereign-browser-bridge/popup.js
           node --check scripts/sovereign-commander-http.mjs
           node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
@@ -171,10 +194,45 @@ jobs:
           node --test shared/agents/sovereignCommanderHttp.test.mjs
           node --test shared/agents/sovereignWindowsQualificationWorkflow.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs scripts/sovereign-commander-goal-builder-repair.test.mjs shared/agents/goalDiscoveryWorkspaceV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
           node --test tests/battle-bridge-observation.test.mjs
+          node --test tests/sovereign-commander-browser-observe.test.mjs
+          node --test tests/sovereign-commander-browser-mailbox-projection.test.mjs
+          node --test tests/sovereign-browser-native-receipt.test.mjs
+          node --test tests/sovereign-browser-extension-permissions.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
           node --test shared/agents/sovereignCommanderCpuPressure.test.mjs
           node --test scripts/sovereign-commander-ignition-autoheal.test.mjs
           node --test shared/agents/sovereignCommanderWindows.test.mjs
+
+  native-browser-host-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Parse browser host installer scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @('scripts/windows/install-sovereign-browser-witness.ps1', 'scripts/windows/uninstall-sovereign-browser-witness.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) { throw "Invalid PowerShell: $file" }
+          }
+      - name: Compile native host without registering browser or elevating
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'sovereign-browser-host-test'
+          New-Item -Path $outputRoot -ItemType Directory -Force | Out-Null
+          $exe = Join-Path $outputRoot 'sovereign-browser-witness-host.exe'
+          Add-Type -Path (Resolve-Path 'scripts/windows/SovereignBrowserWitnessHost.cs').Path -OutputAssembly $exe -OutputType ConsoleApplication -ReferencedAssemblies @('System.Web.Extensions.dll','System.dll','System.Core.dll') -ErrorAction Stop
+          @{allowedOrigins=@('http://localhost:4173')} | ConvertTo-Json | Set-Content -Path (Join-Path $outputRoot 'allowed-origins.json') -Encoding UTF8
+          "STEPHANOS_BROWSER_WITNESS_HOST_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Native host protocol, scope and screenshot proof
+        run: node --test tests/sovereign-browser-host-windows.test.mjs
 
   windows-core-admission:
     runs-on: windows-latest
