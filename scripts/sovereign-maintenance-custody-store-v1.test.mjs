@@ -20,7 +20,10 @@ function fixture(t) {
   mkdirSync(join(root, 'status')); mkdirSync(join(root, 'events'));
   let latest = null, recordId = 0;
   anchors.set(root, { readLatest: () => latest && { ...latest, bytes: Buffer.from(latest.bytes) },
-    append: bytes => { latest = { bytes: Buffer.from(bytes), eventRecordId: ++recordId }; return latest; } });
+    append: (bytes, { expectedRecordId }) => {
+      if ((latest?.eventRecordId ?? null) !== expectedRecordId) throw new Error('fixture native compare failed');
+      latest = { bytes: Buffer.from(bytes), eventRecordId: ++recordId }; return latest;
+    } });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -73,6 +76,30 @@ test('replaying old authenticated IDLE bytes cannot erase the newer OS-anchored 
   assert.equal(successor.reserve(reservation).ok, false);
   assert.equal((await successor.recoverAfterBoot(approved(createHash('sha256').update(idleBytes).digest('hex')))).ok, false);
   assert.equal((await successor.recoverAfterBoot(approved(activeDigest))).ok, true);
+});
+
+test('replacing the workspace fence between two IDLE reads admits only the native compare winner', t => {
+  const root = fixture(t), seed = store(root);
+  seed.prepareIncident(reservation); seed.release();
+  const native = anchors.get(root), originalRead = native.readLatest;
+  const first = store(root), second = store(root);
+  let secondResult, interleaved = false;
+  native.readLatest = () => {
+    const snapshot = originalRead();
+    if (!interleaved) {
+      interleaved = true;
+      const fence = readdirSync(join(root, 'status')).find(name => name.endsWith('.lock'));
+      unlinkSync(join(root, 'status', fence));
+      secondResult = second.reserve({ reservationId: 'second-winner', operation: 'repair-ui-4173' });
+    }
+    return snapshot;
+  };
+  const firstResult = first.reserve({ reservationId: 'first-stale-reader', operation: 'repair-ui-4173' });
+  assert.equal(secondResult.ok, true);
+  assert.equal(firstResult.ok, false);
+  assert.equal(second.status().reservationId, 'second-winner');
+  assert.equal(second.release().ok, true);
+  first.close(); second.close();
 });
 
 test('only the original exact owner can release a known terminal reservation', t => {

@@ -106,7 +106,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
           : current.record.phase === 'ACTIVE' || existsSync(lockPath) ? 'MAINTENANCE_CUSTODY_RESERVED' : '' };
     } catch { return { held: true, digest: '', blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }; }
   };
-  const write = (record, initial = false) => {
+  const write = (record, initial, expectedRecordId) => {
     const bytes = Buffer.from(encode('record', record));
     if (bytes.length > 15000) throw new Error('CUSTODY_RECORD_UNBOUNDED');
     const target = initial ? path : path + '.' + ownerId + '.tmp';
@@ -114,7 +114,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
     try { writeFileSync(fd, bytes); fsyncSync(fd); }
     finally { closeSync(fd); }
     if (!initial) renameSync(target, path);
-    osAnchor.append(bytes); // Must be OS-anchored before any child is admitted.
+    osAnchor.append(bytes, { expectedRecordId }); // Atomic native compare-and-append before admission.
     return sha(bytes);
   };
   const acquire = () => {
@@ -134,7 +134,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       const record = { schemaVersion: MAINTENANCE_CUSTODY_SCHEMA, phase: 'ACTIVE',
         reservationId, operation, nonce: randomUUID(), ownerId, ownerPid: process.pid,
         startedAtUtc: now(), bootWitness, ...(incident ? { incident } : {}) };
-      const digest = write(record, initial); // Persist BEFORE any child launch.
+      const digest = write(record, initial, previous?.anchorRecordId ?? null);
       owned = { fd, record, digest };
       return { ok: true, digest };
     } catch {
@@ -149,7 +149,8 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       const current = read();
       if (current?.digest !== owned.digest || current.record.ownerId !== ownerId)
         return held('MAINTENANCE_CUSTODY_OWNER_CHANGED');
-      write({ ...owned.record, phase: 'IDLE', terminalAtUtc: now(), terminalAdmission: 'KNOWN_TERMINAL' });
+      write({ ...owned.record, phase: 'IDLE', terminalAtUtc: now(), terminalAdmission: 'KNOWN_TERMINAL' },
+        false, current.anchorRecordId);
       unlock(owned.fd); owned = null;
       return { ok: true };
     } catch { return held('MAINTENANCE_CUSTODY_RELEASE_UNPROVEN'); }
@@ -187,7 +188,8 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       try { writeFileSync(auditFd, auditBytes); fsyncSync(auditFd); } finally { closeSync(auditFd); }
       if (read()?.digest !== expectedDigest) return held('MAINTENANCE_CUSTODY_DIGEST_CHANGED');
       write({ ...current.record, phase: 'IDLE', terminalAtUtc: now(),
-        terminalAdmission: 'SUCCESSOR_FULL_BOOT', recoveryReceiptDigest: sha(auditBytes), recoveryBootWitness: witness });
+        terminalAdmission: 'SUCCESSOR_FULL_BOOT', recoveryReceiptDigest: sha(auditBytes), recoveryBootWitness: witness },
+        false, current.anchorRecordId);
       unlock(lock); lock = undefined;
       return { ok: true, custodyReleased: true, receiptDigest: sha(auditBytes),
         reservationId: current.record.reservationId, historicalOutcome: 'UNKNOWN', originalR7Authority: false };

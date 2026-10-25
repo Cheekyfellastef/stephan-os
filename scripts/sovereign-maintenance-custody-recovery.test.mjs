@@ -18,7 +18,10 @@ function fixture(t) {
     bootStartedAtUtc: new Date(now - 86400_000).toISOString(), observedAtUtc: new Date(now).toISOString() };
   let latest = null, id = 0;
   const anchor = { readLatest: () => latest && { ...latest, bytes: Buffer.from(latest.bytes) },
-    append: bytes => { latest = { bytes: Buffer.from(bytes), eventRecordId: ++id }; return latest; } };
+    append: (bytes, { expectedRecordId }) => {
+      if ((latest?.eventRecordId ?? null) !== expectedRecordId) throw new Error('fixture native compare failed');
+      latest = { bytes: Buffer.from(bytes), eventRecordId: ++id }; return latest;
+    } };
   return { root, boot, anchor };
 }
 

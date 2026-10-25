@@ -12,7 +12,8 @@ Persist an authenticated ACTIVE reservation **before** either guardian or manual
 maintenance launches work. All HTTP sessions and restarted Commander processes
 consult the same guardian state, anchored in the existing OS-owned Windows
 PowerShell event log. The Shared Workspace JSON is a replaceable projection.
-An exclusive boot-scoped fence admits only one owner. Unknown execution, process
+The native kernel compare-and-append admits only one owner; boot-scoped workspace
+fences are conservative diagnostics. Unknown execution, process
 death, persistence failure, absent OS evidence and malformed authority retain
 admission. Known terminal completion publishes an OS-anchored IDLE certificate;
 file absence never means idle.
@@ -52,8 +53,8 @@ exact reservation digest after a fresh local Windows observation proves the
 same machine has completed a full boot **later than the preparation observation**.
 Caller-supplied boot evidence is never accepted. A same-boot service reload,
 unknown boot, different machine, altered reservation and concurrent recovery
-all fail closed. An exclusive recovery fence serializes recovery against all
-new reservations. The full original record and new boot proof are durably
+all fail closed. The same native transition primitive serializes recovery against
+all new reservations. The full original record and new boot proof are durably
 archived before the state can become IDLE. Recovery reports prospective
 termination across the boot boundary, never historical successful completion.
 
@@ -70,6 +71,40 @@ and a real changed-boot witness are
 required before live recovery. No patch may be loaded into the held process.
 
 ## Scope and acceptance
+
+### Structural ownership review after the two authority findings
+
+The rollback and replaceable-fence findings share a root cause: workspace
+artifacts were treated as authority for freshness or exclusion. Stop adding
+caller-side guards. Every state transition must instead compare its expected
+previous OS anchor and append the successor inside one native critical section.
+
+The fixed audit adapter creates/opens one key-derived Global Windows kernel
+mutex, shared across interactive and S4U sessions. Creation applies a protected
+ACL for the canonical user and SYSTEM; existing object owner/ACL are verified.
+The Global namespace is OS-managed, not a workspace directory. Windows requires
+privileged global symbolic-link creation, and an open mutex cannot be replaced
+by deleting a workspace file. Wrong object type, unexpected ACL/owner, wait
+timeout or native failure holds. A mutex becoming abandoned is never child
+exclusion: the persisted ACTIVE OS anchor still holds the original request.
+
+The mutex covers only compare-and-append, not the child lifetime. Before append,
+the native adapter re-reads the newest scoped OS anchor while holding the mutex
+and requires its EventRecordId to equal the caller's authenticated expected
+previous identity (including the explicit no-previous bootstrap). It retains
+the mutex through bounded append and exact readback. A second contender reading
+the same IDLE identity must lose the compare, even if its workspace fence and
+projection were replaced. Terminal IDLE and successor-boot recovery use the
+same transition primitive; they cannot overwrite a foreign reservation.
+
+The linearization point is the independently read-back OS append under that
+kernel mutex. Source-model and real Windows concurrent-adapter tests must cover
+two stale readers, deleted/replaced workspace state, stale terminal release and
+recovery races. Existing file fences remain conservative crash diagnostics, not
+the proof of exclusive ownership. This adds no executor, scheduler or signer.
+
+Primary OS contracts: [kernel namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces)
+and [mutex security](https://learn.microsoft.com/en-us/dotnet/api/system.threading.mutex.-ctor?view=netframework-4.8).
 
 This restores maintenance admission following proven process extinction; it does
 not release R7 source ownership, cancel durable scheduled jobs, enroll the native
