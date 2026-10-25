@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -81,6 +81,30 @@ function invoke(f, overrides = {}) {
   });
 }
 
+function realMailboxRepository(t) {
+  const home = mkdtempSync(join(tmpdir(), 'stephanos-mailbox-git-repair-home-'));
+  const repositoryRoot = join(home, 'Documents', 'GitHub', 'stephan-os');
+  mkdirSync(repositoryRoot, { recursive: true });
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const git = (...args) => {
+    const out = spawnSync('git', args, {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+    });
+    assert.equal(out.status, 0, out.stderr);
+    return out.stdout;
+  };
+  git('init', '-b', 'main');
+  git('config', 'user.name', 'Fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  git('remote', 'add', 'origin', ORIGIN);
+  git('config', 'extensions.worktreeConfig', 'true');
+  git('commit', '--allow-empty', '-m', 'fixture');
+  return { home, repositoryRoot, head: git('rev-parse', 'HEAD').trim(), git };
+}
+
 test('the pre-admission repair action is registered', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('repair-canonical-git-worktree-config'));
 });
@@ -140,17 +164,9 @@ test('postcondition failure retains truthful evidence that mutation occurred', (
   assert.equal(f.mutationCount(), 1);
 });
 
-test('mailbox executes fixed repair before Commander health', async () => {
-  const f = fixture();
-  const env = { USERPROFILE: '/fixture' };
-  const rawSpawn = f.spawnSyncFn;
-  const spawnSyncFn = (command, args, options) => {
-    if (args[0] === '-C' && args[1].endsWith('/fixture/Documents/GitHub/stephan-os')) {
-      if (args[2] === 'branch') return result(0, 'main\n');
-      if (args[2] === 'rev-parse') return result(0, HEAD + '\n');
-    }
-    return rawSpawn(command, args, options);
-  };
+test('mailbox executes fixed repair before Commander health', async t => {
+  const f = realMailboxRepository(t);
+  const env = { ...process.env, USERPROFILE: f.home };
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
     requestId: 'repair-canonical-git-config-test-01',
@@ -159,35 +175,45 @@ test('mailbox executes fixed repair before Commander health', async () => {
     issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
-    expectedHead: HEAD,
+    expectedHead: f.head,
     expiresAt: '2099-01-01T00:00:00.000Z',
     remoteAction: 'repair-canonical-git-worktree-config',
   }, {
     env,
-    spawnSyncFn,
     fetchFn: async () => { throw new Error('Commander health must not be contacted'); },
     ensureRuntimeFn: async () => { throw new Error('Commander runtime must not be recycled'); },
   });
   assert.equal(receipt.ok, true);
   assert.equal(receipt.finalVerdict, 'CANONICAL_GIT_WORKTREE_CONFIG_REPAIRED');
-  assert.equal(receipt.sourceHead, HEAD);
+  assert.equal(receipt.sourceHead, f.head);
   assert.equal(receipt.gitConfigurationMutationPerformed, true);
   assert.equal(receipt.sourceMutationAllowed, false);
   assert.equal(receipt.arbitraryShellAllowed, false);
   assert.equal(receipt.pcRestartAuthority, false);
-  assert.equal(f.mutationCount(), 1);
+  const after = spawnSync('git', ['config', '--local', '--get-all', 'extensions.worktreeConfig'], {
+    cwd: f.repositoryRoot, encoding: 'utf8', shell: false, windowsHide: true,
+  });
+  assert.notEqual(after.status, 0);
 });
 
-test('mailbox failure after completed mutation reports the mutation truthfully', async () => {
-  const f = fixture({ failAfterUnsetRead: true });
-  const env = { USERPROFILE: '/fixture' };
-  const rawSpawn = f.spawnSyncFn;
+test('mailbox failure after completed mutation reports the mutation truthfully', async t => {
+  const f = realMailboxRepository(t);
+  const env = { ...process.env, USERPROFILE: f.home };
+  let unsetCompleted = false;
+  let failedPostUnsetRead = false;
   const spawnSyncFn = (command, args, options) => {
-    if (args[0] === '-C' && args[1].endsWith('/fixture/Documents/GitHub/stephan-os')) {
-      if (args[2] === 'branch') return result(0, 'main\n');
-      if (args[2] === 'rev-parse') return result(0, HEAD + '\n');
+    const joined = args.join('\u0001');
+    if (joined.endsWith('config\u0001--local\u0001--unset-all\u0001extensions.worktreeConfig')) {
+      const out = spawnSync(command, args, options);
+      if (!out.error && Number(out.status) === 0) unsetCompleted = true;
+      return out;
     }
-    return rawSpawn(command, args, options);
+    if (unsetCompleted && !failedPostUnsetRead
+        && joined.endsWith('config\u0001--local\u0001--null\u0001--list')) {
+      failedPostUnsetRead = true;
+      return result(1, '');
+    }
+    return spawnSync(command, args, options);
   };
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
@@ -197,14 +223,19 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
     issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
-    expectedHead: HEAD,
+    expectedHead: f.head,
     expiresAt: '2099-01-01T00:00:00.000Z',
     remoteAction: 'repair-canonical-git-worktree-config',
   }, { env, spawnSyncFn });
   assert.equal(receipt.ok, false);
   assert.equal(receipt.blocker, 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN');
   assert.equal(receipt.gitConfigurationMutationPerformed, true);
-  assert.equal(f.mutationCount(), 1);
+  assert.equal(unsetCompleted, true);
+  assert.equal(failedPostUnsetRead, true);
+  const after = spawnSync('git', ['config', '--local', '--get-all', 'extensions.worktreeConfig'], {
+    cwd: f.repositoryRoot, encoding: 'utf8', shell: false, windowsHide: true,
+  });
+  assert.notEqual(after.status, 0);
 });
 
 test('real Git: absent config.worktree is treated as empty and repaired', t => {
