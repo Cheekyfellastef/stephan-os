@@ -102,14 +102,37 @@ test('real Windows create is Unicode-exact, create-only, nonrecursive and reject
     const root = await realpath(await mkdtemp(join(tmpdir(), 'sovereign-directory-')));
     try {
       const target = join(root, 'José-测试-🚀');
-      let terminal;
-      const result = create(target, { spawnSyncFn: (...args) => { terminal = spawnSync(...args); return terminal; } });
+      let terminal, invocation;
+      const result = create(target, { spawnSyncFn: (...args) => {
+        invocation = args; terminal = spawnSync(...args); return terminal;
+      } });
+      let stages;
+      if (!result.ok && invocation) {
+        // Diagnose the exact production transport without retrying a mutation.
+        // Only fixed stage labels are emitted; stop before the native create.
+        const [executable, args, settings] = invocation;
+        let program = Buffer.from(args.at(-1), 'base64').toString('utf16le');
+        for (const [statement, label] of [
+          ["$ErrorActionPreference = 'Stop'", 'START'],
+          ['$raw = [Console]::In.ReadToEnd()', 'READ_INPUT'],
+          ['$request = $raw | ConvertFrom-Json', 'PARSE_INPUT'],
+          ['$sha = [Security.Cryptography.SHA256]::Create()', 'HASH_SOURCE'],
+          ['Add-Type -TypeDefinition $request.nativeSource', 'COMPILE'],
+          ['$scope = New-Object SovereignDirectoryCreateV1 -ArgumentList $request.path', 'PIN_PARENT'],
+        ]) program = program.replace(statement, `[Console]::Error.WriteLine('${label}'); ${statement}`);
+        program = program.replace('$identity = $scope.Create()',
+          "[Console]::Error.WriteLine('READY_TO_CREATE'); throw 'SOVEREIGN_DIRECTORY_FIXTURE_STOP'");
+        const diagnostic = spawnSync(executable,
+          [...args.slice(0, -1), Buffer.from(program, 'utf16le').toString('base64')], settings);
+        stages = { status: diagnostic.status, error: diagnostic.error?.code,
+          stderr: diagnostic.stderr, stdout: diagnostic.stdout };
+      }
       // This fixture contains only a disposable CI path and committed source.
       // Keep production failures sanitized; retain the actual test subprocess
       // diagnostic here so platform failures can be fixed without guessing.
       assert.equal(result.ok, true, JSON.stringify({ result, terminal: {
-        status: terminal?.status, stdout: terminal?.stdout, stderr: terminal?.stderr,
-      } }));
+        status: terminal?.status, error: terminal?.error?.code, stdout: terminal?.stdout, stderr: terminal?.stderr,
+      }, stages }));
       assert.equal((await lstat(target)).isDirectory(), true);
       const sentinel = join(target, 'keep.txt');
       await writeFile(sentinel, 'preserve');
