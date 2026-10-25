@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { resolveBattleBridgeGitExecutable } from './battleBridgeExecutionBoundaryV1.mjs';
 import {
   SOVEREIGN_COMMANDER_REMOTE_ACTIONS,
   executeSovereignCommanderRemoteOnBattleBridge,
@@ -85,6 +86,10 @@ function invoke(f, overrides = {}) {
     existsFn: f.existsFn,
     ...overrides,
   });
+}
+
+function portableMailboxGit(_command, args, options) {
+  return spawnSync(resolveBattleBridgeGitExecutable(process.platform), args, options);
 }
 
 function realMailboxRepository(t) {
@@ -206,17 +211,9 @@ test('read-only inspection reports nonempty worktree config as repair-held witho
   assert.equal(f.mutationCount(), 0);
 });
 
-test('mailbox serves read-only Git worktree/config inspection before Commander health', async () => {
-  const f = fixture();
-  const env = { USERPROFILE: '/fixture' };
-  const rawSpawn = f.spawnSyncFn;
-  const spawnSyncFn = (command, args, options) => {
-    if (args[0] === '-C' && args[1].endsWith('/fixture/Documents/GitHub/stephan-os')) {
-      if (args[2] === 'branch') return result(0, 'main\n');
-      if (args[2] === 'rev-parse' && args[3] === 'HEAD') return result(0, HEAD + '\n');
-    }
-    return rawSpawn(command, args, options);
-  };
+test('mailbox serves read-only Git worktree/config inspection before Commander health', async t => {
+  const f = realMailboxRepository(t);
+  const env = { ...process.env, USERPROFILE: f.home };
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
     requestId: 'inspect-canonical-git-config-test-01',
@@ -225,12 +222,12 @@ test('mailbox serves read-only Git worktree/config inspection before Commander h
     issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
-    expectedHead: HEAD,
+    expectedHead: f.head,
     expiresAt: '2099-01-01T00:00:00.000Z',
     remoteAction: 'inspect-canonical-git-worktree-config',
   }, {
     env,
-    spawnSyncFn,
+    spawnSyncFn: portableMailboxGit,
     fetchFn: async () => { throw new Error('Commander health must not be contacted'); },
     ensureRuntimeFn: async () => { throw new Error('Commander runtime must not be recycled'); },
   });
@@ -240,7 +237,7 @@ test('mailbox serves read-only Git worktree/config inspection before Commander h
   assert.equal(receipt.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
   assert.equal(receipt.gitConfigurationMutationPerformed, false);
   assert.equal(receipt.readOnly, true);
-  assert.equal(f.mutationCount(), 0);
+  assert.equal(f.git('config', '--local', '--get', 'extensions.worktreeConfig').trim(), 'true');
 });
 
 test('the pre-admission repair action is registered', () => {
@@ -318,6 +315,7 @@ test('mailbox executes fixed repair before Commander health', async t => {
     remoteAction: 'repair-canonical-git-worktree-config',
   }, {
     env,
+    spawnSyncFn: portableMailboxGit,
     fetchFn: async () => { throw new Error('Commander health must not be contacted'); },
     ensureRuntimeFn: async () => { throw new Error('Commander runtime must not be recycled'); },
   });
@@ -342,7 +340,7 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
   const spawnSyncFn = (command, args, options) => {
     const joined = args.join('\u0001');
     if (joined.endsWith('config\u0001--local\u0001--unset-all\u0001extensions.worktreeConfig')) {
-      const out = spawnSync(command, args, options);
+      const out = portableMailboxGit(command, args, options);
       if (!out.error && Number(out.status) === 0) unsetCompleted = true;
       return out;
     }
@@ -351,7 +349,7 @@ test('mailbox failure after completed mutation reports the mutation truthfully',
       failedPostUnsetRead = true;
       return result(1, '');
     }
-    return spawnSync(command, args, options);
+    return portableMailboxGit(command, args, options);
   };
   const receipt = await executeSovereignCommanderRemoteOnBattleBridge({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
