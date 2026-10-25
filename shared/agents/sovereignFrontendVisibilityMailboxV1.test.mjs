@@ -8,6 +8,7 @@ import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   FRONTEND_VISIBILITY_EXECUTION_FILES, FRONTEND_VISIBILITY_OBSERVE_OPERATION,
   FRONTEND_VISIBILITY_START_OPERATION, FRONTEND_VISIBILITY_RESULT_SCHEMA,
+  FRONTEND_VISIBILITY_SOURCE_IDS, FRONTEND_VISIBILITY_SOURCE_BLOCKERS,
   executeFrontendVisibilityOnBattleBridge, projectFrontendVisibilityReceiptV1,
   validateFrontendVisibilityCommandShape, verifyFrontendExecutionSourceV1,
 } from './sovereignFrontendVisibilityMailboxV1.mjs';
@@ -183,4 +184,113 @@ test('source object authentication ignores replacement refs and never executes c
   writeFileSync(join(f.root, file), '// substitute\n');
   assert.throws(() => verifyFrontendExecutionSourceV1(f), /SOURCE_BYTES_CHANGED/);
   assert.equal(existsSync(marker), false);
+});
+
+test('a normal Git fast-forward must change all fixed shared blobs to materialize legacy clean CRLF bytes', t => {
+  const f = sourceFixture(t);
+  const scripts = FRONTEND_VISIBILITY_EXECUTION_FILES.filter(path => path.startsWith('scripts/'));
+  const shared = FRONTEND_VISIBILITY_EXECUTION_FILES.filter(path => path.startsWith('shared/'));
+  const original = new Map(FRONTEND_VISIBILITY_EXECUTION_FILES.map(path => [path, readFileSync(join(f.root, path))]));
+  const explicitPins = paths => paths.map(path => `${path} text eol=lf\n`).join('');
+  const productionAttributes = readFileSync(new URL('../../.gitattributes', import.meta.url), 'utf8');
+  for (const path of FRONTEND_VISIBILITY_EXECUTION_FILES) assert.ok(productionAttributes.split(/\r?\n/).includes(`${path} text eol=lf`), path);
+  const deployment = mkdtempSync(join(tmpdir(), 'frontend-mailbox-deployment-'));
+  t.after(() => rmSync(deployment, { recursive: true, force: true }));
+  f.git('clone', '--config', 'core.autocrlf=true', '--no-hardlinks', '--branch', 'main', f.root, deployment);
+  const deployedGit = (...args) => {
+    const result = spawnSync('git', args, { cwd: deployment, encoding: 'utf8', timeout: 10000, shell: false });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  const advance = () => { deployedGit('fetch', 'origin', 'main'); deployedGit('merge', '--ff-only', 'FETCH_HEAD'); };
+  const deployedBytes = path => readFileSync(join(deployment, path));
+  const containsCrlf = path => deployedBytes(path).includes(Buffer.from('\r\n'));
+  assert.equal(deployedGit('status', '--porcelain'), '');
+  for (const path of FRONTEND_VISIBILITY_EXECUTION_FILES) assert.equal(containsCrlf(path), true);
+
+  // The attributes arrive after this checkout's clean CRLF files already exist.
+  writeFileSync(join(f.root, '.gitattributes'), 'shared/**/*.mjs text eol=lf\n');
+  f.git('add', '--', '.gitattributes'); f.git('commit', '-m', 'existing shared LF attributes'); advance();
+  assert.equal(deployedGit('status', '--porcelain'), '');
+  for (const path of shared) assert.equal(containsCrlf(path), true);
+  writeFileSync(join(f.root, '.gitattributes'), 'shared/**/*.mjs text eol=lf\n' + explicitPins(scripts));
+  for (const path of scripts) writeFileSync(join(f.root, path), Buffer.concat([original.get(path), Buffer.from('// reviewed four-script update\n')]));
+  f.git('add', '--', '.gitattributes', ...scripts); f.git('commit', '-m', 'pin and materialize four scripts'); advance();
+  assert.equal(deployedGit('status', '--porcelain'), '');
+  for (const path of scripts) assert.equal(containsCrlf(path), false);
+  for (const path of shared) assert.equal(containsCrlf(path), true);
+  assert.throws(() => verifyFrontendExecutionSourceV1({ root: deployment, expectedHead: deployedGit('rev-parse', 'HEAD') }),
+    { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_LOCAL_URLS_CRLF_ONLY' });
+
+  writeFileSync(join(f.root, '.gitattributes'), 'shared/**/*.mjs text eol=lf\n' + explicitPins(FRONTEND_VISIBILITY_EXECUTION_FILES));
+  for (const path of shared) writeFileSync(join(f.root, path), Buffer.concat([original.get(path), Buffer.from('// Fixed frontend source admission requires canonical LF deployment bytes.\n')]));
+  f.git('add', '--', '.gitattributes', ...shared); f.git('commit', '-m', 'materialize all fixed shared dependencies'); advance();
+  assert.equal(deployedGit('status', '--porcelain'), '');
+  for (const path of FRONTEND_VISIBILITY_EXECUTION_FILES) assert.equal(containsCrlf(path), false);
+  assert.equal(verifyFrontendExecutionSourceV1({ root: deployment, expectedHead: deployedGit('rev-parse', 'HEAD') }).ok, true);
+
+  const localFile = shared[0], localEdit = Buffer.concat([deployedBytes(localFile), Buffer.from('// operator local edit\n')]);
+  writeFileSync(join(deployment, localFile), localEdit);
+  writeFileSync(join(f.root, localFile), Buffer.concat([readFileSync(join(f.root, localFile)), Buffer.from('// later reviewed source\n')]));
+  f.git('add', '--', localFile); f.git('commit', '-m', 'later source update'); deployedGit('fetch', 'origin', 'main');
+  const refused = spawnSync('git', ['merge', '--ff-only', 'FETCH_HEAD'], { cwd: deployment, encoding: 'utf8', timeout: 10000, shell: false });
+  assert.notEqual(refused.status, 0);
+  assert.deepEqual(deployedBytes(localFile), localEdit, 'normal deployment must still preserve real local edits');
+});
+
+test('source refusal identifies each fixed dependency and still blocks CRLF, content and identity differences', t => {
+  const f = sourceFixture(t);
+  for (const [path, id] of Object.entries(FRONTEND_VISIBILITY_SOURCE_IDS)) {
+    const original = readFileSync(join(f.root, path));
+    writeFileSync(join(f.root, path), original.toString().replace(/\n/g, '\r\n'));
+    assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: `FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_${id}_CRLF_ONLY` });
+    writeFileSync(join(f.root, path), original);
+  }
+  const path = join(f.root, FRONTEND_VISIBILITY_EXECUTION_FILES[0]), original = readFileSync(path);
+  for (const content of [Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original]),
+    Buffer.concat([original, Buffer.from([0xff])]), Buffer.from(original.toString().replace(/\n/g, '\r'))]) {
+    writeFileSync(path, content);
+    assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_CONTENT' });
+  }
+  rmSync(path);
+  assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_IDENTITY' });
+  mkdirSync(path);
+  assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_IDENTITY' });
+  rmSync(path, { recursive: true }); writeFileSync(path, Buffer.alloc(1024 * 1024 + 1));
+  assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_IDENTITY' });
+  writeFileSync(path, original);
+  assert.equal(verifyFrontendExecutionSourceV1(f).ok, true);
+});
+
+test('CRLF-only classification cannot hide invalid UTF-8 behind replacement-character decoding', t => {
+  const f = sourceFixture(t), file = FRONTEND_VISIBILITY_EXECUTION_FILES[0], path = join(f.root, file);
+  writeFileSync(path, '// encoding \uFFFD\n');
+  f.git('add', '--', file); f.git('commit', '-m', 'authenticated replacement character');
+  f.expectedHead = f.git('rev-parse', 'HEAD');
+  writeFileSync(path, Buffer.concat([Buffer.from('// encoding '), Buffer.from([0xff, 13, 10])]));
+  assert.throws(() => verifyFrontendExecutionSourceV1(f), { message: 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_CONTENT' });
+});
+
+test('only the fixed source-ID and reason cross-product escapes the execution error boundary', async () => {
+  assert.equal(FRONTEND_VISIBILITY_SOURCE_BLOCKERS.length, 27);
+  assert.equal(new Set(FRONTEND_VISIBILITY_SOURCE_BLOCKERS).size, 27);
+  for (const blocker of FRONTEND_VISIBILITY_SOURCE_BLOCKERS) {
+    const result = await executeFrontendVisibilityOnBattleBridge(command(), {
+      runFixedFrontendVisibilityFn: async () => { throw new Error(blocker); },
+    });
+    assert.equal(result.ok, false); assert.equal(result.blocker, blocker);
+    assert.equal(result.custodyReleased, false); assert.equal(result.arbitraryShellAllowed, false);
+  }
+  for (const blocker of [
+    'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_UNKNOWN_CONTENT',
+    'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_ACCEPTED',
+    'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_CONTENT C:\\private\\fixture',
+    'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_scripts/sovereign-frontend-start-only.mjs_CONTENT',
+    'ghp_privatefixture123456',
+  ]) {
+    const result = await executeFrontendVisibilityOnBattleBridge(command(), {
+      runFixedFrontendVisibilityFn: async () => { throw new Error(blocker); },
+    });
+    assert.equal(result.blocker, 'FRONTEND_MAILBOX_EXECUTION_UNPROVEN');
+    assert.equal(JSON.stringify(result).includes(blocker), false);
+  }
 });

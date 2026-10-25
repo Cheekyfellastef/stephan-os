@@ -25,6 +25,24 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const FIXED_ROOT = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const STARTER = 'scripts/sovereign-frontend-start-only.mjs';
 const LISTENER = 'scripts/windows/read-stephanos-frontend-listener.ps1';
+export const FRONTEND_VISIBILITY_SOURCE_IDS = Object.freeze({
+  [STARTER]: 'STARTER',
+  [LISTENER]: 'LISTENER',
+  'scripts/serve-stephanos-dist.mjs': 'DIST_SERVER',
+  'scripts/stephanos-build-utils.mjs': 'BUILD_UTILS',
+  'shared/runtime/stephanosLocalUrls.mjs': 'LOCAL_URLS',
+  'shared/runtime/systemPanelToggleRegistry.mjs': 'TOGGLE_REGISTRY',
+  'shared/agents/openClawReadonlyValidationEndpoint.mjs': 'READONLY_ENDPOINT',
+  'shared/agents/battleBridgeExecutionBoundaryV1.mjs': 'EXECUTION_BOUNDARY',
+  'shared/agents/battleBridgeWindowsHosts.mjs': 'WINDOWS_HOSTS',
+});
+const SOURCE_BYTES_CHANGED = 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED';
+const sourceByteReasons = Object.freeze(['IDENTITY', 'CRLF_ONLY', 'CONTENT']);
+export const FRONTEND_VISIBILITY_SOURCE_BLOCKERS = Object.freeze(
+  Object.values(FRONTEND_VISIBILITY_SOURCE_IDS).flatMap(id => sourceByteReasons.map(reason => `${SOURCE_BYTES_CHANGED}_${id}_${reason}`)),
+);
+const sourceByteBlocker = (file, reason) => Object.hasOwn(FRONTEND_VISIBILITY_SOURCE_IDS, file) && sourceByteReasons.includes(reason)
+  ? `${SOURCE_BYTES_CHANGED}_${FRONTEND_VISIBILITY_SOURCE_IDS[file]}_${reason}` : SOURCE_BYTES_CHANGED;
 const fields = new Set(['schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber',
   'branch', 'operatorApproval', 'expectedHead', 'expiresAt', 'expectedDistFingerprint']);
 const childFields = new Set(['schemaVersion', 'service', 'ok', 'blocker', 'frontendAvailable',
@@ -48,6 +66,7 @@ const errors = new Set([
   'FRONTEND_STARTUP_UNPROVEN', 'FRONTEND_START_FAILED', 'FRONTEND_GIT_OBJECT_IDENTITY_INVALID',
   'FRONTEND_GIT_TREE_INVALID', 'FRONTEND_GIT_TREE_CHAIN_INVALID', 'FRONTEND_GIT_COMMIT_INVALID',
   'FRONTEND_LAUNCHER_UNPROVEN', 'FRONTEND_SNAPSHOT_LIMIT', 'FRONTEND_ENTRY_INVALID',
+  ...FRONTEND_VISIBILITY_SOURCE_BLOCKERS,
 ]);
 const plain = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const stop = code => { throw new Error(code); };
@@ -79,12 +98,18 @@ export function isTerminalizableFrontendVisibilityBlocker(value) {
 // Bounded static import closure of the fixed starter, manifest helper and native
 // witness. Verify bytes before loading/invoking them, independently of index
 // masking. This is cooperative drift detection, not hostile-writer exclusion.
-export const FRONTEND_VISIBILITY_EXECUTION_FILES = Object.freeze([
-  STARTER, LISTENER, 'scripts/serve-stephanos-dist.mjs', 'scripts/stephanos-build-utils.mjs',
-  'shared/runtime/stephanosLocalUrls.mjs', 'shared/runtime/systemPanelToggleRegistry.mjs',
-  'shared/agents/openClawReadonlyValidationEndpoint.mjs',
-  'shared/agents/battleBridgeExecutionBoundaryV1.mjs', 'shared/agents/battleBridgeWindowsHosts.mjs',
-]);
+export const FRONTEND_VISIBILITY_EXECUTION_FILES = Object.freeze(Object.keys(FRONTEND_VISIBILITY_SOURCE_IDS));
+
+// Diagnostic classification only: every difference still refuses admission.
+// Compare bytes, removing only CR immediately before LF, without text decoding.
+function differsOnlyByCrlf(actual, expected) {
+  let expectedOffset = 0, removedCr = false;
+  for (let offset = 0; offset < actual.length; offset++) {
+    if (actual[offset] === 13 && actual[offset + 1] === 10) { removedCr = true; continue; }
+    if (expectedOffset >= expected.length || actual[offset] !== expected[expectedOffset++]) return false;
+  }
+  return removedCr && expectedOffset === expected.length;
+}
 
 export function verifyFrontendExecutionSourceV1({ root = ROOT, expectedHead,
   spawnSyncFn = spawnSync, platform = process.platform } = {}) {
@@ -129,11 +154,16 @@ export function verifyFrontendExecutionSourceV1({ root = ROOT, expectedHead,
       if (!entry || (i < parts.length - 1 ? entry.mode !== '40000' : !['100644', '100755'].includes(entry.mode))) stop('FRONTEND_GIT_TREE_CHAIN_INVALID');
       oid = entry.oid;
     }
-    const expected = object('blob', oid), pathname = resolve(root, file), info = lstatSync(pathname);
+    const expected = object('blob', oid), pathname = resolve(root, file);
     const samePath = (a, b) => platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
-    if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024
-      || !samePath(realpathSync(pathname), pathname)) stop('FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED');
-    if (!readFileSync(pathname).equals(expected)) stop('FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED');
+    let actual;
+    try {
+      const info = lstatSync(pathname);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024
+        || !samePath(realpathSync(pathname), pathname)) stop(sourceByteBlocker(file, 'IDENTITY'));
+      actual = readFileSync(pathname);
+    } catch { stop(sourceByteBlocker(file, 'IDENTITY')); }
+    if (!actual.equals(expected)) stop(sourceByteBlocker(file, differsOnlyByCrlf(actual, expected) ? 'CRLF_ONLY' : 'CONTENT'));
   }
   if (capture(['rev-parse', 'HEAD']).toString().trim() !== expectedHead) stop('FRONTEND_INSTALLED_HEAD_CHANGED');
   return Object.freeze({ ok: true, sourceHead: expectedHead });

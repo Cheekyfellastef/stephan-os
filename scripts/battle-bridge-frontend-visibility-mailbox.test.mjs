@@ -9,6 +9,7 @@ import {
 } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import {
   FRONTEND_VISIBILITY_OBSERVE_OPERATION, FRONTEND_VISIBILITY_START_OPERATION,
+  FRONTEND_VISIBILITY_SOURCE_BLOCKERS,
 } from '../shared/agents/sovereignFrontendVisibilityMailboxV1.mjs';
 import { createSanitizedMailboxReceiptProjection, preflightMailboxControlExpectedHead,
   serializeBoundedReceiptJson } from './battle-bridge-github-command-mailbox.mjs';
@@ -134,4 +135,24 @@ test('outer projection refuses cross-head, cross-fingerprint and authority-contr
     assert.equal(createSanitizedMailboxReceiptProjection(invalid).operationResult.frontendVisibility, null);
     assert.equal(JSON.parse(serializeBoundedReceiptJson(invalid)).result.result.frontendVisibility, null);
   }
+});
+
+test('finite source-byte refusals survive public serialization without a private file or exception channel', async () => {
+  for (const blocker of FRONTEND_VISIBILITY_SOURCE_BLOCKERS) {
+    const original = await receipt(false, { ok: false, blocker });
+    assert.equal(original.state, 'BLOCKED');
+    assert.equal(createSanitizedMailboxReceiptProjection(original).operationResult.blocker, blocker);
+    for (const limit of [65_536, 4_500]) {
+      const serialized = serializeBoundedReceiptJson(original, limit), published = JSON.parse(serialized);
+      assert.equal(published.result.result.blocker, blocker);
+      assert.equal(published.result.result.frontendVisibility, null);
+      assert.equal(createSanitizedMailboxReceiptProjection(published).operationResult.blocker, blocker);
+      assert.doesNotMatch(serialized, /scripts\/|shared\/|stdout|C:\\\\private/);
+    }
+  }
+  const privateError = 'FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED_STARTER_CONTENT C:\\private\\fixture ghp_privatefixture123456';
+  const original = await receipt(false, { ok: false, blocker: privateError });
+  const serialized = serializeBoundedReceiptJson(original);
+  assert.equal(JSON.parse(serialized).result.result.blocker, 'FRONTEND_MAILBOX_EXECUTION_UNPROVEN');
+  assert.equal(serialized.includes(privateError), false);
 });

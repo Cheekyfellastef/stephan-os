@@ -202,6 +202,19 @@ An existing foreign listener is never stopped. Changed source or assets require
 a new observation and an appropriately bound activation; an ambiguous startup
 result is not a reason to create a second request or kill a process.
 
+All nine files in the fixed executable closure have explicit LF checkout pins.
+An existing Git-clean CRLF worktree file can survive a source update when its
+blob is unchanged, even if an LF attribute already exists. The five shared
+dependencies therefore carry a source comment change so a normal protected
+update materializes their reviewed LF bytes as well as the four fixed scripts.
+Admission never normalizes files or accepts differing bytes at runtime.
+Byte refusal codes retain the `FRONTEND_MAILBOX_SOURCE_BYTES_CHANGED` prefix
+and add only a fixed source ID and `IDENTITY`, `CRLF_ONLY`, or `CONTENT` reason.
+`CRLF_ONLY` requires exact byte comparison after removing only CR bytes directly
+before LF; it still blocks. No file paths, contents, stdout, or exception text
+are exposed by these finite codes. A generic historical refusal alone does not
+establish that line endings caused the live failure.
+
 Public `frontendVisibility` receipts contain only bounded status, source/build
 identities, fingerprints and listener counts. Controls and external connections
 must remain disabled in accepted child evidence. HTTP page verification is
