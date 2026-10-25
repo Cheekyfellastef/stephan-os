@@ -9,6 +9,97 @@ import '../../tests/seed-canopy-parallel-forge-integration.test.mjs';
 import assert from 'node:assert/strict';
 import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from './upliftWorkspaceProjectionV1.mjs';
 
+const CPU_TEST_NOW = Date.parse('2026-10-25T20:00:00Z');
+function historyRecord(id, seconds, fields = {}) {
+  return { participantId: 'history-index-test', kind: 'learning-event', eventId: id,
+    timestampUtc: new Date(CPU_TEST_NOW + seconds * 1000).toISOString(), ...fields };
+}
+function historyParticipant(records, id = 'history-index-test') {
+  return deriveFlywheelWorkspaceView({ schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1', state: 'ready', records: { eventRecords: records } },
+    { nowMs: CPU_TEST_NOW }).participants.find((entry) => entry.participantId === id);
+}
+
+test('recovery index preserves strict timestamp ordering and stable first recovery proof', () => {
+  const participant = historyParticipant([
+    historyRecord('gap', 10, { eventKind: 'capability-gap', gapId: 'gap-a', state: 'BLOCKED' }),
+    historyRecord('same-time', 10, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/too-early'] }),
+    historyRecord('first', 20, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/first'] }),
+    historyRecord('second', 20, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/second'] }),
+  ]);
+  assert.equal(participant.capabilityGapCount, 0);
+  assert.deepEqual(participant.resolvedGaps[0].resolvedByProofRefs, ['proof/first']);
+  const unresolved = historyParticipant([
+    historyRecord('gap', 10, { eventKind: 'capability-gap', gapId: 'gap-a' }),
+    historyRecord('same-time', 10, { gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/same'] }),
+  ]);
+  assert.equal(unresolved.capabilityGapCount, 1);
+});
+
+test('recovery index retains negative-state precedence, proof requirements and participant isolation', () => {
+  const gap = historyRecord('gap', 1, { eventKind: 'capability-gap', gapId: 'gap-a' });
+  const invalidRecoveries = [
+    historyRecord('negative', 2, { gapId: 'gap-a', state: 'RESOLVED', status: 'FAILED', proofRefs: ['proof/negative'] }),
+    historyRecord('no-proof', 3, { gapId: 'gap-a', state: 'RESOLVED' }),
+    historyRecord('other-agent', 4, { participantId: 'another-agent', gapId: 'gap-a', state: 'RESOLVED', proofRefs: ['proof/other'] }),
+  ];
+  assert.equal(historyParticipant([gap, ...invalidRecoveries]).capabilityGapCount, 1);
+  const recovered = historyParticipant([gap, ...invalidRecoveries,
+    historyRecord('valid', 5, { gapId: 'gap-a', state: 'PASSED', proofRefs: ['proof/valid'] }),
+  ]);
+  assert.deepEqual(recovered.resolvedGaps[0].resolvedByProofRefs, ['proof/valid']);
+});
+
+test('all explicit recovery aliases resolve gaps and later failures reopen without a cache', () => {
+  const keys = ['direct', 'resolved', 'superseded', 'closure', 'root-ref', 'resolved-ref', 'supersedes-ref'];
+  const gaps = keys.map((gapId, i) => historyRecord(`gap-${i}`, i, { gapId, eventKind: 'capability-gap' }));
+  const recovery = historyRecord('all-recovered', 20, {
+    gapId: 'DIRECT', resolvedGapId: ' RESOLVED ', supersedesGapId: 'SUPERSEDED', closureOf: 'CLOSURE',
+    rootGapRefs: ['ROOT-REF', 'DIRECT'], resolvedGapRefs: ['RESOLVED-REF'], supersedes: ['SUPERSEDES-REF'],
+    state: 'VERIFIED', proofRefs: ['proof/all'],
+  });
+  const records = [...gaps, recovery];
+  const resolved = historyParticipant(records);
+  assert.equal(resolved.resolvedGapCount, keys.length);
+  assert.equal(resolved.capabilityGapCount, 0);
+  records.push(historyRecord('new-failure', 30, { gapId: 'direct', eventKind: 'capability-gap' }));
+  const reopened = historyParticipant(records);
+  assert.equal(reopened.capabilityGapCount, 1);
+  assert.equal(reopened.currentGaps[0].gapId, 'direct');
+  assert.equal(resolved.capabilityGapCount, 0, 'previous results retain independent ownership');
+});
+
+test('recovery index keeps invalid-time fallback and anonymous sorted-record identity', () => {
+  const participant = historyParticipant([
+    historyRecord('invalid-time', 1, { timestampUtc: 'invalid', gapId: 'invalid-time-gap', eventKind: 'capability-gap' }),
+    { participantId: 'history-index-test', kind: 'learning-event', timestampUtc: new Date(CPU_TEST_NOW).toISOString(), eventKind: 'capability-gap', summary: 'Missing tool' },
+    historyRecord('recovery', 20, { state: 'RESOLVED', resolvedGapRefs: ['invalid-time-gap', 'historical:missing-tool:1'], proofRefs: ['proof/later'] }),
+  ]);
+  assert.equal(participant.resolvedGapCount, 2);
+  assert.equal(participant.capabilityGapCount, 0);
+});
+
+test('history timestamp reads grow below quadratic when unrelated recovery history doubles', () => {
+  function countReads(size) {
+    let reads = 0;
+    const records = [];
+    for (let i = 0; i < size; i += 1) {
+      for (const record of [
+        historyRecord(`gap-${i}`, i, { eventKind: 'capability-gap', gapId: `gap-${i}` }),
+        historyRecord(`recovery-${i}`, size + i, { gapId: `other-${i}`, state: 'RESOLVED', proofRefs: ['proof/unrelated'] }),
+      ]) {
+        const timestamp = record.timestampUtc;
+        Object.defineProperty(record, 'timestampUtc', { enumerable: true, get() { reads += 1; return timestamp; } });
+        records.push(record);
+      }
+    }
+    assert.equal(historyParticipant(records).capabilityGapCount, size);
+    return reads;
+  }
+  const small = countReads(80);
+  const large = countReads(160);
+  assert.ok(large < small * 2.8, `doubling history must not quadruple timestamp work: ${small} -> ${large}`);
+});
+
 function feed() {
   return {
     schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',

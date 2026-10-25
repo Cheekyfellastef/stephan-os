@@ -4,7 +4,9 @@
 // and exact-head approval remain with the existing downstream validators.
 import { readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE, CANONICAL_MAILBOX_RECEIPT_PREDECESSOR } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
+import { extractProtectedWorkflowDispatch } from '../shared/agents/protectedWorkflowDispatchMailboxV1.mjs';
 
 export const CANONICAL_MAILBOX_WORKFLOW_GATE_SCHEMA = 'stephanos.canonical-mailbox-workflow-gate.v1';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -28,7 +30,8 @@ export function evaluateCanonicalMailboxWorkflowEvent(event, {
   if (repository !== REPOSITORY || owner !== OWNER) return denied('INVALID_OWNER_CONTEXT');
   if (!event || typeof event !== 'object' || Array.isArray(event)
     || event.repository?.full_name !== REPOSITORY
-    || event.issue?.number !== CANONICAL_MAILBOX_ISSUE
+    || (event.issue?.number !== CANONICAL_MAILBOX_ISSUE
+      && !(mode === 'receipt' && event.issue?.number === CANONICAL_MAILBOX_RECEIPT_PREDECESSOR))
     || event.issue?.pull_request
     || event.comment?.user?.login !== owner
     || !['created', 'edited'].includes(event.action)
@@ -44,7 +47,7 @@ export function evaluateCanonicalMailboxWorkflowEvent(event, {
   return Object.freeze({
     schemaVersion: CANONICAL_MAILBOX_WORKFLOW_GATE_SCHEMA,
     admitted: true,
-    issueNumber: CANONICAL_MAILBOX_ISSUE, mode,
+    issueNumber: event.issue.number, mode,
     downstreamExactCommandValidationRequired: true,
     sourceMutationAuthority: false,
     mergeAuthority: false,
@@ -56,14 +59,19 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
     const path = process.env.GITHUB_EVENT_PATH;
     if (path && statSync(path).isFile() && statSync(path).size <= 256000) {
+      const event = JSON.parse(readFileSync(path, 'utf8'));
       evaluation = evaluateCanonicalMailboxWorkflowEvent(
-        JSON.parse(readFileSync(path, 'utf8')),
+        event,
         { mode: process.argv[2],
           repository: process.env.GITHUB_REPOSITORY,
           owner: process.env.GITHUB_REPOSITORY_OWNER },
       );
+      if (evaluation.admitted) {
+        const command = process.argv[2] === 'protected' ? extractProtectedWorkflowDispatch(event.comment.body)?.command : {};
+        await assertMailboxRotationWorkflowAdmission({ mode: process.argv[2], prNumber: command?.prNumber, head: command?.expectedHead });
+      }
     }
-  } catch {}
+  } catch { evaluation = { admitted: false }; }
   process.stdout.write('CANONICAL_MAILBOX_INGRESS=' +
     (evaluation.admitted ? 'ADMITTED' : 'DENIED') + '\n');
   if (!evaluation.admitted) process.exitCode = 1;
