@@ -1,5 +1,17 @@
 # Core-only repair custody (#2961 / PR #3188)
 
+## Durable maintenance recovery continuation
+
+The shared guardian now has a durable ACTIVE/IDLE custody state machine and an
+exact-digest, authenticated successor-boot recovery transition. See
+[`sovereign-maintenance-custody-recovery-v1.md`](sovereign-maintenance-custody-recovery-v1.md)
+for its structural decision, trust boundary, original-incident preparation and
+physical acceptance requirements. It preserves same-boot timeout holds and R7
+ownership. It restores admission for the already-registered manual UI repair
+after proven process extinction, without enrolling the unrelated native Core
+directory worker. Source implementation and fixture success are not installation,
+an observed reboot, live recovery or a running 4173 listener.
+
 ## 25 October 2026 live timeout and current-main convergence
 
 At installed main `ca1dc9a8f634df7703e4d4815679d9d8fecdcdd4`, continuous cycle

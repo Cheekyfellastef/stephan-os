@@ -8,6 +8,8 @@ on:
       - 'scripts/sovereign-core-directory-action*'
       - 'scripts/sovereign-commander-mcp.mjs'
       - 'scripts/sovereign-commander-http.mjs'
+      - 'scripts/sovereign-maintenance-custody*'
+      - 'scripts/windows/read-sovereign-maintenance-boot-witness.ps1'
       - 'shared/agents/sovereignCommanderV1*'
       - 'shared/agents/sovereignCommanderMcp*'
       - 'shared/agents/sovereignCommanderHttp*'
@@ -32,4 +34,4 @@ jobs:
         with:
           node-version: '24'
       - name: Core-only admission, held R7, gaming and Windows descendant denial
-        run: node --test scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs
+        run: node --test scripts/sovereign-maintenance-custody-store-v1.test.mjs scripts/sovereign-maintenance-custody-recovery.test.mjs scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs
