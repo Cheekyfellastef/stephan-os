@@ -146,6 +146,16 @@ captured source head, existing build head, approved input fingerprint and served
 fingerprint (which includes a visible restriction notice). Stale build metadata
 is reported honestly. It does not claim current runtime, backend or builder health.
 
+Every validation Git read uses `resolveBattleBridgeGitExecution()` with the
+canonical fixed overrides and minimal environment, including disabled fsmonitor,
+hooks, replacement objects, grafts and lazy fetch. Diff additionally disables
+external diff and text conversion. Launcher trust is authenticated from the
+pinned commit's actual Git object hash through its root tree, every path's tree
+entries and each blob's Git object hash. Batch requests use immutable object
+IDs, never mutable `HEAD:path` expressions. Header shape and a clean worktree
+alone cannot authenticate served JavaScript. Regressions retain repository-local
+helper and blob/tree replacement attacks as explicit adversarial cases.
+
 The visibility profile has no arbitrary filesystem fallback, proxy, POST,
 restart or OpenClaw-probe route. CSP restricts connections to its own origin;
 external backend/gateway connections and controls are disabled. These restrictions
