@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -13,7 +14,7 @@ import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
-import { battleBridgeCanonicalRepositoryArgs, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
+import { battleBridgeCanonicalRepositoryArgs, inspectBattleBridgeGitTopology, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -2491,6 +2492,8 @@ export function repairCanonicalGitWorktreeConfigV1({
   platform = process.platform,
   environment = process.env,
   spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  existsFn = existsSync,
 } = {}) {
   const normalizedHead = text(expectedHead).toLowerCase();
   if (!SHA_PATTERN.test(normalizedHead)) {
@@ -2531,6 +2534,23 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
   }
 
+  const topology = inspectTopologyFn(repositoryRoot);
+  if (topology?.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
+  }
+
+  const worktreeList = capture(['worktree', 'list', '--porcelain']);
+  const worktreeRoots = worktreeList.ok
+    ? worktreeList.stdout.split(/\r?\n/).filter(line => line.startsWith('worktree '))
+      .map(line => line.slice('worktree '.length)) : [];
+  const normalizedRoot = resolve(repositoryRoot);
+  const sameRoot = value => platform === 'win32'
+    ? resolve(value).toLowerCase() === normalizedRoot.toLowerCase()
+    : resolve(value) === normalizedRoot;
+  if (!worktreeList.ok || worktreeRoots.length !== 1 || !sameRoot(worktreeRoots[0])) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
+  }
+
   const beforeConfig = capture(['config', '--local', '--null', '--list']);
   if (!beforeConfig.ok) {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
@@ -2559,19 +2579,23 @@ export function repairCanonicalGitWorktreeConfigV1({
     });
   }
 
-  const configured = capture(['config', '--local', '--get-all', 'extensions.worktreeConfig']);
+  const configured = capture(['config', '--local', '--null', '--get-all', 'extensions.worktreeConfig']);
+  const configuredRaw = configured.ok ? configured.stdout : '';
   const configuredValues = configured.ok
-    ? configured.stdout.split(/\r?\n/).map(value => value.trim()).filter(Boolean) : [];
+    ? (configuredRaw.endsWith('\0') ? configuredRaw.slice(0, -1) : configuredRaw).split('\0') : [];
   if (!configured.ok || configuredValues.length !== 1
       || configuredValues[0].toLowerCase() !== 'true') {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNEXPECTED');
   }
 
-  const worktreeConfig = capture(['config', '--worktree', '--null', '--list']);
-  const worktreeEntries = worktreeConfig.ok
-    ? worktreeConfig.stdout.split('\0').filter(Boolean) : [];
-  if (!worktreeConfig.ok) {
-    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN');
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  let worktreeEntries = [];
+  if (existsFn(worktreeConfigPath)) {
+    const worktreeConfig = capture(['config', '--file', worktreeConfigPath, '--null', '--list']);
+    if (!worktreeConfig.ok) {
+      return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN');
+    }
+    worktreeEntries = worktreeConfig.stdout.split('\0').filter(Boolean);
   }
   if (worktreeEntries.length !== 0) {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
@@ -2585,11 +2609,15 @@ export function repairCanonicalGitWorktreeConfigV1({
   const afterConfig = capture(['config', '--local', '--null', '--list']);
   const afterHead = capture(['rev-parse', 'HEAD']);
   if (!afterConfig.ok || !afterHead.ok || text(afterHead.stdout).toLowerCase() !== normalizedHead) {
-    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN');
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN', {
+      mutationPerformed: true,
+    });
   }
   const afterProof = validateBattleBridgeLocalGitConfiguration(afterConfig.stdout);
   if (afterProof.ok !== true) {
-    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_INVALID');
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_INVALID', {
+      mutationPerformed: true,
+    });
   }
 
   return Object.freeze({
@@ -2706,7 +2734,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         sourceHead: observedHead,
         expectedHeadMatch: true,
         riskCategoriesBefore: repair.riskCategoriesBefore || Object.freeze([]),
-        gitConfigurationMutationPerformed: false,
+        gitConfigurationMutationPerformed: repair.mutationPerformed === true,
         sourceMutationAllowed: false,
         arbitraryShellAllowed: false,
         mergeAuthority: false,
