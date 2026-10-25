@@ -21,6 +21,16 @@ scripts/windows/run-sovereign-commander-hidden.ps1 text eol=lf
 scripts/windows/status-stephanos-core-daemon.ps1 text eol=lf
 scripts/windows/stephanos-core-process-observation.ps1 text eol=lf
 
+# Fixed frontend admission compares raw installed bytes with immutable Git blobs.
+scripts/sovereign-frontend-start-only.mjs text eol=lf
+scripts/serve-stephanos-dist.mjs text eol=lf
+scripts/stephanos-build-utils.mjs text eol=lf
+scripts/windows/read-stephanos-frontend-listener.ps1 text eol=lf
+shared/runtime/stephanosLocalUrls.mjs text eol=lf
+shared/runtime/systemPanelToggleRegistry.mjs text eol=lf
+shared/agents/openClawReadonlyValidationEndpoint.mjs text eol=lf
+shared/agents/battleBridgeExecutionBoundaryV1.mjs text eol=lf
+shared/agents/battleBridgeWindowsHosts.mjs text eol=lf
 # Private directory operation verifies captured native/script bytes.
 scripts/windows/SovereignDirectoryCreateV1.cs text eol=lf
 scripts/windows/sovereign-create-directory.ps1 text eol=lf

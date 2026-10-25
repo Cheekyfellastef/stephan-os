@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -13,6 +14,7 @@ import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { battleBridgeCanonicalRepositoryArgs, inspectBattleBridgeGitTopology, resolveBattleBridgeGitExecution, validateBattleBridgeLocalGitConfiguration } from './battleBridgeExecutionBoundaryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -27,6 +29,8 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'meter-status',
   'controller-lane-status',
   'visibility-snapshot',
+  'inspect-canonical-git-worktree-config',
+  'repair-canonical-git-worktree-config',
   'rescue-island-readonly-boundary',
   'cpu-pressure-snapshot',
   'publish-controller-activity',
@@ -2278,6 +2282,8 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
       || actionId === 'publish-controller-activity'
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_ACTION
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
@@ -2538,6 +2544,393 @@ export function diagnoseRescueIslandNativeReceiptInvalidV1({
   return 'ISLAND_NATIVE_BOUNDARY_INCONSISTENT';
 }
 
+
+const CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION = 'inspect-canonical-git-worktree-config';
+const CANONICAL_GIT_WORKTREE_CONFIG_ACTION = 'repair-canonical-git-worktree-config';
+
+function finiteGitConfigRepairFailure(blocker, details = {}) {
+  return Object.freeze({
+    ok: false,
+    blocker,
+    mutationPerformed: false,
+    ...details,
+  });
+}
+
+export function inspectCanonicalGitWorktreeConfigV1({
+  repositoryRoot = fixedRepositoryRoot(),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  existsFn = existsSync,
+  remainingTimeoutMsFn = () => 10_000,
+} = {}) {
+  const normalizedHead = text(expectedHead).toLowerCase();
+  const held = (blocker, details = {}) => Object.freeze({
+    ok: false,
+    blocker,
+    inspectionComplete: false,
+    safeForFixedUnset: false,
+    mutationPerformed: false,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    gitConfigurationMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    rawPathsReturned: false,
+    rawConfigValuesReturned: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    ...details,
+  });
+  if (!SHA_PATTERN.test(normalizedHead)) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_EXPECTED_HEAD_REQUIRED');
+  }
+
+  let git;
+  try {
+    git = resolveBattleBridgeGitExecution({ platform, environment });
+  } catch {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_GIT_UNAVAILABLE');
+  }
+  const canonicalPrefix = [
+    ...git.fixedConfigArgs,
+    ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
+  ];
+  const nextProbeTimeoutMs = () => {
+    let remaining = 0;
+    try { remaining = Number(remainingTimeoutMsFn()); } catch { return 0; }
+    if (!Number.isFinite(remaining) || remaining <= 0) return 0;
+    return Math.max(1, Math.min(10_000, Math.floor(remaining)));
+  };
+  const deadlineResult = () => Object.freeze({
+    ok: false,
+    status: null,
+    stdout: '',
+    deadlineExceeded: true,
+  });
+  const captureCanonical = (args) => {
+    const timeout = nextProbeTimeoutMs();
+    if (timeout <= 0) return deadlineResult();
+    const result = spawnSyncFn(git.executable, [...canonicalPrefix, ...args], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+      deadlineExceeded: false,
+    });
+  };
+  const head = captureCanonical(['rev-parse', 'HEAD']);
+  const branch = captureCanonical(['branch', '--show-current']);
+  if (head.deadlineExceeded || branch.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
+  if (!head.ok || text(head.stdout).toLowerCase() !== normalizedHead
+      || !branch.ok || text(branch.stdout) !== 'main') {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
+  }
+
+  if (nextProbeTimeoutMs() <= 0) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  }
+  const topology = inspectTopologyFn(repositoryRoot);
+  if (topology?.ok !== true) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
+  }
+
+  // Canonical topology has already proven that repositoryRoot/.git is the
+  // real Git directory, not a redirecting .git file. Linked worktrees are
+  // represented under that canonical directory. Treat any such metadata as a
+  // hard hold rather than depending on `git worktree list`, which is itself
+  // sensitive to the repository configuration we are trying to diagnose.
+  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  if (existsFn(linkedWorktreeMetadataPath)) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
+  }
+  const records = Object.freeze([
+    Object.freeze({ root: repositoryRoot, locked: false, prunable: false }),
+  ]);
+
+  const localConfig = captureCanonical(['config', '--local', '--null', '--list']);
+  if (localConfig.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+    });
+  }
+  if (!localConfig.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
+  const policy = validateBattleBridgeLocalGitConfiguration(localConfig.stdout);
+  const riskCategories = Object.freeze(
+    (Array.isArray(policy?.diagnostic?.riskCategories) ? policy.diagnostic.riskCategories : [])
+      .slice(0, 16),
+  );
+
+  const configured = captureCanonical([
+    'config', '--local', '--null', '--get-all', 'extensions.worktreeConfig',
+  ]);
+  let extensionValues = [];
+  let extensionValueState = 'ABSENT';
+  if (configured.deadlineExceeded) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+      registeredWorktreeCount: records.length,
+      riskCategories,
+    });
+  }
+  if (configured.ok) {
+    const raw = configured.stdout.endsWith('\0')
+      ? configured.stdout.slice(0, -1) : configured.stdout;
+    extensionValues = raw.split('\0');
+    if (extensionValues.length > 1) extensionValueState = 'MULTIPLE';
+    else if (extensionValues[0]?.toLowerCase() === 'true') extensionValueState = 'TRUE';
+    else if (extensionValues[0]?.toLowerCase() === 'false') extensionValueState = 'FALSE';
+    else extensionValueState = 'OTHER';
+  } else if (configured.status !== 1) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNPROVEN', {
+      registeredWorktreeCount: records.length,
+      riskCategories,
+    });
+  }
+
+  let worktreeConfigFileCount = 0;
+  let nonEmptyWorktreeConfigFileCount = 0;
+  let worktreeConfigEntryCount = 0;
+  let allWorktreeConfigsObserved = true;
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  if (existsFn(worktreeConfigPath)) {
+    worktreeConfigFileCount = 1;
+    const config = captureCanonical([
+      'config', '--file', worktreeConfigPath, '--null', '--list',
+    ]);
+    if (config.deadlineExceeded) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount,
+      });
+    }
+    if (!config.ok) {
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+      });
+    }
+    const entries = config.stdout.split('\0').filter(Boolean);
+    worktreeConfigEntryCount = entries.length;
+    if (entries.length > 0) nonEmptyWorktreeConfigFileCount = 1;
+  }
+
+  const linkedWorktreeCount = Math.max(0, records.length - 1);
+  const lockedWorktreeCount = records.filter(record => record.locked).length;
+  const prunableWorktreeCount = records.filter(record => record.prunable).length;
+  const originCount = text(policy?.diagnostic?.originCount) || 'UNKNOWN';
+  const originMatch = text(policy?.diagnostic?.originMatch) || 'UNKNOWN';
+  const soleExpectedRisk = policy?.blocker === 'CANONICAL_GIT_CONFIGURATION_INVALID'
+    && riskCategories.length === 1
+    && riskCategories[0] === 'EXTENSIONS_WORKTREE_CONFIG';
+  const safeForFixedUnset = topology?.ok === true
+    && originCount === 'ONE'
+    && originMatch === 'CANONICAL'
+    && soleExpectedRisk
+    && extensionValues.length === 1
+    && extensionValueState === 'TRUE'
+    && records.length === 1
+    && linkedWorktreeCount === 0
+    && lockedWorktreeCount === 0
+    && prunableWorktreeCount === 0
+    && allWorktreeConfigsObserved
+    && worktreeConfigEntryCount === 0;
+
+  const observation = Object.freeze({
+    schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+    ok: true,
+    inspectionComplete: true,
+    sourceHead: normalizedHead,
+    canonicalTopologyProven: true,
+    canonicalGitConfigurationValid: policy?.ok === true,
+    originCount,
+    originMatch,
+    riskCategories,
+    extensionValueCount: extensionValues.length,
+    extensionValueState,
+    registeredWorktreeCount: records.length,
+    linkedWorktreeCount,
+    lockedWorktreeCount,
+    prunableWorktreeCount,
+    worktreeConfigFileCount,
+    nonEmptyWorktreeConfigFileCount,
+    worktreeConfigEntryCount,
+    allWorktreeConfigsObserved,
+    safeForFixedUnset,
+    mutationPerformed: false,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    gitConfigurationMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    rawPathsReturned: false,
+    rawConfigValuesReturned: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    finalVerdict: policy?.ok === true
+      ? 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_CANONICAL'
+      : safeForFixedUnset
+        ? 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE'
+        : 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_HELD',
+  });
+  return observation;
+}
+
+export function repairCanonicalGitWorktreeConfigV1({
+  repositoryRoot = fixedRepositoryRoot(),
+  expectedHead = '',
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+  inspectTopologyFn = inspectBattleBridgeGitTopology,
+  existsFn = existsSync,
+} = {}) {
+  const normalizedHead = text(expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(normalizedHead)) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_EXPECTED_HEAD_REQUIRED');
+  }
+
+  let git;
+  try {
+    git = resolveBattleBridgeGitExecution({ platform, environment });
+  } catch {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_GIT_UNAVAILABLE');
+  }
+  const prefix = [
+    ...git.fixedConfigArgs,
+    ...battleBridgeCanonicalRepositoryArgs(repositoryRoot),
+  ];
+  const capture = (args) => {
+    const result = spawnSyncFn(git.executable, [...prefix, ...args], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+    });
+  };
+
+  const beforeHead = capture(['rev-parse', 'HEAD']);
+  const branch = capture(['branch', '--show-current']);
+  if (!beforeHead.ok || text(beforeHead.stdout).toLowerCase() !== normalizedHead
+      || !branch.ok || text(branch.stdout) !== 'main') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SOURCE_IDENTITY_CHANGED');
+  }
+
+  const topology = inspectTopologyFn(repositoryRoot);
+  if (topology?.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
+  }
+
+  // The topology proof above authenticates repositoryRoot/.git as the
+  // canonical directory. Any linked-worktree metadata is therefore sufficient
+  // to hold the repository-wide extension repair. Do not invoke
+  // `git worktree list` while the configuration itself is under repair.
+  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  if (existsFn(linkedWorktreeMetadataPath)) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
+  }
+
+  const beforeConfig = capture(['config', '--local', '--null', '--list']);
+  if (!beforeConfig.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_READ_FAILED');
+  }
+  const beforeProof = validateBattleBridgeLocalGitConfiguration(beforeConfig.stdout);
+  if (beforeProof.ok === true) {
+    return Object.freeze({
+      ok: true,
+      blocker: '',
+      mutationPerformed: false,
+      finalVerdict: 'CANONICAL_GIT_CONFIGURATION_ALREADY_VALID',
+      riskCategoriesBefore: Object.freeze([]),
+      canonicalAfter: true,
+    });
+  }
+
+  const categories = Array.isArray(beforeProof?.diagnostic?.riskCategories)
+    ? beforeProof.diagnostic.riskCategories : [];
+  if (beforeProof.blocker !== 'CANONICAL_GIT_CONFIGURATION_INVALID'
+      || beforeProof?.diagnostic?.originCount !== 'ONE'
+      || beforeProof?.diagnostic?.originMatch !== 'CANONICAL'
+      || categories.length !== 1
+      || categories[0] !== 'EXTENSIONS_WORKTREE_CONFIG') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_SCOPE_MISMATCH', {
+      riskCategoriesBefore: Object.freeze(categories.slice(0, 8)),
+    });
+  }
+
+  const configured = capture(['config', '--local', '--null', '--get-all', 'extensions.worktreeConfig']);
+  const configuredRaw = configured.ok ? configured.stdout : '';
+  const configuredValues = configured.ok
+    ? (configuredRaw.endsWith('\0') ? configuredRaw.slice(0, -1) : configuredRaw).split('\0') : [];
+  if (!configured.ok || configuredValues.length !== 1
+      || configuredValues[0].toLowerCase() !== 'true') {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_VALUE_UNEXPECTED');
+  }
+
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  let worktreeEntries = [];
+  if (existsFn(worktreeConfigPath)) {
+    const worktreeConfig = capture(['config', '--file', worktreeConfigPath, '--null', '--list']);
+    if (!worktreeConfig.ok) {
+      return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN');
+    }
+    worktreeEntries = worktreeConfig.stdout.split('\0').filter(Boolean);
+  }
+  if (worktreeEntries.length !== 0) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_PRESENT');
+  }
+
+  const unset = capture(['config', '--local', '--unset-all', 'extensions.worktreeConfig']);
+  if (!unset.ok) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_UNSET_FAILED');
+  }
+
+  const afterConfig = capture(['config', '--local', '--null', '--list']);
+  const afterHead = capture(['rev-parse', 'HEAD']);
+  if (!afterConfig.ok || !afterHead.ok || text(afterHead.stdout).toLowerCase() !== normalizedHead) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN', {
+      mutationPerformed: true,
+    });
+  }
+  const afterProof = validateBattleBridgeLocalGitConfiguration(afterConfig.stdout);
+  if (afterProof.ok !== true) {
+    return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_INVALID', {
+      mutationPerformed: true,
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    mutationPerformed: true,
+    finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_REPAIRED',
+    riskCategoriesBefore: Object.freeze(['EXTENSIONS_WORKTREE_CONFIG']),
+    canonicalAfter: true,
+  });
+}
+
 export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}, options = {}) {
   const shape = validateSovereignCommanderRemoteCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -2624,6 +3017,140 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH', {
       expectedHead: shape.expectedHead,
       observedHead,
+    });
+  }
+
+
+  if (shape.command.remoteAction === CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION) {
+    const inspection = inspectCanonicalGitWorktreeConfigV1({
+      repositoryRoot,
+      expectedHead: observedHead,
+      platform: process.platform,
+      environment: env,
+      spawnSyncFn,
+      remainingTimeoutMsFn: () => remainingPlanTimeoutMs(10_000),
+    });
+    if (!inspection.ok) {
+      if (inspection.blocker === 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED') {
+        return planDeadlineFailure({
+          inspectionComplete: false,
+          registeredWorktreeCount: inspection.registeredWorktreeCount ?? null,
+          riskCategories: inspection.riskCategories || Object.freeze([]),
+        });
+      }
+      return fail(inspection.blocker, {
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+        sourceHead: observedHead,
+        expectedHeadMatch: true,
+        registeredWorktreeCount: inspection.registeredWorktreeCount ?? null,
+        riskCategories: inspection.riskCategories || Object.freeze([]),
+        gitConfigurationMutationPerformed: false,
+        sourceMutationAllowed: false,
+        arbitraryShellAllowed: false,
+        mergeAuthority: false,
+        pcRestartAuthority: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: inspection.finalVerdict,
+      remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+      sourceHead: observedHead,
+      expectedHeadMatch: true,
+      canonicalGitWorktreeConfigInspection: inspection,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        sourceHead: observedHead,
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION,
+        canonicalGitConfigurationValid: inspection.canonicalGitConfigurationValid,
+        riskCategories: inspection.riskCategories,
+        extensionValueCount: inspection.extensionValueCount,
+        extensionValueState: inspection.extensionValueState,
+        registeredWorktreeCount: inspection.registeredWorktreeCount,
+        linkedWorktreeCount: inspection.linkedWorktreeCount,
+        lockedWorktreeCount: inspection.lockedWorktreeCount,
+        prunableWorktreeCount: inspection.prunableWorktreeCount,
+        worktreeConfigFileCount: inspection.worktreeConfigFileCount,
+        nonEmptyWorktreeConfigFileCount: inspection.nonEmptyWorktreeConfigFileCount,
+        worktreeConfigEntryCount: inspection.worktreeConfigEntryCount,
+        allWorktreeConfigsObserved: inspection.allWorktreeConfigsObserved,
+        safeForFixedUnset: inspection.safeForFixedUnset,
+      })).digest('hex'),
+      readOnly: true,
+      gitConfigurationMutationPerformed: false,
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
+    });
+  }
+
+  if (shape.command.remoteAction === CANONICAL_GIT_WORKTREE_CONFIG_ACTION) {
+    const repair = repairCanonicalGitWorktreeConfigV1({
+      repositoryRoot,
+      expectedHead: observedHead,
+      platform: process.platform,
+      environment: env,
+      spawnSyncFn,
+    });
+    if (!repair.ok) {
+      return fail(repair.blocker, {
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        sourceHead: observedHead,
+        expectedHeadMatch: true,
+        riskCategoriesBefore: repair.riskCategoriesBefore || Object.freeze([]),
+        gitConfigurationMutationPerformed: repair.mutationPerformed === true,
+        sourceMutationAllowed: false,
+        arbitraryShellAllowed: false,
+        mergeAuthority: false,
+        pcRestartAuthority: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const result = Object.freeze({
+      ok: true,
+      finalVerdict: repair.finalVerdict,
+      remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+      sourceHead: observedHead,
+      expectedHeadMatch: true,
+      gitConfigurationMutationPerformed: repair.mutationPerformed === true,
+      gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+      riskCategoriesBefore: repair.riskCategoriesBefore,
+      canonicalGitConfigurationValid: repair.canonicalAfter === true,
+      proofHash: createHash('sha256').update(JSON.stringify({
+        sourceHead: observedHead,
+        remoteAction: CANONICAL_GIT_WORKTREE_CONFIG_ACTION,
+        mutationPerformed: repair.mutationPerformed === true,
+        canonicalAfter: repair.canonicalAfter === true,
+      })).digest('hex'),
+      sourceMutationAllowed: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...result,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result,
     });
   }
 

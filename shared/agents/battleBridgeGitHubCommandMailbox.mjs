@@ -10,10 +10,21 @@ import {
   isTerminalizableSovereignCommanderRemoteBlocker,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  executeRescueIslandSupervisedDocumentOnBattleBridge,
+  isTerminalizableRescueIslandSupervisedDocumentBlocker,
+  validateRescueIslandSupervisedDocumentCommandShape,
+} from './rescueIslandSupervisedMailboxV1.mjs';
 import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShape,
   isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
 } from './sovereignMaintenanceRecoveryMailboxV1.mjs';
+import {
+  FRONTEND_VISIBILITY_OPERATIONS, FRONTEND_VISIBILITY_OBSERVE_OPERATION,
+  validateFrontendVisibilityCommandShape, isTerminalizableFrontendVisibilityBlocker,
+  executeFrontendVisibilityOnBattleBridge,
+} from './sovereignFrontendVisibilityMailboxV1.mjs';
 import {
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   executeOperatorEnvironmentApprovalOnBattleBridge,
@@ -44,12 +55,14 @@ export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   ...MAINTENANCE_RECOVERY_OPERATIONS,
+  ...FRONTEND_VISIBILITY_OPERATIONS,
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -71,24 +84,28 @@ function fail(blocker, details = {}) {
 function customOperationKind(operation = '') {
   const normalized = String(operation || '');
   if (MAINTENANCE_RECOVERY_OPERATIONS.includes(normalized)) return 'maintenance-recovery';
+  if (FRONTEND_VISIBILITY_OPERATIONS.includes(normalized)) return 'frontend-visibility';
   if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
   if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
   if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
   if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
   if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
   if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
+  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION) return 'rescue-island-supervised-document';
   return '';
 }
 
 function validateCustomCommandShape(command = {}) {
   const kind = customOperationKind(command?.operation);
   if (kind === 'maintenance-recovery') return validateMaintenanceRecoveryCommandShape(command);
+  if (kind === 'frontend-visibility') return validateFrontendVisibilityCommandShape(command);
   if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
   if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
   if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
   if (kind === 'codex-readback') return validateGuardedCodexTaskReadbackCommandShape(command);
   if (kind === 'sovereign-install') return validateSovereignCommanderInstallCommandShape(command);
   if (kind === 'sovereign-remote') return validateSovereignCommanderRemoteCommandShape(command);
+  if (kind === 'rescue-island-supervised-document') return validateRescueIslandSupervisedDocumentCommandShape(command);
   return Object.freeze({ ok: true, requested: false });
 }
 
@@ -109,7 +126,8 @@ function translateForCore(command = {}, shape = {}) {
   for (const field of STANDARD_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
   }
-  translated.operation = CORE_TRANSLATION_OPERATION;
+  translated.operation = command.operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION
+    ? 'READ_DEPLOYMENT_STATUS' : CORE_TRANSLATION_OPERATION;
   translated.expectedHead = shape?.ok === true
     ? String(shape?.command?.expectedHead || shape?.expectedHead || command?.expectedHead || '')
     : 'invalid';
@@ -125,12 +143,14 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 
 export function isTerminalizableOwnerCommandBlocker(value) {
   return isTerminalizableMaintenanceRecoveryBlocker(value)
+    || isTerminalizableFrontendVisibilityBlocker(value)
     || isTerminalizableOperatorEnvironmentApprovalBlocker(value)
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
     || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
     || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
     || isTerminalizableSovereignCommanderInstallBlocker(value)
     || isTerminalizableSovereignCommanderRemoteBlocker(value)
+    || isTerminalizableRescueIslandSupervisedDocumentBlocker(value)
     || core.isTerminalizableOwnerCommandBlocker(value);
 }
 
@@ -152,6 +172,7 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
+  if (operation === FRONTEND_VISIBILITY_OBSERVE_OPERATION) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION;
   if (customOperationKind(operation)) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   return core.classifyBattleBridgeMailboxOperation(operation);
 }
@@ -178,7 +199,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       return Object.freeze({
         ...entry,
         command: projectCustomCommand(original.command, original.shape),
-        partition: core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
+        partition: classifyBattleBridgeMailboxOperation(original.command.operation),
       });
     })
     : [];
@@ -256,6 +277,7 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
   if (!shape.ok) return shape;
   try {
     if (kind === 'maintenance-recovery') return await executeMaintenanceRecoveryOnBattleBridge(shape.command, options);
+    if (kind === 'frontend-visibility') return await executeFrontendVisibilityOnBattleBridge(shape.command, options);
     if (kind === 'environment') {
       const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
         ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
@@ -289,6 +311,12 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         : executeSovereignCommanderInstallOnBattleBridge;
       return await executor(shape.command, options);
     }
+    if (kind === 'rescue-island-supervised-document') {
+      const executor = typeof options?.executeRescueIslandSupervisedDocumentOnBattleBridgeFn === 'function'
+        ? options.executeRescueIslandSupervisedDocumentOnBattleBridgeFn
+        : executeRescueIslandSupervisedDocumentOnBattleBridge;
+      return await executor(shape.command, options);
+    }
     if (kind === 'sovereign-remote') {
       const executor = typeof options?.executeSovereignCommanderRemoteOnBattleBridgeFn === 'function'
         ? options.executeSovereignCommanderRemoteOnBattleBridgeFn
@@ -308,7 +336,9 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
           ? 'SOVEREIGN_COMMANDER_INSTALL_EXECUTION_FAILED'
           : kind === 'sovereign-remote'
             ? 'SOVEREIGN_COMMANDER_REMOTE_EXECUTION_FAILED'
-            : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
+            : kind === 'rescue-island-supervised-document'
+              ? 'RESCUE_ISLAND_REMOTE_EXECUTION_FAILED'
+              : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
       operation: command?.operation || '',
       requestId: String(command?.requestId || ''),
     });

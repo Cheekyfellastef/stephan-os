@@ -3644,3 +3644,112 @@ test('native Windows reviewer exam survives bounded public receipt without ident
   assert.doesNotMatch(JSON.stringify(unsafe),/PRIVATE/);
   assert.ok(!JSON.stringify(unsafe).includes('EXACT_LOCAL_SOURCE_UNPROVEN'));
 });
+
+
+test('canonical Git worktree inspection survives bounded mailbox publication without raw host detail', () => {
+  const head = 'a'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-inspect-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-inspect-1001',
+      result: {
+        ok: true,
+        finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+        remoteAction: 'inspect-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: false,
+        canonicalGitWorktreeConfigInspection: {
+          schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+          inspectionComplete: true,
+          sourceHead: head,
+          canonicalTopologyProven: true,
+          canonicalGitConfigurationValid: false,
+          originCount: 'ONE',
+          originMatch: 'CANONICAL',
+          riskCategories: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+          extensionValueCount: 1,
+          extensionValueState: 'TRUE',
+          registeredWorktreeCount: 1,
+          linkedWorktreeCount: 0,
+          lockedWorktreeCount: 0,
+          prunableWorktreeCount: 0,
+          worktreeConfigFileCount: 0,
+          nonEmptyWorktreeConfigFileCount: 0,
+          worktreeConfigEntryCount: 0,
+          allWorktreeConfigsObserved: true,
+          safeForFixedUnset: true,
+          finalVerdict: 'CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_REPAIR_ELIGIBLE',
+          rawPath: 'C:\\Users\\Operator\\PRIVATE',
+          rawConfigValue: 'SECRET',
+        },
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  const evidence = projected.operationResult.canonicalGitWorktreeConfigInspection;
+  assert.equal(evidence.safeForFixedUnset, true);
+  assert.equal(evidence.registeredWorktreeCount, 1);
+  assert.equal(evidence.linkedWorktreeCount, 0);
+  assert.deepEqual(evidence.riskCategories, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.operationResult.gitConfigurationMutationPerformed, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
+  assert.equal(compact.canonicalGitWorktreeConfigInspection.extensionValueState, 'TRUE');
+  assert.deepEqual(compact.canonicalGitWorktreeConfigInspection.riskCategories,
+    ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.doesNotMatch(serialized, /C:\\\\Users|PRIVATE_RISK|rawConfigValue|SECRET/);
+});
+
+test('canonical Git repair publication preserves completed mutation on failed postcondition', () => {
+  const head = 'b'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'git-worktree-repair-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'BLOCKED',
+    expectedHead: head,
+    blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'git-worktree-repair-1001',
+      result: {
+        ok: false,
+        blocker: 'CANONICAL_GIT_WORKTREE_CONFIG_POSTCONDITION_UNPROVEN',
+        remoteAction: 'repair-canonical-git-worktree-config',
+        sourceHead: head,
+        expectedHeadMatch: true,
+        gitConfigurationMutationPerformed: true,
+        gitConfigurationMutationScope: 'extensions.worktreeConfig-only',
+        riskCategoriesBefore: ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG', 'PRIVATE_RISK'],
+        canonicalGitConfigurationValid: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt).operationResult;
+  assert.equal(projected.gitConfigurationMutationPerformed, true);
+  assert.equal(projected.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(projected.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(projected.canonicalGitConfigurationValid, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.equal(compact.gitConfigurationMutationPerformed, true);
+  assert.equal(compact.gitConfigurationMutationScope, 'extensions.worktreeConfig-only');
+  assert.deepEqual(compact.riskCategoriesBefore, ['CORE_FSMONITOR', 'EXTENSIONS_WORKTREE_CONFIG']);
+  assert.equal(compact.canonicalGitConfigurationValid, false);
+  assert.doesNotMatch(serialized, /PRIVATE_RISK/);
+});
