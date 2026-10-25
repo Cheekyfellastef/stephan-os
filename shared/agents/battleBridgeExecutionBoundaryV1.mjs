@@ -2,7 +2,6 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
-import { classifyBattleBridgeGitConfigurationRiskV1 } from './battleBridgeGitConfigurationDiagnosticV1.mjs';
 
 export const BATTLE_BRIDGE_CANONICAL_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
 export const BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE = '/usr/bin/git';
@@ -132,6 +131,64 @@ export function resolveBattleBridgeGitExecution({
     fixedConfigArgs: battleBridgeGitFixedConfigArgs(platform),
     environment: createBattleBridgeMinimalChildEnvironment(environment, { git: true, platform }),
   });
+}
+
+// Keep diagnostic classification local to this foundational module: existing
+// exact-commit review and Seed execution use closed import graphs. These labels
+// describe keys already rejected below; they never decide source admission.
+const fixedCategories = new Map([
+  ['core.worktree', 'CORE_WORKTREE'],
+  ['core.sparsecheckout', 'CORE_SPARSE_CHECKOUT'],
+  ['core.sparsecheckoutcone', 'CORE_SPARSE_CHECKOUT_CONE'],
+  ['index.sparse', 'INDEX_SPARSE'],
+  ['core.hookspath', 'CORE_HOOKS_PATH'],
+  ['core.fsmonitor', 'CORE_FSMONITOR'],
+  ['core.trustctime', 'CORE_TRUST_CTIME'],
+  ['core.checkstat', 'CORE_CHECK_STAT'],
+  ['core.ignorestat', 'CORE_IGNORE_STAT'],
+  ['core.untrackedcache', 'CORE_UNTRACKED_CACHE'],
+  ['core.sshcommand', 'CORE_SSH_COMMAND'],
+  ['core.alternaterefscommand', 'CORE_ALTERNATE_REFS_COMMAND'],
+  ['core.askpass', 'CORE_ASKPASS'],
+  ['core.gitproxy', 'CORE_GIT_PROXY'],
+  ['core.pager', 'CORE_PAGER'],
+  ['diff.external', 'DIFF_EXTERNAL'],
+  ['include.path', 'INCLUDE_PATH'],
+  ['extensions.worktreeconfig', 'EXTENSIONS_WORKTREE_CONFIG'],
+  ['gc.recentobjectshook', 'GC_RECENT_OBJECTS_HOOK'],
+  ['interactive.difffilter', 'INTERACTIVE_DIFF_FILTER'],
+  ['sequence.editor', 'SEQUENCE_EDITOR'],
+  ['core.editor', 'CORE_EDITOR'],
+  ['commit.gpgsign', 'COMMIT_GPG_SIGN'],
+  ['tag.gpgsign', 'TAG_GPG_SIGN'],
+]);
+const patternedCategories = [
+  [/^alias\./, 'ALIAS'],
+  [/^credential\./, 'CREDENTIAL'],
+  [/^filter\./, 'FILTER'],
+  [/^diff\..+\.command$/, 'DIFF_COMMAND'],
+  [/^diff\..+\.textconv$/, 'DIFF_TEXTCONV'],
+  [/^merge\..+\.driver$/, 'MERGE_DRIVER'],
+  [/^branch\..+\.mergeoptions$/, 'BRANCH_MERGE_OPTIONS'],
+  [/^remote\..+\.vcs$/, 'REMOTE_VCS'],
+  [/^remote\..+\.proxy$/, 'REMOTE_PROXY'],
+  [/^remote\..+\.uploadpack$/, 'REMOTE_UPLOAD_PACK'],
+  [/^remote\..+\.receivepack$/, 'REMOTE_RECEIVE_PACK'],
+  [/^url\./, 'URL_REWRITE'],
+  [/^includeif\./, 'INCLUDE_IF'],
+  [/^protocol\./, 'PROTOCOL'],
+  [/^submodule\..+\.update$/, 'SUBMODULE_UPDATE'],
+  [/^gc\..*(hook|command)$/, 'GC_HOOK_OR_COMMAND'],
+  [/^pager\./, 'PAGER'],
+  [/^gpg\./, 'GPG'],
+  [/^http\./, 'HTTP'],
+];
+
+function classifyBattleBridgeGitConfigurationRiskV1(key) {
+  if (typeof key !== 'string') return 'UNKNOWN';
+  return fixedCategories.get(key)
+    || patternedCategories.find(([pattern]) => pattern.test(key))?.[1]
+    || 'UNKNOWN';
 }
 
 function parseNullConfig(output = '') {

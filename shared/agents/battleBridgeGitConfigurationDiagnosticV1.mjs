@@ -1,63 +1,17 @@
-// Advisory labels for keys the existing canonical validator has already
-// rejected. These classifiers never decide configuration or source admission.
-// Subsection names and values must never become public diagnostic text.
-const fixedCategories = new Map([
-  ['core.worktree', 'CORE_WORKTREE'],
-  ['core.sparsecheckout', 'CORE_SPARSE_CHECKOUT'],
-  ['core.sparsecheckoutcone', 'CORE_SPARSE_CHECKOUT_CONE'],
-  ['index.sparse', 'INDEX_SPARSE'],
-  ['core.hookspath', 'CORE_HOOKS_PATH'],
-  ['core.fsmonitor', 'CORE_FSMONITOR'],
-  ['core.trustctime', 'CORE_TRUST_CTIME'],
-  ['core.checkstat', 'CORE_CHECK_STAT'],
-  ['core.ignorestat', 'CORE_IGNORE_STAT'],
-  ['core.untrackedcache', 'CORE_UNTRACKED_CACHE'],
-  ['core.sshcommand', 'CORE_SSH_COMMAND'],
-  ['core.alternaterefscommand', 'CORE_ALTERNATE_REFS_COMMAND'],
-  ['core.askpass', 'CORE_ASKPASS'],
-  ['core.gitproxy', 'CORE_GIT_PROXY'],
-  ['core.pager', 'CORE_PAGER'],
-  ['diff.external', 'DIFF_EXTERNAL'],
-  ['include.path', 'INCLUDE_PATH'],
-  ['extensions.worktreeconfig', 'EXTENSIONS_WORKTREE_CONFIG'],
-  ['gc.recentobjectshook', 'GC_RECENT_OBJECTS_HOOK'],
-  ['interactive.difffilter', 'INTERACTIVE_DIFF_FILTER'],
-  ['sequence.editor', 'SEQUENCE_EDITOR'],
-  ['core.editor', 'CORE_EDITOR'],
-  ['commit.gpgsign', 'COMMIT_GPG_SIGN'],
-  ['tag.gpgsign', 'TAG_GPG_SIGN'],
+// Independent public vocabulary for untrusted producer diagnostics. No raw
+// key, subsection or value is accepted here, and no source authority is added.
+const categories = new Set([
+  'ALIAS', 'CORE_WORKTREE', 'CORE_SPARSE_CHECKOUT', 'CORE_SPARSE_CHECKOUT_CONE', 'INDEX_SPARSE',
+  'CORE_HOOKS_PATH', 'CORE_FSMONITOR', 'CORE_TRUST_CTIME', 'CORE_CHECK_STAT', 'CORE_IGNORE_STAT',
+  'CORE_UNTRACKED_CACHE', 'CORE_SSH_COMMAND', 'CORE_ALTERNATE_REFS_COMMAND', 'CORE_ASKPASS',
+  'CORE_GIT_PROXY', 'CORE_PAGER', 'DIFF_EXTERNAL', 'CREDENTIAL', 'FILTER', 'DIFF_COMMAND',
+  'DIFF_TEXTCONV', 'MERGE_DRIVER', 'BRANCH_MERGE_OPTIONS', 'REMOTE_VCS', 'REMOTE_PROXY',
+  'REMOTE_UPLOAD_PACK', 'REMOTE_RECEIVE_PACK', 'URL_REWRITE', 'INCLUDE_PATH', 'INCLUDE_IF',
+  'PROTOCOL', 'EXTENSIONS_WORKTREE_CONFIG', 'SUBMODULE_UPDATE', 'GC_HOOK_OR_COMMAND',
+  'GC_RECENT_OBJECTS_HOOK', 'PAGER', 'INTERACTIVE_DIFF_FILTER', 'SEQUENCE_EDITOR', 'CORE_EDITOR',
+  'GPG', 'COMMIT_GPG_SIGN', 'TAG_GPG_SIGN', 'HTTP', 'UNKNOWN',
 ]);
-const patternedCategories = [
-  [/^alias\./, 'ALIAS'],
-  [/^credential\./, 'CREDENTIAL'],
-  [/^filter\./, 'FILTER'],
-  [/^diff\..+\.command$/, 'DIFF_COMMAND'],
-  [/^diff\..+\.textconv$/, 'DIFF_TEXTCONV'],
-  [/^merge\..+\.driver$/, 'MERGE_DRIVER'],
-  [/^branch\..+\.mergeoptions$/, 'BRANCH_MERGE_OPTIONS'],
-  [/^remote\..+\.vcs$/, 'REMOTE_VCS'],
-  [/^remote\..+\.proxy$/, 'REMOTE_PROXY'],
-  [/^remote\..+\.uploadpack$/, 'REMOTE_UPLOAD_PACK'],
-  [/^remote\..+\.receivepack$/, 'REMOTE_RECEIVE_PACK'],
-  [/^url\./, 'URL_REWRITE'],
-  [/^includeif\./, 'INCLUDE_IF'],
-  [/^protocol\./, 'PROTOCOL'],
-  [/^submodule\..+\.update$/, 'SUBMODULE_UPDATE'],
-  [/^gc\..*(hook|command)$/, 'GC_HOOK_OR_COMMAND'],
-  [/^pager\./, 'PAGER'],
-  [/^gpg\./, 'GPG'],
-  [/^http\./, 'HTTP'],
-];
-const categories = new Set([...fixedCategories.values(),
-  ...patternedCategories.map(([, category]) => category), 'UNKNOWN']);
 const fixedToken = (value, allowed) => typeof value === 'string' && allowed.includes(value) ? value : 'UNKNOWN';
-
-export function classifyBattleBridgeGitConfigurationRiskV1(key) {
-  if (typeof key !== 'string') return 'UNKNOWN';
-  return fixedCategories.get(key)
-    || patternedCategories.find(([pattern]) => pattern.test(key))?.[1]
-    || 'UNKNOWN';
-}
 
 export function projectBattleBridgeGitConfigurationDiagnosticV1(value = {}) {
   value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
