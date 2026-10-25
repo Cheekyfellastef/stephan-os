@@ -35,6 +35,131 @@ function timerHarness() {
   };
 }
 
+async function observePollCycles({ controllers, count = controllers.length, env = {}, writeHeartbeat = async () => {}, runCompletionGuardianCycle, launchCalibrationLane } = {}) {
+  const delays = [];
+  const observations = [];
+  let clock = Date.parse('2026-10-25T23:00:00Z');
+  let identityReads = 0;
+  let cycles = 0;
+  let ticks = 0;
+  const errors = sink();
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), ...env },
+    stdout: sink().stream,
+    stderr: errors.stream,
+    bootstrapMailbox: async () => ({ ok: true }),
+    inspectRepositoryIdentity: async (options) => { identityReads += 1; return canonicalIdentity(options); },
+    listMissionState: async () => [],
+    runControllerCycle: async (_input, options) => {
+      observations.push(options.nowUtc);
+      return controllers[Math.min(cycles++, controllers.length - 1)];
+    },
+    runTick: async () => { ticks += 1; return { processed: { processed: true } }; },
+    writeHeartbeat,
+    ...(runCompletionGuardianCycle ? { runCompletionGuardianCycle } : {}),
+    ...(launchCalibrationLane ? { launchCalibrationLane } : {}),
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    now: () => new Date(clock).toISOString(),
+    sleep: async (delayMs) => {
+      delays.push(delayMs);
+      clock += delayMs;
+      if (delays.length === count) throw new Error('poll-observation-complete');
+    },
+  }), /poll-observation-complete/);
+  return { delays, observations, identityReads, cycles, ticks, errors: errors.read() };
+}
+
+const explicitlyEmptyController = Object.freeze({ status: 'HOLD', allowWorkerTick: false, boundedMutationSteps: 0 });
+
+test('empty worker cycles back off boundedly while rereading canonical identity and controller evidence each time', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 5 });
+  assert.deepEqual(result.delays, [4000, 8000, 15000, 15000, 15000]);
+  assert.equal(result.identityReads, 5);
+  assert.equal(result.cycles, 5);
+  assert.equal(new Set(result.observations).size, 5, 'each cycle must obtain a fresh observation, not reuse a cached controller decision');
+  assert.equal(result.ticks, 0);
+});
+
+test('newly admitted work runs at the next fresh observation and resets empty backoff after progress', async () => {
+  const result = await observePollCycles({ controllers: [
+    explicitlyEmptyController, explicitlyEmptyController, explicitlyEmptyController,
+    { status: 'ACTIVE', allowWorkerTick: true, boundedMutationSteps: 1, workerActionGrant: actionGrant },
+    explicitlyEmptyController, explicitlyEmptyController,
+  ] });
+  assert.deepEqual(result.delays, [4000, 8000, 15000, 250, 4000, 8000]);
+  assert.equal(result.ticks, 1);
+  assert.equal(result.identityReads, 6);
+});
+
+test('controller mutations, grants and unproven mutation counts retain the steady poll cadence', async () => {
+  const result = await observePollCycles({ controllers: [
+    { ...explicitlyEmptyController, boundedMutationSteps: 1 },
+    { status: 'HOLD', allowWorkerTick: false },
+    { ...explicitlyEmptyController, workerActionGrant: actionGrant },
+  ] });
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+});
+
+test('heartbeat publication failures cannot enter the empty-cycle backoff', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    writeHeartbeat: async () => { throw new Error('heartbeat-publication-failed'); },
+  });
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+  assert.match(result.errors, /MISSION_WORKER_HEARTBEAT_WRITE_FAILED/);
+});
+
+test('a persistent completion guardian failure retains steady rechecks between guardian runs', async () => {
+  let guardianRuns = 0;
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    env: { STEPHANOS_COMPLETION_GUARDIAN_ENABLED: '1' },
+    runCompletionGuardianCycle: async () => { guardianRuns += 1; return { ok: false }; },
+  });
+  assert.equal(guardianRuns, 1);
+  assert.deepEqual(result.delays, [2000, 2000, 2000]);
+});
+
+test('empty backoff never accelerates an explicitly slower configured interval', async () => {
+  const result = await observePollCycles({ controllers: [explicitlyEmptyController], count: 3,
+    env: { STEPHANOS_MISSION_WORKER_INTERVAL_MS: '30000' },
+  });
+  assert.deepEqual(result.delays, [30000, 30000, 30000]);
+});
+
+test('launching a due calibration is activity even when the controller reports zero mutation steps', async () => {
+  let launches = 0;
+  const result = await observePollCycles({ controllers: [{ ...explicitlyEmptyController,
+    recurringCalibrationReadiness: { ok: true, dueParticipantIds: ['stephanos'], executionDeferred: true },
+  }], count: 1, launchCalibrationLane: async () => { launches += 1; return { launched: true }; } });
+  assert.equal(launches, 1);
+  assert.deepEqual(result.delays, [2000]);
+});
+
+test('a canonical head change exits for supervised reload before reading another backed-off controller cycle', async () => {
+  let cycles = 0;
+  let identityReads = 0;
+  const delays = [];
+  const exitCode = await runSupervisedMissionWorker({
+    argv: [], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream, stderr: sink().stream, bootstrapMailbox,
+    inspectRepositoryIdentity: async (options) => {
+      identityReads += 1;
+      const identity = await canonicalIdentity(options);
+      return identityReads <= 3 ? identity : { ...identity, canonical: false, headSha: 'b'.repeat(40) };
+    },
+    listMissionState: async () => [],
+    runControllerCycle: async () => { cycles += 1; return explicitlyEmptyController; },
+    runTick: async () => assert.fail('no action was admitted'),
+    writeHeartbeat: async () => {}, setIntervalFn: () => 17, clearIntervalFn: () => {},
+    sleep: async (delayMs) => { delays.push(delayMs); },
+  });
+  assert.equal(exitCode, MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE);
+  assert.equal(cycles, 3);
+  assert.equal(identityReads, 4);
+  assert.deepEqual(delays, [4000, 8000, 15000]);
+});
+
 const actionGrant = {
   schemaVersion: 'stephanos.mission-worker-action-grant.v1',
   missionId: 'critical-supervisor-test',
