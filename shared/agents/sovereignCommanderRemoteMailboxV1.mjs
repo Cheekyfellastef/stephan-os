@@ -2215,6 +2215,8 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'controller-lane-status'
       || actionId === 'cpu-pressure-snapshot'
       || actionId === 'publish-controller-activity'
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_INSPECT_ACTION
+      || actionId === CANONICAL_GIT_WORKTREE_CONFIG_ACTION
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
