@@ -2602,7 +2602,7 @@ export function inspectCanonicalGitWorktreeConfigV1({
     return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const listed = captureCanonical(['worktree', 'list', '--porcelain']);
+  const listed = captureAtWorktree(repositoryRoot, ['worktree', 'list', '--porcelain']);
   if (listed.deadlineExceeded) {
     return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
   }
@@ -2821,6 +2821,29 @@ export function repairCanonicalGitWorktreeConfigV1({
     });
   };
 
+  // Worktree-aware Git commands must let Git resolve the already-verified
+  // canonical .git directory from the repository root. The fixed environment
+  // and config overrides remain identical; topology/source identity are proven
+  // immediately before this read-only enumeration.
+  const captureAtWorktree = (args) => {
+    const result = spawnSyncFn(git.executable, [
+      ...git.fixedConfigArgs, '-C', repositoryRoot, ...args,
+    ], {
+      cwd: repositoryRoot,
+      env: git.environment,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+    });
+    return Object.freeze({
+      ok: !result?.error && Number(result?.status) === 0,
+      status: Number.isInteger(result?.status) ? result.status : null,
+      stdout: String(result?.stdout || ''),
+    });
+  };
+
   const beforeHead = capture(['rev-parse', 'HEAD']);
   const branch = capture(['branch', '--show-current']);
   if (!beforeHead.ok || text(beforeHead.stdout).toLowerCase() !== normalizedHead
@@ -2833,7 +2856,7 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const worktreeList = capture(['worktree', 'list', '--porcelain']);
+  const worktreeList = captureAtWorktree(['worktree', 'list', '--porcelain']);
   const worktreeRoots = worktreeList.ok
     ? worktreeList.stdout.split(/\r?\n/).filter(line => line.startsWith('worktree '))
       .map(line => line.slice('worktree '.length)) : [];
