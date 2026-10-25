@@ -85,3 +85,46 @@ test('actual authenticated HTTP owner rejects forged boot fields and wrong sourc
 test('the real fixed Windows boot observer produces a fresh local witness', { skip: process.platform !== 'win32' }, () => {
   assert.equal(validMaintenanceBootWitnessV1(readMaintenanceBootWitnessV1()), true);
 });
+
+test('audit-loss preparation uses the authenticated pinned owner and cannot accept boot or release claims', async t => {
+  let preparations = 0;
+  const custodyStore = {
+    status: () => ({ held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING' }),
+    prepareAfterAuditLoss: async request => { preparations++; return { ok: true, prepared: true,
+      reservationId: request.expectedReservationId, custodyReleased: false }; },
+    close() {},
+  };
+  const app = await createSovereignCommanderHttpServer({ port: 0, token: key, custodyStore,
+    continuousRepairEnabled: false, recoverySourceAdmission: expected => expected === head });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => app.server.close(resolve)));
+  const url = 'http://127.0.0.1:' + app.server.address().port + '/maintenance-custody/prepare-after-audit-loss';
+  const request = { expectedDigest: 'd'.repeat(64), expectedMain: head,
+    expectedReservationId: 'exact-original-cycle', operatorApproval: 'operator-approved' };
+  const post = (body, auth = key) => fetch(url, { method: 'POST', headers: { authorization: 'Bearer ' + auth }, body: JSON.stringify(body) });
+  assert.equal((await post(request, 'wrong')).status, 401);
+  assert.equal((await post({ ...request, bootWitness: {} })).status, 400);
+  assert.equal((await post({ ...request, custodyReleased: true })).status, 400);
+  assert.equal((await post({ ...request, expectedMain: 'b'.repeat(40) })).status, 409);
+  assert.equal(preparations, 0);
+  const response = await post(request); assert.equal(response.status, 200);
+  assert.equal((await response.json()).custodyReleased, false);
+  assert.equal(app.continuousRepairStatus().timeoutCustodyHeld, true);
+  assert.equal((await post({ ...request, expectedReservationId: 'foreign-cycle' })).status, 409);
+  assert.equal(preparations, 1);
+});
+
+test('fixed audit-loss CLI adapter binds digest, cycle and main without reading a substitute boot witness', async () => {
+  let called = 0;
+  const result = await runMaintenanceCustodyRecoveryV1({ mode: 'prepare-after-audit-loss',
+    expectedDigest: 'd'.repeat(64), expectedCycle: 'original-cycle', expectedMain: head,
+    operatorApproval: 'operator-approved', tokenReader: () => key,
+    bootReader: () => { throw new Error('caller must not supply boot witness'); },
+    fetchFn: async (url, request) => {
+      called++; assert.equal(url, 'http://127.0.0.1:18791/maintenance-custody/prepare-after-audit-loss');
+      assert.deepEqual(JSON.parse(request.body), { expectedDigest: 'd'.repeat(64), expectedMain: head,
+        operatorApproval: 'operator-approved', expectedReservationId: 'original-cycle' });
+      return { json: async () => ({ ok: true, custodyReleased: false }) };
+    } });
+  assert.equal(called, 1); assert.equal(result.custodyReleased, false);
+});
