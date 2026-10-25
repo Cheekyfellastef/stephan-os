@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import {
   SOVEREIGN_COMMANDER_REMOTE_ACTIONS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  inspectCanonicalGitWorktreeConfigV1,
   repairCanonicalGitWorktreeConfigV1,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
@@ -27,10 +28,14 @@ function fixture({
 } = {}) {
   let extensionPresent = true;
   const calls = [];
-  const spawnSyncFn = (_command, args) => {
+  const spawnSyncFn = (_command, args, options = {}) => {
     calls.push([...args]);
     const tail = args.join('\u0001');
     if (tail.endsWith('rev-parse\u0001HEAD')) return result(0, HEAD + '\n');
+    if (tail.endsWith('rev-parse\u0001--git-path\u0001config.worktree')) {
+      const cwd = String(options.cwd || '/fixture/Documents/GitHub/stephan-os');
+      return result(0, cwd + '/.git/config.worktree\n');
+    }
     if (tail.endsWith('branch\u0001--show-current')) return result(0, 'main\n');
     if (tail.endsWith('worktree\u0001list\u0001--porcelain')) {
       return result(0, worktreeRoots.map(root =>
@@ -104,6 +109,114 @@ function realMailboxRepository(t) {
   git('commit', '--allow-empty', '-m', 'fixture');
   return { home, repositoryRoot, head: git('rev-parse', 'HEAD').trim(), git };
 }
+
+test('the reusable read-only worktree/config inspection action is registered', () => {
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('inspect-canonical-git-worktree-config'));
+});
+
+test('read-only inspection proves one-worktree repair eligibility without mutating Git', () => {
+  const f = fixture({ worktreeConfigPresent: false });
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: f.spawnSyncFn,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.inspectionComplete, true);
+  assert.equal(inspected.safeForFixedUnset, true);
+  assert.equal(inspected.registeredWorktreeCount, 1);
+  assert.equal(inspected.linkedWorktreeCount, 0);
+  assert.equal(inspected.extensionValueState, 'TRUE');
+  assert.equal(inspected.worktreeConfigEntryCount, 0);
+  assert.equal(inspected.mutationPerformed, false);
+  assert.equal(inspected.rawPathsReturned, false);
+  assert.equal(inspected.rawConfigValuesReturned, false);
+  assert.equal(f.mutationCount(), 0);
+  assert.equal(JSON.stringify(inspected).includes('/fixture/'), false);
+});
+
+test('read-only inspection exposes linked worktree state without paths and never mutates', () => {
+  const f = fixture({
+    worktreeRoots: ['/fixture/Documents/GitHub/stephan-os', '/fixture/linked'],
+  });
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: f.spawnSyncFn,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.registeredWorktreeCount, 2);
+  assert.equal(inspected.linkedWorktreeCount, 1);
+  assert.equal(inspected.safeForFixedUnset, false);
+  assert.equal(inspected.mutationPerformed, false);
+  assert.equal(JSON.stringify(inspected).includes('/fixture/linked'), false);
+  assert.equal(f.mutationCount(), 0);
+});
+
+test('read-only inspection reports nonempty worktree config as repair-held without leaking values', () => {
+  const f = fixture({ worktreeConfigPresent: true, worktreeEntries: 'user.example\nkeep-me\0' });
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: f.spawnSyncFn,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.worktreeConfigFileCount, 1);
+  assert.equal(inspected.nonEmptyWorktreeConfigFileCount, 1);
+  assert.equal(inspected.worktreeConfigEntryCount, 1);
+  assert.equal(inspected.safeForFixedUnset, false);
+  assert.equal(JSON.stringify(inspected).includes('keep-me'), false);
+  assert.equal(f.mutationCount(), 0);
+});
+
+test('mailbox serves read-only Git worktree/config inspection before Commander health', async () => {
+  const f = fixture();
+  const env = { USERPROFILE: '/fixture' };
+  const rawSpawn = f.spawnSyncFn;
+  const spawnSyncFn = (command, args, options) => {
+    if (args[0] === '-C' && args[1].endsWith('/fixture/Documents/GitHub/stephan-os')) {
+      if (args[2] === 'branch') return result(0, 'main\n');
+      if (args[2] === 'rev-parse' && args[3] === 'HEAD') return result(0, HEAD + '\n');
+    }
+    return rawSpawn(command, args, options);
+  };
+  const receipt = await executeSovereignCommanderRemoteOnBattleBridge({
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: 'inspect-canonical-git-config-test-01',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 3149,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: HEAD,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+    remoteAction: 'inspect-canonical-git-worktree-config',
+  }, {
+    env,
+    spawnSyncFn,
+    fetchFn: async () => { throw new Error('Commander health must not be contacted'); },
+    ensureRuntimeFn: async () => { throw new Error('Commander runtime must not be recycled'); },
+  });
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.verdict, 'COMMAND_EXECUTION_COMPLETE');
+  assert.equal(receipt.remoteAction, 'inspect-canonical-git-worktree-config');
+  assert.equal(receipt.canonicalGitWorktreeConfigInspection.safeForFixedUnset, true);
+  assert.equal(receipt.gitConfigurationMutationPerformed, false);
+  assert.equal(receipt.readOnly, true);
+  assert.equal(f.mutationCount(), 0);
+});
 
 test('the pre-admission repair action is registered', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('repair-canonical-git-worktree-config'));
