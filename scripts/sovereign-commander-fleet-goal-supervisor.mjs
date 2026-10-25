@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import {
   FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
   projectFleetConveyorObservationV1, projectFleetSupervisorReceiptV1,
-  isFleetSupervisorTerminalV1,
   fleetSupervisorBlockerCodeV1,
 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { sovereignMaintenanceCustodyUnprovenV1, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
@@ -348,7 +347,9 @@ export function serializeFleetSupervisorTerminalV1(result) {
   const custodyHeld = sovereignMaintenanceCustodyUnprovenV1(
     { status }, result, FLEET_SUPERVISOR_ACTION,
   );
-  const terminalValid = isFleetSupervisorTerminalV1(result);
+  // The complete shared projection, not just the outer protocol shape, owns
+  // validity. Fallback bytes must never promote rejected evidence to success.
+  const terminalValid = projected !== null;
   const fallback = {
     schemaVersion: FLEET_SUPERVISOR_SCHEMA, ok: result?.ok === true,
     finalVerdict: result?.finalVerdict,

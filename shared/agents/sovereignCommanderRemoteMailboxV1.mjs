@@ -10,7 +10,7 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { inspectOriginalSourceCustodyCensusV1 } from './originalSourceCustodyInspectionV1.mjs';
 import { projectOriginalR7WitnessCommissioningAuditV1 } from './originalR7WitnessCommissioningAuditV1.mjs';
 import { parseRescueIslandBoundaryStdoutV1, parseRescueIslandBoundaryHeldStdoutV1 } from './rescueIslandBoundaryReceiptV1.mjs';
-import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, readSovereignMaintenanceTerminalReceiptV1,
+import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, readSovereignMaintenanceTerminalReceiptV1,
   sovereignMaintenanceCustodyUnprovenV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 
@@ -1782,6 +1782,57 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+const FLEET_MAINTENANCE_OWNER_BLOCKERS = new Set([
+  SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+  'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+  'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE',
+]);
+
+function safeFleetMaintenanceFailureProjection(value = {}, expectedAction = '') {
+  if (expectedAction !== FLEET_SUPERVISOR_ACTION) return null;
+  let source = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+    // Wrappers may nest, but another command cannot lend its child's identity.
+    if (Object.hasOwn(source, 'command')) break;
+    source = depth < 4 ? source.structuredContent : null;
+  }
+  const command = source?.command;
+  if (source?.ok !== false || command?.dispatchAllowed !== true
+    || command.operation !== 'MAINTENANCE_ACTION'
+    || command.plan?.kind !== 'fixed-process'
+    || command.plan.processId !== expectedAction) return null;
+  const execution = source.structuredContent;
+  let errorCode = '';
+  let executionBlocker;
+  if (source.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED') {
+    if (!FLEET_MAINTENANCE_OWNER_BLOCKERS.has(source.blocker)) return null;
+    // A pre-launch owner denial has no execution output. A post-execution
+    // custody hold is distinct: it must carry the canonical negative evidence,
+    // and never supplies a successful fleet terminal receipt or custody release.
+    if (Object.hasOwn(source, 'structuredContent')) {
+      if (source.blocker !== SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+        || !execution || typeof execution !== 'object' || Array.isArray(execution)
+        || typeof execution.ok !== 'boolean'
+        || !(execution.status === null || Number.isInteger(execution.status))
+        || typeof execution.signal !== 'string' || typeof execution.errorCode !== 'string'
+        || execution.ok !== (execution.status === 0 && !execution.signal && !execution.errorCode)
+        || typeof execution.stdout !== 'string' || typeof execution.stderr !== 'string'
+        || !sovereignMaintenanceCustodyUnprovenV1(execution,
+          readSovereignMaintenanceTerminalReceiptV1(execution.stdout, expectedAction), expectedAction)) return null;
+      if (['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)) errorCode = execution.errorCode;
+    } else if (Object.hasOwn(source, 'status')) return null;
+    executionBlocker = source.blocker;
+  } else if (source.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED') {
+    if (!execution || execution.ok !== false || execution.status !== null
+      || !['ETIMEDOUT', 'ABORT_ERR'].includes(execution.errorCode)
+      || typeof execution.stdout !== 'string' || typeof execution.stderr !== 'string') return null;
+    errorCode = execution.errorCode;
+    executionBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+  } else return null;
+  return Object.freeze({ processId: expectedAction, status: null, errorCode, executionBlocker });
+}
+
 function safeFleetSupervisorExecutionProjection(value = {}) {
   const source = findMaintenanceExecutionEnvelope(value);
   const execution = source?.structuredContent;
@@ -3118,6 +3169,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           secretMaterialReturned: false,
         });
       }
+      const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
+        actionCall.body?.result?.structuredContent, actionId);
+      if (fleetMaintenanceFailure) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
+          stepIndex: index, remoteAction: actionId, remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length, completedSteps: Object.freeze(completedSteps),
+          ...fleetMaintenanceFailure,
+          publicReceiptSafe: true, secretMaterialReturned: false,
+        });
+      }
       const boundedFailure = safeMaintenanceFailureProjection(
         actionCall.body?.result?.structuredContent,
         actionId,
@@ -3258,6 +3319,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   }, sessionId);
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
+  }
+  const fleetMaintenanceFailure = safeFleetMaintenanceFailureProjection(
+    actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  if (fleetMaintenanceFailure) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
+      remoteAction: shape.command.remoteAction, ...fleetMaintenanceFailure,
+      publicReceiptSafe: true, secretMaterialReturned: false,
+    });
   }
   const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight',
     'rescue-island-readonly-boundary', 'starfield-vr-telemetry-archive']
