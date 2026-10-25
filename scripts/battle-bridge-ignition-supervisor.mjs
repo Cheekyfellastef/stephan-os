@@ -29,6 +29,8 @@ import {
 } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
+import { createBattleBridgeGitProbeContextV1, isBattleBridgeGitProbeContextV1,
+  validateBattleBridgeGitProbeConfigurationV1 } from '../shared/agents/battleBridgeGitProbeContextV1.mjs';
 
 export const BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA = 'stephanos.battle-bridge-ignition-supervisor.v1';
 export const BATTLE_BRIDGE_IGNITION_PHASES = Object.freeze([
@@ -127,9 +129,15 @@ function sameStableGitTopology(left = {}, right = {}) {
 }
 
 function evaluateTrackedVisibility(output = '') {
-  const hidden = String(output || '').split(/\r?\n/).filter((line) => (
+  const lines = String(output || '').split(/\r?\n/);
+  const hidden = lines.filter((line) => (
     /^S\s/.test(line) || /^[a-z]\s/.test(line)
   ));
+  // A nested checkout has its own configuration/bootstrap namespace. A later
+  // status command must not enter it using this root's isolation qualification.
+  if (lines.some(line => /^[A-Za-z?]\s+160000\s/.test(line))) return Object.freeze({
+    ok: false, blocker: 'CANONICAL_GIT_PROBE_SUBMODULE_UNSUPPORTED', hiddenCount: hidden.length,
+  });
   return Object.freeze({
     ok: hidden.length === 0,
     blocker: hidden.length === 0 ? '' : 'HIDDEN_TRACKED_PATHS_PRESENT',
@@ -137,7 +145,35 @@ function evaluateTrackedVisibility(output = '') {
   });
 }
 
-export function collectCanonicalIgnitionSourceTruth({
+export function collectCanonicalIgnitionSourceTruth(options = {}) {
+  let context;
+  try {
+    const root = options.cwd ?? defaultRepoRoot;
+    const topology = (options.inspectTopologyFn || inspectBattleBridgeGitTopology)(root, { stabilizeIndex: true });
+    if (!topology?.ok) return structuredSourceTruthBlocker({
+      code: topology?.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN',
+      detail: 'Canonical repository topology could not be proven before source inspection.',
+      extra: { topology: topology || null },
+    });
+    // Native isolation is the production default. The explicit factory seam
+    // keeps deterministic collector fixtures separate from native proof.
+    context = (options.createGitProbeContextFn || createBattleBridgeGitProbeContextV1)(root);
+    if (context && !isBattleBridgeGitProbeContextV1(context, root))
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN'), { code: 'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN' });
+    const result = collectCanonicalIgnitionSourceTruthInContext(options, context, topology);
+    context?.assert();
+    context?.close();
+    return result;
+  } catch (error) {
+    try { context?.close(); } catch { /* Unknown owned metadata is retained. */ }
+    const code = /^CANONICAL_GIT_PROBE_[A-Z_]+$/.test(error?.code || '')
+      ? error.code : 'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN';
+    return structuredSourceTruthBlocker({ code,
+      detail: 'Bootstrap-isolated canonical Git metadata could not be qualified.' });
+  }
+}
+
+function collectCanonicalIgnitionSourceTruthInContext({
   cwd = defaultRepoRoot,
   environment = process.env,
   platform = process.platform,
@@ -146,8 +182,7 @@ export function collectCanonicalIgnitionSourceTruth({
   validateConfigurationFn = validateBattleBridgeLocalGitConfiguration,
   evaluateStatusFn = evaluateGitStatusForIgnition,
   scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers,
-} = {}) {
-  const topologyBefore = inspectTopologyFn(cwd, { stabilizeIndex: true });
+} = {}, gitProbeContext = null, topologyBefore = null) {
   if (!topologyBefore?.ok) {
     return structuredSourceTruthBlocker({
       code: topologyBefore?.blocker || 'CANONICAL_GIT_TOPOLOGY_UNPROVEN',
@@ -158,10 +193,11 @@ export function collectCanonicalIgnitionSourceTruth({
 
   let gitExecution = null;
   const capture = (label, args, { allowFailure = false } = {}) => {
+    gitProbeContext?.assert();
     gitExecution ||= resolveBattleBridgeGitExecution({ platform, environment });
     const fixedArgs = [
       ...gitExecution.fixedConfigArgs,
-      ...battleBridgeCanonicalRepositoryArgs(cwd),
+      ...(gitProbeContext ? gitProbeContext.repositoryArgs() : battleBridgeCanonicalRepositoryArgs(cwd)),
       ...args,
     ];
     const result = spawnSyncFn(gitExecution.executable, fixedArgs, {
@@ -194,7 +230,8 @@ export function collectCanonicalIgnitionSourceTruth({
 
   try {
     const configurationBefore = capture('source-config-before-fetch', ['config', '--local', '--null', '--list']);
-    const configurationProof = validateConfigurationFn(configurationBefore);
+    const configurationProof = validateBattleBridgeGitProbeConfigurationV1(configurationBefore,
+      { gitProbeContext, repoRoot: cwd, validateBase: validateConfigurationFn });
     if (!configurationProof?.ok) {
       return structuredSourceTruthBlocker({
         code: configurationProof?.blocker || 'CANONICAL_GIT_CONFIGURATION_INVALID',
@@ -203,6 +240,9 @@ export function collectCanonicalIgnitionSourceTruth({
         extra: { configurationProof: configurationProof || null },
       });
     }
+    if (configurationProof.worktreeConfigurationIsolated
+      && capture('source-isolated-config-before-fetch', ['config', '--worktree', '--null', '--list']) !== '')
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY'), { code: 'CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY' });
 
     const trackedVisibilityBeforeOutput = capture('source-tracked-visibility-before-fetch', ['ls-files', '--stage', '-v', '--']);
     const trackedVisibilityBefore = evaluateTrackedVisibility(trackedVisibilityBeforeOutput);
@@ -290,7 +330,11 @@ export function collectCanonicalIgnitionSourceTruth({
     const statusAfterOutput = captureSourceStatus('source-status-after-fetch');
     const statusAfter = evaluateStatusFn(statusAfterOutput);
     const configurationAfter = capture('source-config-after-fetch', ['config', '--local', '--null', '--list']);
-    const configurationAfterProof = validateConfigurationFn(configurationAfter);
+    const configurationAfterProof = validateBattleBridgeGitProbeConfigurationV1(configurationAfter,
+      { gitProbeContext, repoRoot: cwd, validateBase: validateConfigurationFn });
+    if (configurationAfterProof.worktreeConfigurationIsolated
+      && capture('source-isolated-config-after-fetch', ['config', '--worktree', '--null', '--list']) !== '')
+      throw Object.assign(new Error('CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY'), { code: 'CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY' });
     const branchAfter = capture('source-branch-after-fetch', ['branch', '--show-current']).trim();
     const upstreamAfter = String(capture(
       'source-upstream-after-fetch',
