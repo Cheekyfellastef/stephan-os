@@ -242,98 +242,104 @@ export async function observeSovereignBrowser({
       ? 'BROWSER_PLAYWRIGHT_UNAVAILABLE' : 'BROWSER_SESSION_NOT_CONNECTED';
     return Object.freeze({ ok: false, observedAtUtc, blocker, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' });
   }
-  // Do not close browser: it belongs to the operator. Process exit disconnects CDP.
-  const pages = browser.contexts().flatMap((context) => context.pages());
-  const admitted = pages.filter((page) => admittedBrowserTab(page.url(), allowedOrigins));
-  if (!admitted.length) {
-    return Object.freeze({ ok: false, observedAtUtc, blocker: 'NO_AUTHORISED_STEPHANOS_BROWSER_TABS', connectedTabCount: pages.length, observedTabCount: 0, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' });
-  }
-  const limit = Math.min(MAX_TABS, Math.max(1, Number(maxTabs) || MAX_TABS));
-  const observations = [];
-  await mkdir(proofRoot, { recursive: true });
-  for (const page of admitted.slice(0, limit)) {
-    const initialUrl = page.url();
-    const id = safeBrowserPageId(initialUrl);
-    const errors = { console: 0, page: 0, network: 0 };
-    let mainDocumentChanged = false;
-    const onConsole = (msg) => { if (msg.type() === 'error') errors.console += 1; };
-    const onPageError = () => { errors.page += 1; };
-    const onRequestFailed = () => { errors.network += 1; };
-    const onNavigation = (frame) => {
-      if (!frame.parentFrame()) mainDocumentChanged = true;
-    };
-    page.on('console', onConsole);
-    page.on('pageerror', onPageError);
-    page.on('requestfailed', onRequestFailed);
-    page.on('framenavigated', onNavigation);
-    try {
-      if (!admittedBrowserTab(initialUrl, allowedOrigins)) throw new Error('BROWSER_ORIGIN_CHANGED');
-      // Passive only: no reload, click, goto, storage/cookie access, form entry or script mutation.
-      const dom = await page.evaluate((origins) => {
-        if (!origins.includes(location.origin)
-          || !['http:', 'https:'].includes(location.protocol)) return null;
-        return {
-          readyState: document.readyState,
-          images: [...document.querySelectorAll('img')].slice(0, 500).map((el) => ({ complete: el.complete, naturalWidth: el.naturalWidth })),
-          links: [...document.querySelectorAll('a')].slice(0, 1000).map((el) => ({ href: el.href })),
-          buttonCount: document.querySelectorAll('button').length,
-          disabledButtonCount: document.querySelectorAll('button:disabled').length,
-          headingCount: document.querySelectorAll('h1,h2,h3').length,
-        };
-      }, [...allowedOrigins]);
-      if (!dom || mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
-      const screenshot = await page.screenshot({ type: 'png', timeout: 7_000 });
-      // Discard bytes when a navigation occurred during capture, including an
-      // away-and-back transition whose final URL equals the original URL.
-      if (mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
-      const screenshotHash = sha256(screenshot);
-      const screenshotName = `${observedAtUtc.replace(/[:.]/g, '-')}-${id}.png`;
-      await writeFile(resolve(proofRoot, screenshotName), screenshot);
-      observations.push(Object.freeze({
-        tabId: id,
-        captured: true,
-        screenshotSha256: screenshotHash,
-        screenshotName,
-        ...summarizeDomObservation(dom),
-        // Only events that occur *after* listeners attach are available here.
-        errorsObservedDuringCapture: { ...errors },
-      }));
-    } catch {
-      observations.push(Object.freeze({ tabId: id, captured: false, blocker: 'BROWSER_TAB_CAPTURE_FAILED' }));
-    } finally {
-      page.off('console', onConsole);
-      page.off('pageerror', onPageError);
-      page.off('requestfailed', onRequestFailed);
-      page.off('framenavigated', onNavigation);
+  try {
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    const admitted = pages.filter((page) => admittedBrowserTab(page.url(), allowedOrigins));
+    if (!admitted.length) {
+      return Object.freeze({ ok: false, observedAtUtc, blocker: 'NO_AUTHORISED_STEPHANOS_BROWSER_TABS', connectedTabCount: pages.length, observedTabCount: 0, finalVerdict: 'BROWSER_OBSERVATION_BLOCKED' });
     }
+    const limit = Math.min(MAX_TABS, Math.max(1, Number(maxTabs) || MAX_TABS));
+    const observations = [];
+    await mkdir(proofRoot, { recursive: true });
+    for (const page of admitted.slice(0, limit)) {
+      const initialUrl = page.url();
+      const id = safeBrowserPageId(initialUrl);
+      const errors = { console: 0, page: 0, network: 0 };
+      let mainDocumentChanged = false;
+      const onConsole = (msg) => { if (msg.type() === 'error') errors.console += 1; };
+      const onPageError = () => { errors.page += 1; };
+      const onRequestFailed = () => { errors.network += 1; };
+      const onNavigation = (frame) => {
+        if (!frame.parentFrame()) mainDocumentChanged = true;
+      };
+      page.on('console', onConsole);
+      page.on('pageerror', onPageError);
+      page.on('requestfailed', onRequestFailed);
+      page.on('framenavigated', onNavigation);
+      try {
+        if (!admittedBrowserTab(initialUrl, allowedOrigins)) throw new Error('BROWSER_ORIGIN_CHANGED');
+        // Passive only: no reload, click, goto, storage/cookie access, form entry or script mutation.
+        const dom = await page.evaluate((origins) => {
+          if (!origins.includes(location.origin)
+            || !['http:', 'https:'].includes(location.protocol)) return null;
+          return {
+            readyState: document.readyState,
+            images: [...document.querySelectorAll('img')].slice(0, 500).map((el) => ({ complete: el.complete, naturalWidth: el.naturalWidth })),
+            links: [...document.querySelectorAll('a')].slice(0, 1000).map((el) => ({ href: el.href })),
+            buttonCount: document.querySelectorAll('button').length,
+            disabledButtonCount: document.querySelectorAll('button:disabled').length,
+            headingCount: document.querySelectorAll('h1,h2,h3').length,
+          };
+        }, [...allowedOrigins]);
+        if (!dom || mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
+        const screenshot = await page.screenshot({ type: 'png', timeout: 7_000 });
+        // Discard bytes when a navigation occurred during capture, including an
+        // away-and-back transition whose final URL equals the original URL.
+        if (mainDocumentChanged || page.url() !== initialUrl) throw new Error('BROWSER_ORIGIN_CHANGED');
+        const screenshotHash = sha256(screenshot);
+        const screenshotName = `${observedAtUtc.replace(/[:.]/g, '-')}-${id}.png`;
+        await writeFile(resolve(proofRoot, screenshotName), screenshot);
+        observations.push(Object.freeze({
+          tabId: id,
+          captured: true,
+          screenshotSha256: screenshotHash,
+          screenshotName,
+          ...summarizeDomObservation(dom),
+          // Only events that occur *after* listeners attach are available here.
+          errorsObservedDuringCapture: { ...errors },
+        }));
+      } catch {
+        observations.push(Object.freeze({ tabId: id, captured: false, blocker: 'BROWSER_TAB_CAPTURE_FAILED' }));
+      } finally {
+        page.off('console', onConsole);
+        page.off('pageerror', onPageError);
+        page.off('requestfailed', onRequestFailed);
+        page.off('framenavigated', onNavigation);
+      }
+    }
+    const capturedCount = observations.filter((item) => item.captured).length;
+    const receipt = {
+      schemaVersion: BROWSER_OBSERVATION_SCHEMA,
+      observedAtUtc,
+      mechanism: 'operator-opt-in-local-chromium-cdp',
+      readOnly: true,
+      connectedTabCount: pages.length,
+      admittedTabCount: admitted.length,
+      observedTabCount: observations.length,
+      screenshotCount: capturedCount,
+      truncated: admitted.length > limit,
+      observationOnly: true,
+      servedHeadVerified: false,
+      functionalAcceptanceVerified: false,
+      observations,
+    };
+    const evidenceHash = sha256(JSON.stringify(receipt));
+    const receiptName = `${observedAtUtc.replace(/[:.]/g, '-')}-${evidenceHash.slice(0, 16)}.json`;
+    await writeFile(resolve(proofRoot, receiptName), `${JSON.stringify({ ...receipt, evidenceHash }, null, 2)}\n`, 'utf8');
+    return Object.freeze({
+      ...receipt,
+      evidenceHash,
+      receiptName,
+      ok: capturedCount > 0 && capturedCount === observations.length,
+      finalVerdict: capturedCount > 0 && capturedCount === observations.length
+        ? 'BROWSER_OBSERVATION_CAPTURED' : 'BROWSER_OBSERVATION_PARTIAL',
+    });
+  } finally {
+    // connectOverCDP supplies a transport-only close: detach this client without
+    // closing the operator's browser or pages. Await it on every post-connect exit;
+    // a rejected disconnect must not be reported as a completed observation.
+    await browser.close();
   }
-  const capturedCount = observations.filter((item) => item.captured).length;
-  const receipt = {
-    schemaVersion: BROWSER_OBSERVATION_SCHEMA,
-    observedAtUtc,
-    mechanism: 'operator-opt-in-local-chromium-cdp',
-    readOnly: true,
-    connectedTabCount: pages.length,
-    admittedTabCount: admitted.length,
-    observedTabCount: observations.length,
-    screenshotCount: capturedCount,
-    truncated: admitted.length > limit,
-    observationOnly: true,
-    servedHeadVerified: false,
-    functionalAcceptanceVerified: false,
-    observations,
-  };
-  const evidenceHash = sha256(JSON.stringify(receipt));
-  const receiptName = `${observedAtUtc.replace(/[:.]/g, '-')}-${evidenceHash.slice(0, 16)}.json`;
-  await writeFile(resolve(proofRoot, receiptName), `${JSON.stringify({ ...receipt, evidenceHash }, null, 2)}\n`, 'utf8');
-  return Object.freeze({
-    ...receipt,
-    evidenceHash,
-    receiptName,
-    ok: capturedCount > 0 && capturedCount === observations.length,
-    finalVerdict: capturedCount > 0 && capturedCount === observations.length
-      ? 'BROWSER_OBSERVATION_CAPTURED' : 'BROWSER_OBSERVATION_PARTIAL',
-  });
 }
 
 export function publicBrowserObservationProjection(result = {}) {
