@@ -262,23 +262,43 @@ function isRecoverySignal(record = {}) {
 }
 
 function deriveGapHistory(records = []) {
-  const ordered = [...records].sort((a, b) => recordTimeMs(a) - recordTimeMs(b));
+  // Index this observation only. Do not retain a cache across worker cycles:
+  // new failure/recovery evidence must be reflected on the very next read.
+  const ordered = records.map((record) => ({ record, atMs: recordTimeMs(record) }))
+    .sort((a, b) => a.atMs - b.atMs);
   const gaps = ordered
-    .map((record, index) => ({ record, index }))
+    .map(({ record, atMs }, index) => ({ record, atMs, index }))
     .filter(({ record }) => isGapSignal(record))
-    .map(({ record, index }) => ({
+    .map(({ record, atMs, index }) => ({
       gapId: gapIdentity(record, index),
       record,
-      atMs: recordTimeMs(record),
+      atMs,
     }));
 
+  const recoveriesByGap = new Map();
+  for (const entry of ordered) {
+    if (!isRecoverySignal(entry.record)) continue;
+    const ids = new Set([canonicalGapId(entry.record), ...resolvedGapIds(entry.record)]);
+    for (const id of ids) {
+      if (!id) continue;
+      let recoveries = recoveriesByGap.get(id);
+      if (!recoveries) { recoveries = []; recoveriesByGap.set(id, recoveries); }
+      recoveries.push(entry);
+    }
+  }
+
   const history = gaps.map((gap) => {
-    const matchingRecovery = ordered.find((record) => {
-      if (recordTimeMs(record) <= gap.atMs || !isRecoverySignal(record)) return false;
-      const direct = canonicalGapId(record);
-      const explicitResolved = resolvedGapIds(record);
-      return (direct && direct === gap.gapId) || explicitResolved.includes(gap.gapId);
-    });
+    const recoveries = recoveriesByGap.get(gap.gapId) || [];
+    let low = 0;
+    let high = recoveries.length;
+    // Preserve strict later-than matching and the first stable record when
+    // several recoveries share a timestamp, exactly as the former find did.
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (recoveries[middle].atMs <= gap.atMs) low = middle + 1;
+      else high = middle;
+    }
+    const matchingRecovery = recoveries[low]?.record;
     const record = gap.record;
     return Object.freeze({
       gapId: gap.gapId,

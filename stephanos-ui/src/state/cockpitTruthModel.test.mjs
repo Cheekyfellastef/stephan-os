@@ -95,7 +95,13 @@ test('cockpit model only animates traces with real recent activity or active exe
 });
 
 test('cockpit model animates backend-memory trace when telemetry memory transition is recent', () => {
+  const checkedAt = new Date().toISOString();
   const model = buildCockpitModel({
+    apiStatus: {
+      backendReachable: true, lastCheckedAt: checkedAt,
+      meta: { ok: true, service: 'stephanos-server', schemaVersion: 'stephanos.backend-health.v1', backendIdentity: { runtimeId: 'stephanos-battle-bridge-backend' } },
+      runtimeContext: { healthProbeTruth: { lastBackendHealthProbeAt: checkedAt, lastBackendHealthProbeResult: 'ok:true' } },
+    },
     runtimeStatus: {
       appLaunchState: 'idle',
       executionTruth: 'idle',

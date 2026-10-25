@@ -1,8 +1,10 @@
 // Fair bounded observation of the OPEN PR estate; no review, lease or merge authority.
-// The global 5-minute scheduler used to fetch issue comments for every open PR
+// The formerly global 5-minute scheduler used to fetch comments for every open PR
 // on every pass. Keep the two most recently updated PRs hot and rotate the
 // remainder in deterministic bounded windows without durable cursor state.
-export const EXACT_HEAD_DISCOVERY_WINDOW_MS = 5 * 60_000;
+// Stay aligned with the 15-minute scheduled fallback. A 5-minute window
+// sampled every 15 minutes can systematically skip old-PR cohorts.
+export const EXACT_HEAD_DISCOVERY_WINDOW_MS = 15 * 60_000;
 export const EXACT_HEAD_DISCOVERY_FRESH_COUNT = 2;
 export const EXACT_HEAD_DISCOVERY_ROTATING_COUNT = 10;
 export const EXACT_HEAD_DISCOVERY_MAX_PER_PASS =

@@ -76,8 +76,9 @@ function projectedVerification(repair = {}) {
     repairRequired: core?.repairRequired === true,
     heartbeatFresh: core?.heartbeatFresh === true,
     busyGraceActive: core?.busyGraceActive === true,
-    heartbeatAgeSeconds: Number.isFinite(Number(core?.heartbeatAgeSeconds))
-      ? Number(core.heartbeatAgeSeconds)
+    heartbeatAgeSeconds: typeof core?.heartbeatAgeSeconds === 'number'
+      && Number.isFinite(core.heartbeatAgeSeconds) && core.heartbeatAgeSeconds >= 0
+      ? core.heartbeatAgeSeconds
       : null,
   });
 }

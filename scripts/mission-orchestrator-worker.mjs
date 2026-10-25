@@ -1,3 +1,4 @@
+import { resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -960,6 +961,7 @@ export async function executeForgePublicationAction(action, claim, options = {})
     receiptRoot: join(root, 'publication-authorizations'),
     githubApi: options.forgeGithubApi || canonicalForgeGithubApi,
     nowUtc: now.toISOString(),
+    env,
   });
 }
 
@@ -972,8 +974,14 @@ export async function runMissionWorkerTick(options = {}) {
       processed: { processed: false, reason: 'exact-action-grant-required' },
     };
   }
+  const env = options.env || process.env;
+  const canonicalPaths = resolveCanonicalMissionWorkerPaths({ env });
   const workerOptions = {
     ...options,
+    env,
+    sharedWorkspaceRoot: resolve(options.sharedWorkspaceRoot || env.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || env.STEPHANOS_SHARED_WORKSPACE_ROOT || canonicalPaths.workspaceRoot),
+    repoRoot: options.repoRoot || env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT || canonicalPaths.repositoryRoot,
     actionGrant,
     runCommand: options.runCommand || defaultRun,
     privateKeyPath: options.privateKeyPath

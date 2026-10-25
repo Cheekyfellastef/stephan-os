@@ -4,6 +4,7 @@ import { createSharedWorkspaceEventRecord } from './sharedAgentWorkspaceStore.mj
 import {
   extractSovereignNativeCapabilityGapsV1,
   SOVEREIGN_NATIVE_GAP_MAX_CANDIDATES,
+  SOVEREIGN_NATIVE_GAP_MAX_RETAINED,
 } from './sovereignCommanderNativeGapIntakeV1.mjs';
 
 function nativeEvent(capabilityId, eventId, overrides = {}) {
@@ -58,6 +59,25 @@ test('reject forged, unrelated, stale, future and non-gap events without source 
   assert.equal(result.finalVerdict, 'SOVEREIGN_NATIVE_GAP_NO_QUALIFIED_EVENTS');
 });
 
+test('retains the same uncompleted native gap after its original discovery event expires', () => {
+  const old = nativeEvent('windows-service-ownership', 'sovereign-gap-one');
+  const first = extractSovereignNativeCapabilityGapsV1([old], {
+    nowUtc: '2026-10-12T11:10:00.000Z',
+  });
+  const later = extractSovereignNativeCapabilityGapsV1([old], {
+    nowUtc: '2026-10-22T11:10:00.000Z', priorGaps: first.gaps,
+  });
+  assert.equal(later.candidateCount, 1);
+  assert.equal(later.gaps[0].capabilityId, 'windows-service-ownership');
+  assert.equal(later.gaps[0].constructionAdmissionAllowed, false);
+  assert.equal(later.proofOfNewExecutableCapability, false);
+  const denied = extractSovereignNativeCapabilityGapsV1([], {
+    nowUtc: '2026-10-22T11:10:00.000Z',
+    priorGaps: [{ ...first.gaps[0], sourceIsRuntimeParityProof: true }],
+  });
+  assert.equal(denied.candidateCount, 0);
+});
+
 test('large native learning history reports truncation but does not make a new scheduler', () => {
   const events = Array.from({ length: 20 }, (_, i) =>
     nativeEvent(`bounded-gap-${i}`, `sovereign-gap-${i}`));
@@ -67,6 +87,33 @@ test('large native learning history reports truncation but does not make a new s
   assert.equal(result.candidateTotalCount, 20);
   assert.equal(result.candidateCount, SOVEREIGN_NATIVE_GAP_MAX_CANDIDATES);
   assert.equal(result.candidatesTruncated, true);
+  assert.equal(result.retainedCount, 20);
+  assert.equal(result.retentionTruncated, false);
+  const aged = extractSovereignNativeCapabilityGapsV1([], {
+    nowUtc: '2026-10-22T11:10:00.000Z', priorGaps: result.retainedGaps,
+  });
+  assert.equal(aged.candidateTotalCount, 20, 'older waiting gaps are not discarded');
+  assert.equal(aged.retainedCount, 20);
+  assert.equal(aged.candidateCount, SOVEREIGN_NATIVE_GAP_MAX_CANDIDATES);
+  assert.equal(aged.constructionAdmissionAllowed, undefined);
   assert.equal(result.runtimeMutationAuthority, false);
   assert.equal(result.proofOfNewExecutableCapability, false);
+});
+
+
+test('native inventory overflow fails closed rather than silently completing proposals', () => {
+  const events = Array.from({ length: SOVEREIGN_NATIVE_GAP_MAX_RETAINED + 1 }, (_, i) =>
+    nativeEvent(`retained-gap-${String(i).padStart(3, '0')}`, `sovereign-overflow-${i}`));
+  const first = extractSovereignNativeCapabilityGapsV1(events, {
+    nowUtc: '2026-10-12T11:10:00.000Z',
+  });
+  assert.equal(first.candidateTotalCount, SOVEREIGN_NATIVE_GAP_MAX_RETAINED + 1);
+  assert.equal(first.retainedCount, SOVEREIGN_NATIVE_GAP_MAX_RETAINED);
+  assert.equal(first.retentionTruncated, true);
+  assert.equal(first.automaticAdmissionAllowed, false);
+  const later = extractSovereignNativeCapabilityGapsV1([], {
+    nowUtc: '2026-10-22T11:10:00.000Z', priorGaps: first.retainedGaps,
+  });
+  assert.equal(later.retainedCount, SOVEREIGN_NATIVE_GAP_MAX_RETAINED);
+  assert.equal(later.automaticAdmissionAllowed, false);
 });

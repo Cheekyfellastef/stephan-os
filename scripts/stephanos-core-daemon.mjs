@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
@@ -14,6 +14,8 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
+  coreGamingProtectionFromGovernor,
+  coreWorkerDependentWorkAllowed,
   projectStephanosCoreDaemonState,
   shouldReloadStephanosCoreDaemon,
 } from '../shared/agents/stephanosCoreDaemonV1.mjs';
@@ -45,8 +47,14 @@ import {
   SOVEREIGN_COMMANDER_OPERATION,
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
+import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
+import { publishSignedCoreGateEvidenceV1 } from '../shared/runtime/goalBuildGateSignedPublisherV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
+import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
 import {
   buildStephanosBuildTruth,
   collectSovereignControllerLaneStatus,
@@ -69,7 +77,7 @@ const lockPath = resolve(localStateRoot, 'stephanos-core-daemon.lock.json');
 const workerHeartbeatPath = resolve(workspaceRoot, 'status', 'mission-orchestrator-worker-heartbeat.json');
 const sourceLeasePath = resolve(workspaceRoot, 'status', 'source-mutation-lease-current.json');
 const coreStatusPath = resolve(workspaceRoot, 'status', 'stephanos-core-daemon-current.json');
-const gamingStatePath = resolve(workspaceRoot, 'status', 'vr-resource-governor-current.json');
+const gamingStatePath = resolve(workspaceRoot, 'vr', 'vr-resource-governor-current.json');
 const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 const HEARTBEAT_MS = 15_000;
 const FLYWHEEL_FALLBACK_MS = DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
@@ -79,7 +87,6 @@ const DEPENDENCY_SELF_HEAL_COOLDOWN_MS = 2 * 60_000;
 const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
-const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
@@ -105,40 +112,35 @@ function currentHead() {
   return head;
 }
 
-async function processAlive(pid) {
-  if (!Number.isSafeInteger(pid) || pid < 1) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+async function readExactCurrentLock(identity) {
+  try { return exactCoreLockOwnerV1(JSON.parse(await readFile(lockPath, 'utf8')), identity); }
+  catch { return false; }
 }
 
+// Core source never removes an EXISTING lock while acquiring one.
+// PID liveness is not an atomic lock ownership test; competing attempts can
+// otherwise delete each other's newly created lock. Stale lock recovery must
+// use the separately reviewed, exclusive custody authority after proving no
+// original Core worker exists.
 async function acquireSingleInstance(sourceHead) {
   await mkdir(localStateRoot, { recursive: true });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(lockPath, 'wx', 0o600);
-      await handle.writeFile(JSON.stringify({
-        schemaVersion: 'stephanos.core-daemon-lock.v1',
-        pid: process.pid,
-        sourceHead,
-        startedAtUtc: new Date().toISOString(),
-      }));
-      return handle;
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      let stale = true;
-      try {
-        const existing = JSON.parse(await readFile(lockPath, 'utf8'));
-        stale = !(await processAlive(Number(existing?.pid)));
-      } catch {}
-      if (!stale) return null;
-      try { await unlink(lockPath); } catch {}
+  const identity = Object.freeze({
+    pid: process.pid, sourceHead, startedAtUtc: new Date().toISOString(),
+  });
+  let handle;
+  try {
+    handle = await open(lockPath, 'wx', 0o600);
+    await handle.writeFile(JSON.stringify({ schemaVersion: CORE_LOCK_SCHEMA, ...identity }));
+    if (!(await readExactCurrentLock(identity))) {
+      try { await handle.close(); } catch {}
+      return null;
     }
+    return Object.freeze({ handle, identity });
+  } catch (error) {
+    if (handle) { try { await handle.close(); } catch {} }
+    if (error?.code === 'EEXIST') return null;
+    throw error;
   }
-  return null;
 }
 
 async function probe(url, expectedService = '') {
@@ -157,21 +159,13 @@ async function probe(url, expectedService = '') {
   }
 }
 
-async function fileAgeMs(path) {
-  try {
-    const info = await stat(path);
-    return Math.max(0, Date.now() - info.mtimeMs);
-  } catch {
-    return null;
-  }
-}
-
 async function gamingActive() {
   try {
-    const value = JSON.parse(await readFile(gamingStatePath, 'utf8'));
-    return value?.active === true;
+    return coreGamingProtectionFromGovernor(JSON.parse(await readFile(gamingStatePath, 'utf8')));
   } catch {
-    return false;
+    // No authoritative gaming truth means no new local CPU/GPU-intensive work.
+    // Do not block separately hosted GitHub Actions or lightweight heartbeats.
+    return true;
   }
 }
 
@@ -275,6 +269,17 @@ let lastOctopusSelfHealAtMs = null;
 let lastOctopusSelfHealAtUtc = '';
 let lastOctopusSelfHealVerdict = 'NOT_RUN';
 let lastOctopusSelfHealBlocker = '';
+let lastNativeGateProbeAtMs = 0;
+let lastNativeGateRouting = null;
+let lastGateSignedPublicationAtMs = 0;
+let lastGateSignedPublicationVerdict = 'NOT_COMMISSIONED';
+let lastGateStewardActionKey = '';
+let lastGateStewardAttemptAtMs = null;
+// One bounded cooldown per independent gate/evidence reason. In-memory only:
+// Core may re-propose after a restart, but never writes/executes an approval.
+let lastGateStewardAttempts = [];
+let lastOctopusSelfHealSourceHead = '';
+let lastOctopusSelfHealProgrammeBlockerIdentity = '';
 let lastOctopusSelfHealAttemptCount = 0;
 let lastOctopusSelfHealProofHash = '';
 let lastOctopusSelfHealProofHashes = Object.freeze([]);
@@ -350,6 +355,13 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
     lastDependencySelfHealBlocker = '';
     return Object.freeze({ attempted: false, recovered: true });
   }
+  if (state.gamingActive === true) {
+    // Keep the lightweight Core heartbeat, but do not spawn expensive
+    // machine repair/worker bootstrap while local gaming owns the PC.
+    lastDependencySelfHealVerdict = 'CORE_DEPENDENCY_SELF_HEAL_GAMING_PROTECTED';
+    lastDependencySelfHealBlocker = '';
+    return Object.freeze({ attempted: false, recovered: false });
+  }
 
   const nowMs = Date.now();
   if (lastDependencySelfHealAtMs !== null
@@ -405,28 +417,22 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   }
 
   if (state.missionWorkerHealthy !== true) {
-    const workerRepair = await runBoundedDependencyMaintenance(
-      MISSION_WORKER_START_ACTION_ID,
-      sourceHead,
-      'stephanos-core-mission-worker-self-heal',
-    );
-    if (workerRepair?.proofHash) proofHashes.push(String(workerRepair.proofHash));
-    if (workerRepair?.ok !== true) {
-      lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_BLOCKED';
-      lastDependencySelfHealBlocker = String(
-        workerRepair?.blocker || 'MISSION_WORKER_SELF_HEAL_BLOCKED',
-      ).slice(0, 160);
-      lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
-      return Object.freeze({ attempted: true, recovered: false });
-    }
+    // Neither missing nor measured-stale heartbeats exclude a detached live
+    // worker. The Core observes/escalates; restart remains with the existing
+    // Windows owner after process/launch/lease custody is independently proven.
+    // Do not infer restart authority from a heartbeat's numeric age.
+    lastDependencySelfHealVerdict = 'MISSION_WORKER_SELF_HEAL_CUSTODY_HELD';
+    lastDependencySelfHealBlocker = 'MISSION_WORKER_CUSTODY_UNPROVEN';
+    lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
+    return Object.freeze({ attempted: true, recovered: false });
   }
 
   const [verifiedCommander, verifiedBackend, verifiedWorkerAge] = await Promise.all([
     probe('http://127.0.0.1:18791/health', 'stephanos-sovereign-commander'),
     probe('http://127.0.0.1:8787/api/health'),
-    fileAgeMs(workerHeartbeatPath),
+    readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
   ]);
-  const verifiedWorker = verifiedWorkerAge !== null && verifiedWorkerAge <= 5 * 60 * 1000;
+  const verifiedWorker = canonicalMissionWorkerEvidenceAllowsWork(verifiedWorkerAge);
   const recovered = verifiedCommander && verifiedBackend && verifiedWorker;
   lastDependencySelfHealProofHashes = Object.freeze(proofHashes);
   lastDependencySelfHealVerdict = recovered
@@ -443,6 +449,15 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
 }
 
 async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
+  // The asynchronous refill/escalation may outlive cycle-entry evidence.
+  // Every initial, control-plane and retry edge shares this admission point.
+  const workerState = projectStephanosCoreDaemonState({
+    sourceHead, missionWorkerHeartbeatAgeMs: readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
+  });
+  if (!coreWorkerDependentWorkAllowed(workerState)) {
+    return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
+      finalVerdict: 'OCTOPUS_WORKER_CUSTODY_HELD', sourceMutationAllowed: false });
+  }
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
     repositoryRoot: repoRoot,
     sharedWorkspaceRoot: workspaceRoot,
@@ -465,12 +480,19 @@ async function runBoundedOctopusSelfHeal(sourceHead) {
     nowMs: Date.now(),
     lastAttemptAtMs: lastOctopusSelfHealAtMs,
     cooldownMs: OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+    lastBlocker: lastOctopusSelfHealBlocker,
+    lastAttemptSourceHead: lastOctopusSelfHealSourceHead,
+    sourceHead,
+    programmeBlockerIdentity: lastRefillSummary.refillCanonicalProgrammeBlockerIdentity,
+    lastAttemptProgrammeBlockerIdentity: lastOctopusSelfHealProgrammeBlockerIdentity,
   });
   if (!decision.shouldRepair) {
     lastOctopusSelfHealVerdict = decision.reason;
     return Object.freeze({ ok: false, attempted: false, decision });
   }
 
+  lastOctopusSelfHealSourceHead = sourceHead;
+  lastOctopusSelfHealProgrammeBlockerIdentity = lastRefillSummary.refillCanonicalProgrammeBlockerIdentity;
   lastOctopusSelfHealAtMs = Date.now();
   lastOctopusSelfHealAtUtc = new Date(lastOctopusSelfHealAtMs).toISOString();
   lastOctopusSelfHealAttemptCount += 1;
@@ -670,7 +692,12 @@ function persistentFlywheelStatus() {
   });
 }
 
-async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false) {
+async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false, workerState = {}) {
+  if (!coreWorkerDependentWorkAllowed(workerState)
+      || !canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) {
+    lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_WORKER_CUSTODY_HELD';
+    return Object.freeze({ shouldRun: false, reason: lastFlywheelWakeReason });
+  }
   if (gamingProtected) {
     lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_GAMING_PROTECTED';
     return Object.freeze({
@@ -737,6 +764,9 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
       // degradation cannot suppress Octopus construction progress.
       try {
         markFlywheelStage('RECONCILE');
+        if (!canonicalMissionWorkerEvidenceAllowsWork(readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }))) {
+          throw new Error('MISSION_WORKER_CUSTODY_UNPROVEN');
+        }
         const result = await runDurableFlywheelStartupCycle({}, {
           sourceRevision: sourceHead,
           repoRoot,
@@ -811,6 +841,92 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     blocker: lastOctopusSelfHealBlocker,
     needsRepair: flywheel?.octopusNeedsRepair === true,
   });
+  // Only use existing canonical evidence and the existing locked daemon.
+  // Never make the heartbeat depend on this optional read-only observer.
+  // Share one bounded native capacity probe per minute across existing
+  // heartbeats. The signer and publisher own their own trust boundaries.
+  if (Date.parse(timestampUtc) - lastNativeGateProbeAtMs >= 60_000) {
+    lastNativeGateProbeAtMs = Date.parse(timestampUtc);
+    try {
+      lastNativeGateRouting = await readVerifiedStephanosNativeRoutingCandidate({
+        root: workspaceRoot, repoRoot, env: process.env,
+        repository: 'Cheekyfellastef/stephan-os',
+        sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+        nowUtc: timestampUtc,
+      });
+    } catch { lastNativeGateRouting = null; }
+  }
+  const nativeRouting = lastNativeGateRouting;
+  const gateEvidence = projectCoreGateEvidenceV1({
+    sourceHead: state.sourceHead, observedAtUtc: timestampUtc, state,
+    refillSummary: lastRefillSummary,
+    lastRepairBlocker: lastOctopusSelfHealBlocker,
+    lastRepairSourceHead: lastOctopusSelfHealSourceHead,
+    nativeRouting,
+  });
+  // Raw Core facts are only shadow-mode suggestions; the public observatory
+  // intentionally rejects them until separately pinned, signed, immutable
+  // status+proof records exist. Never convert a proposal into a PASS.
+  const gateSteward = planCoreGateStewardV1({
+    sourceHead: state.sourceHead,
+    gates: gateEvidence.ok ? gateEvidence.evidence.gates : [],
+  }, {
+    nowMs: Date.parse(timestampUtc), gamingProtected: state.gamingActive,
+    previousActionKey: lastGateStewardActionKey,
+    previousAttemptAtMs: lastGateStewardAttemptAtMs,
+    previousAttempts: lastGateStewardAttempts,
+  });
+  // The Gate Steward can now execute its exact, qualified READ-ONLY Gate 13
+  // probe without awaiting external privileged actions. Original Windows
+  // custody, task restart and protected approvals remain held.
+  const gateReadOnlyExecution = await executeCoreGateReadOnlyActionV1(gateSteward, {
+    sourceHead: state.sourceHead,
+    observedAtUtc: timestampUtc,
+    nowUtc: new Date().toISOString(),
+    gamingProtected: state.gamingActive,
+    probeNativeRouting: () => readVerifiedStephanosNativeRoutingCandidate({
+      root: workspaceRoot, repoRoot, env: process.env,
+      repository: 'Cheekyfellastef/stephan-os',
+      sourceHead: state.sourceHead, taskClass: 'FOCUSED_REPAIR',
+      nowUtc: new Date().toISOString(),
+    }),
+  });
+  // Persist the last diagnostic suggestion across heartbeats. Protected
+  // mutation stays with its independent owner, never with this read-only probe.
+  if (gateSteward.decision === 'PROPOSE_EXISTING_AUTHORITY_ACTION' && gateSteward.proofKey) {
+    const proposedAtMs = Date.parse(timestampUtc);
+    lastGateStewardActionKey = gateSteward.proofKey;
+    lastGateStewardAttemptAtMs = proposedAtMs;
+    lastGateStewardAttempts = [
+      ...lastGateStewardAttempts.filter(entry =>
+        entry.key !== gateSteward.proofKey &&
+        entry.atMs >= proposedAtMs - 60 * 60_000 && entry.atMs <= proposedAtMs),
+      { key: gateSteward.proofKey, atMs: proposedAtMs },
+    ].slice(-23);
+  }
+  // Optional, independently commissioned private signing key, never in Git
+  // or the Shared Workspace. Lack of key leaves all 23 observable gates
+  // UNVERIFIED and does not hinder the Core heartbeat.
+  if (gateEvidence.ok && !state.gamingActive
+    && Date.parse(timestampUtc) - lastGateSignedPublicationAtMs >= 60_000) {
+    lastGateSignedPublicationAtMs = Date.parse(timestampUtc);
+    try {
+      const keyFile = resolve(localStateRoot, 'keys', 'stephanos-goal-build-gates-private.pem');
+      const meta = await lstat(keyFile);
+      if (!meta.isFile() || meta.isSymbolicLink() || meta.size > 8192) {
+        lastGateSignedPublicationVerdict = 'SIGNING_KEY_NOT_QUALIFIED';
+      } else {
+        const outcome = await publishSignedCoreGateEvidenceV1({
+          root: workspaceRoot, repoRoot, sourceHead: state.sourceHead,
+          observedAtUtc: timestampUtc, coreEvidence: gateEvidence.evidence,
+          signingPrivateKeyPem: await readFile(keyFile, 'utf8'),
+        });
+        lastGateSignedPublicationVerdict = outcome.reason;
+      }
+    } catch {
+      lastGateSignedPublicationVerdict = 'GATE_SIGNING_AUTHORITY_NOT_COMMISSIONED';
+    }
+  }
   const outerBridgeState = sovereignOuterBridge.snapshot();
   const common = {
     // Core's separately persisted heartbeat is the fallback diagnostic if
@@ -823,6 +939,10 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     outerBridgeLastVerdict: String(outerBridgeState.lastResult?.finalVerdict || 'NOT_RUN').slice(0, 120),
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
+    goalBuildGateEvidence: gateEvidence.evidence,
+    goalConveyorGateSteward: gateSteward,
+    goalConveyorGateReadOnlyExecution: gateReadOnlyExecution,
+    goalBuildGateSignedPublisherVerdict: lastGateSignedPublicationVerdict,
     processId: process.pid,
     readiness: state.readiness,
     daemonHealthy: state.daemonHealthy,
@@ -1029,7 +1149,7 @@ async function sample(sourceHead) {
   const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
     sovereignCommanderRuntimePromise,
     probe('http://127.0.0.1:8787/api/health'),
-    fileAgeMs(workerHeartbeatPath),
+    readCanonicalMissionWorkerHeartbeatAgeMs({ workspaceRoot, expectedSourceHead: sourceHead }),
     gamingActive(),
   ]);
   return projectStephanosCoreDaemonState({
@@ -1042,8 +1162,8 @@ async function sample(sourceHead) {
 }
 
 const sourceHead = currentHead();
-const lockHandle = await acquireSingleInstance(sourceHead);
-if (!lockHandle) {
+const ownedLock = await acquireSingleInstance(sourceHead);
+if (!ownedLock) {
   console.log(JSON.stringify({
     ok: true,
     finalVerdict: 'STEPHANOS_CORE_DAEMON_ALREADY_RUNNING',
@@ -1062,17 +1182,25 @@ let shuttingDown = false;
 async function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
-  try { await lockHandle.close(); } catch {}
-  try {
-    const current = JSON.parse(await readFile(lockPath, 'utf8'));
-    if (Number(current?.pid) === process.pid) await unlink(lockPath);
-  } catch {}
+  try { await ownedLock.handle.close(); } catch {}
+  // The lock may have changed custody while this process was exiting.
+  // PID equality alone is insufficient, and must never delete a new lock.
+  if (await readExactCurrentLock(ownedLock.identity)) {
+    try { await unlink(lockPath); } catch {}
+  }
 }
 process.on('SIGINT', async () => { await cleanup(); process.exit(0); });
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
 
 try {
   while (true) {
+    // Even if a stale-lock contender displaced this record, only the
+    // exact current owner may continue Core work. No second source writer.
+    if (!(await readExactCurrentLock(ownedLock.identity))) {
+      await cleanup();
+      console.error('STEPHANOS_CORE_OWNER_LOCK_CHANGED_HELD');
+      process.exit(76);
+    }
     const observedHead = currentHead();
     if (shouldReloadStephanosCoreDaemon(sourceHead, observedHead)) {
       const state = projectStephanosCoreDaemonState({
@@ -1101,7 +1229,7 @@ try {
     });
     const dependencyRepair = await maybeRepairCoreDependencies(observedState, sourceHead);
     const state = dependencyRepair.attempted ? await sample(sourceHead) : observedState;
-    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
+    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive, state);
     await publish(state, new Date().toISOString(), persistentFlywheelStatus(), {
       worker: await readJsonIfPresent(workerHeartbeatPath),
       lease: await readJsonIfPresent(sourceLeasePath),

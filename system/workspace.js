@@ -468,6 +468,15 @@ export const workspace = {
       entry: stephanosLaunchTarget || effectiveProject?.entry,
     });
 
+    // Cockpit is a first-class runtime surface, like Stephanos itself. Opening
+    // its redirect stub inside a fixed-height iframe creates a second shell.
+    const cockpitSurface = String(effectiveProject?.folder || effectiveProject?.id || '').toLowerCase() === 'cockpit';
+    if (cockpitSurface) {
+      const cockpitUrl = new URL('apps/stephanos/dist/index.html?surface=cockpit', window.location.href);
+      window.location.assign(withCommandDeckDestination(cockpitUrl.href, window));
+      return;
+    }
+
     if (isStephanosProject(project) && resolvedEntryUrl) {
       recordStartupLaunchTrigger({
         sourceModule: "system/workspace.js",

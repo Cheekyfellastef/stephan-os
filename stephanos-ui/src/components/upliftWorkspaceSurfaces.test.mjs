@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import { deriveConversationLearningJourneyV1 } from '../../../shared/runtime/conversationLearningJourneyV1.mjs';
+// Reuse the existing surface/Skill Forge test lane; do not create another GitHub authority workflow.
+import '../../../shared/skill-forge/pinnedGithubSkillIntakeV2.test.mjs';
+
 const flywheelUrl = new URL('./FlywheelPanel.jsx', import.meta.url);
 const flywheelCanvasUrl = new URL('./FlywheelWorkspaceCanvas.jsx', import.meta.url);
 const flywheelSeedCanopyUrl = new URL('./FlywheelSeedCanopy.jsx', import.meta.url);
@@ -208,4 +212,53 @@ test('skill provenance never infers activation from an exam or static seed', asy
   assert.equal(transfer.activated,false);
   assert.equal(transfer.eligibleForExistingApprovedActivationRoute,false);
   assert.ok(transfer.blockers.includes('operatorApprovalPresent'));
+});
+
+
+test('Flywheel and Skill Forge both render one shared, truth-gated conversation improvement journey', async () => {
+  const [panel, canvas, forge, component, css] = await Promise.all([
+    readFile(flywheelUrl, 'utf8'),
+    readFile(flywheelCanvasUrl, 'utf8'),
+    readFile(skillForgeUrl, 'utf8'),
+    readFile(new URL('./ConversationLearningJourney.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('./ConversationLearningJourney.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(panel, /conversationUplift=\{telemetry\.payload\?\.conversationUplift \|\| null\}/);
+  assert.match(panel, /conversationFeedState=\{telemetry\.state === 'unreachable'/);
+  assert.match(canvas, /<ConversationLearningJourney[\s\S]*placement="flywheel"/);
+  assert.match(forge, /<ConversationLearningJourney[\s\S]*placement="skill-forge"/);
+  assert.match(forge, /feedState=\{refreshState === 'RECEIVED'/);
+  assert.match(component, /Conversation Intelligence · Improvement Journey/);
+  assert.match(component, /KNOWLEDGE → CAPABILITY → PROOF/);
+  assert.match(component, /UNKNOWN/);
+  assert.match(component, /builder and runtime evidence/);
+  assert.match(component, /view\.provenanceNote/);
+  assert.match(css, /max-width: 760px/);
+});
+
+test('conversation journey never promotes unverified conversation hints into builder completions', () => {
+  const uplift = {
+    state: 'ready', turnCount: 301,
+    candidates: [{
+      id: 'goal-conveyor', title: 'Investigate conveyor',
+      classification: 'CONVERSATION_HINT_REVIEW_REQUIRED',
+      provenCapabilityFailure: false, eligibleForBoundedInvestigation: true,
+      mentionCount: 4, sourceTurnRefs: ['workspace://one', 'workspace://two'],
+    }],
+  };
+  const ready = deriveConversationLearningJourneyV1({ uplift, feedState: 'ready' });
+  assert.equal(ready.indexedTurns, 301);
+  assert.equal(ready.investigationEligible, 1);
+  assert.equal(ready.admittedGoals, null);
+  assert.equal(ready.builderPickups, null);
+  assert.equal(ready.provenImprovements, null);
+  assert.equal(JSON.stringify(ready).includes('workspace://one'), false);
+
+  for (const state of ['unavailable', 'connecting']) {
+    const result = deriveConversationLearningJourneyV1({ uplift, feedState: state });
+    assert.equal(result.indexedTurns, null);
+    assert.equal(result.provenImprovements, null);
+    assert.notEqual(result.state, 'REPORTED');
+  }
+  assert.equal(deriveConversationLearningJourneyV1({ uplift, feedState: 'stale' }).indexedTurns, 301);
 });

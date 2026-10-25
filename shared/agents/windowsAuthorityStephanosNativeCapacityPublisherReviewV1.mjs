@@ -6,7 +6,13 @@ export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = Ob
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
-const EXPECTED_BLOB_SHA = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
+// Existing qualification plus the independently reviewed bootstrap syntax repair:
+// PR #3077, exact head 2efb7d390255445d17fc15a1993813fefd0f94e9,
+// independent review comment 6133050345. No other source bytes are admitted.
+const QUALIFIED_BLOB_SHAS = new Set([
+  '65253e069c91414bfe24cec8fc0db6ad14d9371c',
+  '8d3c7a8c528a62011967b986e3d87b8675810b5a',
+]);
 const MAX_BYTES = 256 * 1024;
 const SHA40 = /^[a-f0-9]{40}$/;
 
@@ -51,7 +57,7 @@ function exactSource(source, sourceHead, path) {
     && bytes <= MAX_BYTES
     && SHA40.test(text(source.blobSha))
     && source.blobSha === gitBlobSha(content)
-    && source.blobSha === EXPECTED_BLOB_SHA
+    && QUALIFIED_BLOB_SHAS.has(source.blobSha)
   );
 }
 
@@ -140,7 +146,7 @@ export function analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(
     findings.push(finding('windows-authority-source-evidence-invalid', 'Exactly one immutable exact-head native capacity publisher installer source record is required.', path));
   } else {
     findings.push(...inspectInstaller(candidates[0].content, path));
-    proofRefs.push(`proofs/windows-authority/native-capacity-publisher/${path}@${sourceHead}#${EXPECTED_BLOB_SHA}:${candidates[0].size}`);
+    proofRefs.push(`proofs/windows-authority/native-capacity-publisher/${path}@${sourceHead}#${candidates[0].blobSha}:${candidates[0].size}`);
   }
 
   const clean = findings.length === 0;

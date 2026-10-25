@@ -55,7 +55,7 @@ Select Case taskId
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "sovereign-commander-watchdog"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-hidden.ps1")
-    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath) & " -RequireCapabilityVersion 2026-10-18-island-action-contract-v6"
   Case "sovereign-chatgpt-tunnel"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-chatgpt-tunnel-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)

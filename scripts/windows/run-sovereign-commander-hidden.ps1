@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
+    [string]$RequireCapabilityVersion = '2026-10-18-island-action-contract-v6',
     [switch]$SkipCoreDaemonLifecycle,
     [switch]$SkipDesktopCommanderCrossHeal
 )
@@ -27,6 +27,7 @@ $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$coreDaemonLockPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE 'AppData\Local' }) 'Stephanos\stephanos-core-daemon.lock.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $desktopCommanderTaskName = 'Stephanos Commander Watchdog'
@@ -37,15 +38,12 @@ $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
 $relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
+. (Join-Path $scriptDir 'stephanos-core-process-observation.ps1')
+$script:coreProcessObservation = $null
 
 function Get-StephanosCoreDaemonProcesses {
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -eq 'node.exe' -and
-                [string]$_.CommandLine -match $coreDaemonScriptPattern
-            }
-    )
+    $script:coreProcessObservation = Get-StephanosCoreProcessObservation -CoreScript $coreDaemonScript
+    return @($script:coreProcessObservation.processes)
 }
 
 function Get-StephanosCoreDaemonHealth {
@@ -79,6 +77,50 @@ function Get-StephanosCoreDaemonHealth {
             $sourceHead -match '^[0-9a-fA-F]{40}$' -and
             [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
         )
+        $writerPid = 0
+        if ($status.PSObject.Properties['processId']) {
+            [void][int]::TryParse([string]$status.processId, [ref]$writerPid)
+        }
+        $lockOwnerPid = 0
+        $lock = $null
+        if (Test-Path -LiteralPath $coreDaemonLockPath -PathType Leaf) {
+            try {
+                $lock = Get-Content -LiteralPath $coreDaemonLockPath -Raw | ConvertFrom-Json
+                [void][int]::TryParse([string]$lock.pid, [ref]$lockOwnerPid)
+            } catch {}
+        }
+        $coreProcesses = @(Get-StephanosCoreDaemonProcesses)
+        $writerCustodyProven = $false
+        if ($script:coreProcessObservation.complete -and
+            $coreProcesses.Count -eq 1 -and $writerPid -gt 0 -and
+            $lockOwnerPid -eq $writerPid -and $null -ne $lock -and
+            [string]$lock.schemaVersion -ceq 'stephanos.core-daemon-lock.v1' -and
+            [string]$lock.sourceHead -cmatch '^[0-9a-f]{40}$' -and
+            [string]::Equals([string]$lock.sourceHead, [string]$status.sourceHead, [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                $writerProcess = @($coreProcesses | Where-Object { [int]$_.ProcessId -eq $writerPid })
+                if ($writerProcess.Count -eq 1 -and $null -ne $writerProcess[0].CreationDate) {
+                    $lockStart = [DateTimeOffset]::Parse([string]$lock.startedAtUtc)
+                    $writerCreated = [DateTimeOffset]::new([datetime]$writerProcess[0].CreationDate)
+                    $heartbeatAt = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+                    $startupLagSeconds = ($lockStart.ToUniversalTime() - $writerCreated.ToUniversalTime()).TotalSeconds
+                    $writerCustodyProven = [bool](
+                        $lockStart.Offset -eq [TimeSpan]::Zero -and
+                        $startupLagSeconds -ge -3 -and $startupLagSeconds -le 90 -and
+                        $lockStart -le $heartbeatAt
+                    )
+                }
+            } catch { $writerCustodyProven = $false }
+        }
+        $rescueCount = 0
+        $rescueStage = if ($status.PSObject.Properties['outerBridgeLastStage']) {
+            [string]$status.outerBridgeLastStage
+        } else { '' }
+        $rescueGenerationProven = [bool](
+            $status.PSObject.Properties['outerBridgeRunCount'] -and
+            [int]::TryParse([string]$status.outerBridgeRunCount, [ref]$rescueCount) -and
+            $rescueCount -ge 0 -and $rescueStage -cmatch '^[A-Z][A-Z0-9_]{0,79}$'
+        )
         $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
         $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
         $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
@@ -91,6 +133,7 @@ function Get-StephanosCoreDaemonHealth {
         }
         $busyGraceActive = [bool](
             $status.daemonHealthy -eq $true -and
+            $writerCustodyProven -and $rescueGenerationProven -and
             $readiness -ne 'RELOAD_REQUIRED' -and
             $sourceHeadMatchesLive -and
             $flywheelCycleRunning -and
@@ -101,6 +144,7 @@ function Get-StephanosCoreDaemonHealth {
         return [pscustomobject]@{
             healthy = [bool](
                 $status.daemonHealthy -eq $true -and
+                $writerCustodyProven -and $rescueGenerationProven -and
                 $readiness -ne 'RELOAD_REQUIRED' -and
                 $sourceHeadMatchesLive -and
                 ($heartbeatFresh -or $busyGraceActive)
@@ -286,11 +330,17 @@ function Get-SovereignCommanderHealth {
         $continuousRepairEnabled = $false
         $continuousRepairRunning = $false
         $continuousRepairScheduled = $false
+        $timeoutCustodyHeld = $false
+        $maintenanceInFlight = $false
         if ($null -ne $continuousRepairProperty -and $null -ne $continuousRepairProperty.Value) {
             $continuousRepair = $continuousRepairProperty.Value
             $enabledProperty = $continuousRepair.PSObject.Properties['enabled']
             $runningProperty = $continuousRepair.PSObject.Properties['running']
             $scheduledProperty = $continuousRepair.PSObject.Properties['scheduled']
+            $custodyProperty = $continuousRepair.PSObject.Properties['timeoutCustodyHeld']
+            $maintenanceProperty = $continuousRepair.PSObject.Properties['maintenanceInFlight']
+            $timeoutCustodyHeld = [bool]($null -ne $custodyProperty -and $custodyProperty.Value -eq $true)
+            $maintenanceInFlight = [bool]($null -ne $maintenanceProperty -and $maintenanceProperty.Value -eq $true)
             $continuousRepairEnabled = [bool]($null -ne $enabledProperty -and $enabledProperty.Value -eq $true)
             $continuousRepairRunning = [bool]($null -ne $runningProperty -and $runningProperty.Value -eq $true)
             $continuousRepairScheduled = [bool]($null -ne $scheduledProperty -and $scheduledProperty.Value -eq $true)
@@ -310,6 +360,8 @@ function Get-SovereignCommanderHealth {
             continuousRepairRunning = [bool]$continuousRepairRunning
             continuousRepairScheduled = [bool]$continuousRepairScheduled
             capabilityVersion = $capabilityVersion
+            timeoutCustodyHeld = $timeoutCustodyHeld
+            maintenanceInFlight = $maintenanceInFlight
         }
     } catch {
         return [pscustomobject]@{
@@ -321,6 +373,8 @@ function Get-SovereignCommanderHealth {
             continuousRepairRunning = $false
             continuousRepairScheduled = $false
             capabilityVersion = ''
+            timeoutCustodyHeld = $false
+            maintenanceInFlight = $false
         }
     }
 }
@@ -371,6 +425,8 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
         continuousRepairRunning = $true
         continuousRepairScheduled = $false
         capabilityVersion = $RequireCapabilityVersion
+        timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Get-SovereignCommanderHealth
@@ -399,7 +455,8 @@ $coreDaemonStartRequested = $false
 $coreDaemonRestartRequested = $false
 $coreDaemonStartedPid = 0
 $coreDaemonStoppedPidCount = 0
-$coreDaemonProcessCount = 0
+$coreDaemonProcessCount = $null
+$coreDaemonProcessInventoryComplete = $false
 $coreDaemonOk = $false
 $coreDaemonBlocker = ''
 $coreDaemonHeartbeatAgeSeconds = $null
@@ -424,7 +481,19 @@ $desktopCommanderCrossHealOk = $false
 $desktopCommanderCrossHealBlocker = ''
 $desktopCommanderRemoteProcessCount = 0
 
-if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
+if ($healthBefore.timeoutCustodyHeld -eq $true) {
+    # A held process is the current custody owner, even when its capability
+    # version is stale. Recycling it would erase the guardian's timeout fence.
+    # Keep the original owner and report HOLD; do not pretend it is healthy.
+    $blocker = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN'
+} elseif ($healthBefore.maintenanceInFlight -eq $true) {
+    $blocker = 'SOVEREIGN_MAINTENANCE_OWNER_BUSY'
+} elseif (($before.Count -gt 0 -or $healthBefore.basicHealthy) -and -not $healthyBefore -and -not $authenticatedInBandParentProof) {
+    # A health snapshot is not an atomic maintenance drain/reservation. Legacy
+    # daemons also omit custody fields. Never kill an existing owner to refresh
+    # its contract until a separate admitted handoff proves terminal custody.
+    $blocker = 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN'
+} elseif (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_TOKEN_MISSING'
@@ -467,6 +536,8 @@ $healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
         capabilitySatisfied = $true
         continuousRepairSatisfied = $true
         capabilityVersion = $RequireCapabilityVersion
+        timeoutCustodyHeld = $false
+        maintenanceInFlight = $false
     }
 } else {
     Wait-SovereignCommanderHealth
@@ -566,35 +637,42 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 # never recycle the caller while it is establishing its first fresh heartbeat.
 if ($SkipCoreDaemonLifecycle) {
     $coreObserved = @(Get-StephanosCoreDaemonProcesses)
+    $coreObservedComplete = [bool]$script:coreProcessObservation.complete
     $coreObservedHealth = Get-StephanosCoreDaemonHealth
-    $coreDaemonProcessCount = $coreObserved.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreObservedComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreObserved.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreObservedHealth.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreObservedHealth.busyGraceActive
     $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
-    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+    if (-not $coreDaemonProcessInventoryComplete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreObserved.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    }
+    $coreDaemonOk = [bool]($coreObserved.Count -eq 1 -and $coreObservedHealth.healthy -and -not $coreDaemonBlocker)
 } elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
 } else {
     $coreBefore = @(Get-StephanosCoreDaemonProcesses)
+    $coreBeforeComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthBefore = Get-StephanosCoreDaemonHealth
-    if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
-        if ($coreBefore.Count -gt 0) {
-            $coreDaemonRestartRequested = $true
-            try {
-                foreach ($process in $coreBefore) {
-                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
-                    $coreDaemonStoppedPidCount += 1
-                }
-                Start-Sleep -Milliseconds 300
-            } catch {
-                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_STALE_RECYCLE_FAILED'
-            }
-        }
+    # Multiple matching processes require independent lock/heartbeat custody
+    # proof. Never force-terminate all matches and create another writer.
+    if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_PROCESS_INVENTORY_UNPROVEN'
+    } elseif ($coreBefore.Count -gt 1) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_CUSTODY_AMBIGUOUS'
+    } elseif ($coreBefore.Count -eq 1 -and -not [bool]$coreHealthBefore.healthy) {
+        # The sole matching process can be the original lock owner. A stale
+        # heartbeat is not a terminal custody receipt or kill authorisation.
+        # Keep it fenced for an independently proven owner repair.
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SINGLE_WRITER_UNVERIFIED'
+    } elseif ($coreBefore.Count -eq 0) {
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
             $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
@@ -617,19 +695,21 @@ if ($SkipCoreDaemonLifecycle) {
         }
     }
     $coreAfter = @(Get-StephanosCoreDaemonProcesses)
+    $coreAfterComplete = [bool]$script:coreProcessObservation.complete
     $coreHealthAfter = if ($coreDaemonStartRequested -or $coreDaemonRestartRequested) {
         Wait-StephanosCoreDaemonHealth
     } else {
         Get-StephanosCoreDaemonHealth
     }
-    $coreDaemonProcessCount = $coreAfter.Count
+    $coreDaemonProcessInventoryComplete = [bool]($coreAfterComplete -and $script:coreProcessObservation.complete)
+    $coreDaemonProcessCount = if ($coreDaemonProcessInventoryComplete) { $coreAfter.Count } else { $null }
     $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
     $coreDaemonHeartbeatFresh = [bool]$coreHealthAfter.heartbeatFresh
     $coreDaemonBusyGraceActive = [bool]$coreHealthAfter.busyGraceActive
     $coreDaemonFlywheelCycleAgeSeconds = $coreHealthAfter.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
     $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
-    $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
+    $coreDaemonOk = [bool]($coreAfter.Count -eq 1 -and $coreHealthAfter.healthy -and -not $coreDaemonBlocker)
     if (-not $coreDaemonOk -and -not $coreDaemonBlocker) {
         $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
     }
@@ -772,7 +852,8 @@ $overallBlocker = if (-not $ok) {
     coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
     coreDaemonStartedPid = [int]$coreDaemonStartedPid
     coreDaemonStoppedPidCount = [int]$coreDaemonStoppedPidCount
-    coreDaemonProcessCount = [int]$coreDaemonProcessCount
+    coreDaemonProcessCount = $coreDaemonProcessCount
+    coreDaemonProcessInventoryComplete = [bool]$coreDaemonProcessInventoryComplete
     coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
     coreDaemonHeartbeatFresh = [bool]$coreDaemonHeartbeatFresh
     coreDaemonBusyGraceActive = [bool]$coreDaemonBusyGraceActive

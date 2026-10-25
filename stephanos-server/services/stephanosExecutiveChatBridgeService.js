@@ -31,9 +31,14 @@ export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE = Object.freeze({
 });
 
 const PROJECT_RELEVANT =
-  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace)\b/i;
+  /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace|sovereign commander|skill forge|over the line|#[1-9]\d*)\b/i;
 
 const EXPLICIT_ACTION_PATTERNS = Object.freeze([
+  /^\s*(?:please\s+|let(?:'|’)s\s+)?(?:keep\s+)?(?:taking|take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
+  /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:take|upgrade|elevate|advance|grow|improve)\s+(?:the\s+)?(?:sovereign commander|stephanos(?: ai)?|openclaw(?: local| standalone)?)\b/i,
+  /^\s*(?:can|could|would|will)\s+we\s+(?:please\s+)?(?:build|fix|repair|restore|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
+  /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:get|make|have)\b[\s\S]{0,200}\bto\s+(?:fix|repair|restore|build|run|start|restart|continue|resume|work)\b/i,
+  /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?(?:get|make|have)\b[\s\S]{0,160}\b(?:fixed|repaired|built|finished|completed|merged|live|working|running|building|over\s+the\s+line)\b/i,
   /^\s*(?:please\s+|let(?:'|’)s\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /^\s*(?:i\s+(?:want|need)\s+you\s+to\s+)(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
@@ -44,8 +49,12 @@ const EXPLICIT_ACTION_PATTERNS = Object.freeze([
   /\bstephanos\b.{0,80}\b(?:ask|asks|asking|tell|tells|telling|direct|directs|directing|have|has|having)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
 ]);
 
+const READ_ONLY_GET_PATTERNS = /^\s*(?:can|could|would|will)\s+(?:we|you)\s+(?:please\s+)?get\s+(?:(?:me|us)\s+)?(?:(?:a|an|the|some)\s+)?(?:status|report|summary|update|readout|list|number|count|explanation|diagnosis)\b/i;
+
 function isExplicitAction(prompt = '') {
-  return EXPLICIT_ACTION_PATTERNS.some((pattern) => pattern.test(text(prompt)));
+  const requestedText = text(prompt);
+  if (READ_ONLY_GET_PATTERNS.test(requestedText)) return false;
+  return EXPLICIT_ACTION_PATTERNS.some((pattern) => pattern.test(requestedText));
 }
 
 function text(value, fallback = '') {
@@ -115,6 +124,7 @@ function safeId(value, fallback = '') {
 
 function targetForPrompt(prompt = '') {
   const normalized = text(prompt).toLowerCase();
+  if (/\bsovereign commander\b/.test(normalized)) return 'sovereign-commander';
   if (/\b(verification harness|verify|verification|proof)\b/.test(normalized)) return 'verification-harness';
   if (/\b(recovery mesh|recover battle bridge)\b/.test(normalized)) return 'battle-bridge-recovery-mesh';
   if (/\b(mailbox|battle bridge command)\b/.test(normalized)) return 'battle-bridge-github-command-mailbox';
@@ -293,7 +303,7 @@ async function publishStephanosFlywheelDialogueReceiptV1({
       summary: 'Stephanos asked the Flywheel what should happen next from current scheduler and action-journal truth.',
       proofRefs,
     }),
-    dialogueSchemaVersion: 'stephanos.flywheel-dialogue-receipt.v1',
+    exchangeSchemaVersion: 'stephanos.flywheel-dialogue-receipt.v1',
     question: text(plan?.flywheel?.question),
     flywheelActionState: text(actionProjection?.state, 'UNKNOWN'),
     flywheelActionReceiptId: text(actionProjection?.receiptId),
