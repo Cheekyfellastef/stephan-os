@@ -700,16 +700,33 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 }
 
 export async function runSovereignCommanderHttpServer(options = {}) {
-  const installedSourceHead = readMaintenanceRecoverySourceV1();
   const token = await loadSovereignCommanderToken(options);
-  const custodyStore = options.custodyStore || createMaintenanceCustodyStoreV1({ signingKey: token });
+  const readRecoverySource = options.readRecoverySource || readMaintenanceRecoverySourceV1;
+  let installedSourceHead = '';
+  let custodyStore;
+  try {
+    installedSourceHead = readRecoverySource();
+    custodyStore = options.custodyStore || createMaintenanceCustodyStoreV1({ signingKey: token });
+  } catch {
+    // Observation remains available when recovery authority cannot be proven.
+    // This object cannot release or replace any existing durable reservation.
+    installedSourceHead = '';
+    const refusal = () => ({ ok: false, custodyReleased: false,
+      blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' });
+    custodyStore = Object.freeze({
+      status: () => ({ held: true, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' }),
+      reserve: refusal, release: refusal, recoverAfterBoot: refusal, close: () => {},
+    });
+  }
   const created = await createSovereignCommanderHttpServer({
     ...options,
     token,
     custodyStore,
-    recoverySourceAdmission: expectedMain => expectedMain === installedSourceHead
-      && readMaintenanceRecoverySourceV1() === installedSourceHead,
-    continuousRepairEnabled: options.continuousRepairEnabled ?? true,
+    recoverySourceAdmission: expectedMain => {
+      if (!installedSourceHead || expectedMain !== installedSourceHead) return false;
+      try { return readRecoverySource() === installedSourceHead; } catch { return false; }
+    },
+    continuousRepairEnabled: Boolean(installedSourceHead) && (options.continuousRepairEnabled ?? true),
   });
   await new Promise((resolveListen, rejectListen) => {
     created.server.once('error', rejectListen);
