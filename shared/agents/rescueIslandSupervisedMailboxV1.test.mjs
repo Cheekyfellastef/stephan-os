@@ -96,6 +96,25 @@ test('executes only the fixed native supervised ingress and projects all materia
   assert.equal(result.result.mergeAuthority, false);
 });
 
+test('does not attest an observed source head when native execution fails', async () => {
+  const result = await executeRescueIslandSupervisedDocumentOnBattleBridge(command(), {
+    platform: 'win32',
+    env: {},
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({ blocker: 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED' }) + '\n',
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(Object.hasOwn(result, 'sourceHead'), false);
+  assert.equal(Object.hasOwn(result, 'expectedHeadMatch'), false);
+  assert.equal(result.proofCompleted, false);
+});
+
 test('mailbox composition retains exact custom operation and executor', async () => {
   const validated = validateBattleBridgeGitHubCommand(command(), {
     authorLogin: 'Cheekyfellastef',
