@@ -185,3 +185,15 @@ test('private configuration drift during the source frame stops before another G
   assert.equal(changed, true); assert.equal(commandsAfterDrift, 0);
   assert.equal(result.ok, false); assert.equal(result.blocker.code, 'CANONICAL_GIT_PROBE_CONTEXT_CHANGED');
 });
+
+test('unqualified nested checkout is refused before status can enter another Git namespace', t => {
+  const f = fixture(t);
+  f.run(['update-index', '--add', '--cacheinfo', '160000', f.head, 'nested']);
+  const result = collectCanonicalIgnitionSourceTruth({ cwd: f.root,
+    spawnSyncFn: (exe, args, options) => {
+      const operation = args.slice(args.findIndex(arg => arg.startsWith('--work-tree=')) + 1);
+      assert.ok(!['status', 'fetch'].includes(operation[0]), 'unsupported nested state must stop before status/fetch');
+      return spawnSync(exe, args, options);
+    } });
+  assert.equal(result.ok, false); assert.equal(result.blocker.code, 'CANONICAL_GIT_PROBE_SUBMODULE_UNSUPPORTED');
+});

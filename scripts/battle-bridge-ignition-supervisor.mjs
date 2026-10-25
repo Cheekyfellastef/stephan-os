@@ -129,9 +129,15 @@ function sameStableGitTopology(left = {}, right = {}) {
 }
 
 function evaluateTrackedVisibility(output = '') {
-  const hidden = String(output || '').split(/\r?\n/).filter((line) => (
+  const lines = String(output || '').split(/\r?\n/);
+  const hidden = lines.filter((line) => (
     /^S\s/.test(line) || /^[a-z]\s/.test(line)
   ));
+  // A nested checkout has its own configuration/bootstrap namespace. A later
+  // status command must not enter it using this root's isolation qualification.
+  if (lines.some(line => /^[A-Za-z?]\s+160000\s/.test(line))) return Object.freeze({
+    ok: false, blocker: 'CANONICAL_GIT_PROBE_SUBMODULE_UNSUPPORTED', hiddenCount: hidden.length,
+  });
   return Object.freeze({
     ok: hidden.length === 0,
     blocker: hidden.length === 0 ? '' : 'HIDDEN_TRACKED_PATHS_PRESENT',

@@ -88,6 +88,7 @@ export function createBattleBridgeGitProbeContextV1(repoRoot) {
   let record;
   try {
     const root = path.resolve(repoRoot), gitDirectory = path.join(root, '.git');
+    if (/[\0\r\n]/.test(root)) deny('CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN');
     const rootIdentity = directory(root), gitIdentity = directory(gitDirectory);
     const head = file(path.join(gitDirectory, 'HEAD'), 4096);
     if (!/^(?:ref: refs\/heads\/[A-Za-z0-9._/-]+|[a-f0-9]{40})\r?\n?$/.test(head.bytes.toString('ascii'))
