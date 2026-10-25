@@ -2,6 +2,12 @@
 // topology/configuration/runtime-directory checks. No source or custody proof.
 import { projectBattleBridgeGitConfigurationDiagnosticV1 } from './battleBridgeGitConfigurationDiagnosticV1.mjs';
 const sourceCodes = new Set([
+  'CANONICAL_GIT_PROBE_DIRECTORY_UNPROVEN', 'CANONICAL_GIT_PROBE_FILE_UNPROVEN',
+  'CANONICAL_GIT_PROBE_FILE_CHANGED', 'CANONICAL_GIT_PROBE_CONTEXT_CHANGED',
+  'CANONICAL_GIT_PROBE_CONTEXT_CLOSED', 'CANONICAL_GIT_PROBE_ORIGINAL_CHANGED',
+  'CANONICAL_GIT_PROBE_HEAD_UNSUPPORTED', 'CANONICAL_GIT_PROBE_INDEX_UNSUPPORTED',
+  'CANONICAL_GIT_PROBE_INDEX_TIMESTAMP_UNPROVEN', 'CANONICAL_GIT_PROBE_CLEANUP_UNPROVEN',
+  'CANONICAL_GIT_PROBE_CONTEXT_UNPROVEN', 'CANONICAL_GIT_PROBE_CONFIGURATION_NOT_EMPTY',
   'CANONICAL_CHECKOUT_DIRTY', 'CANONICAL_GIT_CONFIGURATION_CHANGED', 'CANONICAL_GIT_CONFIGURATION_INVALID',
   'CANONICAL_GIT_METADATA_SCAN_FAILED', 'CANONICAL_GIT_METADATA_SCAN_LIMIT_EXCEEDED',
   'CANONICAL_GIT_REPARSE_POINT_PRESENT', 'CANONICAL_GIT_TOPOLOGY_CHANGED', 'CANONICAL_GIT_TOPOLOGY_INVALID',
@@ -18,6 +24,7 @@ const sourceSteps = new Set([
   'source-config-after-fetch', 'source-branch-after-fetch', 'source-upstream-after-fetch',
   'source-head-after-fetch', 'source-origin-head-after-fetch', 'source-tracked-visibility-after-fetch',
   'source-status-final', 'source-tracked-visibility-final', 'source-heads-final',
+  'source-isolated-config-before-fetch', 'source-isolated-config-after-fetch',
 ]);
 
 export function projectMaintenanceSourceDiagnosticV1(code, step, configuration) {

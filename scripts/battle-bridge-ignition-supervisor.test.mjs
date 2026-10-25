@@ -173,6 +173,7 @@ function runSourceCollectorFixture({
   };
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo',
+    createGitProbeContextFn: () => null,
     environment,
     platform,
     spawnSyncFn,

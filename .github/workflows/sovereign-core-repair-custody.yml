@@ -17,6 +17,10 @@ on:
       - 'shared/agents/battleBridgeGitHubCommandMailbox.mjs'
       - 'shared/agents/sovereignFrontendVisibility*'
       - 'shared/agents/sovereignMaintenanceRecovery*'
+      - 'shared/agents/battleBridgeGitProbeContextV1*'
+      - 'shared/agents/battleBridgeExecutionBoundaryV1*'
+      - 'shared/agents/sovereignMaintenanceSourceDiagnosticV1*'
+      - 'scripts/battle-bridge-ignition-supervisor*'
       - '.gitattributes'
       - 'scripts/serve-stephanos-dist*'
       - 'scripts/windows/read-stephanos-frontend-listener.ps1'
@@ -47,6 +51,15 @@ jobs:
           node-version: '24'
       - name: Bounded OS audit anchor proof before CPU-heavy native fixtures
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
+      - name: Bootstrap-isolated source proof and native racy-index regression
+        env:
+          STEPHANOS_SHARED_WORKSPACE: ${{ runner.temp }}/stephanos-source-proof-fixture
+        run: >-
+          node --test
+          shared/agents/battleBridgeGitProbeContextV1.test.mjs
+          shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
+          scripts/battle-bridge-ignition-supervisor.test.mjs
+          shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
       - name: Observation remains reachable without remote source proof
         run: node --test scripts/sovereign-observation-offline-regression.test.mjs
       - name: Disjoint constrained frontend start-only and existing server regression
