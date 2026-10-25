@@ -1,5 +1,8 @@
 // Admission to existing fixed maintenance; this is neither a new execution
 // owner nor proof of Windows descendant exclusion or cross-restart custody.
+import {
+  FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
+} from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 const READ_ONLY_ACTIONS = new Set([
   'battle-bridge-status', 'battle-bridge-observe', 'meter-status',
   'controller-lane-status', 'rescue-island-readonly-boundary', 'visibility-snapshot',
@@ -21,6 +24,8 @@ export function isSovereignMaintenanceObservationV1(processId) {
 
 // Closed wire contracts: a descendant's receipt cannot substitute for its parent.
 const TERMINAL_PROTOCOLS = Object.freeze({
+  [FLEET_SUPERVISOR_ACTION]: Object.freeze({ schema: FLEET_SUPERVISOR_SCHEMA,
+    marker: FLEET_SUPERVISOR_MARKER, failedExit: 2, uniqueMarker: true, canonicalJson: true }),
   'repair-stephanos': Object.freeze({ schema: 'stephanos.sovereign-commander-stephanos-repair.v1', marker: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=', failedExit: 2 }),
   'repair-goal-builder-flow': Object.freeze({ schema: 'stephanos.sovereign-commander-goal-builder-repair.v1', marker: 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=', failedExit: 2 }),
   'repair-control-plane': Object.freeze({ schema: 'stephanos.sovereign-commander-control-plane-repair.v1', marker: '', failedExit: 1 }),
@@ -66,9 +71,12 @@ export function readSovereignMaintenanceTerminalReceiptV1(stdout = '', processId
   // to an earlier descendant record after the requested parent's record is lost.
   const line = raw.split(/\r?\n/).at(-1).trim();
   if (protocol.marker && !line.startsWith(protocol.marker)) return hold();
+  if (protocol.uniqueMarker && raw.split(/\r?\n/)
+    .filter(value => value.trim().startsWith(protocol.marker)).length !== 1) return hold();
   const candidate = protocol.marker ? line.slice(protocol.marker.length) : line;
   try {
     const receipt = JSON.parse(candidate);
+    if (protocol.canonicalJson && JSON.stringify(receipt) !== candidate) return hold();
     if (receipt && typeof receipt === 'object' && !Array.isArray(receipt)
         && receipt.schemaVersion === protocol.schema && typeof receipt.ok === 'boolean') return receipt;
   } catch {}
