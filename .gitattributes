@@ -20,3 +20,9 @@ scripts/windows/SovereignCoreJobCustodyV1.cs text eol=lf
 scripts/windows/run-sovereign-commander-hidden.ps1 text eol=lf
 scripts/windows/status-stephanos-core-daemon.ps1 text eol=lf
 scripts/windows/stephanos-core-process-observation.ps1 text eol=lf
+
+# Fixed frontend admission compares raw installed bytes with immutable Git blobs.
+scripts/sovereign-frontend-start-only.mjs text eol=lf
+scripts/serve-stephanos-dist.mjs text eol=lf
+scripts/stephanos-build-utils.mjs text eol=lf
+scripts/windows/read-stephanos-frontend-listener.ps1 text eol=lf

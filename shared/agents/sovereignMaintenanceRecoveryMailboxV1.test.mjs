@@ -25,6 +25,8 @@ const options = { readMaintenanceRecoverySourceFn: () => head,
   runMaintenanceCustodyRecoveryFn: async () => ({ ok: true, originalHoldMatched: true,
     cycleId: cycle, reportSha256: digest, bootWitness: { machineHash: 'private' },
     persistentCustody: { held: true, digest, signingKey: 'SECRET' } }) };
+const unknownConfigurationDiagnostic = { stage: 'UNKNOWN', originCount: 'UNKNOWN',
+  originMatch: 'UNKNOWN', riskCategories: ['UNKNOWN'] };
 
 test('fixed shapes reject arbitrary authority and incomplete incident bindings', () => {
   for (const extra of [{ shell: 'whoami' }, { mode: 'recover' }, { expectedDigest: digest },
@@ -149,7 +151,7 @@ function assertPublicDiagnostic(result, operation, code, sourceDiagnostic = {}) 
     assert.equal(recovery.custodyReleased, false);
     assert.equal(recovery.pcRestartAllowed, false);
     assert.equal(recovery.sourceLeaseReleased, false);
-    assert.doesNotMatch(JSON.stringify(projected), /SECRET|PRIVATE|machineHash|signingKey|stderr|cause|stage/);
+    assert.doesNotMatch(JSON.stringify(projected), /SECRET|PRIVATE|machineHash|signingKey|stderr|cause/);
     if (packet !== receipt)
       assert.deepEqual(packet.result.result.maintenanceRecovery.diagnostic, recovery.diagnostic);
   }
@@ -197,8 +199,11 @@ export function collectCanonicalIgnitionSourceTruth() { return result; }\n`);
     ...(await import(pathToFileURL(readerPath).href)) };
 }
 
-function collectedSourceFailure({ dirty = false, topologyCode = '', failFetch = false } = {}) {
+function collectedSourceFailure({ dirty = false, topologyCode = '', failFetch = false,
+  configuration = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0',
+  configurationAfter = configuration } = {}) {
   const calls = [];
+  let configurationReads = 0;
   const result = collectCanonicalIgnitionSourceTruth({
     cwd: '/canonical/repo', platform: 'linux', environment: {},
     inspectTopologyFn: () => topologyCode
@@ -208,14 +213,17 @@ function collectedSourceFailure({ dirty = false, topologyCode = '', failFetch = 
       const operation = args.slice(args.findIndex(value => value.startsWith('--work-tree=')) + 1);
       calls.push(operation[0]);
       let stdout = '';
-      if (operation[0] === 'config') stdout = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+      if (operation[0] === 'config') stdout = ++configurationReads === 1 ? configuration : configurationAfter;
       else if (operation[0] === 'ls-files') stdout = 'H tracked-source.mjs\n';
       else if (operation[0] === 'status') stdout = dirty ? ' M scripts/PRIVATE-source.mjs\n' : '';
       else if (operation[0] === 'branch') stdout = 'main\n';
       else if (operation.includes('@{upstream}')) stdout = 'origin/main\n';
-      else if (operation[0] === 'rev-parse') stdout = head + '\n';
-      else if (operation[0] === 'fetch' && failFetch)
-        return { status: 128, stdout: '', stderr: 'PRIVATE credential and path' };
+      else if (operation[0] === 'rev-parse') stdout = head + '\n'
+        + (operation.includes('HEAD') && operation.includes('origin/main') ? head + '\n' : '');
+      else if (operation[0] === 'rev-list') stdout = '0\t0\n';
+      else if (operation[0] === 'fetch') {
+        if (failFetch) return { status: 128, stdout: '', stderr: 'PRIVATE credential and path' };
+      }
       else assert.fail('unexpected Git step in source-failure fixture');
       return { status: 0, stdout, stderr: '' };
     },
@@ -249,6 +257,91 @@ test('actual native source-reader failures survive the execute wrapper and every
   }
 });
 
+test('real configuration refusals survive native reading, execute and every public projection without invoking recovery', async t => {
+  const native = await nativeSourceReaderFixture(t);
+  const baseline = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+  const noncanonical = 'remote.origin.url\nhttps://PRIVATE:SECRET@example.invalid/repo.git\0';
+  const risky = 'credential.https://PRIVATE:SECRET@example.invalid.helper\nPRIVATE command\0'
+    + 'http.https://PRIVATE:SECRET@example.invalid.extraheader\nSECRET value\0'
+    + 'core.fsmonitor\nPRIVATE command\0includeif.gitdir:PRIVATE_SECRET.path\nPRIVATE path\0';
+  for (const [configuration, expected] of [
+    ['', { originCount: 'ZERO', originMatch: 'UNKNOWN', riskCategories: [] }],
+    ['PRIVATE malformed configuration\0', { originCount: 'ZERO', originMatch: 'UNKNOWN', riskCategories: [] }],
+    [noncanonical, { originCount: 'ONE', originMatch: 'NONCANONICAL', riskCategories: [] }],
+    [baseline + baseline, { originCount: 'MULTIPLE', originMatch: 'CANONICAL', riskCategories: [] }],
+    [baseline + noncanonical + risky, { originCount: 'MULTIPLE', originMatch: 'NONCANONICAL',
+      riskCategories: ['CORE_FSMONITOR', 'CREDENTIAL', 'HTTP', 'INCLUDE_IF'] }],
+  ]) {
+    const { result: source, calls } = collectedSourceFailure({ configuration });
+    assert.equal(source.ok, false);
+    assert.deepEqual(calls, ['config']);
+    native.setResult(source);
+    let thrown;
+    try { native.readMaintenanceRecoverySourceV1(); } catch (error) { thrown = error; }
+    assert.equal(thrown?.message, 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN');
+    assert.deepEqual(thrown.sourceConfiguration, { stage: 'BEFORE_FETCH', ...expected });
+    assert.doesNotMatch(JSON.stringify(thrown), /PRIVATE|SECRET|https|riskyKeys|configurationProof/);
+    for (const operation of ops) {
+      let runnerCalls = 0;
+      const result = await executeBattleBridgeGitHubCommand(command({ operation,
+        ...(operation === ops[1] ? { expectedCycle: cycle, expectedReportSha256: digest } : {}) }), {
+        readMaintenanceRecoverySourceFn: native.readMaintenanceRecoverySourceV1,
+        runMaintenanceCustodyRecoveryFn: async () => { runnerCalls++; assert.fail('configuration rejection ran recovery'); },
+      });
+      assert.equal(runnerCalls, 0);
+      assert.equal(result.ok, false);
+      assert.equal(result.blocker, 'RECOVERY_MAILBOX_RECOVERY_UNPROVEN');
+      assertPublicDiagnostic(result, operation, 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        { sourceCode: 'CANONICAL_GIT_CONFIGURATION_INVALID',
+          sourceConfiguration: { stage: 'BEFORE_FETCH', ...expected } });
+    }
+  }
+});
+
+test('actual after-fetch configuration refusals remain red and valid source keeps the existing recovery invocation', async t => {
+  const native = await nativeSourceReaderFixture(t);
+  const baseline = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+  for (const [configurationAfter, sourceCode, riskCategories] of [
+    [baseline + 'http.https://PRIVATE:SECRET@example.invalid.extraheader\nPRIVATE value\0',
+      'CANONICAL_GIT_CONFIGURATION_INVALID', ['HTTP']],
+    [baseline + 'harmless.PRIVATE_SECRET\nPRIVATE value\0', 'CANONICAL_GIT_CONFIGURATION_CHANGED', []],
+  ]) {
+    const { result: source, calls } = collectedSourceFailure({ configurationAfter });
+    assert.equal(source.ok, false);
+    assert.equal(source.blocker.code, sourceCode);
+    assert.equal(calls.filter(call => call === 'config').length, 2);
+    assert.equal(calls.filter(call => call === 'fetch').length, 1);
+    native.setResult(source);
+    for (const operation of ops) {
+      let runnerCalls = 0;
+      const result = await executeBattleBridgeGitHubCommand(command({ operation,
+        ...(operation === ops[1] ? { expectedCycle: cycle, expectedReportSha256: digest } : {}) }), {
+        readMaintenanceRecoverySourceFn: native.readMaintenanceRecoverySourceV1,
+        runMaintenanceCustodyRecoveryFn: async () => { runnerCalls++; assert.fail('configuration drift ran recovery'); },
+      });
+      assert.equal(result.ok, false);
+      assert.equal(runnerCalls, 0);
+      assertPublicDiagnostic(result, operation, 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        { sourceCode, sourceConfiguration: { stage: 'AFTER_FETCH',
+          originCount: 'ONE', originMatch: 'CANONICAL', riskCategories } });
+    }
+  }
+  const clean = collectedSourceFailure();
+  assert.equal(clean.result.ok, true);
+  native.setResult(clean.result);
+  assert.equal(native.readMaintenanceRecoverySourceV1(), head);
+  let invoked;
+  const result = await executeBattleBridgeGitHubCommand(command(), {
+    ...options, readMaintenanceRecoverySourceFn: native.readMaintenanceRecoverySourceV1,
+    runMaintenanceCustodyRecoveryFn: async input => { invoked = input;
+      return options.runMaintenanceCustodyRecoveryFn(input); },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.diagnostic, undefined);
+  assert.deepEqual(invoked, { mode: 'status', expectedMain: head, expectedCycle: undefined,
+    expectedReportSha256: undefined, operatorApproval: 'operator-approved' });
+});
+
 test('native source diagnostics retain the closed producer vocabulary and reject untrusted codes or steps', async t => {
   const native = await nativeSourceReaderFixture(t);
   const sourceCodes = [
@@ -270,7 +363,9 @@ test('native source diagnostics retain the closed producer vocabulary and reject
     assert.equal(thrown?.message, 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN');
     const expectedCode = sourceCodes.includes(sourceCode) ? sourceCode : 'UNKNOWN';
     const expected = { sourceCode: expectedCode,
-      ...(expectedCode === 'FIXED_AUTHORITY_GIT_FAILED' ? { sourceStep: 'source-fetch' } : {}) };
+      ...(expectedCode === 'FIXED_AUTHORITY_GIT_FAILED' ? { sourceStep: 'source-fetch' } : {}),
+      ...(['CANONICAL_GIT_CONFIGURATION_INVALID', 'CANONICAL_GIT_CONFIGURATION_CHANGED'].includes(expectedCode)
+        ? { sourceConfiguration: unknownConfigurationDiagnostic } : {}) };
     assert.equal(thrown.sourceCode, expectedCode);
     assert.equal(thrown.sourceStep, expected.sourceStep);
     assert.doesNotMatch(JSON.stringify(thrown), /PRIVATE|SECRET|detail|pathname/);
@@ -327,6 +422,58 @@ test('public source diagnostic fields are closed, operation-bound and idempotent
   assert.deepEqual(other.maintenanceRecovery.diagnostic, { code: 'ENOENT', diagnosticOnly: true });
   assert.deepEqual(project({ diagnostic: { code: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
     diagnosticOnly: true, sourceCode: 'CANONICAL_CHECKOUT_DIRTY' } }, 'UNREGISTERED'), {});
+});
+
+test('configuration projection retains every finite category and rejects malformed or private metadata', () => {
+  const categories = [
+    'ALIAS', 'CORE_WORKTREE', 'CORE_SPARSE_CHECKOUT', 'CORE_SPARSE_CHECKOUT_CONE', 'INDEX_SPARSE',
+    'CORE_HOOKS_PATH', 'CORE_FSMONITOR', 'CORE_TRUST_CTIME', 'CORE_CHECK_STAT', 'CORE_IGNORE_STAT',
+    'CORE_UNTRACKED_CACHE', 'CORE_SSH_COMMAND', 'CORE_ALTERNATE_REFS_COMMAND', 'CORE_ASKPASS',
+    'CORE_GIT_PROXY', 'CORE_PAGER', 'DIFF_EXTERNAL', 'CREDENTIAL', 'FILTER', 'DIFF_COMMAND',
+    'DIFF_TEXTCONV', 'MERGE_DRIVER', 'BRANCH_MERGE_OPTIONS', 'REMOTE_VCS', 'REMOTE_PROXY',
+    'REMOTE_UPLOAD_PACK', 'REMOTE_RECEIVE_PACK', 'URL_REWRITE', 'INCLUDE_PATH', 'INCLUDE_IF',
+    'PROTOCOL', 'EXTENSIONS_WORKTREE_CONFIG', 'SUBMODULE_UPDATE', 'GC_HOOK_OR_COMMAND',
+    'GC_RECENT_OBJECTS_HOOK', 'PAGER', 'INTERACTIVE_DIFF_FILTER', 'SEQUENCE_EDITOR', 'CORE_EDITOR',
+    'GPG', 'COMMIT_GPG_SIGN', 'TAG_GPG_SIGN', 'HTTP',
+  ].sort();
+  const good = { stage: 'AFTER_FETCH', originCount: 'MULTIPLE', originMatch: 'NONCANONICAL',
+    riskCategories: categories };
+  const cases = [
+    [good, good],
+    [undefined, unknownConfigurationDiagnostic],
+    [null, unknownConfigurationDiagnostic],
+    ['PRIVATE', unknownConfigurationDiagnostic],
+    [[], unknownConfigurationDiagnostic],
+    [{}, unknownConfigurationDiagnostic],
+    [{ stage: 'before_fetch', originCount: 1, originMatch: true,
+      riskCategories: 'HTTP' }, unknownConfigurationDiagnostic],
+    [{ stage: ['BEFORE_FETCH'], originCount: { toString() { throw new Error('SECRET'); } },
+      originMatch: 'CANONICAL ', riskCategories: [{ toString() { throw new Error('SECRET'); } }] },
+      unknownConfigurationDiagnostic],
+    [{ ...good, riskCategories: ['HTTP', 'PRIVATE credential.https://SECRET', 'HTTP'] },
+      { ...good, riskCategories: ['HTTP', 'UNKNOWN'] }],
+    [{ ...good, riskCategories: Array(1) }, { ...good, riskCategories: ['UNKNOWN'] }],
+    [{ ...good, riskCategories: Array(1000).fill('HTTP') }, { ...good, riskCategories: ['UNKNOWN'] }],
+    [{ stage: 'BEFORE_FETCH', originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [],
+      rawKeys: ['http.PRIVATE_SECRET'], rawValues: ['PRIVATE_SECRET'], command: 'PRIVATE', path: 'SECRET' },
+      { stage: 'BEFORE_FETCH', originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [] }],
+  ];
+  for (const sourceCode of ['CANONICAL_GIT_CONFIGURATION_INVALID', 'CANONICAL_GIT_CONFIGURATION_CHANGED']) {
+    for (const [sourceConfiguration, expected] of cases) {
+      const result = { ok: false, diagnostic: { code: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        diagnosticOnly: true, sourceCode, sourceConfiguration, raw: 'PRIVATE_SECRET' } };
+      assertPublicDiagnostic(result, ops[0], 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+        { sourceCode, sourceConfiguration: expected });
+      const once = project(result, ops[0]);
+      assert.deepEqual(project(once, ops[0]), once);
+    }
+  }
+  for (const sourceCode of ['CANONICAL_CHECKOUT_DIRTY', 'UNKNOWN', 'PRIVATE']) {
+    const result = { ok: false, diagnostic: { code: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+      diagnosticOnly: true, sourceCode, sourceConfiguration: good } };
+    assertPublicDiagnostic(result, ops[0], 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN',
+      { sourceCode: sourceCode === 'PRIVATE' ? 'UNKNOWN' : sourceCode });
+  }
 });
 
 test('fixed native failures and bounded timeout/filesystem classifications retain diagnostic codes only', async () => {

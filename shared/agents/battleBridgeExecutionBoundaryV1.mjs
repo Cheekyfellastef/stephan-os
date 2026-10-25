@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdir
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { classifyBattleBridgeGitConfigurationRiskV1 } from './battleBridgeGitConfigurationDiagnosticV1.mjs';
 
 export const BATTLE_BRIDGE_CANONICAL_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
 export const BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE = '/usr/bin/git';
@@ -196,6 +197,14 @@ export function validateBattleBridgeLocalGitConfiguration(output = '') {
     blocker: ok ? '' : 'CANONICAL_GIT_CONFIGURATION_INVALID',
     remoteUrl: ok ? remoteUrls[0] : '',
     riskyKeys: Object.freeze(risky.map((entry) => entry.key)),
+    diagnostic: Object.freeze({
+      originCount: remoteUrls.length === 0 ? 'ZERO' : remoteUrls.length === 1 ? 'ONE' : 'MULTIPLE',
+      originMatch: remoteUrls.length === 0 ? 'UNKNOWN'
+        : remoteUrls.every(value => value.toLowerCase() === BATTLE_BRIDGE_CANONICAL_REMOTE_URL.toLowerCase())
+          ? 'CANONICAL' : 'NONCANONICAL',
+      riskCategories: Object.freeze([...new Set(risky.map(entry =>
+        classifyBattleBridgeGitConfigurationRiskV1(entry.key)))].sort()),
+    }),
   });
 }
 

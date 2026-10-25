@@ -23,7 +23,8 @@ export function readMaintenanceRecoverySourceV1() {
   const head = verdict?.sourceTruth?.head || source.head;
   if (!verdict.ok || !/^[a-f0-9]{40}$/.test(head ?? ''))
     throw Object.assign(new Error('MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN'),
-      projectMaintenanceSourceDiagnosticV1(verdict?.blocker?.code, verdict?.blocker?.sourceStep));
+      projectMaintenanceSourceDiagnosticV1(verdict?.blocker?.code, verdict?.blocker?.sourceStep,
+        verdict?.blocker?.sourceConfiguration));
   return head;
 }
 

@@ -37,7 +37,7 @@ const diagnostic = (code, source = {}) => {
   const safeCode = typeof code === 'string' && diagnosticCodes.has(code) ? code : 'UNKNOWN';
   return Object.freeze({ code: safeCode, diagnosticOnly: true,
     ...(safeCode === 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN'
-      ? projectMaintenanceSourceDiagnosticV1(source?.sourceCode, source?.sourceStep) : {}),
+      ? projectMaintenanceSourceDiagnosticV1(source?.sourceCode, source?.sourceStep, source?.sourceConfiguration) : {}),
   });
 };
 const blockerDiagnostic = code => diagnostic(fixedDiagnosticCodes.has(code) ? code : 'UNKNOWN');
