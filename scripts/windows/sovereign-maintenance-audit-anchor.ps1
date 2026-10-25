@@ -15,7 +15,7 @@ try {
         $request.authKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($keyLine))
     }
     if ($request.scope -cnotmatch '^[a-f0-9]{64}$') { throw 'INVALID_SCOPE' }
-    $logInfo = Get-WinEvent -ListLog $logName
+    $logInfo = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new($logName)
     if (-not $logInfo.IsEnabled) { throw 'AUDIT_DISABLED' }
     # Reuse the existing OS channel. Do not register a source or modify its ACL.
     $acl = [Security.AccessControl.RawSecurityDescriptor]::new($logInfo.SecurityDescriptor)
@@ -31,13 +31,26 @@ try {
             throw 'AUDIT_CLEAR_AUTHORITY_UNSAFE'
         }
     }
+    $logInfo.Dispose()
+    function Read-NewestRecordId {
+        $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($logName, [Diagnostics.Eventing.Reader.PathType]::LogName, '*')
+        $query.ReverseDirection = $true
+        $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        try {
+            $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            if ($null -eq $row) { throw 'AUDIT_SEQUENCE_UNKNOWN' }
+            try { return [long]$row.RecordId } finally { $row.Dispose() }
+        } finally { $reader.Dispose() }
+    }
     function Read-Anchor {
-        try { $rows = @(Get-WinEvent -FilterHashtable @{LogName=$logName;ProviderName='PowerShell';Id=$eventId} -MaxEvents 256 -ErrorAction Stop) }
-        catch {
-            if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { return $null }
-            throw
-        }
-        foreach ($row in $rows) {
+        $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($logName, [Diagnostics.Eventing.Reader.PathType]::LogName,
+            "*[System[(EventID=62517) and Provider[@Name='PowerShell']]]")
+        $query.ReverseDirection = $true
+        $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+        try { for ($index=0; $index -lt 256; $index++) {
+            $row = $reader.ReadEvent([TimeSpan]::FromSeconds(2))
+            if ($null -eq $row) { return $null }
+            try {
             $raw = [string]$row.Properties[0].Value
             if (-not $raw.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
             # Never skip malformed newer custody evidence in favor of old green.
@@ -48,7 +61,8 @@ try {
             if ($envelope.scope -ceq $request.scope) {
                 return @{found=$true;eventRecordId=[long]$row.RecordId;envelope=$envelope}
             }
-        }
+            } finally { $row.Dispose() }
+        } } finally { $reader.Dispose() }
         return $null
     }
     if ($Mode -eq 'Read') {
@@ -64,7 +78,7 @@ try {
     $writer.Source = 'PowerShell'
     try {
         for ($attempt=0; $attempt -lt 5; $attempt++) {
-            $nextId = [long](Get-WinEvent -LogName $logName -MaxEvents 1).RecordId + 1
+            $nextId = (Read-NewestRecordId) + 1
             $signingText = 'stephanos-maintenance-os-anchor-v1' + [char]0 + $request.scope + [char]0 +
                 [string]$nextId + [char]0 + $request.transitionId + [char]0 + $request.stateBase64
             $hmac = [Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($request.authKey))

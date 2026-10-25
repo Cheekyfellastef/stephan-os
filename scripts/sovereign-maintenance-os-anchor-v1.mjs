@@ -41,7 +41,7 @@ export function createMaintenanceOsAnchorV1({ workspaceRoot, signingKey, spawnFn
     readLatest: () => call('Read'),
     append: bytes => {
       if (!Buffer.isBuffer(bytes) || bytes.length > 15000) throw new Error('MAINTENANCE_OS_ANCHOR_UNBOUNDED');
-      const result = call('Append', { authKey: signingKey, stateBase64: bytes.toString('base64'), transitionId: randomUUID() });
+      const result = call('Append', { stateBase64: bytes.toString('base64'), transitionId: randomUUID() });
       if (!result || !result.bytes.equals(bytes)) throw new Error('MAINTENANCE_OS_ANCHOR_APPEND_UNPROVEN');
       return result;
     },
