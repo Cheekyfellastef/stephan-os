@@ -19,6 +19,18 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const TASK_ID = /^[a-z0-9][a-z0-9-]{7,63}$/;
 const TARGET = /^docs\/architecture\/rescue-island-pilot-[a-z0-9-]+\.md$/;
 const BLOCKER = /^(?:ISLAND_HOST_|RESCUE_ISLAND_)[A-Z0-9_:,.-]+$/;
+const PUBLIC_BLOCKER_ALIASES = Object.freeze(new Map([
+  ['ISLAND_HOST_NATIVE_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_NATIVE_PRINCIPAL_UNAVAILABLE'],
+  ['ISLAND_HOST_NON_ADMINISTRATIVE_TOKEN_REQUIRED', 'RESCUE_ISLAND_REMOTE_NON_ADMINISTRATIVE_PRINCIPAL_REQUIRED'],
+  ['ISLAND_HOST_PRIMARY_TOKEN_REQUIRED', 'RESCUE_ISLAND_REMOTE_PRIMARY_PRINCIPAL_REQUIRED'],
+  ['ISLAND_HOST_PROCESS_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_PROCESS_PRINCIPAL_UNAVAILABLE'],
+  ['ISLAND_HOST_THREAD_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_THREAD_PRINCIPAL_UNAVAILABLE'],
+  ['ISLAND_HOST_TOKEN_GROUPS_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_GROUPS_INVALID'],
+  ['ISLAND_HOST_TOKEN_INFORMATION_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_INFORMATION_INVALID'],
+  ['ISLAND_HOST_TOKEN_PRIVILEGES_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_PRIVILEGES_INVALID'],
+  ['ISLAND_HOST_TOKEN_READ_FAILED', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_READ_FAILED'],
+  ['ISLAND_HOST_TOKEN_SIZE_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_SIZE_UNAVAILABLE'],
+]));
 const ALLOWED_FIELDS = Object.freeze([
   'schemaVersion', 'requestId', 'operation', 'repository', 'issueNumber',
   'branch', 'operatorApproval', 'expectedHead', 'expiresAt', 'commentId', 'task',
@@ -35,6 +47,11 @@ const REQUIRED_STAGES = Object.freeze([
 
 const text = value => String(value ?? '').trim();
 const digest = value => createHash('sha256').update(value).digest('hex');
+const publicBlocker = value => {
+  const observed = text(value);
+  return PUBLIC_BLOCKER_ALIASES.get(observed)
+    || (BLOCKER.test(observed) ? observed : 'RESCUE_ISLAND_REMOTE_EXECUTION_HELD');
+};
 const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
   && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
 
@@ -217,8 +234,7 @@ export async function executeRescueIslandSupervisedDocumentOnBattleBridge(comman
     return executionFail(shape.command, 'RESCUE_ISLAND_REMOTE_NATIVE_RECEIPT_INVALID');
   }
   if (execution?.error || execution?.status !== 0) {
-    const blocker = BLOCKER.test(text(result?.blocker))
-      ? text(result.blocker) : 'RESCUE_ISLAND_REMOTE_EXECUTION_HELD';
+    const blocker = publicBlocker(result?.blocker);
     return executionFail(shape.command, blocker);
   }
   const build = projectSuccessfulBuild(result, shape.command.task, shape.command.commentId);
