@@ -1745,6 +1745,73 @@ function safeOriginalSourceCustodyProjectionDiagnostic(operationResult = {}) {
   });
 }
 
+const CANONICAL_GIT_WORKTREE_CONFIG_REMOTE_ACTIONS = new Set([
+  'inspect-canonical-git-worktree-config',
+  'repair-canonical-git-worktree-config',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_RISK = 'EXTENSIONS_WORKTREE_CONFIG';
+const CANONICAL_GIT_WORKTREE_CONFIG_EXTENSION_STATES = new Set([
+  'ABSENT', 'TRUE', 'FALSE', 'OTHER', 'MULTIPLE',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_COUNTS = new Set([
+  'ZERO', 'ONE', 'MULTIPLE', 'UNKNOWN',
+]);
+const CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_MATCHES = new Set([
+  'CANONICAL', 'NONCANONICAL', 'UNKNOWN',
+]);
+
+function projectCanonicalGitWorktreeConfigEvidence(operationResult = {}) {
+  const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  if (!CANONICAL_GIT_WORKTREE_CONFIG_REMOTE_ACTIONS.has(remoteAction)) {
+    return Object.freeze({});
+  }
+  const riskCategories = values => Object.freeze(
+    (Array.isArray(values) ? values : [])
+      .filter(value => value === CANONICAL_GIT_WORKTREE_CONFIG_RISK)
+      .slice(0, 1),
+  );
+  const inspectionSource = operationResult?.canonicalGitWorktreeConfigInspection;
+  const inspection = inspectionSource
+    && typeof inspectionSource === 'object' && !Array.isArray(inspectionSource)
+    && inspectionSource.schemaVersion === 'stephanos.canonical-git-worktree-config-inspection.v1'
+    ? Object.freeze({
+      schemaVersion: 'stephanos.canonical-git-worktree-config-inspection.v1',
+      inspectionComplete: inspectionSource.inspectionComplete === true,
+      sourceHead: safeTelemetrySha(inspectionSource.sourceHead),
+      canonicalTopologyProven: safeBoolean(inspectionSource.canonicalTopologyProven),
+      canonicalGitConfigurationValid: safeBoolean(inspectionSource.canonicalGitConfigurationValid),
+      originCount: CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_COUNTS.has(inspectionSource.originCount)
+        ? inspectionSource.originCount : 'UNKNOWN',
+      originMatch: CANONICAL_GIT_WORKTREE_CONFIG_ORIGIN_MATCHES.has(inspectionSource.originMatch)
+        ? inspectionSource.originMatch : 'UNKNOWN',
+      riskCategories: riskCategories(inspectionSource.riskCategories),
+      extensionValueCount: safeOptionalNonNegativeInteger(inspectionSource.extensionValueCount),
+      extensionValueState: CANONICAL_GIT_WORKTREE_CONFIG_EXTENSION_STATES.has(inspectionSource.extensionValueState)
+        ? inspectionSource.extensionValueState : 'OTHER',
+      registeredWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.registeredWorktreeCount),
+      linkedWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.linkedWorktreeCount),
+      lockedWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.lockedWorktreeCount),
+      prunableWorktreeCount: safeOptionalNonNegativeInteger(inspectionSource.prunableWorktreeCount),
+      worktreeConfigFileCount: safeOptionalNonNegativeInteger(inspectionSource.worktreeConfigFileCount),
+      nonEmptyWorktreeConfigFileCount: safeOptionalNonNegativeInteger(
+        inspectionSource.nonEmptyWorktreeConfigFileCount,
+      ),
+      worktreeConfigEntryCount: safeOptionalNonNegativeInteger(inspectionSource.worktreeConfigEntryCount),
+      allWorktreeConfigsObserved: safeBoolean(inspectionSource.allWorktreeConfigsObserved),
+      safeForFixedUnset: safeBoolean(inspectionSource.safeForFixedUnset),
+      finalVerdict: safeTelemetryText(inspectionSource.finalVerdict, 160).toUpperCase(),
+    })
+    : null;
+  return Object.freeze({
+    ...(inspection ? { canonicalGitWorktreeConfigInspection: inspection } : {}),
+    gitConfigurationMutationPerformed: safeBoolean(operationResult?.gitConfigurationMutationPerformed),
+    gitConfigurationMutationScope: operationResult?.gitConfigurationMutationScope === 'extensions.worktreeConfig-only'
+      ? 'extensions.worktreeConfig-only' : '',
+    riskCategoriesBefore: riskCategories(operationResult?.riskCategoriesBefore),
+    canonicalGitConfigurationValid: safeBoolean(operationResult?.canonicalGitConfigurationValid),
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const starfieldVrTelemetrySource = telemetrySource
@@ -1798,6 +1865,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     completedSteps: Object.freeze(completedSteps),
     planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
+    ...projectCanonicalGitWorktreeConfigEvidence(operationResult),
     processId: safeTelemetryId(operationResult?.processId),
     ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
@@ -2769,6 +2837,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...projectCanonicalGitWorktreeConfigEvidence(inner),
         ...(fleetOwnerFailure ? {
           ...fleetOwnerFailure,
           remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
