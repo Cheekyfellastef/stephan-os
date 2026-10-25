@@ -3,6 +3,9 @@ import test from 'node:test';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createMissionRecord, appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import { projectElasticAdmissionGateV1 } from './criticalBacklogConveyorServiceCore.js';
@@ -1379,4 +1382,111 @@ test('completed-inspection revision HOLD triggers one guarded recovery then rere
   assert.equal(result.elasticAdmission.selectedMission.missionId, 'critical-2955-elastic-goal');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateActiveMissionAllowed, false);
+});
+
+test('parked diff failure retries only with fresh stronger owner acceptance and terminal released ownership', async t => {
+  for (const mode of ['valid', 'unchanged-plan', 'untrusted-owner', 'editable-oracle', 'ownership-held', 'worktree-dirty', 'duplicate-owner', 'unknown-failure', 'budget-exhausted', 'revision-moved', 'source-scope-changed']) await t.test(mode, async () => {
+    const paths = await roots();
+    let state = createMissionOrchestratorState({
+      missionId: 'critical-2964-elastic-goal', title: 'Original goal', operatorIntent: 'Build bounded source',
+      intendedOutcome: 'Real behavior', missionKind: 'implementation', repository: 'Cheekyfellastef/stephan-os',
+      branch: 'openclaw/elastic-goal-2964', worktreePath: join(paths.repoRoot, 'worker'),
+      allowedFiles: ['stephanos-server/services/example.js'], requiredEvidence: ['focused tests'],
+      requiredTests: ['npm run stephanos:verify', 'node --test scripts/previous.test.mjs'],
+    });
+    const event = (eventType, fields) => {state = applyMissionOrchestratorEvent(state, {missionId: state.missionId, eventType, ...fields});};
+    const receipt = id => ({receiptId: id, requirement: 'proof', source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0, createdAt: new Date().toISOString()});
+    event('WORKTREE_READY', {worktreePath: state.git.worktreePath, clean: true, receipt: receipt('retry-fixture-worktree')});
+    event('AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+    event('AGENT_RESULT_RECEIVED', {success: false, resultId: 'critical-2964-elastic-goal-r1-original', error: mode === 'unknown-failure' ? 'UNKNOWN_EXECUTION' : 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+    event('MISSION_PARKED_FOR_REPAIR', {reason: 'Failed attempt preserved', repairOwner: '#2961', receipt: receipt('retry-fixture-park')});
+    const oracle = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+    if (mode === 'editable-oracle') state.allowedFiles.push('scripts/acceptance/**');
+    if (mode === 'budget-exhausted') state.repair.currentRound = state.repair.maximumRounds;
+    const original = structuredClone(state);
+    const record = {schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+      goalId: 'goal-2964', issueNumber: 2964, repository: state.repository,
+      source: mode === 'untrusted-owner' ? 'untrusted-contributor' : 'github-goal-estate-mirror',
+      mirrorSchema: 'stephanos.github-goal-mirror.v1', githubAdmissionState: 'ADMISSION_PROVEN',
+      mirrorIssueNumber: 2964, mirrorRepository: state.repository, mirrorBuildPickupAllowed: true,
+      requiredTests: [...state.requiredTests, ...(mode === 'unchanged-plan' ? [] : [oracle])],
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:' + (mode === 'source-scope-changed' ? 'shared/agents/other.mjs' : 'stephanos-server/services/example.js')]};
+    let ownershipCalls = 0, refreshCalls = 0, appendCalls = 0;
+    const result = await retrySafelyBlockedAgentFailure({paths, backlog: [], env: {},
+      listMissions: async () => [structuredClone(state)],
+      readProgrammeProjection: async () => ({goalMirrorEstate: {records: mode === 'duplicate-owner' ? [record, record] : [record]}}),
+      proveRetryOwnershipReleased: async input => {ownershipCalls++; assert.equal(input.actionId, original.dispatch.resultId); return {ok: mode !== 'ownership-held'};},
+      refreshRetryWorktree: async () => {refreshCalls++; return {ok: mode !== 'worktree-dirty', clean: mode !== 'worktree-dirty'};},
+      appendEvent: async (_id, retryEvent) => {
+        appendCalls++;
+        assert.equal(retryEvent.expectedRevision, original.revision);
+        assert.equal(retryEvent.expectedCurrentPhase, 'BLOCKED');
+        assert.deepEqual(retryEvent.retryRequiredTests, [...original.requiredTests, oracle]);
+        if (mode === 'revision-moved') return {preconditionFailed: true};
+        state = applyMissionOrchestratorEvent(state, retryEvent);
+        return {state};
+      },
+    });
+    assert.equal(result.retried, mode === 'valid');
+    if (mode === 'valid') {
+      assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+      assert.equal(state.repair.currentRound, 1);
+      assert.deepEqual(state.requiredTests, [...original.requiredTests, oracle]);
+      assert.deepEqual(state.repair.history[0].previousDispatch, original.dispatch);
+      assert.deepEqual(state.allowedFiles, original.allowedFiles);
+      assert.equal(ownershipCalls, 1); assert.equal(refreshCalls, 1); assert.equal(appendCalls, 1);
+    } else {
+      assert.deepEqual(state, original);
+      if (mode !== 'revision-moved') assert.equal(appendCalls, 0);
+      if (['unchanged-plan', 'untrusted-owner', 'editable-oracle', 'duplicate-owner', 'unknown-failure', 'budget-exhausted', 'source-scope-changed'].includes(mode)) assert.equal(ownershipCalls, 0);
+    }
+  });
+});
+
+test('strengthened retry contract persists before actual queue publication and claim', async () => {
+  const paths = await roots();
+  const options = {root: paths.orchestratorRoot, queueRoot: join(paths.orchestratorRoot, 'queue'), env: {},
+    capacityRouting: {nowUtc: new Date().toISOString(), codexStatus: {
+      schemaVersion: 'shared-agent-workspace-record.v1', statusId: 'codex-capacity-current', truthState: 'CURRENT',
+      meterTruthUsable: true, observedAtUtc: new Date(Date.now() - 1000).toISOString(), remainingPercent: 90,
+      availability: 'AVAILABLE', confidence: 'high', naturalResetAtUtc: '',
+    }}};
+  let {state} = await createMissionRecord({missionId: 'critical-2964-elastic-goal', title: 'Original bounded goal',
+    operatorIntent: 'Real source and independent tests', intendedOutcome: 'Implemented behavior', missionKind: 'implementation',
+    repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/elastic-goal-2964',
+    worktreePath: join(paths.repoRoot, 'worker'), allowedFiles: ['stephanos-server/services/example.js'],
+    requiredEvidence: ['focused test'], requiredTests: ['npm run stephanos:verify']}, options);
+  const proof = receiptId => ({receiptId, requirement: 'bounded proof', source: 'fixture', evidenceType: 'command-output', verified: true, exitCode: 0});
+  for (const event of [
+    {eventType: 'WORKTREE_READY', worktreePath: state.git.worktreePath, clean: true, receipt: proof('retry-queue-worktree')},
+    {eventType: 'AGENT_DISPATCHED', agentId: 'foundry-forge'},
+    {eventType: 'AGENT_RESULT_RECEIVED', success: false, resultId: 'critical-2964-elastic-goal-r1-old', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'},
+    {eventType: 'MISSION_PARKED_FOR_REPAIR', reason: 'Preserved failure', repairOwner: '#2961', receipt: proof('retry-queue-park')},
+  ]) ({state} = await appendMissionEvent(state.missionId, {eventId: `queue-fixture-${event.eventType.toLowerCase()}`, ...event}, options));
+  const original = structuredClone(state);
+  const extra = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  const record = {schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
+    goalId: 'goal-2964', issueNumber: 2964, repository: state.repository, source: 'github-goal-estate-mirror',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1', mirrorIssueNumber: 2964, mirrorRepository: state.repository,
+    mirrorBuildPickupAllowed: true, githubAdmissionState: 'ADMISSION_PROVEN', requiredTests: [extra],
+    resourceIds: ['repo:cheekyfellastef/stephan-os:path:stephanos-server/services/example.js']};
+  const result = await retrySafelyBlockedAgentFailure({paths, env: {}, backlog: [],
+    listMissions: async () => [(await readMissionRecord(state.missionId, options)).state],
+    readProgrammeProjection: async () => ({goalMirrorEstate: {records: [record]}}),
+    proveRetryOwnershipReleased: async () => ({ok: true}),
+    refreshRetryWorktree: async () => ({ok: true, clean: true}),
+  });
+  assert.equal(result.retried, true, JSON.stringify(result));
+  const persisted = (await readMissionRecord(state.missionId, options)).state;
+  const expected = [...original.requiredTests, extra];
+  assert.deepEqual(persisted.requiredTests, expected);
+  assert.deepEqual(persisted.repair.history[0].previousDispatch, original.dispatch);
+  const publication = await publishMissionWorkerAction(persisted, options);
+  assert.equal(publication.published, true, JSON.stringify(publication));
+  const queued = JSON.parse(await readFile(publication.path, 'utf8'));
+  assert.deepEqual(queued.payload.requiredTests, expected);
+  const claim = await claimNextMissionWorkerItem(publication.adapter, options);
+  assert.ok(claim);
+  assert.deepEqual(claim.item.payload.requiredTests, expected);
+  assert.equal(claim.item.payload.allowedFiles.includes('scripts/acceptance/**'), false);
 });

@@ -9,6 +9,8 @@ import {
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { isRetryableAgentFailureBlocker } from '../../shared/agents/missionOrchestrator.mjs';
+import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -410,6 +412,7 @@ export async function retrySafelyBlockedAgentFailure({
   appendEvent = appendMissionEvent,
   proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
   refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
+  readProgrammeProjection = readAuthoritativeProgrammeProjection,
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   const candidates = orderedContinuityCandidates(backlog, records, (record) => {
@@ -417,7 +420,9 @@ export async function retrySafelyBlockedAgentFailure({
     const currentRound = Number(record?.repair?.currentRound);
     const maximumRounds = Number(record?.repair?.maximumRounds);
     return text(record?.currentPhase).toUpperCase() === 'BLOCKED'
-      && continuityStatus(record) === ACTIVE_CONTINUITY
+      && (continuityStatus(record) === ACTIVE_CONTINUITY
+        || (continuityStatus(record) === PARKED_BLOCKED && blockers.length === 1
+          && blockers[0] === 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'))
       && text(record?.dispatch?.status).toLowerCase() === 'failed'
       && blockers.length > 0
       && blockers.every(isRetryableAgentFailureBlocker)
@@ -436,6 +441,7 @@ export async function retrySafelyBlockedAgentFailure({
 
   let candidate = null;
   let firstBlockedCandidate = null;
+  let retryAuthority;
   for (const currentCandidate of candidates) {
     if (!Number.isSafeInteger(currentCandidate.revision) || currentCandidate.revision < 0) {
       firstBlockedCandidate ??= {
@@ -445,6 +451,37 @@ export async function retrySafelyBlockedAgentFailure({
         missionId: text(currentCandidate.missionId),
       };
       continue;
+    }
+
+    let retryRequiredTests;
+    if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+      // Re-admission is not repair/completion proof. Require a newly strengthened
+      // owner-authenticated acceptance contract before another consumed attempt.
+      retryAuthority ??= await readProgrammeProjection({ env, nowUtc: now.toISOString(),
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
+      const issueNumber = issueFromMissionId(currentCandidate.missionId);
+      const mirrors = (retryAuthority?.goalMirrorEstate?.records || [])
+        .filter(record => record?.issueNumber === issueNumber);
+      const ownerPlan = mirrors.length === 1
+        ? projectOwnerGoalRequiredTestsV1(mirrors[0], issueNumber, currentCandidate.repository)
+        : null;
+      const retainedScopes = projectCanonicalResourceIds((currentCandidate.allowedFiles || []).map(path =>
+        path === '**' ? `repo:${currentCandidate.repository}`
+          : `repo:${currentCandidate.repository}:path:${path.endsWith('/**') ? path.slice(0, -3) : path}`));
+      const currentScopes = projectCanonicalResourceIds(mirrors[0]?.resourceIds || []);
+      const sameSourceScope = retainedScopes.valid && currentScopes.valid && currentScopes.resourceIds.length > 0
+        && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
+      const strengthened = sameSourceScope && ownerPlan?.valid && ownerPlan.supplied
+        ? projectStrengthenedRetryTestsV1(currentCandidate.requiredTests,
+          [...new Set(['npm run stephanos:verify', ...ownerPlan.commands])], currentCandidate.allowedFiles)
+        : null;
+      if (currentCandidate.blockers.length !== 1 || !strengthened?.valid) {
+        firstBlockedCandidate ??= { ok: true, classification: 'SOURCE_DIFF_RETRY_REQUIRES_STRONGER_OWNER_ACCEPTANCE',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+      retryRequiredTests = strengthened.commands;
     }
 
     const missionId = text(currentCandidate.missionId).toLowerCase();
@@ -509,7 +546,7 @@ export async function retrySafelyBlockedAgentFailure({
       };
       continue;
     }
-    candidate = { ...currentCandidate, retryWorktreeRefresh: worktreeRefresh };
+    candidate = { ...currentCandidate, retryRequiredTests, retryWorktreeRefresh: worktreeRefresh };
     break;
   }
 
@@ -537,6 +574,7 @@ export async function retrySafelyBlockedAgentFailure({
     expectedCurrentPhase: 'BLOCKED',
     timestamp,
     retryableBlockers,
+    ...(candidate.retryRequiredTests ? { retryRequiredTests: candidate.retryRequiredTests } : {}),
     receipt: {
       receiptId,
       requirement: 'bounded retry admission for retryable agent execution failure',
