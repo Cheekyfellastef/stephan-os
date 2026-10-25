@@ -10,14 +10,34 @@ owner and the existing `repair-ui-4173` action producing live exact-head proof.
 
 Persist an authenticated ACTIVE reservation **before** either guardian or manual
 maintenance launches work. All HTTP sessions and restarted Commander processes
-consult the same canonical Shared Workspace state. An exclusive boot-scoped
-fence admits only one owner. Unknown execution, process death, persistence failure,
-missing state and malformed state retain admission. Known terminal completion
-atomically publishes authenticated IDLE state; absence never means idle. State
-and audit authentication reuse the existing private Commander bearer-key trust
-domain with domain-separated HMAC, not a new signer, credential or independent
-authority. This does not claim tamper resistance against an actor that already
-controls that credential or the installed executor. Key changes fail closed.
+consult the same guardian state, anchored in the existing OS-owned Windows
+PowerShell event log. The Shared Workspace JSON is a replaceable projection.
+An exclusive boot-scoped fence admits only one owner. Unknown execution, process
+death, persistence failure, absent OS evidence and malformed authority retain
+admission. Known terminal completion publishes an OS-anchored IDLE certificate;
+file absence never means idle.
+
+Specialist review reproduced rollback of an older signed IDLE projection over a
+new ACTIVE record. HMAC alone is authenticity, not freshness. The correction
+moves the full authenticated state into the existing OS append log, not another
+writable counter. A caller without the credential cannot forge an anchor. Each
+anchor MAC binds the actual OS EventRecordId as well as workspace scope,
+transition nonce and full state. Re-appending a valid old message acquires a new
+record ID and is rejected. Reads consider the newest matching event, never skip
+invalid new evidence to recover an older green record. A missing/rotated/cleared
+anchor holds; the JSON projection cannot substitute for it. The original ACTIVE
+record remains recoverable from the OS anchor even after projection rollback.
+
+The fixed adapter reuses the pre-existing PowerShell source and Windows
+PowerShell channel, verifies its ACL grants clear/owner/DACL control only to
+privileged OS groups, and changes no source, channel, permission, service or
+scheduler configuration. Windows enforces append/read versus clear rights.
+Append is acknowledged only after readback of the exact newly assigned record;
+concurrent record-ID races are bounded and otherwise hold before child launch.
+State and audit authentication reuse the existing private Commander bearer-key
+trust domain with separate MAC domains, not a new signer or credential. No claim
+is made against an actor controlling that credential, OS administration or the
+installed executor. Key changes and unavailable audit capacity fail closed.
 The existing terminal-admission predicate remains binding;
 no caller flag, child receipt or successful direct-child kill overrides it.
 

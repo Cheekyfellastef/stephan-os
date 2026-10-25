@@ -16,11 +16,14 @@ function fixture(t) {
   const now = Date.now();
   const boot = { schemaVersion: 'stephanos.windows-boot-witness.v1', machineHash: 'a'.repeat(64),
     bootStartedAtUtc: new Date(now - 86400_000).toISOString(), observedAtUtc: new Date(now).toISOString() };
-  return { root, boot };
+  let latest = null, id = 0;
+  const anchor = { readLatest: () => latest && { ...latest, bytes: Buffer.from(latest.bytes) },
+    append: bytes => { latest = { bytes: Buffer.from(bytes), eventRecordId: ++id }; return latest; } };
+  return { root, boot, anchor };
 }
 
 test('migration binds actual held owner, report bytes and exact approved source; status never writes', async t => {
-  const { root, boot } = fixture(t);
+  const { root, boot, anchor } = fixture(t);
   const report = { reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
     source: 'continuous-repair-guardian', cycleId: 'original-timeout-cycle',
     cycleStartedAtUtc: new Date(Date.now() - 60_000).toISOString(), sourceHead: head, detectedFaults: ['ETIMEDOUT'] };
@@ -31,7 +34,7 @@ test('migration binds actual held owner, report bytes and exact approved source;
     timeoutCustodyHeld: true, running: false, maintenanceInFlight: false,
     lastCycleId: report.cycleId, lastStartedAtUtc: report.cycleStartedAtUtc,
     lastBlocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN' } };
-  const deps = { workspaceRoot: root, bootReader: () => boot, tokenReader: () => key,
+  const deps = { workspaceRoot: root, bootReader: () => boot, tokenReader: () => key, anchor,
     sourceReader: () => head, fetchFn: async () => ({ ok: true, json: async () => health }) };
   assert.equal((await runMaintenanceCustodyRecoveryV1({ ...deps, mode: 'status' })).originalHoldMatched, true);
   const journal = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
@@ -50,16 +53,16 @@ test('migration binds actual held owner, report bytes and exact approved source;
 });
 
 test('actual authenticated HTTP owner rejects forged boot fields and wrong source before recovery', async t => {
-  const { root, boot } = fixture(t);
+  const { root, boot, anchor } = fixture(t);
   const old = { ...boot, observedAtUtc: new Date(Date.now() - 120_000).toISOString() };
   const original = createMaintenanceCustodyStoreV1({ workspaceRoot: root, signingKey: key,
-    bootWitness: old, now: () => old.observedAtUtc });
+    bootWitness: old, now: () => old.observedAtUtc, anchor });
   original.prepareIncident({ reservationId: 'held-http-cycle', operation: 'repair-stephanos' });
   const digest = original.status().digest; original.close();
   const successorBoot = { ...boot, bootStartedAtUtc: new Date(Date.now() - 60_000).toISOString() };
   let bootReads = 0;
   const successor = createMaintenanceCustodyStoreV1({ workspaceRoot: root, signingKey: key,
-    bootWitness: successorBoot, readBootWitness: () => { bootReads++; return successorBoot; } });
+    bootWitness: successorBoot, readBootWitness: () => { bootReads++; return successorBoot; }, anchor });
   const app = await createSovereignCommanderHttpServer({ port: 0, token: key, custodyStore: successor,
     continuousRepairEnabled: false, recoverySourceAdmission: expected => expected === head });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));

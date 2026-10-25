@@ -2,11 +2,12 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
-  readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+  renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 import { collectCanonicalIgnitionSourceTruth, evaluateCanonicalIgnitionSourceTruth } from './battle-bridge-ignition-supervisor.mjs';
+import { createMaintenanceOsAnchorV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
 
 export const MAINTENANCE_CUSTODY_SCHEMA = 'stephanos.sovereign-maintenance-custody.v1';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -50,7 +51,7 @@ function directory(path) {
 }
 
 export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
-  signingKey, bootWitness = readMaintenanceBootWitnessV1(), readBootWitness = readMaintenanceBootWitnessV1,
+  signingKey, anchor, bootWitness = readMaintenanceBootWitnessV1(), readBootWitness = readMaintenanceBootWitnessV1,
   now = () => new Date().toISOString() } = {}) {
   if (typeof signingKey !== 'string' || signingKey.length < 32) throw new Error('CUSTODY_AUTHENTICATION_REQUIRED');
   if (!validMaintenanceBootWitnessV1(bootWitness, Date.parse(now()))) throw new Error('WINDOWS_BOOT_WITNESS_INVALID');
@@ -64,6 +65,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
     + sha(bootWitness.machineHash + bootWitness.bootStartedAtUtc) + '.lock');
   const archive = resolve(root, 'events', 'sovereign-maintenance-custody');
   const ownerId = randomUUID();
+  const osAnchor = anchor || createMaintenanceOsAnchorV1({ workspaceRoot: root, signingKey });
   let owned = null;
   const mac = (kind, value) => createHmac('sha256', signingKey)
     .update('stephanos-maintenance-custody-v1\0' + kind + '\0' + JSON.stringify(value)).digest('hex');
@@ -77,34 +79,43 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
     return envelope[kind];
   };
   const read = () => {
-    if (!existsSync(path)) return null;
-    const info = lstatSync(path);
-    if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 64 * 1024)
-      throw new Error('CUSTODY_RECORD_UNSAFE');
-    const bytes = readFileSync(path), record = decode('record', bytes);
+    // The OS-owned append log is the rollback anchor. The JSON file is only a
+    // replaceable projection; replaying/deleting it cannot erase a newer hold.
+    if (existsSync(path)) {
+      const info = lstatSync(path);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 64 * 1024)
+        throw new Error('CUSTODY_RECORD_UNSAFE');
+    }
+    const latest = osAnchor.readLatest();
+    if (!latest) return null;
+    const bytes = latest.bytes, record = decode('record', bytes);
     if (record.schemaVersion !== MAINTENANCE_CUSTODY_SCHEMA || !['ACTIVE', 'IDLE'].includes(record.phase)
         || !record.reservationId || !record.ownerId || !record.operation
         || !Number.isFinite(instant(record.startedAtUtc)) || !record.bootWitness
         || !/^[a-f0-9]{64}$/.test(record.bootWitness.machineHash ?? ''))
       throw new Error('CUSTODY_RECORD_INVALID');
-    return { record, digest: sha(bytes) };
+    return { record, digest: sha(bytes), anchorRecordId: latest.eventRecordId };
   };
   const status = () => {
     try {
       const current = read();
       return { held: !current || current.record.phase === 'ACTIVE' || existsSync(lockPath),
         digest: current?.digest || '', reservationId: current?.record.reservationId || '',
+        anchorRecordId: current?.anchorRecordId || null,
         blocker: !current ? 'MAINTENANCE_CUSTODY_STATE_MISSING'
           : current.record.phase === 'ACTIVE' || existsSync(lockPath) ? 'MAINTENANCE_CUSTODY_RESERVED' : '' };
     } catch { return { held: true, digest: '', blocker: 'MAINTENANCE_CUSTODY_STATE_UNPROVEN' }; }
   };
   const write = (record, initial = false) => {
+    const bytes = Buffer.from(encode('record', record));
+    if (bytes.length > 15000) throw new Error('CUSTODY_RECORD_UNBOUNDED');
     const target = initial ? path : path + '.' + ownerId + '.tmp';
     const fd = openSync(target, 'wx', 0o600);
-    try { writeFileSync(fd, encode('record', record)); fsyncSync(fd); }
+    try { writeFileSync(fd, bytes); fsyncSync(fd); }
     finally { closeSync(fd); }
     if (!initial) renameSync(target, path);
-    return read().digest;
+    osAnchor.append(bytes); // Must be OS-anchored before any child is admitted.
+    return sha(bytes);
   };
   const acquire = () => {
     const fd = openSync(lockPath, 'wx', 0o600);
@@ -176,7 +187,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       try { writeFileSync(auditFd, auditBytes); fsyncSync(auditFd); } finally { closeSync(auditFd); }
       if (read()?.digest !== expectedDigest) return held('MAINTENANCE_CUSTODY_DIGEST_CHANGED');
       write({ ...current.record, phase: 'IDLE', terminalAtUtc: now(),
-        terminalAdmission: 'SUCCESSOR_FULL_BOOT', recoveryReceiptDigest: sha(auditBytes) });
+        terminalAdmission: 'SUCCESSOR_FULL_BOOT', recoveryReceiptDigest: sha(auditBytes), recoveryBootWitness: witness });
       unlock(lock); lock = undefined;
       return { ok: true, custodyReleased: true, receiptDigest: sha(auditBytes),
         reservationId: current.record.reservationId, historicalOutcome: 'UNKNOWN', originalR7Authority: false };

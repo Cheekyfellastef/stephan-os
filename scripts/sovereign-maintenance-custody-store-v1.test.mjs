@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,14 +14,19 @@ const now = () => new Date(clock).toISOString();
 const oldBoot = { schemaVersion: 'stephanos.windows-boot-witness.v1', machineHash,
   bootStartedAtUtc: new Date(clock - 86400_000).toISOString(), observedAtUtc: oldNow };
 const newBoot = { ...oldBoot, bootStartedAtUtc: new Date(clock - 30_000).toISOString(), observedAtUtc: now() };
+const anchors = new Map();
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'sovereign-custody-'));
   mkdirSync(join(root, 'status')); mkdirSync(join(root, 'events'));
+  let latest = null, recordId = 0;
+  anchors.set(root, { readLatest: () => latest && { ...latest, bytes: Buffer.from(latest.bytes) },
+    append: bytes => { latest = { bytes: Buffer.from(bytes), eventRecordId: ++recordId }; return latest; } });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
 function store(root, bootWitness = oldBoot, overrides = {}) {
   return createMaintenanceCustodyStoreV1({ workspaceRoot: root, bootWitness,
+    anchor: anchors.get(root),
     signingKey: 'fixture-sovereign-token-'.repeat(3),
     now: bootWitness === oldBoot ? () => oldNow : now, readBootWitness: () => bootWitness, ...overrides });
 }
@@ -50,6 +56,23 @@ test('exclusive persistent reservation precedes execution and survives owner dea
   first.close();
   assert.equal(second.status().held, true);
   assert.equal(second.reserve(reservation).ok, false);
+});
+
+test('replaying old authenticated IDLE bytes cannot erase the newer OS-anchored ACTIVE incident', async t => {
+  const root = fixture(t), original = store(root);
+  original.prepareIncident(reservation); original.release();
+  const path = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+  const idleBytes = readFileSync(path);
+  original.reserve({ reservationId: 'interrupted-newer-cycle', operation: 'repair-ui-4173' });
+  const activeDigest = original.status().digest;
+  original.close(); writeFileSync(path, idleBytes);
+  const successor = store(root, newBoot);
+  assert.equal(successor.status().held, true);
+  assert.equal(successor.status().reservationId, 'interrupted-newer-cycle');
+  assert.equal(successor.status().digest, activeDigest);
+  assert.equal(successor.reserve(reservation).ok, false);
+  assert.equal((await successor.recoverAfterBoot(approved(createHash('sha256').update(idleBytes).digest('hex')))).ok, false);
+  assert.equal((await successor.recoverAfterBoot(approved(activeDigest))).ok, true);
 });
 
 test('only the original exact owner can release a known terminal reservation', t => {

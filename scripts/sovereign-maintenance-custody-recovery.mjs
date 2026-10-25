@@ -12,7 +12,7 @@ import { loadSovereignCommanderToken } from './sovereign-commander-http.mjs';
 export async function runMaintenanceCustodyRecoveryV1({ mode, expectedCycle, expectedReportSha256,
   expectedDigest, expectedMain, operatorApproval, workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
   bootReader = readMaintenanceBootWitnessV1, fetchFn = fetch,
-  tokenReader = loadSovereignCommanderToken, sourceReader = readMaintenanceRecoverySourceV1 } = {}) {
+  tokenReader = loadSovereignCommanderToken, sourceReader = readMaintenanceRecoverySourceV1, anchor } = {}) {
   if (!['status', 'prepare', 'recover'].includes(mode)) return { ok: false, blocker: 'CUSTODY_RECOVERY_MODE_INVALID' };
   if (mode === 'recover') {
     if (operatorApproval !== 'operator-approved' || !/^[a-f0-9]{64}$/.test(expectedDigest ?? '')
@@ -34,7 +34,7 @@ export async function runMaintenanceCustodyRecoveryV1({ mode, expectedCycle, exp
   const reportSha256 = createHash('sha256').update(bytes).digest('hex');
   const witness = await bootReader();
   const store = createMaintenanceCustodyStoreV1({ workspaceRoot, signingKey: await tokenReader(),
-    bootWitness: witness, readBootWitness: bootReader });
+    bootWitness: witness, readBootWitness: bootReader, anchor });
   const guardian = health.continuousRepairGuardian;
   const held = healthResponse.ok && health.service === 'stephanos-sovereign-commander'
     && guardian?.timeoutCustodyHeld === true && guardian.running === false
@@ -51,7 +51,8 @@ export async function runMaintenanceCustodyRecoveryV1({ mode, expectedCycle, exp
   if (!/^[a-f0-9]{40}$/.test(expectedMain ?? '') || sourceReader() !== expectedMain)
     return { ok: false, blocker: 'MAINTENANCE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' };
   const result = store.prepareIncident({ reservationId: expectedCycle, operation: 'repair-stephanos',
-    incident: { reportSha256, sourceHead: report.sourceHead, cycleStartedAtUtc: report.cycleStartedAtUtc } });
+    incident: { reportSha256, sourceHead: report.sourceHead, cycleStartedAtUtc: report.cycleStartedAtUtc,
+      originalExecutionOutcome: 'UNKNOWN', report } });
   const status = store.status(); store.close();
   return { ...result, prepared: result.ok, persistentCustody: status,
     custodyReleased: false, pcRestartAllowed: false, originalR7Authority: false };
