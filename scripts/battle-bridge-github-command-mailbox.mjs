@@ -66,6 +66,8 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   safeCpuPressureSnapshotProjection,
 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import { projectBattleBridgeGitConfigurationDiagnosticV1 }
+  from '../shared/agents/battleBridgeGitConfigurationDiagnosticV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1765,11 +1767,16 @@ function projectCanonicalGitWorktreeConfigEvidence(operationResult = {}) {
   if (!CANONICAL_GIT_WORKTREE_CONFIG_REMOTE_ACTIONS.has(remoteAction)) {
     return Object.freeze({});
   }
-  const riskCategories = values => Object.freeze(
-    (Array.isArray(values) ? values : [])
-      .filter(value => value === CANONICAL_GIT_WORKTREE_CONFIG_RISK)
-      .slice(0, 1),
-  );
+  const riskCategories = values => {
+    const projected = projectBattleBridgeGitConfigurationDiagnosticV1({
+      riskCategories: Array.isArray(values) ? values : [],
+    });
+    return Object.freeze(
+      projected.riskCategories
+        .filter(value => value !== 'UNKNOWN')
+        .slice(0, 48),
+    );
+  };
   const inspectionSource = operationResult?.canonicalGitWorktreeConfigInspection;
   const inspection = inspectionSource
     && typeof inspectionSource === 'object' && !Array.isArray(inspectionSource)
