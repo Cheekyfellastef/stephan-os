@@ -384,6 +384,17 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     if (!snapshotBacked && newText.length === 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
     }
+    // Reject the observed EOF-only response inside the existing bounded model
+    // retry, before mutation/tests. Do not trim arbitrary source or string data.
+    const content = snapshots.get(path)?.content;
+    if (typeof content === 'string' && content.endsWith(oldText)
+      && content.indexOf(oldText) === content.lastIndexOf(oldText)
+      && newText.startsWith(oldText)) {
+      const suffix = newText.slice(oldText.length);
+      if (/^[\t \r\n]+$/.test(suffix) && /\r?\n[\t ]*\r?\n[\t \r\n]*$/.test(content + suffix)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+      }
+    }
     totalBytes += Buffer.byteLength(oldText, 'utf8') + Buffer.byteLength(newText, 'utf8');
     if (totalBytes > MAX_STRUCTURED_EDIT_BYTES) {
       throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_TOO_LARGE');
@@ -585,15 +596,17 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
-    goalContextSection,
     sourceSnapshotsSection,
+    goalContextSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
     ...mutationInstructions,
     'Only modify paths allowed by Allowed source files.',
     'Do not modify .git, dependencies, runtime data, secrets, environment files, generated output or protected main.',
     'Do not commit, push, merge or create branches.',
-    'Make the smallest implementation that satisfies the intended outcome.',
+    goalContextSection ? 'Implement the concrete requirements in the Authoritative GitHub goal context above; keep the source change bounded.'
+      : 'Make the smallest implementation that satisfies the intended outcome.',
+    'Implement the requested behavior. Appending blank lines or returning unchanged code does not satisfy the task.',
   ].join('\n');
 }
 

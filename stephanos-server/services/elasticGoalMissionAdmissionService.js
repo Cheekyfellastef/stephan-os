@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
-import { projectGoalAdmissionRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -430,21 +430,8 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: scope.reason, resourceIds: scope.resourceIds });
       continue;
     }
-    const tests = projectGoalAdmissionRequiredTestsV1(record?.requiredTests);
-    const testAuthority = !tests.supplied || (
-      record?.schemaVersion === 'shared-agent-workspace-record.v1'
-      && record?.kind === 'stephanos.shared_workspace.goal'
-      && record?.goalId === `goal-${issueNumber}`
-      && record?.issueNumber === issueNumber
-      && text(record?.repository).toLowerCase() === scope.repository.toLowerCase()
-      && record?.source === 'github-goal-estate-mirror'
-      && record?.mirrorSchema === 'stephanos.github-goal-mirror.v1'
-      && record?.githubAdmissionState === 'ADMISSION_PROVEN'
-      && record?.mirrorIssueNumber === issueNumber
-      && text(record?.mirrorRepository).toLowerCase() === scope.repository.toLowerCase()
-      && record?.mirrorBuildPickupAllowed === true
-    );
-    if (!tests.valid || !testAuthority) {
+    const tests = projectOwnerGoalRequiredTestsV1(record, issueNumber, scope.repository);
+    if (!tests.valid) {
       held.push({ issueNumber, reason: 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN' });
       continue;
     }
