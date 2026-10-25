@@ -523,6 +523,7 @@ test('worker02 real adapters build in their own estate with exact parent and ret
   const marker=join(f.root,'retained-filter-executed.txt');
   git(f.host.roots.repoRoot,['config','filter.retained-proof.clean',
     'cmd.exe /d /c echo unsafe>'+marker]);
+  await mkdir(join(f.host.roots.repoRoot,'.git/info'),{recursive:true});
   await writeFile(join(f.host.roots.repoRoot,'.git/info/attributes'),'* filter=retained-proof\n');
   const target=join(f.host.roots.worktreeRoot,f.task.taskId,f.task.targetPath);
   await writeFile(target,await readFile(target));
