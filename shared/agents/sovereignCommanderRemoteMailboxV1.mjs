@@ -2562,28 +2562,6 @@ export function inspectCanonicalGitWorktreeConfigV1({
       deadlineExceeded: false,
     });
   };
-  const captureAtWorktree = (worktreeRoot, args) => {
-    const timeout = nextProbeTimeoutMs();
-    if (timeout <= 0) return deadlineResult();
-    const result = spawnSyncFn(git.executable, [
-      ...git.fixedConfigArgs, '-C', worktreeRoot, ...args,
-    ], {
-      cwd: worktreeRoot,
-      env: git.environment,
-      encoding: 'utf8',
-      shell: false,
-      windowsHide: true,
-      timeout,
-      maxBuffer: 64 * 1024,
-    });
-    return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
-      status: Number.isInteger(result?.status) ? result.status : null,
-      stdout: String(result?.stdout || ''),
-      deadlineExceeded: false,
-    });
-  };
-
   const head = captureCanonical(['rev-parse', 'HEAD']);
   const branch = captureCanonical(['branch', '--show-current']);
   if (head.deadlineExceeded || branch.deadlineExceeded) {
@@ -2602,40 +2580,18 @@ export function inspectCanonicalGitWorktreeConfigV1({
     return held('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const listed = captureAtWorktree(repositoryRoot, ['worktree', 'list', '--porcelain']);
-  if (listed.deadlineExceeded) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED');
+  // Canonical topology has already proven that repositoryRoot/.git is the
+  // real Git directory, not a redirecting .git file. Linked worktrees are
+  // represented under that canonical directory. Treat any such metadata as a
+  // hard hold rather than depending on `git worktree list`, which is itself
+  // sensitive to the repository configuration we are trying to diagnose.
+  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  if (existsFn(linkedWorktreeMetadataPath)) {
+    return held('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
   }
-  if (!listed.ok) return held('CANONICAL_GIT_WORKTREE_CONFIG_WORKTREE_LIST_UNPROVEN');
-
-  const records = [];
-  let current = null;
-  for (const rawLine of listed.stdout.split(/\r?\n/)) {
-    const line = String(rawLine || '');
-    if (line.startsWith('worktree ')) {
-      if (current) records.push(current);
-      current = { root: line.slice('worktree '.length), locked: false, prunable: false };
-    } else if (current && (line === 'locked' || line.startsWith('locked '))) {
-      current.locked = true;
-    } else if (current && (line === 'prunable' || line.startsWith('prunable '))) {
-      current.prunable = true;
-    }
-  }
-  if (current) records.push(current);
-  if (records.length < 1 || records.length > 256) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_WORKTREE_LIST_UNPROVEN');
-  }
-
-  const normalizedRoot = resolve(repositoryRoot);
-  const sameRoot = value => platform === 'win32'
-    ? resolve(value).toLowerCase() === normalizedRoot.toLowerCase()
-    : resolve(value) === normalizedRoot;
-  const canonicalWorktreeCount = records.filter(record => sameRoot(record.root)).length;
-  if (canonicalWorktreeCount !== 1) {
-    return held('CANONICAL_GIT_WORKTREE_CONFIG_CANONICAL_WORKTREE_UNPROVEN', {
-      registeredWorktreeCount: records.length,
-    });
-  }
+  const records = Object.freeze([
+    Object.freeze({ root: repositoryRoot, locked: false, prunable: false }),
+  ]);
 
   const localConfig = captureCanonical(['config', '--local', '--null', '--list']);
   if (localConfig.deadlineExceeded) {
@@ -2680,27 +2636,11 @@ export function inspectCanonicalGitWorktreeConfigV1({
   let nonEmptyWorktreeConfigFileCount = 0;
   let worktreeConfigEntryCount = 0;
   let allWorktreeConfigsObserved = true;
-  for (const record of records) {
-    const gitPath = captureAtWorktree(record.root, ['rev-parse', '--git-path', 'config.worktree']);
-    if (gitPath.deadlineExceeded) {
-      return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
-        registeredWorktreeCount: records.length,
-        riskCategories,
-        worktreeConfigFileCount,
-        nonEmptyWorktreeConfigFileCount,
-        worktreeConfigEntryCount,
-      });
-    }
-    if (!gitPath.ok || !text(gitPath.stdout)) {
-      allWorktreeConfigsObserved = false;
-      continue;
-    }
-    const candidate = text(gitPath.stdout);
-    const configPath = resolve(record.root, candidate);
-    if (!existsFn(configPath)) continue;
-    worktreeConfigFileCount += 1;
-    const config = captureAtWorktree(record.root, [
-      'config', '--file', configPath, '--null', '--list',
+  const worktreeConfigPath = resolve(repositoryRoot, '.git', 'config.worktree');
+  if (existsFn(worktreeConfigPath)) {
+    worktreeConfigFileCount = 1;
+    const config = captureCanonical([
+      'config', '--file', worktreeConfigPath, '--null', '--list',
     ]);
     if (config.deadlineExceeded) {
       return held('CANONICAL_GIT_WORKTREE_CONFIG_INSPECTION_DEADLINE_EXCEEDED', {
@@ -2712,12 +2652,15 @@ export function inspectCanonicalGitWorktreeConfigV1({
       });
     }
     if (!config.ok) {
-      allWorktreeConfigsObserved = false;
-      continue;
+      return held('CANONICAL_GIT_WORKTREE_CONFIG_CONTENT_UNPROVEN', {
+        registeredWorktreeCount: records.length,
+        riskCategories,
+        worktreeConfigFileCount,
+      });
     }
     const entries = config.stdout.split('\0').filter(Boolean);
-    worktreeConfigEntryCount += entries.length;
-    if (entries.length > 0) nonEmptyWorktreeConfigFileCount += 1;
+    worktreeConfigEntryCount = entries.length;
+    if (entries.length > 0) nonEmptyWorktreeConfigFileCount = 1;
   }
 
   const linkedWorktreeCount = Math.max(0, records.length - 1);
@@ -2821,29 +2764,6 @@ export function repairCanonicalGitWorktreeConfigV1({
     });
   };
 
-  // Worktree-aware Git commands must let Git resolve the already-verified
-  // canonical .git directory from the repository root. The fixed environment
-  // and config overrides remain identical; topology/source identity are proven
-  // immediately before this read-only enumeration.
-  const captureAtWorktree = (args) => {
-    const result = spawnSyncFn(git.executable, [
-      ...git.fixedConfigArgs, '-C', repositoryRoot, ...args,
-    ], {
-      cwd: repositoryRoot,
-      env: git.environment,
-      encoding: 'utf8',
-      shell: false,
-      windowsHide: true,
-      timeout: 10_000,
-      maxBuffer: 64 * 1024,
-    });
-    return Object.freeze({
-      ok: !result?.error && Number(result?.status) === 0,
-      status: Number.isInteger(result?.status) ? result.status : null,
-      stdout: String(result?.stdout || ''),
-    });
-  };
-
   const beforeHead = capture(['rev-parse', 'HEAD']);
   const branch = capture(['branch', '--show-current']);
   if (!beforeHead.ok || text(beforeHead.stdout).toLowerCase() !== normalizedHead
@@ -2856,15 +2776,12 @@ export function repairCanonicalGitWorktreeConfigV1({
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_TOPOLOGY_UNPROVEN');
   }
 
-  const worktreeList = captureAtWorktree(['worktree', 'list', '--porcelain']);
-  const worktreeRoots = worktreeList.ok
-    ? worktreeList.stdout.split(/\r?\n/).filter(line => line.startsWith('worktree '))
-      .map(line => line.slice('worktree '.length)) : [];
-  const normalizedRoot = resolve(repositoryRoot);
-  const sameRoot = value => platform === 'win32'
-    ? resolve(value).toLowerCase() === normalizedRoot.toLowerCase()
-    : resolve(value) === normalizedRoot;
-  if (!worktreeList.ok || worktreeRoots.length !== 1 || !sameRoot(worktreeRoots[0])) {
+  // The topology proof above authenticates repositoryRoot/.git as the
+  // canonical directory. Any linked-worktree metadata is therefore sufficient
+  // to hold the repository-wide extension repair. Do not invoke
+  // `git worktree list` while the configuration itself is under repair.
+  const linkedWorktreeMetadataPath = resolve(repositoryRoot, '.git', 'worktrees');
+  if (existsFn(linkedWorktreeMetadataPath)) {
     return finiteGitConfigRepairFailure('CANONICAL_GIT_WORKTREE_CONFIG_LINKED_WORKTREES_PRESENT');
   }
 
