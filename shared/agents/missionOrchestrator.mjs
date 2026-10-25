@@ -1,3 +1,5 @@
+import { projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -14,6 +16,7 @@ export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
   'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON',
   'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
   'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
+  'SOURCE_ARTIFACT_DIFF_CHECK_FAILED',
 ]);
 const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
 const RETRYABLE_AGENT_FAILURE_PATH_PREFIXES = Object.freeze([
@@ -393,7 +396,14 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
   if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
-    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Retry admission requires active mission continuity.', timestamp);
+    const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
+      && state.blockers.length === 1 && state.blockers[0] === 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED';
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or a bounded parked source diff failure.', timestamp);
+    const strengthened = event.retryRequiredTests === undefined ? null
+      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, state.allowedFiles);
+    if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {
+      return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
+    }
     if (state.currentPhase !== 'BLOCKED' || state.dispatch?.status !== 'failed') {
       return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
     }
@@ -414,7 +424,19 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       startedAt: timestamp,
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      previousRequiredTests: [...state.requiredTests],
+      previousDispatch: clone(state.dispatch),
+      previousParkingStatus: state.continuity.parkingStatus,
+      requiredTests: [...(strengthened?.commands || state.requiredTests)],
     });
+    if (strengthened) state.requiredTests = [...strengthened.commands];
+    if (parkedRetry) state.continuity = { ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+      pendingResolvedBlockers: [],
+      history: [...state.continuity.history, { eventType, timestamp,
+        previousParkingStatus: MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+        receiptId: text(event.receipt?.receiptId || event.receipt?.id) }],
+    };
     state.blockers = state.blockers.filter((reason) => !retryableBlockers.includes(reason));
     state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
   } else if (eventType === 'MISSION_PARKED_FOR_REPAIR') {

@@ -174,8 +174,11 @@ export function collectCoreDaemonVisibility({ spawnSyncFn = spawnSync } = {}) {
   return Object.freeze({
     schemaVersion: 'stephanos.core-daemon-status.v1',
     available: true,
-    ok: parsed.ok === true,
-    processCount: integer(parsed.processCount, 100),
+    ok: parsed.ok === true && parsed.processInventoryComplete === true && parsed.processCount === 1,
+    processCount: parsed.processInventoryComplete === true && typeof parsed.processCount === 'number'
+      ? integer(parsed.processCount, 100) : null,
+    processInventoryComplete: parsed.processInventoryComplete === true,
+    processObservationBlocker: state(parsed.processObservationBlocker, 120),
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: state(parsed.readiness, 40) || 'UNKNOWN',
     wakeState: state(parsed.wakeState, 40) || 'UNKNOWN',
@@ -211,6 +214,12 @@ export async function collectSelfHealVisibility(options = {}) {
     : [];
   return Object.freeze({
     available: true,
+    outerBridgeRunCount: integer(parsed.outerBridgeRunCount, 1_000_000),
+    outerBridgeInFlight: parsed.outerBridgeInFlight === true,
+    outerBridgeLastPublicationOk: parsed.outerBridgeLastPublicationOk === true,
+    outerBridgeLastStage: state(parsed.outerBridgeLastStage, 80) || 'NOT_OBSERVED',
+    outerBridgeLastBlocker: state(parsed.outerBridgeLastBlocker, 120) || 'NOT_OBSERVED',
+    outerBridgeLastVerdict: state(parsed.outerBridgeLastVerdict, 120) || 'NOT_RUN',
     dependencySelfHealEnabled: parsed.dependencySelfHealEnabled === true,
     dependencySelfHealLastAttemptAtUtc: timestamp(parsed.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: integer(parsed.dependencySelfHealAttemptCount, 1_000_000),
@@ -228,6 +237,55 @@ export async function collectSelfHealVisibility(options = {}) {
     flywheelLastStatus: state(parsed.flywheelLastStatus, 120),
     flywheelLastAction: state(parsed.flywheelLastAction, 120),
     flywheelLastBlockerCount: integer(parsed.flywheelLastBlockerCount, 1_000_000),
+  });
+}
+
+// Observe the already-running Core Daemon bridge without creating a
+// recovery task, touching the original source lease or exposing raw workspace.
+export async function collectSovereignOuterBridgeVisibility(options = {}) {
+  const parsed = await readWorkspaceStatusFile('sovereign-outer-bridge-current.json', options);
+  const bridge = parsed?.bridge;
+  const unknown = Object.freeze({
+    available: false, current: false, exactHeadMatch: false, cycleAgeSeconds: null,
+    sourceHead: '', stage: 'UNVERIFIED', rescueBlocker: 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: false, physicalPickupProven: false,
+    twoUnattendedRefillsProven: false, canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: true, readOnly: true,
+  });
+  if (parsed?.statusId !== 'sovereign-outer-bridge-current'
+    || parsed?.participantId !== 'stephanos-core-daemon'
+    || parsed?.status !== 'HELD'
+    || bridge?.schemaVersion !== 'stephanos.sovereign-outer-bridge.v1'
+    || bridge?.sourceMutationAllowed !== false
+    || bridge?.leaseSeizureAllowed !== false
+    || bridge?.duplicateSchedulerAllowed !== false
+    || bridge?.mergeAuthority !== false) return unknown;
+  const observedAtUtc = timestamp(bridge.observedAtUtc);
+  const statusTimestampUtc = timestamp(parsed.timestampUtc);
+  const nowMs = options?.now instanceof Date ? options.now.getTime() : Date.now();
+  const ageMs = observedAtUtc ? nowMs - Date.parse(observedAtUtc) : NaN;
+  const current = Boolean(statusTimestampUtc && observedAtUtc
+    && statusTimestampUtc === observedAtUtc && Number.isFinite(ageMs)
+    && ageMs >= 0 && ageMs <= 3 * 60_000);
+  const sourceHead = sha(bridge.sourceHead);
+  const stage = state(bridge.stage, 80);
+  const known = ['OUTER_BRIDGE_WIDE','OUTER_BRIDGE_NARROWING_LEASE',
+    'OUTER_BRIDGE_NARROWING_PICKUP','CANONICAL_REJOIN_READY'];
+  const allowedStage = known.includes(stage) ? stage : 'UNVERIFIED';
+  return Object.freeze({
+    available: true, current,
+    observedAtUtc, cycleAgeSeconds: Number.isFinite(ageMs) && ageMs >= 0
+      ? Math.floor(ageMs / 1000) : null,
+    sourceHead, exactHeadMatch: false, // proven only by the caller's exact local source
+    stage: allowedStage,
+    rescueBlocker: state(bridge.rescueBlocker, 120) || 'OUTER_BRIDGE_BLOCKER_UNVERIFIED',
+    // Be conservative: local source and current cycle are independently required.
+    canonicalLeaseReleaseProven: current && bridge.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    oneCanonicalLeaseAuthority: bridge.oneCanonicalLeaseAuthority === true,
+    readOnly: true,
   });
 }
 
@@ -443,15 +501,38 @@ export function buildSovereignVisibilitySnapshot({
   controllers = {},
   meters = {},
   relay = {},
+  outerBridge = {},
 } = {}) {
   const compactObservationValue = compactObservation(observation);
   const compactControllersValue = compactControllers(controllers);
   const compactMetersValue = compactMeters(meters);
   const headSync = buildHeadSyncVisibility({ repository, core });
+  const headMatchedBridge = outerBridge?.available === true
+    && outerBridge?.current === true
+    && sha(outerBridge.sourceHead) === sha(repository.head)
+    && sha(outerBridge.sourceHead) === sha(core.sourceHead)
+    && headSync.exactHeadChainProven === true;
+  const projectedOuterBridge = Object.freeze({
+    available: outerBridge?.available === true,
+    current: headMatchedBridge,
+    exactHeadMatch: headMatchedBridge,
+    sourceHead: headMatchedBridge ? sha(outerBridge.sourceHead) : '',
+    observedAtUtc: timestamp(outerBridge?.observedAtUtc),
+    cycleAgeSeconds: integer(outerBridge?.cycleAgeSeconds, 31_536_000),
+    stage: headMatchedBridge ? state(outerBridge?.stage, 80) : 'UNVERIFIED',
+    rescueBlocker: state(outerBridge?.rescueBlocker, 120) || 'OUTER_BRIDGE_STATUS_NOT_PROVEN',
+    canonicalLeaseReleaseProven: headMatchedBridge && outerBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const repositoryLight = !repository?.available
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
   const coreLight = core?.available === true
+    && core?.processInventoryComplete === true
+    && core?.processCount === 1
     && core?.ok === true
     && core?.daemonHealthy === true
     && core?.readiness === 'READY'
@@ -493,6 +574,7 @@ export function buildSovereignVisibilitySnapshot({
     controllers: compactControllersValue,
     meters: compactMetersValue,
     relay,
+    outerBridge: projectedOuterBridge,
     health: Object.freeze({
       repository: repositoryLight,
       core: coreLight,
@@ -526,12 +608,13 @@ export async function collectSovereignVisibilitySnapshot({
   meterCollector = collectSovereignMeterStatus,
 } = {}) {
   const current = now();
-  const [observation, controllers, meters, selfHeal, relay] = await Promise.all([
+  const [observation, controllers, meters, selfHeal, relay, outerBridge] = await Promise.all([
     battleBridgeCollector({ spawnSyncFn, env, now: () => current }),
     controllerCollector({ env, now: () => current }),
     meterCollector({ env, spawnSyncFn, now: () => current }),
     collectSelfHealVisibility({ env, readFileFn, now: current }),
     collectRelayVisibility({ env, readFileFn, now: current }),
+    collectSovereignOuterBridgeVisibility({ env, readFileFn, now: current }),
   ]);
   const repository = collectRepositoryVisibility({ spawnSyncFn });
   const core = collectCoreDaemonVisibility({ spawnSyncFn });
@@ -544,6 +627,7 @@ export async function collectSovereignVisibilitySnapshot({
     controllers,
     meters,
     relay,
+    outerBridge,
   });
 }
 

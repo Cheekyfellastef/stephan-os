@@ -2,7 +2,7 @@
 
 Canonical owner: #2573 — Goal: Make Sovereign Commander absorb every Remote Commander capability.
 
-Use the existing Sovereign Commander execution plane first. Local/private MCP is the direct desktop route. Cloud ChatGPT uses the GitHub Sovereign Relay fast carrier and the scheduled mailbox fallback on #2808 — Canonical Sovereign Mailbox Authority — successor to exhausted #2590. Neither route requires a Remote Desktop Commander allowance. ChatGPT/provider usage and GitHub API capacity remain separate constraints.
+Use the existing Sovereign Commander execution plane first. Local/private MCP is the direct desktop route. Cloud ChatGPT uses the GitHub Sovereign Relay fast carrier and the scheduled mailbox fallback on the issue resolved from `shared/agents/canonicalMailboxAuthorityV1.mjs` at current protected main (currently #3149; #2808 is retired). Neither route requires a Remote Desktop Commander allowance. ChatGPT/provider usage and GitHub API capacity remain separate constraints.
 
 ## Read-only discovery
 
@@ -38,10 +38,21 @@ The CPU mailbox action executes only the immutable sampler blob from the approve
 
 Use existing `maintenance_action` / admitted remote repair verbs after diagnosis: for example `repair-ui-4173`, `repair-control-plane`, `repair-battle-bridge` or `repair-openclaw-stack`. The read-only inspection tool rejects all repair verbs, gaming preparation/overrides and runtime restart. Repair approval, source/head checks, leases and post-action proof remain independently required. A parity classification is a route mapping, never an approval grant.
 
-General PowerShell, arbitrary process/service control, unrestricted termination, credential export and PC restart are not supplied by this adapter. Missing bounded capabilities belong to #2573; preserve operator gates while building the smallest reusable fixed recipe. Existing private file batching remains in PR #3024 — Goal #2573: Expand Sovereign Commander private diagnostics without vendor meter.
+General PowerShell, arbitrary process/service control, unrestricted termination, credential export and PC restart are not supplied by this adapter. Missing bounded capabilities belong to #2573; preserve operator gates while building the smallest reusable fixed recipe. Private file batching is already present in current main; its installed-host activation must be verified independently.
 
 ## Delivery and reusable invariant
 
-Run the complete Sovereign parity suite and independent review on the exact source head/base. Use the existing protected merge boundary with its exact operator packet; synchronize main without discarding local data, refresh the existing MCP lifecycle where admitted, then prove `tools/list` and real Windows calls. Do not claim the new tool is deployed from candidate tests alone.
+Run the applicable Sovereign parity suite, including the Windows VR array-shape fixtures, and independent review on the exact source head/base. Use the existing protected merge boundary with its exact operator packet; synchronize main without discarding local data, refresh the existing MCP lifecycle where admitted, then prove `tools/list` and real Windows calls. Do not claim the new tool is deployed from candidate tests alone.
 
 Invariant: an existing guarded diagnostic must be discoverable from its admitted transport and map to its canonical semantic capability, while read-only tool admission must fail closed before any repair executor is reached. Cross-layer regression tests enforce the registry/MCP/cloud correspondence and rejection of repair, shell, path and process-ID smuggling.
+
+## Current-main preservation, 25 October 2026
+
+This continuation retains the current shared maintenance owner, uncertainty holds,
+Core cancellation, public CPU redaction and terminal-receipt validation. The
+inspection adapter forwards the same maintenance owner; it cannot clear or bypass
+an existing hold. Whether an action is exempt observation remains a decision of
+`sovereignMaintenanceAdmissionV1`, not the new tool name or its read-only hint.
+The Starfield diagnostic remains subject to its existing owner admission.
+The stricter CPU receipt projection and its regressions are already on main and
+are preserved instead of restoring the earlier, weaker candidate implementation.

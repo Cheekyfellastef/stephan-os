@@ -30,6 +30,7 @@ import OpenClawTile from './components/OpenClawTile.jsx';
 import MissionConsoleTile from './components/MissionConsoleTile.jsx';
 import CapabilityRadarTile from './components/CapabilityRadarTile.jsx';
 import SkillForgeTile from './components/SkillForgeTile.jsx';
+import StephanosCommandObservatory from './components/StephanosCommandObservatory.jsx';
 import WorldWorkspaceTile from './components/WorldWorkspaceTile.jsx';
 import GamingResourceTile from './components/GamingResourceTile.jsx';
 import StephanosSurfacePane from './components/StephanosSurfacePane.jsx';
@@ -2502,6 +2503,22 @@ export default function App() {
     );
   }
 
+  if (skillForgeSurfaceMode) {
+    markStartupStage('app-skill-forge-surface-render-start');
+    markStartupStage('app-skill-forge-surface-render-complete');
+    return (
+      <main className="app-shell-root mission-console-surface-mode skill-forge-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          SKILL FORGE SURFACE · <strong>{ignitionModeBanner.mode}</strong> · Shared Workspace capability provenance · origin <code>{runtimeFingerprint.currentOrigin}</code>
+        </div>
+        <section className="mission-console-surface-stage">
+          <SkillForgeTile uiLayout={safeUiLayout} togglePanel={togglePanel} runtimeStatusModel={runtimeStatusModel} forcePanelOpen />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
   if (openClawSurfaceMode) {
     markStartupStage('app-openclaw-surface-render-start');
     markStartupStage('app-openclaw-surface-render-complete');
@@ -2572,6 +2589,15 @@ export default function App() {
       <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
         IGNITION MODE: <strong>{ignitionModeBanner.mode}</strong> · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
       </div>
+      <StephanosCommandObservatory
+        runtimeStatus={runtimeStatus}
+        runtimeStatusModel={runtimeStatusModel}
+        routeTruthView={routeTruthView}
+        finalAgentView={displayAgentView}
+        runtimeBuildParity={runtimeBuildParity}
+        safeApiStatus={safeApiStatus}
+        missionBridgeTruth={missionBridgeTruth}
+      />
       <AgentQuickControls
         controls={agentControls}
         registry={agentRegistry}

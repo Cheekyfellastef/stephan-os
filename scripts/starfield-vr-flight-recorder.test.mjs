@@ -9,19 +9,21 @@ import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-teleme
 
 test('Windows VR diagnosis handles zero, one and conflicting providers without inventing missing metrics', { skip: process.platform !== 'win32' }, async () => {
   const scriptPath = fileURLToPath(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url));
-  for (const [sessionProvider, summaryProvider, expectedIdentity, expectedProvider, hasSamples] of [
-    ['', '', 'UNKNOWN_PROVIDER', 'UNKNOWN', false],
-    ['mutar-openxr', '', 'VERIFIED_PROVIDER', 'mutar-openxr', true],
-    ['vorpx', 'vorpx', 'VERIFIED_PROVIDER', 'vorpx', true],
-    ['mutar-openxr', 'vorpx', 'PROVIDER_IDENTITY_CONFLICT', 'UNKNOWN', true],
+  for (const [sessionProvider, summaryProvider, expectedIdentity, expectedProvider, samples] of [
+    ['', '', 'UNKNOWN_PROVIDER', 'UNKNOWN', []],
+    ['mutar-openxr', '', 'VERIFIED_PROVIDER', 'mutar-openxr', [20]],
+    ['vorpx', 'vorpx', 'VERIFIED_PROVIDER', 'vorpx', [20, 40]],
+    ['mutar-openxr', 'vorpx', 'PROVIDER_IDENTITY_CONFLICT', 'UNKNOWN', [20, 40]],
+    ['vorpx', '', 'VERIFIED_PROVIDER', 'vorpx', [null]],
   ]) {
     const workspace = await mkdtemp(join(tmpdir(), 'sovereign-vr-diagnosis-'));
     try {
-      if (hasSamples) {
+      if (samples.length) {
         const sessions = join(workspace, 'vr', 'starfield-vr-performance-sessions');
         await mkdir(sessions, { recursive: true });
         const base = join(sessions, 'starfield-vr-performance-fixture');
-        await writeFile(base + '.csv', 'timestampUtc,gpuUtilPct\n2026-10-12T00:00:00Z,20\n2026-10-12T00:00:01Z,40\n');
+        await writeFile(base + '.csv', 'timestampUtc,gpuUtilPct\n'
+          + samples.map((value, index) => `2026-10-12T00:00:0${index}Z,${value ?? ''}\n`).join(''));
         await writeFile(base + '.json', JSON.stringify({ routeIdentity: { provider: sessionProvider } }));
         await writeFile(base + '.summary.json', JSON.stringify({ routeIdentity: { provider: summaryProvider } }));
       }
@@ -33,9 +35,11 @@ test('Windows VR diagnosis handles zero, one and conflicting providers without i
       const receipt = JSON.parse(result.stdout);
       assert.equal(receipt.context.providerIdentityStatus, expectedIdentity);
       assert.equal(receipt.context.provider, expectedProvider);
-      assert.equal(receipt.metrics.sampleCount, hasSamples ? 2 : 0);
-      assert.equal(receipt.metrics.avgGpuUtilPct, hasSamples ? 30 : null);
-      assert.equal(receipt.metrics.maxGpuUtilPct, hasSamples ? 40 : null);
+      const measured = samples.filter(value => typeof value === 'number');
+      assert.equal(receipt.metrics.sampleCount, samples.length);
+      assert.equal(receipt.metrics.avgGpuUtilPct, measured.length
+        ? measured.reduce((sum, value) => sum + value, 0) / measured.length : null);
+      assert.equal(receipt.metrics.maxGpuUtilPct, measured.length ? Math.max(...measured) : null);
       assert.equal(receipt.metrics.avgApplicationFrameTimeMs, null);
       assert.equal(receipt.metrics.frameTimeTelemetryAvailable, false);
       assert.equal(receipt.metrics.storageTelemetryAvailable, false);

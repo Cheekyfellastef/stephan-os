@@ -248,6 +248,19 @@ export function buildSovereignControllerLaneStatus({
     refillState = 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
   }
 
+  // Reuse the per-goal build-truth witness. Global material-lane occupancy
+  // cannot attest that any particular selected goal was physically picked up.
+  const selectedMaterialPickupProvenCount = buildStephanosBuildTruth({
+    capturedAtUtc: new Date(safeNowMs).toISOString(),
+    physical,
+    logical,
+    lanes: { activeMaterialLaneCount, refillHealth, refillState },
+  }).goals.filter((goal) => (
+    goal.selectedForAdmission === true
+    && goal.state === 'BUILDING'
+    && goal.proofRefs.length > 0
+  )).length;
+
   const finalVerdict = refillHealth === 'RED'
     ? 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED'
     : refillHealth === 'AMBER'
@@ -265,6 +278,7 @@ export function buildSovereignControllerLaneStatus({
     lanes: Object.freeze({
       targetMaterialLanes,
       activeMaterialLaneCount,
+      selectedMaterialPickupProvenCount,
       activeLaneClaimCount,
       reportedMaterialLaneCountSum,
       occupancyPercent: targetMaterialLanes > 0
@@ -608,17 +622,98 @@ export async function collectSovereignControllerLaneStatus({
   });
 }
 
+// The existing Sovereign Commander fixed-process boundary preserves at most
+// 16 KiB of stdout. The full 75-goal logical fabric can exceed that and truncate
+// the JSON line, turning a healthy *observation transport* into an invalid
+// receipt. Emit an allowlisted count/host/physical summary ONLY for the remote
+// --snapshot-only verb. The full local publisher and build-truth evidence remain
+// unchanged. No lease, admission or physical-pickup authority is conferred.
+export function projectBoundedRemoteControllerLaneStatus(status = {}) {
+  if (status?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+      || status?.ok !== true
+      || status?.readOnly !== true
+      || status?.arbitraryShellAllowed !== false
+      || status?.sourceMutationAllowed !== false
+      || status?.mergeAuthority !== false
+      || status?.secretMaterialIncluded !== false
+      || status?.unknownMeansGreen !== false) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_SOURCE_INVALID');
+  }
+  const pick = (source, keys) => Object.fromEntries(
+    keys.filter((key) => source?.[key] !== undefined).map((key) => [key, source[key]]),
+  );
+  return Object.freeze({
+    ...pick(status, [
+      'schemaVersion', 'ok', 'capturedAtUtc', 'finalVerdict',
+      'readOnly', 'arbitraryShellAllowed', 'sourceMutationAllowed',
+      'mergeAuthority', 'secretMaterialIncluded', 'unknownMeansGreen',
+    ]),
+    physical: Object.freeze({
+      ...pick(status.physical, [
+        'expected', 'building', 'amber', 'red', 'unknown', 'allCurrent',
+        'allObservedEnabled', 'finalVerdict',
+      ]),
+      controllers: Object.freeze((status.physical?.controllers || []).slice(0, 5)
+        .map((row) => Object.freeze(pick(row, [
+          'controllerId', 'title', 'freshness', 'activityState', 'trafficLight',
+          'materialLaneCount', 'activeLaneCount', 'parkedLaneCount',
+          'safeEligibleWorkRemaining', 'blocker',
+        ])))),
+    }),
+    logical: Object.freeze({
+      ...pick(status.logical, [
+        'current', 'valid', 'observedAtUtc', 'physicalControllerCount', 'total',
+        'active', 'tracking', 'parked', 'retired', 'selectedForAdmission',
+        'finalVerdict',
+      ]),
+      hostLoads: Object.freeze((status.logical?.hostLoads || []).slice(0, 5)
+        .map((host) => Object.freeze(pick(host, [
+          'controllerId', 'title', 'logicalControllerCount', 'activeCount',
+          'trackingCount', 'parkedCount',
+        ])))),
+    }),
+    lanes: Object.freeze(pick(status.lanes, [
+      'targetMaterialLanes', 'activeMaterialLaneCount',
+      'selectedMaterialPickupProvenCount', 'activeLaneClaimCount',
+      'reportedMaterialLaneCountSum', 'occupancyPercent', 'freeTargetLaneSlots',
+      'runnableBacklogCount', 'parkedPhysicalLaneCount',
+      'currentPhysicalControllerCount', 'stalePhysicalControllerCount',
+      'nonCurrentPhysicalControllerCount', 'currentPhysicalHardRedCount',
+      'reportedSafeEligibleWorkMax', 'reportedSafeEligibleWorkSum',
+      'refillHealth', 'refillState',
+    ])),
+  });
+}
+
+// The MCP fixed read-only diagnostic must not wait on mutable Shared Workspace
+// publications. The periodic publisher keeps both existing writes unchanged.
 export async function runSovereignControllerLaneStatus(options = {}) {
-  const status = await collectSovereignControllerLaneStatus(options);
-  await publishSharedWorkspaceControllerLaneStatus(status, options);
-  await publishSharedWorkspaceStephanosBuildTruth(buildStephanosBuildTruth(status), options);
-  process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
+  const status = await (options.collectStatusFn || collectSovereignControllerLaneStatus)(options);
+  if (options.snapshotOnly !== true) {
+    await (options.publishStatusFn || publishSharedWorkspaceControllerLaneStatus)(status, options);
+    await (options.publishBuildTruthFn || publishSharedWorkspaceStephanosBuildTruth)(buildStephanosBuildTruth(status), options);
+  }
+  const output = options.snapshotOnly === true
+    ? projectBoundedRemoteControllerLaneStatus(status)
+    : status;
+  const line = `${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(output)}\n`;
+  // Never silently truncate a purported complete structured receipt.
+  if (options.snapshotOnly === true && Buffer.byteLength(line, 'utf8') > 12 * 1024) {
+    throw new Error('CONTROLLER_LANE_STATUS_REMOTE_OUTPUT_TOO_LARGE');
+  }
+  (options.emitFn || ((value) => process.stdout.write(value)))(line);
   return status;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  runSovereignControllerLaneStatus().catch((error) => {
-    process.stderr.write(`${text(error?.message || error, 240)}\n`);
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--snapshot-only')) {
+    process.stderr.write('CONTROLLER_LANE_STATUS_ARGUMENTS_INVALID\n');
     process.exitCode = 1;
-  });
+  } else {
+    runSovereignControllerLaneStatus({ snapshotOnly: args[0] === '--snapshot-only' }).catch((error) => {
+      process.stderr.write(`${text(error?.message || error, 240)}\n`);
+      process.exitCode = 1;
+    });
+  }
 }

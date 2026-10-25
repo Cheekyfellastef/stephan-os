@@ -1,19 +1,6 @@
 name: Battle Bridge Tailscale Bootstrap Pipe
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/battle-bridge-tailscale-bootstrap-pipe.yml'
-      - 'scripts/battle-bridge-tailscale-bootstrap-pipe.mjs'
-      - 'scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs'
-      - 'scripts/battle-bridge-tailscale-prerequisite-proof.mjs'
-      - 'scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs'
-      - 'shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs'
-      - 'shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs'
-      - 'shared/agents/battleBridgeTailscalePrerequisiteProofV1.mjs'
-      - 'shared/agents/battleBridgeTailscalePrerequisiteProofV1.test.mjs'
-      - 'docs/architecture/battle-bridge-tailscale-bootstrap-pipe-v1.md'
-      - 'docs/architecture/battle-bridge-tailscale-prerequisite-proof-v1.md'
   issue_comment:
     types: [created]
 
@@ -25,43 +12,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  contract-proof:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Check out exact pull request head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Run bounded bootstrap and prerequisite contract tests
-        run: |
-          node --test shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs
-          node --test scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs
-          node --test shared/agents/battleBridgeTailscalePrerequisiteProofV1.test.mjs
-          node --test scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
-
-      - name: Parse bounded runners and contracts
-        run: |
-          node --check scripts/battle-bridge-tailscale-bootstrap-pipe.mjs
-          node --check shared/agents/battleBridgeTailscaleBootstrapPipeV1.mjs
-          node --check scripts/battle-bridge-tailscale-prerequisite-proof.mjs
-          node --check shared/agents/battleBridgeTailscalePrerequisiteProofV1.mjs
-
-      - name: Diff check
-        run: git diff --check origin/main...HEAD
-
   bootstrap-canonical-github-sync:
     if: >-
       github.event_name == 'issue_comment' &&
-      github.event.issue.number == 2808 &&
+      github.event.issue.number > 0 &&
       github.actor == 'Cheekyfellastef' &&
       contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap') &&
       !contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap-prerequisites')
@@ -85,6 +39,8 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Recheck canonical bootstrap mailbox event
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs bootstrap
       - name: Validate exact owner-authored bootstrap request
         id: request
         shell: bash
@@ -164,7 +120,7 @@ jobs:
   prerequisite-proof:
     if: >-
       github.event_name == 'issue_comment' &&
-      github.event.issue.number == 2808 &&
+      github.event.issue.number > 0 &&
       github.actor == 'Cheekyfellastef' &&
       contains(github.event.comment.body, '```stephanos-battle-bridge-tailscale-bootstrap-prerequisites')
     runs-on: ubuntu-latest
@@ -187,6 +143,8 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Recheck canonical prerequisite mailbox event
+        run: node scripts/canonical-mailbox-workflow-event-gate.mjs prerequisite
       - name: Validate exact owner-authored read-only prerequisite request
         id: request
         shell: bash

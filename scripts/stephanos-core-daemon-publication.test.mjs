@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,8 @@ import { projectStephanosCoreDaemonState } from '../shared/agents/stephanosCoreD
 import * as flywheel from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import * as onion from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import * as spine from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
+import { projectCoreGateEvidenceV1, planCoreGateStewardV1 } from '../shared/runtime/goalConveyorGateStewardV1.mjs';
+import { executeCoreGateReadOnlyActionV1 } from '../shared/runtime/goalConveyorGateReadOnlyExecutionV1.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(join(repoRoot, 'scripts', 'stephanos-core-daemon.mjs'), 'utf8');
@@ -34,6 +36,11 @@ function isolatedPublisher(workspaceRoot) {
   const context = vm.createContext({
     Object, String, Promise, Date, process: { pid: process.pid },
     repoRoot, workspaceRoot, resolve,
+    localStateRoot: workspaceRoot, lstat, readFile,
+    projectCoreGateEvidenceV1, planCoreGateStewardV1, executeCoreGateReadOnlyActionV1,
+    readVerifiedStephanosNativeRoutingCandidate: async () => null,
+    publishSignedCoreGateEvidenceV1: async () => { throw Error('fixture signing authority is not commissioned'); },
+    sovereignOuterBridge: { snapshot: () => ({ runCount: 0, inFlight: false, lastResult: null }) },
     readJsonIfPresent: async (path) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } },
     createSharedWorkspaceEventRecord,
     FLYWHEEL_FALLBACK_MS: flywheel.DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
@@ -131,7 +138,7 @@ test('Core publisher refuses secret-bearing telemetry without replacing prior st
 });
 
 
-test('Core publisher emits one deduped typed Flywheel repair event for a measured gap', async () => {
+test('Core publisher advances distinct measured gaps at one event per heartbeat', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
   try {
     const context = isolatedPublisher(root);
@@ -144,9 +151,10 @@ test('Core publisher emits one deduped typed Flywheel repair event for a measure
       await context.publish(state, timestampUtc, context.persistentFlywheelStatus(), { publishEvents: true });
     }
     const events = await readdir(join(root, 'events'));
-    assert.equal(events.length, 1);
-    assert.match(events[0], /^core-loop-gap-[a-f0-9]{12}-watch-to-reconciliation-w[0-9]+\.json$/);
-    const event = JSON.parse(await readFile(join(root, 'events', events[0]), 'utf8'));
+    assert.equal(events.length, 2, 'the second heartbeat advances the next independent gap');
+    const watchFile = events.find(name => /^core-loop-gap-[a-f0-9]{12}-watch-to-reconciliation-w[0-9]+\.json$/.test(name));
+    assert.ok(watchFile);
+    const event = JSON.parse(await readFile(join(root, 'events', watchFile), 'utf8'));
     assert.equal(event.eventKind, 'goal-conveyor-incident');
     assert.equal(event.relatedIssue, '#2593');
     assert.equal(event.missionId, 'goal-conveyor-fleet-care');
@@ -189,6 +197,50 @@ test('failed unattended repair publishes one typed Flywheel learning gap owned b
   }
 });
 
+
+test('long live repair blockers publish valid learning identities and dedupe without starving other edges', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
+  try {
+    const context = isolatedPublisher(root);
+    const at = '2026-10-12T09:59:26.657Z';
+    const state = projectStephanosCoreDaemonState({
+      sourceHead: '50411d67c719292da85ff9e1263468d7894712dc',
+      sovereignCommanderHealthy: true, backendHealthy: true,
+      missionWorkerHeartbeatAgeMs: 0, gamingActive: false,
+    });
+    const blockers = ['REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+      'REPAIR_' + 'A'.repeat(112), 'REPAIR_' + 'A'.repeat(111) + 'B'];
+    const ids = [];
+    for (const blocker of blockers) {
+      vm.runInContext(`lastOctopusBuildSummary = { octopusNeedsRepair: true };
+        lastOctopusSelfHealAtUtc = '${at}';
+        lastOctopusSelfHealAttemptCount = 1;
+        lastOctopusSelfHealBlocker = '${blocker}';`, context);
+      await context.publish(state, at, context.persistentFlywheelStatus(), { publishEvents: true });
+      const projected = context.projectOctopusFailedRepairLearningEventV1({
+        sourceHead: state.sourceHead, attemptAtUtc: at, attemptCount: 1, blocker, needsRepair: true,
+      });
+      ids.push(projected.eventId);
+      assert.ok((projected.eventId + '.json').length <= 81);
+      const event = JSON.parse(await readFile(join(root, 'events', projected.eventId + '.json'), 'utf8'));
+      assert.equal(event.eventId, projected.eventId);
+      assert.equal(event.closedLoopLearning.learningEligibleCapabilityFailure, true);
+      assert.equal(event.closedLoopLearning.capabilityId, projected.capabilityId);
+      assert.equal(event.blocker, blocker);
+      assert.equal(event.relatedIssue, '#2961');
+      assert.equal(event.mergeAuthority, false);
+      assert.equal(event.leaseOverrideAllowed, false);
+      assert.equal(validateSharedWorkspaceRecord(event).valid, true);
+      await context.publish(state, at, context.persistentFlywheelStatus(), { publishEvents: true });
+      assert.equal((await readdir(join(root, 'events'))).filter(name => name === projected.eventId + '.json').length, 1);
+    }
+    assert.equal(new Set(ids).size, blockers.length, 'long blockers sharing a prefix retain distinct identities');
+    assert.ok((await readdir(join(root, 'events'))).some(name => name.startsWith('core-loop-')),
+      'deduped repair event lets the checker publish another unresolved edge');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('fresh healthy reconciliation routes missing edge proof to existing owner without inventing failure', async () => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-core-publish-test-'));
@@ -295,15 +347,20 @@ test('daemon checker sweeps all observed gaps AND missing handoffs without leavi
     assert.ok(events.every((e) => e.newGoalScopeAuthorized === false));
     assert.ok(events.every((e) => e.sourceMutationAuthority === false && e.mergeAuthority === false));
     assert.ok(events.every((e) => validateSharedWorkspaceRecord(e).valid));
-    // Once every edge has a local event, the next heartbeat must be idle.
-    await context.publish(state, new Date(Date.parse(at) + 90 * 60_000).toISOString(),
+    // Repeated fresh evidence in the same window must be idle.
+    await context.publish(state, new Date(Date.parse(at) + candidateCount * 15_000).toISOString(),
       flywheelSnapshot, { publishEvents: true });
     assert.equal((await readdir(join(root, 'events'))).length, candidateCount);
+    // After 90 minutes the reconciliation evidence is stale: one new measured
+    // WATCH gap is expected even though the other edge identities still dedupe.
+    await context.publish(state, new Date(Date.parse(at) + 90 * 60_000).toISOString(),
+      flywheelSnapshot, { publishEvents: true });
+    assert.equal((await readdir(join(root, 'events'))).length, candidateCount + 1);
     // Same unresolved evidence may be re-escalated after the bounded window,
     // using the same owners, while the old immutable events remain intact.
     await context.publish(state, new Date(Date.parse(at) + flywheel.CORE_LOOP_CHECKER_RECHECK_MS).toISOString(),
       flywheelSnapshot, { publishEvents: true });
-    assert.equal((await readdir(join(root, 'events'))).length, candidateCount + 1);
+    assert.equal((await readdir(join(root, 'events'))).length, candidateCount + 2);
     const status = JSON.parse(await readFile(join(root, 'status', 'stephanos-core-daemon-current.json'), 'utf8'));
     assert.equal(status.allGoalBuildLoopsProvenClosed, false);
     assert.equal(status.checkerEscalationPlan.totalAuditedEdgeCount, 12);

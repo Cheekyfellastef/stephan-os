@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
+import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
+  compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -16,6 +19,10 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { quarantineOriginalSourceAttempt } from '../stephanos-server/services/originalSourceAttemptFenceService.js';
+import { authenticateOriginalWriterExclusionEvidence } from '../stephanos-server/services/originalSourceWriterCustodyService.js';
+import { authenticateLegacyOrphanQuarantine } from '../stephanos-server/services/legacyOriginalSourceOrphanQuarantineV1.js';
+import { resolveCriticalBacklogRuntimePaths } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { readVerifiedStephanosNativeRoutingCandidate } from '../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
@@ -51,7 +58,10 @@ import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConve
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
-import { SOVEREIGN_COMMANDER_REMOTE_OPERATION, safeCpuPressureSnapshotProjection } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  safeCpuPressureSnapshotProjection,
+} from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -957,6 +967,12 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     .slice(0, 8));
   const selfHeal = Object.freeze({
     available: safeBoolean(value?.selfHeal?.available),
+    outerBridgeRunCount: safeOptionalNonNegativeInteger(value?.selfHeal?.outerBridgeRunCount),
+    outerBridgeInFlight: safeBoolean(value?.selfHeal?.outerBridgeInFlight),
+    outerBridgeLastPublicationOk: safeBoolean(value?.selfHeal?.outerBridgeLastPublicationOk),
+    outerBridgeLastStage: safeTelemetryText(value?.selfHeal?.outerBridgeLastStage, 80).toUpperCase(),
+    outerBridgeLastBlocker: safeTelemetryText(value?.selfHeal?.outerBridgeLastBlocker, 120).toUpperCase(),
+    outerBridgeLastVerdict: safeTelemetryText(value?.selfHeal?.outerBridgeLastVerdict, 120).toUpperCase(),
     dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
     dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
     dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
@@ -991,6 +1007,31 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
     finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
   });
+  const rawOuterBridge = value?.outerBridge;
+  const matchedOuterBridge = rawOuterBridge?.available === true
+    && rawOuterBridge?.current === true
+    && rawOuterBridge?.exactHeadMatch === true
+    && rawOuterBridge?.readOnly === true
+    && rawOuterBridge?.sourceMutationAllowed === false
+    && rawOuterBridge?.mergeAuthority === false
+    && safeTelemetrySha(rawOuterBridge?.sourceHead) === repository.head
+    && repository.head === headSync.runtimeHead
+    && headSync.exactHeadChainProven === true;
+  const outerBridge = Object.freeze({
+    available: rawOuterBridge?.available === true,
+    current: matchedOuterBridge,
+    exactHeadMatch: matchedOuterBridge,
+    sourceHead: matchedOuterBridge ? repository.head : '',
+    observedAtUtc: safeTimestamp(rawOuterBridge?.observedAtUtc),
+    cycleAgeSeconds: safeOptionalNonNegativeInteger(rawOuterBridge?.cycleAgeSeconds),
+    stage: matchedOuterBridge ? safeTelemetryText(rawOuterBridge?.stage, 80).toUpperCase() : 'UNVERIFIED',
+    rescueBlocker: safeTelemetryText(rawOuterBridge?.rescueBlocker, 120).toUpperCase(),
+    canonicalLeaseReleaseProven: matchedOuterBridge && rawOuterBridge?.canonicalLeaseReleaseProven === true,
+    physicalPickupProven: false,
+    twoUnattendedRefillsProven: false,
+    canonicalHandbackEligible: false,
+    readOnly: true, sourceMutationAllowed: false, mergeAuthority: false,
+  });
   const health = Object.freeze({
     repository: safeLight(value?.health?.repository),
     core: safeLight(value?.health?.core),
@@ -1021,6 +1062,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     controllers,
     meters,
     relay,
+    outerBridge,
     health,
     readOnly: true,
     sourceMutationAllowed: false,
@@ -1327,16 +1369,375 @@ function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
   return null;
 }
 
-// Revalidate the existing immutable CPU sampler's allowlisted schema on the
-// public boundary. Reject unknown process/script identities; never forward raw
-// stdout, full paths, command lines or caller-selected process enumeration.
+// Read-only Island result has its own authority-denying public receipt contract.
+function safeRescueIslandBoundaryReceiptProjection(value = {}) {
+  if (value?.remoteAction !== 'rescue-island-readonly-boundary'
+      || value?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_ISLAND_SCOPE_OBSERVED'
+      || value?.sourceMutationAllowed !== false
+      || value?.originalSourceLeaseReleaseAllowed !== false
+      || value?.mergeAuthority !== false
+      || value?.publicReceiptSafe !== true
+      || value?.secretMaterialReturned !== false) return null;
+  const scope = value?.rescueIslandBoundary;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+      || scope.schemaVersion !== 'stephanos.rescue-island-boundary-probe.v1'
+      || scope.ok !== true || scope.readOnly !== true
+      || scope.observedPathCount !== 3
+      || scope.physicalScopeReadback !== 'LOCAL_OS_SCOPE_OBSERVED'
+      || scope.finalVerdict !== 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED'
+      || scope.sourceMutationAllowed !== false || scope.workerStartAllowed !== false
+      || scope.independentOwnershipAuthenticated !== false
+      || scope.gamingBudgetAuthenticated !== false
+      || scope.originalSourceLeaseReleaseAllowed !== false
+      || scope.seedForgeQueueAccessAllowed !== false
+      || scope.mergeAllowed !== false || scope.publicReceiptSafe !== true
+      || scope.secretMaterialReturned !== false) return null;
+  // Never serialize native file names, process IDs, raw stdout, secrets or aliases.
+  return Object.freeze({
+    schemaVersion: 'stephanos.rescue-island-boundary-probe.v1',
+    ok: true, observedPathCount: 3,
+    physicalScopeReadback: 'LOCAL_OS_SCOPE_OBSERVED',
+    finalVerdict: 'RESCUE_ISLAND_OS_SCOPE_READONLY_OBSERVED',
+    readOnly: true,
+    sourceMutationAllowed: false,
+    workerStartAllowed: false,
+    independentOwnershipAuthenticated: false,
+    gamingBudgetAuthenticated: false,
+    originalSourceLeaseReleaseAllowed: false,
+    seedForgeQueueAccessAllowed: false,
+    mergeAllowed: false,
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Secondary redaction barrier for the single read-only original-r7 census.
+// The public GitHub mailbox must never publish raw process, SID, path or script data.
+const ORIGINAL_CUSTODY_RECEIPT_BLOCKERS = new Set([
+  'ORIGINAL_CHECKOUT_NOT_OBSERVED', 'ORIGINAL_CHECKOUT_ACL_UNOBSERVED',
+  'ORIGINAL_PROCESS_ENUMERATION_UNAVAILABLE', 'ORIGINAL_PROCESS_CANDIDATES_PRESENT',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_PROBE_UNAVAILABLE',
+  'CIM_PROCESS_INVENTORY_UNAVAILABLE', 'CIM_PROCESS_COMMAND_LINE_UNOBSERVED',
+  'TASK_INVENTORY_UNAVAILABLE',
+  'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
+  'INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED',
+  'INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN',
+]);
+function safeOriginalSourceCustodyReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const value = operationResult?.inspection;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || operationResult.ok !== true
+    || operationResult.finalVerdict !== 'SOVEREIGN_CUSTODY_CENSUS_OBSERVED_HOLD'
+    || operationResult.originalLeaseReleased !== false
+    || operationResult.privilegedWindowsWitnessCommissioned !== false
+    || operationResult.sourceMutationAllowed !== false
+    || operationResult.arbitraryShellAllowed !== false
+    || operationResult.publicReceiptSafe !== true
+    || operationResult.secretMaterialReturned !== false
+    || value.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease'
+    || value.finalVerdict !== 'ORIGINAL_SOURCE_CUSTODY_HOLD'
+    || value.historicalExecutionOutcome !== 'UNKNOWN'
+    || value.independentWindowsExclusionProven !== false
+    || value.independentOperatorApprovalProven !== false
+    || value.leaseReleaseAuthorized !== false
+    || value.sourceMutationAuthorized !== false
+    || typeof value.checkoutPresent !== 'boolean'
+    || typeof value.aclReadable !== 'boolean') return null;
+  const count = item => item === null || (Number.isSafeInteger(item) && item >= 0 && item <= 1_000_000);
+  if (!count(value.candidateProcessCount) || !count(value.stephanosScheduledTaskCount)) return null;
+  const inspectedAtUtc = value.inspectedAtUtc;
+  const observedMs = Date.parse(inspectedAtUtc);
+  if (typeof inspectedAtUtc !== 'string'
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(inspectedAtUtc)
+    || !Number.isFinite(observedMs)
+    || new Date(observedMs).toISOString() !== inspectedAtUtc) return null;
+  const blockers = value.blockers;
+  if (!Array.isArray(blockers) || blockers.length < 2 || blockers.length > 14
+    || blockers.some(code => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(code))
+    || !blockers.includes('INDEPENDENT_OS_EXCLUSION_WITNESS_NOT_COMMISSIONED')
+    || !blockers.includes('INDEPENDENT_OPERATOR_APPROVAL_NOT_PROVEN')) return null;
+  return Object.freeze({
+    originalLeaseId: 'critical-2962-elastic-goal-r7-lease',
+    inspectedAtUtc,
+    checkoutPresent: value.checkoutPresent,
+    aclReadable: value.aclReadable,
+    candidateProcessCount: value.candidateProcessCount,
+    stephanosScheduledTaskCount: value.stephanosScheduledTaskCount,
+    blockers: Object.freeze([...new Set(blockers)]),
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    independentOperatorApprovalProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAuthorized: false,
+    finalVerdict: 'ORIGINAL_SOURCE_CUSTODY_HOLD',
+  });
+}
+
+// Projection for the read-only Starfield VR archive. Public GitHub receipts
+// carry only four validated summary rows per page, never raw CSV, file paths,
+// arbitrary metadata, screenshots or host telemetry fields.
+function safeStarfieldVrTelemetryArchiveReceiptProjection(archive) {
+  if (!archive || archive.schemaVersion !== 'stephanos.starfield-vr-telemetry-archive.v1'
+    || archive.ok !== true || archive.readOnly !== true
+    || archive.sourceMutationAllowed !== false
+    || archive.rawTelemetryReturned !== false || archive.hostPathsReturned !== false
+    || archive.secretMaterialReturned !== false || archive.arbitraryShellAllowed !== false
+    || archive.unknownMeansGreen !== false || !Array.isArray(archive.sessions)
+    || archive.sessions.length > 4) return null;
+  const safeCount = (value, maximum = 1000000000) => (
+    Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null
+  );
+  const metric = (value, maximum = 1000000) => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maximum
+      ? Math.round(value * 100) / 100 : null
+  );
+  const time = (value) => {
+    if (typeof value !== 'string' || value.length > 60) return '';
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
+  };
+  const limit = safeCount(archive.limit, 4);
+  const offset = safeCount(archive.offset, 1000000);
+  const totalSessions = safeCount(archive.totalSessions, 1000000);
+  const nextOffset = archive.nextOffset === null ? null : safeCount(archive.nextOffset, 1000000);
+  if (!limit || offset === null || totalSessions === null
+    || (archive.hasMore === true && nextOffset === null)
+    || archive.sessions.length > limit
+    || !time(archive.generatedAtUtc)) return null;
+  const sessions = archive.sessions.map((row) => ({
+    sessionId: safeTelemetryId(row.sessionId),
+    enteredAtUtc: time(row.enteredAtUtc),
+    endedAtUtc: time(row.endedAtUtc),
+    provider: ['mutar-openxr', 'vorpx'].includes(row.provider) ? row.provider : 'UNKNOWN',
+    sourceHead: safeTelemetrySha(row.sourceHead),
+    sessionOutcome: safeTelemetryText(row.sessionOutcome, 60),
+    sampleCount: safeCount(row.sampleCount),
+    partialTelemetry: row.partialTelemetry === true,
+    csvPresent: row.csvPresent === true,
+    summaryPresent: row.summaryPresent === true,
+    sessionReceiptPresent: row.sessionReceiptPresent === true,
+    avgApplicationFrameTimeMs: metric(row.avgApplicationFrameTimeMs),
+    p95ApplicationFrameTimeMs: metric(row.p95ApplicationFrameTimeMs),
+    p99ApplicationFrameTimeMs: metric(row.p99ApplicationFrameTimeMs),
+    avgDeliveredCadenceHz: metric(row.avgDeliveredCadenceHz, 1000),
+    headsetRefreshRateHz: metric(row.headsetRefreshRateHz, 1000),
+    maxEyePresentationSkewMs: metric(row.maxEyePresentationSkewMs),
+    maxPoseAgeMs: metric(row.maxPoseAgeMs),
+    avgGpuUtilPct: metric(row.avgGpuUtilPct, 100),
+    avgSystemCpuPct: metric(row.avgSystemCpuPct, 100),
+    telemetryMissingCount: safeCount(row.telemetryMissingCount, 1000),
+    crashEvidenceCount: safeCount(row.crashEvidenceCount, 1000),
+  }));
+  if (sessions.some((row) => !row.sessionId)) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-archive.v1',
+    ok: true, generatedAtUtc: time(archive.generatedAtUtc),
+    directoryAvailable: archive.directoryAvailable === true,
+    totalSessions, newestSessionId: safeTelemetryId(archive.newestSessionId),
+    offset, limit, hasMore: archive.hasMore === true, nextOffset,
+    sessions: Object.freeze(sessions),
+    readOnly: true, sourceMutationAllowed: false,
+    rawTelemetryReturned: false, hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
+// Repeat the CPU sampler's fail-closed validator at the public receipt boundary.
+// The host already returns a bounded, allowlisted projection; never mirror raw
+// process command lines, Windows paths, full process inventories or untrusted fields.
 function safeCpuPressureReceiptProjection(operationResult = {}) {
-  if (operationResult?.remoteAction !== 'cpu-pressure-snapshot') return null;
-  const value = operationResult?.cpuPressure;
+  if (operationResult?.remoteAction !== 'cpu-pressure-snapshot'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false
+    || !operationResult?.cpuPressure
+    || typeof operationResult.cpuPressure !== 'object'
+    || Array.isArray(operationResult.cpuPressure)) return null;
+  let sanitized = null;
+  try {
+    sanitized = safeCpuPressureSnapshotProjection({
+      structuredContent: { stdout: JSON.stringify(operationResult.cpuPressure) },
+    }, 'cpu-pressure-snapshot');
+  } catch { return null; }
+  if (!sanitized) return null;
+  // The public command transport has a strict 9 KiB receipt budget. Keep the
+  // hottest twelve allowlisted entries, never quietly claim the full census.
+  return Object.freeze({
+    ...sanitized,
+    rows: Object.freeze(sanitized.rows.slice(0, 12)),
+    rowsTruncated: sanitized.rows.length > 12,
+    observedRowCount: sanitized.rows.length,
+  });
+}
+
+// The authenticated local /health guardian is already projected by Commander,
+// but the public GitHub mailbox formerly dropped it. Publish only this bounded
+// allowlist; a healthy HTTP listener or a cycleCount > 0 is NOT material repair.
+function safeSovereignGuardianReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'status'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false) return null;
+  const value = operationResult?.continuousRepairGuardian;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  let stdout = '';
-  try { stdout = JSON.stringify(value); } catch { return null; }
-  return safeCpuPressureSnapshotProjection({ structuredContent: { stdout } }, 'cpu-pressure-snapshot');
+  const count = v => Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000 ? v : null;
+  const token = v => typeof v === 'string'
+    && /^[A-Z0-9][A-Z0-9_.:-]{0,159}$/.test(v) ? v : '';
+  const stamp = v => typeof v === 'string' && v.length > 0 && v.length <= 40
+    && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : '';
+  const state = ['UNKNOWN', 'DISABLED', 'AWAITING_FIRST_CYCLE',
+    'NOT_SCHEDULED', 'CYCLES_OBSERVED'].includes(value.loopState)
+    ? value.loopState : 'UNKNOWN';
+  const available = value.available === true
+    && typeof value.enabled === 'boolean'
+    && typeof value.running === 'boolean'
+    && typeof value.scheduled === 'boolean'
+    && count(value.cycleCount) !== null
+    && count(value.successCount) !== null
+    && count(value.failureCount) !== null;
+  return Object.freeze({
+    available,
+    enabled: available ? value.enabled : null,
+    running: available ? value.running : null,
+    scheduled: available ? value.scheduled : null,
+    cycleCount: available ? count(value.cycleCount) : null,
+    successCount: available ? count(value.successCount) : null,
+    failureCount: available ? count(value.failureCount) : null,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk: available && typeof value.lastOk === 'boolean' ? value.lastOk : null,
+    lastBlocker: available ? token(value.lastBlocker) : '',
+    lastFinalVerdict: available ? token(value.lastFinalVerdict) : '',
+    loopState: available ? state : 'UNKNOWN',
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
+// Closed-world public summary for the fixed original-r7 Windows witness readiness
+// observation. A source-only preflight is never permission to install, sign,
+// release the lease, or infer exclusion from an empty process census.
+const ORIGINAL_R7_READINESS_BLOCKERS = new Set([
+  'PUBLISHER_TASK_CONTEXT_UNAVAILABLE',
+  'OS_WITNESS_SERVICE_NOT_OBSERVED', 'OS_WITNESS_SERVICE_NOT_RUNNING',
+  'ORIGINAL_WRITER_PROCESS_INVENTORY_UNAVAILABLE',
+  'ORIGINAL_WRITER_PROCESS_CANDIDATES_PRESENT',
+  'RELATED_SCHEDULED_TASK_INVENTORY_UNAVAILABLE',
+  'SERVICE_ENUMERATION_UNAVAILABLE', 'PROCESS_ENUMERATION_UNAVAILABLE',
+  'PROCESS_COMMANDLINE_VISIBILITY_INCOMPLETE',
+  'SCHEDULED_TASK_ENUMERATION_UNAVAILABLE', 'CHECKOUT_INSPECTION_UNAVAILABLE',
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+]);
+const ORIGINAL_R7_MANDATORY_HOLDS = [
+  'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
+  'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
+  'PROTECTED_WITNESS_SIGNING_ROOT_UNCOMMISSIONED',
+  'SEPARATE_OPERATOR_SIGNING_ROOT_UNCOMMISSIONED',
+  'CANONICAL_R7_CAS_RELEASE_PROOF_MISSING',
+];
+function originalR7WitnessReadinessGuardProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return {};
+  // These guards qualify the summary again after local checkpointing and
+  // public compaction. Preserve actual booleans; missing evidence stays null.
+  return {
+    originalLeaseReleased: safeBoolean(result.originalLeaseReleased),
+    privilegedWindowsWitnessCommissioned: safeBoolean(result.privilegedWindowsWitnessCommissioned),
+    sourceMutationAllowed: safeBoolean(result.sourceMutationAllowed),
+    arbitraryShellAllowed: safeBoolean(result.arbitraryShellAllowed),
+  };
+}
+
+function safeOriginalR7WitnessReadinessProjection(result = {}) {
+  if (result.remoteAction !== 'original-r7-witness-readiness') return null;
+  const value = result.witnessReadiness;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || result.ok !== true || result.finalVerdict !== 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD'
+    || result.originalLeaseReleased !== false || result.privilegedWindowsWitnessCommissioned !== false
+    || result.sourceMutationAllowed !== false || result.arbitraryShellAllowed !== false
+    || result.publicReceiptSafe !== true || result.secretMaterialReturned !== false
+    || value.finalVerdict !== 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED'
+    || value.historicalOutcome !== 'UNKNOWN' || value.authenticatedWitness !== false
+    || value.physicalPickupProven !== false || value.leaseReleaseAuthority !== false
+    || value.sourceMutationAuthority !== false
+    || typeof value.servicePresent !== 'boolean'
+    || !['RUNNING', 'STOPPED', 'NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus)
+    || (!value.servicePresent && !['NOT_INSTALLED', 'UNKNOWN'].includes(value.serviceStatus))
+    || typeof value.publisherTaskPresent !== 'boolean'
+    || !['RUNNING', 'READY', 'DISABLED', 'QUEUED', 'NOT_FOUND', 'UNKNOWN'].includes(value.publisherTaskState)
+    || !['ZERO', 'NONZERO', 'NEVER_RUN', 'UNKNOWN'].includes(value.publisherLastResultClass)
+    || value.publisherOriginalWriterAuthenticated !== false
+    || !Array.isArray(value.blockers) || value.blockers.length < 5 || value.blockers.length > 14
+    || value.blockers.some(code => !ORIGINAL_R7_READINESS_BLOCKERS.has(code))
+    || ORIGINAL_R7_MANDATORY_HOLDS.some(code => !value.blockers.includes(code))) return null;
+  const stamp = value.observedAtUtc;
+  const ms = typeof stamp === 'string' ? Date.parse(stamp) : NaN;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString() !== stamp
+    || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(stamp)) return null;
+  return Object.freeze({
+    observedAtUtc: stamp,
+    servicePresent: value.servicePresent,
+    serviceStatus: value.serviceStatus,
+    publisherTaskPresent: value.publisherTaskPresent,
+    publisherTaskState: value.publisherTaskState,
+    publisherLastResultClass: value.publisherLastResultClass,
+    publisherOriginalWriterAuthenticated: false,
+    blockers: Object.freeze([...new Set(value.blockers)]),
+    historicalOutcome: 'UNKNOWN', authenticatedWitness: false,
+    physicalPickupProven: false, leaseReleaseAuthority: false,
+    sourceMutationAuthority: false,
+    finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
+  });
+}
+
+// The public census may HOLD its safe numeric summary for a schema reason.
+// Surface only a fixed reason, never raw PIDs, identities, command lines,
+// checkout paths, invalid blocker strings or apparent lease-release authority.
+function safeOriginalSourceCustodyProjectionDiagnostic(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'original-source-custody-census') return null;
+  const projected = safeOriginalSourceCustodyReceiptProjection(operationResult);
+  let status = 'CENSUS_SUMMARY_UNQUALIFIED';
+  if (projected) status = 'SAFE_CENSUS_SUMMARY_VISIBLE';
+  else {
+    const observation = operationResult.inspection;
+    if (!observation || typeof observation !== 'object' || Array.isArray(observation)) {
+      status = 'CENSUS_DETAIL_MISSING';
+    } else if (!Array.isArray(observation.blockers)
+      || observation.blockers.some(x => !ORIGINAL_CUSTODY_RECEIPT_BLOCKERS.has(x))) {
+      status = 'CENSUS_BLOCKERS_UNQUALIFIED';
+    } else if (!([null].includes(observation.candidateProcessCount)
+      || Number.isSafeInteger(observation.candidateProcessCount))
+      || !([null].includes(observation.stephanosScheduledTaskCount)
+      || Number.isSafeInteger(observation.stephanosScheduledTaskCount))) {
+      status = 'CENSUS_COUNTS_UNQUALIFIED';
+    } else {
+      const observedAt = observation.inspectedAtUtc;
+      const ms = Date.parse(observedAt);
+      if (typeof observedAt !== 'string'
+        || !Number.isFinite(ms)
+        || new Date(ms).toISOString() !== observedAt) {
+        status = 'CENSUS_TIMESTAMP_UNQUALIFIED';
+      }
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 'stephanos.original-source-custody-public-diagnostic.v1',
+    status,
+    safeCountSummaryAvailable: Boolean(projected),
+    readOnly: true,
+    historicalExecutionOutcome: 'UNKNOWN',
+    independentWindowsExclusionProven: false,
+    leaseReleaseAuthorized: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+  });
 }
 
 function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
@@ -1351,11 +1752,22 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     : [];
   if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
 
-  const status = Number(operationResult?.status);
+  // Fleet checkpoints already renamed status to maintenanceStatus. Preserve
+  // that exact observed exit across repeated publication; never coerce null or
+  // resolve contradictory raw/checkpoint exits into a valid fleet packet.
+  const fleetExits = remoteAction === FLEET_SUPERVISOR_ACTION
+    ? ['status', 'maintenanceStatus'].filter(key => Object.hasOwn(operationResult, key))
+      .map(key => operationResult[key]) : [];
+  const fleetExit = fleetExits.length > 0 && fleetExits.every(value => [0, 2].includes(value))
+    && fleetExits.every(value => value === fleetExits[0]) ? fleetExits[0] : null;
+  const status = remoteAction === FLEET_SUPERVISOR_ACTION ? fleetExit : Number(operationResult?.status);
+  const fleetSupervisor = remoteAction === FLEET_SUPERVISOR_ACTION && fleetExit !== null
+    ? projectFleetSupervisorReceiptV1(operationResult?.fleetSupervisor, fleetExit) : null;
   const completedSteps = Array.isArray(operationResult?.completedSteps)
     ? operationResult.completedSteps.slice(0, 6).map((step) => {
       const stepIndex = Number(step?.stepIndex);
-      const stepStatus = Number(step?.status);
+      const stepStatus = step?.remoteAction === FLEET_SUPERVISOR_ACTION
+        ? ([0, 2].includes(step?.status) ? step.status : null) : Number(step?.status);
       return Object.freeze({
         stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
         remoteAction: safeTelemetryText(step?.remoteAction, 120),
@@ -1363,6 +1775,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
         processId: safeTelemetryId(step?.processId),
         status: Number.isInteger(stepStatus) ? stepStatus : null,
         errorCode: safeTelemetryText(step?.errorCode, 120),
+        ...(step?.remoteAction === FLEET_SUPERVISOR_ACTION && [0, 2].includes(step?.status)
+          && projectFleetSupervisorReceiptV1(step?.fleetSupervisor, step?.status)
+          ? { fleetSupervisor: projectFleetSupervisorReceiptV1(step.fleetSupervisor, step.status) } : {}),
       });
     })
     : [];
@@ -1370,25 +1785,51 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
 
   return Object.freeze({
     remoteAction,
+    ...(remoteAction === 'sovereign-windows-reviewer-calibration'
+      && validateWindowsCalibrationRemoteProjectionV1(operationResult.calibration)
+      ? { calibration: operationResult.calibration } : {}),
     remotePlan: Object.freeze(remotePlan),
     stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
     completedSteps: Object.freeze(completedSteps),
     planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
+    ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
+    } : {}),
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
-    cpuPressure: safeCpuPressureReceiptProjection(operationResult),
+    // Archive diagnostics only: expose a typed, minimal failure shape so an
+    // operator can distinguish a stale served MCP tool from a failed reader.
+    // Do not mirror raw structuredContent, stdout, stderr or host paths.
+    ...(remoteAction === 'starfield-vr-telemetry-archive' ? {
+      archiveDedicatedToolAdvertised: safeBoolean(operationResult?.dedicatedToolAdvertised),
+      archiveFixedFallbackSelected: safeBoolean(operationResult?.fixedMaintenanceFallbackSelected),
+      archiveRuntimeRefreshRequired: safeBoolean(operationResult?.runtimeRefreshRequired),
+      archiveMcpToolReturnedError: safeBoolean(operationResult?.mcpToolReturnedError),
+      archiveCommanderBlocker: safeTelemetryId(operationResult?.commanderBlocker),
+      archiveExecutionStatus: Number.isInteger(operationResult?.executionStatus)
+        ? operationResult.executionStatus : null,
+      archiveExecutionErrorCode: safeTelemetryId(operationResult?.executionErrorCode),
+    } : {}),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    originalSourceCustodyCensus: safeOriginalSourceCustodyReceiptProjection(operationResult),
+    originalSourceCustodyProjectionDiagnostic: safeOriginalSourceCustodyProjectionDiagnostic(operationResult),
+    witnessReadiness: safeOriginalR7WitnessReadinessProjection(operationResult),
+    ...originalR7WitnessReadinessGuardProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    cpuPressure: safeCpuPressureReceiptProjection(operationResult),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    rescueIslandBoundary: safeRescueIslandBoundaryReceiptProjection(operationResult),
     visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
     starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
+    starfieldVrTelemetryArchive: safeStarfieldVrTelemetryArchiveReceiptProjection(operationResult?.telemetryArchive),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
@@ -1593,6 +2034,11 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     nativeCapacityModel: safeTelemetryText(packet?.nativeCapacityModel, 120),
     nativeCapacitySourceHead: safeTelemetrySha(packet?.nativeCapacitySourceHead),
     nativeCapacityReceiptId: safeTelemetryId(packet?.nativeCapacityReceiptId),
+    nativePublisherDiagnosticOnly: packet?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(packet?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: packet?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: safeTelemetryText(packet?.nativePublisherDiagnosticReason, 120).toUpperCase(),
+    nativePublisherDiagnosticBinding: safeTelemetryText(packet?.nativePublisherDiagnosticBinding, 45).toUpperCase(),
     elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
     elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
@@ -2062,6 +2508,12 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
     }) : null,
     selfHeal: snapshot.selfHeal ? Object.freeze({
       available: snapshot.selfHeal.available === true,
+      outerBridgeRunCount: snapshot.selfHeal.outerBridgeRunCount,
+      outerBridgeInFlight: snapshot.selfHeal.outerBridgeInFlight === true,
+      outerBridgeLastPublicationOk: snapshot.selfHeal.outerBridgeLastPublicationOk === true,
+      outerBridgeLastStage: snapshot.selfHeal.outerBridgeLastStage,
+      outerBridgeLastBlocker: snapshot.selfHeal.outerBridgeLastBlocker,
+      outerBridgeLastVerdict: snapshot.selfHeal.outerBridgeLastVerdict,
       dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
       dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
       dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
@@ -2117,6 +2569,7 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       counts: meters.counts,
       finalVerdict: meters.finalVerdict,
     }) : null,
+    outerBridge: snapshot.outerBridge,
     relay: snapshot.relay ? Object.freeze({
       available: snapshot.relay.available === true,
       daemonHealthy: snapshot.relay.daemonHealthy === true,
@@ -2186,6 +2639,11 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
     nativeCapacityModel: nativeVerified ? nativeModel : '',
     nativeCapacitySourceHead: nativeVerified ? nativeSourceHead : '',
     nativeCapacityReceiptId: nativeVerified ? nativeReceiptId : '',
+    nativePublisherDiagnosticOnly: inner?.nativePublisherDiagnosticOnly === true,
+    nativePublisherObservedHead: safeTelemetrySha(inner?.nativePublisherObservedHead),
+    nativePublisherHeadMatchesExpected: inner?.nativePublisherHeadMatchesExpected === true,
+    nativePublisherDiagnosticReason: token(inner?.nativePublisherDiagnosticReason, 120),
+    nativePublisherDiagnosticBinding: token(inner?.nativePublisherDiagnosticBinding, 45),
     elasticDesiredWidth: safeNonNegativeNumber(inner?.elasticDesiredWidth),
     elasticRemainingAdmissionSlots: safeNonNegativeNumber(inner?.elasticRemainingAdmissionSlots),
     controllerValid: inner?.controllerValid === true,
@@ -2201,33 +2659,7 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
   });
 }
 
-// Keep bounded measurements even if the receipt exceeds GitHub's 9 KiB
-// limit. Only a previously validated CPU schema may survive compaction.
-function compactCpuPressureForCoreReceipt(value = null) {
-  const safe = safeCpuPressureReceiptProjection({
-    remoteAction: 'cpu-pressure-snapshot',
-    cpuPressure: value,
-  });
-  if (!safe) return null;
-  const rows = safe.rows.slice(0, 6);
-  return Object.freeze({
-    schemaVersion: safe.schemaVersion,
-    capturedAtUtc: safe.capturedAtUtc,
-    sampleSeconds: safe.sampleSeconds,
-    processorCount: safe.processorCount,
-    metadataAvailable: safe.metadataAvailable,
-    rows: Object.freeze(rows),
-    rowsTruncated: safe.rows.length > rows.length,
-    readOnly: true,
-    processTerminationAllowed: false,
-    rawCommandLinesReturned: false,
-    rawPathsReturned: false,
-    secretMaterialIncluded: false,
-    finalVerdict: safe.finalVerdict,
-  });
-}
-
-function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
@@ -2259,14 +2691,34 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
+          ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
+        ...(Array.isArray(inner?.completedSteps)
+          && inner.completedSteps.some(step => step?.remoteAction === FLEET_SUPERVISOR_ACTION) ? {
+            remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+            completedSteps: inner.completedSteps.slice(0, 6).map(step => Object.freeze({
+              stepIndex: step.stepIndex, remoteAction: step.remoteAction,
+              proofHash: step.proofHash, processId: step.processId,
+              status: step.status, errorCode: step.errorCode,
+              ...(step.remoteAction === FLEET_SUPERVISOR_ACTION && step.fleetSupervisor
+                ? { fleetSupervisor: compactFleetSupervisorReceiptV1(step.fleetSupervisor, fleetHeldLimit) } : {}),
+            })),
+          } : {}),
         stepCount: inner?.stepCount ?? null,
         proofHash: inner?.proofHash || '',
         planProofHash: inner?.planProofHash || '',
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
-        cpuPressure: inner?.remoteAction === 'cpu-pressure-snapshot' ? compactCpuPressureForCoreReceipt(inner?.cpuPressure) : null,
         visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        cpuPressure: inner?.cpuPressure ?? null,
+        starfieldVrTelemetryArchive: inner?.starfieldVrTelemetryArchive ?? null,
+        // inner was built by sovereignCommanderRemoteProjection above, not from raw input.
+        rescueIslandBoundary: inner?.rescueIslandBoundary ?? null,
+        originalSourceCustodyCensus: inner?.originalSourceCustodyCensus ?? null,
+        originalSourceCustodyProjectionDiagnostic: inner?.originalSourceCustodyProjectionDiagnostic ?? null,
+        witnessReadiness: inner?.witnessReadiness ?? null,
+        ...originalR7WitnessReadinessGuardProjection(inner),
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         ...compactProgrammeAuthorityForCoreReceipt(compactReceipt, inner),
@@ -2427,8 +2879,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const denseCompactJson = JSON.stringify(compactReceipt);
   if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
 
-  for (const meterLimit of [24, 12, 6, 0]) {
-    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+  for (const [meterLimit, fleetHeldLimit] of [[24, 8], [12, 4], [6, 1], [0, 0]]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit, fleetHeldLimit);
     const coreJson = JSON.stringify(coreReceipt);
     if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }
@@ -3168,13 +3620,78 @@ function programmeAuthorityPacketReady(packet = {}) {
 // Reuse the native capacity router's authenticated signature, authority and freshness
 // gates. No raw Shared Workspace records, paths, keys or signed payloads leave this
 // read-only programme status route. A missing proof must stay explicitly non-green.
+// Independent READ-ONLY diagnostic of the local publisher's *untrusted*
+// source-head claim. This cannot satisfy the signed capacity verifier.
+export function readNativeCapacityPublisherHeadDiagnosticV1({
+  expectedHead = '',
+  readStatus = () => readFileSync(
+    join(sharedWorkspaceRoot, 'status', 'stephanos-native-capacity-current.json'), 'utf8',
+  ),
+} = {}) {
+  const unknown = (reason) => Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: '',
+    nativePublisherHeadMatchesExpected: false,
+    nativePublisherDiagnosticReason: reason,
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+  const target = safeTelemetrySha(expectedHead);
+  if (!target) return unknown('NATIVE_PUBLISHER_EXPECTED_HEAD_INVALID');
+  let record;
+  try {
+    const raw = readStatus();
+    if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > 64 * 1024) {
+      return unknown('NATIVE_PUBLISHER_STATUS_BOUNDED_READ_FAILED');
+    }
+    record = JSON.parse(raw);
+  } catch (error) {
+    return unknown(error?.code === 'ENOENT'
+      ? 'NATIVE_PUBLISHER_STATUS_MISSING'
+      : 'NATIVE_PUBLISHER_STATUS_READ_FAILED');
+  }
+  if (record?.schemaVersion !== 'shared-agent-workspace-record.v1'
+    || record?.statusId !== 'stephanos-native-capacity-current') {
+    return unknown('NATIVE_PUBLISHER_STATUS_IDENTITY_INVALID');
+  }
+  const observed = safeTelemetrySha(record?.capacityReceipt?.payload?.sourceHead);
+  if (!observed) return unknown('NATIVE_PUBLISHER_PAYLOAD_HEAD_UNPROVEN');
+  return Object.freeze({
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: observed,
+    nativePublisherHeadMatchesExpected: observed === target,
+    nativePublisherDiagnosticReason: observed === target
+      ? 'NATIVE_PUBLISHER_HEAD_MATCH_BUT_NOT_VERIFIED'
+      : 'NATIVE_PUBLISHER_STALE_SOURCE_HEAD',
+    // A separate unsigned status read is not the same signed snapshot.
+    nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+  });
+}
+
 export async function readNativeCapacityProgrammeTelemetry({
   expectedHead = '',
   nowUtc = new Date().toISOString(),
   verifier = readVerifiedStephanosNativeRoutingCandidate,
+  diagnosticReader = readNativeCapacityPublisherHeadDiagnosticV1,
 } = {}) {
   const sourceHead = safeTelemetrySha(expectedHead);
+  // The signed router is authoritative. A separately sampled unsigned file
+  // may have advanced in the meantime and must never contradict a signed PASS.
+  const unsignedDiagnostic = () => {
+    let diagnostic;
+    try { diagnostic = diagnosticReader({ expectedHead }); }
+    catch { diagnostic = null; }
+    if (diagnostic?.nativePublisherDiagnosticOnly !== true) {
+      diagnostic = readNativeCapacityPublisherHeadDiagnosticV1({
+        expectedHead, readStatus: () => { throw new Error('UNAVAILABLE'); },
+      });
+    }
+    return {
+      ...diagnostic,
+      nativePublisherDiagnosticBinding: 'UNBOUND_UNSIGNED_STATUS',
+    };
+  };
   const unknown = (reason) => Object.freeze({
+    ...unsignedDiagnostic(),
     nativeCapacityVerified: false,
     nativeCapacityReason: safeTelemetryText(reason, 160).toUpperCase(),
     nativeCapacityModel: '',
@@ -3209,6 +3726,13 @@ export async function readNativeCapacityProgrammeTelemetry({
     return unknown('NATIVE_CAPACITY_CANDIDATE_IDENTITY_INVALID');
   }
   return Object.freeze({
+    // Bind the visible head to the SAME signed verifier candidate. Never
+    // report the raced unsigned file as if it were that signed record.
+    nativePublisherDiagnosticOnly: true,
+    nativePublisherObservedHead: sourceHead,
+    nativePublisherHeadMatchesExpected: true,
+    nativePublisherDiagnosticReason: 'NATIVE_PUBLISHER_VERIFIED_CANDIDATE_HEAD',
+    nativePublisherDiagnosticBinding: 'SIGNED_VERIFIER_CANDIDATE',
     nativeCapacityVerified: true,
     nativeCapacityReason: 'STEPHANOS_NATIVE_ROUTING_CANDIDATE_VERIFIED',
     nativeCapacityModel: safeTelemetryText(candidate.model, 120),
@@ -3344,15 +3868,29 @@ async function readCriticalBacklogStatus(command = {}) {
 export async function cancelMissionOrchestratorMission(command = {}, {
   readSourceIdentity = readCanonicalSourceIdentity,
   cancelMission = cancelBoundedMission,
+  quarantineSourceAttempt = quarantineOriginalSourceAttempt,
 } = {}) {
   const identity = await readSourceIdentity(command);
   if (!identity.ok) return identity;
   try {
-    const result = await cancelMission({
+    const result = await (command.originalLeaseId ? quarantineSourceAttempt : cancelMission)({
       missionId: command.missionId,
       commandId: command.commandId,
       reason: command.reason,
-    });
+      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+        originalLeaseDigest: command.originalLeaseDigest,
+        expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}),
+        operatorSourceRevision: identity.sourceHead,
+        operatorRequestId: command.requestId } : {}),
+    }, command.originalLeaseId ? {
+      paths: resolveCriticalBacklogRuntimePaths({}),
+      // Trusted immutable issuer receipt only. Never use the public packet as
+      // custody evidence or supply a caller-selectable verifier.
+      authenticateOriginalWriterExclusionEvidence,
+      authenticateLegacyOrphanQuarantine,
+    } : {});
     const missionId = safeConveyorId(result?.state?.missionId || command.missionId);
     const currentPhase = safeConveyorId(result?.state?.currentPhase);
     const cancelled = currentPhase === 'CANCELLED';
@@ -3368,6 +3906,7 @@ export async function cancelMissionOrchestratorMission(command = {}, {
       currentPhase,
       duplicate: result?.duplicate === true,
       eventId: safeTelemetryId(result?.eventId),
+      originalSourceAttemptFence: result?.state?.storeMetadata?.originalSourceAttemptFence || null,
       operatorActionRequired: result?.state?.operatorActionRequired === true,
       arbitraryFilesystemAccess: false,
       commandExecutionAccess: false,

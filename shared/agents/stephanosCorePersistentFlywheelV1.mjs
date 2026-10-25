@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
+
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
 export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
+// Exact original-source-owner HOLD is not repairable by repeating the same
+// local builder action. Keep hourly bounded checks while watching every refill.
+export const OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS = 60 * 60_000;
 export const OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS = Object.freeze([
   'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
   'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
@@ -137,6 +142,8 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   nowMs = Date.now(),
   lastAttemptAtMs = null,
   cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+  lastBlocker = '', lastAttemptSourceHead = '', sourceHead = '',
+  programmeBlockerIdentity = '', lastAttemptProgrammeBlockerIdentity = '',
 } = {}) {
   const now = finiteMs(nowMs) ?? Date.now();
   const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
@@ -150,6 +157,30 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
       shouldRepair: false,
       reason: 'OCTOPUS_SELF_HEAL_NOT_REQUIRED',
       retryAfterMs: 0,
+    });
+  }
+
+  // A held historical source-writer receipt cannot be synthesized by the
+  // Core. Suppress redundant attempts on the same source only while the
+  // canonical refill independently still observes Programme HOLD. A new
+  // source head or lifted HOLD re-arms the regular five-minute repair path.
+  const ownerProofMissing = [
+    'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+  ].includes(String(lastBlocker).trim().toUpperCase());
+  const sameExactSource = /^[0-9a-f]{40}$/.test(String(sourceHead).toLowerCase())
+    && String(lastAttemptSourceHead).toLowerCase() === String(sourceHead).toLowerCase();
+  const sinceLastAttemptMs = lastAttempt === null ? null : Math.max(0, now - lastAttempt);
+  const sameCanonicalBlocker = typeof programmeBlockerIdentity === 'string'
+    && programmeBlockerIdentity.length > 0
+    && programmeBlockerIdentity === lastAttemptProgrammeBlockerIdentity;
+  if (ownerProofMissing && sameExactSource && octopusSummary?.octopusProgrammeHeld === true
+    && sameCanonicalBlocker
+    && sinceLastAttemptMs !== null && sinceLastAttemptMs < OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS) {
+    return Object.freeze({
+      shouldRepair: false,
+      reason: 'OCTOPUS_ORIGINAL_OWNER_RECOVERY_WAIT',
+      retryAfterMs: OCTOPUS_ORIGINAL_OWNER_RECOVERY_RECHECK_MS - sinceLastAttemptMs,
     });
   }
 
@@ -242,6 +273,16 @@ export function summarizePersistentRefillSweep(result = {}) {
     refillCanonicalProgrammeHeld: text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
       || result?.controllerContinuity === 'RECONCILE_CANONICAL_PROGRAMME_HOLD'
       || result?.finalVerdict === 'GOAL_DISCOVERY_HEARTBEAT_CANONICAL_PROGRAMME_HOLD',
+    // No hourly throttle without an explicit, bounded canonical HOLD blocker identity.
+    refillCanonicalProgrammeBlockerIdentity: (
+      text(result?.conveyorResult?.programmeStatus).toUpperCase() === 'HOLD'
+      && Array.isArray(result?.conveyorResult?.programmeBlockers)
+      && result.conveyorResult.programmeBlockers.length > 0
+      && result.conveyorResult.programmeBlockers.length <= 20
+      && result.conveyorResult.programmeBlockers.every((entry) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(text(entry)))
+    )
+      ? [...new Set(result.conveyorResult.programmeBlockers.map((entry) => text(entry).toLowerCase()))].sort().join('|')
+      : '',
     refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
   });
 }
@@ -309,6 +350,13 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
   // separately, but do not let it short-circuit repair of the blocked conveyor.
   if (programmeHeld) verdict = 'PROGRAMME_HOLD';
   else if (degraded) verdict = 'DEGRADED';
+  // A full bounded sweep that built something but leaves free safe capacity
+  // must continue through the existing Sovereign self-repair path, rather
+  // than declaring BUILDING and waiting for an operator to notice the gap.
+  else if (materialActions > 0 && sweepExhausted
+    && eligibleWorkRemaining > 0 && provenSafeFreeLanes > 0) {
+    verdict = 'BUILDING_WITH_STRANDED_CAPACITY';
+  }
   else if (materialActions > 0) verdict = 'BUILDING';
   else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
   else if (noRunnableWorkProven && unresolvedOwnedGaps > 0) verdict = 'OWNED_GAP_PICKUP_MISSING';
@@ -317,8 +365,8 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
 
   return Object.freeze({
     octopusBuildVerdict: verdict,
-    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
-    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
+    octopusBuildStallDetected: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING'].includes(verdict),
+    octopusNeedsRepair: ['STALLED_WITH_CAPACITY', 'BUILDING_WITH_STRANDED_CAPACITY', 'PROGRAMME_HOLD', 'PARKED', 'OWNED_GAP_PICKUP_MISSING', 'DEGRADED'].includes(verdict),
     octopusProgrammeHeld: programmeHeld,
     octopusUnresolvedOwnedGapCount: unresolvedOwnedGaps,
     octopusMaterialActionsLastCycle: materialActions,
@@ -336,6 +384,15 @@ export function summarizeOctopusBuildProductivity(refillSummary = {}, {
 // A failed bounded Sovereign repair enters the existing Flywheel learning feed.
 // Stable source head and typed root blocker dedupe cooldown retries.
 
+function boundedRepairIdentity(prefix, reason, maxLength) {
+  const slug = reason.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  if ((prefix + slug).length <= maxLength) return prefix + slug;
+  // Preserve short existing identities. Long typed blockers need both a
+  // readable prefix and a digest of the full reason, not truncation aliases.
+  const digest = createHash('sha256').update(reason).digest('hex').slice(0, 16);
+  return prefix + slug.slice(0, maxLength - prefix.length - digest.length - 1) + '-' + digest;
+}
+
 export function projectOctopusFailedRepairLearningEventV1({
   sourceHead = '', attemptAtUtc = '', attemptCount = 0,
   blocker = '', needsRepair = false,
@@ -348,14 +405,15 @@ export function projectOctopusFailedRepairLearningEventV1({
     && Number.isSafeInteger(attemptCount) && attemptCount > 0
     && Number.isFinite(observed) && needsRepair === true;
   const id = publish
-    ? 'core-octopus-repair-gap-' + head.slice(0, 12) + '-'
-      + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 80)
+    // Shared Workspace path segments allow 81 characters including '.json'.
+    ? boundedRepairIdentity('core-octopus-repair-gap-' + head.slice(0, 12) + '-', reason, 76)
     : '';
   return Object.freeze({
     publish, eventId: id,
     reason: publish ? reason : '',
     ownerIssue: '#2961',
-    capabilityId: publish ? 'core-octopus-failed-repair-' + reason.toLowerCase().replace(/[^a-z0-9]+/g, '-') : '',
+    // Learning capability IDs allow 68 characters; the default lesson adds 12.
+    capabilityId: publish ? boundedRepairIdentity('core-octopus-failed-repair-', reason, 68) : '',
     attemptAtUtc: publish ? attemptAtUtc : '',
     schedulerAuthority: false, mergeAuthority: false, leaseOverrideAllowed: false,
   });

@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import {
+  FLEET_SUPERVISOR_ACTION, FLEET_SUPERVISOR_SCHEMA, FLEET_SUPERVISOR_MARKER,
+  projectFleetConveyorObservationV1, projectFleetSupervisorReceiptV1,
+  isFleetSupervisorTerminalV1,
+  fleetSupervisorBlockerCodeV1,
+} from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { sovereignMaintenanceCustodyUnprovenV1, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+} from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 import {
   ensureCriticalBacklogMission,
@@ -10,9 +18,9 @@ import {
 } from './sovereign-commander-capability-parity-reconcile.mjs';
 
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA =
-  'stephanos.sovereign-commander-fleet-goal-supervisor.v1';
+  FLEET_SUPERVISOR_SCHEMA;
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT_MARKER =
-  'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=';
+  FLEET_SUPERVISOR_MARKER;
 
 function count(value) {
   return Array.isArray(value) ? value.length : 0;
@@ -41,7 +49,10 @@ function blockedResult(blocker, details = {}) {
     runnableGoalCount: integer(details.runnableGoalCount),
     availableSlotCount: integer(details.availableSlotCount),
     dispatchCount: integer(details.dispatchCount),
+    pickupPendingCount: details.pickupPendingCount ?? null,
+    provenPickupCount: details.provenPickupCount ?? null,
     heldGoalCount: integer(details.heldGoalCount),
+    ...(details.conveyorObservation || projectFleetConveyorObservationV1()),
     heldIssues: frozen(Array.isArray(details.heldIssues) ? details.heldIssues.slice(0, 20) : []),
     programmeStatus: text(details.programmeStatus) || 'UNKNOWN',
     programmeBlockers: frozen(Array.isArray(details.programmeBlockers)
@@ -60,10 +71,11 @@ function blockedResult(blocker, details = {}) {
     capabilityParityBoundaryHoldCount: integer(details.commanderParity?.boundaryHoldCount),
     capabilityCompilerVerdict: text(details.commanderParity?.capabilityCompiler?.finalVerdict),
     capabilityCompilerWorkCount: integer(details.commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    nativeGapCandidateTotalCount: integer(details.commanderParity?.nativeGapIntake?.candidateTotalCount),
     flywheelLearningVerdict: text(details.commanderParity?.flywheelLearning?.finalVerdict),
     flywheelLearningPromotionCount: integer(details.commanderParity?.flywheelLearning?.promotedLessonIds?.length),
-    zeroGapInvariantSatisfied: integer(details.commanderParity?.buildableGapCount) === 0,
-    capabilityParityClosureRequired: integer(details.commanderParity?.buildableGapCount) > 0,
+    zeroGapInvariantSatisfied: false,
+    capabilityParityClosureRequired: true,
     // An admission/proof failure must not be green even when parity has zero known gaps.
     daemonMayReportGreen: false,
     mustContinueUntilZero: true,
@@ -125,6 +137,18 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   const runnableGoalCount = runnableGoals.length;
   const availableSlotCount = integer(ignition.availableSlots);
   const dispatchCount = integer(ignition.dispatchCount);
+  // A successfully published external grant is not a worker pickup. Only an
+  // explicitly proven, receipt-bound pickup can clear the pending count.
+  const published = Array.isArray(ignition.dispatched) ? ignition.dispatched : [];
+  const provenPickupCount = published.length === dispatchCount
+    ? published.filter((item) => item?.pickupProven === true
+      && typeof item?.pickupProofRef === 'string'
+      && item.pickupProofRef.trim().length > 0).length
+    : 0;
+  const pickupPendingCount = Math.max(
+    integer(ignition.pickupPendingCount),
+    dispatchCount - provenPickupCount,
+  );
   const heldGoalCount = count(ignition.held);
   const details = {
     activeMissionCount,
@@ -132,7 +156,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     runnableGoalCount,
     availableSlotCount,
     dispatchCount,
+    pickupPendingCount,
+    provenPickupCount,
     heldGoalCount,
+    conveyorObservation: projectFleetConveyorObservationV1(conveyorResult),
     programmeStatus: conveyorResult?.programmeStatus,
     programmeBlockers: conveyorResult?.programmeBlockers,
     elasticAdmissionPresent: Boolean(conveyorResult?.elasticAdmission),
@@ -219,6 +246,21 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     );
   }
 
+  // A native skill gap is still real work even when Remote Commander parity is
+  // already green. A draft alone never proves construction or live activation.
+  // Reuse the canonical #2573 owner; never manufacture a parallel worker.
+  const remoteParityGapCount = integer(commanderParity?.buildableGapCount);
+  const compiledCapabilityWorkCount = integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount);
+  // The compiler admits only the first bounded batch; the retained backlog
+  // is larger and must not be equated with completed or absent work.
+  const nativeGapCandidateTotalCount = integer(commanderParity?.nativeGapIntake?.candidateTotalCount);
+  const capabilityWorkRemainingCount = Math.max(
+    remoteParityGapCount, compiledCapabilityWorkCount, nativeGapCandidateTotalCount,
+  );
+  const nativeCapabilityWorkPending = nativeGapCandidateTotalCount > 0
+    || compiledCapabilityWorkCount > remoteParityGapCount;
+  const nativeGapSourceDegraded = commanderParity?.nativeGapSourceHealth === 'DEGRADED';
+
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
     && dispatchCount === 0
@@ -241,7 +283,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     runnableGoalCount,
     availableSlotCount,
     dispatchCount,
+    pickupPendingCount,
+    provenPickupCount,
     heldGoalCount,
+    ...projectFleetConveyorObservationV1(conveyorResult),
     programmeStatus: text(conveyorResult.programmeStatus),
     programmeBlockers: frozen(Array.isArray(conveyorResult.programmeBlockers)
       ? [...conveyorResult.programmeBlockers].map(text).filter(Boolean)
@@ -253,11 +298,16 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     capabilityParityBoundaryHoldCount: integer(commanderParity?.boundaryHoldCount),
     capabilityCompilerVerdict: text(commanderParity?.capabilityCompiler?.finalVerdict),
     capabilityCompilerWorkCount: integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    nativeGapCandidateTotalCount,
     flywheelLearningVerdict: text(commanderParity?.flywheelLearning?.finalVerdict),
     flywheelLearningPromotionCount: integer(commanderParity?.flywheelLearning?.promotedLessonIds?.length),
-    zeroGapInvariantSatisfied: integer(commanderParity?.buildableGapCount) === 0,
-    capabilityParityClosureRequired: integer(commanderParity?.buildableGapCount) > 0,
-    daemonMayReportGreen: integer(commanderParity?.buildableGapCount) === 0,
+    capabilityWorkRemainingCount,
+    nativeCapabilityWorkPending,
+    nativeGapSourceHealth: text(commanderParity?.nativeGapSourceHealth),
+    zeroGapInvariantSatisfied: capabilityWorkRemainingCount === 0 && !nativeGapSourceDegraded,
+    capabilityParityClosureRequired: capabilityWorkRemainingCount > 0 || nativeGapSourceDegraded,
+    daemonMayReportGreen: capabilityWorkRemainingCount === 0
+      && !nativeGapSourceDegraded && pickupPendingCount === 0,
     mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
@@ -269,7 +319,13 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: integer(commanderParity?.buildableGapCount) > 0
+    finalVerdict: nativeGapSourceDegraded
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_INTAKE_UNVERIFIED'
+      : nativeCapabilityWorkPending
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_NATIVE_UPLIFT_PENDING'
+      : pickupPendingCount > 0
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PICKUP_PENDING'
+      : remoteParityGapCount > 0
       ? dispatchCount > 0
         ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE'
         : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING'
@@ -283,10 +339,56 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   });
 }
 
+// Commander captures the first 16 KiB of child stdout. Preserve the full private
+// function result above, but keep this established CLI terminal record bounded.
+// Never drop negative custody evidence while removing large parity inventories.
+export function serializeFleetSupervisorTerminalV1(result) {
+  const status = result?.ok === true ? 0 : 2;
+  const projected = projectFleetSupervisorReceiptV1(result, status);
+  const custodyHeld = sovereignMaintenanceCustodyUnprovenV1(
+    { status }, result, FLEET_SUPERVISOR_ACTION,
+  );
+  const terminalValid = isFleetSupervisorTerminalV1(result);
+  const fallback = {
+    schemaVersion: FLEET_SUPERVISOR_SCHEMA, ok: result?.ok === true,
+    finalVerdict: result?.finalVerdict,
+    blockerCode: fleetSupervisorBlockerCodeV1(result?.ok, result?.blocker),
+    ...projectFleetConveyorObservationV1(),
+    activeMissionCount: null, runningMissionCount: null, runnableGoalCount: null,
+    availableSlotCount: null, dispatchCount: null, pickupPendingCount: null,
+    provenPickupCount: null, heldGoalCount: null,
+    duplicateSchedulerAllowed: false, duplicateLeaseAllowed: false,
+    mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+  };
+  const terminal = {
+    ...(projected || fallback),
+    ...(custodyHeld ? { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_BLOCKED',
+      blockerCode: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } : {}),
+    ...(!custodyHeld && !terminalValid ? { ok: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PROTOCOL_INVALID' } : {}),
+    blocker: custodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+      : !terminalValid ? 'FLEET_SUPERVISOR_TERMINAL_RECEIPT_INVALID'
+      : typeof result?.blocker === 'string' && result.blocker.length <= 160
+        ? result.blocker : 'FLEET_SUPERVISOR_REPORTED_BLOCKED',
+    // These private scalars are consumed by the existing goal-builder repair.
+    // The public projection deliberately excludes them and any raw blocker.
+    capabilityCompilerWorkCount: Number.isSafeInteger(result?.capabilityCompilerWorkCount)
+      && result.capabilityCompilerWorkCount >= 0 ? result.capabilityCompilerWorkCount : null,
+    nativeGapCandidateTotalCount: Number.isSafeInteger(result?.nativeGapCandidateTotalCount)
+      && result.nativeGapCandidateTotalCount >= 0 ? result.nativeGapCandidateTotalCount : null,
+    nativeGapSourceHealth: typeof result?.nativeGapSourceHealth === 'string'
+      ? result.nativeGapSourceHealth.slice(0, 80) : 'UNKNOWN',
+    daemonMayReportGreen: !custodyHeld && terminalValid && result?.daemonMayReportGreen === true,
+  };
+  return Object.freeze({
+    stdout: `${FLEET_SUPERVISOR_MARKER}${JSON.stringify(terminal)}\n`,
+    exitCode: terminal.ok ? 0 : 2,
+  });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = await runSovereignCommanderFleetGoalSupervisor();
-  process.stdout.write(
-    `${SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT_MARKER}${JSON.stringify(result)}\n`,
-  );
-  process.exitCode = result.ok ? 0 : 2;
+  const terminal = serializeFleetSupervisorTerminalV1(result);
+  process.stdout.write(terminal.stdout);
+  process.exitCode = terminal.exitCode;
 }

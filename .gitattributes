@@ -15,3 +15,8 @@ shared/**/*.js text eol=lf
 shared/**/*.mjs text eol=lf
 shared/**/*.css text eol=lf
 shared/**/*.json text eol=lf
+# Native admission hashes raw installed bytes against the immutable Git blob.
+scripts/windows/SovereignCoreJobCustodyV1.cs text eol=lf
+scripts/windows/run-sovereign-commander-hidden.ps1 text eol=lf
+scripts/windows/status-stephanos-core-daemon.ps1 text eol=lf
+scripts/windows/stephanos-core-process-observation.ps1 text eol=lf
