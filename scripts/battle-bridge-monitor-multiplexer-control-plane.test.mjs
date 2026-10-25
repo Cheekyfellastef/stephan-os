@@ -283,7 +283,7 @@ test('canonical Battle Bridge reconciliation runs Sovereign caretaker seventh an
   assert.equal(powershellCalls[6].args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')), true);
   assert.equal(powershellCalls[5].args.at(-1), '-StartNow');
   assert.equal(powershellCalls[6].args.includes('-StartNow'), false);
-  assert.deepEqual(powershellCalls[6].args.slice(-2), ['-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5']);
+  assert.deepEqual(powershellCalls[6].args.slice(-2), ['-RequireCapabilityVersion', '2026-10-18-island-action-contract-v6']);
   assert.equal(powershellCalls[6].options.shell, false);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
 });
@@ -387,7 +387,7 @@ test('Sovereign caretaker repair continues when an earlier core installer fails'
   assert.equal(result.sovereignRunnerExitOk, true);
   assert.equal(result.sovereignReceiptValid, true);
   const emergencyCaretaker = spawnSyncFn.calls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
-  assert.deepEqual(emergencyCaretaker.args.slice(-2), ['-RequireCapabilityVersion', '2026-10-13-private-mcp-batch-metadata-v5']);
+  assert.deepEqual(emergencyCaretaker.args.slice(-2), ['-RequireCapabilityVersion', '2026-10-18-island-action-contract-v6']);
   assert.equal(result.tasks.some((task) => task.id === 'sovereignCommanderWatchdog' && task.healthy === true), true);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), true);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
