@@ -138,6 +138,37 @@ test('does not attest an observed source head when native execution fails', asyn
   assert.equal(publicReceipt.operationResult.expectedHeadMatch, false);
 });
 
+test('maps only fixed native principal blockers to non-secret typed public aliases', async () => {
+  const cases = new Map([
+    ['ISLAND_HOST_NATIVE_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_NATIVE_PRINCIPAL_UNAVAILABLE'],
+    ['ISLAND_HOST_NON_ADMINISTRATIVE_TOKEN_REQUIRED', 'RESCUE_ISLAND_REMOTE_NON_ADMINISTRATIVE_PRINCIPAL_REQUIRED'],
+    ['ISLAND_HOST_PRIMARY_TOKEN_REQUIRED', 'RESCUE_ISLAND_REMOTE_PRIMARY_PRINCIPAL_REQUIRED'],
+    ['ISLAND_HOST_PROCESS_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_PROCESS_PRINCIPAL_UNAVAILABLE'],
+    ['ISLAND_HOST_THREAD_TOKEN_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_THREAD_PRINCIPAL_UNAVAILABLE'],
+    ['ISLAND_HOST_TOKEN_GROUPS_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_GROUPS_INVALID'],
+    ['ISLAND_HOST_TOKEN_INFORMATION_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_INFORMATION_INVALID'],
+    ['ISLAND_HOST_TOKEN_PRIVILEGES_INVALID', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_PRIVILEGES_INVALID'],
+    ['ISLAND_HOST_TOKEN_READ_FAILED', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_READ_FAILED'],
+    ['ISLAND_HOST_TOKEN_SIZE_UNAVAILABLE', 'RESCUE_ISLAND_REMOTE_PRINCIPAL_SIZE_UNAVAILABLE'],
+  ]);
+  for (const [nativeBlocker, publicBlocker] of cases) {
+    const result = await executeRescueIslandSupervisedDocumentOnBattleBridge(command(), {
+      platform: 'win32',
+      env: {},
+      spawnSyncFn: () => ({
+        status: 3,
+        stdout: JSON.stringify({ blocker: nativeBlocker }) + '\n',
+        stderr: '',
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, publicBlocker);
+    assert.equal(result.result.blocker, publicBlocker);
+    assert.doesNotMatch(result.blocker, /TOKEN|secret|credential/i);
+    assert.equal(result.secretMaterialReturned, false);
+  }
+});
+
 test('mailbox composition retains exact custom operation and executor', async () => {
   const validated = validateBattleBridgeGitHubCommand(command(), {
     authorLogin: 'Cheekyfellastef',
