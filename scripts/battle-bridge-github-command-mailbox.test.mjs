@@ -678,6 +678,67 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('Sovereign status mailbox carries only bounded guardian cycle proof, never claims material repair', () => {
+  const head = 'c'.repeat(40);
+  const guardian = {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED', autonomousMaterialRepairProven: true,
+    readOnly: true, secretMaterialReturned: false,
+    rawStdout: 'C:\\Users\\Secret\\raw.txt', privateToken: 'do-not-publish',
+  };
+  const makeReceipt = (remoteAction, value = guardian) => ({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-guardian-status-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 3149,
+    branch: 'main', expectedHead: head, state: 'DONE',
+    result: {
+      ok: true, verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-guardian-status-proof-001',
+      result: {
+        ok: true, remoteAction,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
+        sourceHead: head, publicReceiptSafe: true, secretMaterialReturned: false,
+        continuousRepairGuardian: value,
+      },
+    },
+  });
+  const receipt = makeReceipt('status');
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.continuousRepairGuardian, {
+    available: true, enabled: true, running: false, scheduled: true,
+    cycleCount: 13, successCount: 0, failureCount: 13, lastOk: false,
+    lastStartedAtUtc: '2026-10-20T22:45:00.000Z',
+    lastCompletedAtUtc: '2026-10-20T22:46:00.000Z',
+    lastBlocker: 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING',
+    lastFinalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+    loopState: 'CYCLES_OBSERVED',
+    autonomousMaterialRepairProven: false,
+    readOnly: true, secretMaterialReturned: false,
+  });
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result.continuousRepairGuardian;
+  assert.equal(compact.failureCount, 13);
+  assert.equal(compact.autonomousMaterialRepairProven, false);
+  assert.doesNotMatch(serialized, /raw\.txt|do-not-publish|C:\\Users/i);
+
+  const other = createSanitizedMailboxReceiptProjection(makeReceipt('meter-status'));
+  assert.equal(Object.hasOwn(other.operationResult, 'continuousRepairGuardian'), false);
+  const malformed = createSanitizedMailboxReceiptProjection(makeReceipt('status', {
+    ...guardian, cycleCount: '100', loopState: 'CYCLES_OBSERVED',
+    lastBlocker: 'C:\\Users\\private',
+  }));
+  assert.equal(malformed.operationResult.continuousRepairGuardian.available, false);
+  assert.equal(malformed.operationResult.continuousRepairGuardian.loopState, 'UNKNOWN');
+  assert.equal(malformed.operationResult.continuousRepairGuardian.cycleCount, null);
+});
+
 test('Sovereign Commander blocked receipts preserve only bounded failure diagnostics', () => {
   const head = 'c'.repeat(40);
   const receipt = {

@@ -4,6 +4,7 @@ import {
   FLEET_SUPERVISOR_ACTION as ACTION, FLEET_SUPERVISOR_SCHEMA as SCHEMA,
   FLEET_SUPERVISOR_MARKER as MARKER, projectFleetConveyorObservationV1 as observe,
   projectFleetSupervisorReceiptV1 as project, compactFleetSupervisorReceiptV1 as compact,
+  createFleetRetryScanObservationV1 as createScan,
 } from './sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { readSovereignMaintenanceTerminalReceiptV1 as read,
   sovereignMaintenanceCustodyUnprovenV1 as custody,
@@ -52,6 +53,96 @@ test('missing observations remain absent and unknown rather than successful empt
     admission: { present: false, classification: 'UNKNOWN', reasonCode: 'UNKNOWN' },
     held: { count: null, reasons: [], truncated: false },
   });
+});
+
+function storedState(issueNumber = 2964, changes = {}) {
+  return { missionId: 'critical-' + issueNumber + '-elastic-goal', repository: 'Cheekyfellastef/stephan-os',
+    currentPhase: 'BLOCKED', revision: 17, updatedAt: '2026-10-25T09:50:00.000Z',
+    dispatch: { status: 'failed' }, continuity: { parkingStatus: 'PARKED_BLOCKED' }, ...changes };
+}
+
+test('retry snapshots retain original identity/state across mutations and follow actual candidate ordering', () => {
+  const old = storedState(1557), original = storedState(), later = storedState(4000);
+  const unrelated = Array.from({ length: 15 }, (_, index) => storedState(1000 + index, { currentPhase: 'COMPLETE' }));
+  const scan = createScan([...unrelated, later, original, old]);
+  scan.note(old, 'OWNER_TEST_SET_UNCHANGED');
+  scan.note(original, 'RETRY_READMITTED');
+  const before = structuredClone(original);
+  original.currentPhase = 'AGENT_IMPLEMENTATION'; original.revision += 1;
+  original.dispatch.status = 'pending'; original.missionId = 'critical-9999-elastic-goal';
+  const result = scan.snapshot([old, original, later], 2);
+  assert.deepEqual(result.reasons, [
+    { issueNumber: 1557, gateCode: 'OWNER_TEST_SET_UNCHANGED' },
+    { issueNumber: 2964, gateCode: 'RETRY_READMITTED' },
+    { issueNumber: 4000, gateCode: 'NOT_EVALUATED' },
+  ]);
+  assert.equal(result.recordCount, 18); assert.equal(result.candidateCount, 3); assert.equal(result.evaluatedCount, 2);
+  assert.equal(result.truncated, false);
+  assert.equal(result.recovery.matchCount, 1); assert.equal(result.recovery.state.issueNumber, 2964);
+  assert.equal(result.recovery.state.phase, before.currentPhase);
+  assert.equal(result.recovery.state.dispatchStatus, before.dispatch.status);
+  assert.equal(result.recovery.state.revision, before.revision);
+});
+
+test('fixed witness cannot alias a foreign repository, mission family or duplicate issue record', () => {
+  for (const changes of [{ repository: 'foreign/private' }, { missionId: 'critical-2964-other-family' }]) {
+    const state = storedState(2964, changes), scan = createScan([state]);
+    scan.note(state, 'OWNER_TEST_SET_UNCHANGED');
+    const result = scan.snapshot([state], 1);
+    assert.equal(result.recovery.matchCount, 1);
+    assert.equal(result.recovery.state, null);
+    assert.equal(result.recovery.gateCode, 'MISSION_IDENTITY_UNPROVEN');
+  }
+  const original = storedState(), foreign = storedState(2964, { repository: 'foreign/private' });
+  const duplicate = createScan([original, foreign]).snapshot([original, foreign], 0);
+  assert.equal(duplicate.recovery.matchCount, 2);
+  assert.equal(duplicate.recovery.state, null);
+  assert.equal(duplicate.recovery.gateCode, 'AMBIGUOUS_MISSION_IDENTITY');
+  const absent = createScan([]).snapshot([], 0);
+  assert.equal(absent.recovery.matchCount, 0);
+  assert.equal(absent.recovery.gateCode, 'MISSION_NOT_OBSERVED');
+});
+
+test('optional contradictory snapshots are dropped without changing mandatory fleet truth', () => {
+  const state = storedState(), observer = createScan([state]);
+  observer.note(state, 'OWNER_TEST_SET_UNCHANGED');
+  const observed = observe({ retryAdmission: { retryScan: observer.snapshot([state], 1) },
+    elasticAdmission: { selectedMission: state, activeMissions: [state] } });
+  const complete = receipt(observed), clean = project(complete, 0);
+  assert.ok(clean.missionDiagnostics);
+  for (const gateCode of ['NOT_OBSERVED', 'MISSION_NOT_OBSERVED', 'AMBIGUOUS_MISSION_IDENTITY', 'MISSION_IDENTITY_UNPROVEN']) {
+    for (const omitted of [false, true]) {
+      const candidate = structuredClone(complete);
+      const recovery = candidate.missionDiagnostics.retryScan.recovery;
+      recovery.gateCode = gateCode;
+      if (omitted) { recovery.state = null; recovery.stateOmitted = true; }
+      const result = project(candidate, 0);
+      assert.ok(result); assert.equal(result.missionDiagnostics, undefined);
+      assert.equal(result.ok, clean.ok); assert.equal(result.finalVerdict, clean.finalVerdict);
+    }
+  }
+  const noCount = structuredClone(complete);
+  noCount.missionDiagnostics.storedMissions.activeCount = null;
+  noCount.missionDiagnostics.storedMissions.active = [];
+  assert.equal(project(noCount, 0).missionDiagnostics, undefined);
+  const malicious = structuredClone(complete);
+  malicious.missionDiagnostics.retryScan.recovery.gateCode = 'GITHUB_PAT_PRIVATE_CODE_SHAPED_SECRET';
+  const result = project(malicious, 0);
+  assert.equal(result.missionDiagnostics, undefined);
+  assert.equal(JSON.stringify(result).includes('PRIVATE'), false);
+});
+
+test('stored snapshot fields reject coercion and report canonical time without exposing arbitrary state', () => {
+  const state = storedState(2964, { revision: '17', updatedAt: '2026-02-30T12:00:00.000Z',
+    currentPhase: 'PRIVATE_PATH', dispatch: { status: 'TOKEN' }, continuity: { parkingStatus: 'PASSWORD' } });
+  const result = observe({ elasticAdmission: { selectedMission: state, activeMissions: [state] } });
+  assert.deepEqual(result.missionDiagnostics.storedMissions.selected, { issueNumber: 2964,
+    phase: 'UNKNOWN', dispatchStatus: 'UNKNOWN', continuity: 'UNKNOWN', revision: null, updatedAt: null });
+  assert.equal(result.missionDiagnostics.retryScan.observed, false);
+  assert.equal(result.missionDiagnostics.retryScan.recovery.matchCount, null);
+  assert.equal(result.missionDiagnostics.retryScan.recovery.gateCode, 'NOT_OBSERVED');
+  assert.equal(JSON.stringify(result).includes('PRIVATE_PATH'), false);
+  assert.equal(JSON.stringify(result).includes('PASSWORD'), false);
 });
 
 test('code-shaped secrets, dynamic exceptions, paths and contradictory identities do not escape', () => {
@@ -224,15 +315,24 @@ test('large actual fleet result fits real Commander capture and preserves privat
   const parity = { ok: true, buildableGapCount: 0, capabilityCompiler: { buildableCapabilityCount: 3 },
     nativeGapIntake: { candidateTotalCount: 500 }, nativeGapSourceHealth: 'DEGRADED',
     privateInventory: 'C:\\PRIVATE\\TOKEN'.repeat(10_000) };
+  const original = storedState();
+  const records = [...Array.from({ length: 100 }, (_, index) => storedState(1000 + index)), original];
+  const scan = createScan(records);
+  for (const state of records) scan.note(state, 'OWNER_TEST_SET_UNCHANGED');
+  const after = storedState(2964, { currentPhase: 'AGENT_IMPLEMENTATION', revision: 18,
+    dispatch: { status: 'running' }, continuity: { parkingStatus: 'ACTIVE' } });
   const raw = await runFleet({ reconcileCommanderParity: async () => parity,
     conveyor: async () => ({ ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED', programmeStatus: 'READY',
-      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      retryAdmission: { classification: 'SOURCE_DIFF_RETRY_REQUIRES_STRONGER_OWNER_ACCEPTANCE',
+        retried: false, missionId: 'critical-1557-elastic-goal', retryScan: scan.snapshot(records, records.length) },
+      elasticAdmission: { selectedMission: after, activeMissions: [after, ...records], runnableMissions: [] },
       elasticIgnition: { availableSlots: 1, dispatchCount: 0, held: [] } }) });
   assert.equal(raw.commanderParity, parity);
   assert.ok(Buffer.byteLength(JSON.stringify(raw)) > 16 * 1024);
   const terminal = serialize(raw);
   assert.ok(Buffer.byteLength(terminal.stdout) < 16 * 1024);
   assert.equal(terminal.stdout.includes('PRIVATE'), false);
+  assert.equal(terminal.stdout.includes('critical-2964'), false);
   const root = '/tmp/stephanos-fleet-receipt-test';
   const command = buildStephanosExecutionCommandEnvelopeV1({
     catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
@@ -261,7 +361,17 @@ test('large actual fleet result fits real Commander capture and preserves privat
     assert.equal(parsed.nativeGapCandidateTotalCount, 500);
     assert.equal(parsed.nativeGapSourceHealth, 'DEGRADED');
     assert.equal(parsed.daemonMayReportGreen, false);
-    assert.equal(project(parsed, 0).provenPickupCount, 0);
+    const packet = project(parsed, 0);
+    assert.equal(packet.provenPickupCount, 0);
+    assert.equal(packet.retryAdmission.issueNumber, 1557);
+    assert.equal(packet.missionDiagnostics.retryScan.recovery.state.revision, 17);
+    assert.equal(packet.missionDiagnostics.retryScan.recovery.gateCode, 'OWNER_TEST_SET_UNCHANGED');
+    assert.equal(packet.missionDiagnostics.retryScan.reasons.length, 8);
+    assert.equal(packet.missionDiagnostics.retryScan.truncated, true);
+    assert.equal(packet.missionDiagnostics.storedMissions.selected.revision, 18);
+    assert.equal(packet.missionDiagnostics.storedMissions.selected.dispatchStatus, 'running');
+    assert.equal(packet.missionDiagnostics.storedMissions.active.length, 4);
+    assert.equal(packet.missionDiagnostics.persistedStateOnly, true);
     assert.equal(guardian.status().timeoutCustodyHeld, false);
     const next = await guardian.withMaintenanceOwner({}, async () => ({ ok: true, structuredContent: { status: 0 } }));
     assert.equal(next.ok, true, 'fresh terminal permits the next normal owner action');

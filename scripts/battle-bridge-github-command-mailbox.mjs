@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { MAINTENANCE_RECOVERY_OPERATIONS, projectMaintenanceRecoveryReceiptV1 } from '../shared/agents/sovereignMaintenanceRecoveryMailboxV1.mjs';
 import { validateWindowsCalibrationRemoteProjectionV1 } from '../shared/agents/sovereignWindowsCalibrationRemoteV1.mjs';
 import { FLEET_SUPERVISOR_ACTION, projectFleetSupervisorReceiptV1,
   compactFleetSupervisorReceiptV1 } from '../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
@@ -1572,6 +1574,52 @@ function safeCpuPressureReceiptProjection(operationResult = {}) {
   });
 }
 
+// The authenticated local /health guardian is already projected by Commander,
+// but the public GitHub mailbox formerly dropped it. Publish only this bounded
+// allowlist; a healthy HTTP listener or a cycleCount > 0 is NOT material repair.
+function safeSovereignGuardianReceiptProjection(operationResult = {}) {
+  if (operationResult?.remoteAction !== 'status'
+    || operationResult?.ok !== true
+    || operationResult?.finalVerdict !== 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE'
+    || operationResult?.publicReceiptSafe !== true
+    || operationResult?.secretMaterialReturned !== false) return null;
+  const value = operationResult?.continuousRepairGuardian;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const count = v => Number.isSafeInteger(v) && v >= 0 && v <= 1_000_000_000 ? v : null;
+  const token = v => typeof v === 'string'
+    && /^[A-Z0-9][A-Z0-9_.:-]{0,159}$/.test(v) ? v : '';
+  const stamp = v => typeof v === 'string' && v.length > 0 && v.length <= 40
+    && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : '';
+  const state = ['UNKNOWN', 'DISABLED', 'AWAITING_FIRST_CYCLE',
+    'NOT_SCHEDULED', 'CYCLES_OBSERVED'].includes(value.loopState)
+    ? value.loopState : 'UNKNOWN';
+  const available = value.available === true
+    && typeof value.enabled === 'boolean'
+    && typeof value.running === 'boolean'
+    && typeof value.scheduled === 'boolean'
+    && count(value.cycleCount) !== null
+    && count(value.successCount) !== null
+    && count(value.failureCount) !== null;
+  return Object.freeze({
+    available,
+    enabled: available ? value.enabled : null,
+    running: available ? value.running : null,
+    scheduled: available ? value.scheduled : null,
+    cycleCount: available ? count(value.cycleCount) : null,
+    successCount: available ? count(value.successCount) : null,
+    failureCount: available ? count(value.failureCount) : null,
+    lastStartedAtUtc: available ? stamp(value.lastStartedAtUtc) : '',
+    lastCompletedAtUtc: available ? stamp(value.lastCompletedAtUtc) : '',
+    lastOk: available && typeof value.lastOk === 'boolean' ? value.lastOk : null,
+    lastBlocker: available ? token(value.lastBlocker) : '',
+    lastFinalVerdict: available ? token(value.lastFinalVerdict) : '',
+    loopState: available ? state : 'UNKNOWN',
+    autonomousMaterialRepairProven: false,
+    readOnly: true,
+    secretMaterialReturned: false,
+  });
+}
+
 // Closed-world public summary for the fixed original-r7 Windows witness readiness
 // observation. A source-only preflight is never permission to install, sign,
 // release the lease, or infer exclusion from an empty process census.
@@ -1750,6 +1798,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     processId: safeTelemetryId(operationResult?.processId),
     ...(fleetSupervisor ? { fleetSupervisor } : {}),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    ...(remoteAction === 'status' ? {
+      continuousRepairGuardian: safeSovereignGuardianReceiptProjection(operationResult),
+    } : {}),
     errorCode: safeTelemetryText(operationResult?.errorCode, 120),
     executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     // Archive diagnostics only: expose a typed, minimal failure shape so an
@@ -2226,7 +2277,8 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
-      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -2322,6 +2374,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+      ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -2612,6 +2665,17 @@ function compactProgrammeAuthorityForCoreReceipt(receipt, inner) {
 
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24, fleetHeldLimit = 8) {
   const inner = compactReceipt?.result?.result || {};
+  // Preserve only the existing typed owner failure, including its unknown exit,
+  // when byte-budget compaction removes optional diagnostics. This is no grant
+  // or fleet completion proof; command identities and native output stay private.
+  const fleetOwnerFailure = inner.remoteAction === FLEET_SUPERVISOR_ACTION && inner.ok === false
+    && inner.processId === FLEET_SUPERVISOR_ACTION && inner.maintenanceStatus === null
+    && inner.publicReceiptSafe === true && inner.secretMaterialReturned === false
+    && [SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, 'SOVEREIGN_MAINTENANCE_OWNER_BUSY',
+      'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE'].includes(inner.executionBlocker)
+    && ['', 'ETIMEDOUT', 'ABORT_ERR'].includes(inner.errorCode)
+    ? { processId: FLEET_SUPERVISOR_ACTION, errorCode: inner.errorCode,
+      executionBlocker: inner.executionBlocker } : null;
   return Object.freeze({
     schemaVersion: compactReceipt.schemaVersion,
     requestId: compactReceipt.requestId,
@@ -2634,6 +2698,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
       requestId: compactReceipt?.result?.requestId || compactReceipt.requestId,
       result: Object.freeze({
         ok: inner?.ok !== false,
+        ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
         blocker: inner?.blocker || '',
         finalVerdict: inner?.finalVerdict || '',
         expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
@@ -2642,6 +2707,10 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         expectedHeadMatch: inner?.expectedHeadMatch ?? null,
         remoteAction: inner?.remoteAction || '',
         remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        ...(fleetOwnerFailure ? {
+          ...fleetOwnerFailure,
+          remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 6) : [],
+        } : {}),
         ...(inner?.remoteAction === FLEET_SUPERVISOR_ACTION && inner?.fleetSupervisor
           ? { fleetSupervisor: compactFleetSupervisorReceiptV1(inner.fleetSupervisor, fleetHeldLimit) } : {}),
         ...(Array.isArray(inner?.completedSteps)
@@ -2692,7 +2761,8 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
     ? nestedOperationResult
     : (
-      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      (receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+        || MAINTENANCE_RECOVERY_OPERATIONS.includes(receipt?.operation))
       && execution && typeof execution === 'object' && !Array.isArray(execution)
         ? execution
         : {}
@@ -2786,6 +2856,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
+      ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),

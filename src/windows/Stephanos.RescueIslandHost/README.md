@@ -266,3 +266,32 @@ or test mode. Source smoke exercises real token, lock, file, Git, Node and
 read-only governor boundaries; it is not the complete Windows qualification.
 The full unfiltered adapter suite remains mandatory in hosted protected CI.
 No copied binary is installed on the OS or granted runtime authority.
+
+## Supervised Island 02 documentation route
+
+The same narrow native ingress can dispatch a documentation task for
+rescue-island-02. Its exact owner is #3103 — Rescue Island: two independent
+proof-gated builders outside Goal Conveyor. Authenticated consent uses:
+
+/rescue-island-02 supervised-cooperative <current-main-SHA> <task-id> <SHA256-of-approved-content>
+
+The task, issue/title, original owner comment, content and current main must
+match. Island01 or source-proposal consent cannot authorise this route.
+Worker02 source proposals remain unsupported. Integration of this code is not
+live commissioning; each live task still needs fresh exact scoped consent.
+
+Worker02 owns the separate fixed worktrees/rescue-island-02 Git estate.
+It repeatedly reads both Island estates and canonical/Seed reservations, checks
+physical identities and preserved files, and requires actual retained Island01
+commit, exact-parent/diff/blob and passing-test artifacts before setup.
+Changed, ambiguous or overlapping claims and unexplained peer mutations hold
+execution; no prior claim or failed evidence is cleared.
+
+Both workers reuse the original whole-operation lock. Their CPU work is
+serial, with non-administrative execution, below-normal priority and gaming
+priority. This is a shared cooperative host and token observer, not a second
+Windows principal, independent witness, hostile-writer boundary or concurrent
+CPU grant. Stage receipts identify the actual worker, task/execution owner and
+CPU_ONLY_SERIAL_EXISTING_OWNER_LOCK policy under SUPERVISED_COOPERATIVE_V1.
+Strict construction remains refused; Seed processes/models, unattended refill
+and the original R7 lease are unchanged.
