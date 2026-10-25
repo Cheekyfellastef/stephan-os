@@ -10,12 +10,16 @@ import { executeSovereignDirectoryCreateV1 as create, validateSovereignDirectory
 import { createSovereignCommanderMcpHandler } from '../../scripts/sovereign-commander-mcp.mjs';
 
 const TARGET = 'C:\\Temp\\José-测试-🚀';
+const TRIM_TAILS = ['\u00a0', '\u1680', ...Array.from({length:11}, (_,i)=>String.fromCharCode(0x2000+i)),
+  '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff'];
 const receipt = overrides => ({ schemaVersion: 'stephanos.sovereign-directory-create.v1', ok: true,
   path: TARGET, created: true, recursive: false, parentIdentity: '12345678:1234567812345678',
   identity: '12345678:1234567812345679', mutationState: 'CREATED', ...overrides });
 
 test('one Windows target is literal: no normalization, device aliases, network or extra scope', () => {
   assert.equal(valid(TARGET), true);
+  assert.equal(valid('C:\\Temp\\interior\u00a0space'), true);
+  for (const tail of TRIM_TAILS) assert.equal(valid(TARGET + tail), false, `trim tail U+${tail.codePointAt(0).toString(16)}`);
   for (const path of [null, 1, '', 'relative', '/', 'C:\\', 'C:relative',
     'C:/Temp/child', '\\\\server\\share\\child', '\\\\?\\C:\\Temp\\child',
     'C:\\Temp\\..\\child', 'C:\\Temp\\.\\child', 'C:\\Temp\\child ',
@@ -90,7 +94,8 @@ test('MCP refuses whitespace-normalized targets and unknown properties before th
   await handler('initialize', {}, message);
   await handler('notifications/initialized', {}, { isNotification: true });
   await handler('tools/list', {}, message);
-  for (const path of ['C:\\Temp\\new ', ' C:\\Temp\\new', 'C:\\Temp\\new.', 'C:\\Temp\\..\\new']) {
+  for (const path of ['C:\\Temp\\new ', ' C:\\Temp\\new', 'C:\\Temp\\new.', 'C:\\Temp\\..\\new',
+    ...TRIM_TAILS.map(tail => TARGET + tail)]) {
     const result = await handler('tools/call', { name: 'create_directory', arguments: { path } }, message);
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.blocker, 'SOVEREIGN_DIRECTORY_TARGET_INVALID');

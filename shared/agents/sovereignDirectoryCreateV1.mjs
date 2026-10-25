@@ -14,7 +14,10 @@ const SCRIPT_SHA256 = '327d29c2fbfdf6b6949e35f279e694bd05143c036c6bad1281f40e30e
 const NATIVE_SHA256 = 'f522113d39222214dfe89c3ff8d9248d25584aecc66e1ce5ff1c83324344526b';
 
 export function validateSovereignDirectoryTargetV1(path) {
-  if (typeof path !== 'string' || path.length > 1024 || !/^[a-z]:\\[^\\]/i.test(path)) return false;
+  // The command fabric trims target lists. Refuse any spelling it would
+  // change before the path crosses that boundary; keep interior Unicode exact.
+  if (typeof path !== 'string' || path !== path.trim() || path.length > 1024
+    || !/^[a-z]:\\[^\\]/i.test(path)) return false;
   return path.slice(3).split('\\').every(part => part.length > 0 && part.length <= 255
     && part !== '.' && part !== '..' && !/[ .]$/.test(part)
     && !/[\x00-\x1f<>:"/|?*]/.test(part)
