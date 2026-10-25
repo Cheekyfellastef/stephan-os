@@ -455,3 +455,68 @@ test('real Git: linked worktree is refused before repository-wide extension muta
   assert.equal(repaired.mutationPerformed, false);
   assert.equal(git('config', '--local', '--get', 'extensions.worktreeConfig').trim(), 'true');
 });
+
+
+test('worktree-aware inspection resolves the verified repository with -C rather than forced git-dir/work-tree', () => {
+  const f = fixture();
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: f.spawnSyncFn,
+    inspectTopologyFn: f.inspectTopologyFn,
+    existsFn: f.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  const call = f.calls.find(args => args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain'));
+  assert.ok(call);
+  assert.equal(call.includes('-C'), true);
+  assert.equal(call[call.indexOf('-C') + 1], '/fixture/Documents/GitHub/stephan-os');
+  assert.equal(call.some(arg => arg.startsWith('--git-dir=')), false);
+  assert.equal(call.some(arg => arg.startsWith('--work-tree=')), false);
+});
+
+test('fixed one-key repair uses the same worktree-aware enumeration before mutation', () => {
+  const f = fixture();
+  const repaired = invoke(f);
+  assert.equal(repaired.ok, true);
+  const call = f.calls.find(args => args.join('\u0001').endsWith('worktree\u0001list\u0001--porcelain'));
+  assert.ok(call);
+  assert.equal(call.includes('-C'), true);
+  assert.equal(call.some(arg => arg.startsWith('--git-dir=')), false);
+  assert.equal(call.some(arg => arg.startsWith('--work-tree=')), false);
+  assert.equal(f.mutationCount(), 1);
+});
+
+test('worktree inspection and repair do not depend on the failing forced git-dir worktree-list form', () => {
+  const base = fixture();
+  const guarded = (_command, args, options) => {
+    const tail = args.join('\u0001');
+    if (tail.endsWith('worktree\u0001list\u0001--porcelain')
+        && args.some(arg => arg.startsWith('--git-dir='))) {
+      return result(128, '');
+    }
+    return base.spawnSyncFn(_command, args, options);
+  };
+  const inspected = inspectCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: guarded,
+    inspectTopologyFn: base.inspectTopologyFn,
+    existsFn: base.existsFn,
+  });
+  assert.equal(inspected.ok, true);
+  const repaired = repairCanonicalGitWorktreeConfigV1({
+    repositoryRoot: '/fixture/Documents/GitHub/stephan-os',
+    expectedHead: HEAD,
+    platform: 'linux',
+    environment: {},
+    spawnSyncFn: guarded,
+    inspectTopologyFn: base.inspectTopologyFn,
+    existsFn: base.existsFn,
+  });
+  assert.equal(repaired.ok, true);
+});
