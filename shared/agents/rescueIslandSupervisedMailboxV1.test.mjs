@@ -110,8 +110,16 @@ test('does not attest an observed source head when native execution fails', asyn
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
+  assert.equal(result.finalVerdict, 'RESCUE_ISLAND_02_SUPERVISED_DOCUMENT_BUILD_BLOCKED');
+  assert.equal(result.result.ok, false);
+  assert.equal(result.result.blocker, 'ISLAND_HOST_CANONICAL_SOURCE_CHANGED');
+  assert.equal(result.result.publicReceiptSafe, true);
+  assert.equal(result.result.secretMaterialReturned, false);
   assert.equal(Object.hasOwn(result, 'sourceHead'), false);
   assert.equal(Object.hasOwn(result, 'expectedHeadMatch'), false);
+  assert.equal(Object.hasOwn(result.result, 'sourceHead'), false);
+  assert.equal(Object.hasOwn(result.result, 'expectedHeadMatch'), false);
   assert.equal(result.proofCompleted, false);
 });
 
