@@ -520,6 +520,16 @@ test('worker02 real adapters build in their own estate with exact parent and ret
   assert.equal(retained.contentSha256,hash(f.task.content));
   assert.deepEqual(retained.stages,['SELECTED','CLAIMED','BRANCH_RESERVED','PHYSICAL_PICKUP',
     'EDITED','TESTED','ISOLATED_COMMIT']);
+  const marker=join(f.root,'retained-filter-executed.txt');
+  git(f.host.roots.repoRoot,['config','filter.retained-proof.clean',
+    'cmd.exe /d /c echo unsafe>'+marker]);
+  await writeFile(join(f.host.roots.repoRoot,'.git/info/attributes'),'* filter=retained-proof\n');
+  const target=join(f.host.roots.worktreeRoot,f.task.taskId,f.task.targetPath);
+  await writeFile(target,await readFile(target));
+  await assert.rejects(f.host.host.withExistingOwnerAdmission(f.expected,
+    ()=>f.host.host.observeRetainedSupervisedCompletion(f.expected,hash(f.task.content))),
+  error=>error?.code==='ISLAND_HOST_RETAINED_REPOSITORY_CONFIGURATION_CHANGED');
+  await assert.rejects(stat(marker),error=>error?.code==='ENOENT');
 });
 test('the original operation lock excludes simultaneous cooperative lanes',async t=>{
   const f=await fixture(t,{worker02:true}),other=createRescueIslandSupervisedHostV1({...f.config,workerId:'rescue-island-01'});

@@ -565,6 +565,12 @@ export function createRescueIslandSupervisedHostV1(configuration={}) {
         || saved.targetPath!==expected.targetPath || saved.taskFingerprint!==expected.taskFingerprint
         || saved.assuranceProfile!==PROFILE || JSON.stringify(saved.roots)!==JSON.stringify(roots))
         held('ISLAND_HOST_RETAINED_ADMISSION_IDENTITY_CHANGED');
+      // Reapply the closed-world Git configuration gate immediately before
+      // any retained worktree inspection. `git status` may otherwise invoke a
+      // clean filter introduced after the original admission.
+      if(!validateBattleBridgeLocalGitConfiguration(
+        git(roots.repoRoot,['config','--local','--null','--list'])).ok)
+        held('ISLAND_HOST_RETAINED_REPOSITORY_CONFIGURATION_CHANGED');
       if(!await retainedCompletion(saved))held('ISLAND_HOST_RETAINED_ADMISSION_INCOMPLETE');
       const claimsRoot=join(roots.receiptRoot,'claims');
       const committed=await json(join(claimsRoot,saved.taskId+'.ISOLATED_COMMIT.json'));
