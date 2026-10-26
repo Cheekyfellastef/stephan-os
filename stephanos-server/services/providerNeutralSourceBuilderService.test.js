@@ -9,6 +9,39 @@ import { tmpdir } from 'node:os';
 
 import { processNextProviderNeutralSourceBuild } from './providerNeutralSourceBuilderService.js';
 
+test('model sees bounded required tests while their edit authority stays closed', async t => {
+  for (const attemptTestEdit of [false, true]) await t.test(String(attemptTestEdit), async () => {
+    const fx = await fixture(['node --test tests/acceptance.test.mjs']);
+    fx.action.allowedFiles = ['shared/agents/example.mjs'];
+    await mkdir(join(fx.repoRoot, 'tests'));
+    const testSource = "import assert from 'node:assert/strict';\nimport { value } from '../shared/agents/example.mjs';\nassert.equal(value, 2, 'readonly-acceptance-marker');\n";
+    await writeFile(join(fx.repoRoot, 'tests/acceptance.test.mjs'), testSource);
+    assert.equal(run('git.exe', ['-C', fx.repoRoot, 'add', '.'], {cwd: fx.repoRoot}).status, 0);
+    assert.equal(run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'independent acceptance'], {cwd: fx.repoRoot}).status, 0);
+    fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], {cwd: fx.repoRoot}).stdout.trim();
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+      repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+      claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+      localModelFetchImpl: async (_url, request) => {
+        const prompt = JSON.parse(request.body).messages[0].content;
+        assert.match(prompt, /Read-only required-test context/);
+        assert.match(prompt, /readonly-acceptance-marker/);
+        const edit = attemptTestEdit
+          ? {path: 'tests/acceptance.test.mjs', old: testSource, new: '// bypass\n'}
+          : {path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;'};
+        return {ok: true, json: async () => ({message: {content: JSON.stringify({edits: [edit], summary: 'bounded test-driven repair'})}})};
+      },
+      collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+    });
+    assert.equal(result.success, !attemptTestEdit, result.error);
+    assert.equal(await readFile(join(fx.repoRoot, 'tests/acceptance.test.mjs'), 'utf8'), testSource);
+    if (attemptTestEdit) assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION/);
+    else assert.equal(result.testsPassed, true);
+  });
+});
+
 function run(executable, args, options = {}) {
   const childEnv = { ...(options.env || process.env) };
   delete childEnv.NODE_TEST_CONTEXT;

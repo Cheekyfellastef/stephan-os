@@ -1,4 +1,4 @@
-import { projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
 
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -42,8 +42,13 @@ function unique(values) {
   return [...new Set(values)];
 }
 
-export function isRetryableAgentFailureBlocker(value) {
+export function isRetryableAgentFailureBlocker(value, requiredTests = []) {
   const blocker = text(value);
+  const testPrefix = 'PROVIDER_NEUTRAL_TEST_FAILED:';
+  if (blocker.startsWith(testPrefix)) {
+    const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
+    return plan.valid && plan.supplied && plan.commands.includes(blocker.slice(testPrefix.length));
+  }
   if (RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(blocker)) return true;
   return RETRYABLE_AGENT_FAILURE_PATH_PREFIXES.some((prefix) => {
     if (!blocker.startsWith(prefix) || blocker.length <= prefix.length) return false;
@@ -54,9 +59,9 @@ export function isRetryableAgentFailureBlocker(value) {
 // Parking releases a construction slot; it must not change the existing bounded
 // failure policy. Custody, clean worktree, CAS, acceptance and budget remain
 // separate retry gates. This predicate is shared by selection and reduction.
-export function isRetryableParkedAgentFailure(blockers) {
+export function isRetryableParkedAgentFailure(blockers, requiredTests = []) {
   return Array.isArray(blockers) && blockers.length > 0
-    && blockers.every(isRetryableAgentFailureBlocker);
+    && blockers.every(reason => isRetryableAgentFailureBlocker(reason, requiredTests));
 }
 
 function normalizePath(value) {
@@ -405,7 +410,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
 
   if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
-      && isRetryableParkedAgentFailure(state.blockers);
+      && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
     const strengthened = event.retryRequiredTests === undefined ? null
       : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, state.allowedFiles);
@@ -416,10 +421,11 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
     }
     const retryableBlockers = unique(list(event.retryableBlockers).map(text));
-    const currentRetryable = state.blockers.filter(isRetryableAgentFailureBlocker);
-    const nonRetryable = state.blockers.filter((reason) => !isRetryableAgentFailureBlocker(reason));
+    const retryable = reason => isRetryableAgentFailureBlocker(reason, state.requiredTests);
+    const currentRetryable = state.blockers.filter(retryable);
+    const nonRetryable = state.blockers.filter((reason) => !retryable(reason));
     if (!retryableBlockers.length
-      || retryableBlockers.some((reason) => !isRetryableAgentFailureBlocker(reason) || !state.blockers.includes(reason))
+      || retryableBlockers.some((reason) => !retryable(reason) || !state.blockers.includes(reason))
       || nonRetryable.length
       || retryableBlockers.length !== currentRetryable.length) {
       return block(state, 'Retry admission can only clear the complete current set of bounded retryable agent failures.', timestamp);
