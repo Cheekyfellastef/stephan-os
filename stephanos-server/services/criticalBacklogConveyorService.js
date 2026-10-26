@@ -431,10 +431,10 @@ export async function retrySafelyBlockedAgentFailure({
     };
     const eligible = checked('PHASE_NOT_BLOCKED', text(record?.currentPhase).toUpperCase() === 'BLOCKED')
       && checked('CONTINUITY_NOT_RETRYABLE', continuityStatus(record) === ACTIVE_CONTINUITY
-        || (continuityStatus(record) === PARKED_BLOCKED && isRetryableParkedAgentFailure(blockers)))
+        || (continuityStatus(record) === PARKED_BLOCKED && isRetryableParkedAgentFailure(blockers, record.requiredTests)))
       && checked('DISPATCH_NOT_FAILED', text(record?.dispatch?.status).toLowerCase() === 'failed')
       && checked('NO_RETRYABLE_BLOCKERS', blockers.length > 0)
-      && checked('NON_RETRYABLE_BLOCKER', blockers.every(isRetryableAgentFailureBlocker))
+      && checked('NON_RETRYABLE_BLOCKER', blockers.every(reason => isRetryableAgentFailureBlocker(reason, record.requiredTests)))
       && checked('REPAIR_BUDGET_INVALID', Number.isSafeInteger(currentRound))
       && checked('REPAIR_BUDGET_INVALID', currentRound >= 0)
       && checked('REPAIR_BUDGET_INVALID', Number.isSafeInteger(maximumRounds))
@@ -637,7 +637,7 @@ export async function retrySafelyBlockedAgentFailure({
   const retried = continuityStatus(state) === ACTIVE_CONTINUITY
     && text(state?.dispatch?.status).toLowerCase() === 'pending'
     && text(state?.currentPhase).toUpperCase() === 'AGENT_IMPLEMENTATION'
-    && !(Array.isArray(state?.blockers) && state.blockers.some(isRetryableAgentFailureBlocker));
+    && !(Array.isArray(state?.blockers) && state.blockers.some(reason => isRetryableAgentFailureBlocker(reason, state.requiredTests)));
   observation.note(candidateRecord, retried ? 'RETRY_READMITTED' : 'RETRY_READMISSION_BLOCKED');
   return observedResult({
     ok: retried,
