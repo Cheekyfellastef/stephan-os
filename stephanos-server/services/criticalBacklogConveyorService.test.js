@@ -17,11 +17,15 @@ import {
 
 test('parking preserves bounded model-failure retries without bypassing custody, budget or scope', async t => {
   const failures = [...RETRYABLE_AGENT_FAILURE_BLOCKERS.filter(x => x !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'),
-    'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:stephanos-server/services/example.js'];
+    'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:stephanos-server/services/example.js',
+    'PROVIDER_NEUTRAL_TEST_FAILED:npm run stephanos:verify',
+    'PROVIDER_NEUTRAL_TEST_FAILED:node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs'];
   for (const failure of failures) for (const mode of ['released', 'custody-held', 'dirty', 'exhausted', 'mixed', 'running', 'revision-moved']) {
     await t.test(`${failure}:${mode}`, async () => {
       const paths = await roots();
       const mission = elasticImplementationMission(2964);
+      mission.requiredTests = ['npm run stephanos:verify',
+        'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs'];
       let state = createMissionOrchestratorState({...mission, branch: mission.git.branch,
         worktreePath: mission.git.worktreePath, repositoryRoot: paths.repoRoot});
       const proof = receiptId => ({receiptId, requirement: 'fixture proof', source: 'deterministic-test',
