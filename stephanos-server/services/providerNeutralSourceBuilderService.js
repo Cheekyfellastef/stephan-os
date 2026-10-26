@@ -15,6 +15,7 @@ import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js'
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
 import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { requestBoundedOllamaJsonReplyV1 } from '../../shared/ai/boundedOllamaJsonReplyV1.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
@@ -649,19 +650,12 @@ async function callLocalBuilder(action, options = {}) {
     const retryInstruction = attempt > 1
       ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
-    const response = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
+    const payload = await requestBoundedOllamaJsonReplyV1(endpoint, {
         model,
-        stream: false,
         format: 'json',
         messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction }],
         options: { temperature: 0.1 },
-      }),
-    });
-    if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
-    const payload = await response.json();
+    }, { fetchImpl });
     let parsed;
     try {
       parsed = JSON.parse(text(payload?.message?.content));
