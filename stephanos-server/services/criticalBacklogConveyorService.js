@@ -10,6 +10,7 @@ import {
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure, projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
 import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
 import { createFleetRetryScanObservationV1, fleetRetryAcceptanceGateCodeV1 } from '../../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
@@ -474,7 +475,8 @@ export async function retrySafelyBlockedAgentFailure({
     let retryRequiredTests;
     let retryAllowedFiles;
     let retryPlanBinding;
-    if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+    const transportRetry = currentCandidate.blockers.some(isModelTransportFailureV1);
+    if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || transportRetry) {
       // Re-admission is not repair/completion proof. Require a newly strengthened
       // owner-authenticated acceptance contract before another consumed attempt.
       retryAuthority ??= await readProgrammeProjection({ env, nowUtc: now.toISOString(),
@@ -496,7 +498,7 @@ export async function retrySafelyBlockedAgentFailure({
         && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
       const prefix = `repo:${currentCandidate.repository.toLowerCase()}:path:`;
       const ownerResources = mirrors[0]?.resourceIds;
-      const narrowedScope = !sameSourceScope && currentScopes.valid && Array.isArray(ownerResources)
+      const narrowedScope = !transportRetry && !sameSourceScope && currentScopes.valid && Array.isArray(ownerResources)
         && ownerResources.length > 0 && ownerResources.every(value => typeof value === 'string' && value.toLowerCase().startsWith(prefix))
         ? projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles,
           ownerResources.flatMap(value => {
@@ -509,7 +511,9 @@ export async function retrySafelyBlockedAgentFailure({
       const nextRequiredTests = admittedScope && ownerPlan?.valid && ownerPlan.supplied
         ? [...new Set(['npm run stephanos:verify', ...ownerPlan.commands])] : null;
       const strengthened = nextRequiredTests
-        ? projectStrengthenedRetryTestsV1(currentCandidate.requiredTests, nextRequiredTests, narrowedScope?.allowedFiles || currentCandidate.allowedFiles)
+        ? (transportRetry
+          ? { valid: JSON.stringify(currentCandidate.requiredTests) === JSON.stringify(nextRequiredTests), commands: nextRequiredTests }
+          : projectStrengthenedRetryTestsV1(currentCandidate.requiredTests, nextRequiredTests, narrowedScope?.allowedFiles || currentCandidate.allowedFiles))
         : null;
       if (currentCandidate.blockers.length !== 1 || !strengthened?.valid) {
         observation.note(currentCandidate, fleetRetryAcceptanceGateCodeV1({
@@ -520,8 +524,8 @@ export async function retrySafelyBlockedAgentFailure({
           retried: false, missionId: currentCandidate.missionId };
         continue;
       }
-      retryRequiredTests = strengthened.commands;
-      if (narrowedScope?.valid) {
+      if (!transportRetry) retryRequiredTests = strengthened.commands;
+      if (narrowedScope?.valid || transportRetry) {
         const sourceHead = text(retryAuthority?.machineryInventory?.sourceHead).toLowerCase();
         if (!SHA_40.test(sourceHead)) {
           observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
@@ -529,7 +533,7 @@ export async function retrySafelyBlockedAgentFailure({
             retried: false, missionId: currentCandidate.missionId };
           continue;
         }
-        retryAllowedFiles = narrowedScope.allowedFiles;
+        if (narrowedScope?.valid) retryAllowedFiles = narrowedScope.allowedFiles;
         retryPlanBinding = { sourceHead, ownerResources: JSON.stringify(ownerResources),
           requiredTests: JSON.stringify(ownerPlan.commands) };
       }
@@ -594,6 +598,13 @@ export async function retrySafelyBlockedAgentFailure({
       continue;
     }
 
+    if (transportRetry && !modelTransportFailureProofMatchesV1(ownershipRelease.providerTransportFailure,
+      currentCandidate.missionId, failedActionId, currentCandidate.blockers[0])) {
+      observation.note(currentCandidate, 'OWNERSHIP_RELEASE_UNPROVEN');
+      firstBlockedCandidate ??= { ok: true, classification: 'MODEL_TRANSPORT_RETRY_TERMINAL_FAILURE_UNPROVEN',
+        retried: false, missionId: currentCandidate.missionId };
+      continue;
+    }
     const worktreeRefresh = await refreshRetryWorktree({ mission: currentCandidate, repoRoot: paths.repoRoot, env });
     if (worktreeRefresh?.ok !== true) {
       observation.note(currentCandidate, 'WORKTREE_REFRESH_BLOCKED');
@@ -625,7 +636,9 @@ export async function retrySafelyBlockedAgentFailure({
     }
     observation.note(currentCandidate, 'RETRY_SELECTED');
     candidateRecord = currentCandidate;
-    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding, retryWorktreeRefresh: worktreeRefresh };
+    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding,
+      retryProviderFailureProof: transportRetry ? ownershipRelease.providerTransportFailure : undefined,
+      retryWorktreeRefresh: worktreeRefresh };
     break;
   }
 
@@ -656,6 +669,7 @@ export async function retrySafelyBlockedAgentFailure({
     ...(candidate.retryRequiredTests ? { retryRequiredTests: candidate.retryRequiredTests } : {}),
     ...(candidate.retryAllowedFiles ? { retryAllowedFiles: candidate.retryAllowedFiles } : {}),
     ...(candidate.retryPlanBinding ? { retryPlanSourceHead: candidate.retryPlanBinding.sourceHead } : {}),
+    ...(candidate.retryProviderFailureProof ? { retryProviderFailureProof: candidate.retryProviderFailureProof } : {}),
     receipt: {
       receiptId,
       requirement: 'bounded retry admission for retryable agent execution failure',

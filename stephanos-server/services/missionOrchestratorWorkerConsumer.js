@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
+import { projectModelTransportFailureProofV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
 import {
   appendExecutionReceipt,
   createExecutionReceipt,
@@ -707,6 +708,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   return Object.freeze({
     ok: true,
     classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    providerTransportFailure: providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)
+      ? projectModelTransportFailureProofV1(result, terminalReceipt) : null,
     missionId: normalizedMissionId,
     actionId: normalizedActionId,
     adapter: normalizedAdapter,
