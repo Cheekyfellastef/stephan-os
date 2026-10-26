@@ -657,6 +657,32 @@ test('external active mission prevents critical mission creation', async () => {
   assert.equal(store.records.length, 1);
 });
 
+test('elastic conveyor projects occupied observation without instructing another worker action', async () => {
+  const paths = await roots();
+  const mission = { missionId: 'critical-2963-elastic-goal', revision: 5,
+    currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { adapter: 'foundry-forge', status: 'running' },
+    continuity: { parkingStatus: 'ACTIVE' } };
+  const admission = { schemaVersion: 'stephanos.elastic-goal-mission-admission.v1', ok: true,
+    classification: 'ELASTIC_GOAL_MISSIONS_OCCUPIED', selectedMission: mission,
+    elasticMissions: [mission], activeMissions: [mission], runnableMissions: [] };
+  const result = await ensureCriticalBacklogMission({
+    allowLegacyMissionCreation: false, paths, now,
+    readProgrammeProjection: async () => ({ status: 'READY', blockers: [],
+      scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+      machineryInventory: { sourceHead: 'a'.repeat(40) } }),
+    listMissions: async () => [mission], ensureElasticMissions: async () => admission,
+    readCapacityRouting: async () => ({ ok: true }),
+    dispatchElasticBuilds: async () => ({ ok: true, dispatchCount: 0, held: [] }),
+    publishProjection: async () => ({ ok: true }),
+  });
+  assert.equal(result.projection.executionObligation.state, 'OCCUPIED');
+  assert.equal(result.projection.executionObligation.materialProgressRequired, false);
+  assert.match(result.projection.exactNextAction, /Observe the existing external execution/);
+  assert.equal(result.projection.activeMission, mission, 'preserve external owner observation');
+  assert.equal(result.projection.mergeAuthority, false);
+  assert.equal(mission.dispatch.status, 'running');
+});
+
 test('multiple active missions fail closed and never create another lane', async () => {
   const paths = await roots();
   const store = inMemoryMissionStore([
