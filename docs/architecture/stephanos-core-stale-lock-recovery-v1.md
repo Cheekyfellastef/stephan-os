@@ -22,6 +22,10 @@ From a limited user process, supply `-ExpectedHead`, `-ExpectedLockSha256` and
 The existing canonical ignition source-truth admission must accept that exact
 main. Relevant source bytes are captured and rechecked across awaited work.
 Node loader overrides are refused; PowerShell uses only its system module path.
+Every inherited daemon path input (`USERPROFILE`, `HOME`, `LOCALAPPDATA` and
+`STEPHANOS_SHARED_AGENT_WORKSPACE`) must be absent or resolve to the same fixed
+canonical path. This is checked before elevation and on every source recheck,
+so retirement and the launched daemon cannot target different state directories.
 
 The limited parent requests one UAC child. The child only retires the fixed
 Core lock. It never starts Core or alters services, scheduled tasks, source

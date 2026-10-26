@@ -29,6 +29,25 @@ function Get-CoreRecoveryDigest([string]$Path) {
     finally { $sha.Dispose() }
 }
 
+function Assert-CoreRecoveryEnvironment {
+    # Match every path input used by stephanos-core-daemon.mjs. A redirected
+    # daemon must never be launched after retiring this fixed canonical lock.
+    $expectedPaths = @{
+        USERPROFILE = $profileRoot
+        HOME = $profileRoot
+        LOCALAPPDATA = (Join-Path $profileRoot 'AppData\Local')
+        STEPHANOS_SHARED_AGENT_WORKSPACE = (Join-Path $profileRoot 'Documents\Stephanos-openclaw-workspace')
+    }
+    foreach ($name in $expectedPaths.Keys) {
+        $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+        if ([string]::IsNullOrEmpty($value)) { continue }
+        if ($value -notmatch '^[a-zA-Z]:[\\/]' -or
+            -not [string]::Equals([IO.Path]::GetFullPath($value).TrimEnd('\'), $expectedPaths[$name].TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'CORE_RECOVERY_PATH_OVERRIDE_REFUSED'
+        }
+    }
+}
+
 function Write-CoreRecoveryResult {
     param([bool]$Ok, [string]$Verdict, [string]$Blocker = '')
     [ordered]@{
@@ -44,6 +63,7 @@ function Write-CoreRecoveryResult {
 
 try {
     if (-not $OperatorApproved) { throw 'CORE_RECOVERY_EXACT_OPERATOR_APPROVAL_REQUIRED' }
+    Assert-CoreRecoveryEnvironment
     if ($env:NODE_OPTIONS -or $env:NODE_PATH) { throw 'CORE_RECOVERY_NODE_LOADER_OVERRIDE_REFUSED' }
     if (-not [string]::Equals([IO.Path]::GetFullPath($PSCommandPath), $entry, [StringComparison]::OrdinalIgnoreCase)) { throw 'CORE_RECOVERY_CANONICAL_ENTRY_REQUIRED' }
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -54,6 +74,7 @@ try {
     $sourceDigests = @{}
     foreach ($file in $sourceFiles) { $sourceDigests[$file] = Get-CoreRecoveryDigest $file }
     function Assert-CoreRecoverySource {
+        Assert-CoreRecoveryEnvironment
         $report = @(& $node (Join-Path $repoRoot 'scripts\battle-bridge-ignition-supervisor.mjs') '--source-truth-json')
         if ($LASTEXITCODE -ne 0) { throw 'CORE_RECOVERY_CANONICAL_SOURCE_UNPROVEN' }
         $truth = ($report -join "`n") | ConvertFrom-Json -ErrorAction Stop

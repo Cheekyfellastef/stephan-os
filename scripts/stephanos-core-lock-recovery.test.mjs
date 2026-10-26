@@ -34,3 +34,18 @@ test('recovery entry refuses missing approval before any native observation or m
   assert.equal(receipt.coreStartRequested, false);
   assert.equal(receipt.lockRetired, false);
 });
+
+for (const variable of ['USERPROFILE', 'HOME', 'LOCALAPPDATA', 'STEPHANOS_SHARED_AGENT_WORKSPACE']) {
+  test(`recovery entry rejects redirected ${variable} before elevation or retirement`, { skip: process.platform !== 'win32' }, () => {
+    const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(entry),
+      '-ExpectedHead', 'a'.repeat(40), '-ExpectedLockSha256', 'b'.repeat(64), '-OperatorApproved',
+    ], { windowsHide: true, encoding: 'utf8', timeout: 10_000,
+      env: { ...process.env, [variable]: 'C:\\core-recovery-redirected-fixture' } });
+    assert.equal(result.status, 2, result.stderr);
+    const receipt = JSON.parse(result.stdout);
+    assert.equal(receipt.blocker, 'CORE_RECOVERY_PATH_OVERRIDE_REFUSED');
+    assert.equal(receipt.lockRetired, false);
+    assert.equal(receipt.coreStartRequested, false);
+  });
+}
