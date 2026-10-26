@@ -18,7 +18,13 @@ test('transport retry proof requires exact returned provider failure and termina
  for(const key of Object.keys(proof)) assert.equal(matches({...proof,[key]:null},result.missionId,result.actionId,result.error),false,key);
 });
 
-test('reducer consumes one existing round only with bound transport proof',()=>{
+for (const error of ['fetch failed','PROVIDER_NEUTRAL_MODEL_RESPONSE_TOO_LARGE'])
+test('reducer consumes one existing round only with bound provider proof: '+error,()=>{
+ const result={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,success:false,
+  providerInvoked:true,providerCompleted:false,failureStage:'PROVIDER',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+  missionId:'critical-1721-elastic-goal',actionId:'critical-1721-elastic-goal-r5-test',error};
+ const receipt={executionId:result.actionId,state:'failed',phase:'provider-neutral-result-blocked',blocker:error,
+  receiptId:result.actionId+'-5',sourceHead:'a'.repeat(40)};
  const evidence=id=>({receiptId:id,requirement:'test',source:'test',evidenceType:'command-output',verified:true,exitCode:0});
  let state=createMissionOrchestratorState({missionId:result.missionId,title:'Existing task',operatorIntent:'Bounded repair',
   intendedOutcome:'Functional source',missionKind:'implementation',repository:'Cheekyfellastef/stephan-os',branch:'openclaw/elastic-goal-1721',
@@ -41,4 +47,19 @@ test('reducer consumes one existing round only with bound transport proof',()=>{
  }
  const exhausted=apply({...state,repair:{...state.repair,currentRound:3}},event);
  assert.equal(exhausted.repair.currentRound,3);assert.equal(exhausted.currentPhase,'BLOCKED');
+ const lastRound=apply({...state,repair:{...state.repair,currentRound:2}},event);
+ assert.equal(lastRound.repair.currentRound,3);
+ assert.deepEqual(lastRound.allowedFiles,state.allowedFiles);
+ assert.deepEqual(lastRound.requiredTests,state.requiredTests);
+});
+
+test('oversized provider response requires authentic pre-mutation failure, not a source failure',()=>{
+ const error='PROVIDER_NEUTRAL_MODEL_RESPONSE_TOO_LARGE';
+ const failed={...result,error};
+ const terminal={...receipt,blocker:error};
+ assert.ok(project(failed,terminal));
+ assert.equal(project(failed,{...terminal,state:'progress'}),null);
+ assert.equal(project({...failed,providerCompleted:true},terminal),null);
+ assert.equal(project({...failed,failureStage:'SOURCE_OR_TEST'},terminal),null);
+ assert.equal(project(failed,{...terminal,blocker:'fetch failed'}),null);
 });
