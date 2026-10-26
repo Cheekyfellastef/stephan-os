@@ -19,6 +19,10 @@ on:
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
       - 'scripts/windows/status-stephanos-core-daemon.ps1'
+      - 'scripts/windows/StephanosCoreLockRecoveryV1.cs'
+      - 'scripts/windows/stephanos-core-lock-recovery*.ps1'
+      - 'scripts/windows/recover-stephanos-core-lock.ps1'
+      - 'scripts/stephanos-core-lock-recovery.test.mjs'
       - 'scripts/windows/stephanos-core-process-observation.ps1'
       - 'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1*'
       - 'shared/agents/windowsAuthoritySpecialistReviewV1*'
@@ -75,6 +79,10 @@ on:
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignMaintenanceAdmissionV1*'
       - 'scripts/windows/status-stephanos-core-daemon.ps1'
+      - 'scripts/windows/StephanosCoreLockRecoveryV1.cs'
+      - 'scripts/windows/stephanos-core-lock-recovery*.ps1'
+      - 'scripts/windows/recover-stephanos-core-lock.ps1'
+      - 'scripts/stephanos-core-lock-recovery.test.mjs'
       - 'scripts/windows/stephanos-core-process-observation.ps1'
       - 'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1*'
       - 'shared/agents/windowsAuthoritySpecialistReviewV1*'
@@ -181,5 +189,7 @@ jobs:
         run: node --test --test-concurrency=1 stephanos-server/services/githubLifeboatLane7Service.test.js stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorStore.atomic-write.test.js scripts/battle-bridge-goal-discovery-heartbeat.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs scripts/sovereign-commander-custody-recycle.test.mjs shared/agents/stephanosCoreProcessObservationV1.test.mjs shared/agents/sovereignCommanderWindows.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs scripts/sovereign-goal-builder-worker-evidence.test.mjs shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs
       - name: Canonical worktree metadata and fixed repair regressions on Windows
         run: node --test shared/agents/sovereignCommanderCanonicalGitConfigRepairV1.test.mjs
+      - name: Attended Core recovery with real disposable Windows lock fixtures
+        run: node --test scripts/stephanos-core-lock-recovery.test.mjs shared/agents/stephanosCoreLockOwnerV1.test.mjs
       - name: Windows temporary-store supervised R7 recovery regressions
         run: node --experimental-vm-modules --test --test-concurrency=1 stephanos-server/services/supervisedR7RecoveryPreparationV1.test.mjs stephanos-server/services/supervisedR7RecoveryPreparationV1.integration.test.mjs stephanos-server/services/supervisedR7RecoveryRuntime.test.js
