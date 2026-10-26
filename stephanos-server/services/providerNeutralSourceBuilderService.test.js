@@ -32,7 +32,13 @@ test('partial model stream cannot mutate source or satisfy a source receipt', as
     repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
     claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
     localModelFetchImpl: async (_url, request) => {
-      assert.equal(JSON.parse(request.body).stream, true);
+      const sent = JSON.parse(request.body);
+      assert.equal(sent.stream, true);
+      assert.equal(sent.options.num_predict, 8192);
+      assert.equal(sent.format.additionalProperties, false);
+      assert.deepEqual(sent.format.required, ['edits', 'summary']);
+      assert.deepEqual(sent.format.properties.edits.items.required, ['path', 'old', 'new']);
+      assert.match(sent.messages[0].content, /smallest unique old-text anchors/);
       return new Response(JSON.stringify({done: false, message: {content: JSON.stringify({edits})}}) + '\n');
     },
     collectAgentWorkerResult: async () => ({state: {revision: 1}}),

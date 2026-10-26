@@ -2,6 +2,9 @@ const failures = new Set([
   'fetch failed', // Legacy provider result; never sufficient without terminal proof.
   'PROVIDER_NEUTRAL_MODEL_REQUEST_DEADLINE_EXCEEDED',
   'PROVIDER_NEUTRAL_MODEL_RESPONSE_STALLED',
+  // A bounded provider response rejected before source mutation. The existing
+  // exact terminal proof, owner-plan revalidation and remaining-round cap apply.
+  'PROVIDER_NEUTRAL_MODEL_RESPONSE_TOO_LARGE',
   ...['ECONNRESET','ECONNREFUSED','ETIMEDOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET']
     .map(code => `PROVIDER_NEUTRAL_MODEL_TRANSPORT_FAILED:${code}`),
 ]);
