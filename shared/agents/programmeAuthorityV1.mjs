@@ -1389,11 +1389,17 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   if (lease && !lane) blockers.push('mutation-lease-without-lane-projection');
   if (lane && !lane.valid) blockers.push(...list(lane.blockers).map((blocker) => `lane:${blocker}`));
   if (lane?.active && !lease) blockers.push('active-lane-without-source-mutation-lease');
+  if (lane && input.executionReceipt && !lease) blockers.push('execution-receipt-without-source-mutation-lease');
   if (!lane && input.executionReceipt) blockers.push('execution-receipt-cannot-create-lane-authority');
 
   const controllerHeartbeat = input.controllerHeartbeatProjection;
   if (!controllerHeartbeat?.valid || !controllerHeartbeat?.fresh) {
     blockers.push(`controller-heartbeat-${controllerHeartbeat?.valid ? 'stale' : 'invalid-or-missing'}`);
+  }
+  // Controller activity is not authenticated construction when its claimed
+  // lane lacks exact current worker-started receipt and source custody.
+  if (!lane?.active && ACTIVE_LANE_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
+    blockers.push('controller-heartbeat-phantom-active-lane');
   }
   if (lane?.active && controllerHeartbeat?.activeLaneId !== lane.laneId) {
     blockers.push('controller-heartbeat-active-lane-mismatch');
@@ -1444,7 +1450,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const scheduler = input.scheduler;
   if (!scheduler || typeof scheduler !== 'object') blockers.push('mission-scheduler-source-missing');
   else if (scheduler.failClosed === true) blockers.push(...list(scheduler.contradictions).map((item) => `scheduler:${text(item.code, 'contradiction')}`));
-  if (!lane && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
+  if (!lane?.active && scheduler?.decisionReceipt?.status === 'ACTIVE_LANE') blockers.push('scheduler-active-lane-without-canonical-projection');
   if (lane?.active && scheduler?.decisionReceipt?.status !== 'ACTIVE_LANE') blockers.push('scheduler-active-lane-status-mismatch');
   if (lane?.active && number(scheduler?.decisionReceipt?.activeIssue) !== lane.issueNumber) blockers.push('scheduler-active-lane-identity-mismatch');
 
