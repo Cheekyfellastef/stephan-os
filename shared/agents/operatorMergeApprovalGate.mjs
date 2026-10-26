@@ -404,6 +404,17 @@ function permissionSignatures(source) {
   });
 }
 
+// The immutable legacy grammar remains readable. The successor grammar only
+// separates READY identity; merge identity and its replay protection are exact.
+export function protectedOperatorWorkflowRunNameSourceIsExact(source) {
+  const lines = String(source).split(/\r?\n/).filter(line => /^run-name:/.test(line));
+  const allowed = [
+    'run-name: Protected operator merge ${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}',
+    "run-name: ${{ inputs.mode == 'user-owned-pr-ready' && format('Protected operator ready {0}', inputs.expected_head) || format('Protected operator merge {0}', github.event.merge_group.head_sha || inputs.expected_head || github.run_id) }}",
+  ];
+  return lines.length === 1 && allowed.includes(lines[0].trimEnd());
+}
+
 function validateProtectedWorkflowYaml(path, source) {
   const policy = PROTECTED_WORKFLOW_FINAL_POLICIES[path];
   const blockers = [];
@@ -435,7 +446,7 @@ function validateProtectedWorkflowYaml(path, source) {
     const dispatchInputs = yamlWorkflowDispatchInputKeys(source);
     if (dispatchInputs.length !== requiredInputs.length
       || dispatchInputs.some((input, index) => input !== requiredInputs[index])
-      || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*$/m.test(source)) {
+      || !protectedOperatorWorkflowRunNameSourceIsExact(source)) {
       blockers.push('protected-workflow-dispatch-inputs-not-exact');
     }
   }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { CANONICAL_MAILBOX_ISSUE as current, CANONICAL_MAILBOX_RECEIPT_PREDECESSOR as previous } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { MAILBOX_ROTATION_OPERATION as operation, MAILBOX_ROTATION_SCHEMA, auditMailboxRotationComments,
-  settleMailboxRotationDrain, projectMailboxRotation } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+  settleMailboxRotationDrain, projectMailboxRotation, mailboxRotationCommandAllowed } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence, readMailboxRotationFence,
   mailboxRotationWorkflowAllowed, inventoryMailboxRotationActions } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 import { canonicalMailboxSuccessorBody } from '../shared/agents/canonicalMailboxRolloverConsumerV1.mjs';
@@ -60,6 +60,18 @@ function fixture() {
     persist:s=>events.push({type:'persist',record:structuredClone(s.mailboxRotation)}),
     publishFence:async r=>events.push({type:'fence',record:structuredClone(r)}),readActions:async()=>actions()};
 }
+
+test('FROZEN only permits the nominated exact existing protected native bootstrap',()=>{
+  const frozen={...record(),phase:'FROZEN',drained:true};
+  const merge={operation:'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',prNumber:4000,expectedHead:target,expectedBase:head};
+  assert.equal(mailboxRotationCommandAllowed(merge,200,frozen),true);
+  for(const patch of [{phase:'DRAINING'},{drained:false},{drained:undefined},
+    {predecessorIssue:current-1},{cutoverPrNumber:4001},{cutoverHead:merged},{preparationHead:merged}])
+    assert.equal(mailboxRotationCommandAllowed(merge,200,{...frozen,...patch}),false,JSON.stringify(patch));
+  for(const patch of [{prNumber:4001},{expectedHead:head},{expectedBase:merged},{prNumber:undefined},
+    {expectedHead:undefined},{expectedBase:undefined},{operation:'EXECUTE_UNREVIEWED_MERGE'}])
+    assert.equal(mailboxRotationCommandAllowed({...merge,...patch},200,frozen),false,JSON.stringify(patch));
+});
 
 test('FREEZE persists the local hold before publishing its verified global fence and never self-certifies drain',async()=>{
   const f=fixture(),r=await executeMailboxRotationOnHost(command(),f);

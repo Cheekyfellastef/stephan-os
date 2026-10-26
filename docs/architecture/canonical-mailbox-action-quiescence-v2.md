@@ -45,11 +45,19 @@ Then activation incorporates that main, gets exact qualification/approval, and
 uses the existing rotation commands. No private queue, controller, tunnel,
 custody override or standing future merge approval is added.
 
-The existing protected READY workflow also receives a distinct source-owned run
-identity. Future READY runs say Protected operator ready; merge runs retain
-Protected operator merge. This prevents future ready success from colliding with
-merge replay custody. Legacy ambiguous identities remain held, and successful
-real merges continue to block replay. No caller-supplied GraphQL is introduced.
+Both canonical protected-workflow validators learn the exact successor READY
+identity grammar while retaining the immutable legacy grammar. The workflow is
+unchanged in this prerequisite: the trusted old reviewer must first admit these
+validators through the existing qualified operator bootstrap. The actual source-
+owned READY identity change belongs to the already nominated activation PR.
+No broad run-name pattern or caller-supplied GraphQL is introduced.
+
+The frozen native fence admits the existing protected bootstrap only on the
+predecessor side, in FROZEN with drained true, for the exact nominated PR, cutover
+head and preparation base. All existing owner-comment, review artifact, exact
+approval token, protected integration and final live PR checks still execute.
+Source-defined protected READY happens before the freeze; qualified bootstrap
+avoids treating its legacy display identity as a second ordinary merge attempt.
 
 The original finite-capacity failure is not closed by a prepared PR or archived
 notifications. Supervised cutover needs real live commissioning receipts. Future

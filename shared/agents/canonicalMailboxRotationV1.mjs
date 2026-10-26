@@ -134,6 +134,13 @@ export function mailboxRotationCommandAllowed(command, commentId, record, { appr
     && positive(commentId) && commentId < record.barrierCommentId) return true;
   if (command?.operation === 'APPROVE_PROTECTED_MERGE_ENVIRONMENT') return command.prNumber === record.cutoverPrNumber
     && command.expectedPullRequestHead === record.cutoverHead;
+  // Reuse the existing fully validated native bootstrap for the nominated
+  // activation only. Its owner, review, protected environment and exact approval
+  // gates still run; this fence predicate grants none of those authorities.
+  if (command?.operation === 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE') return record.phase === 'FROZEN' && record.drained === true
+    && CANONICAL_MAILBOX_ISSUE === record.predecessorIssue
+    && command.prNumber === record.cutoverPrNumber && command.expectedHead === record.cutoverHead
+    && command.expectedBase === record.preparationHead;
   if (command?.operation === 'UPDATE_STEPHANOS_FROM_CHAT') return MAILBOX_ROTATION_SHA.test(approvedUpdateHead)
     && command.expectedHead === approvedUpdateHead;
   // Only two fixed read-only classes can produce successor commissioning proof.

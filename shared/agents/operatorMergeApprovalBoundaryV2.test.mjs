@@ -118,6 +118,18 @@ test('admits only the exact personal-repository fallback workflow source', () =>
   assert.equal(validation.valid, true, validation.blockers.join(','));
   assert.match(validation.proofRef, /^proofs\/personal-repository-workflow-source\//);
 
+  const successorName = "run-name: ${{ inputs.mode == 'user-owned-pr-ready' && format('Protected operator ready {0}', inputs.expected_head) || format('Protected operator merge {0}', github.event.merge_group.head_sha || inputs.expected_head || github.run_id) }}";
+  for (const [name, valid] of [[successorName, true],
+    [successorName.replace('user-owned-pr-ready','user-owned-protected-squash'), false],
+    [successorName.replace('inputs.expected_head)', 'github.sha)'), false],
+    [successorName+'\n'+successorName, false]]) {
+    const renamed = content.replace(/^run-name:.*$/m,name);
+    const result = validatePersonalRepositoryProtectedWorkflowSource({...exact,
+      protectedWorkflowSources:[workflowSource(path,{content:renamed})]});
+    assert.equal(result.valid, valid, result.blockers.join(','));
+    if (!valid) assert.ok(result.blockers.includes('personal-repository-workflow-dispatch-inputs-not-exact'));
+  }
+
   for (const altered of [
     content.replace(
       'Collect exact personal-repository evidence after protected admission',
