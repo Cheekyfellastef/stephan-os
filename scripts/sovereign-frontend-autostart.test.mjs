@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { appendWorkspaceJsonl } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { claimFrontendBootAttempt, createFrontendSourceBoundary, finalizeFrontendStartupResult, publishFrontendStartupResult, runFrontendAutostart } from './sovereign-frontend-autostart.mjs';
 
 const head = 'a'.repeat(40);
@@ -123,24 +124,28 @@ test('startup adapter and installer have narrow Windows entry and preserve exist
   assert.doesNotMatch(installer, /Register-ScheduledTask[^\n]*-Force/);
   assert.doesNotMatch(installer, /Stop-Process|Restart-Computer|Unregister-ScheduledTask|Set-ScheduledTask/);
 });
-test('terminal receipt uses canonical shared workspace writer and preserves actual boot and result', async () => {
+test('startup history uses the canonical event writer without current-readiness authority', async () => {
   const actual = { ok: false, actionAttempted: true, commandVerdict: 'UNKNOWN' };
   let published;
   const result = await publishFrontendStartupResult(actual, { workspaceRoot: 'test-root', bootReader: () => witness,
     writer: async (root, segments, record, options) => { published = { root, segments, record, options }; return { ok: true }; } });
   assert.equal(result.ok, true);
-  assert.deepEqual(published.segments, ['status', 'stephanos-frontend-autostart-current.json']);
-  assert.deepEqual(published.record.result, actual); assert.deepEqual(published.record.bootWitness, witness);
-  assert.equal(published.record.status, 'ATTENTION_REQUIRED'); assert.equal(published.options.durable, true);
+  assert.deepEqual(published.segments, ['events', 'stephanos-frontend-autostart.ndjson']);
+  assert.deepEqual(published.record.bootWitness, witness);
+  assert.equal(published.record.observation.outcomeWhenObserved, 'UNPROVEN');
+  assert.equal(published.record.currentReadinessAuthority, false); assert.equal(published.record.status, undefined);
 });
-test('real atomic workspace publication accepts both ready and blocked startup evidence', async () => {
+test('real canonical event appending accepts observed proof and blocked history', async () => {
   const workspaceRoot = mkdtempSync(resolve(tmpdir(), 'stephanos-frontend-receipt-'));
   for (const actual of [{ ok: true, expectedHead: head, reusedExisting: true, actionAttempted: false },
     { ok: false, expectedHead: head, actionAttempted: true, commandVerdict: 'UNKNOWN', blocker: 'FRONTEND_AUTOSTART_SERVED_HEAD_UNPROVEN' }]) {
     const written = await publishFrontendStartupResult(actual, { workspaceRoot, bootReader: () => witness, sourceReader: () => head });
     assert.equal(written.ok, true, JSON.stringify(written));
-    const record = JSON.parse(readFileSync(resolve(workspaceRoot, 'status/stephanos-frontend-autostart-current.json')));
-    assert.deepEqual(record.result, actual);
+    const lines = readFileSync(resolve(workspaceRoot, 'events/stephanos-frontend-autostart.ndjson'), 'utf8').trim().split('\n');
+    const record = JSON.parse(lines.at(-1));
+    assert.equal(record.observation.sourceHead, actual.expectedHead);
+    assert.equal(record.observation.outcomeWhenObserved, actual.ok ? 'SERVED_PROOF_PASSED' : 'UNPROVEN');
+    assert.equal(record.currentReadinessAuthority, false); assert.equal(record.status, undefined);
   }
 });
 test('source change during the awaited publication boot probe refuses a READY receipt', async () => {
@@ -149,7 +154,7 @@ test('source change during the awaited publication boot probe refuses a READY re
     sourceReader: () => currentHead, bootReader: async () => { currentHead = 'c'.repeat(40); return witness; },
     writer: async () => { writes++; return { ok: true }; },
   }), /FRONTEND_AUTOSTART_SOURCE_CHANGED/);
-  assert.equal(writes, 0);
+  assert.equal(writes, 1); // A historical event may exist; current READY cannot.
 });
 
 const preDispatchStages = ['initial-proof', 'health-fetch', 'health-body', 'guardian-wait', 'token',
@@ -269,10 +274,40 @@ test('publication invalidation cannot retain current success flags in the final 
   });
   assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_SOURCE_CHANGED');
   assert.equal(result.servedExactHeadProven, undefined); assert.equal(result.runtimeReady, undefined);
-  assert.equal(result.priorServedProofPassed, true); assert.equal(writes, 0);
+  assert.equal(result.priorServedProofPassed, true); assert.equal(writes, 1);
 });
 test('ordinary publication failure retains only historical served proof', async () => {
   const result = await finalizeFrontendStartupResult({ ok: true, expectedHead: head, servedExactHeadProven: true }, { publish: async () => ({ ok: false }) });
   assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_RECEIPT_UNPROVEN');
   assert.equal(result.servedExactHeadProven, undefined); assert.equal(result.priorServedProofPassed, true);
+});
+for (const fault of ['changed', 'unprovable']) {
+  test(`source ${fault} during REAL event append blocks finalization and leaves no current READY`, async () => {
+    const workspaceRoot = mkdtempSync(resolve(tmpdir(), 'stephanos-startup-append-race-'));
+    const observedAtUtc = new Date().toISOString();
+    let invalid = false;
+    const result = await finalizeFrontendStartupResult({ ok: true, expectedHead: head, observedAtUtc, actionAttempted: true, servedExactHeadProven: true }, {
+      publish: value => publishFrontendStartupResult(value, { workspaceRoot, bootReader: async () => witness,
+        sourceReader: () => { if (invalid) { if (fault === 'unprovable') throw new Error('source unavailable'); return 'c'.repeat(40); } return head; },
+        writer: async (root, segments, record) => { await Promise.resolve(); invalid = true; return appendWorkspaceJsonl(root, segments, record); },
+      }),
+    });
+    assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_SOURCE_CHANGED');
+    const record = JSON.parse(readFileSync(resolve(workspaceRoot, 'events/stephanos-frontend-autostart.ndjson'), 'utf8').trim());
+    assert.equal(record.currentReadinessAuthority, false); assert.equal(record.status, undefined);
+    assert.equal(record.ok, undefined); assert.equal(record.result, undefined);
+    assert.equal(record.observation.sourceHead, head); assert.equal(record.observation.observedAtUtc, observedAtUtc);
+    assert.equal(JSON.stringify(record).includes('"READY"'), false);
+  });
+}
+test('a failure after the real append cannot turn historical proof into terminal success', async () => {
+  const workspaceRoot = mkdtempSync(resolve(tmpdir(), 'stephanos-startup-append-failure-'));
+  const result = await finalizeFrontendStartupResult({ ok: true, expectedHead: head }, {
+    publish: value => publishFrontendStartupResult(value, { workspaceRoot, bootReader: () => witness, sourceReader: () => head,
+      writer: async (...args) => { await appendWorkspaceJsonl(...args); throw new Error('lost acknowledgement'); },
+    }),
+  });
+  assert.equal(result.ok, false); assert.equal(result.blocker, 'FRONTEND_AUTOSTART_RECEIPT_UNPROVEN');
+  const record = JSON.parse(readFileSync(resolve(workspaceRoot, 'events/stephanos-frontend-autostart.ndjson'), 'utf8').trim());
+  assert.equal(record.currentReadinessAuthority, false); assert.equal(record.status, undefined);
 });

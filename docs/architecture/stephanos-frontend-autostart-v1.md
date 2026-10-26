@@ -20,9 +20,15 @@ an uncertain mutation. The file can deny an attempt; it cannot authorize one.
 Deleting it cannot bypass the guardian's independent maintenance admission.
 An uncertain transport result is observed for a bounded period, never retried as
 a fresh mutation. The original command verdict and final served proof are distinct.
-The terminal result and a fresh native boot witness are published with the existing
-Shared Workspace atomic writer to `status/stephanos-frontend-autostart-current.json`.
-Publication failure remains an explicit proof failure even if a server is running.
+Build-bound historical observations and a native boot witness are appended with
+the existing Shared Workspace event writer to
+`events/stephanos-frontend-autostart.ndjson`. Observation time is separate from
+append time. These events never contain current READY/success status and explicitly
+have no current-readiness authority. Existing canonical ignition owns that truth.
+The complete boot-observation/append operation stays inside full source validation;
+source invalidation during append blocks finalization. A line already appended is
+history of one build's observation, not stale current health. Publication failure
+remains an explicit proof failure even if a server is running.
 
 The installer requires the exact reviewed installed main and explicit runtime
 approval. It refuses an existing task and uses no forced replacement. Boot-trigger
@@ -42,7 +48,7 @@ Two related review findings exposed the same model error: an invalidated source
 observation was represented as ordinary frontend-not-ready, allowing fallthrough
 to mutation. The startup client now shares one source-bound observation model
 across reuse, guardian health, token/session setup, boot witness, waits, late
-completion and READY publication. Each awaited operation checks local HEAD before
+completion and lifecycle publication. Each awaited operation checks local HEAD before
 and after, including its exception path. Source change or unreadability is a
 distinct terminal `FRONTEND_AUTOSTART_SOURCE_CHANGED` state; it can never become
 an invitation to claim/dispatch because a readiness probe returned false.
@@ -60,8 +66,17 @@ observation and require zero boot claims and zero maintenance calls. The existin
 guardian independently revalidates canonical source inside the registered repair;
 this client model does not replace that authority or seize a source lease.
 Full canonical admission (including fixed remote fetch and source hygiene) is
-required initially, again before boot claim/dispatch, and before returning READY.
+required initially, again before boot claim/dispatch, and before accepting served proof.
 The local continuity checks reuse the existing fixed Git HEAD reader and do not
-fetch remotely on every transport await. READY publication retains full source
-admission around its native boot observation. A stable HEAD cannot excuse dirty
+fetch remotely on every transport await. Lifecycle publication retains full source
+admission around its entire native boot observation and event append. A stable HEAD cannot excuse dirty
 or otherwise unprovable canonical source at an admission transition.
+
+Structural review of the publication race removed the proposed duplicate durable
+current-READY ledger instead of adding a compensating clear/green mechanism. No
+source lease is seized to make workspace publication atomic with source changes.
+Required live source/served checks, final post-publication source validation,
+independent review and real-boot acceptance remain binding. Real-writer race tests
+advance or invalidate source during append and require a blocked final result with
+no persisted current READY assertion. The task never substitutes its history event
+for canonical ignition's current runtime proof.

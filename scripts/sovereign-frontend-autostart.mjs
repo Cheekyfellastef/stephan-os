@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Scheduled client of the existing guardian. No alternate maintenance owner.
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, lstatSync, openSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { loadSovereignCommanderToken } from './sovereign-commander-http.mjs';
 import { readMaintenanceBootWitnessV1, readMaintenanceRecoverySourceV1 } from './sovereign-maintenance-custody-store-v1.mjs';
 import { collectUi4173ServedExactHeadProof, getUi4173RepairCurrentGitHead } from './battle-bridge-ui-4173-repair.mjs';
 import { sovereignControlPlaneGamingSafeV1 } from './sovereign-commander-control-plane-repair.mjs';
-import { writeAtomicJson, SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, SHARED_WORKSPACE_RECORD_KINDS } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { appendWorkspaceJsonl, SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, SHARED_WORKSPACE_RECORD_KINDS } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 const BASE = 'http://127.0.0.1:18791';
 const SHA = /^[a-f0-9]{40}$/;
@@ -55,19 +55,27 @@ export async function finalizeFrontendStartupResult(result, { publish = publishF
 }
 
 export async function publishFrontendStartupResult(result, { workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
-  bootReader = readMaintenanceBootWitnessV1, writer = writeAtomicJson,
+  bootReader = readMaintenanceBootWitnessV1, writer = appendWorkspaceJsonl,
   sourceReader = readMaintenanceRecoverySourceV1 } = {}) {
-  const bootWitness = result.ok
-    ? await createFrontendSourceBoundary(result.expectedHead, sourceReader).observe(bootReader)
-    : await bootReader();
-  const record = { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
-    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'stephanos-frontend-autostart-current',
-    participantId: 'sovereign-commander', timestampUtc: new Date().toISOString(),
-    status: result.ok ? 'READY' : 'ATTENTION_REQUIRED',
-    summary: result.ok ? 'Normal frontend exact-head startup verified.' : 'Normal frontend startup remains unproven.',
-    reportSchema: SCHEMA, bootWitness, result,
+  const appendObservation = async () => {
+    const bootWitness = await bootReader();
+    // This is history of a source-bound observation, never another current
+    // readiness authority. Canonical ignition owns current runtime truth.
+    const record = { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+      kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT, eventId: 'frontend-startup-' + randomUUID(),
+      participantId: 'sovereign-commander', timestampUtc: new Date().toISOString(),
+      summary: 'Build-bound startup observation; use canonical ignition for current readiness.',
+      reportSchema: SCHEMA, bootWitness, currentReadinessAuthority: false,
+      observation: { sourceHead: result.expectedHead || '', observedAtUtc: result.observedAtUtc || null,
+        outcomeWhenObserved: result.ok ? 'SERVED_PROOF_PASSED' : 'UNPROVEN',
+        actionAttempted: result.actionAttempted === true, commandVerdict: result.commandVerdict || 'NOT_REPORTED',
+        proofHash: result.proofHash || '', blockerWhenObserved: result.blocker || '' },
+    };
+    return writer(workspaceRoot, ['events', 'stephanos-frontend-autostart.ndjson'], record);
   };
-  return writer(workspaceRoot, ['status', 'stephanos-frontend-autostart-current.json'], record, { durable: true });
+  return result.ok
+    ? createFrontendSourceBoundary(result.expectedHead, sourceReader).observe(appendObservation)
+    : appendObservation();
 }
 
 export function claimFrontendBootAttempt({ workspaceRoot, witness, expectedHead }) {
@@ -106,6 +114,8 @@ export async function runFrontendAutostart({
   // Full canonical admission (including fixed fetch/source hygiene) is distinct
   // from cheap local HEAD continuity. Do not fetch on every transport await.
   const admission = boundary.withReader(admissionReader);
+  const readyResult = extra => ({ schemaVersion: SCHEMA, ok: true, expectedHead,
+    observedAtUtc: new Date().toISOString(), ...extra });
   let actionAttempted = false;
   try {
   const ready = async () => {
@@ -120,7 +130,7 @@ export async function runFrontendAutostart({
       return false;
     }
   };
-  if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, reusedExisting: true, actionAttempted: false };
+  if (await ready()) return readyResult({ reusedExisting: true, actionAttempted: false });
   // Commander has its existing boot task. This adapter cannot bootstrap or
   // recycle it, clear custody, change controllers, or start another executor.
   let guardianReady = false;
@@ -162,7 +172,7 @@ export async function runFrontendAutostart({
     if (!initialized.ok || !listed.ok || !maintenance?.inputSchema?.properties?.actionId?.enum?.includes('repair-ui-4173'))
       throw new Error('FIXED_FRONTEND_ACTION_UNAVAILABLE');
     boundary.assertCurrent();
-    if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, reusedExisting: true, actionAttempted: false };
+    if (await ready()) return readyResult({ reusedExisting: true, actionAttempted: false });
     const witness = await boundary.observe(bootReader);
     admission.assertCurrent();
     if (!gamingSafe()) return blocked('FRONTEND_AUTOSTART_GAMING_PROTECTION_HELD', { expectedHead, actionAttempted: false });
@@ -182,9 +192,9 @@ export async function runFrontendAutostart({
     // Cold build can finish after the registered repair's readiness timeout.
     // Observe the same attempt; never spawn another build to repair a timeout.
     for (let i = 0; i < 12; i++) {
-      if (await ready()) return { schemaVersion: SCHEMA, ok: true, expectedHead, actionAttempted,
+      if (await ready()) return readyResult({ actionAttempted,
         commandOk: response?.ok === true && response.body?.result?.isError !== true && command?.ok === true,
-        commandVerdict: command?.finalVerdict || 'UNKNOWN', proofHash: command?.proofHash || '', servedExactHeadProven: true };
+        commandVerdict: command?.finalVerdict || 'UNKNOWN', proofHash: command?.proofHash || '', servedExactHeadProven: true });
       if (i + 1 < 12) await boundary.observe(() => sleep(5000));
     }
     return blocked('FRONTEND_AUTOSTART_SERVED_HEAD_UNPROVEN', { expectedHead, actionAttempted, commandVerdict: command?.finalVerdict || 'UNKNOWN' });
