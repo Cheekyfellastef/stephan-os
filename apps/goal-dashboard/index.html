@@ -276,6 +276,41 @@
     .goal-card .human-summary { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
     .goal-card .human-label { display:block; margin-bottom:3px; color:var(--muted); font-size:.62rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
     .goal-card .human-blocker { margin-top:9px; color:var(--text); font-size:.7rem; line-height:1.42; }
+    .conveyor-overview { margin:16px 0; padding:24px; border-color:rgba(103,232,249,.35); background:radial-gradient(ellipse at 100% 0,rgba(103,232,249,.09),transparent 60%),var(--panel); }
+    .conveyor-overview .cv-top { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+    .conveyor-overview h2 { margin:5px 0 8px; font-size:clamp(1.35rem,2.4vw,2rem); letter-spacing:-.035em; }
+    .cv-kicker { color:var(--cyan); font-size:.64rem; font-weight:800; letter-spacing:.15em; }
+    .cv-subtitle,.cv-meta { color:var(--muted); font-size:.73rem; line-height:1.6; margin:0; }
+    .cv-status { border:1px solid var(--line); border-radius:30px; padding:9px 14px; white-space:nowrap; font-size:.75rem; font-weight:800; }
+    .cv-lamp { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:var(--unknown); }
+    [data-cv-light="GREEN"] { --cv-color:var(--green); }
+    [data-cv-light="RED"] { --cv-color:var(--red); }
+    [data-cv-light="AMBER"] { --cv-color:var(--gold); }
+    [data-cv-light="GREY"] { --cv-color:var(--unknown); }
+    .cv-status,.cv-stage { color:var(--cv-color,var(--muted)); }
+    .cv-status .cv-lamp,.cv-stage .cv-lamp { background:var(--cv-color,var(--unknown)); box-shadow:0 0 12px color-mix(in srgb,var(--cv-color,var(--unknown)) 35%,transparent); }
+    .cv-metrics { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:9px; margin:20px 0 12px; }
+    .cv-metric { padding:12px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }
+    .cv-metric strong { display:block; font-size:1.6rem; line-height:1.25; font-variant-numeric:tabular-nums; }
+    .cv-metric span { color:var(--muted); font-size:.66rem; }
+    .cv-flow { list-style:none; padding:0; margin:18px 0; display:grid; grid-template-columns:repeat(9,minmax(0,1fr)); gap:7px; }
+    .cv-stage { min-width:0; position:relative; padding:12px 9px; border:1px solid var(--line); border-radius:12px; background:rgba(3,7,17,.45); }
+    .cv-stage:not(:last-child)::after { content:'›'; position:absolute; right:-7px; top:32px; color:var(--cyan); }
+    .cv-stage small { display:block; color:var(--muted); font-size:.58rem; margin-bottom:10px; }
+    .cv-stage strong { display:block; color:var(--text); font-size:.72rem; line-height:1.4; min-height:2.8em; }
+    .cv-stage span { font-size:.6rem; }
+    .cv-stage details { margin-top:8px; font-size:.63rem; color:var(--muted); overflow-wrap:anywhere; }
+    .cv-stage summary { cursor:pointer; min-height:32px; padding-top:6px; }
+    .cv-bottom { display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:12px; }
+    .cv-instrument { padding:15px; border:1px solid var(--line); border-radius:13px; min-width:0; }
+    .cv-instrument label { display:block; color:var(--cyan); text-transform:uppercase; letter-spacing:.09em; font-size:.6rem; margin-bottom:9px; }
+    .cv-instrument strong { display:block; font-size:.85rem; line-height:1.5; overflow-wrap:anywhere; }
+    .cv-instrument p { color:var(--muted); font-size:.69rem; line-height:1.5; margin:8px 0 0; overflow-wrap:anywhere; }
+    .cv-controller-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
+    .cv-controller { padding:6px 9px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:.6rem; overflow-wrap:anywhere; }
+    .cv-boundary { margin-top:14px; font-size:.66rem; color:var(--muted); }
+    @media(max-width:1100px) { .cv-flow { grid-template-columns:repeat(3,minmax(0,1fr)); } .cv-stage strong { min-height:0; } .cv-stage:nth-child(3n)::after { content:''; } .cv-bottom { grid-template-columns:1fr 1fr; } .cv-instrument:first-child { grid-column:1/-1; } }
+    @media(max-width:600px) { .conveyor-overview { padding:16px; } .cv-top { flex-direction:column; } .cv-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); } .cv-bottom { grid-template-columns:1fr; } .cv-status { align-self:flex-start; } .cv-stage { padding:10px 7px; } }
     .goal-conveyor-panel { padding:16px; margin-bottom:12px; overflow:hidden; }
     .goal-conveyor-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:11px; }
     .goal-conveyor-summary div { border:1px solid var(--line); border-radius:12px; padding:10px 11px; background:rgba(255,255,255,.02); }
@@ -452,6 +487,19 @@
           <div class="orbit-core"><strong id="maturity-band">UNKNOWN</strong><span>programme maturity band<br/>categorical, evidence-derived</span></div>
         </div>
       </aside>
+    </section>
+    <section class="panel conveyor-overview" data-dashboard-page="overview" data-testid="goal-build-conveyor-overview" aria-label="Live Goal-to-Build Conveyor">
+      <div class="cv-top"><div><div class="cv-kicker">STEPHANOS · CANONICAL GOAL CONVEYOR</div><h2>From intent to a proven build</h2><p class="cv-subtitle">The work, the handoffs, and what is holding them up.</p></div><div id="cv-status" class="cv-status" data-cv-light="GREY" role="status"><i class="cv-lamp" aria-hidden="true"></i>Evidence unavailable</div></div>
+      <p id="cv-cycle" class="cv-meta">Current mission trace unavailable.</p>
+      <div id="cv-metrics" class="cv-metrics"></div><p id="cv-count-note" class="cv-meta">Waiting for canonical goal classifications.</p>
+      <ol id="cv-flow" class="cv-flow" aria-label="System handoffs from admission through protected merge"></ol>
+      <div class="cv-bottom">
+        <div class="cv-instrument"><label>01 · Bottleneck / next safe step</label><strong id="cv-bottleneck">No current evidence</strong><p id="cv-owner"></p><p id="cv-next"></p></div>
+        <div class="cv-instrument"><label>02 · Material builders</label><strong id="cv-workers">Unknown</strong><p id="cv-worker-detail">A controller heartbeat does not prove building.</p></div>
+        <div class="cv-instrument"><label>03 · Last real activity</label><strong id="cv-activity">No material receipt</strong><p id="cv-activity-source"></p><p id="cv-freshness"></p></div>
+      </div>
+      <div id="cv-controllers" class="cv-controller-list" aria-label="Existing controller observations"></div>
+      <details class="technical-details cv-boundary"><summary>Evidence sources and truth boundary</summary><p id="cv-boundary">Waiting for the canonical backend overview. No status inferred from static or remote fallback.</p><p id="cv-head"></p></details>
     </section>
     <section class="source-strip" aria-label="data source status" data-testid="goal-dashboard-source-row" data-dashboard-page="overview">
       <div class="source-pill">Source badge<strong id="source-badge" data-live-telemetry-field="source-badge">STATIC_FALLBACK</strong></div>
@@ -875,6 +923,46 @@
       }
       function goalBuildJourney(goal) { const journey=goal?.buildJourney; return journey&&Array.isArray(journey.stages)?journey:fallbackGoalBuildJourney(goal); }
       function conveyorStagesHtml(journey) { const current=String(journey?.currentStage||''); return (Array.isArray(journey?.stages)?journey.stages:[]).map(stage=>'<div class="conveyor-stage" data-stage="'+escapeHtml(stage?.id||'UNKNOWN')+'" data-light="'+escapeHtml(stage?.trafficLight||'GREY')+'" data-current="'+String(String(stage?.id||'')===current)+'" title="'+escapeHtml((stage?.proof||stage?.reason||'No proof available.')+(stage?.source?' · '+stage.source:''))+'">'+escapeHtml(stage?.label||stage?.id||'Stage')+'</div>').join(''); }
+      let conveyorOverviewObservation=null;
+      function conveyorAge(at,now=Date.now()) { const ms=Date.parse(at||'');if(!Number.isFinite(ms)||ms>now)return 'timestamp unknown';const seconds=Math.floor((now-ms)/1000);return seconds<60?seconds+'s ago':seconds<3600?Math.floor(seconds/60)+'m ago':Math.floor(seconds/3600)+'h ago'; }
+      function renderConveyorOverview(projection) {
+        const root=byId('cv-flow');if(!root)return;
+        const overview=projection?.goalBuildConveyorOverview;
+        conveyorOverviewObservation=overview?.schemaVersion==='stephanos.goal-build-conveyor-overview.v1'?overview:null;
+        const data=conveyorOverviewObservation||{};
+        const setText=(id,value)=>{const node=byId(id);if(node)node.textContent=value;};
+        const now=Date.now();
+        const expires=at=>Number.isFinite(Date.parse(at||''))&&now<=Date.parse(at);
+        const buildLive=data.buildLive===true&&expires(data.buildExpiresAtUtc);
+        const trace=data.trace;const traceLive=trace?.truth==='CURRENT'&&expires(trace.expiresAtUtc);
+        setText('cv-cycle',trace?(trace.issue+' — '+trace.title+' · '+(traceLive?humanText(trace.currentGate)+' '+humanText(trace.currentState):'Trace stale')+' · physical pickup requires separate proof.'):'Current mission trace unavailable.');
+        const vetoLive=data.bottleneck&&(data.bottleneck.gateId?expires(data.bottleneck.expiresAtUtc):buildLive);
+        const state=vetoLive?'BLOCKED':!buildLive?(data.buildObservedAtUtc?'STALE':'UNKNOWN'):data.buildState;
+        const light=state==='BLOCKED'?'RED':state==='BUILDING'?'GREEN':['STALE','HELD','QUEUED'].includes(state)?'AMBER':'GREY';
+        const names={BLOCKED:'Build flow blocked',BUILDING:'Material building observed',STALE:'Evidence needs refreshing',HELD:'Work held',QUEUED:'Waiting for pickup',IDLE:'Idle · no build observed',UNKNOWN:'Evidence unavailable'};
+        const badge=byId('cv-status');if(badge){badge.setAttribute('data-cv-light',light);badge.innerHTML='<i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(names[state]||names.UNKNOWN);}
+        const counts=data.queueCounts||{};
+        const metrics=[['open','Open goals'],['eligible','Eligible'],['active','Active / selected'],['held','Held'],['dependency','Dependencies'],['approval','Awaiting approval']];
+        const metricRoot=byId('cv-metrics');if(metricRoot)metricRoot.innerHTML=metrics.map(([id,label])=>'<div class="cv-metric"><strong>'+escapeHtml(counts[id]??'—')+'</strong><span>'+escapeHtml(label)+'</span></div>').join('');
+        setText('cv-count-note',data.queueCounts?'Latest durable goal classifications · '+(data.uncertainGoalCount??'unknown')+' records stale or unverified at source observation · '+(counts.unknown??'unknown')+' unclassified · active / selected does not mean physically building.':'Queue counts unavailable · no canonical goal classifications loaded.');
+        const stages=Array.isArray(data.stages)?data.stages:['Admission','Select','Claim','Physical pickup','Edit','Test','Commit','Proof / review','Protected merge'].map(label=>({label,state:'UNKNOWN',trafficLight:'GREY'}));
+        root.innerHTML=stages.map((stage,index)=>{const expired=stage.expiresAtUtc&&!expires(stage.expiresAtUtc);const s=expired?'STALE':stage.state;const l=expired?'AMBER':stage.trafficLight;const reason=expired?'This checkpoint observation has expired.':stage.reason||'No canonical checkpoint observation.';return '<li class="cv-stage" data-cv-stage="'+escapeHtml(stage.id||String(index))+'" data-cv-light="'+escapeHtml(l)+'"><small>'+String(index+1).padStart(2,'0')+' · '+(stage.gateIds?.length?'gate '+stage.gateIds.join('+'):'receipt')+'</small><strong>'+escapeHtml(stage.label)+'</strong><span><i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(s)+'</span>'+(stage.traceState?'<br><span>Trace: '+escapeHtml(traceLive?humanText(stage.traceState):'stale')+'</span>':'')+'<details><summary>Evidence</summary>'+escapeHtml(reason)+(stage.traceReason?'<br>Trace: '+escapeHtml(humanText(stage.traceReason)):'')+'<br>'+escapeHtml((stage.proofRefs||[]).join(' · ')||'No proof reference')+'</details></li>';}).join('');
+        setText('cv-bottleneck',traceLive&&!vetoLive?humanText(trace.currentGate)+' · '+humanText(trace.currentState)+': '+(String(trace.diagnosis||'No diagnosis published.').split(': ')[0]):vetoLive?(data.bottleneck.title+' · '+humanText(data.bottleneck.reason)):data.lastReportedBlocker?'Last reported: '+humanText(data.lastReportedBlocker):'No current bottleneck proven');
+        setText('cv-owner',traceLive&&!vetoLive?(trace.owner?'Mission owner: '+trace.owner:'Current mission owner not published.'):vetoLive?'Owner: '+data.bottleneck.owner:data.lastReportedBlocker?'Last reported blocker is unverified now. Refresh its existing owner’s evidence.':'Missing evidence is shown in the flow above.');
+        setText('cv-next',traceLive&&!vetoLive?trace.nextAction:buildLive||vetoLive?data.nextAction||'Follow the existing canonical owner.':'Refresh canonical build evidence.');
+        const workers=buildLive?(data.workers||[]):[];
+        setText('cv-workers',buildLive?workers.length+' workers · '+(data.buildingGoalCount??'—')+' goals building':'Active workers unknown');
+        setText('cv-worker-detail',workers.length?workers.map(worker=>worker.id+' → '+worker.goals.map(goal=>(goal.issue||'')+' — '+(goal.title||'title unavailable from current evidence')).join(', ')).join(' · '):buildLive?'No material builder is proven by this observation.':'A controller heartbeat does not prove building.');
+        const activity=data.lastActivity;
+        const activityNode=byId('cv-activity');if(activityNode){activityNode.textContent=activity?conveyorAge(activity.atUtc,now):'No material receipt';activityNode.title=activity?.atUtc||'';}
+        setText('cv-activity-source',activity?(activity.atUtc+' · '+activity.source):'Heartbeat and HTTP refresh are excluded.');
+        setText('cv-freshness',(buildLive?'Build source live · ':'Build source stale / unknown · ')+conveyorAge(data.buildObservedAtUtc,now));
+        const controllerRoot=byId('cv-controllers');if(controllerRoot)controllerRoot.innerHTML=(data.controllers||[]).map(controller=>'<span class="cv-controller">'+escapeHtml(controller.title||controller.id||'Controller')+' · '+escapeHtml(controller.truth==='CURRENT'&&expires(controller.expiresAtUtc)?controller.state:'STALE / UNKNOWN')+'</span>').join('')+'<span class="cv-controller">Material lanes '+escapeHtml(buildLive?(data.materialLanes??'—')+'/'+(data.targetMaterialLanes??'—'):'unknown')+' · slots ≠ workers</span>';
+        setText('cv-boundary',data.truthBoundary||'Waiting for the canonical backend overview. No status inferred from static or remote fallback.');
+        setText('cv-head',data.sourceHead?'Checkpoint source '+data.sourceHead+' · observed '+data.ledgerObservedAtUtc:'Signed checkpoint source unavailable.');
+      }
+      function refreshConveyorAge() { if(conveyorOverviewObservation)renderConveyorOverview({goalBuildConveyorOverview:conveyorOverviewObservation});window.setTimeout(refreshConveyorAge,5000); }
+      window.setTimeout(refreshConveyorAge,5000);
       function renderGoalBuildConveyor(goals, projection) {
         const root=byId('goal-conveyor-board');if(!root)return;
         const journeys=(goals||[]).map(goal=>({goal,journey:goalBuildJourney(goal)}));
@@ -1212,7 +1300,7 @@
         {id:'workspace-discovery',label:'Workspaces',raw:discovery.finalVerdict,value:(discovery.summary?.active??0)+' active · '+(discovery.summary?.blocked??0)+' blocked',detail:(discovery.summary?.stale??0)+' stale · '+(discovery.summary?.orphaned??0)+' orphaned',human:(discovery.summary?.active??0)+' workspaces are active; '+(discovery.summary?.blocked??0)+' are blocked, '+(discovery.summary?.stale??0)+' are stale, and '+(discovery.summary?.orphaned??0)+' are orphaned.'}
       ]; root.textContent=''; nodes.forEach(node=>{const technicalTruth=sourceEvidenceTruth(node.raw,feedState);const human=typeof node.human==='function'?node.human(technicalTruth):node.human;const el=document.createElement('article');el.className='source-node';el.setAttribute('data-source-id',node.id);el.setAttribute('data-truth',technicalTruth);el.innerHTML='<strong>'+escapeHtml(node.label)+'</strong><output>'+escapeHtml(humanState(technicalTruth))+'</output><p class="plain-language">'+escapeHtml(human)+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(node.value+' · '+node.detail)+'</code></details>';root.appendChild(el);}); }
       function renderCompatibilityFields(payload, projection) { const queue=projection?.queueDispatcher||{}; const bridge=projection?.captainsBridge||{}; const build=bridge.buildOrchestration||{}; const attention=projection?.operatorAttention||{}; setField('active-goal-queue',(queue.currentJob&&queue.currentJob!=='UNKNOWN'?queue.currentJob:'depth '+(queue.queueDepth??'UNKNOWN'))); setField('active-proof-lane',bridge.activeLane?.laneId||bridge.activeLane?.id||bridge.activeLane?.name||bridge.activeLane||'UNKNOWN'); setField('blocked-goals',Array.isArray(attention.blockers)&&attention.blockers.length?attention.blockers.join(', '):'none published'); setField('completed-goals','UNKNOWN · no canonical completed-goals list in this feed'); setField('build-concierge-v1-v8-status',(bridge.milestone?.status||'UNKNOWN')+' · implemented '+(Array.isArray(bridge.milestone?.implementedGoals)?bridge.milestone.implementedGoals.join(', '):'UNKNOWN')); setField('build-concierge-v9-execution-engine',(build.phase||'UNKNOWN')+' · actor '+(build.actor||'UNKNOWN')+' · goal '+(build.selectedGoal||'UNKNOWN')); setField('build-concierge-v9-enriched-candidates',Object.entries(build.signals||{}).filter(([,enabled])=>enabled===true).map(([name])=>name).join(', ')||'none active'); setField('next-operator-action',attention.exactNextAction||bridge.exactNextAction||payload?.exactNextAction||'UNKNOWN'); }
-      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; renderStephanosBuildTruth(projection); const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderGoalBuildConveyor(goals,projection); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderGoalBuildGateObservatory(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
+      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; renderConveyorOverview(projection); renderStephanosBuildTruth(projection); const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderGoalBuildConveyor(goals,projection); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderGoalBuildGateObservatory(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
       function setSourceBadge(value, truthState) { setField('source-badge',value); const badge=field('source-badge'); if(badge?.setAttribute)badge.setAttribute('data-truth',truthState); setFieldTranslation('source-badge',humanState(truthState)); }
       function markStatic(reason) { setField('goal-data-source','Seeded / source-controlled · ' + reason); setField('github-state','Not live in browser'); setField('automation-state','Not live in browser'); setField('proof-state','Explicit or unknown'); setField('telemetry-blocker', reason + ' · No live GitHub proof, local proof, browser proof, or automation proof is attached to this static file.'); setSourceBadge('STATIC_FALLBACK','UNKNOWN'); setFieldTranslation('goal-data-source','Showing the safe built-in project picture.'); setFieldTranslation('github-state','GitHub status is not connected here.'); setFieldTranslation('automation-state','No live automation status is available.'); setFieldTranslation('proof-state','Evidence cannot be confirmed from the fallback page.'); setFieldTranslation('dashboard-feed-endpoint','Waiting for the local project service.'); setFieldTranslation('dashboard-last-refresh','No live refresh has completed.'); setFieldTranslation('dashboard-workspace-root','The shared project workspace is not connected.'); const mesh=byId('source-mesh');if(mesh)mesh.innerHTML='<div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Project records</strong><output>'+escapeHtml(humanState('UNKNOWN'))+'</output><p class="plain-language">'+escapeHtml(humanText(reason))+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(reason)+'</code></details></div>'; const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Truth boundary: bounded backend data is unavailable. Static seed visibility is shown only as fallback; no GitHub, automation, runtime or browser proof is claimed.'; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','static-seed'); applyProjection({goals:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:[reason],exactNextAction:'Restore bounded local dashboard feed.'}},'static-seed','unavailable'); renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The live approval inbox is unavailable. No decision can be recorded.'}); }
       function proofSummary(goals) { const counts={CURRENT:0,STALE:0,UNKNOWN:0}; (goals||[]).forEach(g=>{const t=goalProof(g);if(t==='CURRENT')counts.CURRENT++;else if(t==='STALE')counts.STALE++;else counts.UNKNOWN++;}); return 'CURRENT '+counts.CURRENT+' · STALE '+counts.STALE+' · UNKNOWN '+counts.UNKNOWN; }
