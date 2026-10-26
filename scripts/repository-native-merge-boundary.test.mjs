@@ -296,7 +296,9 @@ test('protected boundary keeps the native queue and adds only the exact mobile-s
   assert.match(protectedSource, /^  merge_group:\s*$/m);
   assert.match(protectedSource, /^    types: \[checks_requested\]\s*$/m);
   assert.match(protectedSource, /^  workflow_dispatch:\s*$/m);
-  assert.match(protectedSource, /run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}/);
+  assert.match(protectedSource, /run-name: \$\{\{ inputs\.mode == 'user-owned-pr-ready'/);
+  assert.ok(protectedSource.includes("format('Protected operator ready {0}', inputs.expected_head)"));
+  assert.ok(protectedSource.includes("format('Protected operator merge {0}', github.event.merge_group.head_sha || inputs.expected_head || github.run_id)"));
   assert.doesNotMatch(protectedSource, /pull_request_target:|^\s+pull_request:\s*$/m);
   assert.equal(
     [...protectedSource.matchAll(/ref: \$\{\{ github\.event\.merge_group\.base_sha \}\}/g)].length,

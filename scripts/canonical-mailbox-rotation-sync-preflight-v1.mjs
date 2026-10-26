@@ -4,14 +4,15 @@ import { spawnSync } from 'node:child_process';
 import { readJsonObject, resolveMailboxOutboxGuardLockPath } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { CANONICAL_MAILBOX_ISSUE } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { mailboxActionsExecutionQuiescent } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
+import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
 import { auditMailboxRotationComments, validateMailboxRotationRecord } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
-import { findMailboxRotationFence, parseMailboxRotationFenceBody, validateMailboxRotationFenceProof,
-  evaluateMailboxRotationActionInventory } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
+import { findMailboxRotationFence, parseMailboxRotationFenceBody, validateMailboxRotationFenceProof } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 
 // The existing direct guarded sync route crosses the source-epoch boundary.
 // It must not depend on posting a new command to a retired transport shard.
-export function evaluateMailboxRotationSyncPreflight({ state, predecessorComments, pull, authoritySource, mainHead, outboxLedger, fence, actions } = {}) {
+export function evaluateMailboxRotationSyncPreflight({ state, predecessorComments, pull, authoritySource, mainHead, outboxLedger, fence, actions, now } = {}) {
   const authority = readMailboxAuthorityLiteral(authoritySource);
   if (authority.active === CANONICAL_MAILBOX_ISSUE) return { ok: true, required: false };
   const fail = blocker => ({ ok: false, required: true, blocker });
@@ -21,7 +22,7 @@ export function evaluateMailboxRotationSyncPreflight({ state, predecessorComment
   if (!fence || fence.phase !== 'FROZEN' || fence.drained !== true || fence.transitionId !== record.transitionId
     || fence.predecessorIssue !== record.predecessorIssue || fence.successorIssue !== record.successorIssue
     || fence.cutoverHead !== record.cutoverHead || fence.cutoverPrNumber !== record.cutoverPrNumber) return fail('MAILBOX_ROTATION_SYNC_GLOBAL_FREEZE_UNPROVEN');
-  if (actions?.complete !== true || actions.pendingRuns?.length !== 0) return fail('MAILBOX_ROTATION_SYNC_ACTIONS_PENDING');
+  if (!mailboxActionsExecutionQuiescent(actions,{now,mainHead,activationHead:record.cutoverHead})) return fail('MAILBOX_ROTATION_SYNC_ACTIONS_PENDING');
   if (record.phase !== 'FROZEN' || record.drained !== true) return fail('MAILBOX_ROTATION_SYNC_REQUIRES_FROZEN_DRAIN');
   if (!Array.isArray(state.acceptedRequestIds) || state.acceptedRequestIds.length
     || !Array.isArray(state.pendingReceiptPublications) || state.pendingReceiptPublications.length) return fail('MAILBOX_ROTATION_SYNC_INFLIGHT_ACTIONS');
@@ -85,9 +86,8 @@ export function preflightCanonicalMailboxRotationSync({ repoRoot, expectedHead =
     freeze: get(`issues/comments/${projected.freezeCommentId}`), command: get(`issues/comments/${projected.commandCommentId}`),
     receipt: get(`issues/comments/${projected.receiptCommentId}`),
   });
-  const actions = evaluateMailboxRotationActionInventory(['queued','in_progress','waiting','requested','pending']
-    .map(status => get(`actions/runs?status=${status}&per_page=100`)));
+  const actions = inventoryMailboxRotationExecution({read:get,activationHead:state.mailboxRotation.cutoverHead});
   if (get('commits/main').sha !== mainHead) return { ok: false, blocker: 'MAILBOX_ROTATION_SYNC_MAIN_MOVED' };
   return evaluateMailboxRotationSyncPreflight({ state, predecessorComments,
-    pull: get(`pulls/${state.mailboxRotation.cutoverPrNumber}`), authoritySource, mainHead, outboxLedger, fence, actions });
+    pull: get(`pulls/${state.mailboxRotation.cutoverPrNumber}`), authoritySource, mainHead, outboxLedger, fence, actions, now:new Date().toISOString() });
 }

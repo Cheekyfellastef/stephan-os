@@ -66,7 +66,8 @@ import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRo
   validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
-import { buildMailboxRotationFence, findMailboxRotationFence, inventoryMailboxRotationActions } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
+import { buildMailboxRotationFence, findMailboxRotationFence } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
+import { inventoryMailboxRotationExecution } from './canonical-mailbox-action-evidence-v2.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
 import {
@@ -3451,9 +3452,9 @@ function publishRotationFence(record, proof) {
   return { commentId: observed.id };
 }
 
-function readRotationActions() {
-  return inventoryMailboxRotationActions(status => ghJson(['api',
-    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/actions/runs?status=${status}&per_page=100`]));
+function readRotationActions(record) {
+  return inventoryMailboxRotationExecution({activationHead:record?.cutoverHead,
+    read:path=>ghJson(['api',`repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${path}`])});
 }
 
 function approvedRotationUpdateHead(record, mainHead) {
@@ -4445,7 +4446,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       ? approvedRotationUpdateHead(state.mailboxRotation, currentHead) : '',
   });
   if (state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) {
-    try { state.mailboxRotationActions = await readRotationActions(); }
+    try { state.mailboxRotationActions = await readRotationActions(state.mailboxRotation); }
     catch { state.mailboxRotationActions = { complete: false, pendingRuns: [] }; }
   }
   saveState(state);

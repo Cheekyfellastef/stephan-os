@@ -419,6 +419,18 @@ test('dispatch entrypoint checks the complete bounded run estate before POST', (
   assert.doesNotMatch(workflow, /group: protected-workflow-dispatch-mailbox-\$\{\{ github\.event\.comment\.id/);
 });
 
+test('a source-distinct READY lifecycle cannot counterfeit merge custody, while real and ambiguous merges stay fenced',()=>{
+  const inspect=duplicateGuard.inspectProtectedWorkflowDuplicateDispatchRuns,head=baseCommand.expectedHead,base=baseCommand.expectedBase;
+  const run={id:777,name:'Protected operator ready '+head,display_title:'Protected operator ready '+head,
+    event:'workflow_dispatch',head_sha:base,head_branch:'main',status:'completed',conclusion:'success'};
+  assert.equal(inspect([run],baseCommand).ok,true);
+  const merge={...run,name:'Protected operator merge '+head,display_title:'Protected operator merge '+head};
+  assert.equal(inspect([merge],baseCommand).blocker,'PROTECTED_WORKFLOW_DUPLICATE_SOURCE_ATTEMPT_HELD');
+  // Historical same-title READY runs remain ambiguous and cannot be waived.
+  assert.equal(inspect([{...merge,mode:'user-owned-pr-ready'}],baseCommand).ok,false);
+  assert.equal(inspect([{...run,display_title:merge.display_title}],baseCommand).blocker,'PROTECTED_WORKFLOW_DISPATCH_RUN_IDENTITY_UNVERIFIABLE');
+});
+
 
 function readOnlyRetryFixture(attempts = 1) {
   const repository = 'Cheekyfellastef/stephan-os';
