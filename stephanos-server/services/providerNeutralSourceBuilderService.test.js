@@ -7,7 +7,43 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { processNextProviderNeutralSourceBuild } from './providerNeutralSourceBuilderService.js';
+import { processNextProviderNeutralSourceBuild as buildSource } from './providerNeutralSourceBuilderService.js';
+
+// Existing edit fixtures describe a complete model message. Present them on the
+// real streaming Response interface now used by the builder transport.
+function processNextProviderNeutralSourceBuild(options) {
+  const fetchFixture = options.localModelFetchImpl;
+  return buildSource({ ...options, ...(fetchFixture ? { localModelFetchImpl: async (...args) => {
+    const reply = await fetchFixture(...args);
+    if (reply.body) return reply;
+    return new Response(JSON.stringify({ ...await reply.json(), done: true }) + '\n',
+      { status: reply.status || (reply.ok ? 200 : 500) });
+  } } : {}) });
+}
+
+test('partial model stream cannot mutate source or satisfy a source receipt', async () => {
+  const fx = await fixture(['node --check shared/agents/example.mjs']);
+  fx.action.allowedFiles = ['shared/agents/example.mjs'];
+  const original = await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8');
+  const edits = [{path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;'}];
+  const result = await buildSource({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+    repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+    claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+    localModelFetchImpl: async (_url, request) => {
+      assert.equal(JSON.parse(request.body).stream, true);
+      return new Response(JSON.stringify({done: false, message: {content: JSON.stringify({edits})}}) + '\n');
+    },
+    collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.failureStage, 'PROVIDER');
+  assert.match(result.error, /MODEL_RESPONSE_INCOMPLETE/);
+  assert.equal(result.providerCompleted, false);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), original);
+  assert.equal(result.sourceArtifact ?? null, null);
+});
 
 test('model sees bounded required tests while their edit authority stays closed', async t => {
   for (const attemptTestEdit of [false, true]) await t.test(String(attemptTestEdit), async () => {
