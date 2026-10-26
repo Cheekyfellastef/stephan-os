@@ -13,7 +13,6 @@ import {
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
   REQUIRED_EXACT_HEAD_WORKFLOW_IDENTITIES,
   analyzeIndependentSecurityReview,
-  protectedOperatorWorkflowRunNameSourceIsExact,
   bindRequiredExactHeadWorkflowIdentities,
   buildProtectedApprovalReceipt,
   buildProtectedSecurityReviewReceipt,
@@ -30,20 +29,6 @@ import {
   validateProtectedOperatorMergePrerequisites,
   validateTrustedProtectedReviewReceipt,
 } from './operatorMergeApprovalGate.mjs';
-
-test('protected READY identity has one exact mode-bound successor grammar', () => {
-  const legacy = 'run-name: Protected operator merge ${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}';
-  const successor = "run-name: ${{ inputs.mode == 'user-owned-pr-ready' && format('Protected operator ready {0}', inputs.expected_head) || format('Protected operator merge {0}', github.event.merge_group.head_sha || inputs.expected_head || github.run_id) }}";
-  for (const line of [legacy, successor]) assert.equal(protectedOperatorWorkflowRunNameSourceIsExact(line), true);
-  for (const line of ['', successor+'\n'+successor, legacy+'\n'+successor,
-    successor.replace('user-owned-pr-ready', 'user-owned-protected-squash'),
-    successor.replace('inputs.expected_head)', 'github.sha)'),
-    successor.replace('Protected operator merge', 'Protected operator ready'),
-    successor.replace('Protected operator ready', 'Protected operator merge'),
-    successor.replace(" || format", " && format"),
-    successor.replace('github.event.merge_group.head_sha || ', ''),
-    successor+' || true']) assert.equal(protectedOperatorWorkflowRunNameSourceIsExact(line), false, line);
-});
 
 test('independent review waits for active exact-head workflows but stops on terminal failures', () => {
   assert.equal(exactHeadWorkflowFailureIsTerminal({
@@ -611,15 +596,6 @@ test('independent reviewer analyzes the complete diff and rejects operator-synth
     ...protectedWorkflowAnalysisEvidence(),
   });
   assert.equal(clean.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
-
-  const mergePath = '.github/workflows/operator-merge-approval-gate.yml';
-  const legacyName = protectedWorkflowContent(mergePath).split('\n').find(line => line.startsWith('run-name:'));
-  const successorName = "run-name: ${{ inputs.mode == 'user-owned-pr-ready' && format('Protected operator ready {0}', inputs.expected_head) || format('Protected operator merge {0}', github.event.merge_group.head_sha || inputs.expected_head || github.run_id) }}";
-  for (const [name, valid] of [[successorName, true], [successorName.replace('inputs.expected_head)', 'github.sha)'), false]]) {
-    const result = analyzeIndependentSecurityReview({changedFiles:cleanBoundaryFiles,diff:cleanBoundaryDiff(),
-      ...protectedWorkflowAnalysisEvidence({[mergePath]:protectedWorkflowContent(mergePath).replace(legacyName,name)})});
-    assert.equal(result.findings.some(item => item.code === 'write-workflow-does-not-use-trusted-source'), !valid);
-  }
 
   const movingTrustedSource = analyzeIndependentSecurityReview({
     changedFiles: cleanBoundaryFiles,

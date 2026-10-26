@@ -4,7 +4,6 @@ import {
   PROTECTED_WORKFLOW_SOURCE_MAX_BYTES,
   PROTECTED_WORKFLOW_SOURCE_SCHEMA_VERSION,
   analyzeIndependentSecurityReview,
-  protectedOperatorWorkflowRunNameSourceIsExact,
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
@@ -651,11 +650,7 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
   const content = typeof source?.content === 'string' ? source.content : '';
   const size = Buffer.byteLength(content, 'utf8');
   const blockers = [];
-  // The pinned fallback body stays byte-exact apart from the separately
-  // validated source-owned READY/merge identity. No job/input grant changes.
-  const canonicalContent = (protectedOperatorWorkflowRunNameSourceIsExact(content)
-    ? content.replace(/^run-name:.*$/m, 'run-name: Protected operator merge ${{ github.event.merge_group.head_sha || inputs.expected_head || github.run_id }}')
-    : content).replace(/\n+$/u, '\n');
+  const canonicalContent = content.replace(/\n+$/u, '\n');
   if (createHash('sha256').update(canonicalContent, 'utf8').digest('hex') !== PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256) {
     blockers.push('personal-repository-workflow-content-digest-not-exact');
   }
@@ -691,7 +686,7 @@ export function validatePersonalRepositoryProtectedWorkflowSource(input = {}) {
       block.lines.filter((line) => /^ {8}required:\s*true\s*$/.test(line)).length !== 1
       || block.lines.filter((line) => /^ {8}type:\s*string\s*$/.test(line)).length !== 1
     ))
-    || !protectedOperatorWorkflowRunNameSourceIsExact(content)) {
+    || !/^run-name: Protected operator merge \$\{\{ github\.event\.merge_group\.head_sha \|\| inputs\.expected_head \|\| github\.run_id \}\}\s*$/m.test(content)) {
     blockers.push('personal-repository-workflow-dispatch-inputs-not-exact');
   }
   const checkouts = checkoutBlocks(content);
