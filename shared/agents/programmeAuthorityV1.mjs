@@ -59,6 +59,8 @@ const ACTIVE_LANE_CONTROLLER_STATES = new Set(['ACTIVE_LANE']);
 const IDLE_SELECTION_CONTROLLER_STATES = new Set(['IDLE', 'RECONCILING']);
 const TERMINAL_LANE_CONTROLLER_STATES = new Set(['FINALIZING', 'RECONCILING']);
 const ACTIVE_EXECUTION_RECEIPT_STATES = new Set(['queued', 'accepted', 'started', 'progress']);
+// A dispatch or claim is not physical source execution.
+const PICKED_UP_EXECUTION_RECEIPT_STATES = new Set(['started', 'progress']);
 const FAILED_EXECUTION_RECEIPT_STATES = new Set(['failed', 'cancelled']);
 const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
   'COMPLETE',
@@ -498,7 +500,20 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   ].map((value) => text(value)).filter(Boolean));
   const materialPhasePermitted = !elasticPhaseBound
     || phaseBinding?.materialImplementation === true;
-  const active = blockers.length === 0 && github.active && materialPhasePermitted;
+  // A GitHub OPEN PR and an independent source lease are not a material
+  // Goal Conveyor worker. This binds the current single worker-started
+  // receipt to the exact live lease, worker, issue, PR, branch and head.
+  // Actual OS pickup and custody remain separate production authority gates.
+  const currentExecution = executionReceipts.length === 1 ? executionReceipts[0] : null;
+  const executionStartedOnLease = Boolean(
+    lease && currentExecution && executionReceiptRefs.length === 1
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(currentExecution.state)
+    && validateExecutionReceiptAgainstMutationLease(currentExecution, lease, { nowUtc: input.nowUtc }).valid
+  );
+  const active = blockers.length === 0 && github.active && materialPhasePermitted
+    && executionStartedOnLease;
+  const pickupPending = blockers.length === 0 && github.active && materialPhasePermitted
+    && !executionStartedOnLease;
   const reviewPending = blockers.length === 0 && github.active
     && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
@@ -522,6 +537,8 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
     mergeEvidence: github,
     status: terminal ? 'TERMINAL' : active ? 'ACTIVE' : reviewPending ? 'REVIEW_PENDING' : 'HOLD',
     active,
+    pickupPending,
+    executionStartedOnLease,
     reviewPending,
     elasticMissionPhaseBinding: elasticPhaseBound ? phaseBinding : null,
     terminal,
@@ -1418,7 +1435,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     else {
       const executionBinding = validateExecutionReceiptAgainstMutationLease(input.executionReceipt, lease, { nowUtc });
       if (!executionBinding.valid) blockers.push(...executionBinding.errors.map((error) => `execution:${error}`));
-      else if (!ACTIVE_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
+      else if (!PICKED_UP_EXECUTION_RECEIPT_STATES.has(input.executionReceipt.state)) {
         blockers.push('active-lane-execution-receipt-state-not-executable');
       }
     }
