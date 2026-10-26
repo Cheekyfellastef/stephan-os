@@ -1257,6 +1257,8 @@ test('authoritative projection holds without a real mutation lease even when a r
   assert.equal(projection.schemaVersion, AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA);
   assert.equal(projection.status, 'HOLD');
   assert.equal(projection.lane.active, false);
+  assert.ok(projection.blockers.includes('execution-receipt-without-source-mutation-lease'));
+  assert.ok(projection.blockers.includes('controller-heartbeat-phantom-active-lane'));
   assert.ok(!projection.blockers.includes('active-lane-without-source-mutation-lease'));
   assert.equal(projection.chatMemoryAuthoritative, false);
 });
