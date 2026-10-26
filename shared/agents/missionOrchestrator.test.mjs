@@ -6,7 +6,64 @@ import {
   buildMissionOperationsSnapshot,
   createMissionOrchestratorState,
   isRetryableAgentFailureBlocker,
+  projectNarrowedMissionSourceScopeV1,
 } from './missionOrchestrator.mjs';
+
+test('retry source scope is directional containment with unchanged path boundaries', () => {
+  const project = projectNarrowedMissionSourceScopeV1;
+  for (const [prior, next] of [
+    [['**'], ['shared/agents/example.mjs']],
+    [['shared/**'], ['shared/agents/example.mjs', 'shared/agents/example.mjs/**']],
+    [['shared/agents/example.mjs', 'scripts/**'], ['shared/agents/example.mjs']],
+  ]) assert.equal(project(prior, next).valid, true);
+  for (const [prior, next] of [
+    [['shared/agents/example.mjs'], ['shared/agents/example.mjs/**']],
+    [['shared/agents/**'], ['shared/**']],
+    [['shared/agents/**'], ['shared/agents-other/a.mjs']],
+    [['**'], ['**']], [['**'], []], [[], ['shared/a.mjs']],
+    [['**'], new Array(1)], [new Array(1), ['shared/a.mjs']],
+    [['**'], ['../shared/a.mjs']], [['**'], ['C:/shared/a.mjs']],
+    [['**'], ['shared//a.mjs']], [['**'], ['shared/./a.mjs']],
+    [['**'], ['.git/config']], [['**'], ['shared/token.mjs']],
+    [['**'], ['shared/a.mjs', 'SHARED/A.mjs']], [['**'], ['shared/*.mjs']],
+  ]) assert.equal(project(prior, next).valid, false, JSON.stringify([prior, next]));
+});
+
+test('failed task retry atomically narrows scope and strengthens acceptance without replacing its history', () => {
+  let state = createMissionOrchestratorState({...base, allowedFiles: ['**']}, {now: new Date(timestamp(0))});
+  state = event(state, 'WORKTREE_READY', {worktreePath: base.worktreePath, clean: true, receipt: receipt('worktree', 'narrow-worktree')});
+  state = event(state, 'AGENT_DISPATCHED', {agentId: 'foundry-forge'});
+  state = event(state, 'AGENT_RESULT_RECEIVED', {success: false, resultId: 'original-narrow-action', error: 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'});
+  state = event(state, 'MISSION_PARKED_FOR_REPAIR', {reason: 'Original failure', repairOwner: '#2961', receipt: receipt('park', 'narrow-park')});
+  const original = structuredClone(state);
+  const scope = ['shared/agents/example.mjs'];
+  const tests = [...original.requiredTests, 'node --test scripts/independent.test.mjs'];
+  const fields = { retryableBlockers: original.blockers, retryAllowedFiles: scope, retryRequiredTests: tests,
+    retryPlanSourceHead: 'a'.repeat(40), receipt: receipt('retry', 'narrow-retry') };
+  const next = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', fields);
+  assert.equal(next.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(next.repair.currentRound, original.repair.currentRound + 1);
+  assert.deepEqual(next.allowedFiles, scope);
+  assert.deepEqual(next.requiredTests, tests);
+  assert.deepEqual(next.repair.history.at(-1).previousAllowedFiles, ['**']);
+  assert.deepEqual(next.repair.history.at(-1).previousDispatch, original.dispatch);
+  assert.deepEqual(next.repair.history.at(-1).previousRequiredTests, original.requiredTests);
+  assert.deepEqual(next.continuity.history.slice(0, -1), original.continuity.history);
+  const dispatched = event(next, 'AGENT_DISPATCHED', {agentId: 'codex', adapter: 'codex'});
+  const outside = event(dispatched, 'AGENT_RESULT_RECEIVED', {success: true,
+    changedFiles: ['scripts/independent.test.mjs'], receipt: receipt('result', 'narrow-outside')});
+  assert.equal(outside.currentPhase, 'BLOCKED');
+  assert.match(outside.blockers.join(' '), /exceeded approved source scope/);
+  for (const change of [ {retryPlanSourceHead: ''}, {retryAllowedFiles: ['**']},
+    {retryRequiredTests: original.requiredTests}, {retryAllowedFiles: ['scripts/**']},
+    {retryRequiredTests: ['node --test scripts/independent.test.mjs']} ]) {
+    const rejected = event(original, 'AGENT_FAILURE_RETRY_ADMITTED', {...fields, ...change});
+    assert.equal(rejected.currentPhase, 'BLOCKED');
+    assert.deepEqual(rejected.allowedFiles, original.allowedFiles);
+    assert.deepEqual(rejected.requiredTests, original.requiredTests);
+    assert.equal(rejected.repair.currentRound, original.repair.currentRound);
+  }
+});
 
 test('test failure retry binds the complete validated consumed test plan', () => {
   const command = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
