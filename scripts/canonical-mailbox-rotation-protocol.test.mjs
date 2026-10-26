@@ -80,7 +80,7 @@ test('DRAIN explicitly extends the barrier; STATUS retains late work and CANCEL 
   assert.equal(f.state.mailboxRotation.barrierCommentId,200);
   assert.deepEqual(f.state.mailboxRotationInventory.pendingBeforeBarrier,['ordinary-request-001']);
   await executeMailboxRotationOnHost(control('CANCEL'),f);
-  assert.equal(f.state.mailboxRotation.phase,'CANCELLED');assert.equal(current,3149);
+  assert.equal(f.state.mailboxRotation.phase,'CANCELLED');assert.equal(f.state.mailboxRotation.predecessorIssue,current);
 });
 test('active/waiting Actions demote an earlier FROZEN record and prevent drain certification',async()=>{
   const f=fixture();await executeMailboxRotationOnHost(command(),f);
@@ -206,12 +206,14 @@ test('only the exact native protocol adapters naturally reload; GitHub-only help
 test('A→B→C keeps one durable execution identity and successor proof derives from changed authority',async t=>{
   const root=sandbox(t),ledger=createMailboxExecutionLedger(root),source=readFileSync(new URL('../shared/agents/canonicalMailboxRotationV1.mjs',import.meta.url),'utf8');
   const authoritySource=readFileSync(new URL('../shared/agents/canonicalMailboxAuthorityV1.mjs',import.meta.url),'utf8');
-  let predecessor=current;
+  let predecessor=current,retired=readMailboxAuthorityLiteral(authoritySource).retired;
   for (const [i,epoch] of [current+1000,current+2000].entries()) {
     const a=join(root,`authority-${i}.mjs`),r=join(root,`rotation-${i}.mjs`);
+    retired=[...new Set([...retired,predecessor])];
     writeFileSync(a,authoritySource.replace(`CANONICAL_MAILBOX_ISSUE = ${current}`,`CANONICAL_MAILBOX_ISSUE = ${epoch}`)
       .replace(/RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze\(\[[^\]]*\]\)/,
-        `RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze([1507, 2158, 2590, 2808, ${predecessor}])`));
+        `RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze(${JSON.stringify(retired)})`));
+    assert.deepEqual(readMailboxAuthorityLiteral(readFileSync(a,'utf8')).retired,retired);
     writeFileSync(r,source.replace('./canonicalMailboxAuthorityV1.mjs',pathToFileURL(a).href));
     const module=await import(pathToFileURL(r).href),rotation={...record(),predecessorIssue:predecessor,successorIssue:epoch};
     const ids=[`epoch-${i}-probe-first`,`epoch-${i}-probe-second`],comments=[];
@@ -233,7 +235,7 @@ test('A→B→C keeps one durable execution identity and successor proof derives
       .replace('../shared/agents/canonicalMailboxRolloverConsumerV1.mjs',new URL('../shared/agents/canonicalMailboxRolloverConsumerV1.mjs',import.meta.url).href));
     const host=await import(pathToFileURL(hostPath).href),state={mailboxRotation:{...rotation,phase:'FROZEN',drained:true,globalFencePublished:true}},
       options={...fixture(),state,sourceHead:merged,selectedCommentId:200,
-        readPull:async()=>pull({merged:true,merge_commit_sha:merged}),readAuthoritySource:async()=>authority(epoch,[previous,predecessor]),
+        readPull:async()=>pull({merged:true,merge_commit_sha:merged}),readAuthoritySource:async()=>authority(epoch,retired),
         readComments:async issue=>issue===epoch?comments:[]};
     assert.equal((await host.executeMailboxRotationOnHost(control('CANCEL',{issueNumber:epoch,expectedHead:merged}),options)).blocker,'MAILBOX_ROTATION_PROTECTED_ROLLBACK_REQUIRED');
     assert.equal((await host.executeMailboxRotationOnHost(control('VERIFY',{issueNumber:epoch,expectedHead:merged,probeRequestIds:ids}),options)).ok,true);

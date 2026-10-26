@@ -23,7 +23,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
-const CANONICAL_MAILBOX_ISSUE = 3149;
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 function command(overrides = {}) {
   return {

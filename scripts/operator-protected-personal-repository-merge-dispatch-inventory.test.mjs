@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -61,7 +62,7 @@ function fixture() {
     schemaVersion: PROTECTED_WORKFLOW_DISPATCH_SCHEMA,
     requestId: 'protected-inventory-fixture-only-20261025',
     operation: 'DISPATCH_PROTECTED_OPERATOR_MERGE', repository: REPOSITORY,
-    issueNumber: 3149, operatorApproval: 'operator-approved',
+    issueNumber: activeMailboxIssueForTest, operatorApproval: 'operator-approved',
     expiresAt: '2026-10-25T10:08:00Z', mode: 'user-owned-protected-squash',
     prNumber: 3240, expectedBranch: 'fix/2961-inventory-fixture',
     expectedHead: HEAD, expectedHeadTree: TREE, expectedBase: BASE,
@@ -72,7 +73,7 @@ function fixture() {
   const fence = String.fromCharCode(96).repeat(3);
   const comment = {
     id: 7000, user: { ...OWNER },
-    issue_url: 'https://api.github.com' + ROOT + '/issues/3149',
+    issue_url: 'https://api.github.com' + ROOT + `/issues/${activeMailboxIssueForTest}`,
     created_at: '2026-10-25T09:59:00Z', updated_at: '2026-10-25T09:59:00Z',
     body: fence + 'stephanos-protected-workflow-dispatch\n' + JSON.stringify(command) + '\n' + fence,
   };

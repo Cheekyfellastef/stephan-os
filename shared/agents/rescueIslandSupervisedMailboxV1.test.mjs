@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -35,7 +36,7 @@ const command = overrides => ({
   requestId: 'island02-mailbox-proof-01',
   operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149,
+  issueNumber: activeMailboxIssueForTest,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: HEAD,
@@ -71,7 +72,7 @@ const statusCommand = overrides => ({
   requestId: 'island02-mailbox-proof-01-status',
   operation: RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149,
+  issueNumber: activeMailboxIssueForTest,
   branch: 'main',
   operatorApproval: 'operator-approved',
   expectedHead: 'e'.repeat(40),

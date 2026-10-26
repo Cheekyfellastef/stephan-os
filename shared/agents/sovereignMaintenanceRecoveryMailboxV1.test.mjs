@@ -1,3 +1,4 @@
+import { CANONICAL_MAILBOX_ISSUE as activeMailboxIssueForTest } from './canonicalMailboxAuthorityV1.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,7 +20,7 @@ const cycle = '0a23c41a-124f-4776-97e8-e45ab0309b0b';
 const now = new Date('2026-10-25T14:00:00Z');
 const command = (extra = {}) => ({ schemaVersion: 'stephanos.battle-bridge-github-command.v1',
   requestId: 'octopus-recovery-test-1', operation: ops[0], repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 3149, branch: 'main', operatorApproval: 'operator-approved', expectedHead: head,
+  issueNumber: activeMailboxIssueForTest, branch: 'main', operatorApproval: 'operator-approved', expectedHead: head,
   expiresAt: '2026-10-25T14:30:00Z', ...extra });
 const options = { readMaintenanceRecoverySourceFn: () => head,
   runMaintenanceCustodyRecoveryFn: async () => ({ ok: true, originalHoldMatched: true,
