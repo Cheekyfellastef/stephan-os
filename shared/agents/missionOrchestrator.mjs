@@ -92,6 +92,29 @@ function scopeAllowsPath(scope, value) {
   return false;
 }
 
+// A repaired failed-task plan may reduce mutation authority, never enlarge it.
+// Evaluate containment with the same path semantics used at result ingestion.
+export function projectNarrowedMissionSourceScopeV1(previous, next) {
+  const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
+  const validScope = value => typeof value === 'string' && value === normalizePath(value)
+    && !isUnsafePath(value)
+    && (value === '**' || /^[A-Za-z0-9._/-]+(?:\/\*\*)?$/.test(value))
+    && !value.split('/').some(part => !part || part === '.')
+    && !value.replace(/\/\*\*$/, '').includes('*');
+  if (!Array.isArray(previous) || !previous.length || !Array.isArray(next) || !next.length
+      || [...previous].some(value => value !== '**' && !validScope(value))
+      || [...next].some(value => value === '**' || !validScope(value))) return invalid();
+  const allowedFiles = [...new Set(next)];
+  if (new Set(allowedFiles.map(value => value.toLowerCase())).size !== allowedFiles.length) return invalid();
+  for (const candidate of allowedFiles) {
+    const recursive = candidate.endsWith('/**');
+    const base = recursive ? candidate.slice(0, -3) : candidate;
+    if (!previous.some(scope => scopeAllowsPath(scope, base)
+        && (!recursive || scope === '**' || scope.endsWith('/**')))) return invalid();
+  }
+  return Object.freeze({ valid: true, allowedFiles: Object.freeze(allowedFiles) });
+}
+
 function iso(value, fallback = '') {
   const parsed = Date.parse(text(value));
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
@@ -412,8 +435,14 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
       && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
+    const narrowedScope = event.retryAllowedFiles === undefined ? null
+      : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
+    if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
+        || state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+      return block(state, 'Retry scope reduction requires the original bounded source-diff failure and cannot widen authority.', timestamp);
+    }
     const strengthened = event.retryRequiredTests === undefined ? null
-      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, state.allowedFiles);
+      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, narrowedScope?.allowedFiles || state.allowedFiles);
     if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {
       return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
     }
@@ -439,11 +468,14 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
       previousRequiredTests: [...state.requiredTests],
+      ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
       previousDispatch: clone(state.dispatch),
       previousParkingStatus: state.continuity.parkingStatus,
       requiredTests: [...(strengthened?.commands || state.requiredTests)],
     });
     if (strengthened) state.requiredTests = [...strengthened.commands];
+    if (narrowedScope) state.allowedFiles = [...narrowedScope.allowedFiles];
     if (parkedRetry) state.continuity = { ...state.continuity,
       parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
       pendingResolvedBlockers: [],

@@ -8,7 +8,7 @@ import {
   SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
-import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure } from '../../shared/agents/missionOrchestrator.mjs';
+import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure, projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
 import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { createFleetRetryScanObservationV1, fleetRetryAcceptanceGateCodeV1 } from '../../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -472,6 +472,8 @@ export async function retrySafelyBlockedAgentFailure({
     }
 
     let retryRequiredTests;
+    let retryAllowedFiles;
+    let retryPlanBinding;
     if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
       // Re-admission is not repair/completion proof. Require a newly strengthened
       // owner-authenticated acceptance contract before another consumed attempt.
@@ -492,21 +494,45 @@ export async function retrySafelyBlockedAgentFailure({
       const currentScopes = projectCanonicalResourceIds(mirrors[0]?.resourceIds || []);
       const sameSourceScope = retainedScopes.valid && currentScopes.valid && currentScopes.resourceIds.length > 0
         && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
-      const nextRequiredTests = sameSourceScope && ownerPlan?.valid && ownerPlan.supplied
+      const prefix = `repo:${currentCandidate.repository.toLowerCase()}:path:`;
+      const ownerResources = mirrors[0]?.resourceIds;
+      const narrowedScope = !sameSourceScope && currentScopes.valid && Array.isArray(ownerResources)
+        && ownerResources.length > 0 && ownerResources.every(value => typeof value === 'string' && value.toLowerCase().startsWith(prefix))
+        ? projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles,
+          ownerResources.flatMap(value => {
+            const scope = value.slice(prefix.length);
+            return projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles, [`${scope}/**`]).valid
+              ? [scope, `${scope}/**`] : [scope];
+          }))
+        : null;
+      const admittedScope = sameSourceScope || narrowedScope?.valid === true;
+      const nextRequiredTests = admittedScope && ownerPlan?.valid && ownerPlan.supplied
         ? [...new Set(['npm run stephanos:verify', ...ownerPlan.commands])] : null;
       const strengthened = nextRequiredTests
-        ? projectStrengthenedRetryTestsV1(currentCandidate.requiredTests, nextRequiredTests, currentCandidate.allowedFiles)
+        ? projectStrengthenedRetryTestsV1(currentCandidate.requiredTests, nextRequiredTests, narrowedScope?.allowedFiles || currentCandidate.allowedFiles)
         : null;
       if (currentCandidate.blockers.length !== 1 || !strengthened?.valid) {
         observation.note(currentCandidate, fleetRetryAcceptanceGateCodeV1({
           singleBlocker: currentCandidate.blockers.length === 1, mirrorCount: mirrors.length,
-          sameSourceScope, ownerPlan, previousRequiredTests: currentCandidate.requiredTests, nextRequiredTests,
+          sameSourceScope: admittedScope, ownerPlan, previousRequiredTests: currentCandidate.requiredTests, nextRequiredTests,
         }));
         firstBlockedCandidate ??= { ok: true, classification: 'SOURCE_DIFF_RETRY_REQUIRES_STRONGER_OWNER_ACCEPTANCE',
           retried: false, missionId: currentCandidate.missionId };
         continue;
       }
       retryRequiredTests = strengthened.commands;
+      if (narrowedScope?.valid) {
+        const sourceHead = text(retryAuthority?.machineryInventory?.sourceHead).toLowerCase();
+        if (!SHA_40.test(sourceHead)) {
+          observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
+          firstBlockedCandidate ??= { ok: true, classification: 'NARROWED_RETRY_PLAN_HEAD_UNPROVEN',
+            retried: false, missionId: currentCandidate.missionId };
+          continue;
+        }
+        retryAllowedFiles = narrowedScope.allowedFiles;
+        retryPlanBinding = { sourceHead, ownerResources: JSON.stringify(ownerResources),
+          requiredTests: JSON.stringify(ownerPlan.commands) };
+      }
     }
 
     const missionId = text(currentCandidate.missionId).toLowerCase();
@@ -577,9 +603,29 @@ export async function retrySafelyBlockedAgentFailure({
       };
       continue;
     }
+    if (retryPlanBinding) {
+      // Custody and worktree checks await external reads. Re-observe the same
+      // authenticated plan/head before the existing revision-guarded event.
+      const refreshed = await readProgrammeProjection({ env, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+        orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
+      const issueNumber = issueFromMissionId(currentCandidate.missionId);
+      const mirrors = (refreshed?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
+      const ownerPlan = mirrors.length === 1
+        ? projectOwnerGoalRequiredTestsV1(mirrors[0], issueNumber, currentCandidate.repository) : null;
+      if (!ownerPlan?.valid || !ownerPlan.supplied
+          || text(refreshed?.machineryInventory?.sourceHead).toLowerCase() !== retryPlanBinding.sourceHead
+          || worktreeRefresh.clean !== true || worktreeRefresh.afterHead !== retryPlanBinding.sourceHead
+          || JSON.stringify(mirrors[0]?.resourceIds) !== retryPlanBinding.ownerResources
+          || JSON.stringify(ownerPlan.commands) !== retryPlanBinding.requiredTests) {
+        observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
+        firstBlockedCandidate ??= { ok: true, classification: 'NARROWED_RETRY_PLAN_CHANGED_OR_WORKTREE_UNBOUND',
+          retried: false, missionId: currentCandidate.missionId };
+        continue;
+      }
+    }
     observation.note(currentCandidate, 'RETRY_SELECTED');
     candidateRecord = currentCandidate;
-    candidate = { ...currentCandidate, retryRequiredTests, retryWorktreeRefresh: worktreeRefresh };
+    candidate = { ...currentCandidate, retryRequiredTests, retryAllowedFiles, retryPlanBinding, retryWorktreeRefresh: worktreeRefresh };
     break;
   }
 
@@ -608,6 +654,8 @@ export async function retrySafelyBlockedAgentFailure({
     timestamp,
     retryableBlockers,
     ...(candidate.retryRequiredTests ? { retryRequiredTests: candidate.retryRequiredTests } : {}),
+    ...(candidate.retryAllowedFiles ? { retryAllowedFiles: candidate.retryAllowedFiles } : {}),
+    ...(candidate.retryPlanBinding ? { retryPlanSourceHead: candidate.retryPlanBinding.sourceHead } : {}),
     receipt: {
       receiptId,
       requirement: 'bounded retry admission for retryable agent execution failure',
