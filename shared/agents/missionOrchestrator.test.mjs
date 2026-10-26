@@ -5,7 +5,33 @@ import {
   applyMissionOrchestratorEvent,
   buildMissionOperationsSnapshot,
   createMissionOrchestratorState,
+  isRetryableAgentFailureBlocker,
 } from './missionOrchestrator.mjs';
+
+test('test failure retry binds the complete validated consumed test plan', () => {
+  const command = 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs';
+  const blocker = `PROVIDER_NEUTRAL_TEST_FAILED:${command}`;
+  for (const [plan, eligible] of [
+    [[command], true], [['npm run stephanos:verify', command], true],
+    [['npm run stephanos:verify'], false], [[], false],
+    [[command, 'npm install'], false], [[command, command], false],
+  ]) {
+    assert.equal(isRetryableAgentFailureBlocker(blocker, plan), eligible);
+    let state = createMissionOrchestratorState({ ...base, requiredTests: plan });
+    state.requiredTests = [...plan]; state.git.worktreeReady = true; state.git.clean = true;
+    state.currentPhase = 'BLOCKED'; state.dispatch.status = 'failed'; state.blockers = [blocker];
+    const next = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+      retryableBlockers: [blocker], receipt: receipt('retry', 'test-plan-retry'),
+    });
+    assert.equal(next.currentPhase, eligible ? 'AGENT_IMPLEMENTATION' : 'BLOCKED');
+    assert.equal(next.repair.currentRound, eligible ? 1 : 0);
+    assert.deepEqual(next.requiredTests, state.requiredTests);
+  }
+  for (const invalid of [command + ';whoami', command + ' --watch', command + '\nwhoami',
+    'node --test scripts/../secret.test.mjs', 'node --test scripts/*.test.mjs']) {
+    assert.equal(isRetryableAgentFailureBlocker('PROVIDER_NEUTRAL_TEST_FAILED:' + invalid, [invalid]), false);
+  }
+});
 
 const base = {
   missionId: 'mission-orchestrator-test',

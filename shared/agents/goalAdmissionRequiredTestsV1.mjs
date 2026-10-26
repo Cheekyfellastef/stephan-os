@@ -20,6 +20,18 @@ export function projectGoalAdmissionRequiredTestsV1(value) {
   return Object.freeze({ valid: true, supplied: true, commands: Object.freeze(commands) });
 }
 
+// Read-only context for already admitted tests. Never a mutation scope or an
+// import crawler: the one fixed acceptance wrapper needs its declared oracle.
+export function projectGoalTestContextPathsV1(requiredTests) {
+  const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
+  if (!plan.valid || !plan.supplied) return Object.freeze([]);
+  const paths = plan.commands.filter(command => command.startsWith('node --test '))
+    .map(command => command.slice('node --test '.length));
+  if (paths.includes('scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs'))
+    paths.unshift('shared/agents/legacyGoalTestPlanAcceptanceV1.mjs');
+  return Object.freeze([...new Set(paths)]);
+}
+
 export function projectOwnerGoalRequiredTestsV1(record, issueNumber, repository) {
   const tests = projectGoalAdmissionRequiredTestsV1(record?.requiredTests);
   const identity = record?.schemaVersion === 'shared-agent-workspace-record.v1'

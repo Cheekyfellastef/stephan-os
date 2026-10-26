@@ -14,6 +14,7 @@ import {
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
+import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
@@ -280,7 +281,7 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
     }
     const bytes = await readFileImpl(absolutePath);
     if (bytes.length > MAX_PER_FILE_BYTES) continue;
-    if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
+    if (totalBytes + bytes.length > Math.min(MAX_TOTAL_BYTES, options.maxContextBytes ?? MAX_TOTAL_BYTES)) continue;
     totalBytes += bytes.length;
     snapshot.push(Object.freeze({ path, content: bytes.toString('utf8') }));
   }
@@ -563,7 +564,7 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
   return text(issue?.body).slice(0, MAX_GOAL_CONTEXT_BYTES);
 }
 
-function localBuilderPrompt(action = {}, sourceSnapshots = []) {
+function localBuilderPrompt(action = {}, sourceSnapshots = [], testSnapshots = []) {
   const sourceSnapshotsSection = sourceSnapshots.length
     ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
     : '';
@@ -596,6 +597,7 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
+    testSnapshots.length ? `Read-only required-test context (never permission to edit):\n${JSON.stringify(testSnapshots, null, 2)}` : '',
     sourceSnapshotsSection,
     goalContextSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
@@ -654,7 +656,7 @@ async function callLocalBuilder(action, options = {}) {
         model,
         stream: false,
         format: 'json',
-        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) + retryInstruction }],
+        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction }],
         options: { temperature: 0.1 },
       }),
     });
@@ -972,10 +974,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       run,
       { ...options, sourceContextHint },
     );
+    const testContextPaths = projectGoalTestContextPathsV1(action.requiredTests);
+    const testSnapshots = testContextPaths.length ? await collectSourceSnapshots(
+      worktreePath, testContextPaths, run, { ...options, sourceContextHint, maxContextBytes: 16 * 1024 },
+    ) : [];
     providerInvoked = true;
     const generated = await callLocalBuilder(
       { ...sourceBuildAction, goalContext },
-      { ...options, sourceSnapshots },
+      { ...options, sourceSnapshots, testSnapshots },
     );
     providerCompleted = true;
     const { finalized, receipt, sourceTestReceipts } = await guardMutation(async () => {
