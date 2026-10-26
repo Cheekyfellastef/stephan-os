@@ -18,7 +18,7 @@ const FLOW = [
   ['merge', 'Protected merge', [22]],
 ];
 
-export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Date.now(), staleAfterMs = MAX_AGE } = {}) {
+export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Date.now(), staleAfterMs = MAX_AGE, statusRecords } = {}) {
   const maxAgeMs = Math.max(1000, Math.min(MAX_AGE, Number(staleAfterMs) || MAX_AGE));
   const ledger = projection.goalBuildGateObservatory;
   const admittedLedger = ledger?.schemaVersion === 'stephanos.goal-build-gate-observatory.v1'
@@ -29,17 +29,31 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     && fresh(ledger.observedAtUtc, nowMs, maxAgeMs);
   // Keep the existing logical handoff trace visible, but never elevate its
   // structural WORKER/CLAIM flags into signed physical execution proof.
-  const track = projection.autonomyBuildTrack;
+  // A projected wrapper is refreshed by each HTTP read. In the backend only the
+  // original publisher record may establish observation time (including absence).
+  const latestStatus = id => array(statusRecords).filter(record => record.statusId === id)
+    .sort((a, b) => time(b.timestampUtc) - time(a.timestampUtc))[0];
+  const heartbeat = latestStatus('autonomy-build-track-current');
+  const track = statusRecords ? heartbeat?.autonomyTrack : projection.autonomyBuildTrack;
+  const originalTimes = [time(heartbeat?.timestampUtc), time(track?.timestampUtc)];
+  const trackAt = statusRecords ? originalTimes.every(value => Number.isFinite(value) && value <= nowMs)
+    ? new Date(Math.min(...originalTimes)).toISOString() : '' : track?.timestampUtc;
+  const missionBound = Boolean(track?.missionId) && Number.isInteger(track?.issueNumber) && track.issueNumber > 0;
+  const systemScoped = !track?.missionId && (track?.issueNumber === null || track?.issueNumber === undefined);
   const trackKnown = track?.schemaVersion === 'stephanos.autonomy-build-track.v1'
-    && /^[a-f0-9]{40}$/.test(track.sourceHead || '') && track.missionId
-    && Number.isInteger(track.issueNumber) && track.issueNumber > 0;
-  const trackLive = trackKnown && fresh(track.timestampUtc, nowMs, maxAgeMs)
-    && (!admittedLedger || ledger.sourceHead === track.sourceHead);
+    && (/^[a-f0-9]{40}$/.test(track.sourceHead || '') || (statusRecords && !track.sourceHead))
+    && (missionBound || systemScoped);
+  const trackLive = trackKnown && fresh(trackAt, nowMs, maxAgeMs)
+    && (!admittedLedger || systemScoped || ledger.sourceHead === track.sourceHead);
   const trackGoal = trackKnown ? array(projection.goals).find(goal => goal.issue === '#'+track.issueNumber) : null;
   const trace = trackKnown ? { truth: trackLive ? 'CURRENT' : 'STALE',
-    issue: '#'+track.issueNumber, title: trackGoal?.title || 'title unavailable from current evidence',
+    scope: missionBound ? 'MISSION' : 'SYSTEM', cycleId: track.cycleId || '',
+    sourceBinding: track.sourceHead ? 'SOURCE_BOUND' : 'SOURCE_HEAD_MISSING',
+    readyWorkCount: count(track.cycleDecision?.safeEligibleWorkRemaining),
+    materialActionsSucceeded: count(track.materialActionsSucceeded),
+    issue: missionBound ? '#'+track.issueNumber : '', title: missionBound ? trackGoal?.title || 'title unavailable from current evidence' : 'No goal selected',
     owner: trackGoal?.controllerTitle || '', missionId: track.missionId, sourceHead: track.sourceHead,
-    observedAtUtc: track.timestampUtc, expiresAtUtc: trackLive ? new Date(time(track.timestampUtc)+maxAgeMs).toISOString() : '',
+    observedAtUtc: trackAt || '', expiresAtUtc: trackLive ? new Date(time(trackAt)+maxAgeMs).toISOString() : '',
     currentGate: track.currentGate, currentState: track.currentState, diagnosis: track.diagnosis,
     nextAction: track.exactNextAction } : null;
   const traceGateByStage = { admission: 'ELIGIBLE_GOAL', select: 'SELECT', claim: 'CLAIM',
@@ -54,8 +68,21 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     const stale = observations.some(gate => gate && (gate.status === 'STALE' || !gateLive(gate)) && gate.proofRef);
     const waiting = ledgerLive && observations.some(gate => gate?.status === 'WAITING_FOR_PREREQUISITE');
     const state = failure ? 'BLOCKED' : passed ? 'PROVEN' : stale ? 'STALE' : waiting ? 'WAITING' : 'UNKNOWN';
-    const traceGate = trackLive ? array(track.gates).find(gate => gate.id === traceGateByStage[id]) : null;
+    const historicalGate = trackKnown && Number.isFinite(time(trackAt)) && time(trackAt) <= nowMs
+      ? array(track.gates).find(gate => gate.id === traceGateByStage[id]) : null;
+    const traceGate = trackLive ? historicalGate : null;
+    const passedLabels = { admission: 'Admission reported', select: 'Selection reported', claim: 'Claim reported',
+      pickup: 'Pickup reported', edit: 'Edit reported', test: 'Test run reported', proof: 'Review handoff reported' };
+    const operationalLabels = { PASS: passedLabels[id] || 'Observed',
+      WAITING: 'Waiting here', FAIL: 'Blocked here', BLOCKED: 'Blocked here', NOT_REACHED: 'Not reached' };
+    const operational = historicalGate ? { state: historicalGate.state, truth: trackLive ? 'CURRENT' : 'STALE',
+      label: operationalLabels[historicalGate.state] || 'No stage report',
+      reason: historicalGate.reason || '', observedAtUtc: trackAt, expiresAtUtc: trace.expiresAtUtc,
+      trafficLight: !trackLive ? 'AMBER' : ['FAIL', 'BLOCKED'].includes(historicalGate.state) ? 'RED'
+        : historicalGate.state === 'WAITING' || (id === 'pickup' && historicalGate.state === 'PASS') ? 'AMBER'
+          : historicalGate.state === 'PASS' ? 'GREEN' : 'GREY' } : null;
     return { id, label, state, trafficLight: failure ? 'RED' : passed ? 'GREEN' : stale || waiting ? 'AMBER' : 'GREY',
+      operational,
       traceState: traceGate?.state || '', traceReason: traceGate?.reason || '',
       gateIds, expiresAtUtc: passed || failure ? new Date(Math.min(time(ledger.observedAtUtc),
         ...observations.filter(gateLive).map(gate => time(gate.observedAtUtc))) + maxAgeMs).toISOString() : '',
@@ -113,23 +140,37 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
   const buildState = !buildLive ? buildKnown && build.observedAtUtc ? 'STALE' : 'UNKNOWN'
     : build.state === 'BLOCKED' ? 'BLOCKED' : buildingGoals.length ? 'BUILDING' : ['IDLE_GREEN', 'HELD', 'QUEUED'].includes(build.state)
       ? build.state === 'IDLE_GREEN' ? 'IDLE' : build.state : 'UNKNOWN';
-  const state = bottleneck ? 'BLOCKED' : buildState;
+  const state = bottleneck ? 'BLOCKED' : buildLive ? buildState : trackLive
+    ? ['FAIL', 'BLOCKED'].includes(track.currentState) ? 'BLOCKED' : 'WAITING' : buildState;
+  const core = latestStatus('stephanos-core-daemon-current');
+  const coreKnown = /^[a-f0-9]{40}$/.test(core?.sourceHead || '');
+  const coreLive = coreKnown && fresh(core.timestampUtc, nowMs, maxAgeMs);
+  const health = ['daemonHealthy', 'missionWorkerHealthy', 'backendHealthy'].map((field, index) => ({
+    id: field, label: ['Core daemon', 'Mission worker', 'Backend'][index],
+    state: coreLive && typeof core[field] === 'boolean' ? core[field] ? 'HEALTHY' : 'UNHEALTHY' : 'UNKNOWN',
+    observedAtUtc: coreKnown ? core.timestampUtc : '',
+    expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '',
+  }));
   return {
     schemaVersion: CONVEYOR_OVERVIEW_SCHEMA, readOnly: true, state, buildState,
     trafficLight: state === 'BLOCKED' ? 'RED' : state === 'BUILDING' ? 'GREEN'
-      : ['HELD', 'QUEUED', 'STALE'].includes(state) ? 'AMBER' : 'GREY',
+      : ['HELD', 'QUEUED', 'STALE', 'WAITING'].includes(state) ? 'AMBER' : 'GREY',
     generatedAtUtc: new Date(nowMs).toISOString(), maxAgeMs,
     buildExpiresAtUtc: buildLive ? new Date(Math.min(time(build.observedAtUtc),
       ...buildingGoals.map(goal => time(goal.lastMaterialProgressAtUtc))) + maxAgeMs).toISOString() : '',
     buildObservedAtUtc: buildKnown ? build.observedAtUtc || '' : '', buildLive,
     ledgerObservedAtUtc: admittedLedger ? ledger.observedAtUtc : '', ledgerLive,
     sourceHead: admittedLedger ? ledger.sourceHead : '', trace, stages, queueCounts, uncertainGoalCount,
+    health, signedProof: { live: ledgerLive,
+      ledgerExpiresAtUtc: ledgerLive ? new Date(time(ledger.observedAtUtc) + maxAgeMs).toISOString() : '',
+      publisherVerdict: coreLive ? String(core.goalBuildGateSignedPublisherVerdict || '') : '',
+      expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '' },
     workers, buildingGoalCount: buildLive ? buildingGoals.length : null, controllers,
     materialLanes: buildLive ? count(build.activeMaterialLaneCount) : null,
     targetMaterialLanes: buildLive ? count(build.targetMaterialLaneCount) : null,
     bottleneck, lastActivity: activity,
     lastReportedBlocker: buildKnown ? String(array(build.blockers)[0] || '') : '',
-    nextAction: veto ? ledger.exactNextAction : buildLive ? build.nextAction : 'Refresh canonical build evidence.',
-    truthBoundary: 'Traffic lights show independent signed system checkpoints, not one goal’s completed journey. Trace annotations describe only the named canonical mission and cannot prove physical pickup. Queue counts are durable goal classifications. Controllers and capacity slots are not builders. Commit requires its own receipt. Seed Canopy and Rescue Island retain separate ownership.',
+    nextAction: veto ? ledger.exactNextAction : trackLive ? track.exactNextAction : buildLive ? build.nextAction : 'Refresh canonical build evidence.',
+    truthBoundary: 'Flow reports come from the canonical autonomy cycle; a system cycle with no selected goal is not attributed to a mission. Operational reports do not grant signed execution, approval or merge authority. Physical pickup needs separate signed proof. Queue counts are durable goal classifications, not an admitted worker queue. Health and capacity do not prove building. Commit and merge require their own receipts. Existing owners and leases are unchanged.',
   };
 }

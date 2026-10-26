@@ -221,4 +221,57 @@ test('a trace with a different source head cannot annotate the signed ledger', (
   assert.equal(result.trace.truth, 'STALE');assert.equal(result.stages.find(s => s.id === 'select').traceState, '');
 });
 
+test('a canonical system cycle survives missing mission and source head without granting signed proof', () => {
+  const data = input();delete data.goalBuildGateObservatory;
+  const record = { statusId: 'autonomy-build-track-current', timestampUtc: at(-1000), autonomyTrack: {
+    schemaVersion: 'stephanos.autonomy-build-track.v1', timestampUtc: at(-1000), sourceHead: '', missionId: '', issueNumber: null,
+    currentGate: 'ELIGIBLE_GOAL', currentState: 'WAITING', materialActionsSucceeded: 0,
+    cycleDecision: { safeEligibleWorkRemaining: 0 }, gates: [
+      { id: 'ELIGIBLE_GOAL', state: 'WAITING', reason: 'NO_ELIGIBLE_GOAL_OBSERVED' },
+      { id: 'WORKER', state: 'NOT_REACHED', reason: 'WORKER_PICKUP_NOT_OBSERVED' },
+    ] } };
+  const result = project(data, { ...options, statusRecords: [record] });
+  assert.equal(result.trace.scope, 'SYSTEM');assert.equal(result.trace.issue, '');
+  assert.equal(result.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  assert.equal(result.trace.readyWorkCount, 0);assert.equal(result.trace.materialActionsSucceeded, 0);
+  assert.equal(result.stages.find(s => s.id === 'admission').operational.label, 'Waiting here');
+  assert.equal(result.stages.find(s => s.id === 'pickup').operational.label, 'Not reached');
+  assert.equal(result.stages.find(s => s.id === 'pickup').state, 'UNKNOWN');
+  assert.equal(result.trace.observedAtUtc, record.timestampUtc);
+  assert.equal(project({ ...data, autonomyBuildTrack: record.autonomyTrack }, options).trace, null,
+    'A headless fallback object cannot replace the canonical publisher record');
+  record.autonomyTrack.missionId = 'partial-mission';
+  assert.equal(project(data, { ...options, statusRecords: [record] }).trace, null,
+    'A partial mission identity cannot be attributed to a goal');
+});
+test('HTTP wrapper and inner timestamps cannot renew an expired or absent publisher record', () => {
+  const data = input();delete data.goalBuildGateObservatory;
+  data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1', sourceHead: 'a'.repeat(40),
+    missionId: '', issueNumber: null, timestampUtc: at(-1), gates: [{ id: 'SELECT', state: 'PASS' }] };
+  for (const offset of [-600001, 1]) {
+    const result = project(data, { ...options, statusRecords: [{ statusId: 'autonomy-build-track-current',
+      timestampUtc: at(offset), autonomyTrack: data.autonomyBuildTrack }] });
+    assert.equal(result.trace.truth, 'STALE');
+    assert.equal(result.stages.find(s => s.id === 'select').operational?.truth ?? 'NO_VALID_TIME', offset < 0 ? 'STALE' : 'NO_VALID_TIME');
+  }
+  assert.equal(project(data, { ...options, statusRecords: [] }).trace, null);
+  const record = { statusId: 'autonomy-build-track-current', timestampUtc: at(-1),
+    autonomyTrack: { ...data.autonomyBuildTrack, timestampUtc: at(-600001) } };
+  assert.equal(project(data, { ...options, statusRecords: [record] }).trace.truth, 'STALE');
+});
+test('fresh Core health remains separate from stale builders and expires at its original observation', () => {
+  const data = input();data.stephanosBuildTruth.state = 'STALE';
+  const core = { statusId: 'stephanos-core-daemon-current', sourceHead: 'a'.repeat(40), timestampUtc: at(-1000),
+    daemonHealthy: true, missionWorkerHealthy: false, backendHealthy: true,
+    goalBuildGateSignedPublisherVerdict: 'GATE_SIGNING_AUTHORITY_NOT_COMMISSIONED' };
+  let result = project(data, { ...options, statusRecords: [core] });
+  assert.deepEqual(result.health.map(h => h.state), ['HEALTHY', 'UNHEALTHY', 'HEALTHY']);
+  assert.equal(result.buildingGoalCount, null);assert.deepEqual(result.workers, []);
+  assert.equal(result.lastActivity.atUtc, at(-3000));
+  core.timestampUtc = at(-600001);
+  result = project(data, { ...options, statusRecords: [core] });
+  assert.ok(result.health.every(h => h.state === 'UNKNOWN'));
+  assert.equal(result.signedProof.publisherVerdict, '');
+});
+
 }

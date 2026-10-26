@@ -280,7 +280,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
   };
   const projection = Object.freeze({ ...overviewInput,
-    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs }),
+    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs, statusRecords: records.statusRecords }),
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);

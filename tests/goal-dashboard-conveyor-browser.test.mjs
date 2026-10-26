@@ -42,6 +42,7 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
     await page.goto('http://127.0.0.1:'+server.address().port+'/apps/goal-dashboard/index.html');
     const card=page.getByTestId('goal-build-conveyor-overview');
     await page.waitForFunction(()=>document.querySelector('#cv-status').textContent.includes('Material building observed'));
+    assert.ok((await card.boundingBox()).y<140,'The live conveyor must be visible before the decorative overview hero');
     assert.equal(await card.locator('.cv-stage').count(),9);
     assert.match(await card.locator('#cv-workers').textContent(),/1 workers · 1 goals building/);
     assert.match(await card.locator('#cv-worker-detail').textContent(),/<worker-one>/);
@@ -52,6 +53,7 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
       assert.equal(await card.isVisible(),true);
       const box=await card.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=viewport.width+1);
       assert.equal(await card.evaluate(node=>node.scrollWidth<=node.clientWidth+1),true);
+      assert.equal(await page.locator('#cv-flow').count(),1);
       const summaries=card.locator('.cv-stage summary');
       assert.ok((await summaries.first().boundingBox()).height>=32);
       await summaries.nth(3).click();assert.equal(await summaries.nth(3).evaluate(node=>node.parentElement.open),true);
@@ -61,6 +63,29 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
         await card.screenshot({path:join(process.env.STEPHANOS_CONVEYOR_PROOF_DIR,'fixture-'+viewport.width+'.png')});
       }
     }
+    // Regression for the real empty-gates failure: the canonical system cycle
+    // has no mission or source head, while runtime health is independently live.
+    delete projection.goalBuildGateObservatory;
+    projection.stephanosBuildTruth.state='STALE';
+    const statusRecords=[{statusId:'autonomy-build-track-current',timestampUtc:at,autonomyTrack:{
+      schemaVersion:'stephanos.autonomy-build-track.v1',timestampUtc:at,sourceHead:'',missionId:'',issueNumber:null,
+      currentGate:'ELIGIBLE_GOAL',currentState:'WAITING',materialActionsSucceeded:0,
+      cycleDecision:{safeEligibleWorkRemaining:0},gates:[
+        {id:'ELIGIBLE_GOAL',state:'WAITING',reason:'NO_ELIGIBLE_GOAL_OBSERVED'},
+        {id:'SELECT',state:'NOT_REACHED',reason:'SCHEDULER_SELECTION_NOT_OBSERVED'},
+        {id:'WORKER',state:'NOT_REACHED',reason:'WORKER_PICKUP_NOT_OBSERVED'}]}},
+      {statusId:'stephanos-core-daemon-current',sourceHead:'a'.repeat(40),timestampUtc:at,
+        daemonHealthy:true,missionWorkerHealthy:false,backendHealthy:true}];
+    projection.goalBuildConveyorOverview=overview(projection,{nowMs:now,statusRecords});
+    await page.evaluate(()=>refresh());
+    assert.equal(await card.locator('#cv-headline').textContent(),'Waiting at admission');
+    assert.match(await card.locator('#cv-summary').textContent(),/3 goal records are labelled eligible/);
+    assert.match(await card.locator('#cv-cycle').textContent(),/no goal selected/);
+    assert.match(await card.locator('[data-cv-stage="admission"]').textContent(),/Waiting here/);
+    assert.match(await card.locator('[data-cv-stage="select"]').textContent(),/Not reached/);
+    assert.equal(await card.locator('#cv-workers').textContent(),'No pickup reported');
+    assert.match(await card.locator('#cv-health').textContent(),/Mission worker · unhealthy/);
+    assert.equal(await card.locator('[data-cv-stage="pickup"]').getAttribute('data-cv-light'),'GREY');
     // Expire the observation while all requests hang. Its own display timer
     // must remove green without waiting for a new response or a network error.
     await page.route('**/api/**', route=>new Promise(resolve=>setTimeout(()=>route.abort().then(resolve).catch(resolve),1500)));
@@ -68,6 +93,8 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
     assert.equal(await card.locator('#cv-status').getAttribute('data-cv-light'),'AMBER');
     assert.equal(await card.locator('[data-cv-stage="pickup"]').getAttribute('data-cv-light'),'AMBER');
     assert.equal(await card.locator('#cv-workers').textContent(),'Active workers unknown');
+    assert.match(await card.locator('[data-cv-stage="pickup"]').textContent(),/Last: not reached/);
+    assert.equal(await card.locator('[data-cv-light="GREEN"]').count(),0);
     await page.unrouteAll({behavior:'wait'});
     available=false;await page.evaluate(()=>refresh());
     assert.equal(await card.locator('#cv-status').textContent(),'Evidence unavailable');
