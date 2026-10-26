@@ -512,8 +512,10 @@ export function buildCanonicalImplementationLaneProjection(input = {}) {
   );
   const active = blockers.length === 0 && github.active && materialPhasePermitted
     && executionStartedOnLease;
+  // A stopped/failed run is a repair HOLD, not a fresh pending pickup.
   const pickupPending = blockers.length === 0 && github.active && materialPhasePermitted
-    && !executionStartedOnLease;
+    && !executionStartedOnLease
+    && (!currentExecution || ['queued', 'accepted'].includes(currentExecution.state));
   const reviewPending = blockers.length === 0 && github.active
     && elasticPhaseBound && phaseBinding?.reviewOnly === true;
   const terminal = blockers.length === 0 && github.affirmativelyMerged;
@@ -1767,8 +1769,28 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   const progressAgeMs = lastProgressMs === null || nowMs === null ? null : Math.max(0, nowMs - lastProgressMs);
   if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
   if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.executionReceipt?.state === 'stalled') blockers.push('execution-receipt-reports-stall');
-  if (safeProjection.lane?.active && FAILED_EXECUTION_RECEIPT_STATES.has(safeProjection.executionReceipt?.state)) {
+  // A stopped execution is no longer material ACTIVE, but its independently
+  // bound receipt must remain visible to repair/stall diagnosis. Never trust
+  // caller-supplied terminal state, lease key, or a receipt from another PR.
+  const observedExecution = safeProjection.executionReceipt;
+  const stoppedExecutionBound = Boolean(
+    lane?.valid === true && observedExecution && safeProjection.mutationLease
+    && list(lane.executionReceiptRefs).includes(observedExecution.receiptId)
+    && validateExecutionReceiptAgainstMutationLease(
+      observedExecution, safeProjection.mutationLease, {
+        nowUtc: options.nowUtc ?? safeProjection.observedAtUtc,
+        expectedLease: {
+          laneId: lane.laneId, issueNumber: lane.issueNumber,
+          prNumber: lane.prNumber, branch: lane.branch,
+          repository: lane.repository, headSha: lane.headSha,
+        },
+      },
+    ).valid
+  );
+  if (stoppedExecutionBound && observedExecution.state === 'stalled') {
+    blockers.push('execution-receipt-reports-stall');
+  }
+  if (stoppedExecutionBound && FAILED_EXECUTION_RECEIPT_STATES.has(observedExecution.state)) {
     blockers.push('execution-receipt-terminal-failure');
   }
   if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
