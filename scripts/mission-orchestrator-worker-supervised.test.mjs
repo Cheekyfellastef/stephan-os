@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createExecutionReceipt } from '../shared/agents/executionReceiptV1.mjs';
+import { buildCanonicalImplementationLaneProjection, createSourceMutationLeaseRecord } from '../shared/agents/programmeAuthorityV1.mjs';
 
 import {
   MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD,
@@ -1370,6 +1372,79 @@ test('surface-quarantine HOLD sidelines the stuck mission instead of becoming na
 test('READY with no selected mission is idle rather than no-grant execution defect', () => {
   assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},allowWorkerTick:false}),false);
   assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),true);
-  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY',lane:{missionId:'critical-1507-elastic-goal'}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY',lane:{active:true,missionId:'critical-1507-elastic-goal'}}}),true);
   assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'HOLD'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),false);
+});
+
+function observedSourceLane(state, expiredLease = false) {
+  const nowUtc = '2026-10-26T12:00:00.000Z';
+  const head = 'c'.repeat(40);
+  const lease = createSourceMutationLeaseRecord({
+    leaseId: 'goal-2315-pr-3259-review', laneId: 'goal-2315-pr-3259',
+    repository: 'Cheekyfellastef/stephan-os', issueNumber: 2315, prNumber: 3259,
+    branch: 'goal/2315-mailbox-cutover', headSha: head, ownerId: 'mailbox-owner',
+    acquiredAtUtc: '2026-10-26T11:30:00.000Z',
+    expiresAtUtc: expiredLease ? '2026-10-26T11:59:00.000Z' : '2026-10-26T13:30:00.000Z',
+    proofRefs: ['proofs/mailbox-lease.json'],
+  });
+  const execution = state ? createExecutionReceipt({
+    receiptId: 'mailbox-execution', executionId: 'mailbox-execution',
+    repository: lease.repository, issueNumber: lease.issueNumber, prNumber: lease.prNumber,
+    branch: lease.branch, sourceHead: head, workerId: lease.ownerId, workerType: 'github-first',
+    leaseKey: lease.leaseId, state, phase: 'bounded-source-mutation', sequence: 1,
+    timestampUtc: '2026-10-26T11:59:00.000Z', heartbeatExpiresAtUtc: '2026-10-26T12:01:00.000Z',
+    blocker: state === 'stalled' ? 'TEST_STALL' : '',
+    proofRefs: ['proofs/mailbox-execution.json'], expectedNextAction: 'Remain within the existing owner.',
+  }) : null;
+  const lane = buildCanonicalImplementationLaneProjection({
+    laneId: lease.laneId, repository: lease.repository, issueNumber: lease.issueNumber,
+    prNumber: lease.prNumber, branch: lease.branch, headSha: head, mutationLease: lease,
+    executionReceipt: execution, nowUtc,
+    github: { repository: lease.repository, prNumber: lease.prNumber, headSha: head,
+      headBranch: lease.branch, prState: 'open', merged: false },
+  });
+  assert.equal(lane.valid, true);
+  return lane;
+}
+
+test('canonical receipt and lease state matrix does not turn observed lanes into worker obligations', () => {
+  for (const state of [null, 'queued', 'accepted', 'started', 'progress', 'stalled', 'completed', 'failed', 'cancelled']) {
+    for (const expired of [false, true]) {
+      const lane = observedSourceLane(state, expired);
+      const expectedMaterial = !expired && ['started', 'progress'].includes(state);
+      assert.equal(lane.active, expectedMaterial);
+      const controller = { status: 'IDLE', allowWorkerTick: false,
+        authoritativeProjection: { status: 'IDLE', lane } };
+      assert.equal(controllerRequiresMaterialProgress(controller), expectedMaterial, String(state) + ':' + expired);
+      assert.equal(controllerRequiresMaterialProgress({ ...controller, actionResult: {
+        elasticAdmission: { selectedMission: { missionId: 'critical-2964-elastic-goal' } },
+      } }), true, 'a selected mission still requires its grant');
+    }
+  }
+});
+
+test('actual worker cycle distinguishes inactive observed leases from missing active-work grants', async () => {
+  for (const [state, expired, expectsDefect] of [[null, true, false], ['queued', false, false],
+    ['progress', true, false], ['failed', false, false], ['started', false, true]]) {
+    const lane = observedSourceLane(state, expired);
+    const errors = sink();
+    const heartbeats = [];
+    let ticks = 0;
+    const code = await runSupervisedMissionWorker({
+      argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+      stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+      inspectRepositoryIdentity: canonicalIdentity, listMissionState: async () => [],
+      runControllerCycle: async () => ({ status: 'IDLE', action: 'WAIT_FOR_DURABLE_GOAL_EVIDENCE',
+        allowWorkerTick: false, boundedMutationSteps: 0,
+        authoritativeProjection: { status: 'IDLE', lane } }),
+      runTick: async () => { ticks += 1; assert.fail('no grant may execute'); },
+      writeHeartbeat: async h => { heartbeats.push(h); },
+      setIntervalFn: () => 17, clearIntervalFn: () => {},
+    });
+    assert.equal(ticks, 0);
+    assert.equal(code, expectsDefect ? 1 : 0, String(state) + ':' + expired);
+    assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), expectsDefect);
+    assert.equal(heartbeats.at(-1).lastTickVerdict,
+      expectsDefect ? 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' : 'MISSION_WORKER_TICK_PASS');
+  }
 });
