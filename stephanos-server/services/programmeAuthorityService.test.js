@@ -817,7 +817,8 @@ test('production composition can discover exact GitHub lane truth before lease a
     assert.equal(projection.lane.valid, true);
     assert.equal(projection.lane.prNumber, 1617);
     assert.equal(projection.lane.headSha, HEAD);
-    assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+    assert.equal(projection.lane.active, false);
+    assert.equal(projection.lane.executionStartedOnLease, false);
     assert.equal(projection.sourceReads.laneSelector, 'complete');
     assert.equal(projection.projectionReceipt.sourceConstructionMode, 'production-contracts');
     assert.equal(projection.projectionReceipt.authorityInjectedByCaller, false);
