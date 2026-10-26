@@ -59,7 +59,14 @@ import {
 import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBridgeCodexTaskReadbackV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
-import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { verifyMailboxOutboxGuardLease, readJsonObject, atomicWriteJson } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { CANONICAL_MAILBOX_ISSUE, RETIRED_CANONICAL_MAILBOX_ISSUES } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { MAILBOX_ROTATION_OPERATION, MAILBOX_ROTATION_REQUEST_ID, auditMailboxRotationComments,
+  parseMailboxRotationComment, mailboxRotationCommandAllowed, projectMailboxRotation,
+  validateMailboxRotationRecord, projectMailboxRotationReceipt } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
+import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral, verifyMailboxRotationActivationPull } from './canonical-mailbox-rotation-host-v1.mjs';
+import { buildMailboxRotationFence, findMailboxRotationFence, inventoryMailboxRotationActions } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
 import {
@@ -81,6 +88,7 @@ const mailboxStateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
 const canonicalReceiptRoot = join(sharedWorkspaceRoot, 'receipts', 'github-command-mailbox');
 const criticalBacklogStatusPath = join(sharedWorkspaceRoot, 'status', 'critical-backlog-conveyor-current.json');
 const statePath = join(mailboxStateRoot, 'state.json');
+const executionLedger = createMailboxExecutionLedger(mailboxStateRoot);
 const MAX_GITHUB_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_GITHUB_RECEIPT_JSON_BYTES = 9 * 1024;
 const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
@@ -93,6 +101,7 @@ const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 const OCI_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/i;
 const FORGE_BACKUP_VOLUME_PATTERN = /^stephanos-forge-shadow-backup-[0-9a-f]{16}$/i;
 const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
+  MAILBOX_ROTATION_OPERATION,
   'UPDATE_STEPHANOS_FROM_CHAT',
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
@@ -2554,6 +2563,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
       ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
+      ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
@@ -2879,6 +2889,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
       result: Object.freeze({
         ok: inner?.ok !== false,
         ...projectMaintenanceRecoveryReceiptV1(inner?.maintenanceRecovery, compactReceipt.operation),
+        ...projectMailboxRotationReceipt(inner, compactReceipt.operation),
         ...projectFrontendVisibilityReceiptV1(inner?.frontendVisibility, compactReceipt.operation,
           { expectedHead: compactReceipt.expectedHead, expectedDistFingerprint: inner?.expectedDistFingerprint }),
         blocker: inner?.blocker || '',
@@ -3044,6 +3055,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...projectMaintenanceRecoveryReceiptV1(operationResult, receipt?.operation),
       ...projectFrontendVisibilityReceiptV1(operationResult, receipt?.operation, { expectedHead: receipt?.expectedHead }),
+      ...projectMailboxRotationReceipt(operationResult, receipt?.operation),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -3097,12 +3109,13 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
 }
 
 function loadState() {
-  try { return JSON.parse(readFileSync(statePath, 'utf8')); } catch { return { consumedRequestIds: [], acceptedRequestIds: [] }; }
+  return readJsonObject(statePath, { allowMissing: true,
+    missingValue: { consumedRequestIds: [], acceptedRequestIds: [], pendingReceiptPublications: [] } });
 }
 
 function saveState(state) {
   mkdirSync(mailboxStateRoot, { recursive: true });
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  atomicWriteJson(statePath, state);
 }
 
 export function checkpointTerminalMailboxReceipt(state, receipt, {
@@ -3115,10 +3128,9 @@ export function checkpointTerminalMailboxReceipt(state, receipt, {
   state.consumedRequestIds = [...new Set([
     ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
     receipt.requestId,
-  ])].slice(-500);
+  ])];
   state.acceptedRequestIds = (Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : [])
-    .filter((requestId) => requestId !== receipt.requestId)
-    .slice(-500);
+    .filter((requestId) => requestId !== receipt.requestId);
   state.lastReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
@@ -3134,7 +3146,7 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   state.acceptedRequestIds = [...new Set([
     ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
     receipt.requestId,
-  ])].slice(-500);
+  ])];
   state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
@@ -3242,6 +3254,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
   write = writeReceipt,
   publish = postReceipt,
   persist = saveState,
+  ledger = null,
 } = {}) {
   const terminal = [];
   const consumed = new Set(Array.isArray(state?.consumedRequestIds) ? state.consumedRequestIds : []);
@@ -3250,6 +3263,7 @@ export function terminalizeRejectedMailboxCommands(state, rejections = [], {
     if (consumed.has(requestId)) continue;
     const receipt = buildRejectedMailboxTerminalReceipt(rejection, now().toISOString());
     const receiptLocation = write(receipt);
+    ledger?.complete(receipt);
     checkpointTerminalMailboxReceipt(state, receipt, { persist });
     consumed.add(requestId);
     const publishable = { ...receipt, receiptRef: receiptLocation.ref };
@@ -3370,14 +3384,133 @@ function loadBoundedMailboxComments() {
   return [...commentsById.values()].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
+export function loadCompleteMailboxComments(issueNumber, { read = ghJson } = {}) {
+  if (![CANONICAL_MAILBOX_ISSUE, ...RETIRED_CANONICAL_MAILBOX_ISSUES].includes(issueNumber)) throw new Error('MAILBOX_HISTORY_ISSUE_NOT_AUTHORIZED');
+  const comments = [];
+  for (let page = 1; page <= 30; page++) {
+    const batch = read(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${issueNumber}/comments?per_page=100&page=${page}`]);
+    if (!Array.isArray(batch)) throw new Error('MAILBOX_HISTORY_PAGE_INVALID');
+    comments.push(...batch);
+    if (batch.length < 100) return comments;
+  }
+  throw new Error('MAILBOX_HISTORY_ENUMERATION_INCOMPLETE');
+}
+
+export function bootstrapMailboxExecutionHistory(state, { ledger = executionLedger, readComments = loadCompleteMailboxComments,
+  persist = saveState } = {}) {
+  const issues = [...RETIRED_CANONICAL_MAILBOX_ISSUES, CANONICAL_MAILBOX_ISSUE];
+  const bootstrapped = state.executionLedgerBootstrappedIssues || [];
+  if (!Array.isArray(bootstrapped) || bootstrapped.some(issue => !issues.includes(issue))) throw new Error('MAILBOX_EXECUTION_HISTORY_STATE_INVALID');
+  for (const issue of issues) {
+    if (bootstrapped.includes(issue)) continue;
+    const inventory = auditMailboxRotationComments(readComments(issue), { issueNumber: issue });
+    const terminal = new Set(inventory.terminalIds), accepted = new Set(inventory.acceptedIds);
+    for (const id of inventory.requestIds) {
+      if (issue !== CANONICAL_MAILBOX_ISSUE) ledger.importHistorical(id, issue, terminal.has(id) ? 'TERMINAL' : 'RETIRED');
+      else if (terminal.has(id) || accepted.has(id)) ledger.importHistorical(id, issue, terminal.has(id) ? 'TERMINAL' : 'RESERVED');
+    }
+    bootstrapped.push(issue);
+    state.executionLedgerBootstrappedIssues = [...bootstrapped];
+    persist(state);
+  }
+  for (const id of state.consumedRequestIds || []) if (MAILBOX_ROTATION_REQUEST_ID.test(id)) ledger.importHistorical(id, CANONICAL_MAILBOX_ISSUE, 'TERMINAL');
+  for (const id of state.acceptedRequestIds || []) if (MAILBOX_ROTATION_REQUEST_ID.test(id)) ledger.importHistorical(id, CANONICAL_MAILBOX_ISSUE, 'RESERVED');
+}
+
+function readRotationAuthoritySource(head) {
+  if (!EXACT_GIT_HEAD_PATTERN.test(head)) throw new Error('MAILBOX_ROTATION_HEAD_INVALID');
+  const file = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/contents/shared/agents/canonicalMailboxAuthorityV1.mjs?ref=${head}`]);
+  if (file?.encoding !== 'base64' || !Number.isSafeInteger(file.size) || file.size > 64000) throw new Error('MAILBOX_ROTATION_SOURCE_UNPROVEN');
+  return Buffer.from(file.content, 'base64').toString('utf8');
+}
+
+function readRotationPull(number) {
+  if (!Number.isSafeInteger(number) || number <= 0) throw new Error('MAILBOX_ROTATION_PR_INVALID');
+  return ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/pulls/${number}`]);
+}
+
+function loadRotationGoalComments() {
+  const comments = [];
+  for (let page=1; page<=30; page++) {
+    const batch = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/2315/comments?per_page=100&page=${page}`]);
+    if (!Array.isArray(batch)) throw new Error('MAILBOX_ROTATION_OWNER_HISTORY_INVALID');
+    comments.push(...batch);
+    if (batch.length < 100) return comments;
+  }
+  throw new Error('MAILBOX_ROTATION_OWNER_HISTORY_INCOMPLETE');
+}
+
+function publishRotationFence(record, proof) {
+  const existing = findMailboxRotationFence(loadRotationGoalComments());
+  const body = buildMailboxRotationFence(record, proof);
+  const endpoint = existing ? `issues/comments/${existing.id}` : 'issues/2315/comments';
+  const created = ghJson(['api', '--method', existing ? 'PATCH' : 'POST',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/${endpoint}`, '-f', `body=${body}`]);
+  const observed = ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/comments/${created.id}`]);
+  if (observed.user?.login !== 'Cheekyfellastef' || observed.body !== body) throw new Error('MAILBOX_ROTATION_GLOBAL_FENCE_READBACK_FAILED');
+  return { commentId: observed.id };
+}
+
+function readRotationActions() {
+  return inventoryMailboxRotationActions(status => ghJson(['api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/actions/runs?status=${status}&per_page=100`]));
+}
+
+function approvedRotationUpdateHead(record, mainHead) {
+  if (!record || !EXACT_GIT_HEAD_PATTERN.test(mainHead)) return '';
+  const pull = readRotationPull(record.cutoverPrNumber);
+  return verifyMailboxRotationActivationPull(pull, record, readMailboxAuthorityLiteral(readRotationAuthoritySource(mainHead)),
+    { merged: true, mainHead }) ? mainHead : '';
+}
+
+export function prepareMailboxRotationPoll(state, comments, { readComments = loadCompleteMailboxComments,
+  ledger = executionLedger, approvedUpdateHead = '' } = {}) {
+  const consumed = new Set([...(state.consumedRequestIds || []), ...(state.acceptedRequestIds || [])]);
+  const record = state.mailboxRotation;
+  if (record) {
+    validateMailboxRotationRecord(record);
+    if (!['VERIFIED', 'CANCELLED'].includes(record.phase)) state.mailboxRotationInventory = auditMailboxRotationComments(
+      readComments(record.predecessorIssue), { issueNumber: record.predecessorIssue, barrierCommentId: record.barrierCommentId });
+  }
+  const filtered = [], deferredRequestIds = [];
+  for (const comment of comments) {
+    const parsed = parseMailboxRotationComment(comment, CANONICAL_MAILBOX_ISSUE);
+    if (parsed?.type === 'command') {
+      if (ledger.has(parsed.value.requestId)) consumed.add(parsed.value.requestId);
+      if (!mailboxRotationCommandAllowed(parsed.value, parsed.commentId, record, { approvedUpdateHead })) {
+        deferredRequestIds.push(parsed.value.requestId); continue;
+      }
+    }
+    filtered.push(comment);
+  }
+  return { comments: filtered, consumedRequestIds: consumed, deferredRequestIds };
+}
+
 function postReceipt(receipt) {
+  const issueNumber = receipt?.issueNumber;
+  const historical = RETIRED_CANONICAL_MAILBOX_ISSUES.includes(issueNumber)
+    && ['DONE', 'BLOCKED'].includes(receipt.state) && executionLedger.read(receipt.requestId)?.issueNumber === issueNumber;
+  if (issueNumber !== CANONICAL_MAILBOX_ISSUE && !historical) return { ok: false, blocker: 'MAILBOX_RECEIPT_ORIGIN_NOT_AUTHORIZED' };
   const body = [
     '<!-- stephanos-battle-bridge-command-receipt -->',
     '```json',
     serializeBoundedReceiptJson(receipt),
     '```',
   ].join('\n');
-  return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  const published = run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(issueNumber), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+  if (published.ok && receipt.operation === MAILBOX_ROTATION_OPERATION && receipt.state === 'DONE') {
+    // The fence may relax only after the actual owner terminal receipt exists.
+    // Failure here holds the previous global fence; never retry the effect.
+    try {
+      const state = loadState(), record = state.mailboxRotation;
+      const match = published.stdout.trim().match(new RegExp(`^https://github.com/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${issueNumber}#issuecomment-([1-9][0-9]*)$`));
+      const projected = (receipt.result?.result || receipt.result || {}).mailboxRotation;
+      if (record && match && projected?.phase === record.phase) publishRotationFence(record, {
+        commandCommentId: record.controlCommentId, receiptCommentId: Number(match[1]), receiptIssue: issueNumber,
+      });
+    } catch { published.rotationFencePublication = 'HELD'; }
+  }
+  return published;
 }
 
 export function verifyFreshSelectedMailboxCommand(selected = {}, {
@@ -4212,8 +4345,15 @@ export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, term
   });
 }
 
-async function executeSelectedMailboxCommand(selected, receiptRef) {
+async function executeSelectedMailboxCommand(selected, receiptRef, state) {
   return executeBattleBridgeGitHubCommand(selected.command, {
+    executeMailboxRotationFn: command => executeMailboxRotationOnHost(command, {
+      state, selectedCommentId: selected.commentId, sourceHead: readMailboxCheckoutHead(),
+      readIssue: number => ghJson(['api', `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${number}`]),
+      readPull: readRotationPull, readAuthoritySource: readRotationAuthoritySource,
+      readComments: loadCompleteMailboxComments, persist: saveState,
+      publishFence: publishRotationFence, readActions: readRotationActions,
+    }),
     updateStephanos: (command) => updateStephanosFromChat({
       operatorApproval: command.operatorApproval,
       expectedBranch: 'main',
@@ -4296,13 +4436,21 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
     publish: publicationBudget.publish,
   });
-  const comments = loadBoundedMailboxComments();
+  bootstrapMailboxExecutionHistory(state);
+  const comments = state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)
+    ? loadCompleteMailboxComments(CANONICAL_MAILBOX_ISSUE) : loadBoundedMailboxComments();
   const currentHead = readGitHubMainHead();
-  const batch = selectBattleBridgeGitHubCommandBatch(comments, {
-    consumedRequestIds: new Set([
-      ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
-      ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
-    ]),
+  const rotationPoll = prepareMailboxRotationPoll(state, comments, {
+    approvedUpdateHead: state.mailboxRotation && currentHead !== MAILBOX_PROCESS_SOURCE_HEAD
+      ? approvedRotationUpdateHead(state.mailboxRotation, currentHead) : '',
+  });
+  if (state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) {
+    try { state.mailboxRotationActions = await readRotationActions(); }
+    catch { state.mailboxRotationActions = { complete: false, pendingRuns: [] }; }
+  }
+  saveState(state);
+  const batch = selectBattleBridgeGitHubCommandBatch(rotationPoll.comments, {
+    consumedRequestIds: rotationPoll.consumedRequestIds,
     now: now(),
     maxBatch: 1,
     currentHead,
@@ -4310,12 +4458,15 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
     now,
     publish: publicationBudget.publish,
+    ledger: executionLedger,
   });
   if (batch.verdict === 'NO_COMMAND_READY') return Object.freeze({
     ...batch,
     terminalizedRejectionCount: rejectedTerminal.length,
     receiptPublicationOutbox: publicationOutbox,
     receiptPublicationBudget: publicationBudget.snapshot(),
+    rotationDeferredCount: rotationPoll.deferredRequestIds.length,
+    mailboxRotation: projectMailboxRotation(state.mailboxRotation, state.mailboxRotationInventory),
   });
   if (!batch.ok) return batch;
 
@@ -4332,6 +4483,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       return preflightMailboxControlExpectedHead(selected);
     },
     beforeExecute: async (selected) => {
+      executionLedger.reserve(selected.command);
       const acceptedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
@@ -4368,7 +4520,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       const heartbeatTimer = setInterval(renew, 60_000);
       heartbeatTimer?.unref?.();
       try {
-        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref, state);
       } finally {
         clearInterval(heartbeatTimer);
       }
@@ -4391,6 +4543,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
         processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
+      executionLedger.complete(receipt);
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
