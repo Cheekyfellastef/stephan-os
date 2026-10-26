@@ -14,6 +14,18 @@ const sample = (patch = {}) => ({
   sampleSeconds: 5,
   processorCount: 8,
   metadataAvailable: true,
+  systemCpuMeasured: true,
+  systemCpuPct: 94.7,
+  browserTabsInspected: false,
+  browserProfilesInspected: false,
+  browserApps: [
+    { app: 'msedge', processCount: 26, cpuSampledCount: 26, cpuPercent: 28.5, workingSetMiB: 3646 },
+    { app: 'brave', processCount: 11, cpuSampledCount: 11, cpuPercent: 6, workingSetMiB: 1407 },
+    { app: 'chrome', processCount: 0, cpuSampledCount: 0, cpuPercent: 0, workingSetMiB: 0 },
+    { app: 'firefox', processCount: 0, cpuSampledCount: 0, cpuPercent: 0, workingSetMiB: 0 },
+    { app: 'ChatGPT', processCount: 15, cpuSampledCount: 15, cpuPercent: 22.2, workingSetMiB: 3122 },
+    { app: 'msedgewebview2', processCount: 20, cpuSampledCount: 18, cpuPercent: null, workingSetMiB: 1176 },
+  ],
   rows: [
     {
       pid: 5996,
@@ -46,6 +58,13 @@ test('fixed registry, MCP, and GitHub mailbox expose only bounded CPU snapshot a
   assert.match(registry, /timeoutMs: 25_000/);
   assert.match(mcp, /'cpu-pressure-snapshot'/);
   assert.match(script, /Start-Sleep -Seconds 5/);
+  assert.match(script, /Get-CimInstance Win32_Processor/);
+  assert.match(script, /'msedge','brave','chrome','firefox','ChatGPT','msedgewebview2'/);
+  assert.match(script, /browserTabsInspected = \$false/);
+  assert.match(script, /browserProfilesInspected = \$false/);
+  assert.doesNotMatch(script, /Get-Content.*(?:History|Cookies)|chrome:\/\/|edge:\/\/|Get-CimInstance\s+Win32_Service/i);
+  assert.match(script, /systemCpuMeasured = \$systemCpuMeasured/);
+  assert.match(script, /systemCpuPct = \$systemCpuPct/);
   assert.match(script, /StartedTicks -eq \$startTime\.Ticks/);
   assert.doesNotMatch(script, /\$id\b/i, 'PowerShell $id aliases the reserved $PID variable');
   assert.match(script, /\$processId = \[int\]\$p\.Id/);
@@ -59,6 +78,13 @@ test('mailbox projects measured CPU and known script basename without raw comman
   const p = safeCpuPressureSnapshotProjection(envelope(sample()), 'cpu-pressure-snapshot');
   assert.equal(p.finalVerdict, 'BATTLE_BRIDGE_CPU_PRESSURE_SAMPLED');
   assert.equal(p.rows[0].pid, 5996);
+  assert.equal(p.systemCpuMeasured, true);
+  assert.equal(p.systemCpuPct, 94.7);
+  assert.equal(p.browserApps.length, 6);
+  assert.deepEqual(p.browserApps.find(app => app.app === 'msedge'),
+    {app:'msedge',processCount:26,cpuSampledCount:26,cpuPercent:28.5,workingSetMiB:3646});
+  assert.equal(p.browserApps.find(app => app.app === 'msedgewebview2').cpuPercent, null);
+  assert.equal(p.browserTabsInspected, false);
   assert.equal(p.rows[0].cpuPercent, 9.3);
   assert.equal(p.rows[0].script, 'run-vr-resource-governor.ps1');
   assert.equal(Object.hasOwn(p.rows[0], 'commandLine'), false);
@@ -73,6 +99,25 @@ test('mailbox CPU projection fails closed on fake permission or unsanitized path
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ processTerminationAllowed: true })), 'cpu-pressure-snapshot'), null);
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ rows: [{ ...sample().rows[0], script: 'secret.ps1' }] })), 'cpu-pressure-snapshot'), null);
   assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ rows: [{ ...sample().rows[0], cpuPercent: 999 }] })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuPct: 101 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuPct: -1 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: false, systemCpuPct: 1 })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: true, systemCpuPct: null })), 'cpu-pressure-snapshot'), null);
+  const missingOsCounter = safeCpuPressureSnapshotProjection(envelope(sample({ systemCpuMeasured: false, systemCpuPct: null })), 'cpu-pressure-snapshot');
+  assert.equal(missingOsCounter.systemCpuPct, null);
+  assert.equal(missingOsCounter.systemCpuMeasured, false);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserTabsInspected: true })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserProfilesInspected: true })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserApps: [...sample().browserApps].reverse() })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserApps: [
+    { ...sample().browserApps[0], cpuPercent: 900 }, ...sample().browserApps.slice(1)
+  ] })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserApps: [
+    { ...sample().browserApps[0], processCount: 26, cpuSampledCount: 25, cpuPercent: 28.5 }, ...sample().browserApps.slice(1)
+  ] })), 'cpu-pressure-snapshot'), null);
+  assert.equal(safeCpuPressureSnapshotProjection(envelope(sample({ browserApps: [
+    { ...sample().browserApps[0], workingSetMiB: 'C:\\Users\\Private' }, ...sample().browserApps.slice(1)
+  ] })), 'cpu-pressure-snapshot'), null);
 });
 
 const CPU_HEAD = 'a'.repeat(40);
@@ -195,6 +240,10 @@ test('public CPU receipt retains 12 validated rows, exact process identity and e
   assert.equal(publicReceipt.state, 'DONE');
   assert.equal(publicReceipt.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CPU_SNAPSHOT_COMPLETE');
   assert.equal(cpu?.schemaVersion, 'stephanos.battle-bridge-cpu-pressure.v1');
+  assert.equal(cpu?.systemCpuMeasured, true);
+  assert.equal(cpu?.systemCpuPct, 94.7);
+  assert.equal(cpu?.browserApps?.find(app=>app.app==='ChatGPT')?.cpuPercent, 22.2);
+  assert.equal(cpu?.browserProfilesInspected, false);
   assert.equal(cpu?.rows.length, 12);
   assert.equal(cpu?.observedRowCount, 20);
   assert.equal(cpu?.rowsTruncated, true);
