@@ -306,13 +306,15 @@ export function controllerRequiresMaterialProgress(controller) {
   const projection = ownData(controller, 'authoritativeProjection');
   const status = boundedText(ownData(projection, 'status'), 32).toUpperCase();
   if (!status || status === 'HOLD') return false;
-  // READY alone is not an executable grant. Preserve defect reporting if a
-  // specific mission was selected but the controller failed to grant it.
+  // An observed PR/lease is not material execution. Consume the canonical
+  // lane's ACTIVE decision rather than recreating authority from its presence.
+  // Explicitly granted/selected missions still require progress, including
+  // newly admitted work before its first physical pickup receipt exists.
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
   return ownData(controller, 'allowWorkerTick') === true
-    || Boolean(ownData(projection, 'lane'))
+    || ownData(ownData(projection, 'lane'), 'active') === true
     || Boolean(ownData(admission, 'selectedMission'))
     || Boolean(ownData(critical, 'activeMission'));
 }
