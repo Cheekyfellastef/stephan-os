@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectGoalTestContextPathsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1 as project, projectStrengthenedRetryTestsV1 as strengthen, projectOwnerGoalRequiredTestsV1 as owner } from './goalAdmissionRequiredTestsV1.mjs';
 
 test('required-test context is a fixed read-only projection of the validated plan', () => {
   assert.deepEqual(projectGoalTestContextPathsV1(['npm run stephanos:verify',
@@ -14,7 +15,6 @@ test('required-test context is a fixed read-only projection of the validated pla
     assert.deepEqual(projectGoalTestContextPathsV1(plan), []);
   }
 });
-import { projectGoalAdmissionRequiredTestsV1 as project, projectStrengthenedRetryTestsV1 as strengthen, projectOwnerGoalRequiredTestsV1 as owner } from './goalAdmissionRequiredTestsV1.mjs';
 
 test('optional owner acceptance permits only finite existing bounded test forms', () => {
   assert.deepEqual(project(undefined), { valid: true, supplied: false, commands: [] });
