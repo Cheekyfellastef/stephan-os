@@ -1,6 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { projectGoalTestContextPathsV1 } from './goalAdmissionRequiredTestsV1.mjs';
 import { projectGoalAdmissionRequiredTestsV1 as project, projectStrengthenedRetryTestsV1 as strengthen, projectOwnerGoalRequiredTestsV1 as owner } from './goalAdmissionRequiredTestsV1.mjs';
+
+test('required-test context is a fixed read-only projection of the validated plan', () => {
+  assert.deepEqual(projectGoalTestContextPathsV1(['npm run stephanos:verify',
+    'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs']),
+  ['shared/agents/legacyGoalTestPlanAcceptanceV1.mjs', 'scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs']);
+  assert.deepEqual(projectGoalTestContextPathsV1(['node --test shared/agents/example.test.mjs']),
+    ['shared/agents/example.test.mjs']);
+  for (const plan of [undefined, [], ['node --test ../secrets.test.mjs'],
+    ['node --test scripts/*.test.mjs'], ['node --test scripts/a.test.mjs;whoami'],
+    ['node --test scripts/a.test.mjs', 'npm install']]) {
+    assert.deepEqual(projectGoalTestContextPathsV1(plan), []);
+  }
+});
 
 test('optional owner acceptance permits only finite existing bounded test forms', () => {
   assert.deepEqual(project(undefined), { valid: true, supplied: false, commands: [] });
@@ -22,9 +36,19 @@ test('malformed, unbounded, executable, environment and escaping test requests r
   ]) assert.equal(project(value).valid, false, JSON.stringify(value));
 });
 
-test('owner-selected independent task acceptance has one exact bounded command', () => {
+test('owner-selected independent task acceptance permits only the fixed commands', () => {
   assert.equal(project(['node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs']).valid, true);
+  const scopeAcceptance = 'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs';
+  assert.equal(project([scopeAcceptance]).valid, true);
+  assert.deepEqual(projectGoalTestContextPathsV1([scopeAcceptance]),
+    ['scripts/acceptance/generated-functional-scope.acceptance.mjs']);
+  assert.equal(strengthen(['npm run stephanos:verify'], ['npm run stephanos:verify', scopeAcceptance],
+    ['stephanos-server/services/githubPrEvidenceService.js']).valid, true);
+  assert.equal(strengthen(['npm run stephanos:verify'], ['npm run stephanos:verify', scopeAcceptance],
+    ['scripts/acceptance/**']).valid, false);
   for (const command of ['node --test scripts/acceptance/other.acceptance.mjs',
+    'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs --watch',
+    'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs;whoami',
     'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs --watch',
     'node --test scripts/../acceptance/legacy-goal-declared-tests.acceptance.mjs']) {
     assert.equal(project([command]).valid, false, command);

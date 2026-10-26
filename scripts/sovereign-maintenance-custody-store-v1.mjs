@@ -1,7 +1,7 @@
 // Durable adapter of the existing guardian, not another executor or lease owner.
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
   renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -199,7 +199,67 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
     } catch { return held('MAINTENANCE_CUSTODY_RECOVERY_UNPROVEN'); }
     finally { if (lock !== undefined) { try { unlock(lock); } catch { /* Retained fence fails closed. */ } } }
   };
-  return Object.freeze({ status, reserve, release, recoverAfterBoot,
+  const prepareAfterAuditLoss = async ({ expectedDigest, expectedReservationId, operatorApproval } = {}) => {
+    if (operatorApproval !== 'operator-approved' || !/^[a-f0-9]{64}$/.test(expectedDigest ?? '')
+        || typeof expectedReservationId !== 'string' || !expectedReservationId)
+      return held('MAINTENANCE_AUDIT_LOSS_EXACT_APPROVAL_REQUIRED');
+    if (owned) return held('MAINTENANCE_CUSTODY_RESERVED');
+    let fd, mutationStarted = false;
+    try {
+      fd = acquire();
+      // Missing is not idle. This operation creates only a new ACTIVE fence;
+      // its later-boot recovery must exclude ALL potentially lost executions.
+      // A corrupt/unreadable/newer anchor throws or refuses, never bootstraps.
+      if (read() !== null) { unlock(fd); fd = undefined; return held('MAINTENANCE_AUDIT_ANCHOR_PRESENT'); }
+      const witness = await readBootWitness();
+      if (!validMaintenanceBootWitnessV1(witness, Date.parse(now()))
+          || witness.machineHash !== bootWitness.machineHash
+          || witness.bootStartedAtUtc !== bootWitness.bootStartedAtUtc)
+        throw new Error('PREPARATION_BOOT_UNPROVEN');
+      const bytes = readFileSync(path);
+      if (bytes.length > 15000 || sha(bytes) !== expectedDigest)
+        throw new Error('PROJECTION_CHANGED');
+      const original = decode('record', bytes);
+      if (original.schemaVersion !== MAINTENANCE_CUSTODY_SCHEMA || original.phase !== 'ACTIVE'
+          || original.reservationId !== expectedReservationId)
+        throw new Error('PROJECTION_IDENTITY_UNPROVEN');
+      directory(resolve(root, 'events'));
+      if (!existsSync(archive)) mkdirSync(archive);
+      directory(archive);
+      const receipt = { schemaVersion: 'stephanos.maintenance-audit-loss-preparation.v1',
+        original, originalEnvelopeBase64: bytes.toString('base64'), originalDigest: expectedDigest, projectionFreshness: 'UNPROVEN',
+        historicalOutcome: 'UNKNOWN', sourceLeaseReleased: false,
+        preparedAtUtc: now(), bootWitness: witness, successorOwnerId: ownerId };
+      const auditBytes = encode('receipt', receipt);
+      if (Buffer.byteLength(auditBytes) > 64 * 1024) throw new Error('AUDIT_LOSS_ARCHIVE_UNBOUNDED');
+      mutationStarted = true;
+      const auditFd = openSync(resolve(archive, 'audit-loss-' + expectedDigest + '-' + ownerId + '.json'), 'wx', 0o600);
+      try { writeFileSync(auditFd, auditBytes); fsyncSync(auditFd); } finally { closeSync(auditFd); }
+      // Recheck the captured projection and OS authority after durable archive.
+      if (sha(readFileSync(path)) !== expectedDigest || read() !== null)
+        throw new Error('AUDIT_LOSS_PREPARATION_RACED');
+      const record = { schemaVersion: MAINTENANCE_CUSTODY_SCHEMA, phase: 'ACTIVE',
+        reservationId: expectedReservationId, operation: 'repair-stephanos',
+        nonce: randomUUID(), ownerId, ownerPid: process.pid, startedAtUtc: now(), bootWitness: witness,
+        incident: { kind: 'AUDIT_LOSS_REPREPARATION', originalProjectionDigest: expectedDigest,
+          projectionFreshness: 'UNPROVEN', historicalOutcome: 'UNKNOWN',
+          preparationReceiptDigest: sha(auditBytes) } };
+      const digest = write(record, false, null);
+      // Never give this process release authority: preparation does not prove
+      // prior process extinction. Retain the boot fence even after close().
+      closeSync(fd); fd = undefined;
+      return { ok: true, prepared: true, digest, reservationId: expectedReservationId,
+        custodyReleased: false, historicalOutcome: 'UNKNOWN', sourceLeaseReleased: false,
+        requiresLaterFullBoot: true, receiptDigest: sha(auditBytes) };
+    } catch {
+      if (fd !== undefined) {
+        if (mutationStarted) closeSync(fd); // Uncertain writes retain the fence.
+        else unlock(fd); // A known pre-write refusal must not strand admission.
+      }
+      return held('MAINTENANCE_AUDIT_LOSS_PREPARATION_UNPROVEN');
+    }
+  };
+  return Object.freeze({ status, reserve, release, recoverAfterBoot, prepareAfterAuditLoss,
     // This only ADDS an ACTIVE fence. The fixed migration adapter independently
     // checks the exact live held owner/report before calling it. No idle seed.
     prepareIncident: request => reserve(request, true),

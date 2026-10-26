@@ -205,6 +205,7 @@ function collectedSourceFailure({ dirty = false, topologyCode = '', failFetch = 
   const calls = [];
   let configurationReads = 0;
   const result = collectCanonicalIgnitionSourceTruth({
+    createGitProbeContextFn: () => null,
     cwd: '/canonical/repo', platform: 'linux', environment: {},
     inspectTopologyFn: () => topologyCode
       ? { ok: false, blocker: topologyCode, pathname: 'PRIVATE topology path' }

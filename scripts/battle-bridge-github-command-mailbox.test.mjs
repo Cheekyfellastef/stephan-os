@@ -296,7 +296,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.doesNotMatch(installer, /New-ScheduledTaskAction -Execute \$(?:node|nodeExe|npm)/);
 
   const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
-  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(comments/);
+  assert.match(mailboxSource, /selectBattleBridgeGitHubCommandBatch\(rotationPoll\.comments/);
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);

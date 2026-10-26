@@ -203,6 +203,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'openclaw-elastic-provider-pool-projection',
   }),
   record({
+    fileName: 'sovereign-commander-maintenance-custody.json',
+    schemaIds: ['stephanos.sovereign-maintenance-custody.v1'],
+    sourcePaths: ['scripts/sovereign-maintenance-custody-store-v1.mjs'],
+    role: 'sovereign-maintenance-custody-state',
+  }),
+  record({
     fileName: 'stephanos-backend-runtime.json',
     schemaIds: ['stephanos.backend-runtime.v1'],
     sourcePaths: ['scripts/windows/start-stephanos-backend.ps1'],

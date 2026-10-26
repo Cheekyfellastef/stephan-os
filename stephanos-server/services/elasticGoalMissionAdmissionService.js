@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
-import { projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectGoalAdmissionRequiredTestsV1, projectOwnerGoalRequiredTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { resolve } from 'node:path';
 import {
   createMissionRecord,
@@ -337,7 +337,7 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     worktreePath: resolve(worktreeRoot, missionId),
     allowedFiles: scope.allowedFiles,
     requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
-    requiredTests: [...new Set(['npm run stephanos:verify', ...(goal.requiredTests || [])])],
+    requiredTests: [...goal.requiredTests],
     browserProofRequired: false,
   };
 }
@@ -430,7 +430,18 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       held.push({ issueNumber, reason: scope.reason, resourceIds: scope.resourceIds });
       continue;
     }
-    const tests = projectOwnerGoalRequiredTestsV1(record, issueNumber, scope.repository);
+    const ownerTests = projectOwnerGoalRequiredTestsV1(record, issueNumber, scope.repository);
+    // Derive legacy acceptance only from exact declared paths. The existing
+    // validator rejects unsafe or overlarge plans; never truncate acceptance.
+    // Explicit owner plans remain authoritative, including independent tests.
+    const declaredTestCommands = scope.allowedFiles
+      .filter(path => /\.test\.(?:mjs|cjs|js)$/.test(path))
+      .map(path => `node --test ${path}`);
+    const tests = ownerTests.supplied || !ownerTests.valid
+      ? ownerTests
+      : projectGoalAdmissionRequiredTestsV1([
+        'npm run stephanos:verify', ...new Set(declaredTestCommands),
+      ]);
     if (!tests.valid) {
       held.push({ issueNumber, reason: 'GOAL_REQUIRED_TEST_PLAN_UNPROVEN' });
       continue;

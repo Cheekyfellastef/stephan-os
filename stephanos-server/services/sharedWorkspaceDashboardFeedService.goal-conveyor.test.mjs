@@ -129,6 +129,10 @@ test('dashboard backend projects each goal build journey without borrowing anoth
   assert.equal(payload.stephanosBuildTruthStatus.truth, 'CURRENT');
   assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
   assert.equal(payload.projection.stephanosBuildTruth.goals.length, 2);
+  assert.equal(payload.projection.goalBuildConveyorOverview.schemaVersion, 'stephanos.goal-build-conveyor-overview.v1');
+  assert.equal(payload.projection.goalBuildConveyorOverview.buildingGoalCount, 1);
+  assert.equal(payload.projection.goalBuildConveyorOverview.workers[0].id, 'openclaw-local');
+  assert.equal(payload.projection.goalBuildConveyorOverview.stages.find(stage => stage.id === 'merge').state, 'UNKNOWN');
   assert.equal(building.buildJourney.schemaVersion, 'stephanos.goal-build-conveyor.v1');
   assert.equal(building.buildJourney.builder, 'openclaw-local');
   assert.equal(building.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');

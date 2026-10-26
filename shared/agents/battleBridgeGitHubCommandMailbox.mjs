@@ -12,11 +12,14 @@ import {
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import {
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
   executeRescueIslandSupervisedDocumentOnBattleBridge,
   isTerminalizableRescueIslandSupervisedDocumentBlocker,
   validateRescueIslandSupervisedDocumentCommandShape,
 } from './rescueIslandSupervisedMailboxV1.mjs';
 import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
+import { MAILBOX_ROTATION_OPERATION, validateMailboxRotationCommandShape,
+  isTerminalizableMailboxRotationBlocker } from './canonicalMailboxRotationV1.mjs';
 import { MAINTENANCE_RECOVERY_OPERATIONS, validateMaintenanceRecoveryCommandShape,
   isTerminalizableMaintenanceRecoveryBlocker, executeMaintenanceRecoveryOnBattleBridge,
 } from './sovereignMaintenanceRecoveryMailboxV1.mjs';
@@ -53,6 +56,7 @@ import {
 export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
+  MAILBOX_ROTATION_OPERATION,
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   ...MAINTENANCE_RECOVERY_OPERATIONS,
   ...FRONTEND_VISIBILITY_OPERATIONS,
@@ -63,6 +67,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION,
+  RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -83,6 +88,7 @@ function fail(blocker, details = {}) {
 
 function customOperationKind(operation = '') {
   const normalized = String(operation || '');
+  if (normalized === MAILBOX_ROTATION_OPERATION) return 'mailbox-rotation';
   if (MAINTENANCE_RECOVERY_OPERATIONS.includes(normalized)) return 'maintenance-recovery';
   if (FRONTEND_VISIBILITY_OPERATIONS.includes(normalized)) return 'frontend-visibility';
   if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
@@ -91,12 +97,16 @@ function customOperationKind(operation = '') {
   if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
   if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
   if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
-  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION) return 'rescue-island-supervised-document';
+  if (normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_OPERATION
+      || normalized === RESCUE_ISLAND_SUPERVISED_DOCUMENT_STATUS_OPERATION) {
+    return 'rescue-island-supervised-document';
+  }
   return '';
 }
 
 function validateCustomCommandShape(command = {}) {
   const kind = customOperationKind(command?.operation);
+  if (kind === 'mailbox-rotation') return validateMailboxRotationCommandShape(command);
   if (kind === 'maintenance-recovery') return validateMaintenanceRecoveryCommandShape(command);
   if (kind === 'frontend-visibility') return validateFrontendVisibilityCommandShape(command);
   if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
@@ -142,7 +152,8 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 }
 
 export function isTerminalizableOwnerCommandBlocker(value) {
-  return isTerminalizableMaintenanceRecoveryBlocker(value)
+  return isTerminalizableMailboxRotationBlocker(value)
+    || isTerminalizableMaintenanceRecoveryBlocker(value)
     || isTerminalizableFrontendVisibilityBlocker(value)
     || isTerminalizableOperatorEnvironmentApprovalBlocker(value)
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
@@ -276,6 +287,13 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
   const shape = validateCustomCommandShape(command);
   if (!shape.ok) return shape;
   try {
+    if (kind === 'mailbox-rotation') {
+      if (typeof options.executeMailboxRotationFn !== 'function') return fail('MAILBOX_ROTATION_HOST_CONTEXT_UNPROVEN');
+      const result = await options.executeMailboxRotationFn(shape.command);
+      return { ok: result.ok === true, operation: command.operation, requestId: command.requestId,
+        verdict: result.ok ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
+        ...(result.blocker ? { blocker: result.blocker } : {}), result };
+    }
     if (kind === 'maintenance-recovery') return await executeMaintenanceRecoveryOnBattleBridge(shape.command, options);
     if (kind === 'frontend-visibility') return await executeFrontendVisibilityOnBattleBridge(shape.command, options);
     if (kind === 'environment') {

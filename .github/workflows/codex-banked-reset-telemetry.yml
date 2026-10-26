@@ -69,11 +69,18 @@ jobs:
           fetch-depth: 1
       - name: Recheck canonical owner event from trusted main
         if: github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/canonical-mailbox-workflow-event-gate.mjs receipt
       - name: Replace compact telemetry issue body from trusted receipts
         uses: actions/github-script@v7
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           script: |
+            const { assertMailboxRotationWorkflowAdmission } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/canonical-mailbox-workflow-admission-v1.mjs`);
+            const recheck = () => assertMailboxRotationWorkflowAdmission({ mode: 'receipt' });
+            await recheck();
             const path = await import('node:path');
             const { pathToFileURL } = await import('node:url');
             const moduleUrl = `${pathToFileURL(path.resolve('shared/agents/codexBankedResetTelemetryMirror.mjs')).href}?run=${Date.now()}`;
@@ -89,6 +96,7 @@ jobs:
               timestampUtc: new Date().toISOString(),
             });
             const body = telemetry.buildCodexBankedResetTelemetryIssueBody(record);
+            await recheck();
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,

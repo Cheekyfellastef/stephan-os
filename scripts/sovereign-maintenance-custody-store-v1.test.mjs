@@ -20,6 +20,7 @@ function fixture(t) {
   mkdirSync(join(root, 'status')); mkdirSync(join(root, 'events'));
   let latest = null, recordId = 0;
   anchors.set(root, { readLatest: () => latest && { ...latest, bytes: Buffer.from(latest.bytes) },
+    lose: () => { latest = null; },
     append: (bytes, { expectedRecordId }) => {
       if ((latest?.eventRecordId ?? null) !== expectedRecordId) throw new Error('fixture native compare failed');
       latest = { bytes: Buffer.from(bytes), eventRecordId: ++recordId }; return latest;
@@ -35,6 +36,62 @@ function store(root, bootWitness = oldBoot, overrides = {}) {
 }
 const reservation = { reservationId: 'original-cycle', operation: 'repair-stephanos' };
 const approved = expectedDigest => ({ expectedDigest, operatorApproval: 'operator-approved' });
+
+test('lost audit authority can only prepare ACTIVE; a boot later than preparation is required', async t => {
+  const root = fixture(t), original = store(root);
+  original.prepareIncident(reservation);
+  const originalBytes = readFileSync(join(root, 'status', 'sovereign-commander-maintenance-custody.json'));
+  const oldDigest = original.status().digest; original.close(); anchors.get(root).lose();
+  const preparation = store(root, newBoot);
+  assert.equal((await preparation.recoverAfterBoot(approved(oldDigest))).ok, false);
+  const result = await preparation.prepareAfterAuditLoss({ ...approved(oldDigest), expectedReservationId: reservation.reservationId });
+  assert.equal(result.ok, true); assert.equal(result.custodyReleased, false);
+  assert.equal(result.requiresLaterFullBoot, true); assert.notEqual(result.digest, oldDigest);
+  assert.equal(preparation.status().held, true);
+  assert.equal(preparation.release().ok, false); preparation.close();
+  assert.equal((await store(root, newBoot).recoverAfterBoot(approved(result.digest))).ok, false);
+  const laterClock = clock + 60_000;
+  const later = { ...newBoot, bootStartedAtUtc: new Date(clock + 30_000).toISOString(), observedAtUtc: new Date(laterClock).toISOString() };
+  const successor = store(root, later, { now: () => later.observedAtUtc, readBootWitness: () => later });
+  assert.equal((await successor.recoverAfterBoot(approved(result.digest))).ok, true);
+  assert.equal(successor.status().held, false);
+  const receipts = readdirSync(join(root, 'events', 'sovereign-maintenance-custody'));
+  const archive = JSON.parse(readFileSync(join(root, 'events', 'sovereign-maintenance-custody', receipts.find(x => x.startsWith('audit-loss-'))))).receipt;
+  assert.equal(archive.original.reservationId, reservation.reservationId);
+  assert.equal(archive.originalDigest, oldDigest); assert.equal(archive.projectionFreshness, 'UNPROVEN');
+  assert.deepEqual(Buffer.from(archive.originalEnvelopeBase64, 'base64'), originalBytes);
+  assert.equal(archive.historicalOutcome, 'UNKNOWN'); assert.equal(archive.sourceLeaseReleased, false);
+});
+
+test('audit-loss preparation refuses present/corrupt authority, changed projection, absent approval and failed archive', async t => {
+  for (const scenario of ['present', 'corrupt-anchor', 'changed', 'unapproved', 'foreign-cycle', 'archive-failed']) {
+    const root = fixture(t), original = store(root); original.prepareIncident(reservation);
+    const digest = original.status().digest; original.close();
+    if (scenario !== 'present') anchors.get(root).lose();
+    if (scenario === 'corrupt-anchor') anchors.get(root).readLatest = () => { throw new Error('untrusted'); };
+    if (scenario === 'changed') writeFileSync(join(root, 'status', 'sovereign-commander-maintenance-custody.json'), '{}');
+    if (scenario === 'archive-failed') writeFileSync(join(root, 'events', 'sovereign-maintenance-custody'), 'preserve me');
+    const successor = store(root, newBoot);
+    const result = await successor.prepareAfterAuditLoss({ ...approved(digest), expectedReservationId: reservation.reservationId,
+      ...(scenario === 'unapproved' ? { operatorApproval: undefined } : {}),
+      ...(scenario === 'foreign-cycle' ? { expectedReservationId: 'foreign-cycle' } : {}) });
+    assert.equal(result.ok, false, scenario); assert.equal(successor.status().held, true, scenario);
+    assert.equal(successor.release().ok, false); successor.close();
+  }
+});
+
+test('audit-loss preparation retains exclusive custody while awaiting a fresh native boot observation', async t => {
+  const root = fixture(t), original = store(root); original.prepareIncident(reservation);
+  const digest = original.status().digest; original.close(); anchors.get(root).lose();
+  let complete;
+  const first = store(root, newBoot, { readBootWitness: () => new Promise(resolve => { complete = resolve; }) });
+  const pending = first.prepareAfterAuditLoss({ ...approved(digest), expectedReservationId: reservation.reservationId });
+  const other = store(root, newBoot);
+  assert.equal((await other.prepareAfterAuditLoss({ ...approved(digest), expectedReservationId: reservation.reservationId })).ok, false);
+  assert.equal(other.reserve(reservation).ok, false);
+  complete(newBoot); assert.equal((await pending).ok, true);
+  assert.equal(first.release().ok, false);
+});
 
 test('missing state, changed keys, and unsigned replacement never mean idle', t => {
   const root = fixture(t), original = store(root);

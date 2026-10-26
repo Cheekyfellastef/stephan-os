@@ -374,6 +374,41 @@ test('known specialized status projections stay outside dashboard authority with
 });
 
 
+test('maintenance custody envelopes stay with their specialized owner and cannot grant dashboard authority', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-26T00:00:00.000Z';
+  await writeJson(root, 'status', 'status-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current', timestampUtc: now, status: 'CURRENT',
+  }));
+  // Native custody is MAC-wrapped, not a generic shared status record. Its
+  // authentication and ACTIVE/IDLE admission remain the custody owner's job.
+  const envelope = {
+    record: {
+      schemaVersion: 'stephanos.sovereign-maintenance-custody.v1',
+      phase: 'ACTIVE', reservationId: 'fixture-reservation', operation: 'fleet-goal-supervisor',
+      ownerId: 'fixture-owner', ownerPid: 1234, nonce: 'fixture-nonce', startedAtUtc: now,
+      bootWitness: { bootStartedAtUtc: '2026-10-25T23:00:00.000Z' },
+    },
+    mac: 'a'.repeat(64),
+  };
+  const fileName = 'sovereign-commander-maintenance-custody.json';
+  await writeJson(root, 'status', fileName, envelope);
+  const accepted = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(accepted.state, DASHBOARD_FEED_STATES.READY);
+  assert.deepEqual(accepted.errors, []);
+  assert.deepEqual(accepted.records.statusRecords.map(record => record.statusId), ['workspace-current']);
+  assert.deepEqual(accepted.records.proofRecords, []);
+
+  // Neither a similar filename nor the same filename in proof is exempt.
+  await writeJson(root, 'status', 'sovereign-commander-maintenance-custody-other.json', envelope);
+  await writeJson(root, 'proof', fileName, envelope);
+  const rejected = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(rejected.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.equal(rejected.errors.length, 2);
+  assert.ok(rejected.errors.some(error => error.startsWith('status/sovereign-commander-maintenance-custody-other.json:')));
+  assert.ok(rejected.errors.some(error => error.startsWith('proof/sovereign-commander-maintenance-custody.json:')));
+});
+
 test('live feed observes the clock after asynchronous record reads and retains explicit future refusal', async t => {
   const start = Date.parse('2026-07-07T00:00:00.000Z');
   const root = await tempWorkspace();

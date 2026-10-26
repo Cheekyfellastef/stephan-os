@@ -191,7 +191,7 @@ function classifyBattleBridgeGitConfigurationRiskV1(key) {
     || 'UNKNOWN';
 }
 
-function parseNullConfig(output = '') {
+export function parseBattleBridgeNullConfigV1(output = '') {
   return String(output || '').split('\0').filter(Boolean).map((entry) => {
     const separator = entry.includes('\n') ? entry.indexOf('\n') : entry.indexOf('=');
     return Object.freeze({
@@ -200,6 +200,7 @@ function parseNullConfig(output = '') {
     });
   });
 }
+const parseNullConfig = parseBattleBridgeNullConfigV1;
 
 export function validateBattleBridgeLocalGitConfiguration(output = '') {
   const entries = parseNullConfig(output);
