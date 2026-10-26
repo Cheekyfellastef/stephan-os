@@ -226,6 +226,46 @@ test('open PR and unrelated source lease cannot fabricate a material builder', (
   }).active, false);
 });
 
+test('bound stalled and failed receipts remain diagnosable after material lane becomes inactive', () => {
+  for (const state of ['stalled', 'failed', 'cancelled']) {
+    const stoppedReceipt = receipt({ state, blocker: 'SIMULATED_WORKER_STOP' });
+    const stoppedLane = lane({ executionReceipt: stoppedReceipt });
+    assert.equal(stoppedLane.valid, true);
+    assert.equal(stoppedLane.active, false);
+    assert.equal(stoppedLane.pickupPending, false);
+    assert.deepEqual(stoppedLane.executionReceiptRefs, [stoppedReceipt.receiptId]);
+    const diagnostic = diagnoseProgrammeStall({
+      observedAtUtc: NOW, status: 'HOLD',
+      lane: stoppedLane, mutationLease: lease(),
+      executionReceipt: stoppedReceipt,
+      controllerHeartbeat: { fresh: true },
+      workerHeartbeat: { fresh: true },
+      battleBridgeProofs: [],
+    }, { nowUtc: NOW });
+    assert.equal(diagnostic.stalled, true);
+    assert.ok(diagnostic.blockers.includes(
+      state === 'stalled' ? 'execution-receipt-reports-stall'
+        : 'execution-receipt-terminal-failure',
+    ), state + ': expected authentic terminal/stall diagnosis');
+    assert.equal(diagnostic.sourceMutationAllowed, false);
+    assert.equal(diagnostic.dispatchAllowed, false);
+  }
+
+  // A syntactically accepted but wrong-worker failure must not become
+  // authoritative stall evidence for the original worker.
+  const foreignReceipt = receipt({ state: 'failed', workerId: 'another-owner',
+    blocker: 'UNRELATED_WORKER' });
+  const unknownLane = lane({ executionReceipt: foreignReceipt });
+  const rejected = diagnoseProgrammeStall({
+    observedAtUtc: NOW, status: 'HOLD', lane: unknownLane,
+    mutationLease: lease(), executionReceipt: foreignReceipt,
+    controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true },
+    battleBridgeProofs: [],
+  }, { nowUtc: NOW });
+  assert.equal(unknownLane.active, false);
+  assert.ok(!rejected.blockers.includes('execution-receipt-terminal-failure'));
+});
+
 test('canonical lane requires GitHub to affirm the exact head repository and branch', () => {
   for (const githubEvidence of [
     github({ repository: '' }),
