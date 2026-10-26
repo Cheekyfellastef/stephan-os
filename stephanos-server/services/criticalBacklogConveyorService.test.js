@@ -1386,7 +1386,8 @@ test('completed-inspection revision HOLD triggers one guarded recovery then rere
 
 test('parked diff failure retries only with fresh stronger owner acceptance and terminal released ownership', async t => {
   const expectedGate = {
-    valid: 'RETRY_READMITTED', 'unchanged-plan': 'OWNER_TEST_SET_UNCHANGED',
+    valid: 'RETRY_READMITTED', 'valid-expanded-scope': 'RETRY_READMITTED',
+    'valid-reversed-expanded-scope': 'RETRY_READMITTED', 'unchanged-plan': 'OWNER_TEST_SET_UNCHANGED',
     'untrusted-owner': 'OWNER_PLAN_INVALID', 'editable-oracle': 'OWNER_SOURCE_SCOPE_MISMATCH',
     'ownership-held': 'OWNERSHIP_RELEASE_UNPROVEN', 'worktree-dirty': 'WORKTREE_REFRESH_BLOCKED',
     'duplicate-owner': 'OWNER_MIRROR_AMBIGUOUS', 'unknown-failure': 'CONTINUITY_NOT_RETRYABLE',
@@ -1419,6 +1420,8 @@ test('parked diff failure retries only with fresh stronger owner acceptance and 
     if (mode === 'invalid-revision') state.revision = -1;
     if (mode === 'terminal-missing') state.dispatch.resultId = '';
     if (mode === 'already-running') { state.currentPhase = 'AGENT_IMPLEMENTATION'; state.dispatch.status = 'running'; }
+    if (mode.includes('expanded-scope')) state.allowedFiles.push(state.allowedFiles[0] + '/**');
+    if (mode === 'valid-reversed-expanded-scope') state.allowedFiles.reverse();
     const original = structuredClone(state);
     const record = {schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.goal',
       goalId: 'goal-2964', issueNumber: 2964, repository: state.repository,
@@ -1460,8 +1463,8 @@ test('parked diff failure retries only with fresh stronger owner acceptance and 
     assert.equal(scan.evaluatedCount, beforeCandidate ? 0 : 1);
     assert.equal(authorityCalls, beforeCandidate || mode === 'invalid-revision' ? 0 : 1,
       'diagnostics must not add an authority read or evaluate an unreached gate');
-    assert.equal(result.retried, mode === 'valid');
-    if (mode === 'valid') {
+    assert.equal(result.retried, mode.startsWith('valid'));
+    if (mode.startsWith('valid')) {
       assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
       assert.equal(state.repair.currentRound, 1);
       assert.deepEqual(state.requiredTests, [...original.requiredTests, oracle]);
@@ -1554,7 +1557,8 @@ test('strengthened retry contract persists before actual queue publication and c
   let {state} = await createMissionRecord({missionId: 'critical-2964-elastic-goal', title: 'Original bounded goal',
     operatorIntent: 'Real source and independent tests', intendedOutcome: 'Implemented behavior', missionKind: 'implementation',
     repository: 'Cheekyfellastef/stephan-os', branch: 'openclaw/elastic-goal-2964',
-    worktreePath: join(paths.repoRoot, 'worker'), allowedFiles: ['stephanos-server/services/example.js'],
+    worktreePath: join(paths.repoRoot, 'worker'),
+    allowedFiles: ['stephanos-server/services/example.js', 'stephanos-server/services/example.js/**'],
     requiredEvidence: ['focused test'], requiredTests: ['npm run stephanos:verify']}, options);
   const proof = receiptId => ({receiptId, requirement: 'bounded proof', source: 'fixture', evidenceType: 'command-output', verified: true, exitCode: 0});
   for (const event of [
@@ -1580,11 +1584,13 @@ test('strengthened retry contract persists before actual queue publication and c
   const persisted = (await readMissionRecord(state.missionId, options)).state;
   const expected = [...original.requiredTests, extra];
   assert.deepEqual(persisted.requiredTests, expected);
+  assert.deepEqual(persisted.allowedFiles, original.allowedFiles);
   assert.deepEqual(persisted.repair.history[0].previousDispatch, original.dispatch);
   const publication = await publishMissionWorkerAction(persisted, options);
   assert.equal(publication.published, true, JSON.stringify(publication));
   const queued = JSON.parse(await readFile(publication.path, 'utf8'));
   assert.deepEqual(queued.payload.requiredTests, expected);
+  assert.deepEqual(queued.payload.allowedFiles, original.allowedFiles);
   const claim = await claimNextMissionWorkerItem(publication.adapter, options);
   assert.ok(claim);
   assert.deepEqual(claim.item.payload.requiredTests, expected);

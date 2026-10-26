@@ -485,9 +485,11 @@ export async function retrySafelyBlockedAgentFailure({
       const ownerPlan = mirrors.length === 1
         ? projectOwnerGoalRequiredTestsV1(mirrors[0], issueNumber, currentCandidate.repository)
         : null;
-      const retainedScopes = projectCanonicalResourceIds((currentCandidate.allowedFiles || []).map(path =>
+      // Admission expands each resource path to path and path/**. Match its
+      // resource reconstruction: remove representation duplicates before validation.
+      const retainedScopes = projectCanonicalResourceIds([...new Set((currentCandidate.allowedFiles || []).map(path =>
         path === '**' ? `repo:${currentCandidate.repository}`
-          : `repo:${currentCandidate.repository}:path:${path.endsWith('/**') ? path.slice(0, -3) : path}`));
+          : `repo:${currentCandidate.repository}:path:${path.endsWith('/**') ? path.slice(0, -3) : path}`))]);
       const currentScopes = projectCanonicalResourceIds(mirrors[0]?.resourceIds || []);
       const sameSourceScope = retainedScopes.valid && currentScopes.valid && currentScopes.resourceIds.length > 0
         && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
