@@ -121,6 +121,7 @@ jobs:
             shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
             shared/agents/missionControllerCapacityRouterV1.test.mjs \
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            shared/agents/goalBuildConveyorOverviewV1.test.mjs \
             shared/agents/flywheelAgentUpliftV1.test.mjs \
             shared/agents/starfieldVrOutcomeOwnershipSeedV1.test.mjs \
             shared/agents/agentSystem.test.mjs \
