@@ -1448,3 +1448,129 @@ test('actual worker cycle distinguishes inactive observed leases from missing ac
       expectsDefect ? 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT' : 'MISSION_WORKER_TICK_PASS');
   }
 });
+
+// Regression contract: observing another execution is not a new grant obligation.
+function occupiedExternalControllerFixture() {
+  const mission = {
+    missionId: 'critical-2963-elastic-goal', revision: 5,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { adapter: 'foundry-forge', status: 'running', resultId: '' },
+    continuity: { parkingStatus: 'ACTIVE' },
+  };
+  return {
+    status: 'HOLD', allowWorkerTick: false, boundedMutationSteps: 0,
+    authoritativeProjection: { status: 'READY', lane: null },
+    actionResult: {
+      classification: 'WAIT_ACTIVE_MISSION',
+      elasticAdmission: {
+        schemaVersion: 'stephanos.elastic-goal-mission-admission.v1',
+        ok: true, classification: 'ELASTIC_GOAL_MISSIONS_OCCUPIED',
+        selectedMission: mission, activeMissions: [mission],
+        elasticMissions: [mission], runnableMissions: [],
+      },
+      projection: { decision: 'WAIT_EXTERNAL_ACTIVE_MISSION', activeMission: mission },
+    },
+  };
+}
+
+test('occupied fallback obligation: running external work is observed without demanding another grant', () => {
+  const controller = occupiedExternalControllerFixture();
+  const original = JSON.stringify(controller);
+  assert.equal(controllerRequiresMaterialProgress(controller), false);
+  assert.equal(JSON.stringify(controller), original, 'classification cannot retire or rewrite the old attempt');
+});
+
+test('occupied fallback obligation: genuinely selected runnable work still requires its missing grant', () => {
+  for (const phase of ['CREATE_WORKTREE', 'AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED', 'VERIFYING', 'CHECK_PULL_REQUEST']) {
+    const controller = occupiedExternalControllerFixture();
+    const selected = { missionId: 'critical-2964-elastic-goal', revision: 8,
+      currentPhase: phase, dispatch: { adapter: 'foundry-forge', status: 'pending' } };
+    controller.actionResult.elasticAdmission.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE';
+    controller.actionResult.elasticAdmission.selectedMission = selected;
+    controller.actionResult.elasticAdmission.runnableMissions = [selected];
+    controller.actionResult.projection.activeMission = selected;
+    assert.equal(controllerRequiresMaterialProgress(controller), true, phase);
+  }
+});
+
+test('occupied fallback obligation: contradictory or incomplete inventory cannot manufacture idle readiness', () => {
+  const cases = [
+    ['missing runnable inventory', c => { delete c.actionResult.elasticAdmission.runnableMissions; }],
+    ['invalid runnable inventory', c => { c.actionResult.elasticAdmission.runnableMissions = {}; }],
+    ['failed admission', c => { c.actionResult.elasticAdmission.ok = false; }],
+    ['missing phase', c => { delete c.actionResult.elasticAdmission.selectedMission.currentPhase; }],
+    ['unknown dispatch', c => { c.actionResult.elasticAdmission.selectedMission.dispatch.status = 'unknown'; }],
+    ['contradictory runnable selection', c => {
+      c.actionResult.elasticAdmission.runnableMissions = [c.actionResult.elasticAdmission.selectedMission];
+    }],
+    ['different projected mission', c => {
+      c.actionResult.projection.activeMission = { missionId: 'critical-2964-elastic-goal',
+        currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'pending' } };
+    }],
+  ];
+  for (const [label, change] of cases) {
+    const controller = occupiedExternalControllerFixture();
+    change(controller);
+    assert.equal(controllerRequiresMaterialProgress(controller), true, label);
+  }
+});
+
+test('occupied fallback obligation: explicit current action or active canonical lane still requires progress', () => {
+  const granted = occupiedExternalControllerFixture();
+  granted.allowWorkerTick = true;
+  granted.workerActionGrant = actionGrant;
+  assert.equal(controllerRequiresMaterialProgress(granted), true);
+  const active = occupiedExternalControllerFixture();
+  active.authoritativeProjection.lane = { active: true };
+  assert.equal(controllerRequiresMaterialProgress(active), true);
+});
+
+test('occupied fallback obligation: actual supervised cycle preserves old work and never invokes another writer', async () => {
+  const controller = occupiedExternalControllerFixture();
+  const original = JSON.stringify(controller);
+  const errors = sink();
+  const heartbeats = [];
+  let ticks = 0;
+  let stateWrites = 0;
+  const code = await runSupervisedMissionWorker({
+    argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+    stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    appendMissionStateEvent: async () => { stateWrites += 1; assert.fail('observation cannot mutate a mission'); },
+    runControllerCycle: async () => controller,
+    runTick: async () => { ticks += 1; assert.fail('no grant may execute'); },
+    writeHeartbeat: async h => { heartbeats.push(h); },
+    setIntervalFn: () => 17, clearIntervalFn: () => {},
+  });
+  assert.equal(code, 0);
+  assert.equal(ticks, 0);
+  assert.equal(stateWrites, 0);
+  assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), false);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+  assert.equal(JSON.stringify(controller), original);
+});
+
+test('occupied fallback obligation: actual supervised cycle keeps runnable-without-grant failure visible', async () => {
+  const controller = occupiedExternalControllerFixture();
+  const mission = controller.actionResult.elasticAdmission.selectedMission;
+  mission.dispatch.status = 'pending';
+  controller.actionResult.elasticAdmission.classification = 'ELASTIC_GOAL_MISSIONS_AVAILABLE';
+  controller.actionResult.elasticAdmission.runnableMissions = [mission];
+  const errors = sink();
+  const heartbeats = [];
+  let ticks = 0;
+  const code = await runSupervisedMissionWorker({
+    argv: ['--once'], env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'c'.repeat(40) },
+    stdout: sink().stream, stderr: errors.stream, bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity, listMissionState: async () => [],
+    runControllerCycle: async () => controller,
+    runTick: async () => { ticks += 1; assert.fail('a pending mission is not a grant'); },
+    writeHeartbeat: async h => { heartbeats.push(h); },
+    setIntervalFn: () => 17, clearIntervalFn: () => {},
+  });
+  assert.equal(code, 1);
+  assert.equal(ticks, 0);
+  assert.equal(errors.read().includes('CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'), true);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT');
+});
