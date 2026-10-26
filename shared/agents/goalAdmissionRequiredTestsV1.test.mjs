@@ -36,9 +36,19 @@ test('malformed, unbounded, executable, environment and escaping test requests r
   ]) assert.equal(project(value).valid, false, JSON.stringify(value));
 });
 
-test('owner-selected independent task acceptance has one exact bounded command', () => {
+test('owner-selected independent task acceptance permits only the fixed commands', () => {
   assert.equal(project(['node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs']).valid, true);
+  const scopeAcceptance = 'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs';
+  assert.equal(project([scopeAcceptance]).valid, true);
+  assert.deepEqual(projectGoalTestContextPathsV1([scopeAcceptance]),
+    ['scripts/acceptance/generated-functional-scope.acceptance.mjs']);
+  assert.equal(strengthen(['npm run stephanos:verify'], ['npm run stephanos:verify', scopeAcceptance],
+    ['stephanos-server/services/githubPrEvidenceService.js']).valid, true);
+  assert.equal(strengthen(['npm run stephanos:verify'], ['npm run stephanos:verify', scopeAcceptance],
+    ['scripts/acceptance/**']).valid, false);
   for (const command of ['node --test scripts/acceptance/other.acceptance.mjs',
+    'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs --watch',
+    'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs;whoami',
     'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs --watch',
     'node --test scripts/../acceptance/legacy-goal-declared-tests.acceptance.mjs']) {
     assert.equal(project([command]).valid, false, command);
