@@ -12,7 +12,67 @@ import { projectElasticAdmissionGateV1 } from './criticalBacklogConveyorServiceC
 import {
   applyMissionOrchestratorEvent,
   createMissionOrchestratorState,
+  RETRYABLE_AGENT_FAILURE_BLOCKERS,
 } from '../../shared/agents/missionOrchestrator.mjs';
+
+test('parking preserves bounded model-failure retries without bypassing custody, budget or scope', async t => {
+  const failures = [...RETRYABLE_AGENT_FAILURE_BLOCKERS.filter(x => x !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'),
+    'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:stephanos-server/services/example.js'];
+  for (const failure of failures) for (const mode of ['released', 'custody-held', 'dirty', 'exhausted', 'mixed', 'running', 'revision-moved']) {
+    await t.test(`${failure}:${mode}`, async () => {
+      const paths = await roots();
+      const mission = elasticImplementationMission(2964);
+      let state = createMissionOrchestratorState({...mission, branch: mission.git.branch,
+        worktreePath: mission.git.worktreePath, repositoryRoot: paths.repoRoot});
+      const proof = receiptId => ({receiptId, requirement: 'fixture proof', source: 'deterministic-test',
+        evidenceType: 'command-output', verified: true, exitCode: 0});
+      for (const event of [
+        {eventType: 'WORKTREE_READY', worktreePath: mission.git.worktreePath, clean: true, receipt: proof('park-retry-worktree')},
+        {eventType: 'AGENT_DISPATCHED', agentId: 'foundry-forge'},
+        {eventType: 'AGENT_RESULT_RECEIVED', success: false, resultId: 'critical-2964-elastic-goal-r5-original', error: failure},
+        {eventType: 'MISSION_PARKED_FOR_REPAIR', reason: failure, repairOwner: 'goal-building-agent',
+          repairRef: '#2002', receipt: proof('park-retry-parking')},
+      ]) state = applyMissionOrchestratorEvent(state, event);
+      assert.equal(state.continuity.parkingStatus, 'PARKED_BLOCKED');
+      if (mode === 'exhausted') state.repair.currentRound = 3;
+      if (mode === 'mixed') state.blockers.push('SOURCE_MUTATION_LEASE_HELD');
+      if (mode === 'running') state.dispatch.status = 'running';
+      const before = structuredClone(state), calls = [];
+      const result = await retrySafelyBlockedAgentFailure({paths, backlog: [], env: {},
+        listMissions: async () => [structuredClone(state)],
+        readProgrammeProjection: async () => assert.fail('model retries retain the already authenticated test plan'),
+        proveRetryOwnershipReleased: async () => { calls.push('custody'); return {ok: mode !== 'custody-held',
+          classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN'}; },
+        refreshRetryWorktree: async () => { calls.push('worktree'); return {ok: mode !== 'dirty', classification: 'RETRY_WORKTREE_DIRTY'}; },
+        appendEvent: async (missionId, event) => {
+          calls.push('append'); assert.equal(missionId, before.missionId);
+          assert.equal(event.expectedRevision, before.revision); assert.equal(event.expectedCurrentPhase, 'BLOCKED');
+          if (mode === 'revision-moved') return {preconditionFailed: true};
+          state = applyMissionOrchestratorEvent(state, event);
+          return {state};
+        },
+      });
+      assert.equal(result.retried, mode === 'released');
+      if (mode === 'released') {
+        assert.deepEqual(calls, ['custody', 'worktree', 'append']);
+        assert.equal(state.continuity.parkingStatus, 'ACTIVE');
+        assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+        assert.equal(state.dispatch.status, 'pending');
+        assert.equal(state.repair.currentRound, before.repair.currentRound + 1);
+        assert.deepEqual(state.requiredTests, before.requiredTests);
+        assert.deepEqual(state.allowedFiles, before.allowedFiles);
+        assert.deepEqual(state.repair.history.at(-1).previousDispatch, before.dispatch);
+        assert.equal(state.repair.history.at(-1).previousParkingStatus, 'PARKED_BLOCKED');
+        assert.deepEqual(state.continuity.history.slice(0, -1), before.continuity.history);
+      } else {
+        assert.deepEqual(state, before);
+        if (['exhausted', 'mixed', 'running'].includes(mode)) assert.deepEqual(calls, []);
+        if (mode === 'custody-held') assert.deepEqual(calls, ['custody']);
+        if (mode === 'dirty') assert.deepEqual(calls, ['custody', 'worktree']);
+      }
+    });
+  }
+});
 import { createMissionWorkerHeartbeatRecord } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import {
   GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
