@@ -179,6 +179,53 @@ test('canonical lane binds lane ID, issue, PR, exact head, receipts, proofs and 
   assert.equal(projection.chatMemoryAuthoritative, false);
 });
 
+test('open PR and unrelated source lease cannot fabricate a material builder', () => {
+  const noReceipt = lane({ executionReceipt: null });
+  assert.equal(noReceipt.valid, true);
+  assert.equal(noReceipt.active, false);
+  assert.equal(noReceipt.pickupPending, true);
+  assert.equal(noReceipt.executionStartedOnLease, false);
+  assert.equal(noReceipt.status, 'HOLD');
+
+  const separateLease = lease({
+    leaseId: 'goal-2315-pr-3259-rollover-20261026-v7',
+    laneId: 'goal-2315-pr-3259', issueNumber: 2315, prNumber: 3259,
+  });
+  const unrelatedReview = lane({
+    laneId: 'goal-2315-pr-3259', issueNumber: 2315, prNumber: 3259,
+    github: github({ prNumber: 3259 }),
+    mutationLease: separateLease, executionReceipt: null,
+  });
+  assert.equal(unrelatedReview.valid, true);
+  assert.equal(unrelatedReview.active, false);
+  assert.equal(unrelatedReview.pickupPending, true);
+  assert.equal(unrelatedReview.mutationLeaseIdentity.leaseId, separateLease.leaseId);
+
+  for (const state of ['queued', 'accepted']) {
+    const dispatchOnly = lane({ executionReceipt: receipt({ state }) });
+    assert.equal(dispatchOnly.active, false, state + ' does not prove pickup');
+    assert.equal(dispatchOnly.pickupPending, true);
+  }
+  for (const state of ['started', 'progress']) {
+    const actualStart = lane({ executionReceipt: receipt({ state }) });
+    assert.equal(actualStart.valid, true);
+    assert.equal(actualStart.active, true);
+    assert.equal(actualStart.executionStartedOnLease, true);
+  }
+  for (const bad of [
+    receipt({ workerId: 'other-owner' }),
+    receipt({ leaseKey: 'wrong-lease' }),
+    receipt({ prNumber: 3259 }),
+    receipt({ sourceHead: MERGE }),
+    receipt({ heartbeatExpiresAtUtc: NOW }),
+  ]) {
+    assert.equal(lane({ executionReceipt: bad }).active, false);
+  }
+  assert.equal(lane({
+    mutationLease: lease({ expiresAtUtc: '2026-07-30T09:59:00.000Z' }),
+  }).active, false);
+});
+
 test('canonical lane requires GitHub to affirm the exact head repository and branch', () => {
   for (const githubEvidence of [
     github({ repository: '' }),
@@ -1209,7 +1256,8 @@ test('authoritative projection holds without a real mutation lease even when a r
   });
   assert.equal(projection.schemaVersion, AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA);
   assert.equal(projection.status, 'HOLD');
-  assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+  assert.equal(projection.lane.active, false);
+  assert.ok(!projection.blockers.includes('active-lane-without-source-mutation-lease'));
   assert.equal(projection.chatMemoryAuthoritative, false);
 });
 
@@ -1991,7 +2039,7 @@ function exactElasticMission(overrides = {}) {
     ...overrides,
   };
 }
-function phaseAwareElasticLane(leaseRecord, binding) {
+function phaseAwareElasticLane(leaseRecord, binding, executionReceipt = null) {
   return buildCanonicalImplementationLaneProjection({
     laneId: 'goal-2956-pr-2960',
     issueNumber: 2956, prNumber: 2960,
@@ -2003,8 +2051,24 @@ function phaseAwareElasticLane(leaseRecord, binding) {
       merged: false, mergedAt: '', mergeCommitSha: '',
     },
     mutationLease: leaseRecord,
+    executionReceipt,
     elasticMissionPhaseBinding: binding,
     nowUtc: NOW,
+  });
+}
+
+function elasticStartedReceipt(leaseRecord) {
+  return createExecutionReceipt({
+    receiptId: 'execution-elastic-2956-1',
+    repository: REPOSITORY, issueNumber: 2956, prNumber: 2960,
+    branch: 'openclaw/elastic-goal-2956', sourceHead: ELASTIC_HEAD,
+    workerId: leaseRecord.ownerId, workerType: 'github-first',
+    executionId: 'execution-elastic-2956', leaseKey: leaseRecord.leaseId,
+    state: 'started', phase: 'bounded-source-mutation', sequence: 1,
+    timestampUtc: '2026-07-30T09:59:00.000Z',
+    heartbeatExpiresAtUtc: '2026-07-30T10:01:00.000Z',
+    proofRefs: ['proofs/elastic-execution-2956.json'],
+    expectedNextAction: 'Continue bounded work.',
   });
 }
 
@@ -2031,7 +2095,10 @@ test('actual source implementation remains active, subject to current execution 
       exactElasticMission({ currentPhase: phase }),
     ]);
     assert.equal(binding.materialImplementation, true);
-    const projected = phaseAwareElasticLane(sourceLease, binding);
+    const waiting = phaseAwareElasticLane(sourceLease, binding);
+    assert.equal(waiting.active, false);
+    assert.equal(waiting.pickupPending, true);
+    const projected = phaseAwareElasticLane(sourceLease, binding, elasticStartedReceipt(sourceLease));
     assert.equal(projected.active, true);
     assert.equal(projected.status, 'ACTIVE');
   }
@@ -2072,10 +2139,6 @@ test('proven elastic material lane uses canonical scheduler when legacy critical
   const activeBinding = projectElasticMissionPhaseBindingV1(sourceLease, [
     exactElasticMission({ currentPhase: 'AGENT_IMPLEMENTATION' }),
   ]);
-  const activeLane = phaseAwareElasticLane(sourceLease, activeBinding);
-  assert.equal(activeLane.valid, true);
-  assert.equal(activeLane.active, true);
-  assert.equal(activeLane.mutationLeaseIdentity.active, true);
   const executionReceipt = createExecutionReceipt({
     receiptId: 'execution-elastic-2956-1',
     repository: REPOSITORY,
@@ -2095,6 +2158,10 @@ test('proven elastic material lane uses canonical scheduler when legacy critical
     proofRefs: ['proofs/elastic-execution-2956.json'],
     expectedNextAction: 'Continue bounded work.',
   });
+  const activeLane = phaseAwareElasticLane(sourceLease, activeBinding, executionReceipt);
+  assert.equal(activeLane.valid, true);
+  assert.equal(activeLane.active, true);
+  assert.equal(activeLane.mutationLeaseIdentity.active, true);
   const criticalBacklog = {
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
     validation: { valid: true },
