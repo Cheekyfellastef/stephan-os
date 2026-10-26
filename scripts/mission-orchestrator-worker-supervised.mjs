@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { projectElasticMissionExecutionObligation } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
@@ -308,15 +309,18 @@ export function controllerRequiresMaterialProgress(controller) {
   if (!status || status === 'HOLD') return false;
   // An observed PR/lease is not material execution. Consume the canonical
   // lane's ACTIVE decision rather than recreating authority from its presence.
-  // Explicitly granted/selected missions still require progress, including
-  // newly admitted work before its first physical pickup receipt exists.
+  // An elastic selected mission may instead be an occupied external fallback.
+  // Only a coherent canonical inventory can establish that observation state.
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
+  const occupied = ownData(critical, 'decision') === 'WAIT_EXTERNAL_ACTIVE_MISSION'
+    && Boolean(ownData(critical, 'activeMission'))
+    && projectElasticMissionExecutionObligation(admission, ownData(critical, 'activeMission')).state === 'OCCUPIED';
   return ownData(controller, 'allowWorkerTick') === true
     || ownData(ownData(projection, 'lane'), 'active') === true
-    || Boolean(ownData(admission, 'selectedMission'))
-    || Boolean(ownData(critical, 'activeMission'));
+    || (!occupied && (Boolean(ownData(admission, 'selectedMission'))
+      || Boolean(ownData(critical, 'activeMission'))));
 }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 

@@ -605,6 +605,37 @@ test('retry ownership proof blocks while the prior provider-neutral claim is sti
   assert.equal(result.classification, 'MISSION_WORKER_RETRY_PRIOR_CLAIM_STILL_PROCESSING');
 });
 
+test('transport retry proof requires both the failed provider result and matching terminal execution', async () => {
+  const options=await runtime();
+  const adapter='foundry-forge',missionId='critical-1721-elastic-goal',actionId='critical-1721-elastic-goal-r5-test';
+  const leaseKey=missionId+'-r5-lease',sourceHead='a'.repeat(40);
+  const failedRoot=join(options.queueRoot,adapter,'failed');
+  await mkdir(failedRoot,{recursive:true});
+  await writeFile(join(failedRoot,actionId+'.json'),JSON.stringify({
+    schemaVersion:'stephanos.mission-worker-queue-item.v1',adapter,missionId,actionId,
+    actionGrant:{schemaVersion:'stephanos.mission-worker-action-grant.v1'},
+    executionBinding:{schemaVersion:'stephanos.mission-worker-queue-execution-binding.v1',executionId:actionId,leaseKey,sourceRevision:sourceHead},
+  }));
+  const result={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,success:false,
+    adapter,providerAdapter:adapter,missionId,actionId,error:'fetch failed',providerInvoked:true,providerCompleted:false,
+    failureStage:'PROVIDER',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED'};
+  const receipt={receiptId:actionId+'-5',executionId:actionId,leaseKey,sourceHead,state:'failed',
+    phase:'provider-neutral-result-blocked',blocker:'fetch failed'};
+  const observe=(present=true)=>proveMissionWorkerRetryOwnershipReleased({missionId,actionId,adapter,
+    queueRoot:options.queueRoot,sharedWorkspaceRoot:options.root,repoRoot:'C:/repo',
+    readReceiptHistory:async()=>({ok:true,latestReceipt:present?receipt:null})});
+  await writeFile(join(failedRoot,actionId+'.result.json'),JSON.stringify(result));
+  const valid=await observe();
+  assert.equal(valid.providerTransportFailure.actionId,actionId);
+  assert.equal(valid.providerTransportFailure.receiptId,receipt.receiptId);
+  assert.equal((await observe(false)).providerTransportFailure,undefined,'queue-only fallback never proves model transport failure');
+  for(const change of [{providerInvoked:false},{providerCompleted:true},{failureStage:'SOURCE'},
+    {providerAdapter:'different'},{error:'PROVIDER_NEUTRAL_SCOPE_VIOLATION'}]) {
+    await writeFile(join(failedRoot,actionId+'.result.json'),JSON.stringify({...result,...change}));
+    assert.equal((await observe()).providerTransportFailure,null,JSON.stringify(change));
+  }
+});
+
 test('retry ownership proof requires released failed claim plus terminal execution receipt', async () => {
   const options = await runtime();
   const adapter = 'foundry-forge';

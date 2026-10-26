@@ -1,4 +1,5 @@
 import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
 
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -44,6 +45,7 @@ function unique(values) {
 
 export function isRetryableAgentFailureBlocker(value, requiredTests = []) {
   const blocker = text(value);
+  if (isModelTransportFailureV1(blocker)) return true;
   const testPrefix = 'PROVIDER_NEUTRAL_TEST_FAILED:';
   if (blocker.startsWith(testPrefix)) {
     const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
@@ -90,6 +92,29 @@ function scopeAllowsPath(scope, value) {
     return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
   }
   return false;
+}
+
+// A repaired failed-task plan may reduce mutation authority, never enlarge it.
+// Evaluate containment with the same path semantics used at result ingestion.
+export function projectNarrowedMissionSourceScopeV1(previous, next) {
+  const invalid = () => Object.freeze({ valid: false, allowedFiles: Object.freeze([]) });
+  const validScope = value => typeof value === 'string' && value === normalizePath(value)
+    && !isUnsafePath(value)
+    && (value === '**' || /^[A-Za-z0-9._/-]+(?:\/\*\*)?$/.test(value))
+    && !value.split('/').some(part => !part || part === '.')
+    && !value.replace(/\/\*\*$/, '').includes('*');
+  if (!Array.isArray(previous) || !previous.length || !Array.isArray(next) || !next.length
+      || [...previous].some(value => value !== '**' && !validScope(value))
+      || [...next].some(value => value === '**' || !validScope(value))) return invalid();
+  const allowedFiles = [...new Set(next)];
+  if (new Set(allowedFiles.map(value => value.toLowerCase())).size !== allowedFiles.length) return invalid();
+  for (const candidate of allowedFiles) {
+    const recursive = candidate.endsWith('/**');
+    const base = recursive ? candidate.slice(0, -3) : candidate;
+    if (!previous.some(scope => scopeAllowsPath(scope, base)
+        && (!recursive || scope === '**' || scope.endsWith('/**')))) return invalid();
+  }
+  return Object.freeze({ valid: true, allowedFiles: Object.freeze(allowedFiles) });
 }
 
 function iso(value, fallback = '') {
@@ -412,8 +437,21 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
       && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
+    const transportRetry = state.blockers.some(isModelTransportFailureV1);
+    if (transportRetry && (state.blockers.length !== 1
+        || !SHA40_PATTERN.test(text(event.retryPlanSourceHead))
+        || !modelTransportFailureProofMatchesV1(event.retryProviderFailureProof,
+          state.missionId, state.dispatch.resultId, state.blockers[0]))) {
+      return block(state, 'Model transport retry requires the exact failed provider terminal receipt and current owner plan.', timestamp);
+    }
+    const narrowedScope = event.retryAllowedFiles === undefined ? null
+      : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
+    if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
+        || state.blockers[0] !== 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED')) {
+      return block(state, 'Retry scope reduction requires the original bounded source-diff failure and cannot widen authority.', timestamp);
+    }
     const strengthened = event.retryRequiredTests === undefined ? null
-      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, state.allowedFiles);
+      : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, narrowedScope?.allowedFiles || state.allowedFiles);
     if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {
       return block(state, 'Parked source retry requires strengthened independent acceptance without weakening the consumed plan.', timestamp);
     }
@@ -439,11 +477,16 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
       previousRequiredTests: [...state.requiredTests],
+      ...(transportRetry ? { retryProviderFailureProof: clone(event.retryProviderFailureProof),
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
+      ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
       previousDispatch: clone(state.dispatch),
       previousParkingStatus: state.continuity.parkingStatus,
       requiredTests: [...(strengthened?.commands || state.requiredTests)],
     });
     if (strengthened) state.requiredTests = [...strengthened.commands];
+    if (narrowedScope) state.allowedFiles = [...narrowedScope.allowedFiles];
     if (parkedRetry) state.continuity = { ...state.continuity,
       parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
       pendingResolvedBlockers: [],
