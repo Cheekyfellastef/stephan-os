@@ -17,6 +17,7 @@ import { assertMailboxRotationWorkflowAdmission, readMailboxWorkflowGitHub } fro
 import { serializeBoundedReceiptJson, prepareMailboxRotationPoll } from './battle-bridge-github-command-mailbox.mjs';
 import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
+import { classifyPostSyncRefresh } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 
 const head='a'.repeat(40), target='b'.repeat(40), merged='c'.repeat(40), now='2026-10-25T23:40:00.000Z';
 const repository='Cheekyfellastef/stephan-os';
@@ -188,6 +189,19 @@ test('receipt dual-read preserves terminal predecessor provenance while excludin
     comment(terminal({...cmd,requestId:'unfinished-previous-001'},{state:'ACCEPTED'}),3,true,previous),
     {...comment(terminal({...cmd,requestId:'spoofed-previous-001'}),4,true,previous),user:{login:'attacker'}}]});
   assert.equal(record.activeReceipt,null);assert.deepEqual(record.recentReceipts.map(r=>r.requestId),[cmd.requestId]);
+});
+test('only the exact native protocol adapters naturally reload; GitHub-only helpers grant no host execution',()=>{
+  const native=['scripts/canonical-mailbox-execution-ledger-v1.mjs','scripts/canonical-mailbox-rotation-host-v1.mjs',
+    'scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs','scripts/stephanos-codex-dispatch-host-operation-v1.mjs'];
+  const cloud=['scripts/canonical-mailbox-rollover-github-adapter.mjs','scripts/canonical-mailbox-workflow-admission-v1.mjs',
+    'scripts/canonical-mailbox-workflow-event-gate.mjs','scripts/dispatch-protected-merge-from-mailbox.mjs','scripts/operator-protected-merge-gate-v2.mjs'];
+  const result=classifyPostSyncRefresh([...native,...cloud]);
+  assert.equal(result.automaticExecutionAllowed,true);assert.deepEqual(result.internal.unknownPaths,[]);
+  assert.deepEqual(result.targetIds,['natural-reload']);assert.equal(result.noRuntimePathCount,cloud.length);
+  for(const path of native.concat(cloud)) {
+    const sibling=path.replace(/\.mjs$/,'-other.mjs');const r=classifyPostSyncRefresh([sibling]);
+    assert.equal(r.automaticExecutionAllowed,false);assert.equal(r.unknownPathCount,1);
+  }
 });
 test('A→B→C keeps one durable execution identity and successor proof derives from changed authority',async t=>{
   const root=sandbox(t),ledger=createMailboxExecutionLedger(root),source=readFileSync(new URL('../shared/agents/canonicalMailboxRotationV1.mjs',import.meta.url),'utf8');

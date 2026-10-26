@@ -42,6 +42,7 @@ export const CODEX_DISPATCH_TEST_ARGS = Object.freeze([
   'scripts/remote-codex-task-visibility-observer.test.mjs',
   'scripts/remote-codex-github-mirror-publisher.test.mjs',
   'scripts/battle-bridge-worker-watchdog-runner.test.mjs',
+  'scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs',
 ]);
 
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/i;

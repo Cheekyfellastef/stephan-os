@@ -72,6 +72,22 @@ and fresh Actions drain. It pins the actual sync target before fast-forwarding.
 Missing transition evidence or newly arrived work blocks adoption. Normal source
 sync within an unchanged mailbox epoch retains its existing guards.
 
+The unattended GitHub Sync executor uses this same admission and mailbox guard,
+rechecks custody after locking, and pins fast-forward to the exact reviewed SHA
+instead of a moving remote ref. Changed local source, pending work, or unknown
+drain prevents its merge. No new task or schedule is installed.
+
+The long-lived private dispatch MCP sends each of its existing sync/update
+operations to one bounded fresh Node child with fixed operations and closed
+arguments. That child proves its source head unchanged around module loading,
+using the canonical minimal environment and fixed Git executable/configuration
+so inherited Node injection or Git repository selectors cannot redirect it,
+then invokes the original implementation. It cannot retain a previous epoch's
+cached authority import. Its returned adapter/source identity and the private
+MCP process's captured script digest are commissioning evidence. An already
+running legacy MCP process without this adapter is not presumed upgraded merely
+because files changed; actual attachment/diagnostic readback remains required.
+
 After adoption, only two fixed read-only probe classes are allowed until VERIFY.
 VERIFY requires two distinct successor command IDs, real ACCEPTED and DONE
 receipts from the exact new process/source head, source-declared predecessor

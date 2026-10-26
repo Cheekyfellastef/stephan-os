@@ -67,6 +67,10 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
 ]);
 
 const NATURAL_EXACT = new Set([
+  'scripts/canonical-mailbox-execution-ledger-v1.mjs',
+  'scripts/canonical-mailbox-rotation-host-v1.mjs',
+  'scripts/canonical-mailbox-rotation-sync-preflight-v1.mjs',
+  'scripts/stephanos-codex-dispatch-host-operation-v1.mjs',
   'shared/agents/battleBridgeGitHubCommandMailbox.mjs',
   'shared/agents/stephanosCapabilityRegistry.mjs',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
@@ -140,6 +144,11 @@ const NO_RUNTIME_PREFIXES = Object.freeze([
 ]);
 
 const NO_RUNTIME_EXACT = new Set([
+  'scripts/canonical-mailbox-rollover-github-adapter.mjs',
+  'scripts/canonical-mailbox-workflow-admission-v1.mjs',
+  'scripts/canonical-mailbox-workflow-event-gate.mjs',
+  'scripts/dispatch-protected-merge-from-mailbox.mjs',
+  'scripts/operator-protected-merge-gate-v2.mjs',
   '.gitignore',
   '.gitattributes',
   'LICENSE',

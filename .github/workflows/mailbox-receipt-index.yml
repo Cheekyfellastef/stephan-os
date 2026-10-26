@@ -18,6 +18,10 @@ on:
       - 'scripts/canonical-mailbox-execution-ledger-v1.mjs'
       - 'scripts/canonical-mailbox-workflow*.mjs'
       - 'shared/agents/codexDispatchHostOps.mjs'
+      - 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+      - 'scripts/stephanos-codex-dispatch-mcp.mjs'
+      - 'scripts/stephanos-codex-dispatch-host-operation-v1*.mjs'
+      - 'scripts/battle-bridge-github-sync-executor*.mjs'
       - 'scripts/battle-bridge-github-command-mailbox.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
       - 'scripts/canonical-mailbox-rollover-github-adapter.mjs'
@@ -66,81 +70,101 @@ jobs:
       - name: Shared Workspace receipt index proof
         run: >-
           node --test --test-concurrency=1
-          scripts/battle-bridge-github-command-mailbox-one-minute-cadence.test.mjs
-          scripts/battle-bridge-github-command-mailbox-cache-authority.test.mjs
-          scripts/battle-bridge-github-command-mailbox-accepted-lease.test.mjs
           scripts/battle-bridge-frontend-visibility-mailbox.test.mjs
-          scripts/battle-bridge-github-command-mailbox.test.mjs
-          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          scripts/battle-bridge-github-command-mailbox-accepted-lease.test.mjs
+          scripts/battle-bridge-github-command-mailbox-cache-authority.test.mjs
+          scripts/battle-bridge-github-command-mailbox-one-minute-cadence.test.mjs
           scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailbox.elastic-v1.test.mjs
+          scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
+          scripts/battle-bridge-github-command-mailbox.test.mjs
+          scripts/battle-bridge-github-sync-and-refresh.test.mjs
+          scripts/battle-bridge-github-sync-command-registry.test.mjs
+          scripts/battle-bridge-github-sync-executor.test.mjs
+          scripts/battle-bridge-github-sync-installer.test.mjs
+          scripts/battle-bridge-github-sync-policy.test.mjs
+          scripts/battle-bridge-github-sync-runtime-memory.test.mjs
+          scripts/battle-bridge-post-sync-refresh.test.mjs
+          scripts/battle-bridge-recovery-canonical-mailbox-authority.test.mjs
+          scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs
+          scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
+          scripts/battle-bridge-worker-watchdog-post-sync-deadline.test.mjs
+          scripts/canonical-mailbox-rollover-github-adapter.test.mjs
+          scripts/canonical-mailbox-rotation-protocol.test.mjs
+          scripts/canonical-mailbox-workflow-event-gate.test.mjs
+          scripts/operator-protected-personal-repository-merge-dispatch-inventory.test.mjs
+          scripts/post-sync-runtime-refresh-windows-canonical-git-hardlink.test.mjs
+          scripts/protected-openclaw-merge-continuity-v2.test.mjs
+          scripts/prove-protected-workflow-actor-handoff.test.mjs
+          scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs
           shared/agents/battleBridgeApprovedBackendRestartMailboxV1.test.mjs
-          shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxStarfieldVr.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxSovereignRemote.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxProtectedMerge.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxOperatorEnvironmentApprovalV1.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexReadbackV1.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexDispatchV1.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxForgeShadowM3.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxForgeShadow.test.mjs
-          shared/agents/battleBridgeGitHubCommandMailboxDiagnosticLink.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.elastic-v1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailbox.test.mjs
           shared/agents/battleBridgeGitHubCommandMailboxBootstrap.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxDiagnosticLink.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxForgeShadow.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxForgeShadowM3.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexDispatchV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxGuardedCodexReadbackV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxOperatorEnvironmentApprovalV1.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxProtectedMerge.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxSovereignRemote.test.mjs
+          shared/agents/battleBridgeGitHubCommandMailboxStarfieldVr.test.mjs
+          shared/agents/battleBridgeGitHubRuntimeDataPreservationMailboxV1.test.mjs
           shared/agents/battleBridgeOutOfBandObserverReceiptV1.test.mjs
           shared/agents/battleBridgeTailscaleBootstrapPipeV1.test.mjs
-          scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs
-          scripts/battle-bridge-recovery-canonical-mailbox-authority.test.mjs
           shared/agents/battleBridgeTailscalePrerequisiteProofV1.test.mjs
-          scripts/canonical-mailbox-rollover-github-adapter.test.mjs
-          scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
-          scripts/canonical-mailbox-workflow-event-gate.test.mjs
-          scripts/canonical-mailbox-rotation-protocol.test.mjs
           shared/agents/canonicalMailboxAuthorityV1.test.mjs
           shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs
-          scripts/prove-protected-workflow-actor-handoff.test.mjs
-          scripts/protected-openclaw-merge-continuity-v2.test.mjs
-          scripts/operator-protected-personal-repository-merge-dispatch-inventory.test.mjs
-          shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs
-          shared/agents/canonicalMailboxRotationV1.test.mjs
           shared/agents/canonicalMailboxRolloverPlannerV1.test.mjs
+          shared/agents/canonicalMailboxRotationV1.test.mjs
+          shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs
           shared/agents/codexDispatchHostOps.test.mjs
-          shared/agents/elasticBattleBridgeMailboxSchedulerEvidenceV1.test.mjs
-          shared/agents/elasticBattleBridgeMailboxSchedulerAdapterV1.test.mjs
-          shared/agents/elasticBattleBridgeMailboxResourceEvidenceV1.test.mjs
+          shared/agents/codexDispatchMcp.test.mjs
           shared/agents/elasticBattleBridgeMailboxCapacityV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxResourceEvidenceV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxSchedulerAdapterV1.test.mjs
+          shared/agents/elasticBattleBridgeMailboxSchedulerEvidenceV1.test.mjs
           shared/agents/expressCommandMailboxV1.test.mjs
           shared/agents/mailboxReceiptIndex.test.mjs
-          shared/agents/mainMovementTolerantProtectedMergeIntegrationV1.test.mjs
-          shared/agents/mailboxReceiptTruthIssue.test.mjs
-          shared/agents/mailboxReceiptIndexWorkflow.test.mjs
-          shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
           shared/agents/mailboxReceiptIndexAccess.test.mjs
+          shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
+          shared/agents/mailboxReceiptIndexWorkflow.test.mjs
+          shared/agents/mailboxReceiptTruthIssue.test.mjs
+          shared/agents/mainMovementTolerantProtectedMergeIntegrationV1.test.mjs
           shared/agents/monitorMultiplexerMailboxRoute.test.mjs
-          shared/agents/operatorProtectedMergeConfigurationActivationV1.test.mjs
-          shared/agents/operatorPersonalRepositoryProvenanceBootstrapV1.test.mjs
           shared/agents/operatorPersonalRepositoryMergeV1.test.mjs
+          shared/agents/operatorPersonalRepositoryProvenanceBootstrapV1.test.mjs
+          shared/agents/operatorProtectedMergeConfigurationActivationV1.test.mjs
+          shared/agents/postSyncCodexDispatchMcpNaturalReloadV1.test.mjs
+          shared/agents/postSyncEdgeLauncherNaturalReloadV1.test.mjs
+          shared/agents/postSyncExecutionSurfaceQuarantineHardeningV1.test.mjs
+          shared/agents/postSyncGoalDiscoveryHeartbeatRuntimeV1.test.mjs
           shared/agents/postSyncMailboxReceiptIndexNaturalReloadV1.test.mjs
           shared/agents/postSyncProtectedMergeNoRuntimeV1.test.mjs
-          shared/agents/protectedWorkflowDispatchMailboxV1.test.mjs
-          shared/agents/protectedWorkflowDispatchMailboxPermissionsV1.test.mjs
-          shared/agents/protectedWorkflowDispatchCanonicalMailboxV1.test.mjs
-          shared/agents/protectedOpenClawMergeWorkflowDispatch.test.mjs
-          shared/agents/protectedOpenClawMergeWorkflowDispatch.integration.test.mjs
-          shared/agents/protectedOpenClawMergeWorkflowDispatch.contract.test.mjs
-          shared/agents/protectedOpenClawMergeMailboxCanonicalProvenance.test.mjs
+          shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs
+          shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs
+          shared/agents/postSyncRuntimeRefreshCoordinator.workerWatchdogProbe.test.mjs
+          shared/agents/postSyncServerOpenClawClassificationV1.test.mjs
+          shared/agents/postSyncVerificationClassificationV1.test.mjs
           shared/agents/protectedOpenClawMergeMailboxAdapterSuccessorBoundary.test.mjs
-          shared/agents/sovereignCommanderTailscale.test.mjs
-          shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
-          shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
-          shared/agents/sovereignFrontendVisibilityMailboxV1.test.mjs
+          shared/agents/protectedOpenClawMergeMailboxCanonicalProvenance.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.contract.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.integration.test.mjs
+          shared/agents/protectedOpenClawMergeWorkflowDispatch.test.mjs
+          shared/agents/protectedWorkflowDispatchCanonicalMailboxV1.test.mjs
+          shared/agents/protectedWorkflowDispatchMailboxPermissionsV1.test.mjs
+          shared/agents/protectedWorkflowDispatchMailboxV1.test.mjs
           shared/agents/rescueIslandSupervisedMailboxV1.test.mjs
+          shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
+          shared/agents/sovereignCommanderTailscale.test.mjs
+          shared/agents/sovereignFrontendVisibilityMailboxV1.test.mjs
+          shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
           shared/agents/starfieldVrBattleBridgeMailboxV1.test.mjs
           shared/agents/stephanosChatUpdate.test.mjs
-          shared/agents/windowsAuthorityMailboxRolloverExecutionScanV1.test.mjs
-          shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs
-          shared/agents/windowsAuthorityMailboxCadenceRouterV1.test.mjs
           shared/agents/windowsAuthorityMailboxCadenceReviewV1.test.mjs
+          shared/agents/windowsAuthorityMailboxCadenceRouterV1.test.mjs
+          shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs
+          shared/agents/windowsAuthorityMailboxRolloverExecutionScanV1.test.mjs
 
       - name: Import structure proof
         run: node scripts/guard-import-structure.mjs
