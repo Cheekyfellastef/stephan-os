@@ -51,6 +51,14 @@ export function isRetryableAgentFailureBlocker(value) {
   });
 }
 
+// Parking releases a construction slot; it must not change the existing bounded
+// failure policy. Custody, clean worktree, CAS, acceptance and budget remain
+// separate retry gates. This predicate is shared by selection and reduction.
+export function isRetryableParkedAgentFailure(blockers) {
+  return Array.isArray(blockers) && blockers.length > 0
+    && blockers.every(isRetryableAgentFailureBlocker);
+}
+
 function normalizePath(value) {
   return text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
 }
@@ -397,8 +405,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
 
   if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
-      && state.blockers.length === 1 && state.blockers[0] === 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED';
-    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or a bounded parked source diff failure.', timestamp);
+      && isRetryableParkedAgentFailure(state.blockers);
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
     const strengthened = event.retryRequiredTests === undefined ? null
       : projectStrengthenedRetryTestsV1(state.requiredTests, event.retryRequiredTests, state.allowedFiles);
     if ((state.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && (state.blockers.length !== 1 || !strengthened?.valid)) || (strengthened && !strengthened.valid)) {

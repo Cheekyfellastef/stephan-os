@@ -8,7 +8,7 @@ import {
   SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
-import { isRetryableAgentFailureBlocker } from '../../shared/agents/missionOrchestrator.mjs';
+import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure } from '../../shared/agents/missionOrchestrator.mjs';
 import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { createFleetRetryScanObservationV1, fleetRetryAcceptanceGateCodeV1 } from '../../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -431,8 +431,7 @@ export async function retrySafelyBlockedAgentFailure({
     };
     const eligible = checked('PHASE_NOT_BLOCKED', text(record?.currentPhase).toUpperCase() === 'BLOCKED')
       && checked('CONTINUITY_NOT_RETRYABLE', continuityStatus(record) === ACTIVE_CONTINUITY
-        || (continuityStatus(record) === PARKED_BLOCKED && blockers.length === 1
-          && blockers[0] === 'SOURCE_ARTIFACT_DIFF_CHECK_FAILED'))
+        || (continuityStatus(record) === PARKED_BLOCKED && isRetryableParkedAgentFailure(blockers)))
       && checked('DISPATCH_NOT_FAILED', text(record?.dispatch?.status).toLowerCase() === 'failed')
       && checked('NO_RETRYABLE_BLOCKERS', blockers.length > 0)
       && checked('NON_RETRYABLE_BLOCKER', blockers.every(isRetryableAgentFailureBlocker))
