@@ -111,6 +111,91 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     expiresAtUtc: fresh(controller.timestampUtc, nowMs, maxAgeMs)
       ? new Date(time(controller.timestampUtc) + maxAgeMs).toISOString() : '',
   }));
+  // Read-only Octopus inventory, not an invented fleet of target-capacity slots.
+  // A lane-specific verified receipt and fresh material timestamp are needed
+  // before any *individual* lane can claim to be building.
+  const sourceControllers = array(projection.controllerFleet?.controllers);
+  const octopusControllers = sourceControllers.map(item => {
+    const observedAtUtc = String(item.timestampUtc || '');
+    const live = item.freshness === 'CURRENT' && fresh(observedAtUtc, nowMs, maxAgeMs);
+    return {
+      id: String(item.controllerId || ''), title: String(item.title || item.controllerId || ''),
+      observedAtUtc, live, expiresAtUtc: live ? new Date(time(observedAtUtc) + maxAgeMs).toISOString() : '',
+      state: live ? String(item.activityState || 'UNKNOWN') : observedAtUtc ? 'STALE' : 'UNKNOWN',
+      blocker: live ? String(item.blocker || '') : '',
+      materialActions: live && item.activityState === 'BUILDING' && array(item.proofRefs).length
+        ? count(item.materialActionsSucceeded) : null,
+      namedLanes: array(item.materialLanes).length + array(item.activeLanes).length + array(item.parkedLanes).length,
+    };
+  });
+  const octopusLanes = sourceControllers.flatMap(controller => {
+    const ownerId = String(controller.controllerId || '');
+    const owner = String(controller.title || ownerId);
+    const observedAtUtc = String(controller.timestampUtc || '');
+    const live = controller.freshness === 'CURRENT' && fresh(observedAtUtc, nowMs, maxAgeMs);
+    const verified = new Set(array(controller.proofRefs).map(String));
+    const source = array(controller.materialLanes).map((lane, index) => {
+      const laneId = String(lane?.laneId || ownerId + '-material-' + (index + 1));
+      const proofRef = String(lane?.proofRef || '');
+      const proven = live && controller.activityState === 'BUILDING' && proofRef
+        && verified.has(proofRef) && fresh(lane?.lastMaterialActionAtUtc, nowMs, maxAgeMs);
+      return { id:ownerId + ':' + laneId, laneId, controller:owner,
+        workerId:String(lane?.workerId || ''), goalId:String(lane?.goalId || ''),
+        source:'material-lane observation', blocker:String(lane?.blocker || ''),
+        state:!live ? observedAtUtc ? 'STALE' : 'UNKNOWN' : proven ? 'PROVEN_BUILD'
+          : lane?.blocker ? 'BLOCKED_REPORTED' : 'REPORTED_UNVERIFIED',
+        light:!live ? 'GREY' : proven ? 'GREEN' : lane?.blocker ? 'RED' : 'AMBER',
+        proofVerified:Boolean(proven), observedAtUtc,
+        expiresAtUtc:live ? new Date(time(observedAtUtc)+maxAgeMs).toISOString() : '' };
+    });
+    const names = new Set(source.map(lane => lane.laneId));
+    const claims = [...array(controller.activeLanes).map(value=>({value,parked:false})),
+      ...array(controller.parkedLanes).map(value=>({value,parked:true}))].flatMap(({value,parked})=>{
+      const laneId=String(value||'');if(!laneId||names.has(laneId))return [];
+      names.add(laneId);
+      return [{id:ownerId+':'+laneId,laneId,controller:owner,workerId:'',goalId:'',
+        source:'controller lane claim',blocker:'',proofVerified:false,observedAtUtc,
+        state:!live ? observedAtUtc ? 'STALE':'UNKNOWN' : parked ? 'PARKED_CLAIM':'ACTIVE_CLAIM',
+        light:live?'AMBER':'GREY',
+        expiresAtUtc:live ? new Date(time(observedAtUtc)+maxAgeMs).toISOString() : ''}];
+    });
+    return [...source,...claims];
+  });
+  const observedBuilderIds=[...new Set((buildKnown ? array(build.goals):[])
+    .map(goal=>String(goal?.builder||'')).filter(Boolean))];
+  const octopusBuilders=observedBuilderIds.map(id=>{
+    const goals=array(build.goals).filter(goal=>goal.builder===id);
+    const proven=buildLive && goals.some(goal=>goal.state==='BUILDING'
+      && array(goal.proofRefs).length && fresh(goal.lastMaterialProgressAtUtc,nowMs,maxAgeMs));
+    const blocked=buildLive && goals.some(goal=>goal.state==='BLOCKED');
+    return {id,state:!buildLive?'STALE_OR_UNKNOWN':proven?'PROVEN_BUILD'
+      :blocked?'BLOCKED_REPORTED':'REPORTED_UNVERIFIED',
+      light:!buildLive?'GREY':proven?'GREEN':blocked?'RED':'AMBER',
+      goals:goals.map(goal=>({issue:String(goal.issue||''),state:String(goal.state||'UNKNOWN')})),
+      expiresAtUtc:buildLive?new Date(time(build.observedAtUtc)+maxAgeMs).toISOString():''};
+  });
+  const logical=projection.logicalGoalControllers;
+  const logicalReady=logical?.schemaVersion==='stephanos.logical-goal-controller-dashboard.v1'
+    && logical.truth==='CURRENT';
+  const octopusLogicalLanes=logicalReady?array(logical.controllers).map(lane=>({
+    id:String(lane.logicalControllerId||''),goalRef:String(lane.goalRef||''),
+    title:String(lane.title||''),host:String(lane.hostControllerTitle||''),
+    state:String(lane.continuityState||'UNKNOWN'),route:String(lane.route||''),
+    selectedForAdmission:lane.selectedForAdmission===true,
+    physicalBuildProven:false,
+  })):[];
+  const octopusFleet={
+    schemaVersion:'stephanos.goal-conveyor-octopus-inventory.v1',readOnly:true,
+    controllers:octopusControllers,lanes:octopusLanes,builders:octopusBuilders,
+    logicalLanes:octopusLogicalLanes,
+    logicalTruth:logicalReady?'REPORTED_NOT_PHYSICAL_PROOF':String(logical?.truth||'UNKNOWN'),
+    controllerCount:octopusControllers.length,observedLaneCount:octopusLanes.length,
+    provenMaterialLaneCount:octopusLanes.filter(lane=>lane.proofVerified).length,
+    observedBuilderCount:buildKnown?octopusBuilders.length:null,
+    logicalLaneCount:logicalReady?octopusLogicalLanes.length:null,
+    targetMaterialLanes:buildLive?count(build.targetMaterialLaneCount):null,
+    truthBoundary:'Five controller hosts, named execution lanes, worker identities and logical goal lanes are different layers. Active/parked lane claims are not physical pickup. Green requires fresh lane-specific verified material proof. Capacity targets are not invented builders. Stale reports cannot remain green.',
+  };
   const estate = projection.goalEstate;
   const estateKnown = estate?.schemaVersion === 'stephanos.goal-dashboard-estate-summary.v1';
   const queueCounts = estateKnown ? {
@@ -165,7 +250,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
       ledgerExpiresAtUtc: ledgerLive ? new Date(time(ledger.observedAtUtc) + maxAgeMs).toISOString() : '',
       publisherVerdict: coreLive ? String(core.goalBuildGateSignedPublisherVerdict || '') : '',
       expiresAtUtc: coreLive ? new Date(time(core.timestampUtc) + maxAgeMs).toISOString() : '' },
-    workers, buildingGoalCount: buildLive ? buildingGoals.length : null, controllers,
+    workers, buildingGoalCount: buildLive ? buildingGoals.length : null, controllers, octopusFleet,
     materialLanes: buildLive ? count(build.activeMaterialLaneCount) : null,
     targetMaterialLanes: buildLive ? count(build.targetMaterialLaneCount) : null,
     bottleneck, lastActivity: activity,

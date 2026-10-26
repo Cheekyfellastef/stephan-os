@@ -275,3 +275,48 @@ test('fresh Core health remains separate from stale builders and expires at its 
 });
 
 }
+
+
+test('Octopus named lanes are all visible in the projection but only lane-exact proof may turn one green', () => {
+  const nowMs=Date.parse('2026-10-26T15:00:00Z'), at=ms=>new Date(nowMs+ms).toISOString();
+  const projection={
+    controllerFleet:{controllers:Array.from({length:5},(_,i)=>({
+      controllerId:'octopus-'+i,title:'Controller '+i,observedEnabled:true,
+      freshness:'CURRENT',timestampUtc:at(i===4?-700000:-1000),
+      activityState:i===0?'BUILDING':'WAITING_OR_BLOCKED',
+      proofRefs:i===0?['proof/lane-1']:[],materialActionsSucceeded:i===0?1:0,
+      materialLanes:i===0?[{laneId:'lane-1',workerId:'native-worker',
+        lastMaterialActionAtUtc:at(-1000),proofRef:'proof/lane-1'}]:[],
+      activeLanes:i===1?['lane-2']:[],parkedLanes:i===2?['lane-3']:[],
+    }))},
+    stephanosBuildTruth:{schemaVersion:'stephanos.sovereign-build-truth.v1',
+      truth:'CURRENT',state:'BUILDING',observedAtUtc:at(-1000),targetMaterialLaneCount:15,
+      goals:[{issue:'#100',builder:'native-worker',state:'BUILDING',proofRefs:['proof/build'],lastMaterialProgressAtUtc:at(-1000)},
+        {issue:'#101',builder:'queued-worker',state:'QUEUED'}]},
+    logicalGoalControllers:{schemaVersion:'stephanos.logical-goal-controller-dashboard.v1',truth:'CURRENT',
+      controllers:Array.from({length:23},(_,i)=>({logicalControllerId:'logical-'+i,
+        goalRef:'#'+(500+i),title:'Goal '+i,hostControllerTitle:'Foreman',
+        continuityState:'TRACKING'}))},
+  };
+  const value=project(projection,{nowMs});
+  assert.equal(value.octopusFleet.controllerCount,5);
+  assert.deepEqual(value.octopusFleet.lanes.map(lane=>lane.laneId),['lane-1','lane-2','lane-3']);
+  assert.equal(value.octopusFleet.observedLaneCount,3);
+  assert.equal(value.octopusFleet.targetMaterialLanes,15);
+  assert.equal(value.octopusFleet.provenMaterialLaneCount,1);
+  assert.equal(value.octopusFleet.lanes[0].state,'PROVEN_BUILD');
+  assert.equal(value.octopusFleet.lanes[1].state,'ACTIVE_CLAIM');
+  assert.equal(value.octopusFleet.lanes[1].light,'AMBER');
+  assert.equal(value.octopusFleet.lanes[2].state,'PARKED_CLAIM');
+  assert.equal(value.octopusFleet.builders.length,2);
+  assert.equal(value.octopusFleet.builders[1].light,'AMBER');
+  assert.equal(value.octopusFleet.logicalLaneCount,23);
+  assert.equal(value.octopusFleet.logicalLanes.every(lane=>!lane.physicalBuildProven),true);
+  projection.controllerFleet.controllers[0].materialLanes[0].proofRef='not-verified';
+  assert.notEqual(project(projection,{nowMs}).octopusFleet.lanes[0].light,'GREEN');
+  projection.controllerFleet.controllers[0].materialLanes[0].proofRef='proof/lane-1';
+  projection.controllerFleet.controllers[0].timestampUtc=at(-700000);
+  assert.equal(project(projection,{nowMs}).octopusFleet.lanes[0].state,'STALE');
+  projection.logicalGoalControllers.truth='STALE';
+  assert.equal(project(projection,{nowMs}).octopusFleet.logicalLaneCount,null);
+});

@@ -21,6 +21,17 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
       observationStatus: 'EVIDENCE_AVAILABLE', gates: [4, 5, 6, 7, 18, 19, 20, 21, 22].map(id => ({
         id, status: 'PASS', observedAtUtc: at, proofRef: 'workspace:proof/fixture-'+id })) },
   };
+  projection.controllerFleet={controllers:Array.from({length:5},(_,i)=>({
+    controllerId:'octopus-'+i,title:'Octopus controller '+i,freshness:'CURRENT',
+    timestampUtc:at,activityState:'WAITING_OR_BLOCKED',proofRefs:[],
+    materialLanes:i===0?[{laneId:'octopus-1',workerId:'native-1'}]:[],
+    activeLanes:i===1?['<unverified-lane>']:[],parkedLanes:i===2?['octopus-parked']:[],
+  }))};
+  projection.logicalGoalControllers={schemaVersion:'stephanos.logical-goal-controller-dashboard.v1',
+    truth:'CURRENT',controllers:Array.from({length:17},(_,i)=>({
+      logicalControllerId:'logical-'+i,goalRef:'#'+(700+i),title:'Goal '+i,
+      hostControllerTitle:'Octopus controller '+(i%5),continuityState:'TRACKING'
+    }))};
   projection.goalBuildConveyorOverview = overview(projection, { nowMs: now });
   let available = true;
   const server = createServer((req, res) => {
@@ -44,6 +55,15 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
     await page.waitForFunction(()=>document.querySelector('#cv-status').textContent.includes('Material building observed'));
     assert.ok((await card.boundingBox()).y<140,'The live conveyor must be visible before the decorative overview hero');
     assert.equal(await card.locator('.cv-stage').count(),9);
+    const inventory=page.getByTestId('octopus-builder-inventory');
+    assert.equal(await inventory.locator('#cv-octopus-controllers .cv-fleet-card').count(),5);
+    assert.equal(await inventory.locator('#cv-octopus-lanes .cv-fleet-card').count(),3);
+    assert.equal(await inventory.locator('#cv-octopus-builders .cv-fleet-card').count(),1);
+    assert.match(await inventory.locator('#cv-octopus-lanes').textContent(),/<unverified-lane>/);
+    assert.equal(await inventory.locator('unverified-lane').count(),0,'escape untrusted worker text');
+    assert.equal(await inventory.locator('#cv-octopus-lanes [data-cv-light="GREEN"]').count(),0,'no fake green pickup');
+    await inventory.locator('.cv-fleet-logical summary').click();
+    assert.equal(await inventory.locator('#cv-octopus-logical .cv-fleet-card').count(),17);
     assert.match(await card.locator('#cv-workers').textContent(),/1 workers · 1 goals building/);
     assert.match(await card.locator('#cv-worker-detail').textContent(),/<worker-one>/);
     assert.equal(await card.locator('worker-one').count(),0);

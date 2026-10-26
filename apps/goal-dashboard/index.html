@@ -328,6 +328,22 @@
     @media(max-width:900px) { .cv-bottom { grid-template-columns:1fr 1fr; } .cv-instrument:first-child { grid-column:1/-1; } }
     @media(max-width:700px) { .conveyor-overview { padding:20px; } .cv-top { flex-direction:column; gap:8px; } .cv-subtitle { font-size:.9rem; } .cv-flow { gap:10px; } .cv-stage { padding:12px 10px 0; } .cv-stage-head { align-items:flex-start; } .cv-stage strong { font-size:.82rem; } .cv-stage-reason { font-size:.72rem; } .cv-bottom { grid-template-columns:1fr; } .cv-instrument:first-child { grid-row:auto; } }
     @media(max-width:480px) { .cv-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 0; } .cv-metric:nth-child(3) { padding-left:0; border:0; } .cv-metric strong { font-size:2rem; } .cv-flow { grid-template-columns:1fr; gap:20px; } .cv-stage-reason { min-height:0; } .cv-stage-head strong { font-size:.95rem; } .cv-status { white-space:normal; } }
+    .cv-fleet { margin:19px 0; padding:16px 0; border-block:1px solid #29404f; }
+    .cv-fleet h3 { margin:0 0 4px; font-size:1.12rem; color:#ecf5fc; }
+    .cv-fleet h4 { margin:13px 0 7px; font-size:.79rem; color:#cbdde9; }
+    .cv-fleet-meta { color:#a7bbce; font-size:.76rem; line-height:1.45; }
+    .cv-fleet-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr)); gap:8px; }
+    .cv-fleet-card { min-width:0; border:1px solid #294353; border-radius:10px; padding:10px; background:#122432; overflow-wrap:anywhere; }
+    .cv-fleet-card[data-cv-light="GREEN"] { border-color:#328566; }
+    .cv-fleet-card[data-cv-light="AMBER"] { border-color:#816b45; }
+    .cv-fleet-card[data-cv-light="RED"] { border-color:#98525c; }
+    .cv-fleet-card strong { display:block; font-size:.8rem; color:#edf5fb; }
+    .cv-fleet-card span,.cv-fleet-card small { display:block; margin-top:5px; color:#b8ccdc; font-size:.72rem; }
+    .cv-fleet-card .cv-fleet-state { color:var(--cv-color,#b8ccdc); font-weight:700; }
+    .cv-fleet-logical { margin-top:12px; border:1px solid #294353; border-radius:10px; padding:0 10px 10px; }
+    .cv-fleet-logical summary { display:flex; align-items:center; cursor:pointer; min-height:44px; color:#9cd2e1; font-size:.78rem; }
+    @media(max-width:700px) { .cv-fleet-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media(max-width:480px) { .cv-fleet-grid { grid-template-columns:1fr; } }
     .goal-conveyor-panel { padding:16px; margin-bottom:12px; overflow:hidden; }
     .goal-conveyor-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:11px; }
     .goal-conveyor-summary div { border:1px solid var(--line); border-radius:12px; padding:10px 11px; background:rgba(255,255,255,.02); }
@@ -494,6 +510,15 @@
         <div class="cv-instrument"><label>People & machines doing the work</label><strong id="cv-workers">Active workers unknown</strong><p id="cv-worker-detail">A controller heartbeat does not prove building.</p></div>
         <div class="cv-instrument"><label>Last real build activity</label><strong id="cv-activity">No material receipt</strong><p id="cv-activity-source"></p></div>
       </div>
+      <section class="cv-fleet" data-testid="octopus-builder-inventory" aria-label="Observed Octopus builder fleet">
+        <h3>🐙 Octopus · All observed builders</h3>
+        <p id="cv-octopus-counts" class="cv-fleet-meta">Waiting for current named lane inventory.</p>
+        <h4>Five canonical controllers</h4><div id="cv-octopus-controllers" class="cv-fleet-grid"></div>
+        <h4>Every reported execution lane</h4><div id="cv-octopus-lanes" class="cv-fleet-grid"></div>
+        <h4>Named worker identities</h4><div id="cv-octopus-builders" class="cv-fleet-grid"></div>
+        <details class="cv-fleet-logical"><summary id="cv-octopus-logical-title">Logical goal lanes · truth unavailable</summary><div id="cv-octopus-logical" class="cv-fleet-grid"></div></details>
+        <p id="cv-octopus-proof" class="cv-fleet-meta">Controller presence does not prove physical building.</p>
+      </section>
       <ol id="cv-flow" class="cv-flow" aria-label="System handoffs from admission through protected merge"></ol>
       <p id="cv-freshness" class="cv-meta"></p>
       <details class="technical-details cv-boundary"><summary>Evidence, signatures & controller reports</summary><p id="cv-proof"></p><div id="cv-controllers" class="cv-controller-list" aria-label="Existing controller observations"></div><p id="cv-boundary"></p><p id="cv-head"></p></details>
@@ -986,6 +1011,40 @@
         const workers=buildLive?(data.workers||[]):[];
         setText('cv-workers',buildLive?workers.length+' workers · '+(data.buildingGoalCount??'—')+' goals building':traceLive&&stages.find(stage=>stage.id==='pickup')?.operational?.state==='NOT_REACHED'?'No pickup reported':'Active workers unknown');
         setText('cv-worker-detail',workers.length?workers.map(worker=>worker.id+' → '+worker.goals.map(goal=>(goal.issue||'')+' — '+(goal.title||'title unavailable from current evidence')).join(', ')).join(' · '):traceLive&&stages.find(stage=>stage.id==='pickup')?.operational?.state==='NOT_REACHED'?'This cycle has not reached physical pickup. Runtime health is shown above.':buildLive?'No material builder is proven by this observation.':'Worker health and controller heartbeats do not prove building.');
+        // Show every observed Octopus identity even when no goal is BUILDING.
+        // The per-item expiry and escaped text preserve canonical truth.
+        const fleet=data.octopusFleet||{};
+        const drawFleetCard=(name,state,light,detail)=>'<article class="cv-fleet-card" data-cv-light="'+escapeHtml(light||'GREY')+'"><strong>'+escapeHtml(name||'Unnamed')+'</strong><span class="cv-fleet-state"><i class="cv-lamp" aria-hidden="true"></i>'+escapeHtml(state||'UNKNOWN')+'</span><small>'+escapeHtml(detail||'')+'</small></article>';
+        const cs=Array.isArray(fleet.controllers)?fleet.controllers:[];
+        const ls=Array.isArray(fleet.lanes)?fleet.lanes:[];
+        const bs=Array.isArray(fleet.builders)?fleet.builders:[];
+        const gs=Array.isArray(fleet.logicalLanes)?fleet.logicalLanes:[];
+        setText('cv-octopus-counts',cs.length+' controller hosts · '+(fleet.observedLaneCount??'unknown')+' named lanes · '+(fleet.provenMaterialLaneCount??'unknown')+' proven material lanes · target '+(fleet.targetMaterialLanes??'unverified'));
+        const cr=byId('cv-octopus-controllers');
+        if(cr)cr.innerHTML=cs.length?cs.map(item=>{
+          const current=item.live===true&&expires(item.expiresAtUtc);
+          return drawFleetCard(item.title,current?item.state:item.observedAtUtc?'STALE':'UNKNOWN',
+            !current?'GREY':item.state==='BUILDING'&&item.materialActions>0?'GREEN':item.blocker?'AMBER':'GREY',
+            item.namedLanes+' reported lane entries'+(current&&item.blocker?' · '+item.blocker:''));
+        }).join(''):'<p class="cv-fleet-meta">Controller inventory unavailable.</p>';
+        const lr=byId('cv-octopus-lanes');
+        if(lr)lr.innerHTML=ls.length?ls.map(item=>{
+          const current=expires(item.expiresAtUtc);
+          return drawFleetCard(item.laneId,current?item.state:item.observedAtUtc?'STALE':'UNKNOWN',
+            current?item.light:'GREY',item.controller+' · '+(item.workerId?'worker '+item.workerId+' · ':'')+(item.goalId?'goal '+item.goalId+' · ':'')+(item.blocker||item.source)+(item.proofVerified&&current?' · material proof verified':' · pickup not proven'));
+        }).join(''):'<p class="cv-fleet-meta">No named execution lanes reported. A target of 15 does not mean 15 workers are live.</p>';
+        const br=byId('cv-octopus-builders');
+        if(br)br.innerHTML=bs.length?bs.map(item=>drawFleetCard(item.id,
+          expires(item.expiresAtUtc)?item.state:'STALE / UNKNOWN',
+          expires(item.expiresAtUtc)?item.light:'GREY',
+          (item.goals||[]).map(goal=>goal.issue+' '+goal.state).join(' · '))).join(''):
+          '<p class="cv-fleet-meta">No named builder in current build truth, not proof that none is installed.</p>';
+        setText('cv-octopus-logical-title','Logical goal lanes · '+(fleet.logicalLaneCount??'unknown')+' · '+(fleet.logicalTruth||'UNKNOWN'));
+        const gr=byId('cv-octopus-logical');
+        if(gr)gr.innerHTML=gs.length?gs.map(item=>drawFleetCard(item.goalRef+' '+item.title,
+          item.state,'GREY',item.host+' · '+item.route+' · continuity only')).join(''):
+          '<p class="cv-fleet-meta">Logical lane inventory unavailable; zero is not verified.</p>';
+        setText('cv-octopus-proof',fleet.truthBoundary||'No qualified Octopus inventory evidence available.');
         const activity=data.lastActivity;
         const activityNode=byId('cv-activity');if(activityNode){activityNode.textContent=activity?conveyorAge(activity.atUtc,now):'No material receipt';activityNode.title=activity?.atUtc||'';}
         setText('cv-activity-source',activity?(activity.atUtc+' · '+activity.source+' · historical observation'):'No timestamped material progress is available in these sources. Heartbeats and page refreshes are excluded.');
