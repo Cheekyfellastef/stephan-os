@@ -533,6 +533,31 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'critical-backlog-conveyor'), true);
     assert.deepEqual(calls, ['github-auth', 'github-pr-evidence']);
 
+    const silentWorker = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: '2026-07-30T10:31:00.000Z', env: {}, testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main', headSha: HEAD }),
+        listMissionRecords: async () => [{ missionId: LANE_ID, issueNumber: 1497,
+          repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION' }],
+      },
+    });
+    assert.equal(silentWorker.productionSourcesConstructed, true);
+    assert.equal(silentWorker.status, 'HOLD');
+    assert.equal(silentWorker.lane.active, false);
+    assert.equal(silentWorker.lane.pickupPending, false);
+    assert.equal(silentWorker.executionReceipt.leaseKey, LEASE_ID);
+    assert.equal(silentWorker.stallDiagnosis.stalled, true);
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(silentWorker.stallDiagnosis.blockers.includes(blocker), blocker);
+    }
+    assert.equal(silentWorker.stallDiagnosis.sourceMutationAllowed, false);
+    assert.equal(silentWorker.stallDiagnosis.dispatchAllowed, false);
+
     const staleProcesses = await readAuthoritativeProgrammeProjection({
       root,
       home,

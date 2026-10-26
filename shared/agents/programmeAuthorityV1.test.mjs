@@ -266,6 +266,110 @@ test('bound stalled and failed receipts remain diagnosable after material lane b
   assert.ok(!rejected.blockers.includes('execution-receipt-terminal-failure'));
 });
 
+test('silent started and progress executions retain stall diagnosis after their heartbeat expires', async () => {
+  const observedAtUtc = '2026-07-30T10:31:00.000Z';
+  for (const state of ['started', 'progress']) {
+    const execution = receipt({ state });
+    const silentLane = lane({ executionReceipt: execution, nowUtc: observedAtUtc });
+    assert.equal(silentLane.valid, true);
+    assert.equal(silentLane.active, false);
+    assert.equal(silentLane.pickupPending, false);
+    assert.equal(validateExecutionReceiptAgainstMutationLease(execution, lease(), {
+      nowUtc: observedAtUtc,
+    }).valid, false, 'diagnosis must not renew execution authority');
+    const projection = buildAuthoritativeProgrammeProjection({
+      nowUtc: observedAtUtc, workspaceFeed: { state: 'ready' },
+      lane: silentLane, mutationLease: lease(), executionReceipt: execution,
+      controllerHeartbeatProjection: { valid: true, fresh: false, cycleState: 'ACTIVE_LANE' },
+      workerHeartbeatProjection: { valid: true, fresh: false },
+      battleBridgeProofs: [], runtimeHealthRecords: [],
+      scheduler: { failClosed: false, decisionReceipt: { status: 'ACTIVE_LANE' } },
+      criticalBacklog: { decision: 'WAIT_ACTIVE_MISSION' },
+      machineryInventory: { validation: { valid: true }, capabilities: [] },
+    });
+    assert.equal(projection.status, 'HOLD');
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(projection.stallDiagnosis.blockers.includes(blocker), state + ': ' + blocker);
+    }
+    const handler = createProgrammeStallMonitorHandler({ loadProjection: async () => projection });
+    const result = await handler({ timestampUtc: observedAtUtc });
+    assert.equal(result.state, 'FAIL');
+    assert.equal(result.diagnosis.sourceMutationAllowed, false);
+    assert.equal(result.diagnosis.dispatchAllowed, false);
+    assert.equal(result.diagnosis.mergeAuthority, false);
+  }
+});
+
+test('execution diagnosis state and expiry matrix keeps material authority and diagnostic identity separate', () => {
+  const expiryMs = Date.parse('2026-07-30T10:01:00.000Z');
+  for (const state of ['queued', 'accepted', 'started', 'progress', 'stalled', 'failed', 'cancelled', 'completed']) {
+    for (const offset of [-1, 0, 1, 30 * 60 * 1000]) {
+      const nowUtc = new Date(expiryMs + offset).toISOString();
+      const execution = receipt({ state, blocker: 'TEST_STOP' });
+      const projectedLane = lane({ executionReceipt: execution, nowUtc });
+      const diagnosis = diagnoseProgrammeStall({
+        lane: projectedLane, mutationLease: lease(), executionReceipt: execution,
+        controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true },
+      }, { nowUtc });
+      const running = ['started', 'progress'].includes(state);
+      assert.equal(projectedLane.active, running && offset < 0, state + ':' + offset);
+      assert.equal(diagnosis.blockers.includes('execution-receipt-heartbeat-expired'),
+        running && offset >= 0, state + ':' + offset);
+      assert.equal(diagnosis.blockers.includes('execution-receipt-reports-stall'), state === 'stalled');
+      assert.equal(diagnosis.blockers.includes('execution-receipt-terminal-failure'),
+        ['failed', 'cancelled'].includes(state));
+      assert.equal(diagnosis.sourceMutationAllowed, false);
+      assert.equal(diagnosis.schedulingAllowed, false);
+    }
+  }
+});
+
+test('expired receipt diagnosis refuses every other binding failure and cannot revive review or terminal lanes', () => {
+  const nowUtc = '2026-07-30T10:31:00.000Z';
+  const original = receipt();
+  const projectedLane = lane({ executionReceipt: original, nowUtc });
+  const base = { lane: projectedLane, mutationLease: lease(), executionReceipt: original,
+    controllerHeartbeat: { fresh: true }, workerHeartbeat: { fresh: true } };
+  const variants = [
+    { executionReceipt: receipt({ workerId: 'wrong-owner' }) },
+    { executionReceipt: receipt({ leaseKey: 'wrong-lease' }) },
+    { executionReceipt: receipt({ prNumber: 3259 }) },
+    { executionReceipt: receipt({ issueNumber: 2315 }) },
+    { executionReceipt: receipt({ branch: 'wrong-branch' }) },
+    { executionReceipt: receipt({ repository: 'other/repo' }) },
+    { executionReceipt: receipt({ sourceHead: MERGE }) },
+    { executionReceipt: receipt({ receiptId: 'not-observed-by-lane' }) },
+    { executionReceipt: receipt({ timestampUtc: '2026-07-30T09:29:00.000Z' }) },
+    { executionReceipt: receipt({ timestampUtc: '2099-01-01T00:00:00.000Z',
+      heartbeatExpiresAtUtc: '2099-01-01T00:01:00.000Z' }) },
+    { executionReceipt: null },
+    { mutationLease: null },
+    { mutationLease: lease({ expiresAtUtc: NOW }) },
+    { mutationLease: { ...lease(), status: 'RELEASED' } },
+    { lane: { ...projectedLane, executionReceiptRefs: [] } },
+    { lane: { ...projectedLane, valid: false } },
+    { lane: { ...projectedLane, terminal: true } },
+    { lane: { ...projectedLane, reviewPending: true } },
+    { lane: { ...projectedLane, elasticMissionPhaseBinding: { materialImplementation: false } } },
+    { mutationLease: lease({ ownerId: 'different-owner' }),
+      executionReceipt: receipt({ workerId: 'different-owner' }) },
+    { mutationLease: lease({ leaseId: 'different-lease' }),
+      executionReceipt: receipt({ leaseKey: 'different-lease' }) },
+  ];
+  for (const variant of variants) {
+    const diagnosis = diagnoseProgrammeStall({ ...base, ...variant }, { nowUtc });
+    assert.ok(!diagnosis.blockers.includes('execution-receipt-heartbeat-expired'), JSON.stringify(variant));
+    assert.ok(!diagnosis.blockers.includes('active-lane-progress-stale'));
+    assert.equal(diagnosis.dispatchAllowed, false);
+  }
+  const renewed = diagnoseProgrammeStall({ ...base,
+    mutationLease: lease({ renewedAtUtc: nowUtc }),
+  }, { nowUtc });
+  assert.ok(renewed.blockers.includes('execution-receipt-heartbeat-expired'),
+    'lease renewal or fresh supervisor heartbeats cannot conceal worker silence');
+});
+
 test('canonical lane requires GitHub to affirm the exact head repository and branch', () => {
   for (const githubEvidence of [
     github({ repository: '' }),

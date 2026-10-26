@@ -1721,8 +1721,8 @@ function boundedProgressTimestamp(value, nowMs) {
     : null;
 }
 
-function isAffirmativeLaneProgressProof(proof, lane, nowMs) {
-  if (!lane?.active || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+function isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved = lane?.active) {
+  if (!executionObserved || !proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
   if (proof.kind !== SHARED_WORKSPACE_RECORD_KINDS.PROOF) return false;
   if (!validateSharedWorkspaceRecord(proof, { nowMs: nowMs ?? undefined }).valid) return false;
   if (boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs) === null) return false;
@@ -1757,8 +1757,36 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   if (nowMs === null) blockers.push('stall-observation-time-invalid');
   if (safeProjection !== projection) blockers.push('programme-projection-missing');
   const lane = safeProjection.lane;
+  const observedExecution = safeProjection.executionReceipt;
+  const executionBinding = lane?.valid === true && observedExecution && safeProjection.mutationLease
+    && lane.mutationLeaseIdentity?.leaseId && lane.mutationLeaseIdentity?.ownerId
+    && list(lane.executionReceiptRefs).includes(observedExecution.receiptId)
+    ? validateExecutionReceiptAgainstMutationLease(
+      observedExecution, safeProjection.mutationLease, {
+        nowUtc: options.nowUtc ?? safeProjection.observedAtUtc,
+        expectedLease: {
+          leaseId: lane.mutationLeaseIdentity.leaseId, ownerId: lane.mutationLeaseIdentity.ownerId,
+          laneId: lane.laneId, issueNumber: lane.issueNumber,
+          prNumber: lane.prNumber, branch: lane.branch,
+          repository: lane.repository, headSha: lane.headSha,
+        },
+      },
+    ) : null;
+  // Execution identity and present liveness are distinct diagnostic dimensions.
+  // Only receipt heartbeat expiry may be ignored for diagnosis, never for
+  // ACTIVE or mutation authority. Every other validator error still refuses
+  // attribution, including expired lease, wrong owner and impossible timestamps.
+  const executionIdentityBound = Boolean(executionBinding
+    && (executionBinding.valid || (executionBinding.errors.length === 1
+      && executionBinding.errors[0] === 'receipt-heartbeat-expired')));
+  const runningExecutionBound = executionIdentityBound
+    && PICKED_UP_EXECUTION_RECEIPT_STATES.has(observedExecution.state)
+    && lane.terminal !== true && lane.reviewPending !== true
+    && (!lane.elasticMissionPhaseBinding
+      || lane.elasticMissionPhaseBinding.materialImplementation === true);
+  const executionObserved = lane?.active || runningExecutionBound;
   const proofProgressTimes = list(safeProjection.battleBridgeProofs)
-    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs))
+    .filter((proof) => isAffirmativeLaneProgressProof(proof, lane, nowMs, executionObserved))
     .map((proof) => boundedProgressTimestamp(proof.timestampUtc ?? proof.at, nowMs));
   const progressTimes = [
     boundedProgressTimestamp(safeProjection.executionReceipt?.timestampUtc, nowMs),
@@ -1767,34 +1795,19 @@ export function diagnoseProgrammeStall(projection = {}, options = {}) {
   ].filter(Number.isFinite);
   const lastProgressMs = progressTimes.length ? Math.max(...progressTimes) : null;
   const progressAgeMs = lastProgressMs === null || nowMs === null ? null : Math.max(0, nowMs - lastProgressMs);
-  if (safeProjection.lane?.active && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
-  if (safeProjection.lane?.active && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
-  // A stopped execution is no longer material ACTIVE, but its independently
-  // bound receipt must remain visible to repair/stall diagnosis. Never trust
-  // caller-supplied terminal state, lease key, or a receipt from another PR.
-  const observedExecution = safeProjection.executionReceipt;
-  const stoppedExecutionBound = Boolean(
-    lane?.valid === true && observedExecution && safeProjection.mutationLease
-    && list(lane.executionReceiptRefs).includes(observedExecution.receiptId)
-    && validateExecutionReceiptAgainstMutationLease(
-      observedExecution, safeProjection.mutationLease, {
-        nowUtc: options.nowUtc ?? safeProjection.observedAtUtc,
-        expectedLease: {
-          laneId: lane.laneId, issueNumber: lane.issueNumber,
-          prNumber: lane.prNumber, branch: lane.branch,
-          repository: lane.repository, headSha: lane.headSha,
-        },
-      },
-    ).valid
-  );
-  if (stoppedExecutionBound && observedExecution.state === 'stalled') {
+  if (executionObserved && safeProjection.controllerHeartbeat?.fresh !== true) blockers.push('controller-heartbeat-not-fresh');
+  if (executionObserved && safeProjection.workerHeartbeat?.fresh !== true) blockers.push('worker-heartbeat-not-fresh');
+  if (runningExecutionBound && executionBinding.errors.includes('receipt-heartbeat-expired')) {
+    blockers.push('execution-receipt-heartbeat-expired');
+  }
+  if (executionIdentityBound && observedExecution.state === 'stalled') {
     blockers.push('execution-receipt-reports-stall');
   }
-  if (stoppedExecutionBound && FAILED_EXECUTION_RECEIPT_STATES.has(observedExecution.state)) {
+  if (executionIdentityBound && FAILED_EXECUTION_RECEIPT_STATES.has(observedExecution.state)) {
     blockers.push('execution-receipt-terminal-failure');
   }
-  if (safeProjection.lane?.active && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
-  if (safeProjection.lane?.active && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
+  if (executionObserved && lastProgressMs === null) blockers.push('active-lane-progress-evidence-missing');
+  if (executionObserved && !EXECUTION_TERMINAL_STATES.has(safeProjection.executionReceipt?.state) && progressAgeMs !== null && progressAgeMs > threshold) blockers.push('active-lane-progress-stale');
   if (safeProjection.lane?.terminal && safeProjection.mutationLease) blockers.push('terminal-lane-cleanup-pending');
   const stalled = blockers.length > 0;
   return freeze({
