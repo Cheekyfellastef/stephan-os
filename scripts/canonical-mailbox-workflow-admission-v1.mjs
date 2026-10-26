@@ -6,9 +6,15 @@ export async function readMailboxWorkflowGitHub(path) {
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   if (!token) throw new Error('MAILBOX_WORKFLOW_AUTHENTICATED_READ_REQUIRED');
   if (!/^\/(branches\/main|issues\/(2315\/comments\?per_page=100&page=[1-9][0-9]?|comments\/[1-9][0-9]*))$/.test(path)) throw new Error('MAILBOX_WORKFLOW_READ_PATH_DENIED');
+  // Preserve the pinned merge-queue job permissions exactly. These fixed
+  // public evidence GETs need no issue credential. TLS repository/comment
+  // identity and the original owner command/receipt still govern the fence;
+  // authenticated main reads and all downstream approval gates remain intact.
+  const publicEvidence = process.env.GITHUB_ACTIONS === 'true'
+    && process.env.GITHUB_JOB === 'operator-merge-queue-boundary' && path.startsWith('/issues/');
   const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
     redirect: 'error', signal: AbortSignal.timeout(30000),
-    headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
+    headers: { Accept: 'application/vnd.github+json', ...(!publicEvidence ? { Authorization: `Bearer ${token}` } : {}), 'X-GitHub-Api-Version': '2022-11-28' },
   });
   if (response.status !== 200) throw new Error('MAILBOX_WORKFLOW_FRESH_READ_FAILED');
   const raw = await response.text();

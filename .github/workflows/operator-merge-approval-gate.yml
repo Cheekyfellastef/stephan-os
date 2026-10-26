@@ -110,7 +110,6 @@ jobs:
       actions: read
       checks: read
       contents: read
-      issues: read
       pull-requests: read
     steps:
       - name: Check out the same trusted exact merge-group base

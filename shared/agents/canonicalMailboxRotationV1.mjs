@@ -171,17 +171,20 @@ export function verifyMailboxRotationProbes(comments, record, { sourceHead, requ
   validateMailboxRotationRecord(record);
   if (CANONICAL_MAILBOX_ISSUE !== record.successorIssue || !MAILBOX_ROTATION_SHA.test(sourceHead || '')
     || !Array.isArray(requestIds) || requestIds.length !== 2 || new Set(requestIds).size !== 2) return false;
-  return requestIds.every(id => {
+  const operations = new Set();
+  const proven = requestIds.every(id => {
     const parsed = comments.map(c => parseMailboxRotationComment(c, record.successorIssue)).filter(Boolean);
     const command = parsed.find(p => p.type === 'command' && p.value.requestId === id
       && p.value.expectedHead === sourceHead && ['READ_DEPLOYMENT_STATUS', 'READ_CAPABILITY_REGISTRY'].includes(p.value.operation));
     if (!command) return false;
+    operations.add(command.value.operation);
     return parsed.some(p => p.type === 'receipt' && p.value.requestId === id && p.value.state === 'ACCEPTED'
-      && p.value.expectedHead === sourceHead && p.value.processSourceHead === sourceHead)
+      && p.value.operation === command.value.operation && p.value.expectedHead === sourceHead && p.value.processSourceHead === sourceHead)
       && parsed.some(p => p.type === 'receipt' && p.value.requestId === id && p.value.state === 'DONE'
         && p.value.operation === command.value.operation && p.value.expectedHead === sourceHead
         && p.value.processSourceHead === sourceHead && Date.parse(p.value.acceptedAt) >= Date.parse(record.requestedAt));
   });
+  return proven && operations.size === 2;
 }
 
 export function projectMailboxRotation(record, inventory) {

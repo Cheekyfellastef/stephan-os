@@ -12,11 +12,12 @@ import { findMailboxRotationFence, parseMailboxRotationFenceBody, validateMailbo
 // The existing direct guarded sync route crosses the source-epoch boundary.
 // It must not depend on posting a new command to a retired transport shard.
 export function evaluateMailboxRotationSyncPreflight({ state, predecessorComments, pull, authoritySource, mainHead, outboxLedger, fence, actions } = {}) {
-  if (!state?.mailboxRotation || ['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) return { ok: true, required: false };
-  const record = validateMailboxRotationRecord(state.mailboxRotation);
   const authority = readMailboxAuthorityLiteral(authoritySource);
-  if (authority.active === record.predecessorIssue) return { ok: true, required: false };
+  if (authority.active === CANONICAL_MAILBOX_ISSUE) return { ok: true, required: false };
   const fail = blocker => ({ ok: false, required: true, blocker });
+  if (!state?.mailboxRotation || ['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)) return fail('MAILBOX_ROTATION_SYNC_TRANSITION_REQUIRED');
+  const record = validateMailboxRotationRecord(state.mailboxRotation);
+  if (record.predecessorIssue !== CANONICAL_MAILBOX_ISSUE) return fail('MAILBOX_ROTATION_SYNC_LOCAL_EPOCH_MISMATCH');
   if (!fence || fence.phase !== 'FROZEN' || fence.drained !== true || fence.transitionId !== record.transitionId
     || fence.predecessorIssue !== record.predecessorIssue || fence.successorIssue !== record.successorIssue
     || fence.cutoverHead !== record.cutoverHead || fence.cutoverPrNumber !== record.cutoverPrNumber) return fail('MAILBOX_ROTATION_SYNC_GLOBAL_FREEZE_UNPROVEN');

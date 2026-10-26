@@ -51,6 +51,11 @@ continues. Bootstrap, observer, protected dispatch and final protected merge/che
 completion recheck the same fence and fresh main source immediately before effects.
 The bootstrap jobs gain only issue-read access on their existing GitHub job token
 to inspect this fence; no new credential or secret is introduced.
+The protected merge workflow remains byte-identical with its pinned permission
+estate. Its merge-queue approval script reads only the fixed public Goal #2315
+and referenced owner command/receipt evidence without an issue credential;
+authenticated main readback and the original protected environment still bind
+execution. Public API failure or ambiguity holds the required check closed.
 
 ## Protected activation and commissioning
 

@@ -4432,11 +4432,11 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     });
   }
   const state = loadState();
-  bootstrapMailboxExecutionHistory(state);
   const publicationBudget = createBoundedMailboxReceiptPublisher();
   const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
     publish: publicationBudget.publish,
   });
+  bootstrapMailboxExecutionHistory(state);
   const comments = state.mailboxRotation && !['VERIFIED', 'CANCELLED'].includes(state.mailboxRotation.phase)
     ? loadCompleteMailboxComments(CANONICAL_MAILBOX_ISSUE) : loadBoundedMailboxComments();
   const currentHead = readGitHubMainHead();

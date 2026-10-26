@@ -13,7 +13,7 @@ import { canonicalMailboxSuccessorBody } from '../shared/agents/canonicalMailbox
 import { executeMailboxRotationOnHost, readMailboxAuthorityLiteral } from './canonical-mailbox-rotation-host-v1.mjs';
 import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledger-v1.mjs';
 import { evaluateMailboxRotationSyncPreflight } from './canonical-mailbox-rotation-sync-preflight-v1.mjs';
-import { assertMailboxRotationWorkflowAdmission } from './canonical-mailbox-workflow-admission-v1.mjs';
+import { assertMailboxRotationWorkflowAdmission, readMailboxWorkflowGitHub } from './canonical-mailbox-workflow-admission-v1.mjs';
 import { serializeBoundedReceiptJson, prepareMailboxRotationPoll } from './battle-bridge-github-command-mailbox.mjs';
 import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
@@ -177,6 +177,7 @@ test('source sync requires complete native drain, actual global fence, fresh Act
     outboxLedger:{schemaVersion:'stephanos.battle-bridge-mailbox-outbox-ledger.v3',storeId:'a'.repeat(32),headSequence:10,nextSequence:10,legacy:null}};
   assert.equal(evaluateMailboxRotationSyncPreflight(input).ok,true);
   for (const patch of [{fence:null},{actions:{complete:false,pendingRuns:[]}},{actions:{complete:true,pendingRuns:[{id:1}]}},
+    {state:{}},{state:{mailboxRotation:{...f.r,phase:'CANCELLED'}}},
     {state:{...input.state,acceptedRequestIds:['pending-request-001']}},{outboxLedger:{...input.outboxLedger,nextSequence:11}},
     {predecessorComments:[comment(ordinary(),150)]},{pull:pull({merged:true,merge_commit_sha:head})}]) assert.equal(evaluateMailboxRotationSyncPreflight({...input,...patch}).ok,false);
 });
@@ -201,12 +202,16 @@ test('A→B→C keeps one durable execution identity and successor proof derives
     const module=await import(pathToFileURL(r).href),rotation={...record(),predecessorIssue:predecessor,successorIssue:epoch};
     const ids=[`epoch-${i}-probe-first`,`epoch-${i}-probe-second`],comments=[];
     for (const [n,id] of ids.entries()) {
-      const cmd=ordinary({issueNumber:epoch,requestId:id,expectedHead:merged});
+      const cmd=ordinary({issueNumber:epoch,requestId:id,expectedHead:merged,operation:n?'READ_CAPABILITY_REGISTRY':'READ_DEPLOYMENT_STATUS'});
       ledger.reserve(cmd);comments.push(comment(cmd,100+n*3,false,epoch),comment(terminal(cmd,{state:'ACCEPTED'}),101+n*3,true,epoch),comment(terminal(cmd),102+n*3,true,epoch));
       ledger.complete(terminal(cmd));
     }
     assert.equal(module.verifyMailboxRotationProbes(comments,rotation,{sourceHead:merged,requestIds:ids}),true);
     assert.equal(module.verifyMailboxRotationProbes(comments,rotation,{sourceHead:head,requestIds:ids}),false);
+    const wrong=structuredClone(comments);
+    const accepted=JSON.parse(wrong[1].body.match(/```json\s*([\s\S]*?)```/)[1]);accepted.operation='READ_CAPABILITY_REGISTRY';
+    wrong[1]=comment(accepted,101,true,epoch);
+    assert.equal(module.verifyMailboxRotationProbes(wrong,rotation,{sourceHead:merged,requestIds:ids}),false);
     const hostPath=join(root,`host-${i}.mjs`);
     writeFileSync(hostPath,readFileSync(new URL('./canonical-mailbox-rotation-host-v1.mjs',import.meta.url),'utf8')
       .replace('../shared/agents/canonicalMailboxAuthorityV1.mjs',pathToFileURL(a).href)
@@ -223,4 +228,20 @@ test('A→B→C keeps one durable execution identity and successor proof derives
     predecessor=epoch;
   }
   assert.throws(()=>readMailboxAuthorityLiteral('export const CANONICAL_MAILBOX_ISSUE = userInput;'),/SOURCE_INVALID/);
+});
+test('merge-queue public fence evidence needs no expanded permission; main remains authenticated and paths fixed',async t=>{
+  const originalFetch=globalThis.fetch, original={};
+  for(const key of ['GITHUB_ACTIONS','GITHUB_JOB','GITHUB_TOKEN']) original[key]=process.env[key];
+  t.after(()=>{globalThis.fetch=originalFetch;for(const [key,value] of Object.entries(original)) value===undefined?delete process.env[key]:process.env[key]=value;});
+  process.env.GITHUB_ACTIONS='true';process.env.GITHUB_JOB='operator-merge-queue-boundary';process.env.GITHUB_TOKEN='test-only-fixed-value';
+  const requests=[];
+  globalThis.fetch=async(url,options)=>{requests.push({url,options});return {status:200,text:async()=>JSON.stringify({commit:{sha:head}})};};
+  await readMailboxWorkflowGitHub('/issues/2315/comments?per_page=100&page=1');
+  await readMailboxWorkflowGitHub('/branches/main');
+  assert.equal(requests[0].options.headers.Authorization,undefined);
+  assert.equal(requests[1].options.headers.Authorization,'Bearer test-only-fixed-value');
+  assert.equal(requests[0].options.redirect,'error');
+  await assert.rejects(readMailboxWorkflowGitHub('/issues/999/comments'),/PATH_DENIED/);
+  globalThis.fetch=async()=>({status:403,text:async()=>''});
+  await assert.rejects(readMailboxWorkflowGitHub('/issues/comments/100'),/FRESH_READ_FAILED/);
 });
