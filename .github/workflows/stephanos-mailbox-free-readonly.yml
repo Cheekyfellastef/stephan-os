@@ -10,6 +10,9 @@ on:
       - 'scripts/mailbox-free-readonly-dispatch.mjs'
       - 'scripts/mailbox-free-readonly-dispatch.test.mjs'
       - 'docs/architecture/stephanos-control-tower-mailbox-free-v1.md'
+      - 'shared/agents/mailboxFreeGoalDiscoveryV1.mjs'
+      - 'shared/agents/mailboxFreeGoalDiscoveryV1.test.mjs'
+      - 'docs/architecture/mailbox-free-goal-discovery-stage2-v1.md'
   workflow_dispatch:
     inputs:
       goal_issue:
@@ -41,11 +44,14 @@ jobs:
         with:
           node-version: 22
       - name: Run hostile trust and no-mutation regressions
-        run: node --test shared/agents/mailboxFreeWorkflowDispatchV1.test.mjs scripts/mailbox-free-readonly-dispatch.test.mjs
+        run: |
+          node --test shared/agents/mailboxFreeWorkflowDispatchV1.test.mjs scripts/mailbox-free-readonly-dispatch.test.mjs
+          node --test shared/agents/mailboxFreeGoalDiscoveryV1.test.mjs
       - name: Parse read-only modules
         run: |
           node --check shared/agents/mailboxFreeWorkflowDispatchV1.mjs
           node --check scripts/mailbox-free-readonly-dispatch.mjs
+          node --check shared/agents/mailboxFreeGoalDiscoveryV1.mjs
           git diff --check
 
   inspect-goal:
