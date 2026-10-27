@@ -32,6 +32,7 @@ await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrAerObserveReviewV1.test.mjs');
+await import('./windowsAuthoritySeedCensusReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
