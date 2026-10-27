@@ -358,6 +358,8 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     proofIndex: projectSharedWorkspaceProofIndexV1({
       sourceAvailable: resolved.ok,
       proofRecords: records.proofRecords,
+      receiptRecords: records.receiptRecords,
+      goalRecords: records.goalRecords,
       nowMs,
       staleAfterMs,
     }),

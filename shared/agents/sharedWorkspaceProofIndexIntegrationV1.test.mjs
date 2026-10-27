@@ -58,7 +58,7 @@ test('invalid selectors and stale feed preserve fail-closed no-authority states'
 });
 test('both UI views and backend route call the same canonical proof-index module', async () => {
   const paths = [
-    ['../../stephanos-ui/src/components/SharedWorkspaceProofIndex.jsx', /projectSharedWorkspaceProofIndex/],
+    ['../../stephanos-ui/src/components/SharedWorkspaceProofIndex.jsx', /feed\?\.proofIndex/],
     ['../../stephanos-server/routes/shared-workspace.js', /projectSharedWorkspaceProofIndex/],
     ['./chatGptParticipantBridgeV1.mjs', /projectSharedWorkspaceProofIndexV1/],
     ['./shared-workspace-dashboard-feed.mjs', /projectSharedWorkspaceProofIndexV1/],
@@ -68,4 +68,11 @@ test('both UI views and backend route call the same canonical proof-index module
     const source = await readFile(new URL(relative, import.meta.url), 'utf8');
     assert.match(source, expected, relative);
   }
+});
+
+test('browser-only proof index view does not import the Node filesystem store', async () => {
+  const ui = await readFile(new URL('../../stephanos-ui/src/components/SharedWorkspaceProofIndex.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(ui, /from ['"]\.\.\/\.\.\/\.\.\/shared\/agents\/sharedWorkspaceProofIndexV1\.mjs['"]/);
+  assert.match(ui, /source\.entries\.filter/);
+  assert.match(ui, /safeSourceLink/);
 });
