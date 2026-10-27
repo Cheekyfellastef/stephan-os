@@ -1,6 +1,3 @@
-// Preserve the original OpenClaw operator's unprivileged PR CI while also
-// exercising GitHub-first draft admission; do not change protected workflows.
-import './chatgptGithubGoalExecutorV1.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
