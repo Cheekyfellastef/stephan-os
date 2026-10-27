@@ -186,7 +186,7 @@ test('ZIP bytes and digest are independently checked by the existing exact class
   const a=stub();a.data.artifacts.artifacts[0].digest='sha256:'+'f'.repeat(64);
   await denied(a,'IMMUTABLE_ARTIFACT_IDENTITY_OR_SHA256_INVALID');
   const b=stub();b.data.zip=Buffer.from('not a zip');
-  await denied(b,'PROOF_ARCHIVE_INVALID_OR_UNBOUNDED');
+  await denied(b,'GOAL_PROOF_UNREADABLE');
 });
 test('current main moving after awaited artifact and goal reads fails closed',async()=>{
   const a=stub();a.data.secondMain={ref:'refs/heads/main',object:{sha:'b'.repeat(40)}};
@@ -225,7 +225,7 @@ test('incomplete API response or an HTTP error holds without leaking input crede
 test('response size guard refuses huge metadata',async()=>{
   const f=stub(),orig=f.fetchImpl;
   f.fetchImpl=async(url,opt)=>url.endsWith('/jobs?per_page=100')
-    ? new Response('x'.repeat(257000),{status:200,headers:{'content-length':'257000'}})
+    ? new Response('x'.repeat(270000),{status:200,headers:{'content-length':'270000'}})
     : orig(url,opt);
   await denied(f,'AUTHENTICATED_READ_OR_ARTIFACT_FAILED');
 });
