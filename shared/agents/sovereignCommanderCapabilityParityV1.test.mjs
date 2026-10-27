@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createSovereignCommanderMcpHandler } from '../../scripts/sovereign-commander-mcp.mjs';
+import { buildSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
+import {
+  buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1,
+} from './stephanosExecutionCommandFabricV1.mjs';
 
 // Exercise the existing fleet supervisor fail-closed tests in the trusted parity CI lane.
 import './sovereignCommanderFleetGoalSupervisorV1.test.mjs';
@@ -23,6 +30,52 @@ function remote(operation, overrides = {}) {
   };
 }
 
+test('Battle Bridge diagnosis and fixed repairs resolve across registry, MCP and cloud admission', async () => {
+  const repoRoot = 'C:\\repo';
+  const handler = createSovereignCommanderMcpHandler({ repoRoot });
+  await handler('initialize', { protocolVersion: '2025-11-25' }, { isRequest: true });
+  await handler('notifications/initialized', {}, { isNotification: true });
+  const listed = await handler('tools/list', {}, { isRequest: true });
+  const admitted = listed.tools.find(({ name }) => name === 'maintenance_action').inputSchema.properties.actionId.enum;
+  for (const action of [
+    'battle-bridge-status', 'battle-bridge-observe', 'visibility-snapshot',
+    'cpu-pressure-snapshot', 'controller-lane-status', 'meter-status', 'status-recovery-mesh',
+    'status-worker-watchdog', 'status-stephanos-core-daemon', 'gaming-resource-status',
+    'starfield-vr-performance-diagnosis', 'repair-ui-4173', 'repair-control-plane',
+    'repair-battle-bridge', 'repair-openclaw-stack',
+  ]) {
+    const result = classifyRemoteCommanderCapabilityObservation(remote(action));
+    assert.equal(result.state, 'PARITY_PRESENT', action);
+    assert.equal(result.sovereignEquivalent, action);
+    assert.ok(admitted.includes(action), `${action} must be discoverable from local ChatGPT`);
+    assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(action), `${action} must have guarded cloud ingress`);
+    const envelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot }),
+      surface: 'SOVEREIGN_COMMANDER', actionId: 'parity-test', missionId: 'parity-test',
+      operation: 'MAINTENANCE_ACTION', payload: { actionId: action },
+    });
+    const command = buildSovereignCommanderCommandV1(envelope, { repoRoot });
+    assert.equal(command.dispatchAllowed, true, action);
+    assert.equal(command.plan.kind, 'fixed-process');
+    assert.equal(command.plan.processId, action);
+    assert.equal(result.runtimeMutationAuthority, false, 'parity classification is not action approval');
+  }
+});
+
+test('diagnostic parity cannot convert general PowerShell or authority-widening requests into approval', () => {
+  for (const operation of ['powershell', 'service-control', 'kill-process']) {
+    assert.equal(classifyRemoteCommanderCapabilityObservation(remote(operation)).state, 'BUILDABLE_GAP');
+  }
+  for (const operation of ['arbitrary-shell', 'pc-restart', 'credential-export']) {
+    assert.equal(classifyRemoteCommanderCapabilityObservation(remote(operation)).state, 'BOUNDARY_HOLD');
+  }
+  for (const action of ['cpu-pressure-snapshot', 'repair-control-plane']) {
+    const result = classifyRemoteCommanderCapabilityObservation(remote(action, { payload: { arbitraryShellAllowed: true } }));
+    assert.equal(result.state, 'BOUNDARY_HOLD');
+    assert.equal(result.arbitraryShellAllowed, false);
+  }
+});
+
 test('known Remote Commander file capability resolves to existing Sovereign Commander parity', () => {
   const result = classifyRemoteCommanderCapabilityObservation(remote('read-file'));
   assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
@@ -37,8 +90,9 @@ test('direct ChatGPT Remote Commander observations feed the same parity ratchet'
     ...remote('start-search'),
     adapter: 'desktop-commander-direct',
   });
-  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
-  assert.equal(result.sovereignEquivalent, 'search_project');
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
+  assert.equal(result.partialSovereignEquivalent, 'search_project');
+  assert.equal(result.runtimeParityProven, false);
   assert.equal(result.observationIngress, 'desktop-commander-direct');
   assert.equal(result.canonicalOwnerGoal, '#2573');
 });
@@ -56,14 +110,88 @@ test('Remote Commander device/reachability probes resolve to Sovereign visibilit
   }
 });
 
-test('Remote Commander project search resolves to native Sovereign search parity', () => {
-  for (const operation of ['start-search', 'search-files', 'search-project', 'get-more-search-results']) {
+test('repository search does not claim whole-PC or search-session parity', () => {
+  const project = classifyRemoteCommanderCapabilityObservation(remote('search-project'));
+  assert.equal(project.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(project.sovereignEquivalent, 'search_project');
+  for (const operation of ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
-    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT, operation);
-    assert.equal(result.sovereignEquivalent, 'search_project', operation);
+    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP, operation);
+    assert.equal(result.partialSovereignEquivalent, 'search_project', operation);
+    assert.equal(result.partialScope, 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY', operation);
+    assert.equal(result.parityEvidenceScope, 'SOURCE_CATALOG_ONLY', operation);
+    assert.equal(result.runtimeParityProven, false, operation);
+    assert.notEqual(result.sovereignEquivalent, 'search_project', operation);
+    assert.match(result.parityGapReason, /NOT_IMPLEMENTED$/, operation);
     assert.equal(result.operatorFallbackAllowed, false, operation);
     assert.equal(result.meterDependencyAccepted, false, operation);
   }
+});
+
+test('retained broad-search false parity is corrected without a new call or lost provenance', () => {
+  const previousCapabilities = ['start-search', 'search-files', 'get-more-search-results'].map((capabilityId) => ({
+    capabilityId,
+    state: 'PARITY_PRESENT',
+    sovereignEquivalent: 'search_project',
+    firstSeenAtUtc: '2026-10-02T10:00:00.000Z',
+    lastSeenAtUtc: '2026-10-24T18:00:00.000Z',
+    observationCount: 17,
+    missionIds: ['original-mission'],
+    actionIds: ['original-action'],
+    queuePaths: ['C:/queue/original-observation.json'],
+  }));
+  const ledger = buildSovereignCommanderCapabilityParityLedger([], {
+    priorLedger: { capabilities: previousCapabilities },
+    nowUtc: '2026-10-25T15:00:00.000Z',
+  });
+  assert.equal(ledger.buildableGapCount, 3);
+  assert.equal(ledger.parityPresentCount, 0);
+  assert.equal(ledger.newlyProvenParityCount, 0);
+  assert.equal(ledger.daemonMayReportGreen, false);
+  assert.equal(ledger.zeroGapInvariantSatisfied, false);
+  assert.equal(ledger.closureRequired, true);
+  for (const capability of ledger.capabilities) {
+    const previous = previousCapabilities.find((item) => item.capabilityId === capability.capabilityId);
+    assert.equal(capability.state, 'BUILDABLE_GAP');
+    assert.equal(capability.stateTransition, 'PARITY_PRESENT->BUILDABLE_GAP');
+    assert.equal(capability.currentObserved, false);
+    assert.equal(capability.newlyProvenParity, false);
+    assert.equal(capability.runtimeParityProven, false);
+    assert.equal(capability.partialSovereignEquivalent, 'search_project');
+    for (const key of ['firstSeenAtUtc', 'lastSeenAtUtc', 'observationCount', 'missionIds', 'actionIds', 'queuePaths'])
+      assert.deepEqual(capability[key], previous[key], key);
+  }
+  const next = buildSovereignCommanderCapabilityParityLedger([], {
+    priorLedger: ledger,
+    nowUtc: '2026-10-25T15:01:00.000Z',
+  });
+  assert.equal(next.buildableGapCount, 3);
+  assert.equal(next.newlyProvenParityCount, 0);
+  assert.equal(next.capabilities[0].stateTransition, 'RETAINED');
+  assert.equal(next.capabilities[0].observationCount, 17);
+});
+
+test('search scope correction preserves authority holds and combines observation provenance', () => {
+  const first = buildSovereignCommanderCapabilityParityLedger([
+    remote('start-search', { actionGrant: { operation: 'start-search', arbitraryShellAllowed: true } }),
+  ], { nowUtc: '2026-10-24T18:00:00.000Z' });
+  const held = buildSovereignCommanderCapabilityParityLedger([], {
+    priorLedger: first,
+    nowUtc: '2026-10-25T15:00:00.000Z',
+  });
+  assert.equal(held.capabilities[0].state, 'BOUNDARY_HOLD');
+  assert.equal(held.capabilities[0].newlyProvenParity, false);
+  const before = buildSovereignCommanderCapabilityParityLedger([remote('get-more-search-results')], {
+    nowUtc: '2026-10-24T18:00:00.000Z',
+  });
+  const after = buildSovereignCommanderCapabilityParityLedger([
+    remote('get-more-search-results', { missionId: 'second-mission', actionId: 'second-action' }),
+  ], { priorLedger: before, nowUtc: '2026-10-25T15:00:00.000Z' });
+  assert.equal(after.capabilities[0].observationCount, 2);
+  assert.deepEqual(after.capabilities[0].missionIds, ['critical-2573-parity', 'second-mission']);
+  assert.deepEqual(after.capabilities[0].actionIds, ['action-get-more-search-results', 'second-action']);
+  assert.equal(after.capabilities[0].firstSeenAtUtc, before.capabilities[0].firstSeenAtUtc);
+  assert.equal(after.capabilities[0].lastSeenAtUtc, '2026-10-25T15:00:00.000Z');
 });
 
 test('source construction resolves to the proven Sovereign canonical build lane', () => {

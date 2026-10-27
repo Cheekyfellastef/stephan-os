@@ -39,9 +39,9 @@ agent / controller intent
   -> deterministic proof hash / receipt
 ```
 
-The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Focused tests are limited to explicit `.test.js` / `.test.mjs` files within the proved Stephanos repository. Process starts are selected from a source-controlled registry.
+The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Caller-selected test files are not execution authority. Process starts are selected from a source-controlled registry.
 
-Project discovery is a first-class read-only capability. `search_project` performs a bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. Remote Commander search operations such as `start-search` and `get-more-search-results` therefore resolve to proven Sovereign parity rather than a permanent meter dependency.
+Project discovery is a first-class read-only capability. `search_project` performs one bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. It provides partial project-search coverage only. Remote Commander’s `start_search`, `get_more_search_results`, `stop_search`, and `list_searches` still require scoped whole-PC search, tracked search sessions, pagination and cancellation under #2573; this source mapping is not evidence of full functional parity or installed runtime capability.
 
 ## Transport layers
 

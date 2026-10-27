@@ -31,3 +31,6 @@ shared/runtime/systemPanelToggleRegistry.mjs text eol=lf
 shared/agents/openClawReadonlyValidationEndpoint.mjs text eol=lf
 shared/agents/battleBridgeExecutionBoundaryV1.mjs text eol=lf
 shared/agents/battleBridgeWindowsHosts.mjs text eol=lf
+# Private directory operation verifies captured native/script bytes.
+scripts/windows/SovereignDirectoryCreateV1.cs text eol=lf
+scripts/windows/sovereign-create-directory.ps1 text eol=lf

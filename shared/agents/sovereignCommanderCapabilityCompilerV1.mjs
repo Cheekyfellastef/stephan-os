@@ -1,4 +1,5 @@
 import { CLOSED_LOOP_CAPABILITY_EXAM_V1 } from './closedLoopLearningV1.mjs';
+import { SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS } from './sovereignCommanderCapabilityParityV1.mjs';
 
 export const SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_SCHEMA =
   'stephanos.sovereign-commander-capability-compiler.v1';
@@ -40,7 +41,7 @@ function capabilityId(value) {
 
 function primitiveFor(id) {
   if (id === 'source-construction') return SOVEREIGN_COMMANDER_PRIMITIVE.COMPOSE_SOURCE_CONSTRUCTION;
-  if (/^(?:read-file|list-directory|start-search|search-files|search-project|get-more-search-results|get-file-info|get-config)$/.test(id)) {
+  if (/^(?:read-file|list-directory|start-search|search-files|search-project|get-more-search-results|stop-search|list-searches|get-file-info|get-config)$/.test(id)) {
     return SOVEREIGN_COMMANDER_PRIMITIVE.OBSERVE_DATA;
   }
   if (/^(?:write-file|edit-file|edit-block|move-file|create-directory)$/.test(id)) {
@@ -236,7 +237,14 @@ function learningCandidate(capability, timestampUtc) {
 }
 
 export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeGaps = [] } = {}) {
-  const capabilities = Array.isArray(ledger?.capabilities) ? ledger.capabilities : [];
+  const capabilities = (Array.isArray(ledger?.capabilities) ? ledger.capabilities : []).map((capability) => {
+    const gap = SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(capability?.capabilityId)];
+    if (!gap || capability?.state === 'BOUNDARY_HOLD') return capability;
+    // The compiler can receive a retained pre-correction ledger directly.
+    // Reuse the same source-owned scope instead of preserving a false green.
+    return { ...capability, ...gap, state: 'BUILDABLE_GAP', newlyProvenParity: false,
+      sovereignEquivalent: `sovereign-${capabilityId(capability.capabilityId)}` };
+  });
   const timestampUtc = text(ledger?.timestampUtc, new Date().toISOString());
   const remoteBuildable = capabilities.filter((item) => text(item?.state) === 'BUILDABLE_GAP');
   const remoteIds = new Set(remoteBuildable.map((item) => capabilityId(item.capabilityId)));
@@ -266,6 +274,7 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeG
       capabilityId: id,
       observationOrigin,
       sovereignEquivalent: text(capability.sovereignEquivalent, `sovereign-${id}`),
+      ...(SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[id] || {}),
       primitive,
       recipeId: `recipe-${id}`.slice(0, 120),
       compilerAction: requiresKernelChange ? 'PROVE_MISSING_PRIMITIVE_THEN_ADD_MINIMUM' : 'COMPOSE_GUARDED_RECIPE',
@@ -291,7 +300,9 @@ export function compileSovereignCommanderCapabilityPlanV1(ledger = {}, { nativeG
   const blockedSkillCount = skillForgeCandidates.filter((skill) => skill.blockedByPolicy).length;
 
   const learningCandidates = capabilities
-    .filter((item) => item?.newlyProvenParity === true)
+    .filter((item) => item?.newlyProvenParity === true
+      && item?.state === 'PARITY_PRESENT'
+      && !SOVEREIGN_COMMANDER_SEARCH_PARITY_GAPS[capabilityId(item?.capabilityId)])
     .map((item) => learningCandidate(item, timestampUtc));
 
   const primitiveGapIds = [...new Set(

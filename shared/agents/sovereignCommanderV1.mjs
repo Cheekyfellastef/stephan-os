@@ -12,6 +12,7 @@ import {
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 import { executeCorePublicationDirectoryActionV1 } from '../../scripts/sovereign-core-directory-action-v1.mjs';
 import { isSovereignMaintenanceObservationV1 } from './sovereignMaintenanceAdmissionV1.mjs';
+import { executeSovereignDirectoryCreateV1, validateSovereignDirectoryTargetV1 } from './sovereignDirectoryCreateV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
@@ -23,6 +24,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
+  CREATE_DIRECTORY: 'CREATE_DIRECTORY',
   SEARCH_PROJECT: 'SEARCH_PROJECT',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
@@ -179,6 +181,7 @@ function fixedReviewerEnvironment(identity, inherited) {
     STEPHANOS_REVIEW_IMPLEMENTER_PRINCIPAL: p.implementerPrincipal,
     STEPHANOS_REVIEW_REVIEWER_PRINCIPAL: p.reviewerPrincipal,
   };
+
 }
 
 function fixedRegistry(repoRoot) {
@@ -440,6 +443,13 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
       timeoutMs: 60_000,
     }),
+    'observe-open-stephanos-tabs': frozen({
+      executable: node,
+      // Read existing native evidence only. Ambient local CDP opt-in cannot
+      // turn a remote observation into browser capture or filesystem mutation.
+      args: frozen([nodeFile('sovereign-commander-browser-observe.mjs'), '--native-receipt-only']),
+      timeoutMs: 10_000,
+    }),
     'prove-stephanos-ai-commander': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ai-chat-acceptance.mjs')]),
@@ -556,6 +566,17 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       depth: safeInteger(payload.depth, 2, 1, 5),
       maxEntries: safeInteger(payload.maxEntries, 500, 1, 2000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY) {
+    const supplied = Array.isArray(envelope.targetPaths) && envelope.targetPaths.length === 1
+      ? envelope.targetPaths[0] : null;
+    if (!validateSovereignDirectoryTargetV1(supplied)) {
+      blockers.push('sovereign-commander-create-requires-safe-local-absolute-target');
+    } else if (!payload || Array.isArray(payload) || Object.getPrototypeOf(payload) !== Object.prototype
+      || Reflect.ownKeys(payload).length !== 0) {
+      blockers.push('sovereign-commander-create-fixed-scope-required');
+    } else {
+      plan = frozen({ kind: 'create-directory', path: supplied, recursive: false });
+    }
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT) {
     const root = normalizedAbsolutePath(options.repoRoot);
     const query = typeof payload.query === 'string' ? payload.query.trim() : '';
@@ -991,6 +1012,7 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
+        canCreateDirectory: process.platform === 'win32',
         canSearchProject: true,
         canRunFocusedNodeTests: false,
         sourceControlledMaintenanceOnly: true,
@@ -1100,6 +1122,12 @@ async function executeAdmittedSovereignCommandV1(command, options) {
         truncated: entries.length >= command.plan.maxEntries,
       });
       contentText = entries.map((entry) => `${entry.type}\t${entry.path}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'create-directory') {
+      structuredContent = executeSovereignDirectoryCreateV1(command.plan.path, options);
+      contentText = JSON.stringify(structuredContent);
+      if (!structuredContent.ok) return frozen({ ok: false, schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+        command, contentText, structuredContent, blocker: structuredContent.blocker,
+        finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
     } else if (command.plan.kind === 'search-project') {
       const results = await searchProjectTree(
         command.plan.root,

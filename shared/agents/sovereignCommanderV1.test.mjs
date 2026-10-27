@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, rm, writeFile, mkdir, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile, lstat, symlink, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -204,6 +204,52 @@ test('read and directory operations execute without an external Commander packag
     assert.ok(list.structuredContent.entries.some((entry) => entry.path.endsWith('child')));
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('create_directory creates only one plain new folder, never overwrites or follows parent links', { skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-mkdir-'));
+  const invoke = (path) => executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY,
+    { targetPaths: [path] },
+  ));
+  try {
+    const folder = join(root, 'new-folder');
+    const created = await invoke(folder);
+    assert.equal(created.ok, true);
+    assert.equal(created.structuredContent.created, true);
+    assert.equal(created.structuredContent.recursive, false);
+    assert.equal((await lstat(folder)).isDirectory(), true);
+    assert.match(created.proofHash, /^[a-f0-9]{64}$/);
+    assert.equal((await invoke(folder)).ok, false, 'existing target cannot be overwritten');
+    assert.equal((await invoke(join(root, 'missing-parent', 'child'))).ok, false, 'no recursive parent creation');
+
+    {
+      const alias = join(root, 'aliased-parent');
+      await symlink(root, alias, 'junction');
+      const redirected = await invoke(join(alias, 'disallowed'));
+      assert.equal(redirected.ok, false);
+      assert.equal(redirected.blocker, 'SOVEREIGN_DIRECTORY_PARENT_REDIRECTED');
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('create_directory rejects non-absolute, traversal and network target paths', () => {
+  for (const path of [
+    'relative-folder',
+    'C:\\Users\\Operator\\..\\Windows\\bad',
+    '\\\\server\\share\\private',
+    '/',
+  ]) {
+    const command = buildSovereignCommanderCommandV1(envelope(
+      SOVEREIGN_COMMANDER_OPERATION.CREATE_DIRECTORY,
+      { targetPaths: [path] },
+    ));
+    assert.equal(command.dispatchAllowed, false, path);
+    assert.ok(command.blockers.includes('sovereign-commander-create-requires-safe-local-absolute-target'));
   }
 });
 

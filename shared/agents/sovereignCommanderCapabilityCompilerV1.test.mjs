@@ -9,6 +9,50 @@ import {
   SOVEREIGN_COMMANDER_PRIMITIVE,
   compileSovereignCommanderCapabilityPlanV1,
 } from './sovereignCommanderCapabilityCompilerV1.mjs';
+import { buildSovereignCommanderCapabilityParityLedger } from './sovereignCommanderCapabilityParityV1.mjs';
+
+test('search session gaps reach existing compiler as bounded observation work with explicit scope', () => {
+  const operations = ['start-search', 'search-files', 'get-more-search-results', 'stop-search', 'list-searches'];
+  const ledger = buildSovereignCommanderCapabilityParityLedger(operations.map((operation) => ({
+    adapter: 'desktop-commander-direct',
+    item: { actionGrant: { operation }, missionId: 'critical-2573-parity' },
+  })), { nowUtc: '2026-10-25T15:00:00.000Z' });
+  const result = compileSovereignCommanderCapabilityPlanV1(ledger);
+  assert.equal(result.buildableCapabilityCount, 5);
+  assert.equal(result.primitiveGapCount, 0);
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.automaticCapabilityConstructionAllowed, false);
+  assert.equal(result.skillForgeActivationAllowed, false);
+  for (const plan of result.plans) {
+    assert.equal(plan.primitive, SOVEREIGN_COMMANDER_PRIMITIVE.OBSERVE_DATA);
+    assert.equal(plan.compilerAction, 'COMPOSE_GUARDED_RECIPE');
+    assert.equal(plan.partialSovereignEquivalent, 'search_project');
+    assert.equal(plan.partialScope, 'CANONICAL_REPOSITORY_LITERAL_SEARCH_ONLY');
+    assert.equal(plan.parityEvidenceScope, 'SOURCE_CATALOG_ONLY');
+    assert.equal(plan.runtimeParityProven, false);
+    assert.equal(plan.canonicalOwnerGoal, '#2573');
+    assert.equal(plan.runtimeMutationAuthority, false);
+  }
+});
+
+test('obsolete search equivalence cannot promote a durable Flywheel lesson', () => {
+  const result = compileSovereignCommanderCapabilityPlanV1({
+    capabilities: [{
+      capabilityId: 'get-more-search-results',
+      state: 'PARITY_PRESENT',
+      sovereignEquivalent: 'search_project',
+      newlyProvenParity: true,
+    }, {
+      capabilityId: 'start-search',
+      state: 'BUILDABLE_GAP',
+      newlyProvenParity: true,
+    }],
+  });
+  assert.equal(result.learningCandidates.length, 0);
+  assert.equal(result.newlyProvenParityCount, 0);
+  assert.equal(result.buildableCapabilityCount, 2);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_WORK_AVAILABLE');
+});
 
 test('compiler decomposes process parity into a guarded primitive recipe without arbitrary shell', () => {
   const result = compileSovereignCommanderCapabilityPlanV1({
