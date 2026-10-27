@@ -13,6 +13,9 @@ on:
       - 'shared/agents/mailboxFreeGoalDiscoveryV1.mjs'
       - 'shared/agents/mailboxFreeGoalDiscoveryV1.test.mjs'
       - 'docs/architecture/mailbox-free-goal-discovery-stage2-v1.md'
+      - 'shared/agents/mailboxFreeGoalReadbackV1.mjs'
+      - 'shared/agents/mailboxFreeGoalReadbackV1.test.mjs'
+      - 'docs/architecture/mailbox-free-goal-readback-stage3-v1.md'
   workflow_dispatch:
     inputs:
       goal_issue:
@@ -47,11 +50,13 @@ jobs:
         run: |
           node --test shared/agents/mailboxFreeWorkflowDispatchV1.test.mjs scripts/mailbox-free-readonly-dispatch.test.mjs
           node --test shared/agents/mailboxFreeGoalDiscoveryV1.test.mjs
+          node --test shared/agents/mailboxFreeGoalReadbackV1.test.mjs
       - name: Parse read-only modules
         run: |
           node --check shared/agents/mailboxFreeWorkflowDispatchV1.mjs
           node --check scripts/mailbox-free-readonly-dispatch.mjs
           node --check shared/agents/mailboxFreeGoalDiscoveryV1.mjs
+          node --check shared/agents/mailboxFreeGoalReadbackV1.mjs
           git diff --check
 
   inspect-goal:
