@@ -76,7 +76,7 @@ async function harness(t, options = {}) {
     }
     if (url.startsWith(`${ROOT}/pulls?state=all&head=`))return response(pull?[pull]:[]);
     if (url===`${ROOT}/pulls`){
-      pull={number:3140,head:{sha:HEAD,ref:body.head,repo:{full_name:REPO}},base:{ref:'main',repo:{full_name:REPO}},merged:false};
+      pull={number:3140,draft:body.draft,head:{sha:HEAD,ref:body.head,repo:{full_name:REPO}},base:{ref:'main',repo:{full_name:REPO}},merged:false};
       if(options.losePrAck&&!options.prAckLost){options.prAckLost=true;throw new Error('PR ack lost');}
       return response(pull,201);
     }
@@ -109,7 +109,7 @@ async function harness(t, options = {}) {
   return {executor,host,task,comment,calls,receipts,root,run:()=>executor.runOnce({issueNumber:1574,commentId:123456}),
     get committed(){return committed;},get completed(){return completed;},get reservations(){return reservations;},
     get pull(){return pull;},get durable(){return durable;},
-    merge(){pull.merged=true;pull.merge_commit_sha=MERGED;}};
+    merge(){pull.draft=false;pull.merged=true;pull.merge_commit_sha=MERGED;}};
 }
 
 test('real canonical reservation and disk receipt chain surround one CAS commit and PR',async t=>{
@@ -130,6 +130,23 @@ test('real canonical reservation and disk receipt chain surround one CAS commit 
   h.merge();const reconciled=await h.executor.reconcile({issueNumber:1574,commentId:123456});
   assert.equal(reconciled.verdict,'MERGED_SOURCE_TASK_RECONCILED');assert.equal(h.completed,true);
   assert.equal(reconciled.unattendedRefillProven,false);
+});
+
+test('zero-Codex GitHub-first source publishes a draft and does not initiate metered review',async t=>{
+  const h=await harness(t);
+  const result=await h.run();
+  assert.equal(result.verdict,'PR_OPEN',JSON.stringify(result));
+  const publishes=h.calls.filter(c=>c.url===`${ROOT}/pulls`&&c.method==='POST');
+  assert.equal(publishes.length,1);
+  assert.equal(publishes[0].body.draft,true);
+  assert.equal(h.pull.draft,true);
+  assert.match(publishes[0].body.body,/DRAFT/);
+  assert.match(publishes[0].body.body,/External Codex auto-review settings may still trigger at READY/);
+  assert.equal(h.calls.some(c=>c.url.includes('/requested_reviewers')
+    || c.url.includes('/dispatches') || c.body?.reviewers?.includes('codex')),false);
+  assert.equal(h.completed,false);
+  assert.equal((await h.executor.reconcile({issueNumber:1574,commentId:123456})).verdict,
+    'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE');
 });
 
 test('forged/edited/expired owner intake is rejected before any source write',async t=>{

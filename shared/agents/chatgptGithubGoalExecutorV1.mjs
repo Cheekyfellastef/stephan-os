@@ -129,9 +129,12 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
     if (current.commentSha256 !== task.commentSha256) stop('OWNER_TASK_CHANGED');
     if (await verifyReservation({task,lease}) !== true) stop('CANONICAL_RESERVATION_LOST');
     if (Date.parse(task.expiresAt) <= Date.parse(now())) stop('OWNER_TASK_EXPIRED');
-    return request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:false,
+    // Open in DRAFT: GitHub may automatically request a metered Codex review on
+    // an ordinary ready PR. Only the existing protected READY/review lifecycle
+    // may later move this PR to reviewable state after separate qualification.
+    return request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:true,
       title:`Goal #${task.issueNumber}: ${task.taskId}`,
-      body:`Bounded GitHub source task under #${task.issueNumber}. Owner intake comment ${task.commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nExisting CI, independent exact-head review and operator-protected merge are required. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
+      body:`Bounded GitHub source task under #${task.issueNumber}. Owner intake comment ${task.commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nPublished as DRAFT to avoid automatically soliciting optional metered review at creation. CI, qualified independent exact-head review and a separately authorised protected READY/merge remain required. External Codex auto-review settings may still trigger at READY. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
   }
 
   return Object.freeze({
