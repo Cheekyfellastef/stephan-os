@@ -1,0 +1,86 @@
+# Goal #2315: one event-only observation of an existing Control Tower run.
+# No new scheduler, mailbox, task/lease source or native execution authority.
+name: Stephanos Control Tower - Automatic Read-Only Proof Readback
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/stephanos-mailbox-free-auto-readback.yml'
+      - 'scripts/mailbox-free-auto-readback-v1.mjs'
+      - 'scripts/mailbox-free-auto-readback-v1.test.mjs'
+      - 'docs/architecture/mailbox-free-auto-readback-stage4-v1.md'
+  workflow_run:
+    workflows:
+      - Stephanos Control Tower - Mailbox-Free Read-Only Pilot
+    types:
+      - completed
+
+permissions: {}
+
+concurrency:
+  group: stephanos-auto-readback-${{ github.event.workflow_run.id || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  contract-test:
+    name: mailbox-free-auto-readback-contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout unprivileged exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test no-authority readback and hostile run events
+        run: node --test scripts/mailbox-free-auto-readback-v1.test.mjs
+      - name: Validate observer syntax and PR diff
+        run: |
+          node --check scripts/mailbox-free-auto-readback-v1.mjs
+          git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+  readback:
+    name: readback
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.repository.full_name == 'Cheekyfellastef/stephan-os' &&
+      github.event.workflow_run.actor.login == 'Cheekyfellastef'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+    steps:
+      - name: Checkout trusted main at event source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Correlate original goal, exact run, jobs and artifact through GET only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/mailbox-free-auto-readback-v1.mjs
+      - name: Retain bounded nonauthoritative discovery proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-mailbox-free-auto-readback-${{ github.event.workflow_run.id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/mailbox-free-goal-readback.json
+          retention-days: 30
+          if-no-files-found: error
