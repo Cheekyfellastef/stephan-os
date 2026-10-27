@@ -35,8 +35,8 @@ test('READ_PROOF_INDEX is an authenticated bounded READ and cannot bypass expiry
   assert.equal(verifyChatGptBridgeRequest(exact, { authenticated: false, transportConfigured: true, nowMs: NOW }).responseStatus, 'BLOCKED_AUTHENTICATION_FAILED');
   assert.equal(verifyChatGptBridgeRequest(exact, { authenticated: true, transportConfigured: true, nowMs: NOW + 600_000 }).responseStatus, 'BLOCKED_EXPIRED_REQUEST');
   assert.equal(verifyChatGptBridgeRequest(request({recordKind:CHATGPT_BRIDGE_RECORD_KINDS.CURRENT_STATUS}), { authenticated: true, transportConfigured: true, nowMs: NOW }).responseStatus, 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED');
-  assert.equal(verifyChatGptBridgeRequest(request({boundedPayload:{exec:'whoami'}}), {authenticated:true,transportConfigured:true,nowMs:NOW}).responseStatus, 'BRIDGE_VERIFIED_PASS');
-  // The read request payload is never used as an execution or arbitrary file selector.
+  assert.equal(verifyChatGptBridgeRequest(request({boundedPayload:{exec:'whoami'}}), {authenticated:true,transportConfigured:true,nowMs:NOW}).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+  // Proof-index reads have no selector, command payload or arbitrary filesystem scope.
 });
 
 test('bridge uses already validated shared proof records without reading arbitrary paths', async () => {
