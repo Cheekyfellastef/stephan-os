@@ -1,4 +1,5 @@
 import { CANONICAL_MAILBOX_ISSUE, RETIRED_CANONICAL_MAILBOX_ISSUES } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
+import { mailboxActionsExecutionQuiescent, mailboxActionEvidenceSummary } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
 import { evaluateCanonicalMailboxSuccessorCandidate } from '../shared/agents/canonicalMailboxRolloverConsumerV1.mjs';
 import { MAILBOX_ROTATION_SCHEMA, auditMailboxRotationComments, projectMailboxRotation,
   validateMailboxRotationCommandShape, validateMailboxRotationRecord, verifyMailboxRotationProbes } from '../shared/agents/canonicalMailboxRotationV1.mjs';
@@ -54,8 +55,9 @@ export async function executeMailboxRotationOnHost(command, {
       state.mailboxRotation = { ...existing, phase: 'DRAINING', barrierCommentId: selectedCommentId, drained: false };
     } else if (command.rotationAction === 'VERIFY') {
       if (CANONICAL_MAILBOX_ISSUE !== existing.successorIssue || existing.phase !== 'FROZEN' || existing.drained !== true) return held('MAILBOX_ROTATION_DRAIN_NOT_PROVEN');
-      const actions = await readActions();
-      if (actions?.complete !== true || actions.pendingRuns?.length !== 0) return held('MAILBOX_ROTATION_ACTIONS_PENDING');
+      const actions = await readActions(existing);
+      if (!mailboxActionsExecutionQuiescent(actions,{now:now(),mainHead:sourceHead,activationHead:existing.cutoverHead})) return held('MAILBOX_ROTATION_ACTIONS_PENDING');
+      state.mailboxRotationActions=actions;
       const predecessor = auditMailboxRotationComments(await readComments(existing.predecessorIssue), {
         issueNumber: existing.predecessorIssue, barrierCommentId: existing.barrierCommentId,
       });
@@ -67,7 +69,7 @@ export async function executeMailboxRotationOnHost(command, {
       const authority = readMailboxAuthorityLiteral(await readAuthoritySource(sourceHead));
       if (!verifyMailboxRotationActivationPull(pull, existing, authority, { merged: true, mainHead: sourceHead })) return held('MAILBOX_ROTATION_ACTIVATION_MERGE_UNVERIFIED');
       if (!RETIRED_CANONICAL_MAILBOX_ISSUES.includes(existing.predecessorIssue)) return held('MAILBOX_ROTATION_PREDECESSOR_NOT_RETIRED');
-      state.mailboxRotation = { ...existing, phase: 'VERIFIED', verifiedAt: now(), sourceHead,
+      state.mailboxRotation = { ...existing, ...mailboxActionEvidenceSummary(actions), phase: 'VERIFIED', verifiedAt: now(), sourceHead,
         probeRequestIds: [...command.probeRequestIds], predecessorInventoryDigest: predecessor.inventoryDigest };
     }
   }
@@ -82,8 +84,9 @@ export async function executeMailboxRotationOnHost(command, {
     persist(state);
   }
   if (!['CANCELLED', 'VERIFIED'].includes(record.phase)) {
-    state.mailboxRotationActions = await readActions();
-    if (state.mailboxRotationActions?.complete !== true || state.mailboxRotationActions.pendingRuns?.length !== 0) {
+    state.mailboxRotationActions = await readActions(state.mailboxRotation);
+    state.mailboxRotation = {...state.mailboxRotation,...mailboxActionEvidenceSummary(state.mailboxRotationActions)};
+    if (!mailboxActionsExecutionQuiescent(state.mailboxRotationActions,{now:now(),mainHead:sourceHead,activationHead:state.mailboxRotation.cutoverHead})) {
       state.mailboxRotation = { ...state.mailboxRotation, phase: 'DRAINING', drained: false };
     }
     state.mailboxRotationInventory = auditMailboxRotationComments(await readComments(record.predecessorIssue), {

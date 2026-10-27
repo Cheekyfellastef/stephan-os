@@ -138,6 +138,8 @@ jobs:
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs \
             shared/agents/sharedWorkspaceProofIndexV1.test.mjs \
+            shared/agents/sharedWorkspaceProofIndexScopedV1.test.mjs \
+            shared/agents/sharedWorkspaceProofIndexIntegrationV1.test.mjs \
             shared/agents/sharedWorkspaceProofIndexBridgeV1.test.mjs \
             shared/agents/shared-workspace-dashboard-feed.test.mjs \
             shared/agents/chatGptParticipantBridgeV1.test.mjs
@@ -196,6 +198,8 @@ jobs:
       - name: Install dependencies
         working-directory: stephanos-ui
         run: npm ci
+      - name: Run combined Shared Workspace backend proof-index API regressions
+        run: node --test --test-concurrency=1 tests/shared-workspace-proof-index-api.test.mjs tests/shared-workspace-dashboard-api.test.mjs
       - name: Run dependency-backed surface render test
         run: node --test --test-concurrency=1 stephanos-ui/src/components/StatusPanel.render.test.mjs
       - name: Build Stephanos UI pipeline from repo root

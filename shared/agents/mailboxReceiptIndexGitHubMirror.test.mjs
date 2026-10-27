@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { MAILBOX_RECEIPT_INDEX_GITHUB_MARKER, MAILBOX_RECEIPT_INDEX_MAX_GITHUB_BYTES, createMailboxReceiptIndexRecord } from './mailboxReceiptIndex.mjs';
 import {
-  buildTrustedMailboxReceiptIndexGitHubBody,
+  buildTrustedMailboxReceiptIndexGitHubBodyV2,
   buildTrustedMailboxReceiptTruthIssueBody,
   extractRetiredMailboxTerminalReceiptsFromTruthIssueBody,
   createTrustedMailboxReceiptIndexFromGitHubComments,
@@ -137,7 +137,7 @@ test('trusted mirror body remains bounded and excludes raw machine data', () => 
     ownerLogin: OWNER,
     timestampUtc: '2026-07-17T20:47:00.000Z',
   });
-  const body = buildTrustedMailboxReceiptIndexGitHubBody(record);
+  const body = buildTrustedMailboxReceiptIndexGitHubBodyV2(record);
   assert.ok(Buffer.byteLength(body, 'utf8') <= MAILBOX_RECEIPT_INDEX_MAX_GITHUB_BYTES);
   assert.match(body, new RegExp(`<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`));
   assert.doesNotMatch(body, /C:\\Users|machinePath|secret\.json/i);
