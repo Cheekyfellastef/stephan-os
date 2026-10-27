@@ -202,7 +202,7 @@ jobs:
         working-directory: stephanos-server
         run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       - name: Run combined Shared Workspace backend proof-index API regressions
-        run: node --test tests/shared-workspace-proof-index-api.test.mjs
+        run: node --test tests/shared-workspace-proof-index-api.test.mjs tests/shared-workspace-dashboard-api.test.mjs tests/workspace-hydration-bridge.test.mjs
       - name: Run dependency-backed surface render test
         run: node --test --test-concurrency=1 stephanos-ui/src/components/StatusPanel.render.test.mjs
       - name: Build Stephanos UI pipeline from repo root
