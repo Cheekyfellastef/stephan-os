@@ -1,4 +1,5 @@
 import { projectGoalAdmissionRequiredTestsV1, projectStrengthenedRetryTestsV1 } from './goalAdmissionRequiredTestsV1.mjs';
+import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from './modelTransportFailureRetryV1.mjs';
 
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -44,6 +45,7 @@ function unique(values) {
 
 export function isRetryableAgentFailureBlocker(value, requiredTests = []) {
   const blocker = text(value);
+  if (isModelTransportFailureV1(blocker)) return true;
   const testPrefix = 'PROVIDER_NEUTRAL_TEST_FAILED:';
   if (blocker.startsWith(testPrefix)) {
     const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
@@ -435,6 +437,13 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     const parkedRetry = state.continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED
       && isRetryableParkedAgentFailure(state.blockers, state.requiredTests);
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE && !parkedRetry) return block(state, 'Retry admission requires active mission continuity or bounded parked agent failures.', timestamp);
+    const transportRetry = state.blockers.some(isModelTransportFailureV1);
+    if (transportRetry && (state.blockers.length !== 1
+        || !SHA40_PATTERN.test(text(event.retryPlanSourceHead))
+        || !modelTransportFailureProofMatchesV1(event.retryProviderFailureProof,
+          state.missionId, state.dispatch.resultId, state.blockers[0]))) {
+      return block(state, 'Model transport retry requires the exact failed provider terminal receipt and current owner plan.', timestamp);
+    }
     const narrowedScope = event.retryAllowedFiles === undefined ? null
       : projectNarrowedMissionSourceScopeV1(state.allowedFiles, event.retryAllowedFiles);
     if (narrowedScope && (!narrowedScope.valid || !SHA40_PATTERN.test(text(event.retryPlanSourceHead)) || state.blockers.length !== 1
@@ -468,6 +477,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       retryableAgentFailures: retryableBlockers,
       retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
       previousRequiredTests: [...state.requiredTests],
+      ...(transportRetry ? { retryProviderFailureProof: clone(event.retryProviderFailureProof),
+        retryPlanSourceHead: event.retryPlanSourceHead } : {}),
       ...(narrowedScope ? { previousAllowedFiles: [...state.allowedFiles], allowedFiles: [...narrowedScope.allowedFiles],
         retryPlanSourceHead: event.retryPlanSourceHead } : {}),
       previousDispatch: clone(state.dispatch),

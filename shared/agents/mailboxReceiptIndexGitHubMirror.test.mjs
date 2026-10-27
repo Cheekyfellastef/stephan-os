@@ -4,7 +4,7 @@ import test from 'node:test';
 
 import { MAILBOX_RECEIPT_INDEX_GITHUB_MARKER, MAILBOX_RECEIPT_INDEX_MAX_GITHUB_BYTES, createMailboxReceiptIndexRecord } from './mailboxReceiptIndex.mjs';
 import {
-  buildTrustedMailboxReceiptIndexGitHubBody,
+  buildTrustedMailboxReceiptIndexGitHubBodyV2,
   buildTrustedMailboxReceiptTruthIssueBody,
   extractRetiredMailboxTerminalReceiptsFromTruthIssueBody,
   createTrustedMailboxReceiptIndexFromGitHubComments,
@@ -16,6 +16,7 @@ import {
 const OWNER = 'Cheekyfellastef';
 const HEAD = 'b3aca072a1c66555a1a2d3b4343f218af8d33ef4';
 const REQUEST_ID = 'receipt-index-mirror-20260717T2045Z';
+
 
 function command(overrides = {}) {
   return {
@@ -137,7 +138,7 @@ test('trusted mirror body remains bounded and excludes raw machine data', () => 
     ownerLogin: OWNER,
     timestampUtc: '2026-07-17T20:47:00.000Z',
   });
-  const body = buildTrustedMailboxReceiptIndexGitHubBody(record);
+  const body = buildTrustedMailboxReceiptIndexGitHubBodyV2(record);
   assert.ok(Buffer.byteLength(body, 'utf8') <= MAILBOX_RECEIPT_INDEX_MAX_GITHUB_BYTES);
   assert.match(body, new RegExp(`<!-- ${MAILBOX_RECEIPT_INDEX_GITHUB_MARKER} -->`));
   assert.doesNotMatch(body, /C:\\Users|machinePath|secret\.json/i);

@@ -13,11 +13,12 @@ on:
       - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
       - 'shared/agents/canonicalMailboxRolloverConsumerV1.mjs'
       - 'shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs'
-      - 'shared/agents/canonicalMailboxAuthorityV1.mjs'
       - 'shared/agents/canonicalMailboxAuthorityV1.test.mjs'
       - 'shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs'
       - 'shared/agents/canonicalMailboxRotation*.mjs'
       - 'scripts/canonical-mailbox-rotation*.mjs'
+      - 'scripts/canonical-mailbox-action-evidence-v2*.mjs'
+      - 'tests/fixtures/canonical-mailbox-rotation/**'
       - 'scripts/canonical-mailbox-execution-ledger-v1.mjs'
       - 'scripts/canonical-mailbox-workflow*.mjs'
       - 'shared/agents/codexDispatchHostOps.mjs'
@@ -96,6 +97,7 @@ jobs:
           scripts/battle-bridge-tailscale-bootstrap-pipe.test.mjs
           scripts/battle-bridge-tailscale-prerequisite-proof.test.mjs
           scripts/battle-bridge-worker-watchdog-post-sync-deadline.test.mjs
+          scripts/canonical-mailbox-action-evidence-v2.test.mjs
           scripts/canonical-mailbox-rollover-github-adapter.test.mjs
           scripts/canonical-mailbox-rotation-protocol.test.mjs
           scripts/canonical-mailbox-workflow-event-gate.test.mjs
@@ -103,6 +105,7 @@ jobs:
           scripts/post-sync-runtime-refresh-windows-canonical-git-hardlink.test.mjs
           scripts/protected-openclaw-merge-continuity-v2.test.mjs
           scripts/prove-protected-workflow-actor-handoff.test.mjs
+          scripts/repository-native-merge-boundary.test.mjs
           scripts/starfield-vr-telemetry-archive.test.mjs
           scripts/stephanos-codex-dispatch-host-operation-v1.test.mjs
           shared/agents/backendColdStartFailureClassifierV1.test.mjs
@@ -126,6 +129,7 @@ jobs:
           shared/agents/canonicalMailboxAuthorityV1.test.mjs
           shared/agents/canonicalMailboxRolloverConsumerV1.test.mjs
           shared/agents/canonicalMailboxRolloverPlannerV1.test.mjs
+          shared/agents/canonicalMailboxRotationActionEvidenceV1.test.mjs
           shared/agents/canonicalMailboxRotationV1.test.mjs
           shared/agents/canonicalMailboxRoutingPolicyV1.test.mjs
           shared/agents/codexBankedResetTelemetryMirror.test.mjs
@@ -262,7 +266,7 @@ jobs:
               priorTruthIssueBody: previousTruth.data.body,
               predecessorComments,
             });
-            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBody(record);
+            const commentBody = receiptIndexMirror.buildTrustedMailboxReceiptIndexGitHubBodyV2(record);
             const existing = receiptIndexMirror.findTrustedMailboxReceiptIndexComment(comments);
             if (existing) {
               await recheck();

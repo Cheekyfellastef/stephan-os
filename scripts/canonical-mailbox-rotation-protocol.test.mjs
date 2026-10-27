@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { CANONICAL_MAILBOX_ISSUE as current, CANONICAL_MAILBOX_RECEIPT_PREDECESSOR as previous } from '../shared/agents/canonicalMailboxAuthorityV1.mjs';
 import { MAILBOX_ROTATION_OPERATION as operation, MAILBOX_ROTATION_SCHEMA, auditMailboxRotationComments,
-  settleMailboxRotationDrain, projectMailboxRotation } from '../shared/agents/canonicalMailboxRotationV1.mjs';
+  settleMailboxRotationDrain, projectMailboxRotation, mailboxRotationCommandAllowed } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 import { buildMailboxRotationFence, findMailboxRotationFence, readMailboxRotationFence,
   mailboxRotationWorkflowAllowed, inventoryMailboxRotationActions } from '../shared/agents/canonicalMailboxRotationFenceV1.mjs';
 import { canonicalMailboxSuccessorBody } from '../shared/agents/canonicalMailboxRolloverConsumerV1.mjs';
@@ -18,6 +18,7 @@ import { serializeBoundedReceiptJson, prepareMailboxRotationPoll } from './battl
 import { buildBattleBridgeGitHubCommandReceipt } from '../shared/agents/battleBridgeGitHubCommandMailbox.mjs';
 import { createTrustedMailboxReceiptIndexFromGitHubComments } from '../shared/agents/mailboxReceiptIndexGitHubMirror.mjs';
 import { classifyPostSyncRefresh } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import { LEGACY_PUBLICATION_CONTRACTS, withMailboxActionEvidence, mailboxActionEvidenceSummary } from '../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs';
 
 const head='a'.repeat(40), target='b'.repeat(40), merged='c'.repeat(40), now='2026-10-25T23:40:00.000Z';
 const repository='Cheekyfellastef/stephan-os';
@@ -40,6 +41,15 @@ const pull = (patch={}) => ({number:4000,state:'open',head:{sha:target,repo:{ful
 const actions = () => ({complete:true,observedAt:now,pendingRuns:[]});
 const sandbox = t => { const root=mkdtempSync(join(tmpdir(),'stephanos-mailbox-rotation-')); t.after(()=>rmSync(root,{recursive:true,force:true})); return root; };
 
+function containedActions(mainHead=head){
+  const c=LEGACY_PUBLICATION_CONTRACTS[0],run={id:99,path:c.path,head_sha:c.head,status:'queued',run_attempt:1,workflow_id:315398307,
+    event:'issue_comment',head_branch:'main',repository:{full_name:repository},head_repository:{full_name:repository}};
+  const proof={run,runAfter:structuredClone(run),attempt:1,workflow:{path:c.path,ref:c.head,sha:c.blob},jobs:{total_count:0,jobs:[]},observedAt:now};
+  const source={mainHead,activationHead:target,modules:LEGACY_PUBLICATION_CONTRACTS.slice(0,2).map(c=>({path:c.module,legacyBuilder:c.legacyBuilder,
+    apiVersion:2,legacyAbsent:true,replacementPresent:true,localBlob:'d'.repeat(40),mainBlob:'d'.repeat(40),activationBlob:'d'.repeat(40)}))};
+  return withMailboxActionEvidence({complete:true,observedAt:now,pendingRuns:[{id:99,workflow:c.path.split('/').at(-1),status:'queued'}]},{proofs:[proof],source});
+}
+
 function fixture() {
   const state={acceptedRequestIds:[],pendingReceiptPublications:[]}, events=[];
   return {state,events,selectedCommentId:100,sourceHead:head,now:()=>now,
@@ -50,6 +60,18 @@ function fixture() {
     persist:s=>events.push({type:'persist',record:structuredClone(s.mailboxRotation)}),
     publishFence:async r=>events.push({type:'fence',record:structuredClone(r)}),readActions:async()=>actions()};
 }
+
+test('FROZEN only permits the nominated exact existing protected native bootstrap',()=>{
+  const frozen={...record(),phase:'FROZEN',drained:true};
+  const merge={operation:'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',prNumber:4000,expectedHead:target,expectedBase:head};
+  assert.equal(mailboxRotationCommandAllowed(merge,200,frozen),true);
+  for(const patch of [{phase:'DRAINING'},{drained:false},{drained:undefined},
+    {predecessorIssue:current-1},{cutoverPrNumber:4001},{cutoverHead:merged},{preparationHead:merged}])
+    assert.equal(mailboxRotationCommandAllowed(merge,200,{...frozen,...patch}),false,JSON.stringify(patch));
+  for(const patch of [{prNumber:4001},{expectedHead:head},{expectedBase:merged},{prNumber:undefined},
+    {expectedHead:undefined},{expectedBase:undefined},{operation:'EXECUTE_UNREVIEWED_MERGE'}])
+    assert.equal(mailboxRotationCommandAllowed({...merge,...patch},200,frozen),false,JSON.stringify(patch));
+});
 
 test('FREEZE persists the local hold before publishing its verified global fence and never self-certifies drain',async()=>{
   const f=fixture(),r=await executeMailboxRotationOnHost(command(),f);
@@ -124,8 +146,8 @@ test('native receipt-only private deliveries retain their IDs and require matchi
   assert.deepEqual(auditMailboxRotationComments([accepted,wrong],{issueNumber:current}).acceptedIds,[cmd.requestId]);
 });
 
-function frozenFenceFixture() {
-  const r={...record(),phase:'FROZEN',drained:true},cmd=control('STATUS'),
+function frozenFenceFixture(summary={}) {
+  const r={...record(),...summary,phase:'FROZEN',drained:true},cmd=control('STATUS'),
     receipt=terminal(cmd,{result:{ok:true,result:{mailboxRotation:projectMailboxRotation(r,auditMailboxRotationComments([],{issueNumber:current}))}}});
   const publicReceipt=JSON.parse(serializeBoundedReceiptJson(receipt));
   const proofs=new Map([[100,comment(command())],[101,comment(cmd,101)],[102,comment(publicReceipt,102,true)]]);
@@ -142,6 +164,39 @@ test('forged/missing receipt, foreign owner and ambiguous global projections nev
   const f=frozenFenceFixture();f.proofs.delete(102);await assert.rejects(f.read(),/RECEIPT_INVALID/);
   const g=frozenFenceFixture();g.proofs.get(102).user.login='attacker';await assert.rejects(g.read(),/RECEIPT_INVALID/);
   assert.throws(()=>findMailboxRotationFence([g.fence,g.fence]),/AMBIGUOUS/);
+});
+
+test('outer drain keeps aggregate status visible and still requires every native and outbox predicate',async()=>{
+  const f=fixture();f.readActions=async()=>containedActions();await executeMailboxRotationOnHost(command(),f);
+  const settled=settleMailboxRotationDrain(f.state,{outboxPendingCount:0,now});
+  assert.equal(settled.mailboxRotation.phase,'FROZEN');assert.equal(settled.mailboxRotation.actionPendingAggregateCount,1);
+  assert.equal(settled.mailboxRotation.actionBlockingCount,0);assert.equal(f.state.mailboxRotationActions.pendingRuns[0].status,'queued');
+  assert.match(projectMailboxRotation(settled.mailboxRotation,settled.mailboxRotationInventory).actionsQuiescenceDigest,/^[a-f0-9]{64}$/);
+  for(const patch of [{acceptedRequestIds:['live-native-action']},{pendingReceiptPublications:[{}]},
+    {mailboxRotationInventory:{...f.state.mailboxRotationInventory,pendingAfterBarrier:['late-action-001']}}])
+    assert.equal(settleMailboxRotationDrain({...f.state,...patch},{outboxPendingCount:0,now}).mailboxRotation.phase,'DRAINING');
+  assert.equal(settleMailboxRotationDrain(f.state,{outboxPendingCount:1,now}).mailboxRotation.phase,'DRAINING');
+});
+
+test('public FROZEN evidence binds the real aggregate count, zero blocking work and native evidence digest',async()=>{
+  const summary=mailboxActionEvidenceSummary(containedActions()),f=frozenFenceFixture(summary),fence=await f.read();
+  assert.equal(fence.actionPendingAggregateCount,1);assert.equal(fence.actionBlockingCount,0);assert.equal(fence.actionsQuiescenceDigest,summary.actionsQuiescenceDigest);
+  for(const patch of [{actionPendingAggregateCount:0},{actionBlockingCount:1},{actionsQuiescenceDigest:'e'.repeat(64)}]){
+    const g=frozenFenceFixture(summary);g.fence.body=buildMailboxRotationFence({...g.r,...patch},{commandCommentId:101,receiptCommentId:102,receiptIssue:current});
+    await assert.rejects(g.read(),/EXECUTION_EVIDENCE_INVALID/);
+  }
+});
+
+test('same-epoch revocation does not authorize adoption: sync still needs matching FROZEN proof and exact merged epoch',async()=>{
+  const a=containedActions(merged),f=frozenFenceFixture(mailboxActionEvidenceSummary(a)),fence=await f.read();
+  const input={state:{mailboxRotation:{...f.r,globalFencePublished:true},acceptedRequestIds:[],pendingReceiptPublications:[]},
+    predecessorComments:[],pull:pull({merged:true,merge_commit_sha:merged}),authoritySource:authority(),mainHead:merged,fence,actions:a,now,
+    outboxLedger:{schemaVersion:'stephanos.battle-bridge-mailbox-outbox-ledger.v3',storeId:'a'.repeat(32),headSequence:10,nextSequence:10,legacy:null}};
+  assert.equal(evaluateMailboxRotationSyncPreflight(input).ok,true);
+  assert.equal(evaluateMailboxRotationSyncPreflight({...input,fence:null}).ok,false);
+  assert.equal(evaluateMailboxRotationSyncPreflight({...input,actions:containedActions(head)}).blocker,'MAILBOX_ROTATION_SYNC_ACTIONS_PENDING');
+  assert.equal(evaluateMailboxRotationSyncPreflight({...input,now:'2026-10-26T00:00:00Z'}).ok,false);
+  assert.equal(evaluateMailboxRotationSyncPreflight({...input,state:{...input.state,acceptedRequestIds:['live-native-action']}}).ok,false);
 });
 test('workflow admission rechecks live main around proof reads and fails stale checkout before side effects',async()=>{
   const f=frozenFenceFixture();
@@ -206,6 +261,7 @@ test('only the exact native protocol adapters naturally reload; GitHub-only help
 test('A→B→C keeps one durable execution identity and successor proof derives from changed authority',async t=>{
   const root=sandbox(t),ledger=createMailboxExecutionLedger(root),source=readFileSync(new URL('../shared/agents/canonicalMailboxRotationV1.mjs',import.meta.url),'utf8');
   const authoritySource=readFileSync(new URL('../shared/agents/canonicalMailboxAuthorityV1.mjs',import.meta.url),'utf8');
+  writeFileSync(join(root,'canonicalMailboxRotationActionEvidenceV1.mjs'),readFileSync(new URL('../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs',import.meta.url),'utf8'));
   let predecessor=current,retired=readMailboxAuthorityLiteral(authoritySource).retired;
   for (const [i,epoch] of [current+1000,current+2000].entries()) {
     const a=join(root,`authority-${i}.mjs`),r=join(root,`rotation-${i}.mjs`);
@@ -232,6 +288,7 @@ test('A→B→C keeps one durable execution identity and successor proof derives
     writeFileSync(hostPath,readFileSync(new URL('./canonical-mailbox-rotation-host-v1.mjs',import.meta.url),'utf8')
       .replace('../shared/agents/canonicalMailboxAuthorityV1.mjs',pathToFileURL(a).href)
       .replace('../shared/agents/canonicalMailboxRotationV1.mjs',pathToFileURL(r).href)
+      .replace('../shared/agents/canonicalMailboxRotationActionEvidenceV1.mjs',pathToFileURL(join(root,'canonicalMailboxRotationActionEvidenceV1.mjs')).href)
       .replace('../shared/agents/canonicalMailboxRolloverConsumerV1.mjs',new URL('../shared/agents/canonicalMailboxRolloverConsumerV1.mjs',import.meta.url).href));
     const host=await import(pathToFileURL(hostPath).href),state={mailboxRotation:{...rotation,phase:'FROZEN',drained:true,globalFencePublished:true}},
       options={...fixture(),state,sourceHead:merged,selectedCommentId:200,

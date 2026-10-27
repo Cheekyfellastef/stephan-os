@@ -15,6 +15,8 @@ import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js'
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
 import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { requestBoundedOllamaJsonReplyV1 } from '../../shared/ai/boundedOllamaJsonReplyV1.mjs';
+import { createLocalBuilderModelRequestV1 } from '../../shared/ai/localBuilderModelRequestV1.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
@@ -576,6 +578,8 @@ function localBuilderPrompt(action = {}, sourceSnapshots = [], testSnapshots = [
         'For an existing file, each path must be one of the supplied Source snapshots and old must be copied exactly from that snapshot, be non-empty, and occur exactly once at the point it is applied.',
         'To create a new allowed file that is absent from Source snapshots, use old as the empty string and new as the complete file contents.',
         'new is the exact replacement text or complete new-file contents.',
+        'For existing files, return compact edits using the smallest unique old-text anchors and only the replacement text. Do not copy unchanged functions or the whole file into old or new.',
+        'Keep the entire response within 8192 generated tokens; use a short summary and no explanations.',
         'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
@@ -649,19 +653,10 @@ async function callLocalBuilder(action, options = {}) {
     const retryInstruction = attempt > 1
       ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
-    const response = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        format: 'json',
-        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction }],
-        options: { temperature: 0.1 },
-      }),
-    });
-    if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
-    const payload = await response.json();
+    const payload = await requestBoundedOllamaJsonReplyV1(endpoint, createLocalBuilderModelRequestV1({
+      model, patchFallbackAllowed,
+      prompt: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction,
+    }), { fetchImpl });
     let parsed;
     try {
       parsed = JSON.parse(text(payload?.message?.content));
