@@ -60,16 +60,21 @@ test('signal validation accepts GitHub second-resolution UTC and fails closed on
   assert.equal(validateBattleBridgeMainAdvanceSignal({ ...signal, syncAuthorityGranted: true }).ok, false);
 });
 
-test('GitHub workflow signals main-associated events with a bounded publisher', () => {
+test('GitHub workflow observes main-associated events with a bounded artifact producer', () => {
   const workflow = readFileSync('.github/workflows/battle-bridge-main-advance-express-sync-v1.yml', 'utf8');
   assert.match(workflow, /push:\s*\n\s*branches: \[main\]/);
   assert.match(workflow, /workflow_run:\s*\n\s*workflows: \[Protected Operator Merge Queue Boundary\]\s*\n\s*types: \[completed\]/);
-  assert.match(workflow, /issues: write/);
+  assert.doesNotMatch(workflow, /issues: write/);
+  assert.match(workflow, /uses: actions\/upload-artifact@v4/);
+  assert.match(workflow, /retention-days: 30/);
+  assert.match(workflow, /observation_ready/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /node scripts\/publish-battle-bridge-main-advance-signal\.mjs/);
-  assert.doesNotMatch(workflow, /^\s*pull_request(?:_target)?:/m);
+  assert.match(workflow, /^\s*pull_request:/m);
+  assert.doesNotMatch(workflow, /^\s*pull_request_target:/m);
   assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
-  assert.doesNotMatch(workflow, /ref:.*github\.event\.pull_request\.(?:head|merge_commit_sha)/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/);
+  assert.doesNotMatch(workflow, /ref:.*github\.event\.pull_request\.merge_commit_sha/);
   assert.doesNotMatch(workflow, /workflow_dispatch:/);
 });
 
@@ -79,7 +84,7 @@ test('main signal uses protected default-branch code and bounded post-merge data
   assert.match(workflow, /github\.event\.workflow_run\.conclusion == 'success'/);
   assert.match(workflow, /github\.event\.workflow_run\.event == 'workflow_dispatch'/);
   assert.match(workflow, /github\.event\.workflow_run\.head_branch == 'main'/);
-  assert.equal((workflow.match(/uses: actions\/checkout@v4/g) || []).length, 1);
+  assert.equal((workflow.match(/uses: actions\/checkout@v4/g) || []).length, 2);
   assert.equal((workflow.match(/ref: \$\{\{ github\.sha \}\}/g) || []).length, 1);
   assert.match(workflow, /contents: read/);
   assert.doesNotMatch(workflow, /contents: write|pull-requests: write|id-token: write|secrets\./);

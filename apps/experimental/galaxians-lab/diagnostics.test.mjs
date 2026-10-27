@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   formatGalaxiansLabDiagnostics,
@@ -51,4 +52,19 @@ test('F1 toggles without modifiers; key repeats and unrelated keys are ignored',
     assert.equal(isGalaxiansLabDiagnosticsKey({ key: 'F1', ...change }), false);
   }
   assert.equal(isGalaxiansLabDiagnosticsKey(null), false);
+});
+
+test('independently expanded Diagnostics toggle is never part of palette mode button state updates', () => {
+  const js = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  assert.match(js, /const modeButtons = Array\.from\(document\.querySelectorAll\('\.mode-btn\[data-mode\]'\)\)/);
+  assert.match(js, /button\.classList\.toggle\('is-active', button\.dataset\.mode === mode\)/);
+  for (const mode of ['original', 'basic', 'deluxe']) {
+    assert.match(html, new RegExp('data-mode="' + mode + '" class="mode-btn'));
+  }
+  const diagnosticButton = html.match(/<button\b[^>]*id="lab-diagnostics-toggle"[^>]*>/);
+  assert.ok(diagnosticButton, 'the separate Diagnostics control must exist');
+  assert.match(diagnosticButton[0], /class="mode-btn"/);
+  assert.doesNotMatch(diagnosticButton[0], /data-mode=/);
+  assert.match(diagnosticButton[0], /aria-expanded="false"/);
 });

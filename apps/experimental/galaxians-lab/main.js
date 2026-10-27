@@ -30,7 +30,9 @@ const ctx = canvas.getContext('2d', { alpha: false });
 ctx.imageSmoothingEnabled = false;
 
 const modeLabel = document.getElementById('mode-label');
-const modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
+// Only palette controls belong to this group. The Diagnostics toggle
+// maintains its own visible/aria-expanded state independently of setMode().
+const modeButtons = Array.from(document.querySelectorAll('.mode-btn[data-mode]'));
 const debugButton = document.getElementById('lab-diagnostics-toggle');
 const debugPanel = document.getElementById('lab-diagnostics');
 
