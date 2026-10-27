@@ -2,6 +2,7 @@
 // Goal #2315: source-bound GitHub Actions GET-only proof; no command or mutation routes.
 import { readFileSync, lstatSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   MAILBOX_FREE_DISPATCH_SCHEMA,
@@ -68,9 +69,22 @@ async function main() {
   try {
     const event = eventFromTrustedRunner(process.env);
     const admission = validateMailboxFreeWorkflowDispatchV1(event, process.env);
-    receipt = admission.ok
-      ? await readMailboxFreeGoalV1(admission, process.env.GITHUB_TOKEN)
-      : fail(admission.blocker);
+    if (!admission.ok) {
+      receipt = fail(admission.blocker);
+    } else {
+      // The runner must execute the exact checked-out protected main, not merely
+      // trust the workflow metadata or mutable ref named by the caller.
+      let checkoutSha = '';
+      try {
+        checkoutSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: process.env.GITHUB_WORKSPACE, encoding: 'utf8',
+          timeout: 3000, windowsHide: true,
+        }).trim();
+      } catch {}
+      receipt = checkoutSha === admission.checkedOutHead
+        ? await readMailboxFreeGoalV1(admission, process.env.GITHUB_TOKEN)
+        : fail('CHECKED_OUT_MAIN_MISMATCH', admission);
+    }
   } catch {
     receipt = fail('TRUSTED_ACTIONS_EVENT_UNAVAILABLE');
   }
