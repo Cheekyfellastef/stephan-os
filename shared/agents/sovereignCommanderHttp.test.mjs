@@ -9,6 +9,33 @@ import {
 
 const TOKEN = 't'.repeat(48);
 
+test('authenticated HTTP disconnect aborts the same pending action signal', async () => {
+  let started, stopped;
+  const began = new Promise(resolve => { started = resolve; });
+  const ended = new Promise(resolve => { stopped = resolve; });
+  await withServer(async ({ base }) => {
+    const headers = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+    const init = await fetch(base + '/mcp', { method: 'POST', headers,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }) });
+    await init.json();
+    const controller = new AbortController();
+    const pending = fetch(base + '/mcp', { method: 'POST',
+      headers: { ...headers, 'mcp-session-id': init.headers.get('mcp-session-id') },
+      signal: controller.signal,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: {} }) });
+    const rejected = assert.rejects(pending);
+    await began; controller.abort(); await rejected;
+    await Promise.race([ended, new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(Error('DISCONNECT_DID_NOT_CANCEL')), 2000); timer.unref();
+    })]);
+  }, { handlerFactory: () => async (method, _params, message) => {
+    if (method === 'initialize') return {};
+    started();
+    await new Promise(resolve => message.signal.addEventListener('abort', resolve, { once: true }));
+    stopped(); return {};
+  } });
+});
+
 async function withServer(action, overrides = {}) {
   const observed = [];
   const created = await createSovereignCommanderHttpServer({
@@ -280,7 +307,7 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
   assert.equal(spawnCount, 1);
 
   activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-    + JSON.stringify({
+    + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1',
       ok: true,
       finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
       reporting: {
@@ -344,7 +371,7 @@ test('continuous repair guardian rejects a green repair receipt without durable 
 
   timers[0].fn();
   activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-    + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
+    + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
     + '\n');
   activeChild.emit('close', 0);
 
@@ -356,4 +383,206 @@ test('continuous repair guardian rejects a green repair receipt without durable 
   assert.equal(status.lastReportBlocker, 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING');
 
   guardian.stop();
+});
+
+function retryGuardianHarness() {
+  const timers = [];
+  const cleared = new Set();
+  let child;
+  let spawns = 0;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl: () => {
+      spawns++;
+      child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      return child;
+    },
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: timer => cleared.add(timer),
+    intervalMs: 60_000,
+  });
+  const cycle = ({ head = 'a'.repeat(40), blocker = 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING', ok = false, exitCode = ok ? 0 : 2, receiptPatch = {} } = {}) => {
+    const timer = timers.at(-1);
+    assert.equal(cleared.has(timer), false);
+    timer.fn();
+    assert.equal(guardian.runNow(), false, 'in-flight cycle retains single flight');
+    child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=' + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1',
+      ok, sourceHead: head, blocker,
+      finalVerdict: ok ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED',
+      reporting: { ok: true, outcome: ok ? 'HEALTHY' : 'BLOCKED', status: ok ? 'READY' : 'ATTENTION_REQUIRED' },
+      ...receiptPatch,
+    }) + '\n');
+    child.emit('close', exitCode);
+    return timers.at(-1).delay;
+  };
+  return { guardian, cycle, timers, cleared, spawns: () => spawns };
+}
+
+test('identical exact-source repair holds back off to a bounded recheck without claiming recovery', () => {
+  const h = retryGuardianHarness();
+  try {
+    assert.deepEqual(Array.from({ length: 8 }, () => h.cycle()), [
+      60_000, 120_000, 240_000, 480_000, 900_000, 900_000, 900_000, 900_000,
+    ]);
+    const state = h.guardian.status();
+    assert.equal(state.successCount, 0);
+    assert.equal(state.failureCount, 8);
+    assert.equal(state.consecutiveFailureCount, 8);
+    assert.equal(state.nextDelayMs, 900_000);
+    assert.equal(state.lastOk, false);
+    assert.equal(state.lastBlocker, 'REPAIR_ORIGINAL_EXECUTION_RECEIPT_MISSING');
+    assert.equal(state.running, false);
+    assert.equal(state.scheduled, true);
+    assert.equal(h.spawns(), 8);
+  } finally { h.guardian.stop(); }
+});
+
+test('changed source or blocker and genuine recovery reset automatic repair pacing', () => {
+  const h = retryGuardianHarness();
+  try {
+    h.cycle();
+    assert.equal(h.cycle(), 120_000);
+    assert.equal(h.cycle({ blocker: 'BACKEND_8787_UNHEALTHY' }), 60_000);
+    assert.equal(h.cycle({ blocker: 'BACKEND_8787_UNHEALTHY' }), 120_000);
+    assert.equal(h.cycle({ head: 'b'.repeat(40), blocker: 'BACKEND_8787_UNHEALTHY' }), 60_000);
+    assert.equal(h.cycle({ ok: true, blocker: '' }), 60_000);
+    assert.equal(h.guardian.status().consecutiveFailureCount, 0);
+    assert.equal(h.guardian.status().successCount, 1);
+    assert.equal(h.cycle(), 60_000);
+  } finally { h.guardian.stop(); }
+});
+
+test('missing child exit code cannot turn an earlier green receipt into successful execution', () => {
+  const h = retryGuardianHarness();
+  try {
+    h.cycle({ ok: true, blocker: '', exitCode: null });
+    assert.equal(h.guardian.status().lastOk, false);
+    assert.equal(h.guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+    assert.equal(h.guardian.status().successCount, 0);
+    assert.equal(h.guardian.status().failureCount, 1);
+  } finally { h.guardian.stop(); }
+});
+
+test('every unsuccessful cycle stays BLOCKED despite contradictory green child verdicts', () => {
+  for (const receiptPatch of [
+    { ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+    { ok: undefined, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+    { ok: true, reporting: null, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' },
+  ]) {
+    const h = retryGuardianHarness();
+    try {
+      h.cycle({ exitCode: 2, receiptPatch });
+      assert.equal(h.guardian.status().lastOk, false);
+      assert.equal(h.guardian.status().lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      assert.equal(h.guardian.status().successCount, 0);
+    } finally { h.guardian.stop(); }
+  }
+});
+
+test('timed-out Windows repair holds descendant custody instead of launching a second cycle', () => {
+  for (const killOutcome of [true, false]) {
+    const timers = [];
+    let child;
+    let launches = 0;
+    let killCount = 0;
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      spawnImpl: () => {
+        launches++;
+        child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => { killCount++; return killOutcome; };
+        return child;
+      },
+      setTimeoutImpl: (fn, delay) => {
+        const timer = { fn, delay, unref() {} };
+        timers.push(timer);
+        return timer;
+      },
+      clearTimeoutImpl: () => {},
+      startDelayMs: 5,
+      intervalMs: 60_000,
+      maxRuntimeMs: 240_000,
+    });
+    try {
+      timers[0].fn();
+      assert.equal(launches, 1);
+      assert.equal(guardian.status().running, true);
+      const timeout = timers.at(-1);
+      assert.equal(timeout.delay, 240_000);
+      timeout.fn();
+      const held = guardian.status();
+      assert.equal(killCount, 1);
+      assert.equal(held.timeoutCustodyHeld, true);
+      assert.equal(held.lastOk, false);
+      assert.equal(held.lastBlocker, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN');
+      assert.equal(held.lastFinalVerdict, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED');
+      assert.equal(held.failureCount, 1);
+      assert.equal(held.running, false);
+      assert.equal(held.scheduled, false);
+      assert.equal(guardian.runNow(), false);
+      assert.equal(timers.length, 2, 'no retry timer may follow an unqualified timeout');
+
+      // Even a late success receipt or direct-child exit proves nothing about
+      // grandchild Task Scheduler/PowerShell work still in flight on Windows.
+      child.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
+        + JSON.stringify({ schemaVersion: 'stephanos.sovereign-commander-stephanos-repair.v1', ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
+          reporting: { ok: true, outcome: 'HEALTHY' } }) + '\n');
+      child.emit('close', 0);
+      assert.equal(guardian.status().timeoutCustodyHeld, true);
+      assert.equal(guardian.status().successCount, 0);
+      assert.equal(guardian.runNow(), false);
+      assert.equal(launches, 1);
+      assert.equal(timers.length, 2);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('close delivered synchronously by timeout kill still holds original child custody', () => {
+  const timers = [];
+  let launches = 0;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl: () => {
+      launches++;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => { child.emit('close', 0); return true; };
+      return child;
+    },
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: () => {},
+    startDelayMs: 5,
+    intervalMs: 60_000,
+  });
+  try {
+    timers[0].fn();
+    timers.at(-1).fn();
+    assert.equal(guardian.status().timeoutCustodyHeld, true);
+    assert.equal(guardian.status().lastOk, false);
+    assert.equal(guardian.status().scheduled, false);
+    assert.equal(guardian.runNow(), false);
+    assert.equal(launches, 1);
+  } finally { guardian.stop(); }
+});
+
+test('manual repair wake cancels the old automatic timer and stop clears pending delay', () => {
+  const h = retryGuardianHarness();
+  const pending = h.timers.at(-1);
+  assert.equal(h.guardian.runNow(), true);
+  assert.equal(h.cleared.has(pending), true);
+  assert.equal(h.guardian.status().nextDelayMs, null);
+  h.guardian.stop();
+  assert.equal(h.guardian.status().scheduled, false);
+  assert.equal(h.guardian.status().nextDelayMs, null);
 });

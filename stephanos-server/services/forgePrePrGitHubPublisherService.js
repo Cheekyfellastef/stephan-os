@@ -47,7 +47,8 @@ export async function publishForgePrePrToGitHub(input = {}) {
     // cannot commit between a preflight read and publication of a source ref.
     const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
       if (state.cancelled === true || state.currentPhase === 'CANCELLED'
-          || state.storeMetadata?.originalSourceAttemptFence) {
+          || state.storeMetadata?.originalSourceAttemptFence
+          || state.storeMetadata?.supervisedRecoveryMaintenance) {
         return fail('ORIGINAL_SOURCE_ATTEMPT_FENCED');
       }
       return publishUnfencedForgePrePr(input);

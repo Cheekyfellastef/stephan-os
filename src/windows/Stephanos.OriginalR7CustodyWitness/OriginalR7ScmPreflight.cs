@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using Microsoft.Win32;
 
 namespace Stephanos.OriginalR7CustodyWitness;
@@ -155,6 +156,12 @@ internal static class OriginalR7ScmPreflight
             using RegistryKey? key = Registry.LocalMachine.OpenSubKey(ServiceKey, writable: false);
             if (key is null) return Held("R7_SCM_SERVICE_NOT_REGISTERED");
 
+            SecurityIdentifier serviceSid = (SecurityIdentifier)new NTAccount(
+                "NT SERVICE", ServiceName).Translate(typeof(SecurityIdentifier));
+            byte[]? registrationSecurity = OriginalR7RegistryProtection.ReadDescriptor(key);
+            if (!OriginalR7RegistryProtection.Evaluate(registrationSecurity, serviceSid))
+                return Held("R7_SCM_REGISTRY_PROTECTION_UNPROVEN");
+
             string? image = key.GetValue("ImagePath", null,
                 RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
             string? account = key.GetValue("ObjectName", null,
@@ -187,6 +194,14 @@ internal static class OriginalR7ScmPreflight
             if (length != after.Length || modified != after.LastWriteTimeUtc
                 || !LocalImageHasNoReparseAncestors(runningBinary))
                 return Held("R7_SCM_EXECUTABLE_FILE_UNPROVEN");
+
+            // Detect a changed sampled descriptor on the retained key, rather
+            // than reading security from a second path-selected registration.
+            // This is not continuous protection or parent-key replacement proof.
+            byte[]? afterSecurity = OriginalR7RegistryProtection.ReadDescriptor(key);
+            if (afterSecurity is null || !CryptographicOperations.FixedTimeEquals(
+                registrationSecurity!, afterSecurity))
+                return Held("R7_SCM_REGISTRY_PROTECTION_CHANGED");
 
             return Evaluate(account, type, start, sidType, image, runningBinary,
                 pinnedDigest, observedDigest);

@@ -149,6 +149,8 @@ export async function refreshSovereignBuilder8Capacity(options = {}) {
   }
   const probe = await (options.probeModel || probeStephanosNativeOllamaV1)({
     endpoint, model, fetchImpl: options.fetchImpl, timeoutMs: options.probeTimeoutMs || 30000,
+    workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, env,
+    nowMs: typeof options.nowMs === 'function' ? options.nowMs : Date.now,
   });
   if (probe?.ok !== true || probe.model !== model || probe.loadState !== 'READY'
     || !/^[a-f0-9]{64}$/.test(text(probe.requestSha256))

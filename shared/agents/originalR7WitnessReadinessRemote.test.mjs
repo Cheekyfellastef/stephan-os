@@ -5,10 +5,16 @@ import {
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import {
+  checkpointTerminalMailboxReceipt,
   serializeBoundedReceiptJson,
 } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 const HEAD = 'a'.repeat(40);
+const readinessGuardFields = [
+  'originalLeaseReleased', 'privilegedWindowsWitnessCommissioned',
+  'sourceMutationAllowed', 'arbitraryShellAllowed',
+];
 const mandatory = [
   'INDEPENDENT_PROTECTED_SERVICE_SID_NOT_COMMISSIONED',
   'ORIGINAL_WRITER_OS_EXCLUSION_AND_NEGATIVE_TESTS_UNPROVEN',
@@ -21,7 +27,7 @@ const shape = (extra = {}) => ({
   requestId: 'r7-witness-readiness-test-v1',
   operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 2808, branch: 'main', operatorApproval: 'operator-approved',
+  issueNumber: CANONICAL_MAILBOX_ISSUE, branch: 'main', operatorApproval: 'operator-approved',
   expectedHead: HEAD, expiresAt: '2026-10-01T12:00:00.000Z',
   remoteAction: 'original-r7-witness-readiness', ...extra,
 });
@@ -48,7 +54,7 @@ const mailboxReceipt = inner => ({
   requestId: 'r7-witness-readiness-test-v1',
   operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
   repository: 'Cheekyfellastef/stephan-os',
-  issueNumber: 2808, branch: 'main', state: 'DONE', expectedHead: HEAD,
+  issueNumber: CANONICAL_MAILBOX_ISSUE, branch: 'main', state: 'DONE', expectedHead: HEAD,
   acceptedAt: '2026-10-17T14:00:00.000Z',
   heartbeatAt: '2026-10-17T14:00:02.000Z',
   completedAt: '2026-10-17T14:00:02.000Z',
@@ -57,6 +63,23 @@ const mailboxReceipt = inner => ({
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     requestId: 'r7-witness-readiness-test-v1', result: inner },
 });
+
+function projectCheckpointThroughPublicReceipt(inner, bound = 65_536) {
+  // Production persists an already projected receipt before publishing it.
+  // Re-publish the public result too, including the smaller core projection.
+  let persisted;
+  checkpointTerminalMailboxReceipt({}, mailboxReceipt(inner), {
+    persist: state => { persisted = structuredClone(state); },
+  });
+  let receipt = persisted.lastReceipt;
+  for (let pass = 0; pass < 2; pass++) {
+    const json = serializeBoundedReceiptJson(receipt, bound);
+    assert.ok(Buffer.byteLength(json, 'utf8') <= bound);
+    receipt = JSON.parse(json);
+  }
+  assert.equal(receipt.issueNumber, CANONICAL_MAILBOX_ISSUE);
+  return receipt;
+}
 
 test('fixed original-r7 readiness action samples immutable Windows script without MCP mutation', async () => {
   const observed = rawObservation();
@@ -92,15 +115,20 @@ test('fixed original-r7 readiness action samples immutable Windows script withou
   assert.equal(calls.some(args => args.includes('-File')), false);
   const text = JSON.stringify(result);
   assert.doesNotMatch(text, /DO_NOT_EXPOSE_WINDOWS_PATH/);
-  for (const bound of [65_536, 4_500]) {
-    const publicResult = JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(result), bound));
+  for (const bound of [65_536, 9_216, 4_500]) {
+    const publicResult = projectCheckpointThroughPublicReceipt(result, bound);
     const summary = publicResult.result.result.witnessReadiness;
+    assert.ok(summary, 'readiness must survive local checkpoint and repeated public projection');
+    for (const field of readinessGuardFields) assert.equal(publicResult.result.result[field], false, field);
     assert.equal(summary.servicePresent, true);
     assert.equal(summary.serviceStatus, 'RUNNING');
     assert.equal(summary.publisherTaskState, 'NOT_FOUND');
     assert.equal(summary.publisherOriginalWriterAuthenticated, false);
     assert.equal(summary.finalVerdict, 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED');
     assert.equal(summary.leaseReleaseAuthority, false);
+    assert.equal(summary.sourceMutationAuthority, false);
+    assert.equal(summary.physicalPickupProven, false);
+    assert.equal(summary.historicalOutcome, 'UNKNOWN');
     assert.deepEqual(summary.blockers, mandatory);
     assert.doesNotMatch(JSON.stringify(publicResult), /DO_NOT_EXPOSE_WINDOWS_PATH/);
   }
@@ -115,7 +143,7 @@ test('fixed original-r7 readiness action samples immutable Windows script withou
   assert.equal(stale.blocker, 'SOVEREIGN_R7_READINESS_UNTRUSTED_OR_STALE');
 });
 
-test('mailbox projects NEVER_RUN without claiming an execution success or identity', () => {
+test('mailbox retains publisher result classes without claiming witness execution or identity', () => {
   const raw = {
     ok: true, remoteAction: 'original-r7-witness-readiness',
     finalVerdict: 'SOVEREIGN_R7_READINESS_OBSERVED_HOLD',
@@ -133,12 +161,17 @@ test('mailbox projects NEVER_RUN without claiming an execution success or identi
       finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
     },
   };
-  const projected = JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(raw), 4500))
-    .result.result.witnessReadiness;
-  assert.equal(projected.publisherLastResultClass, 'NEVER_RUN');
-  assert.equal(projected.publisherOriginalWriterAuthenticated, false);
-  assert.equal(projected.leaseReleaseAuthority, false);
-  assert.equal(projected.authenticatedWitness, false);
+  for (const resultClass of ['ZERO', 'NONZERO', 'NEVER_RUN', 'UNKNOWN']) {
+    raw.witnessReadiness.publisherLastResultClass = resultClass;
+    const projected = projectCheckpointThroughPublicReceipt(raw, 4500).result.result;
+    assert.ok(projected.witnessReadiness);
+    assert.equal(projected.witnessReadiness.publisherLastResultClass, resultClass);
+    assert.equal(projected.witnessReadiness.publisherOriginalWriterAuthenticated, false);
+    assert.equal(projected.witnessReadiness.leaseReleaseAuthority, false);
+    assert.equal(projected.witnessReadiness.authenticatedWitness, false);
+    assert.equal(projected.witnessReadiness.historicalOutcome, 'UNKNOWN');
+    for (const field of readinessGuardFields) assert.equal(projected[field], false, field);
+  }
 });
 
 test('closed-world readiness command rejects caller-selected paths, elevation and release', () => {
@@ -171,11 +204,11 @@ test('public readiness summary refuses caller-forged affirmative authority and u
       finalVerdict: 'ORIGINAL_R7_WINDOWS_WITNESS_NOT_COMMISSIONED',
     },
   };
-  const project = () => JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(inner))).result.result.witnessReadiness;
+  const project = () => projectCheckpointThroughPublicReceipt(inner).result.result.witnessReadiness;
   assert.deepEqual(project().blockers, mandatory);
   inner.witnessReadiness.blockers = [...mandatory, 'PUBLISHER_TASK_CONTEXT_UNAVAILABLE'];
   for (const limit of [65_536, 4_500]) {
-    const receipt = JSON.parse(serializeBoundedReceiptJson(mailboxReceipt(inner), limit));
+    const receipt = projectCheckpointThroughPublicReceipt(inner, limit);
     const detail = receipt.result.result.witnessReadiness;
     assert.ok(detail, 'unavailable publisher context must remain visible');
     assert.deepEqual(detail.blockers, inner.witnessReadiness.blockers);
@@ -184,6 +217,19 @@ test('public readiness summary refuses caller-forged affirmative authority and u
     assert.equal(detail.publisherOriginalWriterAuthenticated, false);
   }
   inner.witnessReadiness.blockers = mandatory;
+  for (const field of readinessGuardFields) {
+    for (const invalid of [true, null, undefined, 'false', 0]) {
+      const forged = structuredClone(inner);
+      if (invalid === undefined) delete forged[field];
+      else forged[field] = invalid;
+      for (const bound of [65_536, 4_500]) {
+        const projected = projectCheckpointThroughPublicReceipt(forged, bound).result.result;
+        assert.equal(projected.witnessReadiness, null, `${field}: ${invalid}`);
+        assert.equal(projected[field], invalid === true ? true : null,
+          'projection must not turn affirmative or missing authority into a false guard');
+      }
+    }
+  }
   inner.witnessReadiness.authenticatedWitness = true;
   assert.equal(project(), null);
   inner.witnessReadiness.authenticatedWitness = false;
