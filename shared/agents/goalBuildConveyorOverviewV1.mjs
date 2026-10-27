@@ -184,9 +184,62 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     selectedForAdmission:lane.selectedForAdmission===true,
     physicalBuildProven:false,
   })):[];
+  // Previously published, source-validated Shared Workspace capacity receipts
+  // disclose distinct named worker identities not necessarily bound to a
+  // BUILDING goal. Availability is not physical pickup or edit/commit proof.
+  const capacityRoutes = new Map([
+    ['CHATGPT_GITHUB', 'chatgpt-github-build-capacity-current'],
+    ['DESKTOP_COMMANDER', 'desktop-commander-build-capacity-current'],
+    ['SOVEREIGN_COMMANDER', 'sovereign-commander-build-capacity-current'],
+    ['FOUNDRY_FORGE', 'foundry-forge-build-capacity-current'],
+  ]);
+  const receiptCandidates = array(statusRecords).flatMap(record => {
+    const receipt = record?.capacityReceipt;
+    const route = String(receipt?.route || '');
+    const workerId = String(receipt?.workerId || '');
+    const expectedStatus = capacityRoutes.get(route);
+    if (record?.kind !== 'stephanos.shared_workspace.status'
+      || receipt?.schemaVersion !== 'stephanos.build-lane-capacity-receipt.v1'
+      || !expectedStatus || !workerId || workerId.length > 120
+      || record.participantId !== workerId
+      || record.statusId !== expectedStatus
+        && !(route === 'FOUNDRY_FORGE' && record.workerScopedCapacity === true
+          && /^foundry-forge-worker-capacity-[a-f0-9]{24}$/.test(String(record.statusId || '')))
+      || typeof record.timestampUtc !== 'string'
+      || record.timestampUtc !== receipt.observedAtUtc
+      || !Number.isFinite(time(record.timestampUtc))
+      || !Number.isFinite(time(receipt.expiresAtUtc))
+      || time(receipt.expiresAtUtc) <= time(record.timestampUtc)
+      || time(receipt.expiresAtUtc) - time(record.timestampUtc) > 60 * 60_000
+      || receipt.repository !== 'Cheekyfellastef/stephan-os'
+      || !['READY','HELD','BLOCKED','UNAVAILABLE','UNKNOWN'].includes(String(receipt.state || ''))) return [];
+    const live = fresh(record.timestampUtc, nowMs, maxAgeMs)
+      && nowMs <= time(receipt.expiresAtUtc);
+    return [{
+      id: route + ':' + workerId, workerId, route,
+      state: live ? String(receipt.state) : 'STALE',
+      trafficLight: live && receipt.state === 'READY' ? 'AMBER' : 'GREY',
+      receiptId: String(receipt.receiptId || ''),
+      queueDepth: count(receipt.queueDepth),
+      observedAtUtc: record.timestampUtc,
+      expiresAtUtc: live ? new Date(Math.min(time(record.timestampUtc) + maxAgeMs,
+        time(receipt.expiresAtUtc))).toISOString() : '',
+      physicalBuildProven: false,
+    }];
+  });
+  const byCapacityIdentity = new Map();
+  for (const receipt of receiptCandidates) {
+    const prior = byCapacityIdentity.get(receipt.id);
+    if (!prior || time(receipt.observedAtUtc) > time(prior.observedAtUtc)) {
+      byCapacityIdentity.set(receipt.id, receipt);
+    }
+  }
+  const octopusCapacityBuilders = [...byCapacityIdentity.values()]
+    .sort((a,b) => a.route.localeCompare(b.route) || a.workerId.localeCompare(b.workerId));
   const octopusFleet={
     schemaVersion:'stephanos.goal-conveyor-octopus-inventory.v1',readOnly:true,
     controllers:octopusControllers,lanes:octopusLanes,builders:octopusBuilders,
+    capacityBuilders:octopusCapacityBuilders,capacityBuilderCount:octopusCapacityBuilders.length,
     logicalLanes:octopusLogicalLanes,
     logicalTruth:logicalReady?'REPORTED_NOT_PHYSICAL_PROOF':String(logical?.truth||'UNKNOWN'),
     controllerCount:octopusControllers.length,observedLaneCount:octopusLanes.length,
@@ -194,7 +247,7 @@ export function projectGoalBuildConveyorOverviewV1(projection = {}, { nowMs = Da
     observedBuilderCount:buildKnown?octopusBuilders.length:null,
     logicalLaneCount:logicalReady?octopusLogicalLanes.length:null,
     targetMaterialLanes:buildLive?count(build.targetMaterialLaneCount):null,
-    truthBoundary:'Five controller hosts, named execution lanes, worker identities and logical goal lanes are different layers. Active/parked lane claims are not physical pickup. Green requires fresh lane-specific verified material proof. Capacity targets are not invented builders. Stale reports cannot remain green.',
+    truthBoundary:'Five controller hosts, named execution lanes, worker identities, provider capacity and logical goal lanes are different layers. Active/parked lane claims are not physical pickup. Green requires fresh lane-specific verified material proof. Provider READY is never physical pickup or BUILDING. Capacity targets are not invented builders. Stale reports cannot remain green.',
   };
   const estate = projection.goalEstate;
   const estateKnown = estate?.schemaVersion === 'stephanos.goal-dashboard-estate-summary.v1';

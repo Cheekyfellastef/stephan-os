@@ -32,7 +32,15 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
       logicalControllerId:'logical-'+i,goalRef:'#'+(700+i),title:'Goal '+i,
       hostControllerTitle:'Octopus controller '+(i%5),continuityState:'TRACKING'
     }))};
-  projection.goalBuildConveyorOverview = overview(projection, { nowMs: now });
+  const statusRecordsForCapacity=[{
+    kind:'stephanos.shared_workspace.status',statusId:'sovereign-commander-build-capacity-current',
+    participantId:'stephanos-sovereign-builder-08',timestampUtc:at,
+    capacityReceipt:{schemaVersion:'stephanos.build-lane-capacity-receipt.v1',
+      repository:'Cheekyfellastef/stephan-os',route:'SOVEREIGN_COMMANDER',
+      workerId:'stephanos-sovereign-builder-08',state:'READY',receiptId:'receipt-builder-08',
+      observedAtUtc:at,expiresAtUtc:new Date(now+240000).toISOString(),queueDepth:0},
+  }];
+  projection.goalBuildConveyorOverview = overview(projection, { nowMs: now, statusRecords: statusRecordsForCapacity });
   let available = true;
   const server = createServer((req, res) => {
     res.setHeader('cache-control', 'no-store');
@@ -59,6 +67,9 @@ test('served conveyor is truthful, responsive, touch accessible, and ages withou
     assert.equal(await inventory.locator('#cv-octopus-controllers .cv-fleet-card').count(),5);
     assert.equal(await inventory.locator('#cv-octopus-lanes .cv-fleet-card').count(),3);
     assert.equal(await inventory.locator('#cv-octopus-builders .cv-fleet-card').count(),1);
+    assert.equal(await inventory.locator('#cv-octopus-capacity .cv-fleet-card').count(),1);
+    assert.match(await inventory.locator('#cv-octopus-capacity').textContent(),/stephanos-sovereign-builder-08/);
+    assert.equal(await inventory.locator('#cv-octopus-capacity [data-cv-light="GREEN"]').count(),0);
     assert.match(await inventory.locator('#cv-octopus-lanes').textContent(),/<unverified-lane>/);
     assert.equal(await inventory.locator('unverified-lane').count(),0,'escape untrusted worker text');
     assert.equal(await inventory.locator('#cv-octopus-lanes [data-cv-light="GREEN"]').count(),0,'no fake green pickup');

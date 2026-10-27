@@ -516,6 +516,7 @@
         <h4>Five canonical controllers</h4><div id="cv-octopus-controllers" class="cv-fleet-grid"></div>
         <h4>Every reported execution lane</h4><div id="cv-octopus-lanes" class="cv-fleet-grid"></div>
         <h4>Named worker identities</h4><div id="cv-octopus-builders" class="cv-fleet-grid"></div>
+        <h4>Provider capacity receipts · not pickup</h4><div id="cv-octopus-capacity" class="cv-fleet-grid"></div>
         <details class="cv-fleet-logical"><summary id="cv-octopus-logical-title">Logical goal lanes · truth unavailable</summary><div id="cv-octopus-logical" class="cv-fleet-grid"></div></details>
         <p id="cv-octopus-proof" class="cv-fleet-meta">Controller presence does not prove physical building.</p>
       </section>
@@ -1039,6 +1040,13 @@
           expires(item.expiresAtUtc)?item.light:'GREY',
           (item.goals||[]).map(goal=>goal.issue+' '+goal.state).join(' · '))).join(''):
           '<p class="cv-fleet-meta">No named builder in current build truth, not proof that none is installed.</p>';
+        const cap=Array.isArray(fleet.capacityBuilders)?fleet.capacityBuilders:[];
+        const capRoot=byId('cv-octopus-capacity');
+        if(capRoot)capRoot.innerHTML=cap.length?cap.map(item=>drawFleetCard(
+          item.workerId,item.state,
+          expires(item.expiresAtUtc)?item.trafficLight:'GREY',
+          item.route+' · queue '+(item.queueDepth??'unknown')+' · capacity only · no pickup')).join(''):
+          '<p class="cv-fleet-meta">No provider worker-capacity identities in this feed. Unobserved does not mean uninstalled.</p>';
         setText('cv-octopus-logical-title','Logical goal lanes · '+(fleet.logicalLaneCount??'unknown')+' · '+(fleet.logicalTruth||'UNKNOWN'));
         const gr=byId('cv-octopus-logical');
         if(gr)gr.innerHTML=gs.length?gs.map(item=>drawFleetCard(item.goalRef+' '+item.title,

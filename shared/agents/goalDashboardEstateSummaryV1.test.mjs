@@ -320,3 +320,32 @@ test('Octopus named lanes are all visible in the projection but only lane-exact 
   projection.logicalGoalControllers.truth='STALE';
   assert.equal(project(projection,{nowMs}).octopusFleet.logicalLaneCount,null);
 });
+
+
+test('independent provider capacity receipts enumerate worker identities but can never be physical-building green', () => {
+  const nowMs=Date.parse('2026-10-26T15:00:00Z'),at=t=>new Date(nowMs+t).toISOString();
+  const record=(workerId,route,statusId,offset=-1000)=>({
+    kind:'stephanos.shared_workspace.status',statusId,participantId:workerId,timestampUtc:at(offset),
+    capacityReceipt:{schemaVersion:'stephanos.build-lane-capacity-receipt.v1',route,
+      repository:'Cheekyfellastef/stephan-os',workerId,state:'READY',
+      receiptId:'receipt-'+workerId,queueDepth:0,observedAtUtc:at(offset),expiresAtUtc:at(offset+240000)},
+  });
+  const data={};
+  const statuses=[
+    record('stephanos-sovereign-builder-08','SOVEREIGN_COMMANDER','sovereign-commander-build-capacity-current'),
+    record('forge-worker-1','FOUNDRY_FORGE','foundry-forge-worker-capacity-'+'a'.repeat(24)),
+    record('old-worker','CHATGPT_GITHUB','chatgpt-github-build-capacity-current',-700000),
+    {...record('forged','DESKTOP_COMMANDER','desktop-commander-build-capacity-current'),participantId:'someone-else'},
+  ];
+  statuses[1].workerScopedCapacity=true;
+  const result=project(data,{nowMs,statusRecords:statuses});
+  assert.equal(result.octopusFleet.capacityBuilderCount,3);
+  assert.deepEqual(result.octopusFleet.capacityBuilders.map(a=>a.workerId),
+    ['old-worker','forge-worker-1','stephanos-sovereign-builder-08']);
+  assert.equal(result.octopusFleet.capacityBuilders.find(a=>a.workerId==='old-worker').state,'STALE');
+  assert.equal(result.octopusFleet.capacityBuilders.find(a=>a.workerId==='stephanos-sovereign-builder-08').state,'READY');
+  assert.equal(result.octopusFleet.capacityBuilders.every(a=>a.trafficLight!=='GREEN'&&!a.physicalBuildProven),true);
+  statuses[0].capacityReceipt.expiresAtUtc=at(-100);
+  assert.equal(project(data,{nowMs,statusRecords:statuses}).octopusFleet.capacityBuilders
+    .find(a=>a.workerId==='stephanos-sovereign-builder-08').state,'STALE');
+});
