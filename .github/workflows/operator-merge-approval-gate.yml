@@ -201,6 +201,15 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: node scripts/prove-protected-workflow-actor-handoff.mjs
 
+      - name: Check exact source readiness before requesting protected approval
+        if: ${{ inputs.mode == 'user-owned-protected-squash' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STEPHANOS_AUTHORIZATION_COMMENT_ID: ${{ steps.authorization.outputs.authorization_comment_id }}
+          STEPHANOS_AUTHORIZATION_COMMENT_SHA256: ${{ steps.authorization.outputs.authorization_comment_sha256 }}
+        run: node scripts/operator-protected-personal-repository-merge.mjs preflight
+
       - name: Collect exact personal-repository evidence after protected admission
         id: evidence
         shell: bash

@@ -1,7 +1,23 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using Stephanos.OriginalR7CustodyWitness;
+
+try
+{
+Stephanos.OriginalR7CustodyWitness.Tests.NativeTestProcessErrorMode.Apply();
+if (args.Length == 1 && args[0] == "--probe-harness-failure")
+    throw new InvalidOperationException("R7_EXPECTED_NONINTERACTIVE_HARNESS_PROBE");
+
+int sourceSchemaAssertions = ProvisioningSourceSchemaTests.Run();
+if (args.Length == 1 && args[0] == "--provisioning-source-schema-only")
+{
+    Console.WriteLine("R7_PROVISIONING_SOURCE_SCHEMA_ASSERTIONS_PASSED=" + sourceSchemaAssertions);
+    Console.WriteLine("R7_NATIVE_CUSTODY_PROVEN=false");
+    return 0;
+}
 
 // Hosted CI executes native Windows SCM readback on a machine without
 // commissioning authority. All even-positive shape cases retain NO lease
@@ -12,7 +28,56 @@ if (!OperatingSystem.IsWindows())
     return 2;
 }
 
-int total = 0;
+if (args.Length == 1 && args[0] == "--observation-session-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--registry-and-observation-only")
+{
+    int focused = 0;
+    RegistryProtectionTests.Run((ok, label) =>
+    {
+        focused++;
+        if (!ok) throw new InvalidOperationException("R7_REGISTRY_INTEGRATION_FAILED_" + label);
+    });
+    focused += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
+    Console.WriteLine("R7_REGISTRY_AND_OBSERVATION_ASSERTIONS_PASSED=" + focused);
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--signing-provider-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7SigningProviderTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--owner-token-transport-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerEnvelopeTransportTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--native-principal-identity-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7NativePrincipalIdentityTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--owner-workflow-auth-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
+    return 0;
+}
+
+if (args.Length == 1 && args[0] == "--key-metadata-only")
+{
+    Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
+    return 0;
+}
+
+int total = sourceSchemaAssertions;
 void Check(bool condition, string name)
 {
     total++;
@@ -20,6 +85,7 @@ void Check(bool condition, string name)
 }
 string image = Environment.ProcessPath
     ?? throw new InvalidOperationException("R7_SCM_TEST_EXECUTABLE_UNAVAILABLE");
+RegistryProtectionTests.Run(Check);
 const string account = @"NT SERVICE\StephanosOriginalR7CustodyWitness";
 // Test an actual binary digest while never commissioning this runner.
 string observed = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(image))).ToLowerInvariant();
@@ -309,8 +375,160 @@ using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
     finally { try { Directory.Delete(tempDirectory, recursive: true); } catch { } }
 }
 
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7AuditJournalTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ObservationSessionTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7ProtectedKeyMetadataTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7NativePrincipalIdentityTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerWorkflowAuthenticationTests.Run();
+
+total += Stephanos.OriginalR7CustodyWitness.Tests.OriginalR7OwnerEnvelopeTransportTests.Run();
+
 Console.WriteLine("R7_SCM_NATIVE_READBACK_TESTS_PASSED=" + total);
 Console.WriteLine("R7_SCM_REAL_BATTLE_BRIDGE_COMMISSIONED=false");
 Console.WriteLine("R7_SCM_ORIGINAL_WRITER_EXCLUDED=false");
 Console.WriteLine("R7_SCM_LEASE_RELEASED=false");
 return 0;
+}
+catch (Exception error)
+{
+    // Deliberate and unexpected fixture failures remain failures. Catch at the
+    // process boundary so they cannot escape into an interactive WER dialog.
+    string detail = error.Message.StartsWith("R7_", StringComparison.Ordinal)
+        || error.Message.StartsWith("FIXTURE_", StringComparison.Ordinal)
+        ? error.Message[..Math.Min(error.Message.Length, 240)] : "UNEXPECTED_FIXTURE_FAILURE";
+    Console.Error.WriteLine("R7_SCM_NATIVE_TEST_FAILED=" + error.GetType().Name + ":" + detail);
+    return 1;
+}
+
+// Schema and byte-binding checks are portable. They do not instantiate a live
+// retained image, authenticate an issuer, enter native consent or create keys.
+internal static class ProvisioningSourceSchemaTests
+{
+    internal static int Run()
+    {
+        int total = 0;
+        DateTimeOffset now = DateTimeOffset.Parse("2026-10-21T18:40:00.000Z",
+            System.Globalization.CultureInfo.InvariantCulture);
+        void Check(bool condition, string label)
+        {
+            total++;
+            if (!condition) throw new InvalidOperationException("R7_SOURCE_SCHEMA_TEST_" + label);
+        }
+        string H(char digit, int count = 64) => new(digit, count);
+        JsonObject Fixture() => new()
+        {
+            ["schemaVersion"] = "stephanos.r7-first-root-owner-intake-proposal.v1",
+            ["purpose"] = "R7_FIRST_ROOT_OWNER_POLICY_INTAKE",
+            ["repository"] = "Cheekyfellastef/stephan-os", ["capabilityIssue"] = 3123, ["prNumber"] = 3178,
+            ["requestId"] = "existing-r7-request-fixture",
+            ["original"] = new JsonObject
+            {
+                ["missionId"] = "critical-2962-elastic-goal", ["leaseId"] = "critical-2962-elastic-goal-r7-lease",
+                ["leaseRevision"] = 7, ["leaseDigest"] = H('a'),
+                ["sourceExecutionId"] = "critical-2962-elastic-goal-r1-0123456789ab",
+                ["branch"] = "openclaw/elastic-goal-2962",
+                ["sourceHead"] = "4e5023eef829b285095db4eeb09d6f2b365e33e4", ["historicalOutcome"] = "UNKNOWN"
+            },
+            ["candidate"] = new JsonObject
+            {
+                ["branch"] = "feature/3123-r7-registry-protection-readback-20261020",
+                ["sourceHead"] = H('a', 40), ["sourceTree"] = H('b', 40), ["reviewedBase"] = H('c', 40),
+                ["sourceMergeCommit"] = H('d', 40), ["expectedMain"] = H('e', 40),
+                ["imageSha256"] = H('a'), ["bundleSha256"] = H('b'), ["manifestSha256"] = H('c')
+            },
+            ["review"] = new JsonObject
+            {
+                ["runId"] = "123", ["runAttempt"] = "2", ["artifactId"] = "456", ["archiveSha256"] = H('a'),
+                ["payloadSha256"] = H('b'), ["reviewedSourceHead"] = H('a', 40),
+                ["reviewedSourceTree"] = H('b', 40), ["reviewedBase"] = H('c', 40)
+            },
+            ["hostPolicyProposalDigest"] = H('d'), ["fixedRecipeDigest"] = H('e'),
+            ["issuedAtUtc"] = "2026-10-21T18:39:00.000Z", ["expiresAtUtc"] = "2026-10-21T18:44:00.000Z"
+        };
+        void Reject(string wire, string label)
+        {
+            try { OriginalR7NativeProvisioningSource.ParsePermit(wire, now); }
+            catch (InvalidOperationException error) when (error.Message.StartsWith("R7_PROVISION_SOURCE_", StringComparison.Ordinal))
+            { Check(true, label); return; }
+            Check(false, label);
+        }
+        void Change(string group, string key, JsonNode? value, string label)
+        {
+            JsonObject fixture = Fixture();
+            JsonObject target = group.Length == 0 ? fixture : fixture[group]!.AsObject();
+            target[key] = value;
+            Reject(fixture.ToJsonString(), label);
+        }
+        string originalWire = Fixture().ToJsonString();
+        var parsed = OriginalR7NativeProvisioningSource.ParsePermit(originalWire, now);
+        Check(parsed.PermitSha256 == Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(originalWire))).ToLowerInvariant(),
+            "EXACT_WIRE_HASH");
+        Check(parsed.SourceExecutionId == "critical-2962-elastic-goal-r1-0123456789ab", "CONSUMED_R1_PRESERVED");
+        Check(parsed.ExpectedMain == H('e', 40) && parsed.OriginalLeaseDigest == H('a') && parsed.ImageSha256 == H('a'),
+            "EXACT_CONTEXT_PRESERVED");
+        foreach (string group in new[] { "", "original", "candidate", "review" })
+        {
+            foreach (string key in new[] { "operatorApproved", "rootEnrollmentAuthorized", "path", "nativeCustody", "__proto__" })
+                Change(group, key, JsonValue.Create(true), "UNKNOWN_OR_AUTHORITY_FIELD");
+            JsonObject missing = Fixture(), target = group.Length == 0 ? missing : missing[group]!.AsObject();
+            target.Remove(target.First().Key); Reject(missing.ToJsonString(), "REQUIRED_FIELD");
+        }
+        Change("", "schemaVersion", JsonValue.Create("other"), "SCHEMA");
+        Change("", "purpose", JsonValue.Create("PROVISION_INACTIVE_R7_SIGNING_ROOTS_ONLY"), "PURPOSE_IS_NOT_CALLER_GRANT");
+        Change("", "repository", JsonValue.Create("other/stephan-os"), "REPOSITORY");
+        Change("", "capabilityIssue", JsonValue.Create("3123"), "CAPABILITY_NUMERIC");
+        Change("", "prNumber", JsonValue.Create(3179), "FIXED_PR");
+        Change("", "requestId", JsonValue.Create("bad\nrequest"), "REQUEST_ID");
+        Change("original", "missionId", JsonValue.Create("other"), "MISSION");
+        Change("original", "leaseId", JsonValue.Create("other"), "LEASE");
+        Change("original", "leaseRevision", JsonValue.Create(8), "REVISION");
+        Change("original", "sourceExecutionId", JsonValue.Create("critical-2962-elastic-goal-r01-0123456789ab"), "EXECUTION_FORMAT");
+        Change("original", "branch", JsonValue.Create("main"), "ORIGINAL_BRANCH");
+        Change("original", "sourceHead", JsonValue.Create(H('b', 40)), "ORIGINAL_HEAD");
+        Change("original", "historicalOutcome", JsonValue.Create("COMPLETE"), "HISTORY_CANNOT_BE_INVENTED");
+        Change("candidate", "branch", JsonValue.Create("main"), "CANDIDATE_BRANCH");
+        foreach (string key in new[] { "reviewedSourceHead", "reviewedSourceTree", "reviewedBase" })
+            Change("review", key, JsonValue.Create(H('f', 40)), "REVIEW_MISMATCH");
+        Change("candidate", "sourceHead", JsonValue.Create(H('c', 40)), "CANDIDATE_EQUALS_BASE");
+        foreach (string key in new[] { "runId", "runAttempt", "artifactId" })
+        {
+            foreach (string value in new[] { "0", "-1", "01", "1e2", "18446744073709551616" })
+                Change("review", key, JsonValue.Create(value), "INVALID_DECIMAL_ID");
+            Change("review", key, JsonValue.Create(1), "ID_MUST_BE_STRING");
+        }
+        foreach ((string group, string key, int size) in new[]
+        {
+            ("", "hostPolicyProposalDigest", 64), ("", "fixedRecipeDigest", 64), ("original", "leaseDigest", 64),
+            ("candidate", "sourceHead", 40), ("candidate", "sourceTree", 40), ("candidate", "reviewedBase", 40),
+            ("candidate", "sourceMergeCommit", 40), ("candidate", "expectedMain", 40),
+            ("candidate", "imageSha256", 64), ("candidate", "bundleSha256", 64), ("candidate", "manifestSha256", 64),
+            ("review", "archiveSha256", 64), ("review", "payloadSha256", 64)
+        })
+            foreach (string bad in new[] { H('0', size), H('A', size), H('g', size), H('a', size - 1) })
+                Change(group, key, JsonValue.Create(bad), "INVALID_OR_ZERO_DIGEST");
+        Change("", "expiresAtUtc", JsonValue.Create("2026-10-21T18:40:00.000Z"), "EXPIRED");
+        Change("", "issuedAtUtc", JsonValue.Create("2026-10-21T18:41:00.000Z"), "FUTURE");
+        Change("", "expiresAtUtc", JsonValue.Create("2026-10-21T18:44:00.001Z"), "OVERLONG");
+        Change("", "issuedAtUtc", JsonValue.Create("2026-02-30T18:39:00.000Z"), "IMPOSSIBLE_DATE");
+        Change("", "issuedAtUtc", JsonValue.Create("2026-10-21T18:39:00Z"), "NONCANONICAL_TIME");
+        Reject(originalWire + "\n", "TRAILING_WHITESPACE");
+        Reject(originalWire.Replace("\"purpose\":", "\"purpose\":\"other\",\"purpose\":"), "DUPLICATE_ROOT");
+        Reject(originalWire.Replace("\"leaseRevision\":7", "\"leaseRevision\":7,\"leaseRevision\":7"), "DUPLICATE_NESTED");
+        Reject(originalWire.Replace("\"leaseRevision\":7", "\"leaseRevision\":7.0"), "NONCANONICAL_NUMBER");
+        Reject(originalWire.Replace("existing-r7-request-fixture", "existing-r7-réquest-fixture"), "NON_ASCII");
+        Reject(new string('x', 16385), "BOUNDED_INPUT");
+        Reject("{", "INVALID_JSON");
+        if (!OperatingSystem.IsWindows())
+        {
+            try { using var source = OriginalR7NativeProvisioningSource.OpenCurrent(originalWire); }
+            catch (InvalidOperationException error) when (error.Message.StartsWith("R7_PROVISION_SOURCE_", StringComparison.Ordinal))
+            { Check(true, "LIVE_SOURCE_REQUIRES_NATIVE_HOST"); return total; }
+            Check(false, "LIVE_SOURCE_REQUIRES_NATIVE_HOST");
+        }
+        return total;
+    }
+}

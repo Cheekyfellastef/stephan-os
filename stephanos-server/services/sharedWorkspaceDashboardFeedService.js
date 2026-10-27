@@ -1,3 +1,4 @@
+import { projectGoalBuildConveyorOverviewV1 } from '../../shared/agents/goalBuildConveyorOverviewV1.mjs';
 import {
   readSharedWorkspaceDashboardFeed,
   SHARED_WORKSPACE_FEED_RECORD_SCOPES,
@@ -272,11 +273,14 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     },
   });
   const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate, feed.stephanosBuildTruthStatus);
-  const projection = Object.freeze({
+  const overviewInput = {
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
     operationalFacts: feed.operationalFacts,
     goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
+  };
+  const projection = Object.freeze({ ...overviewInput,
+    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs }),
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);

@@ -11,7 +11,7 @@ import { analyzeWindowsAuthoritySpecialistReview } from './windowsAuthoritySpeci
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const HEAD = 'a'.repeat(40);
-const [RUNNER_PATH, STATUS_PATH] = WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
+const [RUNNER_PATH, STATUS_PATH, HELPER_PATH] = WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
 
 function blobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -43,17 +43,18 @@ const runner = await readFile(
 const status = await readFile(
   new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8',
 );
+const helper = await readFile(new URL('../../scripts/windows/stephanos-core-process-observation.ps1', import.meta.url), 'utf8');
 
 function review(runnerSource = runner, statusSource = status, extra = []) {
   return analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis,
-    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), ...extra],
+    sources: [source(RUNNER_PATH, runnerSource), source(STATUS_PATH, statusSource), source(HELPER_PATH, helper), ...extra],
   });
 }
 
-test('clean Core Daemon Windows estate is qualified with zero authority', () => {
+test('successor candidate covers the complete Core Windows estate and grants zero authority', () => {
   const result = review();
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
@@ -64,16 +65,49 @@ test('clean Core Daemon Windows estate is qualified with zero authority', () => 
   assert.equal(result.providerQualificationAuthority, false);
 });
 
-test('top-level trusted specialist routes the Core Daemon pair before fallback', () => {
+test('top-level candidate specialist plans all three transitive Core sources before fallback', () => {
   const result = analyzeWindowsAuthoritySpecialistReview({
     repository: REPOSITORY,
     sourceHead: HEAD,
     analysis,
-    sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status)],
+    sources: [source(RUNNER_PATH, runner), source(STATUS_PATH, status), source(HELPER_PATH, helper)],
   });
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, result.findings.map(x => x.code).join(','));
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_SPECIALIST_CLEAN');
+});
+
+test('omitted, duplicated, extra, wrong-head or rehashed altered helpers never inherit the two-consumer qualification', () => {
+  const sources = [source(RUNNER_PATH, runner), source(STATUS_PATH, status), source(HELPER_PATH, helper)];
+  const invoke = rows => analyzeWindowsAuthorityStephanosCoreDaemonReviewV1({ repository: REPOSITORY,
+    sourceHead: HEAD, analysis, sources: rows });
+  for (const rows of [sources.slice(0, 2), [...sources, sources[2]],
+    [...sources, source('scripts/windows/other.ps1', 'x')],
+    [sources[0], sources[1], { ...sources[2], ref: 'b'.repeat(40) }]]) {
+    assert.equal(invoke(rows).clean, false);
+  }
+  for (const altered of [helper + '\nStop-Process -Id 12 -Force',
+    helper.replace('$complete = $false', '$complete = $true'),
+    helper.replace('else { $null }', 'else { 0 }'),
+    helper.replace('-ErrorAction Stop', '-ErrorAction SilentlyContinue'),
+    helper + '\n$script:unexpected = 1']) {
+    assert.notEqual(altered, helper);
+    const result = invoke([sources[0], sources[1], source(HELPER_PATH, altered)]);
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some(x => x.code === 'windows-authority-core-source-blob-unreviewed'));
+  }
+});
+
+test('incomplete inventory and timeout hold cannot be bypassed while safe snippets remain', () => {
+  for (const changed of [
+    runner.replace('if ($healthBefore.timeoutCustodyHeld -eq $true)', 'if ($false)'),
+    runner.replace('elseif ($healthBefore.maintenanceInFlight -eq $true)', 'elseif ($false)'),
+    runner.replace('if (-not $coreBeforeComplete -or -not $script:coreProcessObservation.complete)', 'if ($false)'),
+    runner.replace('$script:coreProcessObservation.complete -and', '$true -and'),
+  ]) {
+    assert.notEqual(changed, runner);
+    assert.equal(review(changed).clean, false);
+  }
 });
 
 test('widened execution, process kill, task, Git and writable-status authority fail closed', () => {

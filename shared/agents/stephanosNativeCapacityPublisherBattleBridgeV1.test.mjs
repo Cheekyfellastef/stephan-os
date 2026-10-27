@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
@@ -17,6 +19,49 @@ import {
 
 const HEAD = 'b'.repeat(40);
 const NOW = new Date('2026-09-22T17:50:00.000Z');
+
+test('generated publisher bootstrap parses in Windows PowerShell and retains every source denial', {
+  skip: process.platform !== 'win32' ? 'Requires the scheduled-task Windows PowerShell engine.' : false,
+}, () => {
+  const installer = fileURLToPath(new URL('../../scripts/windows/install-stephanos-native-capacity-publisher.ps1', import.meta.url));
+  const escaped = installer.replaceAll("'", "''");
+  const script = `
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile('${escaped}', [ref]$tokens, [ref]$errors)
+if (@($errors).Count -ne 0) { throw 'Installer syntax invalid.' }
+$assignment = $ast.Find({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -eq '$bootstrap' }, $true)
+if ($null -eq $assignment) { throw 'Bootstrap assignment absent.' }
+function Quote-Single([string]$value) { return "'" + $value.Replace("'", "''") + "'" }
+$repositoryRoot = 'C:\\Users\\Test\\Documents\\GitHub\\stephan-os'
+$canonicalGit = 'C:\\Program Files\\Git\\cmd\\git.exe'
+$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'
+$publisherScript = $repositoryRoot + '\\scripts\\stephanos-native-capacity-publisher.mjs'
+$sourceGateScript = $repositoryRoot + '\\scripts\\stephanos-native-capacity-publisher-source-gate.mjs'
+$missionRunnerRoot = 'C:\\Users\\Test\\Documents\\OpenClaw-Standalone\\mission-runner'
+$workspaceRoot = 'C:\\Users\\Test\\Documents\\Stephanos-openclaw-workspace'
+# Expand only the installer here-string; never run the resulting bootstrap.
+$bootstrap = Invoke-Expression $assignment.Right.Extent.Text
+$bootstrapAst = [Management.Automation.Language.Parser]::ParseInput($bootstrap, [ref]$tokens, [ref]$errors)
+if (@($errors).Count -ne 0) { throw ('Generated bootstrap syntax: ' + ($errors.Message -join '; ')) }
+$gate = $bootstrapAst.Find({ param($node) $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.Contains('dirtSummary.blocksSync') }, $true)
+if ($null -eq $gate -or $gate.Clauses.Count -ne 1) { throw 'Source denial gate absent.' }
+$condition = $gate.Clauses[0].Item1.Extent.Text
+$head = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+$sourceGate = [pscustomobject]@{ok=$true;finalVerdict='STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS';sourceHead=$head;dirtSummary=[pscustomobject]@{blocksSync=$false}}
+if (Invoke-Expression $condition) { throw 'Qualified source incorrectly denied.' }
+$sourceGate.ok=$false; if (-not (Invoke-Expression $condition)) { throw 'Failed source accepted.' }; $sourceGate.ok=$true
+$sourceGate.finalVerdict='UNKNOWN'; if (-not (Invoke-Expression $condition)) { throw 'Unknown verdict accepted.' }; $sourceGate.finalVerdict='STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS'
+$sourceGate.sourceHead='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; if (-not (Invoke-Expression $condition)) { throw 'Wrong head accepted.' }; $sourceGate.sourceHead=$head
+$sourceGate.dirtSummary.blocksSync=$true; if (-not (Invoke-Expression $condition)) { throw 'Unsafe dirt accepted.' }
+'GENERATED_BOOTSTRAP_SOURCE_GATES_PASS'
+`;
+  const proof = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64'),
+  ], { encoding: 'utf8', shell: false, windowsHide: true, timeout: 20_000 });
+  assert.equal(proof.status, 0, proof.stderr);
+  assert.match(proof.stdout, /GENERATED_BOOTSTRAP_SOURCE_GATES_PASS/);
+});
 
 function command(overrides = {}) {
   return {

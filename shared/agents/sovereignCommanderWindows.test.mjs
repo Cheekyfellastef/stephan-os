@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+const commanderHttp = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
@@ -16,6 +17,9 @@ test('boot recovery installers parse with the Windows PowerShell used by the boo
     'install-sovereign-commander.ps1',
     'install-sovereign-boot-daemon-tasks-elevated.ps1',
     'install-battle-bridge-recovery-mesh.ps1',
+    'stephanos-core-process-observation.ps1',
+    'status-stephanos-core-daemon.ps1',
+    'run-sovereign-commander-hidden.ps1',
   ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
   const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
   const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
@@ -145,7 +149,10 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '(?:2026-10-05-continuous-repair-reporting-v4|2026-10-18-island-action-contract-v6)'/);
+  const runnerDefault = runner.match(/\[string\]\$RequireCapabilityVersion = '([^']+)'/)?.[1];
+  const httpDefault = commanderHttp.match(/export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '([^']+)'/)?.[1];
+  assert.equal(runnerDefault, '2026-10-18-island-action-contract-v6');
+  assert.equal(runnerDefault, httpDefault, 'Direct Windows runner must require the live HTTP capability generation');
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
@@ -167,6 +174,46 @@ test('capability probing is StrictMode-safe when an old daemon omits capabilityV
   assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
   assert.match(runner, /\$capabilityProperty\.Value/);
   assert.doesNotMatch(runner, /\$null -ne \$health\.capabilityVersion/);
+});
+
+test('legacy refresh cannot stop or replace an owner without a terminal custody handoff', { skip: process.platform !== 'win32' }, () => {
+  const start = runner.indexOf('if ($healthBefore.timeoutCustodyHeld -eq $true) {');
+  const end = runner.indexOf('$after = @(Get-SovereignCommanderProcesses)', start);
+  assert.ok(start > 0 && end > start);
+  const selection = runner.slice(start, end);
+  const harness = `
+$ErrorActionPreference = 'Stop'
+function Test-Path { return $true }
+function Start-Sleep {}
+function Stop-Process { $script:stops += 1 }
+function Start-Process { $script:starts += 1; return [pscustomobject]@{Id=999} }
+$rows = @()
+foreach ($case in @('legacy-running','legacy-idle','unreachable-owner','current-idle-mismatch','timeout-held','maintenance-busy','healthy-owner','cold-start')) {
+  $script:stops=0; $script:starts=0; $blocker=''; $stoppedPidCount=0
+  $serverScript='fixed-server'; $tokenPath='fixed-token'; $canonicalNode='fixed-node'; $repoRoot='fixed-repository'
+  $before = @()
+  if ($case -ne 'cold-start') { $before = @([pscustomobject]@{ProcessId=123}) }
+  $healthyBefore = $case -eq 'healthy-owner'
+  $authenticatedInBandParentProof=$false
+  $staleDaemonContract=$true; $staleCapability=$true; $staleContinuousRepair=$false
+  $healthBefore=[pscustomobject]@{basicHealthy=($case -ne 'unreachable-owner' -and $case -ne 'cold-start');timeoutCustodyHeld=($case -eq 'timeout-held');maintenanceInFlight=($case -eq 'maintenance-busy');continuousRepairRunning=($case -eq 'legacy-running')}
+  ${selection}
+  $rows += [pscustomobject]@{name=$case;stops=$script:stops;starts=$script:starts;blocker=$blocker}
+}
+$rows | ConvertTo-Json -Compress
+`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(harness, 'utf16le').toString('base64')], {
+    encoding: 'utf8', windowsHide: true, timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const rows = JSON.parse(result.stdout.trim());
+  for (const row of rows) {
+    assert.equal(row.stops, 0, row.name);
+    assert.equal(row.starts, row.name === 'cold-start' ? 1 : 0, row.name);
+    if (['legacy-running','legacy-idle','unreachable-owner','current-idle-mismatch'].includes(row.name)) {
+      assert.equal(row.blocker, 'SOVEREIGN_COMMANDER_MAINTENANCE_QUIESCENCE_UNPROVEN', row.name);
+    }
+  }
 });
 
 
