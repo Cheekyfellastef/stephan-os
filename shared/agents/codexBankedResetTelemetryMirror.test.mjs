@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildCodexBankedResetTelemetryIssueBody,
+  buildCodexBankedResetTelemetryIssueBodyV2,
   createCodexBankedResetTelemetryRecord,
   extractTrustedCodexResetReceipt,
   projectCodexResetExecutionReceipt,
@@ -117,7 +117,7 @@ test('projects bounded status error evidence and re-filters unsafe historical re
     }, { requestId: `reset-status-unsafe-error-00${index + 1}` });
     const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
     assert.equal(unsafeRecord.latestStatus.error, '');
-    assert.equal(buildCodexBankedResetTelemetryIssueBody(unsafeRecord).includes(diagnostic), false);
+    assert.equal(buildCodexBankedResetTelemetryIssueBodyV2(unsafeRecord).includes(diagnostic), false);
   }
 });
 
@@ -221,7 +221,7 @@ test('confirms exactly one successful press with changed before and after proof'
   assert.equal(record.latestExecution.matchedUsageLabel, '1 reset available');
   assert.equal(record.latestExecution.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestExecution.meterAfter, 'Codex weekly remaining 100%');
-  assert.match(buildCodexBankedResetTelemetryIssueBody(record), /"status": "CONFIRMED"/);
+  assert.match(buildCodexBankedResetTelemetryIssueBodyV2(record), /"status": "CONFIRMED"/);
 });
 
 test('latest receipt wins and unsafe telemetry text is suppressed', () => {

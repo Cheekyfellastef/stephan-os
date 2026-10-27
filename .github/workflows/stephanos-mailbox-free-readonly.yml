@@ -1,0 +1,76 @@
+# Original Goal #2315, event-only read-only pilot. NO native command ingress or second scheduler.
+name: Stephanos Control Tower - Mailbox-Free Read-Only Pilot
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/stephanos-mailbox-free-readonly.yml'
+      - 'shared/agents/mailboxFreeWorkflowDispatchV1.mjs'
+      - 'shared/agents/mailboxFreeWorkflowDispatchV1.test.mjs'
+      - 'scripts/mailbox-free-readonly-dispatch.mjs'
+      - 'scripts/mailbox-free-readonly-dispatch.test.mjs'
+      - 'docs/architecture/stephanos-control-tower-mailbox-free-v1.md'
+  workflow_dispatch:
+    inputs:
+      goal_issue:
+        description: 'Existing Stephanos goal issue number to inspect (READ ONLY)'
+        type: string
+        required: true
+        default: '2961'
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: stephanos-mailbox-free-readonly-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  contract-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact PR source without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run hostile trust and no-mutation regressions
+        run: node --test shared/agents/mailboxFreeWorkflowDispatchV1.test.mjs scripts/mailbox-free-readonly-dispatch.test.mjs
+      - name: Parse read-only modules
+        run: |
+          node --check shared/agents/mailboxFreeWorkflowDispatchV1.mjs
+          node --check scripts/mailbox-free-readonly-dispatch.mjs
+          git diff --check
+
+  inspect-goal:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Checkout source-defined main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Observe exact original goal via authenticated GitHub GET only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/mailbox-free-readonly-dispatch.mjs
+      - name: Retain sanitized nonauthoritative proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stephanos-mailbox-free-readonly-${{ github.run_id }}
+          path: ${{ runner.temp }}/stephanos-mailbox-free-readonly-proof.json
+          if-no-files-found: warn
+          retention-days: 30
