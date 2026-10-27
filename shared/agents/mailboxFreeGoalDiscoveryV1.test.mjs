@@ -230,3 +230,29 @@ test('missing evidence and arbitrary packets always fail closed', () => {
   const b=fixture(); b.archive=Buffer.alloc(64*1024+1); b.artifact.size_in_bytes=b.archive.length;
   held(b,'IMMUTABLE_ARTIFACT_IDENTITY_OR_SHA256_INVALID');
 });
+
+test('real GitHub Actions artifact ZIP 12765876671 decodes as the original denied-authority observation', () => {
+  // Sanitized public Actions proof from run 40573665291. Exact 668-byte ZIP,
+  // deflated with data descriptor; no credentials, user source or private state.
+  const realArchive = Buffer.from('UEsDBBQACAAIACafW10AAAAAAAAAAAAAAAAqAAAAc3RlcGhhbm9zLW1haWxib3gtZnJlZS1yZWFkb25seS1wcm9vZi5qc29unVJNk5pAFLz7KyzOQT4UEG9EKEPVCpaou8mFGoaHTC3MkPkwblL57ynAdTdbOeXa3a9fT7/5NZlONYFraNEJuCCMaqupJiR0NaJMzFpEmoJd9YoD6CURHZK41jmgktHmZXaxtE+9wwV4SbDsZ/dREOZp8vA1Tz9n0f4UhaOkZSXc+U0aPOTZITgcs5Hl8F2BkHHZSxCWhFGhc0X1hel4c9d1bN/Sb8u4ooPuHfWKB1JC2/U5RujMUJOotgCuraa2776hmURyyJPuokS7w2vWtkDlminau9jOfKAEUxzDF0BDPrxw3AKbyMS+h73Cdj28LBa+5Va4XNqo9M3KsaslHm1ZIYBfoAzkUeJ+3DZtV7dM3fYOlr9yvJU1nznO/NtbiiNvemEtZSdWhnEmslbFDLPWWNcAzy8VNA0SEirjdimdCYMIoUAY/SvvPf2X0a1+gysqjHclj66EltABLYHKE3BSEYx6+Q54xXgLfUEVagQMYrgCVj0dKFkzTn5+4CmS5AI7gp9Vt+PsAvQveqx9q+SwImga9uODQceZBCyh3AI/w78UFK5yc7t19BRnhzjZjP8vfUyifR6E2zjL4jTJgyTM4ySMdlESRskh30enOHrUJr8nfwBQSwcICfYQ7tYBAAAmAwAAUEsBAi0DFAAIAAgAJp9bXQn2EO7WAQAAJgMAACoAAAAAAAAAAAAgAICBAAAAAHN0ZXBoYW5vcy1tYWlsYm94LWZyZWUtcmVhZG9ubHktcHJvb2YuanNvblBLBQYAAAAAAQABAFgAAAAuAgAAAAA=', 'base64');
+  assert.equal(realArchive.length, 668);
+  assert.equal(digest(realArchive), 'sha256:ee7610367d6ea027a31e7d6b03cdb691a15c3f85d8b2a6e9c1da723353dd0545');
+  assert.deepEqual(decodeMailboxFreeGoalProofArchiveV1(realArchive), proof());
+
+  const event = fixture();
+  event.archive = realArchive;
+  event.artifact.digest = digest(realArchive);
+  event.artifact.size_in_bytes = realArchive.length;
+  const result = classifyMailboxFreeGoalDiscoveryV1(event);
+  assert.equal(result.disposition, 'DISCOVERY_CANDIDATE_ONLY');
+  assert.equal(result.runId, RUN_ID);
+  assert.equal(result.exclusiveClaimGranted, false);
+  assert.equal(result.executionAuthorized, false);
+  assert.equal(result.nativePickupProven, false);
+  assert.equal(result.sourceMutationAllowed, false);
+
+  // The accepted first run is durable historical evidence, but once protected
+  // main advances it must NOT nominate a new current-main task.
+  event.mainHead = 'c53f35f73d06f8343da5292a950353877ee51d89';
+  held(event, 'CURRENT_MAIN_OR_RUN_HEAD_MOVED');
+});
