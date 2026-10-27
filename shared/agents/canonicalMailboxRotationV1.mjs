@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { mailboxActionsExecutionQuiescent, mailboxActionEvidenceSummary } from './canonicalMailboxRotationActionEvidenceV1.mjs';
 import { CANONICAL_MAILBOX_ISSUE, RETIRED_CANONICAL_MAILBOX_ISSUES } from './canonicalMailboxAuthorityV1.mjs';
 
 export const MAILBOX_ROTATION_OPERATION = 'MANAGE_CANONICAL_MAILBOX_ROTATION';
@@ -118,7 +119,9 @@ export function validateMailboxRotationRecord(record) {
     || !positive(record.cutoverPrNumber) || !MAILBOX_ROTATION_SHA.test(record.cutoverHead || '')
     || !MAILBOX_ROTATION_SHA.test(record.preparationHead || '')
     || !MAILBOX_ROTATION_REQUEST_ID.test(record.freezeRequestId || '')
-    || !Number.isFinite(Date.parse(record.requestedAt || ''))) throw new Error('MAILBOX_ROTATION_RECORD_INVALID');
+    || !Number.isFinite(Date.parse(record.requestedAt || ''))
+    || ['actionPendingAggregateCount','actionBlockingCount'].some(k=>Object.hasOwn(record,k)&&(!Number.isSafeInteger(record[k])||record[k]<-1))
+    || (Object.hasOwn(record,'actionsQuiescenceDigest')&&record.actionsQuiescenceDigest!==''&&!/^[a-f0-9]{64}$/.test(record.actionsQuiescenceDigest))) throw new Error('MAILBOX_ROTATION_RECORD_INVALID');
   return record;
 }
 
@@ -131,6 +134,13 @@ export function mailboxRotationCommandAllowed(command, commentId, record, { appr
     && positive(commentId) && commentId < record.barrierCommentId) return true;
   if (command?.operation === 'APPROVE_PROTECTED_MERGE_ENVIRONMENT') return command.prNumber === record.cutoverPrNumber
     && command.expectedPullRequestHead === record.cutoverHead;
+  // Reuse the existing fully validated native bootstrap for the nominated
+  // activation only. Its owner, review, protected environment and exact approval
+  // gates still run; this fence predicate grants none of those authorities.
+  if (command?.operation === 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE') return record.phase === 'FROZEN' && record.drained === true
+    && CANONICAL_MAILBOX_ISSUE === record.predecessorIssue
+    && command.prNumber === record.cutoverPrNumber && command.expectedHead === record.cutoverHead
+    && command.expectedBase === record.preparationHead;
   if (command?.operation === 'UPDATE_STEPHANOS_FROM_CHAT') return MAILBOX_ROTATION_SHA.test(approvedUpdateHead)
     && command.expectedHead === approvedUpdateHead;
   // Only two fixed read-only classes can produce successor commissioning proof.
@@ -149,8 +159,7 @@ export function settleMailboxRotationDrain(state, { outboxPendingCount, now = ne
   const inventory = state.mailboxRotationInventory;
   const drained = outboxPendingCount === 0 && Array.isArray(state.acceptedRequestIds) && !state.acceptedRequestIds.length
     && record.globalFencePublished === true
-    && state.mailboxRotationActions?.complete === true
-    && Array.isArray(state.mailboxRotationActions.pendingRuns) && !state.mailboxRotationActions.pendingRuns.length
+    && mailboxActionsExecutionQuiescent(state.mailboxRotationActions,{now})
     && Date.parse(now) - Date.parse(state.mailboxRotationActions.observedAt) >= 0
     && Date.parse(now) - Date.parse(state.mailboxRotationActions.observedAt) <= 120000
     && Array.isArray(state.pendingReceiptPublications) && !state.pendingReceiptPublications.length
@@ -159,7 +168,7 @@ export function settleMailboxRotationDrain(state, { outboxPendingCount, now = ne
     && Array.isArray(inventory.pendingBeforeBarrier) && !inventory.pendingBeforeBarrier.length
     && Array.isArray(inventory.pendingAfterBarrier) && !inventory.pendingAfterBarrier.length
     && Array.isArray(inventory.acceptedIds) && !inventory.acceptedIds.length;
-  return { ...state, mailboxRotation: { ...record, phase: drained ? 'FROZEN' : 'DRAINING',
+  return { ...state, mailboxRotation: { ...record, ...mailboxActionEvidenceSummary(state.mailboxRotationActions), phase: drained ? 'FROZEN' : 'DRAINING',
     outboxPendingCount, drained, settledAt: now,
     inventoryDigest: inventory?.inventoryDigest || '',
     pendingBeforeBarrierCount: inventory?.pendingBeforeBarrier?.length ?? -1,
@@ -196,6 +205,8 @@ export function projectMailboxRotation(record, inventory) {
     inventoryDigest: /^[a-f0-9]{64}$/.test(inventory?.inventoryDigest || record.inventoryDigest || '') ? (inventory?.inventoryDigest || record.inventoryDigest) : '',
     pendingBeforeBarrierCount: inventory?.pendingBeforeBarrier?.length ?? -1,
     pendingAfterBarrierCount: inventory?.pendingAfterBarrier?.length ?? -1,
+    ...Object.fromEntries(['actionPendingAggregateCount','actionBlockingCount','actionsQuiescenceDigest']
+      .filter(k=>Object.hasOwn(record,k)).map(k=>[k,record[k]])),
     mergeAuthority: false, sourceMutationAuthority: false,
   };
 }
@@ -209,6 +220,7 @@ export function projectMailboxRotationReceipt(value, operation) {
   for (const key of ['predecessorIssue', 'successorIssue', 'cutoverPrNumber']) if (positive(record[key])) safe[key] = record[key];
   for (const key of ['cutoverHead', 'preparationHead']) if (MAILBOX_ROTATION_SHA.test(record[key] || '')) safe[key] = record[key];
   if (/^[a-f0-9]{64}$/.test(record.inventoryDigest || '')) safe.inventoryDigest = record.inventoryDigest;
-  for (const key of ['pendingBeforeBarrierCount', 'pendingAfterBarrierCount']) if (Number.isSafeInteger(record[key]) && record[key] >= -1) safe[key] = record[key];
+  for (const key of ['pendingBeforeBarrierCount', 'pendingAfterBarrierCount','actionPendingAggregateCount','actionBlockingCount']) if (Number.isSafeInteger(record[key]) && record[key] >= -1) safe[key] = record[key];
+  if (/^[a-f0-9]{64}$/.test(record.actionsQuiescenceDigest||'')) safe.actionsQuiescenceDigest=record.actionsQuiescenceDigest;
   return { mailboxRotation: safe };
 }
