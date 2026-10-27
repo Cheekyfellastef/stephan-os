@@ -781,6 +781,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === 'READ_PROOF_INDEX' && (Object.keys(request.boundedPayload || {}).length !== 0)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
