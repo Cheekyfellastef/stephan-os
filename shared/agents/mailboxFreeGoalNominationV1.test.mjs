@@ -245,10 +245,14 @@ test('every proof authority boolean must remain exactly false', () => {
 test('run, source, goal, digest and next-gate tampering never grants nomination', () => {
   for (const patch of [
     { originRunId: ORIGIN + 1 }, { sourceHead: 'b'.repeat(40) },
-    { goalNumber: 24 }, { artifactSha256: 'fake' },
+    { artifactSha256: 'fake' },
     { originatingArtifactId: 0 }, { verdict: 'SOURCE_ADMITTED' },
     { nextGate: 'START_NATIVE_WORKER' },
   ]) held(tamperedProof(fixture(), patch), 'READBACK_SCOPE_OR_DENIAL_INVALID');
+  // A positive alternate goal number is structurally valid, but is not the
+  // real observed original GitHub issue and must remain ineligible.
+  held(tamperedProof(fixture(), { goalNumber: 24 }),
+    'ORIGINAL_GOAL_NOT_CURRENTLY_OPEN');
 });
 test('replaced source proof kind and nonempty blocker are held', () => {
   held(tamperedProof(fixture(), { sourceProofKind: 'SIGNED_OWNER_GRANT' }),
