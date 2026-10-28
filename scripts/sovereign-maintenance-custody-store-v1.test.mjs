@@ -31,7 +31,7 @@ function fixture(t) {
 function store(root, bootWitness = oldBoot, overrides = {}) {
   return createMaintenanceCustodyStoreV1({ workspaceRoot: root, bootWitness,
     anchor: anchors.get(root),
-    signingKey: 'fixture-sovereign-token-'.repeat(3),
+    signingKey: 'fixture-sovereign-token-'.repeat(3), observeLegacyAudit: () => ({ present: false }),
     now: bootWitness === oldBoot ? () => oldNow : now, readBootWitness: () => bootWitness, ...overrides });
 }
 const reservation = { reservationId: 'original-cycle', operation: 'repair-stephanos' };
@@ -285,4 +285,127 @@ test('restart admission follows the shared terminal-evidence model across advers
     assert.equal(successor.status().timeoutCustodyHeld, row.held);
     successor.stop();
   }
+});
+
+function heldOwner(boot) {
+  const observation = { schemaVersion: 'stephanos.maintenance-held-owner-observation.v2',
+    pid: 7001, createdAtUtc: new Date(Date.parse(boot.bootStartedAtUtc) + 1).toISOString(),
+    commandSha256: 'd'.repeat(64), imageSha256: 'e'.repeat(64),
+    lastCycleId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', lastStartedAtUtc: boot.observedAtUtc,
+    timeoutCustodyHeld: true, running: false, maintenanceInFlight: false, scheduled: false };
+  return { observation, digest: createHash('sha256').update(JSON.stringify(observation)).digest('hex'),
+    observedAtUtc: boot.observedAtUtc };
+}
+test('retained migration archives stale IDLE but only creates ACTIVE and requires another full boot', async t => {
+  const root = fixture(t), first = store(root); first.prepareIncident(reservation); first.release(); first.close();
+  const p = join(root, 'status', 'sovereign-commander-maintenance-custody.json'), original = readFileSync(p);
+  const expectedDigest = createHash('sha256').update(original).digest('hex'); anchors.get(root).lose();
+  const owner = heldOwner(newBoot);
+  const migration = store(root, newBoot, { observeMigrationOwner: () => owner });
+  const r = await migration.prepareRetainedMigration({ ...approved(expectedDigest),
+    expectedReservationId: reservation.reservationId, expectedOwnerDigest: owner.digest, expectedMain: 'c'.repeat(40) });
+  assert.equal(r.ok, true); assert.equal(r.custodyReleased, false); assert.equal(r.requiresLaterFullBoot, true);
+  assert.equal(migration.status().held, true); assert.equal(migration.release().ok, false);
+  assert.equal(JSON.parse(readFileSync(p)).record.phase, 'ACTIVE');
+  assert.equal((await migration.recoverAfterBoot(approved(r.digest))).ok, false);
+  const archived = readdirSync(join(root, 'events', 'sovereign-maintenance-custody')).find(x => x.startsWith('retained-migration-'));
+  const receipt = JSON.parse(readFileSync(join(root, 'events', 'sovereign-maintenance-custody', archived))).receipt;
+  assert.deepEqual(Buffer.from(receipt.originalEnvelopeBase64, 'base64'), original);
+  assert.equal(receipt.original.phase, 'IDLE'); assert.equal(receipt.priorIdleIsFreshnessProof, false);
+  assert.equal(receipt.heldOwnerObservation.digest, owner.digest); assert.equal(receipt.historicalOutcome, 'UNKNOWN');
+  migration.close();
+  const later = { ...newBoot, bootStartedAtUtc: new Date(clock + 30_000).toISOString(),
+    observedAtUtc: new Date(clock + 60_000).toISOString() };
+  const successor = store(root, later, { now: () => later.observedAtUtc, readBootWitness: () => later });
+  assert.equal((await successor.recoverAfterBoot(approved(r.digest))).ok, true);
+  assert.equal(successor.status().held, false);
+});
+test('retained migration refuses legacy authority, owner drift, wrong source binding and changed projection', async t => {
+  for (const scenario of ['legacy-present', 'legacy-unreadable', 'owner-drift', 'owner-running',
+    'missing-owner-binding', 'source-invalid', 'projection-changed', 'anchor-append-failed']) {
+    const root = fixture(t), first = store(root); first.prepareIncident(reservation); first.release(); first.close();
+    const p = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+    const expectedDigest = createHash('sha256').update(readFileSync(p)).digest('hex'); anchors.get(root).lose();
+    let observations = 0; const owner = heldOwner(newBoot);
+    if (scenario === 'anchor-append-failed') anchors.get(root).append = () => { throw new Error('capacity'); };
+    const m = store(root, newBoot, {
+      observeLegacyAudit: () => { if (scenario === 'legacy-unreadable') throw new Error('unreadable');
+        return { present: scenario === 'legacy-present' }; },
+      observeMigrationOwner: () => {
+        observations++;
+        if (scenario === 'projection-changed' && observations === 2) writeFileSync(p, '{}');
+        if (scenario === 'owner-drift' && observations > 1) return { ...owner, digest: 'f'.repeat(64) };
+        if (scenario === 'owner-running') return { ...owner, observation: { ...owner.observation, running: true } };
+        return owner;
+      } });
+    const r = await m.prepareRetainedMigration({ ...approved(expectedDigest),
+      expectedReservationId: reservation.reservationId,
+      expectedOwnerDigest: scenario === 'missing-owner-binding' ? '' : owner.digest,
+      expectedMain: scenario === 'source-invalid' ? 'unbound' : 'c'.repeat(40) });
+    assert.equal(r.ok, false, scenario); assert.equal(m.status().held, true, scenario);
+    assert.equal(m.reserve(reservation).ok, false, scenario); assert.equal(m.release().ok, false, scenario); m.close();
+  }
+});
+test('bounded adversarial model traces never admit execution from missing or replayed workspace state', async t => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const root = fixture(t); let tick = clock, witness = { ...oldBoot, observedAtUtc: new Date(tick).toISOString() };
+    const make = () => store(root, witness, { now: () => new Date(tick).toISOString(),
+      readBootWitness: () => ({ ...witness, observedAtUtc: new Date(tick).toISOString() }),
+      observeMigrationOwner: () => heldOwner({ ...witness, observedAtUtc: new Date(tick).toISOString() }) });
+    let s = make(), state = seed, savedIdle = null;
+    s.prepareIncident(reservation); s.release(); s.close(); s = make();
+    for (let step = 0; step < 30; step++) {
+      state = (state * 1664525 + 1013904223) >>> 0;
+      const action = state % 7, p = join(root, 'status', 'sovereign-commander-maintenance-custody.json');
+      const prior = anchors.get(root).readLatest();
+      if (action === 0) {
+        const r = s.reserve({ reservationId: 'trace-' + seed + '-' + step, operation: 'repair-stephanos' });
+        if (r.ok) assert.equal(JSON.parse(prior.bytes).record.phase, 'IDLE');
+        else assert.equal(r.custodyReleased, false);
+      } else if (action === 1) s.release();
+      else if (action === 2) { anchors.get(root).lose(); assert.equal(s.status().held, true); }
+      else if (action === 3) {
+        const projected = readFileSync(p);
+        if (JSON.parse(projected).record.phase === 'IDLE') savedIdle = projected;
+        else if (savedIdle) { writeFileSync(p, savedIdle);
+          if (prior && JSON.parse(prior.bytes).record.phase === 'ACTIVE') assert.equal(s.status().held, true); }
+      } else if (action === 4) {
+        s.close(); tick += 60_000;
+        witness = { ...witness, bootStartedAtUtc: new Date(tick - 1000).toISOString(), observedAtUtc: new Date(tick).toISOString() };
+        s = make();
+      } else if (action === 5) {
+        const projection = readFileSync(p), parsed = JSON.parse(projection).record, owner = heldOwner(witness);
+        const r = await s.prepareRetainedMigration({ ...approved(createHash('sha256').update(projection).digest('hex')),
+          expectedReservationId: parsed.reservationId, expectedOwnerDigest: owner.digest, expectedMain: 'c'.repeat(40) });
+        if (r.ok) { assert.equal(s.status().held, true); assert.equal(s.release().ok, false); }
+      } else {
+        const status = s.status();
+        const r = await s.recoverAfterBoot(approved(status.digest || 'a'.repeat(64)));
+        if (r.ok) assert.equal(s.status().held, false);
+      }
+      const current = anchors.get(root).readLatest();
+      if (!current || JSON.parse(current.bytes).record.phase === 'ACTIVE') assert.equal(s.status().held, true);
+    }
+    s.close();
+  }
+});
+
+test('post-append owner change preserves the actual prepared ACTIVE digest', async t => {
+  const root = fixture(t), first = store(root); first.prepareIncident(reservation); first.release(); first.close();
+  const bytes = readFileSync(join(root, 'status', 'sovereign-commander-maintenance-custody.json'));
+  anchors.get(root).lose(); const owner = heldOwner(newBoot); let calls = 0;
+  const m = store(root, newBoot, { observeMigrationOwner: () => ++calls < 3 ? owner : { ...owner, digest: 'f'.repeat(64) } });
+  const r = await m.prepareRetainedMigration({ ...approved(createHash('sha256').update(bytes).digest('hex')),
+    expectedReservationId: reservation.reservationId, expectedOwnerDigest: owner.digest, expectedMain: 'c'.repeat(40) });
+  assert.equal(r.ok, false); assert.equal(r.prepared, true); assert.equal(r.digest, m.status().digest);
+  assert.equal(m.status().held, true); assert.equal(m.release().ok, false); m.close();
+});
+
+test('closed capacity refusal admits no reservation and preserves the prior native authority', t => {
+  const root = fixture(t), s = store(root); s.prepareIncident(reservation); s.release();
+  const prior = anchors.get(root).readLatest();
+  anchors.get(root).append = () => { throw new Error('MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE'); };
+  const r = s.reserve({ reservationId: 'must-not-run', operation: 'repair-stephanos' });
+  assert.equal(r.ok, false); assert.equal(r.blocker, 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE');
+  assert.equal(s.status().held, true); assert.deepEqual(anchors.get(root).readLatest(), prior); s.close();
 });

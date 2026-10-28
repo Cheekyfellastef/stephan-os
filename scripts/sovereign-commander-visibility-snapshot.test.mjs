@@ -7,10 +7,68 @@ import {
   buildHeadSyncVisibility,
   collectRepositoryVisibility,
   collectCoreDaemonVisibility,
+  collectMaintenanceCustodyVisibility,
   renderSovereignVisibilitySnapshotLine,
 } from './sovereign-commander-visibility-snapshot.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+const ownerHealth = () => ({ ok: true, service: 'stephanos-sovereign-commander',
+  continuousRepairGuardian: { timeoutCustodyHeld: true, running: false, maintenanceInFlight: false,
+    lastCycleId: '2a5f269f-bc64-45da-a62c-ab0e4c772294',
+    lastBlocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+    persistentCustody: { held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING', token: 'DO_NOT_PUBLISH' },
+  } });
+
+test('live executor hold survives a reset Core heartbeat and ready services', async () => {
+  const maintenanceCustody = await collectMaintenanceCustodyVisibility({ fetchFn: async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:18791/health');
+    assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error');
+    assert.ok(options.signal instanceof AbortSignal);
+    return Response.json(ownerHealth());
+  } });
+  const snapshot = buildSovereignVisibilitySnapshot({
+    repository: { available: true, head: HEAD, branch: 'main', remoteMainAvailable: true, remoteMainHead: HEAD },
+    core: { sourceHead: HEAD, wakeState: 'BOOTSTRAPPING' },
+    selfHeal: { outerBridgeRunCount: 2, octopusSelfHealAttemptCount: 0 }, maintenanceCustody,
+  });
+  assert.equal(snapshot.maintenanceCustody.state, 'HELD');
+  assert.equal(snapshot.maintenanceCustody.lastCycleId, ownerHealth().continuousRepairGuardian.lastCycleId);
+  assert.equal(snapshot.maintenanceCustody.blocker, 'MAINTENANCE_CUSTODY_STATE_MISSING');
+  assert.equal(snapshot.health.maintenanceCustody, 'RED');
+  assert.equal(snapshot.finalVerdict, 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED');
+  assert.equal(snapshot.maintenanceCustody.executionAuthority, false);
+  assert.ok(!JSON.stringify(snapshot).includes('DO_NOT_PUBLISH'));
+});
+
+test('either live hold wins; a negative health observation grants no execution authority', async () => {
+  for (const timeoutCustodyHeld of [true, false]) for (const held of [true, false]) {
+    const health = ownerHealth(), g = health.continuousRepairGuardian;
+    g.timeoutCustodyHeld = timeoutCustodyHeld; g.persistentCustody = { held, blocker: '' };
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn: async () => Response.json(health) });
+    assert.equal(result.state, timeoutCustodyHeld || held ? 'HELD' : 'NOT_HELD_REPORTED');
+    assert.equal(result.executionAuthority, false);
+  }
+});
+
+test('missing, malformed or unavailable owner evidence remains unknown without a repair action', async () => {
+  const malformed = [null, {}, { ok: true, service: 'another-service' },
+    { ...ownerHealth(), ok: false }];
+  for (const change of [g => { delete g.persistentCustody; }, g => { g.timeoutCustodyHeld = 'false'; },
+    g => { g.persistentCustody.blocker = 'private/path or arbitrary text'; }]) {
+    const h = ownerHealth(); change(h.continuousRepairGuardian); malformed.push(h);
+  }
+  for (const h of malformed) {
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn: async () => Response.json(h) });
+    assert.equal(result.available, false); assert.equal(result.state, 'UNKNOWN');
+    assert.equal(buildSovereignVisibilitySnapshot({ maintenanceCustody: result }).health.maintenanceCustody, 'AMBER');
+  }
+  for (const fetchFn of [async () => { throw Error('offline'); }, async () => new Response('{}', { status: 503 }),
+    async () => new Response('x'.repeat(65537))]) {
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn });
+    assert.equal(result.state, 'UNKNOWN'); assert.equal(result.executionAuthority, false);
+  }
+});
 
 test('Core visibility preserves unknown inventory as null rather than zero owners', () => {
   for (const evidence of [
@@ -64,6 +122,9 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
       heartbeatAgeSeconds: 4,
     },
     selfHeal: { available: true, dependencySelfHealEnabled: true },
+    maintenanceCustody: { available: true, timeoutCustodyHeld: false, persistentHeld: false,
+      running: false, maintenanceInFlight: false, blocker: '',
+      evidenceSource: 'LIVE_MAINTENANCE_OWNER_HEALTH', executionAuthority: false },
     controllers: { lanes: { refillHealth: 'GREEN' } },
     meters: { ok: true },
     relay: { available: true, daemonHealthy: true, carrierHealthy: true, heartbeatAgeSeconds: 3 },
@@ -78,6 +139,7 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
     services: 'GREEN',
     laneRefill: 'GREEN',
     transport: 'GREEN',
+    maintenanceCustody: 'GREEN',
   });
   assert.equal(snapshot.headSync.syncState, 'CURRENT');
   assert.equal(snapshot.headSync.canonicalMainHead, HEAD);

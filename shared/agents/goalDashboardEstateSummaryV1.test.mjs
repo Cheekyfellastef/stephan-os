@@ -221,4 +221,131 @@ test('a trace with a different source head cannot annotate the signed ledger', (
   assert.equal(result.trace.truth, 'STALE');assert.equal(result.stages.find(s => s.id === 'select').traceState, '');
 });
 
+test('a canonical system cycle survives missing mission and source head without granting signed proof', () => {
+  const data = input();delete data.goalBuildGateObservatory;
+  const record = { statusId: 'autonomy-build-track-current', timestampUtc: at(-1000), autonomyTrack: {
+    schemaVersion: 'stephanos.autonomy-build-track.v1', timestampUtc: at(-1000), sourceHead: '', missionId: '', issueNumber: null,
+    currentGate: 'ELIGIBLE_GOAL', currentState: 'WAITING', materialActionsSucceeded: 0,
+    cycleDecision: { safeEligibleWorkRemaining: 0 }, gates: [
+      { id: 'ELIGIBLE_GOAL', state: 'WAITING', reason: 'NO_ELIGIBLE_GOAL_OBSERVED' },
+      { id: 'WORKER', state: 'NOT_REACHED', reason: 'WORKER_PICKUP_NOT_OBSERVED' },
+    ] } };
+  const result = project(data, { ...options, statusRecords: [record] });
+  assert.equal(result.trace.scope, 'SYSTEM');assert.equal(result.trace.issue, '');
+  assert.equal(result.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  assert.equal(result.trace.readyWorkCount, 0);assert.equal(result.trace.materialActionsSucceeded, 0);
+  assert.equal(result.stages.find(s => s.id === 'admission').operational.label, 'Waiting here');
+  assert.equal(result.stages.find(s => s.id === 'pickup').operational.label, 'Not reached');
+  assert.equal(result.stages.find(s => s.id === 'pickup').state, 'UNKNOWN');
+  assert.equal(result.trace.observedAtUtc, record.timestampUtc);
+  assert.equal(project({ ...data, autonomyBuildTrack: record.autonomyTrack }, options).trace, null,
+    'A headless fallback object cannot replace the canonical publisher record');
+  record.autonomyTrack.missionId = 'partial-mission';
+  assert.equal(project(data, { ...options, statusRecords: [record] }).trace, null,
+    'A partial mission identity cannot be attributed to a goal');
+});
+test('HTTP wrapper and inner timestamps cannot renew an expired or absent publisher record', () => {
+  const data = input();delete data.goalBuildGateObservatory;
+  data.autonomyBuildTrack = { schemaVersion: 'stephanos.autonomy-build-track.v1', sourceHead: 'a'.repeat(40),
+    missionId: '', issueNumber: null, timestampUtc: at(-1), gates: [{ id: 'SELECT', state: 'PASS' }] };
+  for (const offset of [-600001, 1]) {
+    const result = project(data, { ...options, statusRecords: [{ statusId: 'autonomy-build-track-current',
+      timestampUtc: at(offset), autonomyTrack: data.autonomyBuildTrack }] });
+    assert.equal(result.trace.truth, 'STALE');
+    assert.equal(result.stages.find(s => s.id === 'select').operational?.truth ?? 'NO_VALID_TIME', offset < 0 ? 'STALE' : 'NO_VALID_TIME');
+  }
+  assert.equal(project(data, { ...options, statusRecords: [] }).trace, null);
+  const record = { statusId: 'autonomy-build-track-current', timestampUtc: at(-1),
+    autonomyTrack: { ...data.autonomyBuildTrack, timestampUtc: at(-600001) } };
+  assert.equal(project(data, { ...options, statusRecords: [record] }).trace.truth, 'STALE');
+});
+test('fresh Core health remains separate from stale builders and expires at its original observation', () => {
+  const data = input();data.stephanosBuildTruth.state = 'STALE';
+  const core = { statusId: 'stephanos-core-daemon-current', sourceHead: 'a'.repeat(40), timestampUtc: at(-1000),
+    daemonHealthy: true, missionWorkerHealthy: false, backendHealthy: true,
+    goalBuildGateSignedPublisherVerdict: 'GATE_SIGNING_AUTHORITY_NOT_COMMISSIONED' };
+  let result = project(data, { ...options, statusRecords: [core] });
+  assert.deepEqual(result.health.map(h => h.state), ['HEALTHY', 'UNHEALTHY', 'HEALTHY']);
+  assert.equal(result.buildingGoalCount, null);assert.deepEqual(result.workers, []);
+  assert.equal(result.lastActivity.atUtc, at(-3000));
+  core.timestampUtc = at(-600001);
+  result = project(data, { ...options, statusRecords: [core] });
+  assert.ok(result.health.every(h => h.state === 'UNKNOWN'));
+  assert.equal(result.signedProof.publisherVerdict, '');
+});
+
 }
+
+
+test('Octopus named lanes are all visible in the projection but only lane-exact proof may turn one green', () => {
+  const nowMs=Date.parse('2026-10-26T15:00:00Z'), at=ms=>new Date(nowMs+ms).toISOString();
+  const projection={
+    controllerFleet:{controllers:Array.from({length:5},(_,i)=>({
+      controllerId:'octopus-'+i,title:'Controller '+i,observedEnabled:true,
+      freshness:'CURRENT',timestampUtc:at(i===4?-700000:-1000),
+      activityState:i===0?'BUILDING':'WAITING_OR_BLOCKED',
+      proofRefs:i===0?['proof/lane-1']:[],materialActionsSucceeded:i===0?1:0,
+      materialLanes:i===0?[{laneId:'lane-1',workerId:'native-worker',
+        lastMaterialActionAtUtc:at(-1000),proofRef:'proof/lane-1'}]:[],
+      activeLanes:i===1?['lane-2']:[],parkedLanes:i===2?['lane-3']:[],
+    }))},
+    stephanosBuildTruth:{schemaVersion:'stephanos.sovereign-build-truth.v1',
+      truth:'CURRENT',state:'BUILDING',observedAtUtc:at(-1000),targetMaterialLaneCount:15,
+      goals:[{issue:'#100',builder:'native-worker',state:'BUILDING',proofRefs:['proof/build'],lastMaterialProgressAtUtc:at(-1000)},
+        {issue:'#101',builder:'queued-worker',state:'QUEUED'}]},
+    logicalGoalControllers:{schemaVersion:'stephanos.logical-goal-controller-dashboard.v1',truth:'CURRENT',
+      controllers:Array.from({length:23},(_,i)=>({logicalControllerId:'logical-'+i,
+        goalRef:'#'+(500+i),title:'Goal '+i,hostControllerTitle:'Foreman',
+        continuityState:'TRACKING'}))},
+  };
+  const value=project(projection,{nowMs});
+  assert.equal(value.octopusFleet.controllerCount,5);
+  assert.deepEqual(value.octopusFleet.lanes.map(lane=>lane.laneId),['lane-1','lane-2','lane-3']);
+  assert.equal(value.octopusFleet.observedLaneCount,3);
+  assert.equal(value.octopusFleet.targetMaterialLanes,15);
+  assert.equal(value.octopusFleet.provenMaterialLaneCount,1);
+  assert.equal(value.octopusFleet.lanes[0].state,'PROVEN_BUILD');
+  assert.equal(value.octopusFleet.lanes[1].state,'ACTIVE_CLAIM');
+  assert.equal(value.octopusFleet.lanes[1].light,'AMBER');
+  assert.equal(value.octopusFleet.lanes[2].state,'PARKED_CLAIM');
+  assert.equal(value.octopusFleet.builders.length,2);
+  assert.equal(value.octopusFleet.builders[1].light,'AMBER');
+  assert.equal(value.octopusFleet.logicalLaneCount,23);
+  assert.equal(value.octopusFleet.logicalLanes.every(lane=>!lane.physicalBuildProven),true);
+  projection.controllerFleet.controllers[0].materialLanes[0].proofRef='not-verified';
+  assert.notEqual(project(projection,{nowMs}).octopusFleet.lanes[0].light,'GREEN');
+  projection.controllerFleet.controllers[0].materialLanes[0].proofRef='proof/lane-1';
+  projection.controllerFleet.controllers[0].timestampUtc=at(-700000);
+  assert.equal(project(projection,{nowMs}).octopusFleet.lanes[0].state,'STALE');
+  projection.logicalGoalControllers.truth='STALE';
+  assert.equal(project(projection,{nowMs}).octopusFleet.logicalLaneCount,null);
+});
+
+
+test('independent provider capacity receipts enumerate worker identities but can never be physical-building green', () => {
+  const nowMs=Date.parse('2026-10-26T15:00:00Z'),at=t=>new Date(nowMs+t).toISOString();
+  const record=(workerId,route,statusId,offset=-1000)=>({
+    kind:'stephanos.shared_workspace.status',statusId,participantId:workerId,timestampUtc:at(offset),
+    capacityReceipt:{schemaVersion:'stephanos.build-lane-capacity-receipt.v1',route,
+      repository:'Cheekyfellastef/stephan-os',workerId,state:'READY',
+      receiptId:'receipt-'+workerId,queueDepth:0,observedAtUtc:at(offset),expiresAtUtc:at(offset+240000)},
+  });
+  const data={};
+  const statuses=[
+    record('stephanos-sovereign-builder-08','SOVEREIGN_COMMANDER','sovereign-commander-build-capacity-current'),
+    record('forge-worker-1','FOUNDRY_FORGE','foundry-forge-worker-capacity-'+'a'.repeat(24)),
+    record('old-worker','CHATGPT_GITHUB','chatgpt-github-build-capacity-current',-700000),
+    {...record('forged','DESKTOP_COMMANDER','desktop-commander-build-capacity-current'),participantId:'someone-else'},
+  ];
+  statuses[1].workerScopedCapacity=true;
+  const result=project(data,{nowMs,statusRecords:statuses});
+  assert.equal(result.octopusFleet.capacityBuilderCount,3);
+  assert.deepEqual(result.octopusFleet.capacityBuilders.map(a=>a.workerId),
+    ['old-worker','forge-worker-1','stephanos-sovereign-builder-08']);
+  assert.equal(result.octopusFleet.capacityBuilders.find(a=>a.workerId==='old-worker').state,'STALE');
+  assert.equal(result.octopusFleet.capacityBuilders.find(a=>a.workerId==='stephanos-sovereign-builder-08').state,'READY');
+  assert.equal(result.octopusFleet.capacityBuilders.every(a=>a.trafficLight!=='GREEN'&&!a.physicalBuildProven),true);
+  statuses[0].capacityReceipt.expiresAtUtc=at(-100);
+  assert.equal(project(data,{nowMs,statusRecords:statuses}).octopusFleet.capacityBuilders
+    .find(a=>a.workerId==='stephanos-sovereign-builder-08').state,'STALE');
+});
