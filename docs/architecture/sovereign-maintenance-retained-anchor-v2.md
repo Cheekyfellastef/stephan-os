@@ -1,0 +1,56 @@
+# Retained OS custody journal: structural design for Goal #2961
+
+Status: DESIGN ONLY. No implementation, installation, journal registration, runtime activation, restart or custody recovery is authorized by this document.
+
+Parent: #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
+Pinned base: 8530cb69a6dcb13d4050a7146ebcec77ba9a833e.
+
+## Observed recurrence and invariant
+
+The original incident was recovered with authenticated full-boot evidence. A later hold now has MAINTENANCE_CUSTODY_STATE_MISSING. The existing Windows PowerShell channel is Circular, maximum 15,728,640 bytes; its oldest native record is newer than the original prepared anchor. The surviving authenticated workspace projection is IDLE. Its signature proves provenance, NOT freshness. It cannot clear the present hold. Its reservation also differs from the guardian's later cycle, and the last report's start time differs from the guardian's last attempted admission.
+
+Root cause: a high-volume shared circular audit channel was used as the durable freshness anchor. Fail-closed behavior prevented unsafe execution, but unrelated logging eventually destroyed recovery authority. Increasing the circular size or blindly repeating boot recovery does not repair that model.
+
+Required invariant: custody authority must be non-overwriting OS-managed state, beyond workspace replacement authority. Capacity exhaustion must deny new execution while preserving the last authoritative record. No signed workspace projection, absence of a PID, successful child kill, elapsed time, service reload or old successful recovery may stand in for current authority.
+
+This recurrence requires structural Windows/security review BEFORE implementation. Reject the design if its installation, ACL, retention, migration or crash predicates cannot be established.
+
+## One canonical adapter, retained native channel
+
+Extend the existing native audit adapter; do not add a controller, scheduler, signer or mutation lane.
+
+Use one fixed dedicated classic Windows event log and one fixed source (proposed names Stephanos Maintenance Custody / StephanosMaintenanceCustody). Register through a separately operator-approved, source-pinned native installer. Ordinary startup MUST NOT register, reconfigure, change ACLs, clear, resize or silently create the channel.
+
+Require enabled channel, fixed source-to-log mapping, Retain mode (never overwrite) and a bounded configured maximum (proposed 64 MiB). Reject Circular/AutoBackup until a separately reviewed archival contract exists. Channel creation and configuration are administrator operations; this is an explicit deployment gate, not authority inherited from the current user request or a maintenance verb.
+
+Give the existing executor principal read/write events only. Clear/delete/configuration rights remain restricted to SYSTEM and approved administrative principals, as independently inspected in native configuration. Reject unsupported/empty/broad clear ACLs, wrong owner, unsafe source mapping or inaccessible authority. No arbitrary channel/source/ACL/path arguments.
+
+Continue the existing protected Global kernel mutex and exact previous-record compare-and-append protocol. Bind the new fixed channel identity and a new MAC domain to every envelope, in addition to scope, actual OS EventRecordId, previous ID and transition ID. Reuse the existing credential; no new signer or secret publication. Never accept old-channel envelopes as new-channel authority.
+
+A full channel is an explicit capacity refusal, not rollover, cleanup or permission to delete history. Reserve/terminal append failures preserve HOLD and admit no new action. The final proof must show failed append cannot erase the prior authoritative anchor. Native retention/capacity status must be bounded and must not claim unlimited capacity. Safe operator-led archival/rotation is future work; do not implement automatic retention deletion in this change.
+
+## Migration adds ACTIVE only
+
+The new channel being absent or empty is HOLD, never first-install IDLE. There is no permissive fallback to the old circular channel.
+
+Reuse the existing fixed preparation CLI and custody store rather than inventing another mutating API. The currently held old HTTP owner must stay running and unreloaded while preparation is inspected. New code must not be hot-loaded to clear its hold.
+
+A separately approved migration packet must bind installed canonical main, native journal configuration, exact authenticated projection bytes/digest and reservation, and a fresh bounded observation of the live held owner (no running/in-flight action, current cycle/attempt identity). Preserve differing report/attempt identities explicitly as UNKNOWN; never rewrite a report to fit the hold.
+
+Migration may archive an authenticated ACTIVE OR IDLE projection as stale provenance only. An IDLE projection MUST NOT authorize execution. Under the existing kernel serialization boundary, require no authoritative new-channel record; durably archive the exact original envelope and live observation, recheck input bytes and missing new authority, and append a NEW ACTIVE migration reservation with fresh nonce and current native boot witness. Failed/raced/uncertain writes leave HOLD.
+
+The legacy event channel may be observed for contradictions; an extant newer/corrupt/unreadable authority must refuse migration rather than silently disappear. Exact transition predicates and source/owner bindings require specialist approval before implementation. Do not synthesize a current terminal result.
+
+This preparation grants no release authority to its process. Its only completion is a prepared held receipt. A separately approved full Windows Restart must occur AFTER this preparation's observation. The loaded successor HTTP owner must independently verify fresh same-machine later full boot, exact reservation digest, new retained native authority and canonical source. Only the existing authenticated recovery transition may archive UNKNOWN history and append IDLE. No source lease or historical R7 authority is released.
+
+The prior ONE restart approval has been consumed. A new restart or administrator installation requires a concrete new operator packet after source review/proof; never reuse the old approval.
+
+## Proof and convergence
+
+Before native deployment: deterministic adversarial tests for unsupported retention/ACL/source mapping, missing channel, empty journal, append exhaustion, projection replay/tamper, ACTIVE and IDLE migration remaining held, input drift, concurrent preparation, crash points before/after archive and append, wrong digest/machine, same boot, old epoch/record replay and unchanged ordinary terminal admission. Model/property traces must cover reserve/release/migration/recovery and assert no execution without current authoritative IDLE-to-ACTIVE reservation.
+
+Native exact-head Windows proof must establish the actual channel/source mapping, Retain behavior, executor read/write but no clear/configuration authority, OS record identity binding, concurrent CAS, persistence across full boot, capacity refusal retaining the previous record and genuine post-boot recovery. Do not call mocked .NET results native proof. Any disposable native fixture registration/deletion also needs explicit administrator/operator permission; fixture names are fixed and production cannot be selected as a test target.
+
+Preserve all existing custody, source isolation and guardian regressions. Publish specialist exact-head review, complete tests and exact merge approval. Installation and full boot have distinct receipts. Browser proof must establish actual launcher/runtime usability on 4173 after recovery; reachable HTTP alone is insufficient.
+
+No completion claim until current held custody actually recovers, guarded maintenance remains eligible and normal 4173 works. Record the shared lesson: durable custody freshness cannot depend on an unrelated circular audit stream. Historical recovery and a green review are intermediate evidence, not completion of the recurring repair.
