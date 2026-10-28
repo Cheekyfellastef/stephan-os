@@ -18,6 +18,10 @@ provider, goal grant, source scope, merge or runtime approval.
 3. The existing Sovereign relay reads that workflow through authenticated GETs,
    checks the exact run, both jobs, one artifact, digest, ZIP CRC and bounds,
    operator IDs, timestamps, request operation and unchanged current main.
+   Both the upstream run inventory and local candidate selection bind current
+   main, so an older-source request cannot starve a newer valid request.
+   The fixed filter uses GitHub's documented
+   [workflow-run head_sha parameter](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow).
    Only this acquisition path brands an immutable request for execution.
 4. The relay uses the original command execution ledger under the original
    mailbox state root. An exclusive durable reservation precedes exactly one
@@ -37,7 +41,7 @@ failures. Up to five recent requests are considered oldest first. Already
 recorded IDs are excluded. More than five requests in the active window fail
 closed with backpressure rather than silently dropping older work.
 
-Crash, unknown outcome or incomplete terminal publication retain the original
+Crash, unavailable/invalid owner response, unknown outcome or incomplete terminal publication retain the original
 reservation. No timeout releases it or launches the request again. An owner
 refusal is a blocked wake, not successful handoff or build. These transport
 records never enter the Mission Worker's execution-receipt history, cannot
@@ -55,7 +59,8 @@ Tests exercise the full dispatch/artifact/reader/ledger/guarded-action path with
 an explicitly mocked executor; those are source tests, not native pickup proof.
 They cover forged/fork/rerun contexts, input injection, digest/ZIP tampering,
 wrong job estates, main drift, expiry, concurrency, crash retention, custody
-refusal, lost terminal publication, and live polling during legacy carrier IO.
+refusal, returned transport uncertainty after possible pickup, lost terminal
+publication, stale-head starvation, and live polling during legacy carrier IO.
 
 At preparation, native maintenance holds cycle
 2a5f269f-bc64-45da-a62c-ab0e4c772294 with MAINTENANCE_CUSTODY_STATE_MISSING.

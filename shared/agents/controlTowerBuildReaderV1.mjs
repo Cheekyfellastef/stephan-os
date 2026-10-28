@@ -26,7 +26,7 @@ export async function readControlTowerBuildRequestV1({
     const definition = await get(workflow);
     if (!positive(definition?.id) || definition.path !== CONTROL_TOWER_BUILD_WORKFLOW || definition.state !== 'active')
       return held('CONTROL_TOWER_BUILD_WORKFLOW_UNAVAILABLE');
-    const list = await get(workflow + '/runs?event=workflow_dispatch&per_page=5');
+    const list = await get(workflow + '/runs?event=workflow_dispatch&per_page=5&head_sha=' + first);
     if (!Array.isArray(list.workflow_runs) || list.workflow_runs.length > 5
       || !Number.isSafeInteger(list.total_count) || list.total_count < list.workflow_runs.length)
       return held('CONTROL_TOWER_RUN_INVENTORY_INVALID');
@@ -37,7 +37,7 @@ export async function readControlTowerBuildRequestV1({
       && Date.parse(list.workflow_runs[4]?.created_at) >= cutoff)
       return held('CONTROL_TOWER_BUILD_ACTIVE_WINDOW_OVERFLOW');
     const candidate = [...list.workflow_runs].reverse().find(r =>
-      positive(r.id) && Date.parse(r.created_at) >= cutoff && !isRecorded(r.id)
+      positive(r.id) && r.head_sha === first && Date.parse(r.created_at) >= cutoff && !isRecorded(r.id)
       && r.status === 'completed' && r.conclusion === 'success');
     if (!positive(candidate?.id)) return held('NO_CONTROL_TOWER_BUILD_REQUEST');
     const run = await get('/actions/runs/' + candidate.id);

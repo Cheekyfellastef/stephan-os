@@ -56,7 +56,7 @@ export function fixture() {
     data.calls.push({ url, init });
     const path = url.startsWith(API) ? url.slice(API.length) : url;
     const routes = { '/actions/workflows/stephanos-control-tower-build.yml': data.definition,
-      '/actions/workflows/stephanos-control-tower-build.yml/runs?event=workflow_dispatch&per_page=5': data.list,
+      ['/actions/workflows/stephanos-control-tower-build.yml/runs?event=workflow_dispatch&per_page=5&head_sha=' + HEAD]: data.list,
       '/actions/runs/100': data.run, '/actions/runs/100/jobs?per_page=100': data.jobs,
       '/actions/runs/100/artifacts?per_page=100': data.artifacts };
     if (path === '/git/ref/heads/main') return Response.json(++mains > 1 && data.moved ? data.moved : data.main);

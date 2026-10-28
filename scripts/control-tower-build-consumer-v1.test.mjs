@@ -51,7 +51,8 @@ test('invalid terminal proof cannot discharge the original execution reservation
   assert.equal(ledger.read('control-tower-build-100-1').phase, 'RESERVED');
 });
 test('existing custody refusal becomes a bounded blocked wake without a fabricated build', async t => {
-  const s = setup(t, { execute: async () => ({ ok: false, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING' }) });
+  const s = setup(t, { execute: async () => ({ ok: false, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING',
+    command: { plan: { processId: 'goal-discovery-heartbeat' } }, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }) });
   const result = await s.consume(); assert.equal(result.state, 'WAKE_BLOCKED');
   assert.equal(result.blocker, 'MAINTENANCE_CUSTODY_STATE_MISSING'); assert.equal(result.nativePickupProven, false);
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(result.requestId).terminalState, 'BLOCKED');
@@ -62,6 +63,13 @@ test('a crash or missing terminal result retains the original reservation across
   const first = await s.consume(); assert.equal(first.state, 'UNKNOWN');
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(first.requestId).phase, 'RESERVED');
   await s.consume(); assert.equal(calls, 1); assert.ok(!JSON.stringify(first).includes('private'));
+});
+test('an unavailable owner response may follow pickup and must retain an unknown reservation', async t => {
+  let calls = 0;
+  const s = setup(t, { execute: async () => { calls++; return { ok: false, blocker: 'SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE' }; } });
+  const result = await s.consume(); assert.equal(result.state, 'UNKNOWN');
+  assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(result.requestId).phase, 'RESERVED');
+  await s.consume(); assert.equal(calls, 1);
 });
 test('forged objects, source drift and expired observations cannot reach the owner', async t => {
   const s = setup(t, { readRequest: async () => ({ ok: true, request: { ...fixture().request } }) });
@@ -85,7 +93,7 @@ test('a failed ledger or terminal write cannot be converted into executed or com
 test('wrong owner action or missing proof is never a successful wake', async t => {
   for (const owned of [{ ok: true }, { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
     command: { plan: { processId: 'repair-stephanos' } }, proofHash: 'b'.repeat(64) }]) {
-    const s = setup(t, { execute: async () => owned }); assert.equal((await s.consume()).state, 'WAKE_BLOCKED');
+    const s = setup(t, { execute: async () => owned }); assert.equal((await s.consume()).state, 'UNKNOWN');
   }
 });
 test('relay cooldown coalesces overlapping reads and re-observes after 30 seconds', async t => {

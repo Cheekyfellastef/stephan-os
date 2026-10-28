@@ -55,8 +55,15 @@ export async function consumeControlTowerBuildRequestV1({
     if (await readSourceHead() !== sourceHead || Date.parse(request.expiresAtUtc) <= now().getTime())
       return result('HELD', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
     const owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION }, timeoutMs: 60000 });
-    const completed = owned?.ok === true && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
-      && owned.command?.plan?.processId === ACTION && /^[a-f0-9]{64}$/.test(owned.proofHash || '');
+    const exactOwnerAction = owned?.command?.plan?.processId === ACTION;
+    const completed = exactOwnerAction && owned?.ok === true
+      && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' && /^[a-f0-9]{64}$/.test(owned.proofHash || '');
+    const refused = exactOwnerAction && owned?.ok === false
+      && owned.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED'
+      && typeof owned.blocker === 'string' && code(owned.blocker) === owned.blocker;
+    // A transport failure may arrive after owner pickup. Without a matching
+    // completed/refused owner response, retain custody and never terminalize.
+    if (!completed && !refused) return result('UNKNOWN', code(owned?.blocker), evidence());
     const blocker = completed ? '' : code(owned?.blocker);
     ledger.complete({ requestId: request.requestId, issueNumber: 2315, state: completed ? 'DONE' : 'BLOCKED',
       ...(completed ? { proofHash: owned.proofHash } : {}) });

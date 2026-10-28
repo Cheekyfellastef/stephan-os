@@ -52,3 +52,12 @@ test('oldest unseen active request is selected without giving failed or pending 
   const g = fixture(); g.list.workflow_runs[0].status = 'in_progress';
   assert.equal((await read(g)).blocker, 'NO_CONTROL_TOWER_BUILD_REQUEST');
 });
+test('a stale-head request cannot starve a newer current-main build request', async () => {
+  const f = fixture();
+  f.list.workflow_runs.push({ ...f.run, id: 99, head_sha: 'b'.repeat(40), created_at: '2026-10-28T11:59:00Z' });
+  f.list.total_count = 2;
+  const result = await read(f);
+  assert.equal(result.ok, true); assert.equal(result.request.runId, 100);
+  assert.ok(f.calls.some(c => c.url.endsWith('head_sha=' + HEAD)));
+  assert.ok(!f.calls.some(c => c.url.endsWith('/actions/runs/99')));
+});
