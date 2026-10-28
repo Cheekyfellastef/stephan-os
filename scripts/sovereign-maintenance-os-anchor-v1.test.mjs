@@ -138,7 +138,7 @@ test('native Retain policy, reduced-token denial and capacity refusal preserve t
     finally { runFixture('Restore'); }
     assert.equal(a.readLatest().eventRecordId, prior.eventRecordId);
     assert.equal(runFixture('Fill').full, true);
-    assert.throws(() => a.append(Buffer.from('must-not-overwrite'), { expectedRecordId: prior.eventRecordId }), /ANCHOR_UNPROVEN/);
+    assert.throws(() => a.append(Buffer.from('must-not-overwrite'), { expectedRecordId: prior.eventRecordId }), /JOURNAL_CAPACITY_UNAVAILABLE/);
     assert.equal(a.readLatest().eventRecordId, prior.eventRecordId);
     assert.deepEqual(a.readLatest().bytes, prior.bytes);
   });
@@ -180,4 +180,13 @@ test('Windows capacity model admits only requested bytes or its fixed one-page r
     { shell: false, windowsHide: true, encoding: 'utf8', timeout: 10_000 });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.stdout.trim().split(/\r?\n/), Array(2).fill(['True','True','False','False','False','False','False']).flat());
+});
+
+test('only a completed append refusal can produce the closed capacity code without leaking native data', () => {
+  const a = createMaintenanceOsAnchorV1({ workspaceRoot, signingKey: key, platform: 'win32',
+    spawnFn: () => ({ status: 2, stderr: 'SOVEREIGN_ANCHOR_CAPACITY=FULL_OR_UNPROVEN\nprivate ' + key,
+      stdout: '{}' }) });
+  assert.throws(() => a.append(Buffer.from('fixture'), { expectedRecordId: null }),
+    error => error.message === 'MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE' && !JSON.stringify(error).includes(key));
+  assert.throws(() => a.readLatest(), /MAINTENANCE_OS_ANCHOR_UNPROVEN/);
 });

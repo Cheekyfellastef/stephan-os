@@ -78,3 +78,12 @@ function Assert-MaintenanceJournalBootstrapV2($policy) {
         } finally { $row.Dispose() }
     } finally { $reader.Dispose() }
 }
+
+function Assert-MaintenanceJournalAppendCapacityV2($policy) {
+    $information = [Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.GetLogInformation(
+        $policy.Log,[Diagnostics.Eventing.Reader.PathType]::LogName)
+    if ($information.IsLogFull -ne $false) {
+        [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_CAPACITY=FULL_OR_UNPROVEN')
+        throw 'JOURNAL_APPEND_CAPACITY_UNAVAILABLE'
+    }
+}

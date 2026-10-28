@@ -400,3 +400,12 @@ test('post-append owner change preserves the actual prepared ACTIVE digest', asy
   assert.equal(r.ok, false); assert.equal(r.prepared, true); assert.equal(r.digest, m.status().digest);
   assert.equal(m.status().held, true); assert.equal(m.release().ok, false); m.close();
 });
+
+test('closed capacity refusal admits no reservation and preserves the prior native authority', t => {
+  const root = fixture(t), s = store(root); s.prepareIncident(reservation); s.release();
+  const prior = anchors.get(root).readLatest();
+  anchors.get(root).append = () => { throw new Error('MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE'); };
+  const r = s.reserve({ reservationId: 'must-not-run', operation: 'repair-stephanos' });
+  assert.equal(r.ok, false); assert.equal(r.blocker, 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE');
+  assert.equal(s.status().held, true); assert.deepEqual(anchors.get(root).readLatest(), prior); s.close();
+});

@@ -55,7 +55,10 @@ export function createMaintenanceOsAnchorV1({ workspaceRoot, signingKey, spawnFn
           extra.expectedRecordId ?? 'NONE', Buffer.from(signingKey, 'utf8').toString('base64')].join('\n') + '\n' });
     if (result.error || result.status !== 0) {
       const stages = [...String(result.stderr || '').matchAll(/^SOVEREIGN_ANCHOR_STAGE=(START|INPUT|CONFIG|ACL|QUERY_OPEN|QUERY|NEXT)\r?$/gm)];
-      throw Object.assign(new Error('MAINTENANCE_OS_ANCHOR_UNPROVEN'), {
+      const capacityUnavailable = mode === 'Append' && !result.error && result.status === 2
+        && /^SOVEREIGN_ANCHOR_CAPACITY=FULL_OR_UNPROVEN\r?$/m.test(String(result.stderr || ''));
+      throw Object.assign(new Error(capacityUnavailable ? 'MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE'
+        : 'MAINTENANCE_OS_ANCHOR_UNPROVEN'), {
         stage: stages.at(-1)?.[1] || 'UNKNOWN',
         failureKind: result.error?.code === 'ETIMEDOUT' ? 'TIMEOUT' : 'FAILED',
       });

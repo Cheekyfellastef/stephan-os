@@ -142,10 +142,11 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       const digest = write(record, initial, previous?.anchorRecordId ?? null);
       owned = { fd, record, digest };
       return { ok: true, digest };
-    } catch {
+    } catch (error) {
       // Never remove a fence after an uncertain write; no execution was admitted.
       if (fd !== undefined) closeSync(fd);
-      return held('MAINTENANCE_CUSTODY_RESERVATION_UNPROVEN');
+      return held(error?.message === 'MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE'
+        ? 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE' : 'MAINTENANCE_CUSTODY_RESERVATION_UNPROVEN');
     }
   };
   const release = () => {

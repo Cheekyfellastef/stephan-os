@@ -146,6 +146,7 @@ try {
     $writer.Source = $sourceName
     try {
         for ($attempt=0; $attempt -lt 5; $attempt++) {
+            Assert-MaintenanceJournalAppendCapacityV2 $policy
             $nextId = (Read-NewestRecordId) + 1
             $signingText = 'stephanos-maintenance-os-anchor-v3' + [char]0 + $policy.Id + [char]0 + $request.scope + [char]0 +
                 [string]$nextId + [char]0 + $request.expectedRecordId + [char]0 + $request.transitionId + [char]0 + $request.stateBase64
