@@ -64,10 +64,15 @@ export function createMailboxExecutionLedger(mailboxStateRoot) {
     },
     complete(receipt) {
       if (!['DONE', 'BLOCKED'].includes(receipt?.state)) throw new Error('MAILBOX_EXECUTION_TERMINAL_REQUIRED');
+      if (receipt.proofHash !== undefined && !/^[a-f0-9]{64}$/.test(receipt.proofHash))
+        throw new Error('MAILBOX_EXECUTION_TERMINAL_PROOF_INVALID');
       const existing = read(receipt.requestId);
       if (!existing) return this.importHistorical(receipt.requestId, receipt.issueNumber, 'TERMINAL');
       if (existing.issueNumber !== receipt.issueNumber) throw new Error('MAILBOX_EXECUTION_LEDGER_EPOCH_CONFLICT');
-      if (existing.phase === 'RESERVED') atomicWriteJson(location(receipt.requestId), { ...existing, phase: 'TERMINAL', terminalState: receipt.state }, { maxBytes: 4096 });
+      if (existing.phase === 'RESERVED') atomicWriteJson(location(receipt.requestId), {
+        ...existing, phase: 'TERMINAL', terminalState: receipt.state,
+        ...(receipt.proofHash === undefined ? {} : { terminalProofHash: receipt.proofHash }),
+      }, { maxBytes: 4096 });
       return read(receipt.requestId);
     },
   });
