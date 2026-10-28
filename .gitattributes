@@ -50,3 +50,26 @@ scripts/windows/sovereign-maintenance-audit-anchor.ps1 text eol=lf
 scripts/windows/read-sovereign-maintenance-owner-v2.ps1 text eol=lf
 scripts/windows/test-sovereign-maintenance-journal-v2.ps1 text eol=lf
 scripts/windows/MaintenanceJournalAclFixtureV2.cs text eol=lf
+# Installer bootstrap authenticates raw protected source bytes before elevation.
+.gitattributes text eol=lf
+scripts/windows/SovereignCoreJobCustodyV1.cs text eol=lf
+scripts/sovereign-maintenance-installer-source-admission-v3.mjs text eol=lf
+scripts/sovereign-maintenance-installer-source-job-v3.test.mjs text eol=lf
+docs/architecture/sovereign-maintenance-installer-source-job-v3.md text eol=lf
+
+scripts/windows/SovereignMaintenanceSourceJobV3.cs text eol=lf
+
+# The entire authenticated installer source closure must preserve immutable Git bytes.
+scripts/battle-bridge-github-sync-policy.mjs text eol=lf
+scripts/battle-bridge-ignition-supervisor.mjs text eol=lf
+scripts/battle-bridge-shared-workspace-publisher.mjs text eol=lf
+scripts/battle-bridge-ui-4173-repair.mjs text eol=lf
+scripts/git-branch-intelligence.mjs text eol=lf
+scripts/ignite-stephanos-local-lib.mjs text eol=lf
+scripts/ignite-stephanos-local.mjs text eol=lf
+scripts/ignition-cockpit-model.mjs text eol=lf
+scripts/launcher-readiness-live-facts.mjs text eol=lf
+scripts/launcher-readiness-planner.mjs text eol=lf
+scripts/launcher-readiness-report.mjs text eol=lf
+scripts/stephanos-ignition-preflight.mjs text eol=lf
+package.json text eol=lf

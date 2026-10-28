@@ -13,6 +13,7 @@ on:
       - 'scripts/sovereign-maintenance-owner-observation*'
       - 'scripts/sovereign-maintenance-retained-migration*'
       - 'scripts/sovereign-maintenance-journal-source-proof*'
+      - 'scripts/sovereign-maintenance-installer-source*'
       - 'scripts/windows/*sovereign-maintenance*'
       - 'scripts/windows/MaintenanceJournalAclFixtureV2.cs'
       - 'scripts/sovereign-observation-offline-regression.test.mjs'
@@ -35,6 +36,7 @@ on:
       - 'shared/agents/sovereignCommanderMcp*'
       - 'shared/agents/sovereignCommanderHttp*'
       - 'scripts/windows/SovereignCoreJobCustodyV1.cs'
+      - 'scripts/windows/SovereignMaintenanceSourceJobV3.cs'
       - 'shared/agents/stephanosCoreDaemonV1*'
       - '.github/workflows/sovereign-core-repair-custody.yml'
 permissions:
@@ -63,6 +65,8 @@ jobs:
         env:
           STEPHANOS_CUSTODY_NATIVE_FIXTURE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
+      - name: Native installer source Job and pinned bootstrap proof
+        run: node --test scripts/sovereign-maintenance-installer-source-job-v3.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
           STEPHANOS_SHARED_WORKSPACE: ${{ runner.temp }}/stephanos-source-proof-fixture
