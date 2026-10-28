@@ -136,26 +136,74 @@ export function extractCardLayout({
     return { bounds: rect, geometry: rects.length ? { rect, rects } : null,
       clientRectCount: rawRects.length };
   };
-  const style = el => view.getComputedStyle(el);
-  const visible = el => {
-    for (let p = el; p; p = p.parentElement) {
-      const s = style(p);
-      if (p.hidden || s.display === 'none' || s.visibility === 'hidden'
-        || s.visibility === 'collapse' || Number(s.opacity) === 0
-        || s.contentVisibility === 'hidden') return false;
+  const styleCache = new Map();
+  const style = el => {
+    if (!styleCache.has(el)) {
+      const s = view.getComputedStyle(el);
+      if (!s || typeof s.display !== 'string' || !s.display.trim()
+        || !['visible', 'hidden', 'collapse'].includes(s.visibility)
+        || typeof s.opacity !== 'string' || !s.opacity.trim()
+        || !Number.isFinite(Number(s.opacity)) || Number(s.opacity) < 0 || Number(s.opacity) > 1
+        || !['visible', 'hidden', 'auto'].includes(s.contentVisibility))
+        throw new TypeError('invalid computed render evidence');
+      styleCache.set(el, s);
     }
-    return true; // Visibility metadata and actual paint geometry are separate.
+    return styleCache.get(el);
   };
   const elementGeometry = new Map();
   const measureElement = el => {
     if (!elementGeometry.has(el)) elementGeometry.set(el, measureGeometry(el));
     return elementGeometry.get(el).geometry;
   };
+  // Shared layout vocabulary is input to distinct paint/containment/clip rules.
+  const boxLayouts = new Set([
+    'block', 'block flow', 'flow-root', 'block flow-root',
+    'inline-block', 'inline flow-root', 'flex', 'block flex',
+    'inline-flex', 'inline flex', 'grid', 'block grid', 'inline-grid', 'inline grid',
+  ]);
+  const nativeLayouts = new Set([
+    'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'OPTGROUP', 'PROGRESS', 'METER',
+    'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION', 'COL', 'COLGROUP',
+  ]);
+  const displayOf = s => s.display.trim().toLowerCase().replace(/\s+/g, ' ');
+  const ordinaryHtml = el => el.namespaceURI === 'http://www.w3.org/1999/xhtml'
+    && !nativeLayouts.has(el.tagName.toUpperCase());
+  const contentSuppressed = el => {
+    const s = style(el), display = displayOf(s);
+    if (s.contentVisibility === 'visible' || display === 'none') return false;
+    // Non-replaced inlines and boxless contents cannot acquire containment.
+    if (ordinaryHtml(el) && ['contents', 'inline', 'inline flow'].includes(display)) return false;
+    if (!ordinaryHtml(el) || !boxLayouts.has(display))
+      throw new TypeError('unsupported content visibility layout');
+    if (s.contentVisibility === 'auto')
+      throw new TypeError('automatic content skipping requires independent state evidence');
+    return true;
+  };
+  const boundaryEligible = el => {
+    for (let p = el; p; p = p.parentElement) {
+      const s = style(p), display = displayOf(s);
+      if (display === 'none') return false;
+      if (Number(s.opacity) === 0) {
+        measureElement(p);
+        if (!ordinaryHtml(p) || (!boxLayouts.has(display) && !['inline', 'inline flow'].includes(display))
+          || !elementGeometry.get(p).clientRectCount)
+          throw new TypeError('unsupported zero opacity rendering box');
+        return false;
+      }
+      // Validate active containment on self, but only ancestors suppress its box.
+      if (contentSuppressed(p) && p !== el) return false;
+    }
+    return true;
+  };
+  const boxPainted = el => boundaryEligible(el) && style(el).visibility === 'visible';
+  const contentPainted = el => boxPainted(el) && !contentSuppressed(el);
   const candidates = [...root.querySelectorAll(cardSelector)];
   if (root.matches(cardSelector)) candidates.unshift(root);
-  // Only painted cards become ownership boundaries. Cache before projection
-  // so boxless wrappers cannot hide painted descendants or install false bounds.
-  const cards = candidates.filter(el => visible(el) && measureElement(el) !== null);
+  // Selected associated boxes establish layout ownership even when their own
+  // visibility is hidden: visible descendants must still be audited inside them.
+  const cards = candidates.filter(el => boundaryEligible(el) && measureElement(el) !== null);
+
   const cardSet = new Set(cards), ids = new Map(), elementIds = new Map();
   cards.forEach((el, i) => ids.set(el, 'card-' + i));
   let nextId = 0;
@@ -171,26 +219,16 @@ export function extractCardLayout({
   // Paint presence, generated boxes and overflow applicability are orthogonal.
   // A zero-area generated block may clip; a boxless or non-replaced inline
   // element does not. Unqualified active clipping fails explicitly.
-  const clipLayouts = new Set([
-    'block', 'block flow', 'flow-root', 'block flow-root',
-    'inline-block', 'inline flow-root', 'flex', 'block flex',
-    'inline-flex', 'inline flex', 'grid', 'block grid', 'inline-grid', 'inline grid',
-  ]);
-  const unqualifiedClipElements = new Set([
-    'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'OPTGROUP', 'PROGRESS', 'METER',
-    'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT',
-    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION', 'COL', 'COLGROUP',
-  ]);
   const clipEligible = (el, computed) => {
     const display = String(computed.display || '').trim().toLowerCase().replace(/\s+/g, ' ');
     if (display === 'contents' || display === 'none') return false;
     measureElement(el);
     if (!elementGeometry.get(el).clientRectCount) return false;
     if (el.namespaceURI !== 'http://www.w3.org/1999/xhtml'
-      || unqualifiedClipElements.has(el.tagName.toUpperCase()))
+      || nativeLayouts.has(el.tagName.toUpperCase()))
       throw new TypeError('unsupported overflow clip element');
     if (display === 'inline' || display === 'inline flow') return false;
-    if (!clipLayouts.has(display)) throw new TypeError('unsupported overflow clip layout: ' + display);
+    if (!boxLayouts.has(display)) throw new TypeError('unsupported overflow clip layout: ' + display);
     return true;
   };
   // Text measures contents and retains its own clip. Border-box items must
@@ -227,7 +265,7 @@ export function extractCardLayout({
     let selected = null;
     for (let p = el; p && p !== card; p = p.parentElement) {
       if (owner(p) !== card) break;
-      if (p.matches(controlSelector + ',' + badgeSelector) && visible(p) && measureElement(p))
+      if (p.matches(controlSelector + ',' + badgeSelector) && boxPainted(p) && measureElement(p))
         selected = p;
     }
     return selected;
@@ -242,19 +280,19 @@ export function extractCardLayout({
     for (const el of nodes) {
       if (el !== card && cardSet.has(el)) {
         // Only the immediate nested card is a parent item. Its content is audited separately.
-        if (owner(el.parentElement) === card && visible(el))
+        if (owner(el.parentElement) === card && boxPainted(el))
           items.push(borderBoxItem(el, 'card'));
         continue;
       }
-      if (owner(el) !== card || !visible(el)) continue;
-      if (el !== card && el.matches(controlSelector + ',' + badgeSelector)) {
+      if (owner(el) !== card || !boundaryEligible(el)) continue;
+      if (el !== card && boxPainted(el) && el.matches(controlSelector + ',' + badgeSelector)) {
         // Nested badge/control wrappers would double-count their descendant boxes.
         if (outerPaintedBox(el, card) === el) {
           const measured = borderBoxItem(el, el.matches(controlSelector) ? 'control' : 'badge');
           if (measured) items.push(measured);
         }
       }
-      if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
+      if (!contentPainted(el) || ['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
       for (const node of el.childNodes) {
         if (node.nodeType !== 3 || !norm(node.textContent)) continue;
         const range = doc.createRange();
@@ -390,7 +428,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     const elements = [];
     function el(tag, classes, bounds, parent = null, css = {}, title = null) {
       const e = { tagName: tag, namespaceURI: 'http://www.w3.org/1999/xhtml', className: classes, id: '', parentElement: parent, hidden: false,
-        childNodes: [], css: { display: 'block', visibility: 'visible', opacity: '1',
+        childNodes: [], css: { display: 'block', visibility: 'visible', opacity: '1', contentVisibility: 'visible',
           overflowX: 'visible', overflowY: 'visible', ...css },
         textContent: '', clientLeft: 0, clientTop: 0, clientWidth: bounds.right - bounds.left,
         clientHeight: bounds.bottom - bounds.top, offsetWidth: bounds.right - bounds.left,
@@ -957,4 +995,253 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     }
   });
 
+
+  for (const inheritedVisibility of ['hidden', 'collapse']) {
+    test('visibility reproduction: selected visible cards survive ' + inheritedVisibility + ' ancestor', () => {
+      const fixture = fakeDocument();
+      fixture.root.css.visibility = inheritedVisibility;
+      const data = runInNewContext('(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+        { document: fixture.doc });
+      assert.equal(data.cards.length, 2);
+    });
+    test('visibility reproduction: visible labels retain clipping/collision under ' + inheritedVisibility + ' wrapper', () => {
+      const fixture = fakeDocument();
+      fixture.nested.css.display = 'none';
+      const wrapper = fixture.createElement('DIV', '', r(), fixture.card, { visibility: inheritedVisibility });
+      fixture.title.parentElement = wrapper;
+      fixture.title.getAttribute = () => null;
+      const sibling = fixture.createElement('SPAN', '', r(5, 5, 60, 20), wrapper);
+      sibling.childNodes.push({ nodeType: 3, textContent: 'Visible sibling',
+        rect: r(5, 5, 60, 20), rects: [r(5, 5, 60, 20)] });
+      const data = runInNewContext('(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+        { document: fixture.doc });
+      assert.equal(data.cards[0].items.filter(x => x.kind === 'text').length, 2);
+      const findings = auditCardLayout(data).findings;
+      assert.ok(findings.some(f => f.code === 'CLIPPED_X'));
+      assert.ok(findings.some(f => f.code === 'COLLISION'));
+    });
+  }
+
+  const extractFixture = fixture => runInNewContext(
+    '(' + extractCardLayout.toString() + ')({cardSelector:".card"})', { document: fixture.doc });
+  function renderFixture() {
+    const fixture = fakeDocument();
+    fixture.title.css.display = 'none';
+    fixture.nested.css.display = 'none';
+    const wrapper = fixture.createElement('DIV', '', r(5, 5, 90, 70), fixture.card);
+    const label = fixture.createElement('SPAN', '', r(10, 10, 60, 25), wrapper);
+    label.childNodes.push({ nodeType: 3, textContent: 'Visible label',
+      rect: r(10, 10, 60, 25), rects: [r(10, 10, 60, 25)] });
+    return { fixture, wrapper, label, extract: () => extractFixture(fixture) };
+  }
+
+  test('hidden layout card retains visible descendants and their escape/collision evidence', () => {
+    const model = renderFixture();
+    model.fixture.card.css.visibility = 'hidden';
+    model.wrapper.css.visibility = 'hidden';
+    model.label.childNodes[0].rect = r(-10, 10, 60, 25);
+    model.label.childNodes[0].rects = [r(-10, 10, 60, 25)];
+    const sibling = model.fixture.createElement('SPAN', '', r(10, 10, 40, 25), model.wrapper);
+    sibling.childNodes.push({ nodeType: 3, textContent: 'Visible sibling',
+      rect: r(10, 10, 40, 25), rects: [r(10, 10, 40, 25)] });
+    const data = model.extract(), report = auditCardLayout(data);
+    assert.equal(data.cards.length, 1, 'visibility must not remove layout ownership');
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'text').length, 2);
+    assert.ok(report.findings.some(x => x.code === 'ESCAPE_X'));
+    assert.ok(report.findings.some(x => x.code === 'COLLISION'));
+  });
+
+  test('hidden nested card bounds descendants without painting its border box into the parent', () => {
+    const fixture = fakeDocument();
+    fixture.nested.css.visibility = 'hidden';
+    const data = extractFixture(fixture);
+    assert.equal(data.cards.length, 2);
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'card').length, 0);
+    assert.equal(data.cards[1].items.filter(x => x.kind === 'control').length, 1);
+    assert.equal(data.cards[1].items.filter(x => x.kind === 'text').length, 1);
+  });
+
+  for (const visibility of ['hidden', 'collapse']) {
+    test('own computed ' + visibility + ' omits inherited-hidden text and controls', () => {
+      const model = renderFixture();
+      model.label.css.visibility = visibility; // computed inheritance, not a raw ancestor flag
+      const control = model.fixture.createElement('A', '', r(10, 10, 60, 25), model.wrapper,
+        { visibility });
+      control.childNodes.push({ nodeType: 3, textContent: 'Invisible direct label' });
+      assert.equal(model.extract().cards[0].items.length, 0);
+    });
+  }
+
+  test('invisible controls cannot grant collision exemptions to visible descendant labels', () => {
+    const model = renderFixture();
+    const control = model.fixture.createElement('A', '', r(10, 10, 60, 25), model.wrapper,
+      { visibility: 'hidden' });
+    model.label.parentElement = control;
+    const sibling = model.fixture.createElement('SPAN', 'badge', r(15, 12, 40, 23), model.wrapper);
+    const data = model.extract();
+    const label = data.cards[0].items.find(x => x.kind === 'text');
+    assert.equal(label.ownerId, null);
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'control').length, 0);
+    assert.ok(auditCardLayout(data).findings.some(x => x.code === 'COLLISION'));
+    assert.ok(sibling);
+  });
+
+  test('hidden ancestor keeps its overflow clip around explicitly visible text', () => {
+    const model = renderFixture();
+    model.wrapper.css.visibility = 'hidden';
+    model.wrapper.css.overflowX = 'hidden';
+    model.wrapper.clientWidth = 30;
+    const data = model.extract(), label = data.cards[0].items.find(x => x.kind === 'text');
+    assert.ok(label.clips.some(x => x.rect.right === 35));
+    assert.ok(auditCardLayout(data).findings.some(x => x.code === 'CLIPPED_X'));
+  });
+
+  for (const suppression of ['display', 'opacity']) {
+    test(suppression + ' subtree suppression survives descendant visible overrides', () => {
+      const model = renderFixture();
+      model.wrapper.css[suppression] = suppression === 'display' ? 'none' : '0';
+      model.label.css.visibility = 'visible';
+      model.label.css.display = 'block';
+      model.label.css.opacity = '1';
+      assert.equal(model.extract().cards[0].items.length, 0);
+      model.fixture.card.css[suppression] = suppression === 'display' ? 'none' : '0';
+      assert.equal(model.extract().cards.length, 0);
+    });
+  }
+
+  test('raw hidden attribute yields to effective CSS; effective display:none still suppresses', () => {
+    const model = renderFixture();
+    model.fixture.card.hidden = true;
+    model.wrapper.hidden = true;
+    model.label.hidden = true;
+    assert.equal(model.extract().cards[0].items.filter(x => x.kind === 'text').length, 1);
+    model.wrapper.css.display = 'none';
+    assert.equal(model.extract().cards[0].items.length, 0);
+    model.fixture.card.css.display = 'none';
+    assert.equal(model.extract().cards.length, 0);
+  });
+
+  test('content-hidden card retains its layout and nested border box while omitting direct/descendant content', () => {
+    const fixture = fakeDocument();
+    fixture.nested.css.contentVisibility = 'hidden';
+    fixture.button.css.contentVisibility = 'visible'; // cannot restore ancestor-skipped contents
+    const data = extractFixture(fixture);
+    assert.equal(data.cards.length, 2);
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'card').length, 1);
+    assert.equal(data.cards[1].items.length, 0);
+    fixture.card.css.contentVisibility = 'hidden';
+    const rootHidden = extractFixture(fixture);
+    assert.equal(rootHidden.cards.length, 1);
+    assert.equal(rootHidden.cards[0].items.length, 0);
+  });
+
+  test('content-hidden control-like ordinary HTML box retains own paint but suppresses labels', () => {
+    const model = renderFixture();
+    model.wrapper.tagName = 'A';
+    model.wrapper.css.contentVisibility = 'hidden';
+    const data = model.extract();
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'control').length, 1);
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'text').length, 0);
+  });
+
+  for (const display of ['contents', 'inline', 'inline flow']) {
+    test('content visibility on ineligible ' + display + ' does not suppress descendants', () => {
+      for (const contentVisibility of ['hidden', 'auto']) {
+        const model = renderFixture();
+        model.wrapper.css.display = display;
+        model.wrapper.css.contentVisibility = contentVisibility;
+        if (display === 'contents') setMeasuredGeometry(model.wrapper, r(5, 5, 5, 5), []);
+        assert.equal(model.extract().cards[0].items.filter(x => x.kind === 'text').length, 1);
+      }
+    });
+  }
+
+  test('qualified containment display aliases produce the same suppression model', () => {
+    for (const display of CLIP_LAYOUT_GROUPS.flat()) {
+      const model = renderFixture();
+      model.wrapper.css.display = display;
+      model.wrapper.css.contentVisibility = 'hidden';
+      assert.equal(model.extract().cards[0].items.length, 0);
+    }
+  });
+
+  test('unqualified content visibility and uncertain automatic skipping fail explicitly', () => {
+    for (const display of ['table', 'table-cell', 'ruby', 'list-item', 'unknown-layout']) {
+      const model = renderFixture();
+      model.wrapper.css.display = display;
+      model.wrapper.css.contentVisibility = 'hidden';
+      assert.throws(model.extract, /unsupported content visibility/);
+    }
+    for (const tag of ['INPUT', 'BUTTON', 'TABLE', 'IMG']) {
+      const model = renderFixture();
+      model.wrapper.tagName = tag;
+      model.wrapper.css.contentVisibility = 'hidden';
+      assert.throws(model.extract, /unsupported content visibility/);
+    }
+    const svg = renderFixture();
+    svg.wrapper.namespaceURI = 'http://www.w3.org/2000/svg';
+    svg.wrapper.css.contentVisibility = 'hidden';
+    assert.throws(svg.extract, /unsupported content visibility/);
+    const automatic = renderFixture();
+    automatic.wrapper.css.contentVisibility = 'auto';
+    assert.throws(automatic.extract, /automatic content skipping/);
+  });
+
+  test('zero opacity needs a qualified generated rendering box', () => {
+    for (const display of ['block', 'inline', 'inline flow', 'inline-block']) {
+      const model = renderFixture();
+      model.wrapper.css.display = display;
+      model.wrapper.css.opacity = '0';
+      assert.equal(model.extract().cards[0].items.length, 0);
+    }
+    for (const variant of ['contents', 'boxless', 'native', 'svg', 'table']) {
+      const model = renderFixture();
+      model.wrapper.css.opacity = '0';
+      if (variant === 'contents' || variant === 'table') model.wrapper.css.display = variant;
+      if (variant === 'boxless') setMeasuredGeometry(model.wrapper, r(5, 5, 5, 5), []);
+      if (variant === 'native') model.wrapper.tagName = 'INPUT';
+      if (variant === 'svg') model.wrapper.namespaceURI = 'http://www.w3.org/2000/svg';
+      assert.throws(model.extract, /unsupported zero opacity/);
+    }
+  });
+
+  test('malformed computed render evidence fails explicitly', () => {
+    const invalid = [
+      ['visibility', undefined], ['visibility', 'inherit'], ['display', ''], ['display', null],
+      ['opacity', ''], ['opacity', 'NaN'], ['opacity', '2'], ['opacity', '-0.1'],
+      ['contentVisibility', undefined], ['contentVisibility', 'unknown'],
+    ];
+    for (const [property, value] of invalid) {
+      const model = renderFixture();
+      model.wrapper.css[property] = value;
+      assert.throws(model.extract, /invalid computed render evidence/);
+    }
+  });
+
+  test('visibility model preserves translation and irrelevant hidden-branch invariance', () => {
+    for (const visibility of ['visible', 'hidden', 'collapse']) {
+      for (const offset of [-321, 0, 654]) {
+        const model = renderFixture();
+        model.wrapper.css.visibility = visibility;
+        const original = auditCardLayout(model.extract());
+        const rect = r(10 + offset, 10 + offset, 60 + offset, 25 + offset);
+        // Translate every generated box and Range coherently.
+        for (const el of [model.fixture.root, model.fixture.card, model.wrapper, model.label]) {
+          const before = el.getBoundingClientRect();
+          setMeasuredGeometry(el, r(before.left + offset, before.top + offset,
+            before.right + offset, before.bottom + offset), [
+            r(before.left + offset, before.top + offset, before.right + offset, before.bottom + offset),
+          ]);
+        }
+        model.label.childNodes[0].rect = rect;
+        model.label.childNodes[0].rects = [rect];
+        const branch = model.fixture.createElement('DIV', '', r(), model.fixture.card,
+          { display: 'none' });
+        const omitted = model.fixture.createElement('SPAN', 'badge', r(), branch);
+        omitted.childNodes.push({ nodeType: 3, textContent: 'Irrelevant hidden branch' });
+        const after = auditCardLayout(model.extract());
+        assert.deepEqual(after, original);
+      }
+    }
+  });
 }
