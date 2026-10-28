@@ -71,7 +71,7 @@ function crc32(bytes) {
 
 // Exactly one in-memory ZIP entry, fixed basename, bounded inflation, no
 // filesystem extraction, extra entries, descriptors with unknown sizes or ZIP64.
-export function decodeMailboxFreeReadbackArchiveV1(zip) {
+export function decodeBoundedSingleJsonArchiveV1(zip, fileName, keys) {
   try {
     if (!Buffer.isBuffer(zip) || zip.length < 22 || zip.length > MAX_ZIP_BYTES) return null;
     const e = zip.length - 22;
@@ -97,7 +97,7 @@ export function decodeMailboxFreeReadbackArchiveV1(zip) {
       || centralLength !== 46 + nameLen + extraLen + commentLen
       || localOffset !== 0 || localOffset + 30 > centralOffset) return null;
     const name = zip.subarray(centralOffset + 46, centralOffset + 46 + nameLen).toString('utf8');
-    if (name !== PROOF_FILE || zip.readUInt32LE(localOffset) !== 0x04034b50
+    if (name !== fileName || zip.readUInt32LE(localOffset) !== 0x04034b50
       || zip.readUInt16LE(localOffset + 6) !== flags
       || zip.readUInt16LE(localOffset + 8) !== method) return null;
     const localNameLen = zip.readUInt16LE(localOffset + 26);
@@ -123,10 +123,14 @@ export function decodeMailboxFreeReadbackArchiveV1(zip) {
     const plain = method === 0 ? bytes : inflateRawSync(bytes, { maxOutputLength: MAX_JSON_BYTES });
     if (plain.length !== inflated || crc32(plain) !== expectedCrc) return null;
     const parsed = JSON.parse(plain.toString('utf8'));
-    return exactKeys(parsed, PROOF_KEYS) ? parsed : null;
+    return exactKeys(parsed, keys) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+export function decodeMailboxFreeReadbackArchiveV1(zip) {
+  return decodeBoundedSingleJsonArchiveV1(zip, PROOF_FILE, PROOF_KEYS);
 }
 
 function ownerRun(run, workflowId, path, event, name) {
