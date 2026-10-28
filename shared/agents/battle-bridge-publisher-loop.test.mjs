@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rename, mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -61,30 +62,8 @@ test('an unavailable audit-event sink does not reject an otherwise published tic
 });
 
 test('a real backend-like HTTP process survives detached immediate and scheduled publication failures', () => {
-  const moduleUrl = new URL('./battleBridgePublisherLoop.mjs', import.meta.url).href;
-  const script = `
-    import { createServer } from 'node:http';
-    import { mkdtemp } from 'node:fs/promises';
-    import { tmpdir } from 'node:os';
-    import { join } from 'node:path';
-    import { startBattleBridgePublisherLoop } from ${JSON.stringify(moduleUrl)};
-    const root = await mkdtemp(join(tmpdir(), 'stephanos-publisher-host-'));
-    const server = createServer((_req, res) => res.end('CHAT_ALIVE'));
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    let intervalFn;
-    const loop = startBattleBridgePublisherLoop({ root, repoRoot: process.cwd(),
-      options: { atomicRenameRetryDelaysMs: [], renameFn: async () => {
-        throw Object.assign(new Error('PRIVATE_IO_FAILURE'), { code: 'EPERM' });
-      } }, setIntervalFn(fn) { intervalFn = fn; return 1; }, clearIntervalFn() {} });
-    const wait = async () => { while(loop.getStatus().inFlight) await new Promise(r => setTimeout(r, 5)); };
-    await wait(); intervalFn(); await wait();
-    if (loop.getStatus().lastResult.ok !== false) throw Error('FALSE_SUCCESS');
-    const reply = await fetch('http://127.0.0.1:' + server.address().port);
-    if (await reply.text() !== 'CHAT_ALIVE') throw Error('CHAT_FAILED');
-    loop.stop(); server.closeAllConnections(); await new Promise(r => server.close(r));
-    console.log('HOST_SURVIVED');
-  `;
-  const child = spawnSync(process.execPath, ['--unhandled-rejections=strict', '--input-type=module', '-e', script],
+  const child = spawnSync(process.execPath, ['--unhandled-rejections=strict',
+    fileURLToPath(new URL('./fixtures/battleBridgePublisherLoopHostProbe.mjs', import.meta.url))],
     { encoding: 'utf8', timeout: 10000, windowsHide: true });
   assert.equal(child.status, 0, child.stderr);
   assert.match(child.stdout, /HOST_SURVIVED/);
