@@ -3,7 +3,7 @@
 Status: DESIGN ONLY. No implementation, installation, journal registration, runtime activation, restart or custody recovery is authorized by this document.
 
 Parent: #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
-Pinned base: 8530cb69a6dcb13d4050a7146ebcec77ba9a833e.
+Pinned base: 9bb093826797f89a3c0b0fe0f36b831b8b0d7722 (reconciled after the protected Control Tower merge; original observation base 8530cb69a6dcb13d4050a7146ebcec77ba9a833e).
 
 ## Observed recurrence and invariant
 

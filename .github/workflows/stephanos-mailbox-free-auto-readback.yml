@@ -9,6 +9,9 @@ on:
       - 'scripts/mailbox-free-auto-readback-v1.mjs'
       - 'scripts/mailbox-free-auto-readback-v1.test.mjs'
       - 'docs/architecture/mailbox-free-auto-readback-stage4-v1.md'
+      - 'shared/agents/mailboxFreeGoalNominationV1.mjs'
+      - 'shared/agents/mailboxFreeGoalNominationV1.test.mjs'
+      - 'docs/architecture/mailbox-free-goal-nomination-stage5-v1.md'
   workflow_run:
     workflows:
       - Stephanos Control Tower - Mailbox-Free Read-Only Pilot
@@ -40,10 +43,13 @@ jobs:
         with:
           node-version: 24
       - name: Test no-authority readback and hostile run events
-        run: node --test scripts/mailbox-free-auto-readback-v1.test.mjs
+        run: |
+          node --test scripts/mailbox-free-auto-readback-v1.test.mjs
+          node --test shared/agents/mailboxFreeGoalNominationV1.test.mjs
       - name: Validate observer syntax and PR diff
         run: |
           node --check scripts/mailbox-free-auto-readback-v1.mjs
+          node --check shared/agents/mailboxFreeGoalNominationV1.mjs
           git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
 
   readback:
