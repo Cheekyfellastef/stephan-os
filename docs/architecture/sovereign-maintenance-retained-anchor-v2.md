@@ -1,9 +1,9 @@
 # Retained OS custody journal: structural design for Goal #2961
 
-Status: DESIGN ONLY. No implementation, installation, journal registration, runtime activation, restart or custody recovery is authorized by this document.
+Status: structural design independently accepted at ebe7800d5fbbe69f958f5dbc77bb86de05557b31 (review receipt 6467098875). Implementation candidate remains uninstalled and requires its own exact-head specialist review and native proof. This document grants no installation, journal registration, runtime activation, restart or custody recovery authority.
 
 Parent: #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
-Pinned base: 9bb093826797f89a3c0b0fe0f36b831b8b0d7722 (reconciled after the protected Control Tower merge; original observation base 8530cb69a6dcb13d4050a7146ebcec77ba9a833e).
+Implementation base: 627bf2e21e7df5d3f372670af0662131c6778d8c. Structural design reviewed against 9bb093826797f89a3c0b0fe0f36b831b8b0d7722; original observation base 8530cb69a6dcb13d4050a7146ebcec77ba9a833e. The disjoint live-custody visibility correction was incorporated without rewriting history.
 
 ## Observed recurrence and invariant
 
@@ -59,3 +59,16 @@ Native exact-head Windows proof must establish the actual channel/source mapping
 Preserve all existing custody, source isolation and guardian regressions. Publish specialist exact-head review, complete tests and exact merge approval. Installation and full boot have distinct receipts. Browser proof must establish actual launcher/runtime usability on 4173 after recovery; reachable HTTP alone is insufficient.
 
 No completion claim until current held custody actually recovers, guarded maintenance remains eligible and normal 4173 works. Record the shared lesson: durable custody freshness cannot depend on an unrelated circular audit stream. Historical recovery and a green review are intermediate evidence, not completion of the recurring repair.
+## Candidate proof and deployment boundary
+
+The existing CLI now has a direct local `inspect-retained-migration` observation and `prepare-retained-migration` ACTIVE-only preparation. The operator packet binds the authenticated projection digest/reservation, exact installed main and independent held-owner digest. The native listener/process-birth observation is bounded to the fixed private owner; it is checked before and after the append. Source/owner movement after a real append retains and reports the prepared ACTIVE digest. The old HTTP owner's startup pin is never waived or reloaded.
+
+Deterministic tests include stale IDLE migration, legacy contradictions, changed projection, owner drift including post-append drift, source movement and 360 adversarial model steps across missing/replayed workspace state, reserve/release and boot transitions. The real read-only Windows boot and native owner observations were exercised. C# fixture declarations compile and all five PowerShell files parse. These results do NOT establish native registration, ACL/retention/capacity or post-boot recovery proof.
+
+Native fixture execution is NOT yet admitted. Automatic approval review rejected adding its administrator-level registration to hosted CI without the explicit fixture permission reserved by this design. A concrete approval question is pending for only the fixed 1 MiB `StphCustodyFixture` log on a disposable hosted Windows runner. The proposed production journal remains 64 MiB and is not selectable by that fixture. The hosted Windows test gate deliberately fails if native setup is absent; skipped local fixture tests do not count as proof. No production installation, source sync, owner activation, restart or custody release has occurred for this candidate.
+
+The native harness uses a reduced token with administrator membership disabled to verify read/write versus clear/configuration/registry-write denial. It may clear or alter ONLY the fixed disposable fixture if a denial is broken, causing test failure. It temporarily applies Circular mode only to verify adapter refusal, restores Retain, then fills the bounded fixture to prove failed append retains the last authority. Fixture registration/execution remains paused until permission; no workaround route is authorized.
+
+The first native event must be the independently read fixed non-authority bootstrap with OS record ID 1. The installer emits it only for a truly empty log and verifies readback; normal authority reads/append require that retained bootstrap. Native query exhaustion uses the externally bounded child-process deadline, never a timed no-row result as absence. Scan-budget exhaustion fails closed.
+
+References for the intended OS contracts: [Microsoft EventLogMode](https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.eventing.reader.eventlogmode) defines Retain as non-overwriting; [Microsoft Event Logging Security](https://learn.microsoft.com/en-us/windows/win32/eventlog/event-logging-security) separates read, write and clear rights. Actual exact-head native fixture receipts remain required in addition to these documented semantics.

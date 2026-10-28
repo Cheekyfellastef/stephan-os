@@ -7,7 +7,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveGoalDiscoveryWorkspaceV1 } from '../shared/agents/goalDiscoveryWorkspaceV1.mjs';
 import { collectCanonicalIgnitionSourceTruth, evaluateCanonicalIgnitionSourceTruth } from './battle-bridge-ignition-supervisor.mjs';
-import { createMaintenanceOsAnchorV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
+import { createMaintenanceOsAnchorV1, readMaintenanceLegacyAuditObservationV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
+import { readMaintenanceOwnerObservationV2 } from './sovereign-maintenance-owner-observation-v2.mjs';
 import { projectMaintenanceSourceDiagnosticV1 } from '../shared/agents/sovereignMaintenanceSourceDiagnosticV1.mjs';
 
 export const MAINTENANCE_CUSTODY_SCHEMA = 'stephanos.sovereign-maintenance-custody.v1';
@@ -55,7 +56,8 @@ function directory(path) {
 
 export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
   signingKey, anchor, bootWitness = readMaintenanceBootWitnessV1(), readBootWitness = readMaintenanceBootWitnessV1,
-  now = () => new Date().toISOString() } = {}) {
+  now = () => new Date().toISOString(), observeMigrationOwner = readMaintenanceOwnerObservationV2,
+  observeLegacyAudit = () => readMaintenanceLegacyAuditObservationV1({ workspaceRoot, signingKey }) } = {}) {
   if (typeof signingKey !== 'string' || signingKey.length < 32) throw new Error('CUSTODY_AUTHENTICATION_REQUIRED');
   if (!validMaintenanceBootWitnessV1(bootWitness, Date.parse(now()))) throw new Error('WINDOWS_BOOT_WITNESS_INVALID');
   bootWitness = Object.freeze({ ...bootWitness });
@@ -199,11 +201,24 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
     } catch { return held('MAINTENANCE_CUSTODY_RECOVERY_UNPROVEN'); }
     finally { if (lock !== undefined) { try { unlock(lock); } catch { /* Retained fence fails closed. */ } } }
   };
-  const prepareAfterAuditLoss = async ({ expectedDigest, expectedReservationId, operatorApproval } = {}) => {
+  const prepareFromAuditLoss = async ({ expectedDigest, expectedReservationId, operatorApproval,
+    expectedOwnerDigest, expectedMain } = {}, retainedMigration = false) => {
     if (operatorApproval !== 'operator-approved' || !/^[a-f0-9]{64}$/.test(expectedDigest ?? '')
         || typeof expectedReservationId !== 'string' || !expectedReservationId)
       return held('MAINTENANCE_AUDIT_LOSS_EXACT_APPROVAL_REQUIRED');
     if (owned) return held('MAINTENANCE_CUSTODY_RESERVED');
+    if (retainedMigration && (!/^[a-f0-9]{64}$/.test(expectedOwnerDigest ?? '') || !/^[a-f0-9]{40}$/.test(expectedMain ?? '')))
+      return held('MAINTENANCE_MIGRATION_OWNER_BINDING_REQUIRED');
+    const validOwner = owner => owner && owner.digest === expectedOwnerDigest
+      && sha(JSON.stringify(owner.observation)) === owner.digest
+      && owner.observation.schemaVersion === 'stephanos.maintenance-held-owner-observation.v2'
+      && owner.observation.timeoutCustodyHeld === true && owner.observation.running === false
+      && owner.observation.maintenanceInFlight === false && owner.observation.scheduled === false
+      && Number.isSafeInteger(owner.observation.pid) && owner.observation.pid > 0
+      && Number.isFinite(instant(owner.observedAtUtc))
+      && Date.parse(now()) >= instant(owner.observedAtUtc)
+      && Date.parse(now()) - instant(owner.observedAtUtc) <= 15_000
+      && instant(owner.observation.createdAtUtc) >= instant(bootWitness.bootStartedAtUtc);
     let fd, mutationStarted = false;
     try {
       fd = acquire();
@@ -211,6 +226,9 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       // its later-boot recovery must exclude ALL potentially lost executions.
       // A corrupt/unreadable/newer anchor throws or refuses, never bootstraps.
       if (read() !== null) { unlock(fd); fd = undefined; return held('MAINTENANCE_AUDIT_ANCHOR_PRESENT'); }
+      if ((await observeLegacyAudit())?.present !== false) throw new Error('LEGACY_AUTHORITY_NOT_ABSENT');
+      const ownerBefore = retainedMigration ? await observeMigrationOwner() : null;
+      if (retainedMigration && !validOwner(ownerBefore)) throw new Error('MIGRATION_OWNER_CHANGED');
       const witness = await readBootWitness();
       if (!validMaintenanceBootWitnessV1(witness, Date.parse(now()))
           || witness.machineHash !== bootWitness.machineHash
@@ -220,31 +238,50 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       if (bytes.length > 15000 || sha(bytes) !== expectedDigest)
         throw new Error('PROJECTION_CHANGED');
       const original = decode('record', bytes);
-      if (original.schemaVersion !== MAINTENANCE_CUSTODY_SCHEMA || original.phase !== 'ACTIVE'
+      if (original.schemaVersion !== MAINTENANCE_CUSTODY_SCHEMA
+          || !(retainedMigration ? ['ACTIVE', 'IDLE'] : ['ACTIVE']).includes(original.phase)
           || original.reservationId !== expectedReservationId)
         throw new Error('PROJECTION_IDENTITY_UNPROVEN');
       directory(resolve(root, 'events'));
       if (!existsSync(archive)) mkdirSync(archive);
       directory(archive);
-      const receipt = { schemaVersion: 'stephanos.maintenance-audit-loss-preparation.v1',
+      const receipt = { schemaVersion: retainedMigration ? 'stephanos.maintenance-retained-migration-preparation.v2'
+        : 'stephanos.maintenance-audit-loss-preparation.v1',
         original, originalEnvelopeBase64: bytes.toString('base64'), originalDigest: expectedDigest, projectionFreshness: 'UNPROVEN',
         historicalOutcome: 'UNKNOWN', sourceLeaseReleased: false,
-        preparedAtUtc: now(), bootWitness: witness, successorOwnerId: ownerId };
+        preparedAtUtc: now(), bootWitness: witness, successorOwnerId: ownerId,
+        ...(retainedMigration ? { heldOwnerObservation: ownerBefore, sourceHead: expectedMain, priorIdleIsFreshnessProof: false } : {}) };
       const auditBytes = encode('receipt', receipt);
       if (Buffer.byteLength(auditBytes) > 64 * 1024) throw new Error('AUDIT_LOSS_ARCHIVE_UNBOUNDED');
       mutationStarted = true;
-      const auditFd = openSync(resolve(archive, 'audit-loss-' + expectedDigest + '-' + ownerId + '.json'), 'wx', 0o600);
+      const auditFd = openSync(resolve(archive, (retainedMigration ? 'retained-migration-' : 'audit-loss-')
+        + expectedDigest + '-' + ownerId + '.json'), 'wx', 0o600);
       try { writeFileSync(auditFd, auditBytes); fsyncSync(auditFd); } finally { closeSync(auditFd); }
       // Recheck the captured projection and OS authority after durable archive.
-      if (sha(readFileSync(path)) !== expectedDigest || read() !== null)
+      const ownerAfter = retainedMigration ? await observeMigrationOwner() : null;
+      const legacyAfter = await observeLegacyAudit();
+      const authorityAfter = read();
+      // No asynchronous observation may follow the final projection comparison.
+      if (authorityAfter !== null || legacyAfter?.present !== false
+          || (retainedMigration && !validOwner(ownerAfter)) || sha(readFileSync(path)) !== expectedDigest)
         throw new Error('AUDIT_LOSS_PREPARATION_RACED');
       const record = { schemaVersion: MAINTENANCE_CUSTODY_SCHEMA, phase: 'ACTIVE',
         reservationId: expectedReservationId, operation: 'repair-stephanos',
         nonce: randomUUID(), ownerId, ownerPid: process.pid, startedAtUtc: now(), bootWitness: witness,
-        incident: { kind: 'AUDIT_LOSS_REPREPARATION', originalProjectionDigest: expectedDigest,
+        incident: { kind: retainedMigration ? 'RETAINED_JOURNAL_MIGRATION' : 'AUDIT_LOSS_REPREPARATION',
+          ...(retainedMigration ? { heldOwnerDigest: expectedOwnerDigest, sourceHead: expectedMain } : {}), originalProjectionDigest: expectedDigest,
           projectionFreshness: 'UNPROVEN', historicalOutcome: 'UNKNOWN',
           preparationReceiptDigest: sha(auditBytes) } };
       const digest = write(record, false, null);
+      if (retainedMigration) {
+        let ownerStillBound = false;
+        try { ownerStillBound = validOwner(await observeMigrationOwner()); } catch { /* Retain real ACTIVE. */ }
+        if (!ownerStillBound) {
+          closeSync(fd); fd = undefined;
+          return { ok: false, prepared: true, digest, custodyReleased: false, requiresLaterFullBoot: true,
+            blocker: 'MAINTENANCE_MIGRATION_OWNER_CHANGED_RETAIN_HOLD' };
+        }
+      }
       // Never give this process release authority: preparation does not prove
       // prior process extinction. Retain the boot fence even after close().
       closeSync(fd); fd = undefined;
@@ -259,7 +296,9 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
       return held('MAINTENANCE_AUDIT_LOSS_PREPARATION_UNPROVEN');
     }
   };
-  return Object.freeze({ status, reserve, release, recoverAfterBoot, prepareAfterAuditLoss,
+  const prepareAfterAuditLoss = request => prepareFromAuditLoss(request, false);
+  const prepareRetainedMigration = request => prepareFromAuditLoss(request, true);
+  return Object.freeze({ status, reserve, release, recoverAfterBoot, prepareAfterAuditLoss, prepareRetainedMigration,
     // This only ADDS an ACTIVE fence. The fixed migration adapter independently
     // checks the exact live held owner/report before calling it. No idle seed.
     prepareIncident: request => reserve(request, true),

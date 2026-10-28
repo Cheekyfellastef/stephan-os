@@ -10,6 +10,11 @@ on:
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/sovereign-maintenance-custody*'
       - 'scripts/sovereign-maintenance-os-anchor*'
+      - 'scripts/sovereign-maintenance-owner-observation*'
+      - 'scripts/sovereign-maintenance-retained-migration*'
+      - 'scripts/sovereign-maintenance-journal-source-proof*'
+      - 'scripts/windows/*sovereign-maintenance*'
+      - 'scripts/windows/MaintenanceJournalAclFixtureV2.cs'
       - 'scripts/sovereign-observation-offline-regression.test.mjs'
       - 'scripts/sovereign-frontend-start-only*'
       - 'scripts/battle-bridge-frontend-visibility-mailbox.test.mjs'
@@ -60,6 +65,9 @@ jobs:
           shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
           scripts/battle-bridge-ignition-supervisor.test.mjs
           shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
+      - name: Retained migration and held-owner adversarial regressions
+        run: node --test scripts/sovereign-maintenance-owner-observation-v2.test.mjs scripts/sovereign-maintenance-retained-migration-v2.test.mjs
+
       - name: Observation remains reachable without remote source proof
         run: node --test scripts/sovereign-observation-offline-regression.test.mjs
       - name: Disjoint constrained frontend start-only and existing server regression

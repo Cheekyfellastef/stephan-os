@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createMaintenanceOsAnchorV1 } from './sovereign-maintenance-os-anchor-v1.mjs';
 
 const key = 'fixture-os-anchor-key-'.repeat(3);
@@ -14,10 +16,10 @@ function result(recordId, actualId = recordId) {
   const transitionId = 'a'.repeat(8) + '-aaaa-aaaa-aaaa-' + 'a'.repeat(12);
   const previousRecordId = null;
   const stateBase64 = Buffer.from('fixture-state').toString('base64');
-  const mac = createHmac('sha256', key).update('stephanos-maintenance-os-anchor-v2\0'
+  const mac = createHmac('sha256', key).update('stephanos-maintenance-os-anchor-v3\0retained-v2-production\0'
     + scope + '\0' + recordId + '\0NONE\0' + transitionId + '\0' + stateBase64).digest('hex');
-  return { found: true, eventRecordId: actualId,
-    envelopeBase64: Buffer.from(JSON.stringify({ scope, recordId, previousRecordId, transitionId, stateBase64, mac })).toString('base64') };
+  return { found: true, journalId: 'retained-v2-production', eventRecordId: actualId,
+    envelopeBase64: Buffer.from(JSON.stringify({ scope, journalId: 'retained-v2-production', recordId, previousRecordId, transitionId, stateBase64, mac })).toString('base64') };
 }
 test('OS record identity rejects a replayed authentic event at a newer sequence', () => {
   let payload = result(100);
@@ -33,7 +35,7 @@ test('OS record identity rejects a replayed authentic event at a newer sequence'
   assert.throws(() => anchor.readLatest(), /AUTHENTICATION_FAILED/);
 });
 test('missing/failed OS evidence never falls back to a local green record or exposes the key in arguments', () => {
-  let payload = { found: false };
+  let payload = { found: false, journalId: 'retained-v2-production' };
   const anchor = createMaintenanceOsAnchorV1({ workspaceRoot, signingKey: key, platform: 'win32',
     spawnFn: (exe, args, options) => {
       assert.equal(args.some(value => value.includes(key)), false);
@@ -63,8 +65,8 @@ test('event payload cannot inject native record metadata and the key-handling sc
   assert.doesNotMatch(script, /Convert(?:To|From)-Json|Import-Module|Add-Type/);
 });
 test('actual Windows fixture appends and retrieves an OS-owned anchor in an isolated non-production namespace',
-  { skip: process.platform !== 'win32' }, () => {
-    const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: join(tmpdir(), 'custody-os-proof-' + randomUUID()), signingKey: key });
+  { skip: process.platform !== 'win32' || process.env.STEPHANOS_CUSTODY_NATIVE_FIXTURE !== '1' }, () => {
+    const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: join(tmpdir(), 'custody-os-proof-' + randomUUID()), signingKey: key, nativeFixture: true });
     assert.equal(anchor.readLatest(), null);
     const bytes = Buffer.from(JSON.stringify({ fixture: true, productionAuthority: false }));
     const written = anchor.append(bytes, { expectedRecordId: null });
@@ -72,15 +74,15 @@ test('actual Windows fixture appends and retrieves an OS-owned anchor in an isol
     assert.deepEqual(anchor.readLatest().bytes, bytes);
   });
 
-test('real Windows contenders cannot both replace the same previous anchor', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
+test('real Windows contenders cannot both replace the same previous anchor', { skip: process.platform !== 'win32' || process.env.STEPHANOS_CUSTODY_NATIVE_FIXTURE !== '1', timeout: 30_000 }, async t => {
   const root = join(tmpdir(), 'custody-os-cas-proof-' + randomUUID());
-  const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: root, signingKey: key });
+  const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: root, signingKey: key, nativeFixture: true });
   const initial = anchor.append(Buffer.from('fixture-idle'), { expectedRecordId: null });
   const workerSource = `
     const { parentPort, workerData } = require('node:worker_threads');
     (async () => {
       const { createMaintenanceOsAnchorV1 } = await import(workerData.moduleUrl);
-      const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: workerData.root, signingKey: workerData.key });
+      const anchor = createMaintenanceOsAnchorV1({ workspaceRoot: workerData.root, signingKey: workerData.key, nativeFixture: true });
       parentPort.once('message', () => {
         try {
           const result = anchor.append(Buffer.from(workerData.value), { expectedRecordId: workerData.previous });
@@ -105,3 +107,44 @@ test('real Windows contenders cannot both replace the same previous anchor', { s
   assert.equal(completed.filter(result => result.ok).length, 1);
   assert.equal(anchor.readLatest().eventRecordId, completed.find(result => result.ok).recordId);
 });
+
+test('foreign journal identity and false-absence metadata cannot qualify retained authority', () => {
+  for (const payload of [{ found: false }, { found: false, journalId: 'legacy-v1-observation' },
+    { found: false, journalId: 'retained-v2-production', truncated: true }]) {
+    const a = createMaintenanceOsAnchorV1({ workspaceRoot, signingKey: key, platform: 'win32',
+      spawnFn: () => ({ status: 0, stdout: JSON.stringify(payload) }) });
+    assert.throws(() => a.readLatest(), /IDENTITY_INVALID/);
+  }
+  assert.throws(() => createMaintenanceOsAnchorV1({ workspaceRoot, signingKey: 'real-domain-key-'.repeat(4),
+    platform: 'win32', nativeFixture: true }), /FIXTURE_SCOPE_INVALID/);
+});
+test('native Retain policy, reduced-token denial and capacity refusal preserve the last anchor',
+  { skip: process.platform !== 'win32' || process.env.STEPHANOS_CUSTODY_NATIVE_FIXTURE !== '1',
+    timeout: 60_000 }, () => {
+    const root = join(tmpdir(), 'custody-retain-proof-' + randomUUID());
+    const a = createMaintenanceOsAnchorV1({ workspaceRoot: root, signingKey: key, nativeFixture: true });
+    const prior = a.append(Buffer.from('fixture-last-authority'), { expectedRecordId: null });
+    const runFixture = mode => {
+      const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        ['-NoLogo','-NoProfile','-NonInteractive','-File',
+          fileURLToPath(new URL('./windows/test-sovereign-maintenance-journal-v2.ps1', import.meta.url)), '-Mode', mode],
+        { shell: false, windowsHide: true, encoding: 'utf8', timeout: 20_000, maxBuffer: 8192 });
+      assert.equal(r.status, 0, String(r.stderr)); return JSON.parse(r.stdout);
+    };
+    const acl = runFixture('Acl');
+    for (const field of ['ReadAllowed','WriteAllowed','ClearDenied','ConfigurationDenied','RegistryWriteDenied','AdministratorDisabled'])
+      assert.equal(acl[field], true, field);
+    try { runFixture('Circular'); assert.throws(() => a.readLatest(), /ANCHOR_UNPROVEN/); }
+    finally { runFixture('Restore'); }
+    assert.equal(a.readLatest().eventRecordId, prior.eventRecordId);
+    assert.equal(runFixture('Fill').full, true);
+    assert.throws(() => a.append(Buffer.from('must-not-overwrite'), { expectedRecordId: prior.eventRecordId }), /ANCHOR_UNPROVEN/);
+    assert.equal(a.readLatest().eventRecordId, prior.eventRecordId);
+    assert.deepEqual(a.readLatest().bytes, prior.bytes);
+  });
+
+
+test('hosted Windows cannot substitute skipped native retained-journal proof', {
+  skip: process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
+}, () => assert.equal(process.env.STEPHANOS_CUSTODY_NATIVE_FIXTURE, '1',
+  'Explicitly approved isolated retained-journal fixture setup is required; no production fallback'));
