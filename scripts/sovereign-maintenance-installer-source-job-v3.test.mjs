@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveBattleBridgeGitExecution } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 import { buildMaintenanceInstallerBootstrapCandidateV3, MAINTENANCE_SOURCE_CLOSURE_V3 } from './sovereign-maintenance-installer-source-admission-v3.mjs';
 
 const windows = process.platform === 'win32';
@@ -16,13 +17,36 @@ const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.e
 const expected = 'a'.repeat(40);
 const literal = s => "'" + s.replaceAll("'", "''") + "'";
 const encoded = s => Buffer.from(s, 'utf16le').toString('base64');
-function sourceRecords() {
-  return MAINTENANCE_SOURCE_CLOSURE_V3.map(path => {
-    const bytes = readFileSync(resolve(root, path));
-    return { path, blobSha: createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex'),
-      contentBase64: bytes.toString('base64') };
+const gitExecution = resolveBattleBridgeGitExecution();
+function gitBytes(args, { cwd = root, input } = {}) {
+  const r = spawnSync(gitExecution.executable, [...gitExecution.fixedConfigArgs, ...args], {
+    cwd, env: gitExecution.environment, input, shell: false, windowsHide: true,
+    timeout: 15000, maxBuffer: 16 * 1024 * 1024
   });
+  assert.ifError(r.error); assert.equal(r.status, 0, r.stderr?.toString());
+  return r.stdout;
 }
+function immutableSourceRecords(cwd = root, tree = 'HEAD') {
+  const identity = gitBytes(['rev-parse', tree], { cwd }).toString().trim();
+  assert.match(identity, /^[a-f0-9]{40}$/);
+  const raw = gitBytes(['cat-file', '--batch'], { cwd,
+    input: MAINTENANCE_SOURCE_CLOSURE_V3.map(p => identity + ':' + p).join('\n') + '\n' });
+  let offset = 0;
+  const records = MAINTENANCE_SOURCE_CLOSURE_V3.map(path => {
+    const end = raw.indexOf(10, offset);
+    const match = raw.subarray(offset, end).toString().match(/^([a-f0-9]{40}) blob ([0-9]+)$/);
+    assert.ok(end >= offset && match, 'immutable blob missing: ' + path);
+    const length = Number(match[2]); assert.ok(length <= 2097152);
+    offset = end + 1; const bytes = raw.subarray(offset, offset + length);
+    assert.equal(bytes.length, length); assert.equal(raw[offset + length], 10);
+    offset += length + 1;
+    assert.equal(createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex'), match[1]);
+    return { path, blobSha: match[1], contentBase64: bytes.toString('base64') };
+  });
+  assert.equal(offset, raw.length); return records;
+}
+// Expected bootstrap records come from immutable Git objects, never converted checkout bytes.
+function sourceRecords() { return immutableSourceRecords(); }
 function launchFixture(worker, { deadline = 20000, queryFailure = false, hostileEnvironment = false, fixtureExecutable = null, fixtureArguments = null } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'maintenance-source-job-'));
   const script = join(directory, 'fixed-fixture.cjs');
@@ -72,6 +96,128 @@ async function resultFixture(worker, options, check) {
   try { const { receipt, status, stderr } = await f.done; assert.equal(status, 0, stderr); assert.ok(receipt, stderr); check(receipt); }
   finally { await closeOwnedFixture(f); }
 }
+
+function assertMaterializedPins(candidate, records, checkout, directory, expectedMismatches) {
+  if (!windows) return; // Both platforms exercise real Git; this additionally runs the real Windows bootstrap function.
+  const candidatePath = join(directory, 'candidate.ps1'), manifestPath = join(directory, 'immutable-manifest.json');
+  const driverPath = join(directory, 'pin-driver.ps1');
+  writeFileSync(candidatePath, candidate.script);
+  writeFileSync(manifestPath, JSON.stringify(records.map(r => ({ path: r.path,
+    sha256: createHash('sha256').update(Buffer.from(r.contentBase64, 'base64')).digest('hex') }))));
+  const driver = [
+    'param([string]$CandidatePath,[string]$ManifestPath,[string]$CheckoutRoot,[int]$ExpectedMismatches)',
+    "$ErrorActionPreference='Stop';$tokens=$null;$errors=$null",
+    '$ast=[Management.Automation.Language.Parser]::ParseInput([IO.File]::ReadAllText($CandidatePath),[ref]$tokens,[ref]$errors)',
+    "if($errors.Count){throw 'CANDIDATE_PARSE_FAILED'}",
+    "$function=$ast.Find({param($a)$a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Read-Pinned'},$true)",
+    "if($null -eq $function){throw 'PIN_FUNCTION_MISSING'}",
+    '. ([scriptblock]::Create($function.Extent.Text))',
+    '$root=$CheckoutRoot;$leafPin=$null;$handles=[Collections.Generic.List[IO.FileStream]]::new();$mismatches=0',
+    'try { foreach($row in ([IO.File]::ReadAllText($ManifestPath)|ConvertFrom-Json)) {',
+    ' try { [void](Read-Pinned $row.path $row.sha256) } catch {',
+    "  if($_.Exception.Message -cne 'SOURCE_PIN_DIGEST'){throw};$mismatches++",
+    ' }',
+    '} } finally { foreach($handle in $handles){$handle.Dispose()} }',
+    "if($mismatches -ne $ExpectedMismatches){throw 'PIN_RESULT_MISMATCH'}",
+    "[Console]::WriteLine('MATERIALIZED_PIN_MISMATCHES='+$mismatches)"
+  ].join('\n');
+  writeFileSync(driverPath, driver);
+  const r = spawnSync(powershell, ['-NoLogo','-NoProfile','-NonInteractive','-File',driverPath,
+    '-CandidatePath',candidatePath,'-ManifestPath',manifestPath,'-CheckoutRoot',checkout,
+    '-ExpectedMismatches',String(expectedMismatches)],
+  { windowsHide:true,shell:false,encoding:'utf8',timeout:15000 });
+  assert.ifError(r.error); assert.equal(r.status,0,r.stderr);
+  assert.ok(r.stdout.includes('MATERIALIZED_PIN_MISMATCHES=' + expectedMismatches));
+}
+
+test('all immutable closure blobs survive real autocrlf checkout; omitted LF policy is refused', { timeout:60000 }, () => {
+  const directory = mkdtempSync(join(tmpdir(), 'maintenance-source-checkout-'));
+  const originalRecords = sourceRecords();
+  // The candidate policy is the system under test; every expected materialized byte is subsequently read from Git objects.
+  const policy = readFileSync(resolve(root, '.gitattributes'), 'utf8');
+  try {
+    for (const negative of [false,true]) {
+      const variant = join(directory, negative ? 'omitted-lf' : 'pinned-lf');
+      const store = join(variant, 'object-store'), checkout = join(variant, 'checkout');
+      mkdirSync(variant,{recursive:true}); mkdirSync(checkout);
+      gitBytes(['init','--quiet','--template=','--object-format=sha1',store],{cwd:variant});
+      for (const record of originalRecords) {
+        const path = join(store,record.path); mkdirSync(dirname(path),{recursive:true});
+        const bytes = record.path === '.gitattributes'
+          ? Buffer.from(policy + (negative ? '\n' + MAINTENANCE_SOURCE_CLOSURE_V3.map(p => p + ' text !eol').join('\n') + '\n' : ''))
+          : Buffer.from(record.contentBase64,'base64');
+        writeFileSync(path,bytes);
+      }
+      gitBytes(['-c','core.autocrlf=false','add','--all'],{cwd:store});
+      const tree = gitBytes(['write-tree'],{cwd:store}).toString().trim();
+      const records = immutableSourceRecords(store,tree);
+      for (const r of records) if (r.path !== '.gitattributes')
+        assert.equal(r.blobSha, originalRecords.find(x => x.path === r.path).blobSha, 'fixture staging changed immutable source: ' + r.path);
+      gitBytes(['--git-dir='+join(store,'.git'),'--work-tree='+checkout,'-c','core.autocrlf=true',
+        'checkout-index','--all','--force'],{cwd:variant});
+      const mismatches = records.filter(r => {
+        const actual = readFileSync(join(checkout,r.path));
+        return createHash('sha1').update('blob ' + actual.length + '\0').update(actual).digest('hex') !== r.blobSha;
+      }).map(r => r.path);
+      const expectedMismatches = negative
+        ? records.filter(r => Buffer.from(r.contentBase64,'base64').includes(10)).map(r => r.path)
+        : [];
+      assert.deepEqual(mismatches,expectedMismatches,'raw checkout differs from immutable Git blobs');
+      const attrs = gitBytes(['check-attr','--cached','-z','eol','--',...MAINTENANCE_SOURCE_CLOSURE_V3],{cwd:store}).toString().split('\0');
+      for (let i=0;i<attrs.length-1;i+=3) {
+        assert.equal(attrs[i+1],'eol'); assert.equal(attrs[i+2],negative ? 'unspecified' : 'lf',attrs[i]);
+      }
+      assert.equal((attrs.length-1)/3,MAINTENANCE_SOURCE_CLOSURE_V3.length);
+      if (negative) assert.ok(expectedMismatches.length > 0);
+      if (!negative) {
+        // Include the real repository's nested/info attribute resolution, not only the copied root policy.
+        const effective = gitBytes(['check-attr','-z','eol','--',...MAINTENANCE_SOURCE_CLOSURE_V3])
+          .toString().split('\0');
+        assert.equal((effective.length-1)/3,MAINTENANCE_SOURCE_CLOSURE_V3.length);
+        for (let i=0;i<effective.length-1;i+=3) {
+          assert.equal(effective[i+1],'eol');assert.equal(effective[i+2],'lf',effective[i]);
+        }
+      }
+
+      const candidate = buildMaintenanceInstallerBootstrapCandidateV3({ expectedMain:expected,sourceTree:tree,records });
+      assertMaterializedPins(candidate,records,checkout,variant,expectedMismatches.length);
+      if (negative) {
+        // A policy-only in-place update does not rewrite unchanged checkout files.
+        writeFileSync(join(store,'.gitattributes'),policy);
+        gitBytes(['-c','core.autocrlf=false','add','--','.gitattributes'],{cwd:store});
+        const adoptedTree = gitBytes(['write-tree'],{cwd:store}).toString().trim();
+        const adoptedRecords = immutableSourceRecords(store,adoptedTree);
+        writeFileSync(join(checkout,'.gitattributes'),policy);
+        const stillConverted = adoptedRecords.filter(r => !readFileSync(join(checkout,r.path))
+          .equals(Buffer.from(r.contentBase64,'base64')));
+        assert.ok(stillConverted.length > 0, 'policy update unexpectedly rewrote unchanged files');
+        // Normal Git clean status can hide this byte-level mismatch.
+        gitBytes(['--git-dir='+join(store,'.git'),'--work-tree='+checkout,'-c','core.autocrlf=true',
+          'diff','--quiet'],{cwd:variant});
+        const adoptedCandidate = buildMaintenanceInstallerBootstrapCandidateV3({
+          expectedMain:expected,sourceTree:adoptedTree,records:adoptedRecords });
+        assertMaterializedPins(adoptedCandidate,adoptedRecords,checkout,variant,stillConverted.length);
+        for (const record of stillConverted) {
+          const target = join(checkout,record.path), actual = readFileSync(target);
+          const immutable = Buffer.from(record.contentBase64,'base64');
+          // This is a migration precondition only. The bootstrap NEVER normalizes bytes.
+          assert.equal(actual.toString('utf8').replaceAll('\r\n','\n'),immutable.toString('utf8'));
+          const backup = join(variant,'before-adoption',record.path);
+          mkdirSync(dirname(backup),{recursive:true});writeFileSync(backup,actual,{flag:'wx'});
+          writeFileSync(target,immutable);
+          assert.deepEqual(readFileSync(backup),actual);
+        }
+        for (const record of adoptedRecords) assert.deepEqual(readFileSync(join(checkout,record.path)),
+          Buffer.from(record.contentBase64,'base64'),record.path);
+        assertMaterializedPins(adoptedCandidate,adoptedRecords,checkout,variant,0);
+      }
+
+    }
+  } finally {
+    assert.ok(resolve(directory).startsWith(resolve(tmpdir(),'maintenance-source-checkout-')));
+    rmSync(directory,{recursive:true,force:true,maxRetries:8,retryDelay:50});
+  }
+});
 
 test('native compilation units preserve existing Core loader bounds', () => {
   for (const path of [native,nativeSource]) assert.ok(readFileSync(path).length <= 32768);
