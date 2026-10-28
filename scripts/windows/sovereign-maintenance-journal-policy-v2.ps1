@@ -39,6 +39,9 @@ function Assert-MaintenanceJournalPolicyV2($policy) {
     try {
         if (-not $info.IsEnabled -or $info.LogMode -ne [Diagnostics.Eventing.Reader.EventLogMode]::Retain -or
             $info.MaximumSizeInBytes -ne $policy.Maximum -or $info.IsClassicLog -ne $true) {
+            # Closed native configuration evidence only; no key, SID, path or event payload.
+            [Console]::Error.WriteLine('SOVEREIGN_JOURNAL_CONFIG=' + [string]$info.IsEnabled + '/' +
+                [string]$info.LogMode + '/' + [string]$info.MaximumSizeInBytes + '/' + [string]$info.IsClassicLog)
             throw 'JOURNAL_RETENTION_UNPROVEN'
         }
         $actual = [Security.AccessControl.RawSecurityDescriptor]::new($info.SecurityDescriptor)
