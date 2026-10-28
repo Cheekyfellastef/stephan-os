@@ -318,6 +318,18 @@ test('full-history backend projection exposes latest closed-loop learning state 
   });
   assert.equal(hydration.datasets.dashboard.payload.recordScope, 'full-history');
   assert.equal(hydration.datasets.dashboard.payload.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+
+  // Flywheel now consumes canonical workspace hydration. The backend explicitly
+  // selects full-history for that workspace, without a direct UI dashboard URL.
+  const { readFile } = await import('node:fs/promises');
+  const flywheelSource = await readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8');
+  const hydrationSource = await readFile(new URL('../stephanos-server/services/workspaceHydrationService.js', import.meta.url), 'utf8');
+  assert.match(flywheelSource, /requestWorkspaceHydration\s*\(\s*\{/);
+  assert.match(flywheelSource, /workspaceId:\s*['"]flywheel['"]/);
+  assert.match(flywheelSource, /datasets:\s*\[\s*['"]dashboard['"]\s*\]/);
+  assert.match(hydrationSource, /normalizedWorkspaceId\s*===\s*['"]flywheel['"]/);
+  assert.match(hydrationSource, /\?\s*['"]full-history['"]/);
+  assert.match(hydrationSource, /recordScope:\s*dashboardRecordScope/);
 });
 
 

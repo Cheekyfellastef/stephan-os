@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import {
@@ -318,6 +319,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
     polling,
     records: emptyRecords(),
+    proofIndex: projectSharedWorkspaceProofIndexV1({ sourceAvailable: false, nowMs }),
     operationalFacts: projectSharedWorkspaceOperationalFacts({ statusRecords: [], nowMs }),
     brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
     projection,
@@ -394,6 +396,14 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     polling,
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
+    proofIndex: projectSharedWorkspaceProofIndexV1({
+      sourceAvailable: resolved.ok,
+      proofRecords: records.proofRecords,
+      receiptRecords: records.receiptRecords,
+      goalRecords: records.goalRecords,
+      nowMs,
+      staleAfterMs,
+    }),
     operationalFacts,
     brainState,
     projection,
