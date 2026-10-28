@@ -50,3 +50,9 @@ scripts/windows/sovereign-maintenance-audit-anchor.ps1 text eol=lf
 scripts/windows/read-sovereign-maintenance-owner-v2.ps1 text eol=lf
 scripts/windows/test-sovereign-maintenance-journal-v2.ps1 text eol=lf
 scripts/windows/MaintenanceJournalAclFixtureV2.cs text eol=lf
+# Installer bootstrap authenticates raw protected source bytes before elevation.
+.gitattributes text eol=lf
+scripts/windows/SovereignCoreJobCustodyV1.cs text eol=lf
+scripts/sovereign-maintenance-installer-source-admission-v3.mjs text eol=lf
+scripts/sovereign-maintenance-installer-source-job-v3.test.mjs text eol=lf
+docs/architecture/sovereign-maintenance-installer-source-job-v3.md text eol=lf

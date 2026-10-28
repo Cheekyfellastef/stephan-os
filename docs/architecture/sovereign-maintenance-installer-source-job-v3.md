@@ -1,6 +1,6 @@
 # Goal #2961: bounded native custody for the installer source probe
 
-Status: structural review required before implementation. This follow-up repairs the real deployment refusal after PR #3295; it grants no installation, administrator, restart or recovery authority.
+Status: structural review accepted at f26efb43c161c26194ddaef838d1107e7bfe9c87 (authenticated response 6470717614). Implementation remains a candidate requiring exact-head specialist review and native proof. This follow-up repairs the real deployment refusal after PR #3295; it grants no installation, administrator, restart or recovery authority.
 
 ## Measured defect
 
@@ -39,3 +39,49 @@ After exact-head independent Windows/security review, complete native proof and 
 ## Durable lesson
 
 An installer deadline and its process-custody contract must represent the full canonical validation workload. A fast stand-in child proves environment isolation only. Deadline expiry is not proof that a process tree has terminated, and increasing a timeout alone does not establish custody.
+## Concrete implementation and diagnostic separation
+
+The pure bootstrap candidate builder has no independent source or operator
+approval authority. The existing authenticated GitHub/native operator route must
+independently prove every fixed closure record belongs to the approved immutable
+commit/tree before executing its literal encoded program. The candidate never
+fetches credentials, elevates itself or installs a capability. It authenticates
+all 39 closure snapshots before compilation, compiles only the captured verified
+C# bytes, then pins physical non-reparse directories and single-link source files
+and authenticates them again. Canonical HEAD, main ref, index and configuration
+are held against replacement through journal mutation. Direct workspace installer
+invocation refuses; the isolated hosted fixture remains separately guarded.
+
+A real Windows receipt identified a live CONSOLE_HOST in the source Job. The
+source profile therefore uses DETACHED_PROCESS with explicit inherited pipe
+handles, not CREATE_NO_WINDOW. This does not enable job breakaway. Its priority
+is NORMAL_PRIORITY_CLASS, matching the measured canonical workload rather than
+copying Core's idle scheduling policy. Core's existing implementation, one-process
+limit, idle profile and public repair/probe behavior remain unchanged.
+
+The real descendant fixture is a small compiled benign program, not a detached
+PowerShell host or Node's self-cleaning inner Job. Before root exit or parent
+termination, the observer opens native root/descendant handles and captures UTC
+birth identities; receipts bind the root PID and exact birth. Source admission
+requires native zero-active accounting, never PID absence or a subtracted count.
+A signalled root can briefly remain in the Job list; non-root entries are checked
+through actual native membership and signalled process handles, while only a
+positive final zero-active query admits success. Unknown native queries refuse.
+
+Microsoft reference contracts:
+- https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_process_id_list
+- https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information
+- https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
+
+Historical individual passes and mixed diagnostic runs are not final proof.
+Unchanged Core candidate failures on this desktop must be compared to immutable
+main and reported separately rather than weakening Core's limit to hide them.
+
+Current unprivileged native source observation: the actual canonical collector at
+0b30ed366725640c7c2dfb0911038a288c7eb7d3 passed in 17,938 ms through candidate
+native adapter SHA256 3bc3ca2b593c88825db3cc6fcacc75f708430cccd3a69077be86779c292a5958,
+with assignment before execution, normal exit zero, no cancellation, exact SHA
+and native zero-active proof. This is candidate-component proof at that collector
+head, not installation or current-head production commissioning. The complete
+focused local suite passes 68/72 with four explicitly hosted-only journal fixture
+skips; native storage/ACL fixtures still require their real hosted Windows run.
