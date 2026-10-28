@@ -86,6 +86,7 @@ test('polling contract clamps to safe read-only interval and loading state is ex
 
   const feed = createLoadingSharedWorkspaceDashboardFeed({ pollIntervalMs: 100, nowMs: Date.parse('2026-07-07T00:00:00.000Z') });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.LOADING);
+  assert.equal(feed.proofIndex.state, 'UNAVAILABLE');
   assert.match(feed.exactNextAction, /first safe read-only/);
 });
 
@@ -128,6 +129,7 @@ test('missing workspace path is unavailable and keeps projection unknown', async
   assert.equal(feed.state, DASHBOARD_FEED_STATES.UNAVAILABLE);
   assert.equal(feed.projection.sourceTruth, 'UNKNOWN');
   assert.equal(feed.records.statusRecords.length, 0);
+  assert.equal(feed.proofIndex.state, 'UNAVAILABLE');
   assert.match(feed.exactNextAction, /Set STEPHANOS_SHARED_AGENT_WORKSPACE/);
 });
 
@@ -145,6 +147,12 @@ test('current shared workspace records produce ready feed and refresh operator a
   assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
   assert.equal(feed.readOnly, true);
   assert.equal(feed.recordScope, SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE);
+  assert.equal(feed.proofIndex.state, 'RECORDED');
+  assert.equal(feed.proofIndex.visibleCount, 1);
+  assert.equal(feed.proofIndex.entries[0].proofId, 'workspace-proof');
+  assert.equal(feed.proofIndex.entries[0].verification, 'VALID_WORKSPACE_RECORD_NOT_INDEPENDENTLY_VERIFIED');
+  assert.deepEqual(feed.proofIndex.entries[0].links.map(ref => ref.url), ['https://github.com/Cheekyfellastef/stephan-os/issues/1290']);
+  assert.equal(feed.proofIndex.grantsExecutionOrMergeAuthority, false);
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'CURRENT');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').statusTruth, 'UNKNOWN');
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1287').proofTruth, 'UNKNOWN');
