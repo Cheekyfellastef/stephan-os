@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { setImmediate } from 'node:timers/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -10,6 +11,7 @@ import {
   createLoadingSharedWorkspaceDashboardFeed,
   createSharedWorkspaceDashboardPollingContract,
   readSharedWorkspaceDashboardFeed,
+  readSharedWorkspaceRecordDirectory,
 } from './shared-workspace-dashboard-feed.mjs';
 import { SPECIALIZED_NON_DASHBOARD_STATUS_FILES } from './sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 import {
@@ -29,6 +31,49 @@ async function writeJson(root, directory, name, record) {
   await writeFile(join(root, directory, name), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
 
+test('history reads overlap within a fixed bound without losing validation, order or fresh changes', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  const names = Array.from({ length: 40 }, (_, index) => `status-${String(index).padStart(2, '0')}.json`);
+  await Promise.all(names.map((name) => writeJson(root, 'status', name,
+    createSharedWorkspaceStatusRecord({ statusId: name, timestampUtc: now, status: 'CURRENT' }))));
+  await writeFile(join(root, 'status', names[3]), '{broken', 'utf8');
+  await writeJson(root, 'status', names[8], { kind: 'invalid' });
+  let active = 0;
+  let peak = 0;
+  let reads = 0;
+  const options = {
+    nowMs: Date.parse(now),
+    readFile: async (...args) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      reads += 1;
+      try {
+        // Vary completion order independently of the directory listing.
+        if (String(args[0]).endsWith('0.json')) await setImmediate();
+        return await readFile(...args);
+      } finally { active -= 1; }
+    },
+  };
+  const result = await readSharedWorkspaceRecordDirectory(root, 'status', options);
+  assert.ok(peak > 1, 'history I/O must overlap rather than serialize every record');
+  assert.ok(peak <= 16, 'one request must not open the whole history at once');
+  assert.equal(active, 0);
+  assert.equal(reads, names.length);
+  const directoryOrder = await readdir(join(root, 'status'));
+  assert.deepEqual(result.records.map(record => record.statusId), directoryOrder.filter(name => ![names[3], names[8]].includes(name)));
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /status-03\.json:PARSE_FAILED/);
+  assert.match(result.errors[1], /status-08\.json:/);
+  await writeJson(root, 'status', names[3], createSharedWorkspaceStatusRecord({
+    statusId: 'repaired', timestampUtc: now, status: 'CURRENT',
+  }));
+  const refreshed = await readSharedWorkspaceRecordDirectory(root, 'status', options);
+  assert.equal(refreshed.records.length, 39);
+  assert.equal(refreshed.records.some(record => record.statusId === 'repaired'), true);
+  assert.equal(refreshed.errors.length, 1);
+});
+
 test('polling contract clamps to safe read-only interval and loading state is explicit', () => {
   const contract = createSharedWorkspaceDashboardPollingContract({ pollIntervalMs: 100 });
   assert.equal(contract.readOnly, true);
@@ -42,6 +87,40 @@ test('polling contract clamps to safe read-only interval and loading state is ex
   const feed = createLoadingSharedWorkspaceDashboardFeed({ pollIntervalMs: 100, nowMs: Date.parse('2026-07-07T00:00:00.000Z') });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.LOADING);
   assert.match(feed.exactNextAction, /first safe read-only/);
+});
+
+test('overlapping polls share pending disk reads but keep independent time validation and records', async () => {
+  const root = await tempWorkspace();
+  const now = Date.parse('2026-07-07T00:00:00.000Z');
+  await writeJson(root, 'status', 'current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'shared-read', timestampUtc: new Date(now).toISOString(), status: 'CURRENT',
+  }));
+  let reads = 0;
+  let release;
+  let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const reading = new Promise(resolve => { started = resolve; });
+  const reader = async (...args) => { reads += 1; started(); await gate; return readFile(...args); };
+  const current = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, nowMs: now });
+  await reading;
+  const second = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, nowMs: now });
+  const past = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, nowMs: now - 86400000 });
+  release();
+  const [a, b, c] = await Promise.all([current, second, past]);
+  assert.equal(reads, 1);
+  assert.equal(a.records.length, 1);
+  assert.equal(b.records.length, 1);
+  assert.equal(c.records.length, 1, 'directory reads retain timestamp evidence for the projection to adjudicate');
+  a.records[0].summary = 'changed by first consumer';
+  assert.notEqual(b.records[0].summary, a.records[0].summary);
+  await readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, nowMs: now });
+  assert.equal(reads, 2, 'completed reads must not become a stale evidence cache');
+  const [live, stale] = await Promise.all([
+    readSharedWorkspaceDashboardFeed({ root, nowMs: now, staleAfterMs: 60000 }),
+    readSharedWorkspaceDashboardFeed({ root, nowMs: now + 86400000, staleAfterMs: 60000 }),
+  ]);
+  assert.equal(live.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(stale.state, DASHBOARD_FEED_STATES.STALE, 'overlapping polls must keep their own time verdict');
 });
 
 test('missing workspace path is unavailable and keeps projection unknown', async () => {

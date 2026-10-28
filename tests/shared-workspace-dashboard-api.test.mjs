@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createSharedWorkspaceRouter } from '../stephanos-server/routes/shared-workspace.js';
 import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/services/sharedWorkspaceDashboardFeedService.js';
+import { readWorkspaceHydrationBundle } from '../stephanos-server/services/workspaceHydrationService.js';
 import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/services/battleBridgePublisherLifecycle.js';
 import {
   createAgentCapabilityRecord,
@@ -310,9 +311,13 @@ test('full-history backend projection exposes latest closed-loop learning state 
   assert.equal(full.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
   assert.equal(full.projection.closedLoopLearning.teacherId, 'openclaw-local');
 
-  const flywheelSource = await import('node:fs/promises')
-    .then(({ readFile }) => readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8'));
-  assert.match(flywheelSource, /dashboard-feed\?scope=full-history/);
+  const hydration = await readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel', datasets: ['dashboard'],
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot, nowMs: Date.parse(NOW), staleAfterMs: 60_000,
+  });
+  assert.equal(hydration.datasets.dashboard.payload.recordScope, 'full-history');
+  assert.equal(hydration.datasets.dashboard.payload.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
 });
 
 
