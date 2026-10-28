@@ -54,4 +54,3 @@ export async function readMaintenanceOwnerObservationV2({ nativeReader = readMai
   return Object.freeze({ observation: Object.freeze(observation), digest: digest(observation),
     observedAtUtc: after.observedAtUtc });
 }
-

@@ -30,4 +30,3 @@ try {
     imageSha256=$imageHash
     observedAtUtc=[DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json -Compress
-

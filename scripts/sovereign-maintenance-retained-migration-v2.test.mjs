@@ -68,4 +68,3 @@ test('source movement after preparation retains the real ACTIVE digest instead o
   assert.equal(r.ok, false); assert.equal(r.prepared, true); assert.equal(r.persistentCustody.held, true);
   assert.match(r.digest, /^[a-f0-9]{64}$/); assert.equal(r.custodyReleased, false);
 });
-

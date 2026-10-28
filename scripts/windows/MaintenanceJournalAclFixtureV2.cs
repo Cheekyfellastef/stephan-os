@@ -75,4 +75,3 @@ public static class MaintenanceJournalAclFixtureV2 {
         return result;
     }
 }
-

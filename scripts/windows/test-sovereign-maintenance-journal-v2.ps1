@@ -44,4 +44,3 @@ if ($Mode -eq 'Circular') {
     if (-not $full -or $count -lt 1) { throw 'FIXTURE_CAPACITY_REFUSAL_NOT_PROVEN' }
     [Console]::WriteLine('{"ok":true,"full":true,"fixtureOnly":true}')
 }
-

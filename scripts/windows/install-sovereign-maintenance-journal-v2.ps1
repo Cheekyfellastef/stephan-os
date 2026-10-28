@@ -59,4 +59,3 @@ if ($null -eq $row) {
 Assert-MaintenanceJournalPolicyV2 $policy
 Assert-MaintenanceJournalBootstrapV2 $policy
 [Console]::WriteLine('{"ok":true,"installed":true,"retained":true,"bootstrapProven":true,"custodyReleased":false,"restartPerformed":false}')
-

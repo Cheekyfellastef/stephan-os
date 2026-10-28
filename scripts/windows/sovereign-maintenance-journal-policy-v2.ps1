@@ -61,4 +61,3 @@ function Assert-MaintenanceJournalBootstrapV2($policy) {
         } finally { $row.Dispose() }
     } finally { $reader.Dispose() }
 }
-

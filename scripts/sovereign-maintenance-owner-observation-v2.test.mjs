@@ -42,4 +42,3 @@ test('health body limits and unsuccessful responses fail before accepting owner 
   await assert.rejects(readMaintenanceOwnerObservationV2({ nativeReader: () => n,
     fetchFn: async () => new Response('{}', { status: 503 }) }), /OWNER_UNPROVEN/);
 });
-

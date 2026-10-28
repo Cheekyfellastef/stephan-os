@@ -54,7 +54,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Register only the operator-approved isolated retained-journal fixture
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/windows/install-sovereign-maintenance-journal-v2.ps1 -Fixture -OperatorApproved
       - name: Bounded OS audit anchor proof before CPU-heavy native fixtures
+        env:
+          STEPHANOS_CUSTODY_NATIVE_FIXTURE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
