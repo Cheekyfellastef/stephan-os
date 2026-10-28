@@ -55,6 +55,7 @@ import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-disc
 import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
+import { unqualifiedCoreWindowsRepairV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import {
   buildStephanosBuildTruth,
   collectSovereignControllerLaneStatus,
@@ -88,7 +89,6 @@ const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
 const RELATED_ISSUE = '#2593';
-const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 const bootstrapSovereignParentProofEligible = (
   process.env.STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN === '1'
@@ -458,21 +458,13 @@ async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
     return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
       finalVerdict: 'OCTOPUS_WORKER_CUSTODY_HELD', sourceMutationAllowed: false });
   }
-  const catalog = buildStephanosExecutionSurfaceCatalogV1({
-    repositoryRoot: repoRoot,
-    sharedWorkspaceRoot: workspaceRoot,
-  });
-  const envelope = buildStephanosExecutionCommandEnvelopeV1({
-    catalog,
-    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-    actionId: `stephanos-core-octopus-self-heal-${lastOctopusSelfHealAttemptCount}-${phase}`,
-    missionId: 'stephanos-core-octopus-self-heal',
-    relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
-    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
-    payload: { actionId },
-    proofRefs: [PROOF_REF, `source:${sourceHead}`],
-  });
-  return executeSovereignCommanderCommandV1(envelope, { repoRoot });
+  // This is an automatic caller, including its escalation/retry phases.
+  // Routing it through a manual fixed action bypassed the continuous runner's
+  // native-custody refusal and could create another durable timeout hold.
+  // Keep the existing manual actions available to their operator-owned callers;
+  // automatic broad repair cannot reserve or spawn until its native backend is
+  // independently qualified. Dependency-specific maintenance remains separate.
+  return unqualifiedCoreWindowsRepairV1();
 }
 
 async function runBoundedOctopusSelfHeal(sourceHead) {
