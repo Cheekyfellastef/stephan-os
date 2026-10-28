@@ -32,6 +32,8 @@ export const SHARED_WORKSPACE_FEED_RECORD_SCOPES = Object.freeze({
 });
 export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
+const RECORD_READ_CONCURRENCY = 16;
+const directoryReadFlights = new WeakMap();
 
 const DIRECTORY_BY_KIND = Object.freeze({
   goals: 'goalRecords',
@@ -119,28 +121,24 @@ function classifyFeed({ resolved, records, projection, errors }) {
 export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
   const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
-  let names = [];
-  try {
-    names = await readdir(resolved.path);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { records: [], errors: [] };
-    return { records: [], errors: [`${directory}:READ_FAILED:${error?.code || error?.message || 'unknown'}`] };
+  const reader = options.readFile || readFile;
+  let flights = directoryReadFlights.get(reader);
+  if (!flights) { flights = new Map(); directoryReadFlights.set(reader, flights); }
+  let flight = flights.get(resolved.path);
+  if (!flight) {
+    flight = readDirectorySnapshot(resolved.path, directory, reader);
+    flights.set(resolved.path, flight);
   }
+  let snapshot;
+  try { snapshot = await flight; }
+  finally { if (flights.get(resolved.path) === flight) flights.delete(resolved.path); }
+  // Share only I/O in progress, never a cached authority/freshness verdict.
+  // Each caller owns its returned objects and validates against its own clock.
   const records = [];
-  const errors = [];
-  for (const name of names.filter((item) => (
-    item.endsWith('.json')
-    // Match the canonical operator inbox namespace before opening files. The
-    // shared receipts directory also contains the much larger runtime journal.
-    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
-    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
-  ))) {
+  const errors = [...snapshot.errors];
+  for (const { name, record: raw } of snapshot.entries) {
     try {
-      const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
-      if (
-        directory === 'receipts'
-        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
-      ) continue;
+      const record = structuredClone(raw);
       const validation = validateSharedWorkspaceRecord(record, options);
       if (validation.valid) records.push(record);
       else errors.push(`${directory}/${name}:${validation.errors.join(',')}`);
@@ -148,8 +146,51 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
       errors.push(`${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}`);
     }
   }
+  errors.sort();
   records.sort((a, b) => timestampMs(b) - timestampMs(a));
   return { records, errors };
+}
+
+async function readDirectorySnapshot(path, directory, reader) {
+  let names = [];
+  try {
+    names = await readdir(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { entries: [], errors: [] };
+    return { entries: [], errors: [`${directory}:READ_FAILED:${error?.code || error?.message || 'unknown'}`] };
+  }
+  const entries = [];
+  const errors = [];
+  const selectedNames = names.filter((item) => (
+    item.endsWith('.json')
+    // Match the canonical operator inbox namespace before opening files. The
+    // shared receipts directory also contains the much larger runtime journal.
+    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
+    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
+  ));
+  // Full-history Flywheel polls must not serialize thousands of disk reads.
+  // Keep I/O bounded and collect in directory order so equal timestamps and
+  // validation errors remain deterministic regardless of read completion order.
+  const readRecord = async (name) => {
+    try {
+      const record = JSON.parse(await reader(join(path, name), 'utf8'));
+      if (
+        directory === 'receipts'
+        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
+      ) return {};
+      return { entry: { name, record } };
+    } catch (error) {
+      return { error: `${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}` };
+    }
+  };
+  for (let offset = 0; offset < selectedNames.length; offset += RECORD_READ_CONCURRENCY) {
+    const batch = await Promise.all(selectedNames.slice(offset, offset + RECORD_READ_CONCURRENCY).map(readRecord));
+    for (const result of batch) {
+      if (result.entry) entries.push(result.entry);
+      if (result.error) errors.push(result.error);
+    }
+  }
+  return { entries, errors };
 }
 
 

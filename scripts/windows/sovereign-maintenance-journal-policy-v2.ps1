@@ -1,0 +1,114 @@
+# Fixed native policy for the existing custody adapter. No caller-chosen channel.
+$PSModuleAutoLoadingPreference = 'None'
+function Get-MaintenanceJournalPolicyV2([bool]$Fixture = $false) {
+    if ($Fixture) {
+        return @{Log='StphCustodyFixture';Source='StphCustodyFixtureV2';Maximum=[long]1048576;Id='retained-v2-fixture'}
+    }
+    return @{Log='Stephanos Maintenance Custody';Source='StephanosMaintenanceCustody';Maximum=[long]67108864;Id='retained-v2-production'}
+}
+# Windows may report the requested chunk budget with one additional 4 KiB
+# event-file page (native CI: 1048576 requested, 1052672 read back). Keep
+# requested and reported capacity distinct; no arbitrary larger size is admitted.
+function Test-MaintenanceJournalMaximumV2([long]$Reported, $policy) {
+    return ($Reported -eq $policy.Maximum -or $Reported -eq ($policy.Maximum + 4096))
+}
+function Get-MaintenanceJournalSddlV2 {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try { $sid = $identity.User.Value } finally { $identity.Dispose() }
+    return 'O:BAG:SYD:P(A;;0xf0007;;;SY)(A;;0xf0007;;;BA)(A;;0x3;;;' + $sid + ')'
+}
+function Get-MaintenanceJournalRegistryPathsV2($policy) {
+    $base = 'SYSTEM\CurrentControlSet\Services\EventLog\' + $policy.Log
+    return @($base, ($base + '\' + $policy.Source))
+}
+# SetValue, CreateSubKey, CreateLink, Delete, ChangePermissions and TakeOwnership.
+function Test-MaintenanceRegistryMutationV2([int]$Rights) {
+    return (($Rights -band 0xD0026) -ne 0)
+}
+function Assert-MaintenanceJournalRegistryV2($policy) {
+    foreach ($registryPath in (Get-MaintenanceJournalRegistryPathsV2 $policy)) {
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($registryPath, $false)
+        if ($null -eq $key) { throw 'JOURNAL_SOURCE_MAPPING_UNPROVEN' }
+        try {
+            $security = $key.GetAccessControl()
+            $owner = $security.GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($owner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'JOURNAL_REGISTRY_OWNER_UNSAFE' }
+            foreach ($rule in $security.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+                if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+                    (Test-MaintenanceRegistryMutationV2 ([int]$rule.RegistryRights)) -and
+                    $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')) {
+                    throw 'JOURNAL_REGISTRY_WRITE_AUTHORITY_UNSAFE'
+                }
+            }
+        } finally { $key.Dispose() }
+    }
+}
+function Assert-MaintenanceJournalPolicyV2($policy) {
+    Assert-MaintenanceJournalRegistryV2 $policy
+    $info = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new($policy.Log)
+    try {
+        if (-not $info.IsEnabled -or $info.LogMode -ne [Diagnostics.Eventing.Reader.EventLogMode]::Retain -or
+            -not (Test-MaintenanceJournalMaximumV2 $info.MaximumSizeInBytes $policy) -or $info.IsClassicLog -ne $true) {
+            # Closed native configuration evidence only; no key, SID, path or event payload.
+            [Console]::Error.WriteLine('SOVEREIGN_JOURNAL_CONFIG=' + [string]$info.IsEnabled + '/' +
+                [string]$info.LogMode + '/' + [string]$info.MaximumSizeInBytes + '/' + [string]$info.IsClassicLog)
+            throw 'JOURNAL_RETENTION_UNPROVEN'
+        }
+        $actual = [Security.AccessControl.RawSecurityDescriptor]::new($info.SecurityDescriptor)
+        $expected = [Security.AccessControl.RawSecurityDescriptor]::new((Get-MaintenanceJournalSddlV2))
+        if ($actual.GetSddlForm([Security.AccessControl.AccessControlSections]::All) -cne
+            $expected.GetSddlForm([Security.AccessControl.AccessControlSections]::All)) {
+            [Console]::Error.WriteLine('SOVEREIGN_JOURNAL_ACCESS=' +
+                [string]($actual.Owner.Value -ceq $expected.Owner.Value) + '/' +
+                [string]($actual.Group.Value -ceq $expected.Group.Value) + '/' +
+                [string][int]$actual.ControlFlags + '/' + [string][int]$expected.ControlFlags + '/' +
+                [string]$actual.DiscretionaryAcl.Count + '/' + [string]$expected.DiscretionaryAcl.Count)
+            throw 'JOURNAL_ACCESS_UNPROVEN'
+        }
+    } finally { $info.Dispose() }
+}
+
+
+function Assert-MaintenanceJournalBootstrapV2($policy) {
+    $query = [Diagnostics.Eventing.Reader.EventLogQuery]::new($policy.Log,[Diagnostics.Eventing.Reader.PathType]::LogName,
+        ("*[System[(EventID=62516) and Provider[@Name='" + $policy.Source + "']]]"))
+    $reader = [Diagnostics.Eventing.Reader.EventLogReader]::new($query)
+    try {
+        $row = $reader.ReadEvent()
+        if ($null -eq $row) { throw 'JOURNAL_BOOTSTRAP_UNPROVEN' }
+        try {
+            if ($row.RecordId -ne 1 -or [string]$row.Properties[0].Value -cne
+                'SOVEREIGN_MAINTENANCE_BOOTSTRAP_V2=NON_AUTHORITY') { throw 'JOURNAL_BOOTSTRAP_UNPROVEN' }
+        } finally { $row.Dispose() }
+    } finally { $reader.Dispose() }
+}
+
+function Assert-MaintenanceJournalAppendCapacityV2($policy) {
+    $information = [Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.GetLogInformation(
+        $policy.Log,[Diagnostics.Eventing.Reader.PathType]::LogName)
+    if ($information.IsLogFull -ne $false) {
+        [Console]::Error.WriteLine('SOVEREIGN_ANCHOR_CAPACITY=FULL_OR_UNPROVEN')
+        throw 'JOURNAL_APPEND_CAPACITY_UNAVAILABLE'
+    }
+}
+# Elevated native adapter: preserve only OS bootstrap variables; never inherit
+# Node preload/options, module search paths, provider credentials or caller PATH.
+function New-MaintenanceSourceProbeStartInfoV2 {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = 'C:\Program Files\nodejs\node.exe'
+    $info.Arguments = '"C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-maintenance-journal-source-proof-v2.mjs"'
+    $info.WorkingDirectory = 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.EnvironmentVariables.Clear()
+    foreach ($name in @('SYSTEMROOT','WINDIR','TEMP','TMP')) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value -and $value.IndexOfAny([char[]]@(0,10,13)) -lt 0) {
+            $info.EnvironmentVariables[$name] = $value
+        }
+    }
+    $info.EnvironmentVariables['PATH'] = 'C:\Windows\System32;C:\Windows;C:\Program Files\nodejs'
+    return $info
+}
