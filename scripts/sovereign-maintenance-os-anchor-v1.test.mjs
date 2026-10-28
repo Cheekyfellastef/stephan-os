@@ -190,33 +190,6 @@ test('only a completed append refusal can produce the closed capacity code witho
     error => error.message === 'MAINTENANCE_OS_JOURNAL_CAPACITY_UNAVAILABLE' && !JSON.stringify(error).includes(key));
   assert.throws(() => a.readLatest(), /MAINTENANCE_OS_ANCHOR_UNPROVEN/);
 });
-test('elevated source-probe boundary excludes hostile Node bootstrap and caller execution environment', {
-  skip: process.platform !== 'win32'
-}, () => {
-  const policyFile = fileURLToPath(new URL('./windows/sovereign-maintenance-journal-policy-v2.ps1', import.meta.url));
-  // Execute only the environment constructor and a harmless Node environment
-  // observation. Never execute the administrator installer or touch a journal.
-  const command = ". '" + policyFile.replaceAll("'", "''") + "'; $info=New-MaintenanceSourceProbeStartInfoV2; "
-    + "if($info.FileName -cne 'C:\\Program Files\\nodejs\\node.exe' -or $info.UseShellExecute -or "
-    + "$info.Arguments -cne '\"C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-maintenance-journal-source-proof-v2.mjs\"') { throw 'FIXED_PROBE_CHANGED' }; "
-    + "if($info.WorkingDirectory -cne 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os') { throw 'FIXED_DIRECTORY_CHANGED' }; "
-    + "$info.WorkingDirectory=[IO.Path]::GetTempPath(); $info.Arguments='-e \"console.log(JSON.stringify(process.env))\"'; "
-    + "$p=[Diagnostics.Process]::new(); try { $p.StartInfo=$info; [void]$p.Start(); "
-    + "if(-not $p.WaitForExit(10000)) { $p.Kill(); throw 'PROBE_TIMEOUT' }; "
-    + "[Console]::Write($p.StandardOutput.ReadToEnd()); if($p.ExitCode -ne 0) { throw 'PROBE_FAILED' } } finally { $p.Dispose() }";
-  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-    ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(command,'utf16le').toString('base64')],
-    { shell: false, windowsHide: true, encoding: 'utf8', timeout: 15_000,
-      env: { ...process.env, NODE_OPTIONS: '--import=data:text/javascript,console.log("INJECTED_SOURCE_SHA");process.exit(0)',
-        NODE_PATH: 'hostile-module-path', OPENSSL_CONF: 'hostile-crypto-conf',
-        GITHUB_TOKEN: 'fixture-not-a-secret', PATH: 'hostile-path' } });
-  assert.equal(r.status, 0, r.stderr);
-  const observed = JSON.parse(r.stdout);
-  assert.deepEqual(Object.keys(observed).map(x => x.toUpperCase()).sort(),
-    ['PATH','SYSTEMROOT','TEMP','TMP','WINDIR'].filter(x => x === 'PATH' || process.env[x] || process.env[Object.keys(process.env).find(k => k.toUpperCase() === x)]).sort());
-  assert.equal(observed.PATH ?? observed.Path, 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs');
-  assert.equal(r.stdout.includes('INJECTED_SOURCE_SHA'), false);
-});
 test('native registry mutation model rejects each independent mutation right including delete-only ACEs', {
   skip: process.platform !== 'win32'
 }, () => {

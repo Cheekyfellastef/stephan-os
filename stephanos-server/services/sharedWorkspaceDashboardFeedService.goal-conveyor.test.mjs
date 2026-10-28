@@ -110,6 +110,13 @@ test('dashboard backend projects each goal build journey without borrowing anoth
     },
   });
 
+  await writeJson(root, 'status', 'autonomy-build-track-current.json', {
+    ...createSharedWorkspaceStatusRecord({ statusId: 'autonomy-build-track-current', participantId: 'mission-scheduler',
+      timestampUtc: NOW, status: 'WAITING', summary: 'Canonical cycle is waiting for a claim.' }),
+    autonomyTrack: { schemaVersion: 'stephanos.autonomy-build-track.v1', timestampUtc: NOW,
+      sourceHead: '', missionId: 'mission-2002', issueNumber: 2002,
+      currentGate: 'CLAIM', currentState: 'WAITING', gates: [{ id: 'CLAIM', state: 'WAITING' }] },
+  });
   const payload = await readBackendSharedWorkspaceDashboardFeed({
     env: {
       HOME: home,
@@ -130,6 +137,9 @@ test('dashboard backend projects each goal build journey without borrowing anoth
   assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
   assert.equal(payload.projection.stephanosBuildTruth.goals.length, 2);
   assert.equal(payload.projection.goalBuildConveyorOverview.schemaVersion, 'stephanos.goal-build-conveyor-overview.v1');
+  assert.equal(payload.projection.goalBuildConveyorOverview.trace.observedAtUtc, NOW);
+  assert.equal(payload.projection.goalBuildConveyorOverview.trace.sourceBinding, 'SOURCE_HEAD_MISSING');
+  assert.equal(payload.projection.goalBuildConveyorOverview.stages.find(stage => stage.id === 'claim').operational.label, 'Waiting here');
   assert.equal(payload.projection.goalBuildConveyorOverview.buildingGoalCount, 1);
   assert.equal(payload.projection.goalBuildConveyorOverview.workers[0].id, 'openclaw-local');
   assert.equal(payload.projection.goalBuildConveyorOverview.stages.find(stage => stage.id === 'merge').state, 'UNKNOWN');
