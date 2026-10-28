@@ -110,24 +110,55 @@ function createLoopEvent(input = {}) {
   };
 }
 
+function blockedTick(reason, error, workspaceRoot = '') {
+  const errorCode = ['EPERM', 'EBUSY', 'EACCES', 'EIO', 'ENOSPC'].includes(error?.code)
+    ? error.code : 'WORKSPACE_IO_ERROR';
+  return Object.freeze({ ok: false, reason, errorCode, workspaceRoot,
+    errorHandled: true, finalVerdict: 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED',
+    exactNextAction: 'Inspect publisher storage and restore publication through the existing workspace owner; retained records are not fresh proof.',
+  });
+}
+
 export async function publishBattleBridgeLoopTick(input = {}) {
   const timestampUtc = input.timestampUtc || nowIso(input.now);
-  const workspace = await resolveExistingSharedWorkspace(input.root, { repoRoot: input.repoRoot });
+  let workspace;
+  try { workspace = await resolveExistingSharedWorkspace(input.root, { repoRoot: input.repoRoot }); }
+  catch (error) { return blockedTick('PUBLISHER_WORKSPACE_RESOLUTION_FAILED', error); }
   if (!workspace.ok) return workspace;
+  let sliceInput, sourceFailed = false;
+  const exactNextAction = 'Inspect Battle Bridge publisher loop error event then fix the failing status source and rerun local proof commands.';
   try {
-    const sliceInput = typeof input.buildSlice === 'function'
+    sliceInput = typeof input.buildSlice === 'function'
       ? await input.buildSlice({ timestampUtc })
       : createUnknownPublisherSlice({ timestampUtc, status: input.status, exactNextAction: input.exactNextAction });
-    const result = await publishBattleBridgeSliceToSharedWorkspace(workspace.root, sliceInput, { ...input.options, repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
-    await appendLoopEvent(workspace.root, createLoopEvent({ timestampUtc, summary: result.ok ? 'Battle Bridge publisher loop tick published current Shared Workspace records.' : `Battle Bridge publisher loop publish failed: ${result.reason}.` }), { repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
-    return { ...result, workspaceRoot: workspace.root, finalVerdict: result.ok ? 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_PUBLISHED' : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED' };
-  } catch (error) {
-    const exactNextAction = 'Inspect Battle Bridge publisher loop error event then fix the failing status source and rerun local proof commands.';
-    const staleSlice = createUnknownPublisherSlice({ timestampUtc, status: BATTLE_BRIDGE_SERVICE_STATUS.STALE, exactNextAction });
-    const result = await publishBattleBridgeSliceToSharedWorkspace(workspace.root, staleSlice, { ...input.options, repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
-    await appendLoopEvent(workspace.root, createLoopEvent({ timestampUtc, eventKind: 'operator-action-required', summary: `Battle Bridge publisher loop marked status STALE: ${error?.message ? 'publisher source failed' : 'unknown failure'}.` }), { repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
-    return { ...result, errorHandled: true, exactNextAction, finalVerdict: 'BATTLE_BRIDGE_PUBLISHER_LOOP_FAILURE_PUBLISHED_STALE' };
+  } catch {
+    sourceFailed = true;
+    sliceInput = createUnknownPublisherSlice({ timestampUtc, status: BATTLE_BRIDGE_SERVICE_STATUS.STALE, exactNextAction });
   }
+  let result;
+  try {
+    result = await publishBattleBridgeSliceToSharedWorkspace(workspace.root, sliceInput,
+      { ...input.options, repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
+  } catch (error) {
+    // Storage failure cannot be repaired by a second write to the same sink.
+    // Preserve the atomic writer's refusal and keep the host process alive.
+    return blockedTick('PUBLISHER_WORKSPACE_PUBLICATION_FAILED', error, workspace.root);
+  }
+  let event;
+  try {
+    event = await appendLoopEvent(workspace.root, createLoopEvent({ timestampUtc,
+      eventKind: sourceFailed ? 'operator-action-required' : 'health-check-result',
+      summary: sourceFailed ? 'Battle Bridge publisher loop marked status STALE: publisher source failed.'
+        : result.ok ? 'Battle Bridge publisher loop tick published current Shared Workspace records.'
+          : 'Battle Bridge publisher loop publication was blocked.',
+    }), { repoRoot: input.repoRoot, timestampUtc, nowMs: input.nowMs });
+  } catch (error) { return blockedTick('PUBLISHER_LOOP_EVENT_WRITE_FAILED', error, workspace.root); }
+  if (event?.ok !== true) return blockedTick('PUBLISHER_LOOP_EVENT_WRITE_FAILED', null, workspace.root);
+  return { ...result, workspaceRoot: workspace.root,
+    ...(sourceFailed ? { errorHandled: true, exactNextAction } : {}),
+    finalVerdict: result.ok ? sourceFailed ? 'BATTLE_BRIDGE_PUBLISHER_LOOP_FAILURE_PUBLISHED_STALE'
+      : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_PUBLISHED' : 'BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED',
+  };
 }
 
 export function startBattleBridgePublisherLoop(input = {}) {
@@ -136,17 +167,22 @@ export function startBattleBridgePublisherLoop(input = {}) {
   const clearTimer = input.clearIntervalFn || clearInterval;
   let stopped = false;
   let inFlight = false;
+  let lastResult = null;
   const tick = async () => {
     if (stopped || inFlight) return null;
     inFlight = true;
-    try { return await publishBattleBridgeLoopTick(input); }
+    try { lastResult = await publishBattleBridgeLoopTick(input); }
+    catch (error) { lastResult = blockedTick('PUBLISHER_LOOP_UNEXPECTED_FAILURE', error); }
     finally { inFlight = false; }
+    if (lastResult?.ok !== true) console.warn('BATTLE_BRIDGE_PUBLISHER_LOOP_TICK_BLOCKED');
+    return lastResult;
   };
   if (input.runImmediately !== false) void tick();
   const timer = setTimer(() => { void tick(); }, contract.intervalMs);
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_PUBLISHER_LOOP_SCHEMA_VERSION,
     contract,
+    getStatus() { return Object.freeze({ stopped, inFlight, lastResult }); },
     stop() {
       if (!stopped) {
         stopped = true;
