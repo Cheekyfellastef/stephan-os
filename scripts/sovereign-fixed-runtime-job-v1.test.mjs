@@ -27,10 +27,15 @@ function runFixture(terminalGuardBaseline = 'None') {
     + "$source=[Text.UTF8Encoding]::new($false,$true).GetString($bytes).Replace('$PSScriptRoot'," + ps(ps(fixtureDirectory)) + ");"
     + "& ([scriptblock]::Create($source)) -FixtureNodePath " + ps(process.execPath) + " -FixtureTerminalGuardBaseline " + ps(terminalGuardBaseline);
   assert.ok(code.length < 4096);
-  const stdout = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+  let stdout;
+  try { stdout = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(code, 'utf16le').toString('base64'),
-  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore','pipe','pipe'], timeout: 85000, maxBuffer: 128 * 1024 });
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore','pipe','pipe'], timeout: 85000, maxBuffer: 128 * 1024 }); }
+  catch (error) {
+    throw new Error('NATIVE_FIXTURE_CHILD_FAILED:' + terminalGuardBaseline + ':'
+      + String(error.stderr || error.message).slice(0, 12000));
+  }
   return JSON.parse(stdout.trim());
 }
 test('native runtime stage has actual bound zero/exclusion and never promotes cleanup to success', {
@@ -96,13 +101,24 @@ test('the Windows terminal-drain fixtures fail if the final owner/cancel guard i
   skip: process.platform !== 'win32', timeout: 60000,
 }, () => {
   for (const [baseline, mode] of [['Cancel','drain-cancel'],['ParentDeath','drain-parent-death']]) {
-    assert.throws(() => runFixture(baseline), error => {
-      const actual = String(error.stderr || '');
-      assert.ok(actual.includes('FIXTURE_FALSE_SUCCESS:'), baseline);
-      for (const field of ['"Mode":"'+mode+'"','"TerminalDrainObserved":true',
-        '"OperationOk":true','"ExecutionCustodyReleased":true','"ZeroActiveProcessesObserved":true'])
-        assert.ok(actual.includes(field), baseline + ': ' + field);
-      return true;
-    });
+    const observed = runFixture(baseline);
+    assert.equal(observed.ok, false, 'Mutated source remains an observation-only failing variant');
+    assert.equal(observed.runtimeQualified, false);
+    assert.equal(observed.counterfactualVariant, baseline);
+    assert.equal(observed.cases.length, 1);
+    const row = observed.cases[0];
+    assert.equal(row.Mode, mode);
+    assert.equal(row.RuntimeQualified, false);
+    assert.equal(row.SourceMutationAllowed, false);
+    assert.equal(row.TerminalDrainObserved, true, JSON.stringify(row));
+    assert.equal(row.RootCaptured, true);
+    assert.equal(row.RootEndedByHandle, true);
+    assert.equal(row.Receipt.RootCreatedAtUtc, row.RootCreatedAtUtc);
+    assert.equal(row.Receipt.NormalRootExit, true);
+    assert.equal(row.Receipt.ExitCode, 0);
+    assert.equal(row.Receipt.OutputComplete, true);
+    assert.equal(row.Receipt.OperationOk, true, 'Removing only the guard must reproduce the specialist finding');
+    assert.equal(row.Receipt.ExecutionCustodyReleased, true);
+    assert.equal(row.Receipt.ZeroActiveProcessesObserved, true);
   }
 });

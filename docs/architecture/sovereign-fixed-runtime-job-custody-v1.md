@@ -95,3 +95,13 @@ source-worker lifecycle still require implementation, complete exact-head proof,
 qualified specialist review and the original consequential operator gates. No
 component test or prior review is installation, activation, current e244 recovery,
 source-worker pickup or programme completion.
+
+
+Initial compatibility limitation: the pending helper currently binds the entire
+installed main head and refuses a later head even when its runtime bytes happen
+to be unchanged. A future adoption contract must separately prove current Git
+identity, exact unchanged executable/import/native bytes and existing review and
+deployment authority before distinguishing compile identity from execution head.
+No caller flag, normalized hash, mutable active file or new trust root can waive
+that proof. This conservative limitation is recorded implementation debt; it is
+not an additional predicate for recovering historical e244 or a first safe build.

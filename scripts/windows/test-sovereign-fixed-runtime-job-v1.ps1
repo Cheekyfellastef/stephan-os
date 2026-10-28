@@ -212,7 +212,7 @@ foreach($mode in $modes) {
   if ($mode -eq 'normal' -or $mode -eq 'input') {
     if (-not $r.Receipt.OperationOk -or -not $r.Receipt.ExecutionCustodyReleased) { throw ('FIXTURE_SUCCESS_INVALID:'+ $mode) }
   } else {
-    if ($r.Receipt.OperationOk) { throw ('FIXTURE_FALSE_SUCCESS:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
+    if ($FixtureTerminalGuardBaseline -ceq 'None' -and $r.Receipt.OperationOk) { throw ('FIXTURE_FALSE_SUCCESS:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
   }
   if ($mode -eq 'query') {
     if ($r.Receipt.ExecutionCustodyReleased -or $r.Receipt.ZeroActiveProcessesObserved) { throw 'FIXTURE_QUERY_FALSE_ZERO' }
@@ -229,4 +229,4 @@ foreach($mode in $modes) {
   if ($mode -eq 'overflow' -and (-not $r.Receipt.OutputOverflow -or $r.Receipt.OutputComplete)) { throw 'FIXTURE_OUTPUT_FALSE_PROOF' }
   $cases += $r
 }
-@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=$true;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
+@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=($FixtureTerminalGuardBaseline -ceq 'None');counterfactualVariant=$FixtureTerminalGuardBaseline;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
