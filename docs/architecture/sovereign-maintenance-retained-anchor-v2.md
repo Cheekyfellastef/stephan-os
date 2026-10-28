@@ -76,3 +76,10 @@ References for the intended OS contracts: [Microsoft EventLogMode](https://learn
 Native size normalization evidence: hosted run 40682650880 independently read enabled=True, mode=Retain, classic=True and MaximumSizeInBytes=1052672 after a 1048576-byte request. Requested logical capacity and native readback are now separate model values. Only the exact requested value or that value plus one fixed 4096-byte page is admitted; adjacent values and arbitrary larger caps are rejected by actual PowerShell model tests. Retain, source mapping, protected access and verified bootstrap predicates are unchanged. Capacity proof accepts only native full status or the exact native log-full failure, then independently proves a rejected append cannot replace the prior authority. This normalization is not native acceptance by itself; the complete hosted proof remains binding.
 
 Native capacity convergence: run 40683832169 passed registration, real append/read, concurrent CAS, reduced-token ACL checks, rejected Circular mode and retained readback. Its final assertion exposed that native IsLogFull can be true after a large event is refused while a smaller event can still fit. The canonical append primitive now checks native full/unknown status inside its existing kernel-serialized loop before any new custody append; reads remain available. The store preserves a closed capacity-denial reason, retains its fence and admits no execution. New transport/store regressions cover this distinction; actual hosted full-capacity proof must still pass. No predicate was weakened and the prior authority is never discarded.
+The elevated installer starts its fixed Node source collector through a shell-free,
+10-second bounded process with an explicitly cleared child environment. Only
+SYSTEMROOT, WINDIR, TEMP and TMP plus a fixed PATH survive. Inherited NODE_OPTIONS,
+NODE_PATH, crypto overrides and provider credentials cannot execute before or
+forge source proof. The Windows regression launches a harmless child under hostile
+preload/module/crypto/PATH settings and proves none reaches the child. No native
+registration is executed by that regression.

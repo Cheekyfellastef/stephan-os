@@ -87,3 +87,24 @@ function Assert-MaintenanceJournalAppendCapacityV2($policy) {
         throw 'JOURNAL_APPEND_CAPACITY_UNAVAILABLE'
     }
 }
+# Elevated native adapter: preserve only OS bootstrap variables; never inherit
+# Node preload/options, module search paths, provider credentials or caller PATH.
+function New-MaintenanceSourceProbeStartInfoV2 {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = 'C:\Program Files\nodejs\node.exe'
+    $info.Arguments = '"C:\Users\Stephan Callear\Documents\GitHub\stephan-os\scripts\sovereign-maintenance-journal-source-proof-v2.mjs"'
+    $info.WorkingDirectory = 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.EnvironmentVariables.Clear()
+    foreach ($name in @('SYSTEMROOT','WINDIR','TEMP','TMP')) {
+        $value = [Environment]::GetEnvironmentVariable($name)
+        if ($value -and $value.IndexOfAny([char[]]@(0,10,13)) -lt 0) {
+            $info.EnvironmentVariables[$name] = $value
+        }
+    }
+    $info.EnvironmentVariables['PATH'] = 'C:\Windows\System32;C:\Windows;C:\Program Files\nodejs'
+    return $info
+}

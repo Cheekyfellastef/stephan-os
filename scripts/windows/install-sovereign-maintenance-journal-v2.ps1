@@ -21,10 +21,17 @@ if ($Fixture) {
         throw 'JOURNAL_INSTALL_CANONICAL_SOURCE_REQUIRED'
     }
     # Invoke the unchanged closed source collector, not ordinary Git or a caller probe.
-    $node = 'C:\Program Files\nodejs\node.exe'
-    $probe = [IO.Path]::Combine($PSScriptRoot,'..','sovereign-maintenance-journal-source-proof-v2.mjs')
-    $observed = & $node $probe
-    if ($LASTEXITCODE -ne 0 -or [string]$observed -cne $ExpectedMain) { throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN' }
+    $process = [Diagnostics.Process]::new()
+    try {
+        $process.StartInfo = New-MaintenanceSourceProbeStartInfoV2
+        if (-not $process.Start()) { throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN' }
+        if (-not $process.WaitForExit(10000)) {
+            $process.Kill()
+            throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN'
+        }
+        $observed = $process.StandardOutput.ReadToEnd().Trim()
+        if ($process.ExitCode -ne 0 -or $observed -cne $ExpectedMain) { throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN' }
+    } finally { $process.Dispose() }
 }
 $policy = Get-MaintenanceJournalPolicyV2 ([bool]$Fixture)
 $base = 'SYSTEM\CurrentControlSet\Services\EventLog\' + $policy.Log
