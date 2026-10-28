@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -16,6 +16,33 @@ async function createWorkspace() {
     .map((directory) => mkdir(join(root, directory), { recursive: true })));
   return root;
 }
+
+test('conversation read starts before a blocked history read finishes and its failure remains unavailable', async () => {
+  const root = await createWorkspace();
+  await writeFile(join(root, 'status', 'current.json'), JSON.stringify(createSharedWorkspaceStatusRecord({
+    statusId: 'current', timestampUtc: new Date().toISOString(), status: 'CURRENT',
+  })));
+  let releaseHistory;
+  const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+  let conversationStarted;
+  const conversationGate = new Promise(resolve => { conversationStarted = resolve; });
+  const reading = readBackendSharedWorkspaceDashboardFeed({
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: process.cwd(), liveProjection: null,
+    readFile: async (...args) => { await historyGate; return readFile(...args); },
+    readConversationUplift: async () => { conversationStarted(); throw new Error('conversation unavailable'); },
+  });
+  let deadline;
+  try {
+    await Promise.race([conversationGate, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('conversation queued behind history')), 3000);
+    })]);
+  } finally { clearTimeout(deadline); releaseHistory(); await reading; }
+  const feed = await reading;
+  assert.equal(feed.state, 'ready');
+  assert.equal(feed.records.statusRecords.length, 1);
+  assert.deepEqual(feed.conversationUplift, { state: 'unavailable', turnCount: 0, candidates: [] });
+});
 
 test('backend dashboard feed reads current state without walking historical receipt storage', async () => {
   const root = await createWorkspace();

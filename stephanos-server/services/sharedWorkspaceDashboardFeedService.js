@@ -104,6 +104,15 @@ async function resolveLiveProjection(input, nowMs) {
   }
 }
 
+async function resolveConversationUplift(input, root, nowMs) {
+  try {
+    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
+    return await reader({ root, repoRoot: input.repoRoot, env: input.env, nowMs });
+  } catch {
+    return { state: 'unavailable', turnCount: 0, candidates: [] };
+  }
+}
+
 function hasRenderableCurrentStateEvidence(feed) {
   const records = feed?.records || {};
   const currentRecordCount = [records.goalRecords, records.statusRecords, records.proofRecords, records.capabilityRecords]
@@ -236,7 +245,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   // These independent read models share the same observation clock. A slow
   // optional GitHub overlay must not add its entire latency after the history
   // scan; its existing unavailable/error semantics remain unchanged.
-  const [feed, live] = await Promise.all([
+  const [feed, live, conversationUplift] = await Promise.all([
     readSharedWorkspaceDashboardFeed({
       ...input,
       goalGateTrust,
@@ -244,14 +253,8 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
     }),
     resolveLiveProjection(input, nowMs),
+    resolveConversationUplift(input, validation.root, nowMs),
   ]);
-  let conversationUplift;
-  try {
-    const reader = input.readConversationUplift || readSharedConversationUpliftV1;
-    conversationUplift = await reader({ root: validation.root, repoRoot: input.repoRoot, env: input.env, nowMs });
-  } catch {
-    conversationUplift = { state: 'unavailable', turnCount: 0, candidates: [] };
-  }
   const records = feed.records || {};
   const goalEstate = buildGoalDashboardEstateSummary({
     goalRecords: records.goalRecords,
