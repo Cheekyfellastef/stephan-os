@@ -1,8 +1,19 @@
-param()
+param([Parameter(Mandatory=$true)][string]$FixtureNodePath)
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('stph-runtime-job-' + [Guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($fixtureRoot) | Out-Null
+# Fixture-only executable placement exercises hosted-tool-cache portability.
+# No production executor accepts or consumes this path.
+$fixtureNode = Join-Path $fixtureRoot 'fixed-fixture-node.exe'
+[IO.File]::Copy([IO.Path]::GetFullPath($FixtureNodePath),$fixtureNode,$false)
+$sha = [Security.Cryptography.SHA256]::Create()
+try {
+  $originalDigest = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($FixtureNodePath)))).Replace('-','').ToLowerInvariant()
+  $copyDigest = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($fixtureNode)))).Replace('-','').ToLowerInvariant()
+} finally { $sha.Dispose() }
+if ($copyDigest -cne $originalDigest) { throw 'FIXTURE_EXECUTABLE_COPY_CHANGED' }
 $worker = @'
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -32,13 +43,15 @@ namespace Stephanos.Sovereign {
  using System.Threading;
  using System.Threading.Tasks;
  public sealed class FixedRuntimeFixtureResultV1 {
-   public string Mode, RootCreatedAtUtc="", DescendantCreatedAtUtc="";
+   public string Mode, RootCreatedAtUtc="", DescendantCreatedAtUtc="", RootImagePath="";
    public FixedRuntimeStageV1 Receipt;
    public bool RootCaptured, RootEndedByHandle, DescendantCaptured, DescendantEndedByHandle;
    public bool SourceMutationAllowed=false, RuntimeQualified=false;
  }
  public static partial class CoreJobCustodyV1 {
-  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode) {
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern bool QueryFullProcessImageNameW(IntPtr process,uint flags,StringBuilder name,ref uint size);
+  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode) {
    if(!System.Text.RegularExpressions.Regex.IsMatch(mode,
      "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail)$"))
      throw new InvalidOperationException("FIXTURE_MODE_INVALID");
@@ -55,7 +68,7 @@ namespace Stephanos.Sovereign {
     finally { CloseHandle(currentHandle); }
     launcher=RuntimeOwnerHandleV1(current.Id,created);
     if(mode=="parent-death") {
-      var info=new ProcessStartInfo(@"C:\Program Files\nodejs\node.exe","-e \"setTimeout(()=>{},30000)\"");
+      var info=new ProcessStartInfo(fixtureNode,"-e \"setTimeout(()=>{},30000)\"");
       info.UseShellExecute=false; info.CreateNoWindow=true;
       fakeOwner=Process.Start(info);
       IntPtr h=RuntimeOpenProcessV1(0x101000,false,(uint)fakeOwner.Id);
@@ -79,6 +92,11 @@ namespace Stephanos.Sovereign {
             bool member; Require(IsProcessInJob(rootHandle,job,out member)); Require(member);
             long born,ended,k,u; Require(RuntimeProcessTimesV1(rootHandle,out born,out ended,out k,out u));
             result.RootCreatedAtUtc=DateTime.FromFileTimeUtc(born).ToString("O");
+            var image=new StringBuilder(32768); uint imageLength=32768;
+            Require(QueryFullProcessImageNameW(rootHandle,0,image,ref imageLength));
+            result.RootImagePath=image.ToString();
+            if(!String.Equals(Path.GetFullPath(fixtureNode),result.RootImagePath,StringComparison.OrdinalIgnoreCase))
+              throw new InvalidOperationException("ROOT_IMAGE_CHANGED");
             result.RootCaptured=true;
             if(childPid>0) {
               descendant=RuntimeOpenProcessV1(0x101000,false,(uint)childPid);
@@ -106,7 +124,7 @@ namespace Stephanos.Sovereign {
       if(Interlocked.CompareExchange(ref captured,0,0)!=0) { Thread.Sleep(100); fakeOwner.Kill(); }
     });
     var clock=Stopwatch.StartNew();
-    string executable=mode=="spawn-fail"?@"C:\Windows\System32\StphRuntimeFixtureMissing.exe":@"C:\Program Files\nodejs\node.exe";
+    string executable=mode=="spawn-fail"?Path.Combine(directory,"missing-owned-fixture.exe"):fixtureNode;
     string args=Quote(Path.Combine(directory,"worker.mjs"))+" "+mode+" "+Quote(witness)+" "+Quote(ack);
     byte[] input=mode=="input"?Encoding.UTF8.GetBytes("fixed-fixture-input"):new byte[0];
     result.Receipt=RunRuntimeStageV1(job,"FIXTURE_ONLY",executable,args,directory,input,clock,
@@ -139,11 +157,11 @@ $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/Sovereign
 Add-Type -TypeDefinition $source -ErrorAction Stop
 $cases = @()
 foreach($mode in @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail')) {
-  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode)
+  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode)
   if ($r.RuntimeQualified -ne $false -or $r.SourceMutationAllowed -ne $false) { throw 'FIXTURE_AUTHORITY_INVALID' }
   if ($mode -ne 'spawn-fail') {
     if (-not $r.RootCaptured -or -not $r.RootEndedByHandle -or
-        $r.RootCreatedAtUtc -cne $r.Receipt.RootCreatedAtUtc) { throw ('FIXTURE_ROOT_WITNESS_INVALID:'+ $mode) }
+        $r.RootCreatedAtUtc -cne $r.Receipt.RootCreatedAtUtc) { throw ('FIXTURE_ROOT_WITNESS_INVALID:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
   }
   if ($mode -eq 'normal' -or $mode -eq 'input') {
     if (-not $r.Receipt.OperationOk -or -not $r.Receipt.ExecutionCustodyReleased) { throw ('FIXTURE_SUCCESS_INVALID:'+ $mode) }
@@ -165,4 +183,4 @@ foreach($mode in @('normal','failed','input','deadline','orphan','overflow','que
   if ($mode -eq 'overflow' -and (-not $r.Receipt.OutputOverflow -or $r.Receipt.OutputComplete)) { throw 'FIXTURE_OUTPUT_FALSE_PROOF' }
   $cases += $r
 }
-@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=$true;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
+@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=$true;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress

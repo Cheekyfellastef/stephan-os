@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 test('the runtime kernel remains a separate bounded unit without changing Core limits', () => {
   const source = readFileSync(new URL('./windows/SovereignFixedRuntimeJobV1.cs', import.meta.url));
@@ -16,7 +17,9 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
 }, () => {
   const fixtureUrl = new URL('./windows/test-sovereign-fixed-runtime-job-v1.ps1', import.meta.url);
   const fixtureDirectory = fileURLToPath(new URL('./windows/', import.meta.url)).replaceAll("'", "''");
-  const code = readFileSync(fixtureUrl, 'utf8').replaceAll('$PSScriptRoot', "'" + fixtureDirectory + "'");
+  const code = "& {\n" + readFileSync(fixtureUrl, 'utf8')
+    .replaceAll('$PSScriptRoot', "'" + fixtureDirectory + "'")
+    + "\n} -FixtureNodePath '" + process.execPath.replaceAll("'", "''") + "'";
   const stdout = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(code, 'utf16le').toString('base64'),
@@ -25,6 +28,9 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
   assert.equal(result.schemaVersion, 'stephanos.fixed-runtime-native-fixture.v1');
   assert.equal(result.ok, true);
   assert.equal(result.runtimeQualified, false);
+  assert.equal(result.fixtureExecutableSha256,
+    createHash('sha256').update(readFileSync(process.execPath)).digest('hex'));
+  assert.notEqual(result.fixtureExecutable.toLowerCase(), process.execPath.toLowerCase());
   const cases = new Map(result.cases.map(row => [row.Mode, row]));
   assert.deepEqual([...cases.keys()], ['normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail']);
   for (const [mode, row] of cases) {
@@ -33,6 +39,7 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
     const receipt = row.Receipt;
     if (mode !== 'spawn-fail') {
       assert.equal(row.RootCaptured, true, mode);
+      assert.equal(row.RootImagePath.toLowerCase(), result.fixtureExecutable.toLowerCase(), mode);
       assert.equal(row.RootEndedByHandle, true, mode);
       assert.equal(receipt.AssignedBeforeExecution, true, mode);
       assert.equal(receipt.RootCreatedAtUtc, row.RootCreatedAtUtc, mode);
