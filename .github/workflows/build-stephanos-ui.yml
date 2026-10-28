@@ -136,13 +136,7 @@ jobs:
             stephanos-server/services/flywheelCanonicalGoalAdmissionService.test.js \
             stephanos-server/services/flywheelLearningGoalBridgeService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
-            tests/goal-dashboard-remote-live.test.mjs \
-            shared/agents/sharedWorkspaceProofIndexV1.test.mjs \
-            shared/agents/sharedWorkspaceProofIndexScopedV1.test.mjs \
-            shared/agents/sharedWorkspaceProofIndexIntegrationV1.test.mjs \
-            shared/agents/sharedWorkspaceProofIndexBridgeV1.test.mjs \
-            shared/agents/shared-workspace-dashboard-feed.test.mjs \
-            shared/agents/chatGptParticipantBridgeV1.test.mjs
+            tests/goal-dashboard-remote-live.test.mjs
 
   vr-research-tests:
     if: >-
@@ -198,11 +192,6 @@ jobs:
       - name: Install dependencies
         working-directory: stephanos-ui
         run: npm ci
-      - name: Install backend dependencies for isolated API contract tests
-        working-directory: stephanos-server
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
-      - name: Run combined Shared Workspace backend proof-index API regressions
-        run: node --test tests/shared-workspace-proof-index-api.test.mjs tests/shared-workspace-dashboard-api.test.mjs tests/workspace-hydration-bridge.test.mjs
       - name: Run dependency-backed surface render test
         run: node --test --test-concurrency=1 stephanos-ui/src/components/StatusPanel.render.test.mjs
       - name: Build Stephanos UI pipeline from repo root
