@@ -78,3 +78,7 @@ package.json text eol=lf
 scripts/windows/SovereignFixedRuntimeJobV1.cs text eol=lf
 scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1 text eol=lf
 scripts/sovereign-fixed-runtime-job-v1.test.mjs text eol=lf
+
+scripts/windows/SovereignFixedRuntimeIdentityV1.cs text eol=lf
+scripts/windows/SovereignFixedRuntimeAuthorityV1.cs text eol=lf
+scripts/sovereign-fixed-runtime-identity-v1.test.mjs text eol=lf

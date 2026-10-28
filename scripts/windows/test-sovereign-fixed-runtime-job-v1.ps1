@@ -1,4 +1,5 @@
-param([Parameter(Mandatory=$true)][string]$FixtureNodePath)
+param([Parameter(Mandatory=$true)][string]$FixtureNodePath,
+  [ValidateSet('None','Cancel','ParentDeath')][string]$FixtureTerminalGuardBaseline='None')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -24,7 +25,7 @@ fs.writeFileSync(witness,String(process.pid)+'|'+String(child?.pid||0));
 const waiting = setInterval(()=>{
   if (!fs.existsSync(ack)) return;
   clearInterval(waiting);
-  if (mode === 'normal') { process.stdout.write('normal'); process.exitCode=0; }
+  if (['normal','drain-cancel','drain-parent-death'].includes(mode)) { process.stdout.write('normal'); process.exitCode=0; }
   else if (mode === 'failed') { process.stdout.write('failed'); process.exitCode=2; }
   else if (mode === 'input') { process.stdout.write(String(fs.readFileSync(0).length)); }
   else if (mode === 'orphan') { process.exit(0); }
@@ -46,6 +47,7 @@ namespace Stephanos.Sovereign {
    public string Mode, RootCreatedAtUtc="", DescendantCreatedAtUtc="", RootImagePath="";
    public FixedRuntimeStageV1 Receipt;
    public bool RootCaptured, RootEndedByHandle, DescendantCaptured, DescendantEndedByHandle;
+   public bool BoundBeforeExecution, TerminalDrainObserved;
    public bool SourceMutationAllowed=false, RuntimeQualified=false;
  }
  public static partial class CoreJobCustodyV1 {
@@ -53,13 +55,13 @@ namespace Stephanos.Sovereign {
   static extern bool QueryFullProcessImageNameW(IntPtr process,uint flags,StringBuilder name,ref uint size);
   public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode) {
    if(!System.Text.RegularExpressions.Regex.IsMatch(mode,
-     "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail)$"))
+     "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail|bind-denied|drain-cancel|drain-parent-death)$"))
      throw new InvalidOperationException("FIXTURE_MODE_INVALID");
    var result=new FixedRuntimeFixtureResultV1 { Mode=mode };
    string witness=Path.Combine(directory,mode+".witness"),ack=Path.Combine(directory,mode+".ack");
    var current=Process.GetCurrentProcess(); Process fakeOwner=null;
    IntPtr owner=IntPtr.Zero,launcher=IntPtr.Zero,job=IntPtr.Zero,rootHandle=IntPtr.Zero,descendant=IntPtr.Zero;
-   int captured=0,finished=0; Task observer=null,killer=null;
+   int captured=0,finished=0,terminalCancel=0; Task observer=null,killer=null;
    try {
     long created,exited,kernel,user;
     IntPtr currentHandle=RuntimeOpenProcessV1(0x101000,false,(uint)current.Id);
@@ -67,7 +69,7 @@ namespace Stephanos.Sovereign {
     try { Require(RuntimeProcessTimesV1(currentHandle,out created,out exited,out kernel,out user)); }
     finally { CloseHandle(currentHandle); }
     launcher=RuntimeOwnerHandleV1(current.Id,created);
-    if(mode=="parent-death") {
+    if(mode=="parent-death" || mode=="drain-parent-death") {
       var info=new ProcessStartInfo(fixtureNode,"-e \"setTimeout(()=>{},30000)\"");
       info.UseShellExecute=false; info.CreateNoWindow=true;
       fakeOwner=Process.Start(info);
@@ -129,8 +131,37 @@ namespace Stephanos.Sovereign {
     byte[] input=mode=="input"?Encoding.UTF8.GetBytes("fixed-fixture-input"):new byte[0];
     result.Receipt=RunRuntimeStageV1(job,"FIXTURE_ONLY",executable,args,directory,input,clock,
       mode=="deadline"?3000:7000,owner,launcher,
-      delegate { return mode=="cancel" && Interlocked.CompareExchange(ref captured,0,0)!=0; },
-      delegate { return mode=="query" && Interlocked.CompareExchange(ref captured,0,0)!=0; });
+      delegate { return (mode=="cancel" && Interlocked.CompareExchange(ref captured,0,0)!=0) || Interlocked.CompareExchange(ref terminalCancel,0,0)!=0; },
+      delegate { return mode=="query" && Interlocked.CompareExchange(ref captured,0,0)!=0; },
+      delegate(FixedRuntimeStageV1 prepared) {
+        if(mode!="bind-denied") return true;
+        if(!prepared.AssignedBeforeExecution || prepared.RootPid<=0 || File.Exists(witness))
+          throw new InvalidOperationException("EXECUTED_BEFORE_PARENT_BINDING");
+        rootHandle=RuntimeOpenProcessV1(0x101000,false,(uint)prepared.RootPid);
+        if(rootHandle==IntPtr.Zero) throw new InvalidOperationException("PREPARED_ROOT_UNAVAILABLE");
+        bool member; Require(IsProcessInJob(rootHandle,job,out member)); Require(member);
+        long born,ended,k,u; Require(RuntimeProcessTimesV1(rootHandle,out born,out ended,out k,out u));
+        result.RootCreatedAtUtc=DateTime.FromFileTimeUtc(born).ToString("O");
+        var image=new StringBuilder(32768); uint imageLength=32768;
+        Require(QueryFullProcessImageNameW(rootHandle,0,image,ref imageLength));
+        result.RootImagePath=image.ToString();
+        result.RootCaptured=true; result.BoundBeforeExecution=true;
+        Interlocked.Exchange(ref captured,1);
+        return false;
+      },
+      delegate(FixedRuntimeStageV1 terminal) {
+        if(mode!="drain-cancel" && mode!="drain-parent-death") return;
+        if(!terminal.NormalRootExit || terminal.ExitCode!=0 || !terminal.ExecutionCustodyReleased ||
+          !terminal.ZeroActiveProcessesObserved || !terminal.OutputComplete)
+          throw new InvalidOperationException("TERMINAL_DRAIN_NOT_REACHED");
+        result.TerminalDrainObserved=true;
+        if(mode=="drain-cancel") Interlocked.Exchange(ref terminalCancel,1);
+        else {
+          fakeOwner.Kill();
+          if(!fakeOwner.WaitForExit(5000) || WaitForSingleObject(owner,0)!=0)
+            throw new InvalidOperationException("OWNED_PARENT_NOT_ENDED");
+        }
+      });
     Interlocked.Exchange(ref finished,1);
     if(observer!=null && !observer.Wait(5000)) throw new InvalidOperationException("OBSERVER_NOT_TERMINAL");
     if(killer!=null && !killer.Wait(5000)) throw new InvalidOperationException("KILLER_NOT_TERMINAL");
@@ -151,12 +182,27 @@ namespace Stephanos.Sovereign {
  }
 }
 '@
+$kernel = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeJobV1.cs'))
+if ($FixtureTerminalGuardBaseline -cne 'None') {
+  # Fixture counterfactual never rewrites production source or grants authority.
+  $guard = @'
+        if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
+          interrupted=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
+        }
+'@
+  $guard = $guard.Replace([string][char]13,'')
+  $kernel = $kernel.Replace([string][char]13,'')
+  if (($kernel.Split(@($guard),[StringSplitOptions]::None)).Length -ne 2) { throw 'BASELINE_GUARD_IDENTITY_CHANGED' }
+  $kernel = $kernel.Replace($guard,'')
+}
 $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignCoreJobCustodyV1.cs')) +
-  [Environment]::NewLine + [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeJobV1.cs')) +
-  [Environment]::NewLine + $fixtureCode
+  [Environment]::NewLine + $kernel + [Environment]::NewLine + $fixtureCode
 Add-Type -TypeDefinition $source -ErrorAction Stop
 $cases = @()
-foreach($mode in @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail')) {
+$modes = @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail','bind-denied','drain-cancel','drain-parent-death')
+if ($FixtureTerminalGuardBaseline -ceq 'Cancel') { $modes = @('drain-cancel') }
+if ($FixtureTerminalGuardBaseline -ceq 'ParentDeath') { $modes = @('drain-parent-death') }
+foreach($mode in $modes) {
   $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode)
   if ($r.RuntimeQualified -ne $false -or $r.SourceMutationAllowed -ne $false) { throw 'FIXTURE_AUTHORITY_INVALID' }
   if ($mode -ne 'spawn-fail') {

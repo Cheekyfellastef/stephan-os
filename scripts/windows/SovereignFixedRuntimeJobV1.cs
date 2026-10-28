@@ -141,7 +141,9 @@ namespace Stephanos.Sovereign {
     // No public CLI/MCP argument can select these executable/argument values.
     static FixedRuntimeStageV1 RunRuntimeStageV1(IntPtr job,string stage,string executable,
       string arguments,string cwd,byte[] input,Stopwatch clock,int deadlineMs,
-      IntPtr owner,IntPtr launcher,Func<bool> cancelled,Func<bool> queryFault) {
+      IntPtr owner,IntPtr launcher,Func<bool> cancelled,Func<bool> queryFault,
+      Func<FixedRuntimeStageV1,bool> bindBeforeResume=null,
+      Action<FixedRuntimeStageV1> terminalDrainFixtureHook=null) {
       var r=new FixedRuntimeStageV1 { Stage=stage };
       var accounting=new CoreJobReceiptV1();
       Func<bool> empty=delegate {
@@ -197,6 +199,12 @@ namespace Stephanos.Sovereign {
         bool member; Require(IsProcessInJob(pi.process,job,out member));
         if(!member) throw new InvalidOperationException("ATOMIC_ASSIGNMENT_UNPROVEN");
         r.AssignedBeforeExecution=true;
+        // Existing owner durably binds the exact suspended root to its claim
+        // before it is allowed to execute. The fixed host bounds this exchange.
+        if(bindBeforeResume!=null && !bindBeforeResume(r)) {
+          r.Reason="PARENT_BINDING_UNPROVEN";
+          throw new InvalidOperationException("PARENT_BINDING_UNPROVEN");
+        }
         CloseHandle(outputWrite); outputWrite=IntPtr.Zero;
         CloseHandle(inputRead); inputRead=IntPtr.Zero;
         IntPtr reader=outputRead;
@@ -276,6 +284,10 @@ namespace Stephanos.Sovereign {
         if(!interrupted && clock.ElapsedMilliseconds>=deadlineMs) {
           interrupted=true; r.Reason="DEADLINE";
         }
+        if(terminalDrainFixtureHook!=null) terminalDrainFixtureHook(r);
+        if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
+          interrupted=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
+        }
         r.OperationOk=!interrupted && r.NormalRootExit && r.ExitCode==0 &&
           r.ZeroActiveProcessesObserved && r.OutputComplete &&
           Interlocked.CompareExchange(ref inputFailed,0,0)==0;
@@ -283,7 +295,8 @@ namespace Stephanos.Sovereign {
         else if(!interrupted) r.Reason=r.ExitCode==0?"TERMINAL_IO_UNPROVEN":"CHILD_FAILED";
         return r;
       } catch {
-        r.OperationOk=false; r.Reason="NATIVE_STAGE_UNPROVEN";
+        r.OperationOk=false;
+        if(r.Reason!="PARENT_BINDING_UNPROVEN") r.Reason="NATIVE_STAGE_UNPROVEN";
         if(r.Launched && job!=IntPtr.Zero) {
           r.CancellationRequested=true;
           try {

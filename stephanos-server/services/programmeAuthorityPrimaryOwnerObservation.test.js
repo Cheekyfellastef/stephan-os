@@ -205,3 +205,67 @@ test('actual programme producer returns primary evidence to the real mission ret
   assert.deepEqual(persisted.repair.history[0].previousDispatch, originalDispatch);
   assert.equal(JSON.parse(await readFile(join(root, 'goals', 'goal-1557.json'), 'utf8')).resourceIds.length, 3);
 });
+
+test('outer cache write cannot renew the primary lookup coverage age', async t => {
+  const observed = '2026-10-28T21:20:00.000Z';
+  const cachedAt = '2026-10-28T21:25:00.000Z';
+  const now = '2026-10-28T21:25:00.001Z';
+  const base = await realpath(tmpdir());
+  const directory = await mkdtemp(join(base, 'primary-coverage-age-'));
+  t.after(async () => {
+    const target = await realpath(directory);
+    assert.ok(target.startsWith(join(base, 'primary-coverage-age-')));
+    await rm(target, { recursive: true, force: true });
+  });
+  const root = join(directory, 'workspace');
+  await ensureSharedWorkspaceLayout({ root, repoRoot: repo });
+  const issue = { issueNumber: 1557, repository: 'Cheekyfellastef/stephan-os', title: 'Existing continuity goal',
+    state: 'open', labels: ['goal'], retrievedAt: observed, updatedAt: observed,
+    creatorLogin: 'Cheekyfellastef', authorAssociation: 'OWNER',
+    admissionProofSource: 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', admissionState: 'ADMISSION_PROVEN',
+    schedulerEligible: true, operatorLaneContainment: { active: false },
+    admission: { schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 1557,
+      repository: 'Cheekyfellastef/stephan-os', state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [],
+      resourceIds: [], sourceImplementationAllowed: true, mergeAuthority: false, deploymentAuthority: false,
+      runtimeMutationAuthority: false, arbitraryShellAllowed: false } };
+  assert.equal(await writeGithubGoalEstateSharedSnapshot({ root, repoRoot: repo, nowUtc: cachedAt },
+    { ok: true, reason: 'GITHUB_GOAL_ESTATE_FETCHED', issues: [issue], discoveredIssues: [],
+      retrievedAt: observed, primaryOwnerCommentRequestIssueNumbers: [1557] }), true);
+  const cache = await readGithubGoalEstateSharedSnapshot({ root, repoRoot: repo, nowUtc: now,
+    requiredPrimaryOwnerCommentIssueNumbers: [1557] });
+  assert.equal(cache, null, 'The source lookup is older than five minutes even though the outer cache was just written');
+});
+
+test('normal production observer delivers requested primary cache evidence without injected dependencies', async t => {
+  const now = '2026-10-28T21:20:00.000Z';
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(now) });
+  const base = await realpath(tmpdir());
+  const directory = await mkdtemp(join(base, 'normal-primary-reader-'));
+  t.after(async () => {
+    const target = await realpath(directory);
+    assert.ok(target.startsWith(join(base, 'normal-primary-reader-')));
+    await rm(target, { recursive: true, force: true });
+  });
+  const root = join(directory, 'workspace');
+  await ensureSharedWorkspaceLayout({ root, repoRoot: repo });
+  const issue = { issueNumber: 1557, repository: 'Cheekyfellastef/stephan-os', title: 'Existing continuity goal',
+    state: 'open', labels: ['goal'], retrievedAt: now, updatedAt: now,
+    creatorLogin: 'Cheekyfellastef', authorAssociation: 'OWNER',
+    admissionProofSource: 'OWNER_AUTHENTICATED_COMMENT', admissionState: 'ADMISSION_PROVEN',
+    schedulerEligible: true, operatorLaneContainment: { active: false },
+    admission: { schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 1557,
+      repository: 'Cheekyfellastef/stephan-os', state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [],
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/goalBuildingAgentV1.continuation.mjs'],
+      requiredTests: ['npm run stephanos:verify'], sourceImplementationAllowed: true,
+      mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false } };
+  assert.equal(await writeGithubGoalEstateSharedSnapshot({ root, repoRoot: repo, nowUtc: now },
+    { ok: true, reason: 'GITHUB_GOAL_ESTATE_FETCHED', issues: [issue], discoveredIssues: [], retrievedAt: now,
+      primaryOwnerCommentRequestIssueNumbers: [1557] }), true);
+  const projection = await readAuthoritativeProgrammeProjection({ root, repoRoot: repo,
+    home: join(directory, 'empty-home'), env: {}, nowUtc: now, requiredPrimaryOwnerCommentIssueNumbers: [1557] });
+  assert.equal(projection.dependencyInjectionUsed, false);
+  assert.equal(projection.sourceReads.githubGoalEstate, 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT');
+  assert.equal(projection.githubGoalEstateRead?.ok, true);
+  assert.equal(projection.githubGoalEstateRead.issues[0].admissionProofSource, 'OWNER_AUTHENTICATED_COMMENT');
+  assert.equal(projection.githubGoalEstateRead.issues.length, 1);
+});

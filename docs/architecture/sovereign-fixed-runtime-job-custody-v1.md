@@ -1,6 +1,6 @@
 # Fixed runtime action custody â€” structural review packet
 
-Status: design only, implementation and runtime activation not admitted. Parent goal2961. Canonical source73e1a79c03cb9dafe8fb17d77a45a9ac502e32ce. Original prepared840b incident recovered after verified full boot; distinct ACTIVE e24400efa624935bca41f23a05a5b7d706fa1f6b01a7cd6729731e43a42002bd, reservationmcp-8d25d34d-751c-4464-815a-9cbde695f80a-0f1099a8-4f66-4f24-a5fa-0df8bb5e3d03, operationrepair-goal-builder-flow started2026-10-28T19:44:56.546Z, nativeanchor26 remains held. Caller and actual terminal result are not yet authenticated. No incident extinction inferred from age, parent exit, failed process lookup or installing this design.
+Status: implementation in progress; component fixtures do not admit installation or runtime activation. Parent goal2961. Canonical source73e1a79c03cb9dafe8fb17d77a45a9ac502e32ce. Original prepared840b incident recovered after verified full boot; distinct ACTIVE e24400efa624935bca41f23a05a5b7d706fa1f6b01a7cd6729731e43a42002bd, reservationmcp-8d25d34d-751c-4464-815a-9cbde695f80a-0f1099a8-4f66-4f24-a5fa-0df8bb5e3d03, operationrepair-goal-builder-flow started2026-10-28T19:44:56.546Z, nativeanchor26 remains held. Caller and actual terminal result are not yet authenticated. No incident extinction inferred from age, parent exit, failed process lookup or installing this design.
 
 ## Failure class and scope
 The existing shared/agents/sovereignCommanderV1.mjs runOwnedFixedProcess settles ETIMEDOUT before direct child kill. Nested fixed steps in scripts/sovereign-commander-goal-builder-repair.mjs use spawnSync deadlines without a descendant witness. The guardian correctly retains authority when exclusion is unknown. Repeated restart/clear/timeout-guard changes do not repair this execution model.
@@ -69,3 +69,29 @@ For an already qualified local source-task class, the canonical worker must own 
 Move long execution out of short maintenance reconciliation through that same existing worker ownership. Do not merely raise25/60/145second timeouts. The source-task profile must define one versioned finite total budget, bounded model attempts, aggregate verification budget, cancellation/drain and fresh governor admission, with every child timeout derived from remaining budget. Prove real source output under that composed contract and adversarial cancellation. Model-server/GPU stop truth remains with the existing resource governor; native Job empty alone does not prove a persistent Ollama server stopped.
 
 Before implementing or activating the internal profile, resolve exact existing provider/task-class qualification and worker handoff semantics in structural review. First-profile maintenance proof, a selected goal or a queue wake is never source-build admission or physical pickup.
+
+
+## Implementation checkpoint — no runtime qualification
+
+The private native stage kernel and its Windows fixtures now separate failed
+operations from positively excluded processes, and require the existing parent
+to bind the suspended root before execution. Deterministic late-cancel and
+parent-exit fixtures run after normal root exit, native zero and completed pipe
+collection. Removing only the final guard reproduces false operation success;
+the corrected component keeps the operation failed and custody exclusion true.
+
+The identity component uses the same documented Windows LastBootUpTime property
+as existing recovery, a bounded read, same-machine identity, protected pending
+receipt, strict compiler-completion < install < later-boot ordering, and pinned
+source/native bytes. The authority component only reads and verifies the existing
+retained journal, its original two HMAC domains, fixed channel policy and native
+record identity. It cannot append, recover, clear a fence or issue a source grant.
+Synthetic authentication fixtures use a test key and never mutate the production
+journal or consume its credentials.
+
+These components remain unqualified. The closed host, protected installer,
+parent-only provenance, per-request durable capture and existing supervised
+source-worker lifecycle still require implementation, complete exact-head proof,
+qualified specialist review and the original consequential operator gates. No
+component test or prior review is installation, activation, current e244 recovery,
+source-worker pickup or programme completion.

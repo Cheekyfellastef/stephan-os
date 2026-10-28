@@ -64,8 +64,12 @@ export function goalEstateCoversPrimaryOwnerCommentReadV1(estate, requirement, n
   if (!requirement?.valid) return false;
   if (!requirement.requested) return true;
   const coverage = projectPrimaryOwnerCommentReadRequirementV1(estate?.primaryOwnerCommentRequestIssueNumbers);
-  if (coverage.valid && requirement.issueNumbers.every(id => coverage.issueNumbers.includes(id))) return true;
-  const now = Date.parse(nowUtc);
+  const now = Date.parse(nowUtc), captured = Date.parse(estate?.retrievedAt);
+  // A second cache capture cannot renew the original primary lookup.
+  // Coverage records a bounded attempted read; it never supplies owner proof.
+  if (Number.isFinite(now) && Number.isFinite(captured) && captured <= now
+      && now - captured <= 300_000 && coverage.valid
+      && requirement.issueNumbers.every(id => coverage.issueNumbers.includes(id))) return true;
   return Number.isFinite(now) && requirement.issueNumbers.every(id => {
     const matches = Array.isArray(estate?.issues) ? estate.issues.filter(issue => issue?.issueNumber === id) : [];
     if (matches.length !== 1) return false;
