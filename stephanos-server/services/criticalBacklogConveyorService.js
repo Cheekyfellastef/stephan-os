@@ -9,7 +9,7 @@ import {
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { isRetryableAgentFailureBlocker, isRetryableParkedAgentFailure, projectNarrowedMissionSourceScopeV1 } from '../../shared/agents/missionOrchestrator.mjs';
-import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { projectOwnerGoalRequiredTestsV1, projectStrengthenedRetryTestsV1, projectFreshOwnerGoalRetryContractV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { isModelTransportFailureV1, modelTransportFailureProofMatchesV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
 import { createFleetRetryScanObservationV1, fleetRetryAcceptanceGateCodeV1 } from '../../shared/agents/sovereignCommanderFleetGoalSupervisorReceiptV1.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -405,6 +405,16 @@ export async function recoverOrphanedLegacyCriticalMission({
   });
 }
 
+function selectRetryOwnerPlan(authority, issueNumber, repository, nowUtc, allowFreshOwnerContract) {
+  const mirrors = (authority?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
+  const record = mirrors.length === 1 ? mirrors[0] : null;
+  const contract = allowFreshOwnerContract ? projectFreshOwnerGoalRetryContractV1(record,
+    authority?.githubGoalEstateRead, issueNumber, repository, nowUtc) : null;
+  return { ownerPlan: contract?.valid ? contract : projectOwnerGoalRequiredTestsV1(record, issueNumber, repository),
+    ownerResources: contract?.valid ? contract.resourceIds : record?.resourceIds,
+    freshOwnerContract: contract?.valid === true, ownerContractUpdatedAt: contract?.valid ? contract.updatedAtUtc : '' };
+}
+
 export async function retrySafelyBlockedAgentFailure({
   backlog = SELF_HOSTING_CRITICAL_BACKLOG,
   env = process.env,
@@ -416,6 +426,11 @@ export async function retrySafelyBlockedAgentFailure({
   refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
 } = {}) {
+  const retryClockStart = performance.now();
+  const retryEpoch = now.getTime();
+  // Advance the existing caller's cycle clock across awaits. An authority
+  // snapshot's own timestamp can never renew its freshness.
+  const retryNow = () => new Date(retryEpoch + Math.max(0, performance.now() - retryClockStart)).toISOString();
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   // Observe the existing scan without selecting work or evaluating extra proof.
   // Scalar snapshots are captured before a possible retry event mutates state.
@@ -483,21 +498,19 @@ export async function retrySafelyBlockedAgentFailure({
         root: paths.workspaceRoot, repoRoot: paths.repoRoot,
         orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
       const issueNumber = issueFromMissionId(currentCandidate.missionId);
-      const mirrors = (retryAuthority?.goalMirrorEstate?.records || [])
-        .filter(record => record?.issueNumber === issueNumber);
-      const ownerPlan = mirrors.length === 1
-        ? projectOwnerGoalRequiredTestsV1(mirrors[0], issueNumber, currentCandidate.repository)
-        : null;
+      const mirrors = (retryAuthority?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
+      const selectedOwner = selectRetryOwnerPlan(retryAuthority, issueNumber, currentCandidate.repository,
+        retryNow(), !transportRetry);
+      const { ownerPlan, ownerResources } = selectedOwner;
       // Admission expands each resource path to path and path/**. Match its
       // resource reconstruction: remove representation duplicates before validation.
       const retainedScopes = projectCanonicalResourceIds([...new Set((currentCandidate.allowedFiles || []).map(path =>
         path === '**' ? `repo:${currentCandidate.repository}`
           : `repo:${currentCandidate.repository}:path:${path.endsWith('/**') ? path.slice(0, -3) : path}`))]);
-      const currentScopes = projectCanonicalResourceIds(mirrors[0]?.resourceIds || []);
+      const currentScopes = projectCanonicalResourceIds(ownerResources || []);
       const sameSourceScope = retainedScopes.valid && currentScopes.valid && currentScopes.resourceIds.length > 0
         && JSON.stringify(retainedScopes.resourceIds) === JSON.stringify(currentScopes.resourceIds);
       const prefix = `repo:${currentCandidate.repository.toLowerCase()}:path:`;
-      const ownerResources = mirrors[0]?.resourceIds;
       const narrowedScope = !transportRetry && !sameSourceScope && currentScopes.valid && Array.isArray(ownerResources)
         && ownerResources.length > 0 && ownerResources.every(value => typeof value === 'string' && value.toLowerCase().startsWith(prefix))
         ? projectNarrowedMissionSourceScopeV1(currentCandidate.allowedFiles,
@@ -525,7 +538,7 @@ export async function retrySafelyBlockedAgentFailure({
         continue;
       }
       if (!transportRetry) retryRequiredTests = strengthened.commands;
-      if (narrowedScope?.valid || transportRetry) {
+      if (narrowedScope?.valid || transportRetry || selectedOwner.freshOwnerContract) {
         const sourceHead = text(retryAuthority?.machineryInventory?.sourceHead).toLowerCase();
         if (!SHA_40.test(sourceHead)) {
           observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
@@ -535,7 +548,8 @@ export async function retrySafelyBlockedAgentFailure({
         }
         if (narrowedScope?.valid) retryAllowedFiles = narrowedScope.allowedFiles;
         retryPlanBinding = { sourceHead, ownerResources: JSON.stringify(ownerResources),
-          requiredTests: JSON.stringify(ownerPlan.commands) };
+          requiredTests: JSON.stringify(ownerPlan.commands), freshOwnerContract: selectedOwner.freshOwnerContract,
+          ownerContractUpdatedAt: selectedOwner.ownerContractUpdatedAt };
       }
     }
 
@@ -620,13 +634,15 @@ export async function retrySafelyBlockedAgentFailure({
       const refreshed = await readProgrammeProjection({ env, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
         orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
       const issueNumber = issueFromMissionId(currentCandidate.missionId);
-      const mirrors = (refreshed?.goalMirrorEstate?.records || []).filter(record => record?.issueNumber === issueNumber);
-      const ownerPlan = mirrors.length === 1
-        ? projectOwnerGoalRequiredTestsV1(mirrors[0], issueNumber, currentCandidate.repository) : null;
+      const selectedOwner = selectRetryOwnerPlan(refreshed, issueNumber, currentCandidate.repository,
+        retryNow(), !transportRetry);
+      const { ownerPlan, ownerResources } = selectedOwner;
       if (!ownerPlan?.valid || !ownerPlan.supplied
           || text(refreshed?.machineryInventory?.sourceHead).toLowerCase() !== retryPlanBinding.sourceHead
           || worktreeRefresh.clean !== true || worktreeRefresh.afterHead !== retryPlanBinding.sourceHead
-          || JSON.stringify(mirrors[0]?.resourceIds) !== retryPlanBinding.ownerResources
+          || selectedOwner.freshOwnerContract !== retryPlanBinding.freshOwnerContract
+          || selectedOwner.ownerContractUpdatedAt !== retryPlanBinding.ownerContractUpdatedAt
+          || JSON.stringify(ownerResources) !== retryPlanBinding.ownerResources
           || JSON.stringify(ownerPlan.commands) !== retryPlanBinding.requiredTests) {
         observation.note(currentCandidate, 'OWNER_PLAN_INVALID');
         firstBlockedCandidate ??= { ok: true, classification: 'NARROWED_RETRY_PLAN_CHANGED_OR_WORKTREE_UNBOUND',
