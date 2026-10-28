@@ -42,6 +42,7 @@ import {
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import {
   acquireSharedWorkspaceOperationLock,
   readCurrentExecutionReceipt,
@@ -579,6 +580,45 @@ export function applyGoalClosureReceipts(goalRecords, receiptRecords, goalEstate
   }));
 }
 
+// This affects the future goal contract only. Existing mission scopes, queue
+// claims and leases remain immutable until their ordinary terminal/retry path.
+function freshOwnerMirrorScopeNarrowing(existing, issue, nowUtc) {
+  const issueNumber = positiveInteger(issue?.issueNumber);
+  if (existing?.schemaVersion !== 'shared-agent-workspace-record.v1'
+      || existing.kind !== SHARED_WORKSPACE_RECORD_KINDS.GOAL
+      || existing.participantId !== 'programme-authority'
+      || text(existing.admissionSource)
+      || existing.source !== 'github-goal-estate-mirror'
+      || existing.mirrorSchema !== GITHUB_GOAL_MIRROR_SCHEMA
+      || existing.repository !== CANONICAL_GOAL_REPOSITORY
+      || existing.mirrorRepository !== CANONICAL_GOAL_REPOSITORY
+      || existing.goalId !== `goal-${issueNumber}`
+      || existing.issueNumber !== issueNumber || existing.mirrorIssueNumber !== issueNumber
+      || !Array.isArray(existing.resourceIds)
+      || existing.mergeAuthority !== false || existing.deploymentAuthority !== false
+      || existing.runtimeMutationAuthority !== false || existing.arbitraryShellAllowed !== false
+      || !['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(existing.githubAdmissionState)
+      || issue?.admissionProofSource !== 'OWNER_AUTHENTICATED_COMMENT'
+      || !validGithubGoalEstateSnapshotIssue(issue)) return null;
+  const now = Date.parse(safeNow(nowUtc));
+  const observed = Date.parse(issue.retrievedAt);
+  const previous = Date.parse(safeNow(existing.mirrorObservedAtUtc));
+  if (!Number.isFinite(now) || !Number.isFinite(previous) || observed < previous
+      || observed > now || now - observed > GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS) return null;
+  const before = projectCanonicalResourceIds(existing.resourceIds);
+  const after = projectCanonicalResourceIds(issue.admission.resourceIds);
+  const prefix = `repo:${CANONICAL_GOAL_REPOSITORY.toLowerCase()}:path:`;
+  if (!before.valid || !after.valid || !after.resourceIds.length
+      || before.resourceIds.length !== existing.resourceIds.length
+      || after.resourceIds.length !== issue.admission.resourceIds.length
+      || after.resourceIds.length >= before.resourceIds.length
+      || before.resourceIds.some(value => !value.startsWith(prefix))) return null;
+  const prior = new Set(before.resourceIds);
+  if (after.resourceIds.some(value => !prior.has(value))) return null;
+  // Preserve the observer's path spelling; canonical IDs establish inclusion.
+  return Object.freeze([...issue.admission.resourceIds].sort());
+}
+
 export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
   const workspaceRecords = list(workspaceGoalRecords);
   if (!goalEstateRead.ok) return Object.freeze(workspaceRecords);
@@ -590,6 +630,11 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
     if (issueNumber && !issueIndex.has(issueNumber)) issueIndex.set(issueNumber, index);
   });
   const observedRecords = [...workspaceRecords];
+  const issueCounts = new Map();
+  for (const issue of goalEstateRead.issues) {
+    const id = positiveInteger(issue?.issueNumber);
+    issueCounts.set(id, (issueCounts.get(id) || 0) + 1);
+  }
 
   for (const issue of goalEstateRead.issues) {
     const issueNumber = positiveInteger(issue?.issueNumber);
@@ -612,9 +657,12 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
-      const resourceIds = existingResourceIds.length === 0 && admittedResourceIds.length > 0
+      const narrowed = issueCounts.get(issueNumber) === 1
+        ? freshOwnerMirrorScopeNarrowing(existing, issue, nowUtc) : null;
+      const resourceIds = narrowed || (existingResourceIds.length === 0 && admittedResourceIds.length > 0
         ? admittedResourceIds
-        : existingResourceIds;
+        : existingResourceIds);
+      if (narrowed) observedRecords[existingIndex] = Object.freeze({ ...existing, resourceIds });
       const wasOperatorContained = existing?.operatorLaneContainment?.active === true;
 
       if (contained) {
