@@ -1,8 +1,8 @@
 # Saturated canonical mailbox: bounded rotation control adapter
 
-Status: DESIGN ONLY / IMPLEMENTATION BLOCKED. Structural review 5688751020 found an
-unresolved P1 native-producer provenance dependency. No recovery carrier is selected or
-qualified by this document.
+Status: DESIGN ONLY / NOT ENROLLED. Structural review 5688751020 identified native
+provenance, receipt debt, phase and crash-recovery gaps. This revision specifies a concrete
+candidate evidence contract; no producer, key, verifier or live carrier is qualified by it.
 
 Canonical owner: #2315 — Goal: Automatic canonical mailbox rollover before GitHub comment ceiling.
 Existing activation remains PR #3268 — Goal #2315: activate canonical mailbox #3258 and retire #3149.
@@ -107,6 +107,133 @@ independently verified FROZEN evidence and admits only the exact activation PR/h
 the original protected validators. Cross-boundary state must survive crash/restart without
 replay. No dual active ordinary mailbox authority is introduced.
 
+## Concrete V2 native evidence contract (proposed, not commissioned)
+
+### Independent trust enrollment, never key possession as authority
+
+Use the existing native evidence producer/verification architecture and original mailbox
+executor. Add a PURPOSE-SPECIFIC rotation evidence profile; do not accept the existing
+capacity or Observatory key/domain by default, share their private key, or treat their
+receipts as rotation evidence. No second daemon, worker, listener or execution owner is
+introduced. The existing producer may gain this profile only through separately reviewed
+and explicitly operator-approved commissioning. This document performs no commissioning,
+key generation, key/public-key publication, principal creation or credential change.
+
+The proposed protected-main trust record has a closed schema:
+schemaVersion, enrollmentId, repository, deviceIdSha256, producerId,
+producerPrincipalSha256, producerProfileSha256, keyId, algorithm,
+verificationKeySpkiSha256, verificationKeyArtifactSha256, signatureDomain,
+allowedEvidenceKinds, commissionedAtUtc, notBeforeUtc, revokedAtUtc,
+commissioningProofSha256, independentReviewArtifactSha256, operatorApprovalRef.
+algorithm is Ed25519; signatureDomain is exactly
+"stephanos.canonical-mailbox-native-evidence.v2\\0"; allowedEvidenceKinds is exactly
+["CONTROL_TERMINAL","DRAIN_OBSERVATION"]. The registry contains no private key.
+
+A dedicated existing-producer key must be separately commissioned outside the repository,
+Shared Workspace and worker-readable source estates. Do NOT invoke the capacity publisher's
+auto-generating ensure-key helper. The commissioning proof must independently establish
+the native device/principal, source-closure/profile digest, key origin, private-key access
+policy and actual fixed signer behavior through the existing authenticated private
+operator route and qualified Windows/security review. A self-signed candidate or a comment
+asserting the key belongs to Battle Bridge is insufficient. The exact public verification
+key artifact/digest and enrollment record require their own explicit operator publication
+and protected integration approval before a verifier may trust them.
+
+Commissioning must prove source workers and arbitrary caller-controlled code cannot invoke
+the signer or obtain its private key; ordinary same-user file permissions alone are not
+proof of this separation. If the existing native producer profile cannot enforce that
+boundary without an additional privileged service/principal or signing root, this proposal
+does NOT create one or inherit its authority: remain NATIVE_ROTATION_PRODUCER_UNQUALIFIED
+and route that capability through the existing authority-commissioning programme. Host/OS
+compromise is not claimed contained. These admission requirements are concrete commissioning
+gates, not facts inferred from the current capacity publisher.
+
+The verifier obtains the enrollment and public-key artifact from protected source/
+independently authenticated commissioning evidence, verifies both SHA256 pins and the exact
+review/operator bindings, then checks the key is commissioned, in date and not revoked.
+Neither a receipt, fence, PR, request, environment variable nor caller option can supply
+or override the verification key, enrollment or producer identity. Source movement cannot
+silently enroll a different profile. No currently commissioned rotation record is claimed.
+
+### Signed bytes and closed payload
+
+A receipt is exactly {schemaVersion, algorithm, enrollmentId, keyId, payload,
+signatureBase64}. schemaVersion is
+"stephanos.canonical-mailbox-native-evidence.v2". Signature bytes are Ed25519 over the exact
+UTF-8 domain string above followed by a canonical encoding of payload. The canonical
+encoding is recursively sorted object keys, array order preserved, UTF-8 JSON with no
+whitespace; reject duplicate JSON keys before parsing, unsafe/non-integer numbers, unknown
+fields, non-plain/accessor/proxy objects and noncanonical encodings. The immutable artifact
+is the exact canonical envelope bytes; artifactSha256 is computed over those bytes and is
+not a self-referential signed field. Bounds: 16 KiB envelope, 16-entry proof-reference list,
+IDs at most 128 ASCII characters; no raw logs, paths, keys, arbitrary URLs or private text.
+
+The closed payload has:
+kind, repository, deviceIdSha256, producerId, producerPrincipalSha256,
+producerProfileSha256, requestId, transitionId, phase, result,
+origin, source, activation, epoch, barrier, guard, drain,
+originalTerminalSha256, proofArtifactSha256, observedAtUtc, expiresAtUtc.
+
+origin is exactly {kind:"ACTIVATION_PR_OWNER_CONTROL_V2", prNumber, commentId,
+commentBodySha256, createdAtUtc}. The verifier independently fetches the real unedited
+owner-authored consent and validates all phase/expiry/identity predicates.
+source is exactly {mainHead, treeSha, installedClosureSha256}.
+activation is exactly {prNumber, headSha, baseSha, treeSha, mergeCommitSha};
+mergeCommitSha is null before adoption and the exact admitted merge afterwards.
+epoch is exactly {predecessorIssue, successorIssue}.
+barrier is exactly {highestCommandCommentId, inventorySha256, commentCount}.
+guard is exactly {generationId, ownerInstanceId, transactionSha256}.
+drain is exactly {acceptedCount, inlinePublicationCount, segmentedPublicationCount,
+ordinaryReceiptDebtCount, historyPendingBeforeCount, historyPendingAfterCount,
+orphanAcceptedCount, outboxInventorySha256, actionsInventorySha256,
+actionsObservedAtUtc, actionPendingAggregateCount, actionBlockingCount}.
+All counts are bounded nonnegative safe integers; generation/instance IDs and digests
+are strictly shaped. Payload identity must match the enrollment and original transaction.
+
+The native producer loads the exact reviewed profile/source before reading native state.
+It signs ONLY a result derived from the original guarded transaction and actual native
+observations. It exposes no sign-arbitrary-bytes or caller-populated receipt operation.
+A valid signature proves origin from that commissioned profile; it does not turn a claim,
+DONE result or old observation into drain/merge authority.
+
+For FROZEN, every native/history/ordinary-debt count is zero, actionBlockingCount is zero,
+complete current Actions V2 quiescence proof matches its digest, and the original guard
+has certified after child exit. All inventory observations must be within 120 seconds,
+not future-dated; receipt TTL is at most 120 seconds. A later STATUS may obtain a new
+DRAIN_OBSERVATION only by rechecking all facts under the same original guard, with its
+own fresh phase consent and stable identity; it cannot repeat the original effect.
+Verifier recomputes and checks the full referenced evidence rather than trusting counts.
+Failure or incomplete input yields BLOCKED/UNKNOWN, never an authorizing FROZEN result.
+
+### Original durable artifacts and publication
+
+Before signing, store the original terminal record and bounded proof bundle in the
+EXISTING transaction/evidence estate with content-addressed SHA256 identities; freeze the
+bytes and record their references in the transaction. The native producer reads those
+exact immutable bytes, verifies identities under the guard, then signs the envelope.
+Use physical/single-link path checks, exclusive create, file/directory durability and
+post-write digest readback. No caller path is accepted.
+
+Store the exact signed envelope in the same estate before publication. Publish it as a
+NEW bounded evidence-only comment on fixed Goal 2315, using its own marker/schema; never
+overwrite the mutable deny fence as an evidence artifact. Preserve exact bytes and verify
+the returned immutable reference plus created/updated timestamps. The existing outbox owns
+publication/retry; no second queue or new execution request. Edited/deleted/changed artifacts,
+missing original records or publication ambiguity hold the transition.
+
+The mutable Goal 2315 fence contains ONLY the content digest and exact locator of the
+immutable envelope and original control consent. Fetch and verify the signature and
+original proof bundle using the pinned enrollment. Native evidence is authenticated by
+that signature and commissioning chain, NOT by GitHub comment authorship. The public
+proof bundle is bounded/sanitized; private material never travels through this carrier.
+If the full independently verifiable bundle cannot safely be made available to an
+authoritative validator, that validator remains BLOCKED. An unpublished local result
+can be retained as evidence but cannot relax a remote fence.
+
+The original history/outbox inventory remains the ordinary-debt source of truth. Signed
+CONTROL evidence cannot erase, import or redirect ordinary predecessor debt. The zero-debt
+applicability boundary below remains mandatory.
+
 ## Phase-specific consent predicates
 
 | Phase | Activation/epoch predicates |
@@ -174,13 +301,16 @@ never an assertion that nothing happened.
 
 ## Required delivery order
 
-1. Independent structural review of this design, including concrete native receipt provenance,
-   consent freshness/edit rules, bounded private bootstrap and origin/barrier separation.
+1. Independent structural review of this concrete evidence/enrollment contract, consent and
+   phase transaction. No review statement commissions its producer or proves live drain.
 2. Original-owner scoped implementation and adversarial tests on the SAME prerequisite branch.
    No runtime installation or activation is authorized by this document.
 3. Complete exact-head relevant Windows/Linux proof and qualified Windows/security specialist
    review; exact operator integration approval and existing protected merge.
-4. Guarded same-epoch source/runtime/plugin convergence and actual connected adapter readback.
+4. Separately operator-approved producer/key-domain commissioning and protected trust-record
+   enrollment with independent native exclusion/negative-signer proof; then guarded same-epoch
+   source/runtime/plugin convergence and actual connected adapter/verifier readback. If no
+   qualified existing producer can satisfy the contract, stay blocked without creating a root.
 5. Fresh exact phase consent; real FREEZE, five-controller acknowledgements and empty native/
    history/outbox/Actions drain under the original guard.
 6. Requalify the EXISTING activation PR against current main; exact merge approval/protection.
