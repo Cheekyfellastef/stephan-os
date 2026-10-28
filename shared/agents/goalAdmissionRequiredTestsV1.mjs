@@ -49,6 +49,47 @@ export function projectOwnerGoalRequiredTestsV1(record, issueNumber, repository)
   return Object.freeze({ ...tests, valid: tests.valid && (!tests.supplied || identity) });
 }
 
+// A stronger read request is not admission authority. Cache coverage can also
+// retain a negative lookup, preventing repeated history reads without granting proof.
+export function projectPrimaryOwnerCommentReadRequirementV1(value) {
+  if (value === undefined) return Object.freeze({ valid: true, requested: false, issueNumbers: Object.freeze([]) });
+  if (!Array.isArray(value) || value.length > 1000
+      || value.some(id => !Number.isSafeInteger(id) || id <= 0)
+      || new Set(value).size !== value.length) return Object.freeze({ valid: false, requested: true, issueNumbers: Object.freeze([]) });
+  return Object.freeze({ valid: true, requested: value.length > 0,
+    issueNumbers: Object.freeze([...value].sort((a, b) => a - b)) });
+}
+
+export function goalEstateCoversPrimaryOwnerCommentReadV1(estate, requirement, nowUtc) {
+  if (!requirement?.valid) return false;
+  if (!requirement.requested) return true;
+  const coverage = projectPrimaryOwnerCommentReadRequirementV1(estate?.primaryOwnerCommentRequestIssueNumbers);
+  if (coverage.valid && requirement.issueNumbers.every(id => coverage.issueNumbers.includes(id))) return true;
+  const now = Date.parse(nowUtc);
+  return Number.isFinite(now) && requirement.issueNumbers.every(id => {
+    const matches = Array.isArray(estate?.issues) ? estate.issues.filter(issue => issue?.issueNumber === id) : [];
+    if (matches.length !== 1) return false;
+    const issue = matches[0], observed = Date.parse(issue.retrievedAt), updated = Date.parse(issue.updatedAt);
+    return issue.admissionProofSource === 'OWNER_AUTHENTICATED_COMMENT'
+      && String(issue.repository).toLowerCase() === 'cheekyfellastef/stephan-os'
+      && Number.isFinite(observed) && Number.isFinite(updated) && updated <= observed
+      && observed <= now && now - observed <= 300_000;
+  });
+}
+
+export function projectRequestedPrimaryOwnerEvidenceV1(estate, requirement) {
+  const failed = reason => Object.freeze({ ok: false, reason, issues: Object.freeze([]) });
+  if (!requirement?.valid) return failed('PRIMARY_OWNER_READ_REQUIREMENT_INVALID');
+  if (estate?.ok !== true || !Array.isArray(estate.issues)) return failed('PRIMARY_OWNER_ESTATE_UNAVAILABLE');
+  const requested = new Set(requirement.issueNumbers);
+  const keys = ['issueNumber', 'repository', 'state', 'labels', 'updatedAt', 'retrievedAt', 'admission',
+    'admissionState', 'admissionProofSource', 'schedulerEligible', 'operatorLaneContainment'];
+  const issues = estate.issues.filter(issue => requested.has(issue?.issueNumber))
+    .map(issue => Object.freeze(Object.fromEntries(keys.filter(key => Object.hasOwn(issue, key)).map(key => [key, issue[key]]))));
+  if (new TextEncoder().encode(JSON.stringify(issues)).length > 32768) return failed('PRIMARY_OWNER_EVIDENCE_OVERSIZE');
+  return Object.freeze({ ok: true, reason: estate.reason, issues: Object.freeze(issues), retrievedAt: estate.retrievedAt });
+}
+
 // Retained workspace reservations and a fresh owner's future retry contract
 // are separate truths. This selector cannot alter either record or a claim.
 export function projectFreshOwnerGoalRetryContractV1(record, estate, issueNumber, repository, nowUtc) {
