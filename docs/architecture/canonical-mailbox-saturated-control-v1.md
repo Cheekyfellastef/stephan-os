@@ -1,6 +1,8 @@
 # Saturated canonical mailbox: bounded rotation control adapter
 
-Status: DESIGN ONLY — structural Windows/security review required before implementation.
+Status: DESIGN ONLY / IMPLEMENTATION BLOCKED. Structural review 5688751020 found an
+unresolved P1 native-producer provenance dependency. No recovery carrier is selected or
+qualified by this document.
 
 Canonical owner: #2315 — Goal: Automatic canonical mailbox rollover before GitHub comment ceiling.
 Existing activation remains PR #3268 — Goal #2315: activate canonical mailbox #3258 and retire #3149.
@@ -45,8 +47,8 @@ The connected fresh-process/source-digest proof remains required.
 Require a fresh, exact, owner-authored control approval on the EXISTING activation PR, which
 has capacity. This is a dedicated rotation approval schema, not an ordinary command mailbox.
 Authenticate repository/owner numeric identity, real unedited comment, issue/PR identity,
-open PR, complete head/base/tree, canonical predecessor and the single nominated inactive
-successor using canonical GitHub reads before and after admission. Refuse edited, expired,
+phase-specific PR state, complete head/base/tree and canonical epoch identities using
+canonical GitHub reads before and after admission. The phase table below is normative; Refuse edited, expired,
 foreign, ambiguous or stale consent and changes in main/PR/source. The approval grants
 only its closed phase; merge, source sync, native installation and restart gates stay separate.
 
@@ -89,10 +91,86 @@ provenance at least as strongly as current native-published V1 evidence. Define 
 concretely during structural review; if the existing native publication trust cannot be
 preserved through the fixed channel, implementation stays BLOCKED.
 
+The fence is ONLY a locator/deny projection. Owner-authored comments and matching JSON fields
+are not an independently established native producer trust root. Current V1 field matching
+must not be cited as qualification for a new V2 producer. No current eligible rotation-receipt
+producer/verifier enrollment has been proven. Capacity receipts and signed Observatory gates
+have different domains and do not enroll a control signer. Do not generate a key, reuse a
+capacity/gate signature as control authority, add a signer, or install this adapter under this
+proposal. Until a separately qualified existing producer, explicit domain enrollment, original
+immutable artifact store and independent verifier are identified and reviewed, the entire
+adapter stays BLOCKED: NATIVE_ROTATION_PRODUCER_UNQUALIFIED. Publishing receipt-shaped bytes
+on Goal 2315 cannot change that result.
+
 DRAINING remains deny-only even when terminal publication fails. Relaxation requires
 independently verified FROZEN evidence and admits only the exact activation PR/head through
 the original protected validators. Cross-boundary state must survive crash/restart without
 replay. No dual active ordinary mailbox authority is introduced.
+
+## Phase-specific consent predicates
+
+| Phase | Activation/epoch predicates |
+| --- | --- |
+| FREEZE | Exact open/unmerged activation PR and reviewed head/base/tree; current protected source still selects predecessor; exactly one nominated inactive successor; no other active transition. |
+| DRAIN / STATUS | Same original transition and explicit current phase/source; before adoption require the open/unmerged activation and inactive successor. After adoption, STATUS is read-only and must prove the exact merged activation/new epoch; it grants no drain/effect permission. |
+| CANCEL | Only the matching pre-cutover transition, current source still predecessor and activation unmerged. Deny after epoch change; no rollback authority. |
+| VERIFY | Exact authenticated merged activation and merge/source tree; current main equals the admitted merged source; successor is active and predecessor retired; original frozen transition and both distinct fresh probe classes proven. Never require an open PR/inactive successor here. |
+
+Consent binds the phase's current expected source main/tree separately from the immutable
+activation branch head/base/tree and recorded merge identity. Drift refuses admission; do not
+weaken the pre-cutover predicates to accommodate VERIFY.
+
+## Saturated predecessor receipt debt: explicit applicability boundary
+
+This first proposed recovery applies ONLY when native accepted work, ordinary publication
+outbox debt AND complete predecessor history are independently proven empty/terminal under
+the original guard. No such live proof is asserted here. CONTROL evidence routing cannot
+pay ordinary ACCEPTED/terminal receipt debt: current postReceipt targets receipt.issueNumber,
+failed publication is retained, and retry uses that same destination.
+
+Any ordinary unpublished receipt, orphan ACCEPTED, incomplete history, corrupt/missing
+outbox or ambiguous terminal blocks applicability as SATURATED_PREDECESSOR_RECEIPT_DEBT.
+Never discard debt, relabel it DONE, redirect it to the successor, change its original epoch,
+or teach the auditor to trust a synthetic terminal. Authenticated receipt-only reconciliation
+would require its OWN complete canonical evidence design and independent qualification;
+it is not an implicit part of this proposal.
+
+## Durable phase transaction and crash reconciliation
+
+Extend the original guarded transition transaction, not a second queue. A V2 transaction
+must durably bind schema/version, transition ID, stable request ID, tagged control-origin
+repository/PR/comment/body digest, phase, canonical command epoch, current source head/tree,
+activation identity, predecessor barrier/digest, consent expiry and journal state. Required
+states: PREPARED, RESERVED, EFFECT_INTENT, EFFECT_APPLIED, TERMINAL_STORED, PUBLISHED.
+The immutable original terminal artifact digest/reference is recorded when available.
+All writes use the existing safe atomic/fsynced state primitive under the original guard.
+
+Ordering: persist PREPARED before existing-ledger reservation; then persist RESERVED after
+matching reservation readback. Persist EFFECT_INTENT before effects. Effect state and
+EFFECT_APPLIED checkpoint must be one canonical atomic transition generation, or a separately
+authenticated native effect witness must identify their exact generation. Otherwise a crash
+between effect and checkpoint is UNKNOWN and no automatic retry is allowed.
+Persist the original terminal artifact before recording TERMINAL_STORED; publish/read back
+that exact artifact before PUBLISHED and ledger terminalization. Native evidence still
+requires the unresolved producer/verifier qualification above.
+
+Recovery under the same guard must distinguish:
+- PREPARED without reservation: no effect permitted; revalidate consent/source before a
+  first reservation, or retire as nonexecuted when expired/edited.
+- Matching RESERVED with no effect intent: revalidate unchanged consent/source/epoch before
+  the first effect. Use an explicit read/reconcile path; never call reserve again.
+- EFFECT_INTENT without exact authenticated applied-generation evidence: remain HELD/UNKNOWN.
+  No new request ID, guessed rollback or automatic re-execution.
+- Authenticated EFFECT_APPLIED/TERMINAL_STORED: return or republish ONLY the original immutable
+  artifact; expiry/edit/source movement cannot authorize another effect. Historical
+  publication must retain original epoch/source and pass its qualified provenance verifier.
+- PUBLISHED: idempotent return of the same original result, with no new effect.
+
+Conflicting digests, missing journal/artifact, mixed versions or an unprovable phase hold.
+V1 RESERVED entries cannot be upgraded into resumable V2 work from their sparse fields.
+V1 tombstones remain replay denials; they are not a phase journal. An expiry/edit before
+effects forbids execution; after an uncertain effect it demands authenticated reconciliation,
+never an assertion that nothing happened.
 
 ## Required delivery order
 
