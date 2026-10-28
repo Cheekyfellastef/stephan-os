@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { projectMaintenanceCustodyVisibilityV1, maintenanceCustodyVisibilityLightV1 } from './maintenanceCustodyVisibilityV1.mjs';
 import { parseWindowsCalibrationRemoteV1 } from './sovereignWindowsCalibrationRemoteV1.mjs';
 import { validateSovereignWindowsReviewIdentityV1 } from './sovereignCommanderV1.mjs';
 import { existsSync, lstatSync, opendirSync } from 'node:fs';
@@ -1333,6 +1334,8 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     const candidate = safeState(input, 20);
     return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
   };
+  const maintenanceCustody = projectMaintenanceCustodyVisibilityV1(parsed.maintenanceCustody);
+  const maintenanceLight = maintenanceCustodyVisibilityLightV1(maintenanceCustody);
   const health = Object.freeze({
     repository: safeLight(parsed?.health?.repository),
     core: safeLight(parsed?.health?.core),
@@ -1340,6 +1343,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     services: safeLight(parsed?.health?.services),
     laneRefill: safeLight(parsed?.health?.laneRefill),
     transport: safeLight(parsed?.health?.transport),
+    maintenanceCustody: maintenanceLight,
   });
   const capturedAtUtc = safeTime(parsed.capturedAtUtc);
   const finalVerdict = safeState(parsed.finalVerdict, 120);
@@ -1362,6 +1366,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     core,
     headSync,
     selfHeal,
+    maintenanceCustody,
     controllers,
     meters,
     relay,
@@ -1377,7 +1382,9 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     pcRestartAuthority: false,
     remoteCommanderRequired: false,
     unknownMeansGreen: false,
-    finalVerdict,
+    finalVerdict: maintenanceLight === 'RED' ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED'
+      : maintenanceLight === 'AMBER' && finalVerdict === 'SOVEREIGN_VISIBILITY_SNAPSHOT_READY'
+        ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE' : finalVerdict,
   });
 }
 
