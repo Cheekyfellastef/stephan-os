@@ -46,7 +46,7 @@ approval authority. The existing authenticated GitHub/native operator route must
 independently prove every fixed closure record belongs to the approved immutable
 commit/tree before executing its literal encoded program. The candidate never
 fetches credentials, elevates itself or installs a capability. It authenticates
-all 39 closure snapshots before compilation, compiles only the captured verified
+all 40 closure snapshots before compilation, compiles only the captured verified
 C# bytes, then pins physical non-reparse directories and single-link source files
 and authenticates them again. Canonical HEAD, main ref, index and configuration
 are held against replacement through journal mutation. Direct workspace installer
@@ -85,3 +85,7 @@ and native zero-active proof. This is candidate-component proof at that collecto
 head, not installation or current-head production commissioning. The complete
 focused local suite passes 68/72 with four explicitly hosted-only journal fixture
 skips; native storage/ACL fixtures still require their real hosted Windows run.
+
+### Bounded compilation invariant
+
+Hosted proof exposed a real consumer regression: placing the installer adapter in the existing Core source made its file exceed the unchanged 32,768-byte native loader bound. The installer adapter now lives in `SovereignMaintenanceSourceJobV3.cs`, a second bounded partial compilation unit. Ordinary Core loaders still compile their self-contained original unit; only the pinned installer bootstrap compiles both authenticated snapshots together. The Core unit changes its declaration to partial without changing Core statements, receipts, limits or execution policy. Both files belong to the fixed 40-file authenticated closure. Existing Core preflight and directory tests exercise their production source limits; an explicit regression additionally checks each unit stays bounded. No source or stdin bound is widened.

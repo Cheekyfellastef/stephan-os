@@ -11,6 +11,7 @@ import { buildMaintenanceInstallerBootstrapCandidateV3, MAINTENANCE_SOURCE_CLOSU
 const windows = process.platform === 'win32';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const native = resolve(root, 'scripts/windows/SovereignCoreJobCustodyV1.cs');
+const nativeSource = resolve(root, 'scripts/windows/SovereignMaintenanceSourceJobV3.cs');
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const expected = 'a'.repeat(40);
 const literal = s => "'" + s.replaceAll("'", "''") + "'";
@@ -26,7 +27,7 @@ function launchFixture(worker, { deadline = 20000, queryFailure = false, hostile
   const directory = mkdtempSync(join(tmpdir(), 'maintenance-source-job-'));
   const script = join(directory, 'fixed-fixture.cjs');
   writeFileSync(script, worker);
-  const code = "$ErrorActionPreference='Stop'; Add-Type -Path " + literal(native) + "; "
+  const code = "$ErrorActionPreference='Stop'; Add-Type -Path " + "@(" + literal(native) + "," + literal(nativeSource) + ")" + "; "
     + "$method=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('RunMaintenanceSourceProbeV3',[Reflection.BindingFlags]'NonPublic,Static'); "
     + "$clock=[Diagnostics.Stopwatch]::StartNew(); $r=$method.Invoke($null,@($clock,"
     + literal(fixtureExecutable ?? process.execPath) + "," + literal(fixtureArguments ?? '"' + script + '"') + "," + literal(directory) + ","
@@ -72,6 +73,11 @@ async function resultFixture(worker, options, check) {
   finally { await closeOwnedFixture(f); }
 }
 
+test('native compilation units preserve existing Core loader bounds', () => {
+  for (const path of [native,nativeSource]) assert.ok(readFileSync(path).length <= 32768);
+  assert.doesNotMatch(readFileSync(native,'utf8'), /ReadMaintenanceCanonicalSource|MaintenanceSourceProbeReceiptV3/);
+});
+
 test('bootstrap candidate binds each fixed blob, never promotes caller input to independent authority', () => {
   const records = sourceRecords();
   const c = buildMaintenanceInstallerBootstrapCandidateV3({ expectedMain: expected, sourceTree: 'b'.repeat(40), records });
@@ -81,7 +87,7 @@ test('bootstrap candidate binds each fixed blob, never promotes caller input to 
   assert.match(c.script, /foreach\(\$relative in \$manifest.Keys\)\{\$texts\[\$relative\]=Read-Pinned[\s\S]*Add-Type/);
   assert.match(c.script, /PinDirectoryChain/);
   assert.match(c.script, /FileShare\]::Read/);
-  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 39);
+  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 40);
   for (const bad of [records.slice(1), [...records.slice(1), records[1]],
     records.map((r, i) => i ? r : { ...r, blobSha: '0'.repeat(40) }),
     records.map((r, i) => i ? r : { ...r, path: '../untrusted.ps1' })]) {
@@ -207,8 +213,10 @@ test('native bootstrap pins refuse changed bytes, write/delete races, hard links
   const candidate=buildMaintenanceInstallerBootstrapCandidateV3({
     expectedMain:expected,sourceTree:'b'.repeat(40),records:sourceRecords()
   });
+  const candidatePath=join(directory,'bootstrap-candidate.ps1');
+  writeFileSync(candidatePath,candidate.script);
   try {
-    const code="$ErrorActionPreference='Stop';Add-Type -Path " + literal(native) + ";"
+    const code="$ErrorActionPreference='Stop';Add-Type -Path " + "@(" + literal(native) + "," + literal(nativeSource) + ")" + ";"
       + "$open=[Stephanos.Sovereign.CoreJobCustodyV1].GetMethod('OpenPinnedMaintenanceSourceFileV3',[Reflection.BindingFlags]'NonPublic,Static');"
       + "$f=$open.Invoke($null,@(" + literal(file) + "));try{"
       + "$writeDenied=$false;$deleteDenied=$false;"
@@ -220,7 +228,7 @@ test('native bootstrap pins refuse changed bytes, write/delete races, hard links
       + "try{$f=$open.Invoke($null,@(" + literal(file) + "));$f.Dispose();throw 'HARDLINK_ACCEPTED'}catch{"
       + "if($_.Exception.InnerException.Message -cne 'SOURCE_PIN_IDENTITY_UNPROVEN'){throw}};"
       + "[IO.File]::Delete(" + literal(hard) + ");"
-      + "$scriptText=" + literal(candidate.script) + ";$tokens=$null;$errors=$null;"
+      + "$scriptText=[IO.File]::ReadAllText(" + literal(candidatePath) + ");$tokens=$null;$errors=$null;"
       + "$ast=[Management.Automation.Language.Parser]::ParseInput($scriptText,[ref]$tokens,[ref]$errors);"
       + "$function=$ast.Find({param($a)$a -is [Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -ceq 'Read-Pinned'},$true);"
       + ". ([scriptblock]::Create($function.Extent.Text));"

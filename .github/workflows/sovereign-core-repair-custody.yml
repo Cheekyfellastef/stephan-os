@@ -36,6 +36,7 @@ on:
       - 'shared/agents/sovereignCommanderMcp*'
       - 'shared/agents/sovereignCommanderHttp*'
       - 'scripts/windows/SovereignCoreJobCustodyV1.cs'
+      - 'scripts/windows/SovereignMaintenanceSourceJobV3.cs'
       - 'shared/agents/stephanosCoreDaemonV1*'
       - '.github/workflows/sovereign-core-repair-custody.yml'
 permissions:

@@ -56,3 +56,5 @@ scripts/windows/SovereignCoreJobCustodyV1.cs text eol=lf
 scripts/sovereign-maintenance-installer-source-admission-v3.mjs text eol=lf
 scripts/sovereign-maintenance-installer-source-job-v3.test.mjs text eol=lf
 docs/architecture/sovereign-maintenance-installer-source-job-v3.md text eol=lf
+
+scripts/windows/SovereignMaintenanceSourceJobV3.cs text eol=lf
