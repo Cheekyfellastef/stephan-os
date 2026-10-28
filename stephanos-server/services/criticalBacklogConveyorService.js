@@ -427,10 +427,11 @@ export async function retrySafelyBlockedAgentFailure({
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
 } = {}) {
   const retryClockStart = performance.now();
-  const retryEpoch = now.getTime();
-  // Advance the existing caller's cycle clock across awaits. An authority
-  // snapshot's own timestamp can never renew its freshness.
-  const retryNow = () => new Date(retryEpoch + Math.max(0, performance.now() - retryClockStart)).toISOString();
+  const retryEpoch = Date.now();
+  // Anchor freshness at entry, including time already spent by the caller.
+  // Neither a backward wall clock nor a snapshot timestamp can renew evidence.
+  const retryNow = () => new Date(Math.max(Date.now(),
+    retryEpoch + Math.max(0, performance.now() - retryClockStart))).toISOString();
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   // Observe the existing scan without selecting work or evaluating extra proof.
   // Scalar snapshots are captured before a possible retry event mutates state.
@@ -669,7 +670,8 @@ export async function retrySafelyBlockedAgentFailure({
   });
 
   const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));
-  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const timestamp = candidate.retryPlanBinding?.freshOwnerContract ? retryNow()
+    : now instanceof Date ? now.toISOString() : new Date().toISOString();
   const digest = createHash('sha256')
     .update([text(candidate.missionId), candidate.revision, retryableBlockers.join('|'), timestamp].join(':'))
     .digest('hex')

@@ -82,7 +82,9 @@ test('unknown, cached, ambiguous, stale, foreign or consequential authority cann
 
 test('existing retry rebinds fresh primary intent after ownership and worktree awaits', async t => {
   for (const mode of ['pass', 'raw-missing', 'raw-failed', 'cached', 'stale', 'body-moved', 'head-moved',
-    'scope-moved', 'tests-moved', 'prior-processing', 'outside-original', 'self-dated-stale', 'elapsed-expired']) await t.test(mode, async t => {
+    'scope-moved', 'tests-moved', 'prior-processing', 'outside-original', 'self-dated-stale', 'elapsed-expired',
+    'delayed-wrapper', 'wall-advanced']) await t.test(mode, async t => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
     let elapsed = 0;
     if (mode === 'elapsed-expired') t.mock.method(performance, 'now', () => elapsed);
     const tempBase = await realpath(tmpdir());
@@ -110,7 +112,8 @@ test('existing retry rebinds fresh primary intent after ownership and worktree a
     ]) ({ state } = await appendMissionEvent(state.missionId, { eventId: `owner-fixture-${event.eventType.toLowerCase()}`, ...event }, options));
     const original = structuredClone(state);
     let reads = 0;
-    const result = await retrySafelyBlockedAgentFailure({ paths, backlog: [], env: {}, now: new Date(NOW),
+    const result = await retrySafelyBlockedAgentFailure({ paths, backlog: [], env: {},
+      now: new Date(Date.parse(NOW) - (mode === 'delayed-wrapper' ? 120_000 : 0)),
       listMissions: async () => [(await readMissionRecord(state.missionId, options)).state],
       readProgrammeProjection: async () => {
         const issue = live();
@@ -134,12 +137,13 @@ test('existing retry rebinds fresh primary intent after ownership and worktree a
       },
       proveRetryOwnershipReleased: async () => {
         if (mode === 'elapsed-expired') elapsed = 300_001;
+        if (mode === 'wall-advanced') t.mock.timers.tick(300_001);
         return { ok: mode !== 'prior-processing' };
       },
       refreshRetryWorktree: async () => ({ ok: true, clean: true, afterHead: HEAD }),
     });
     const persisted = (await readMissionRecord(state.missionId, options)).state;
-    if (mode === 'pass') {
+    if (mode === 'pass' || mode === 'delayed-wrapper') {
       assert.equal(result.retried, true, JSON.stringify(result));
       assert.equal(persisted.repair.currentRound, 1);
       assert.equal(persisted.allowedFiles.includes(ORACLE.slice(PREFIX.length)), false);
