@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'scripts/sovereign-commander-stephanos-repair*'
+      - 'scripts/stephanos-core-daemon.mjs'
+      - 'shared/agents/sovereignMaintenanceAdmissionV1*'
       - 'scripts/sovereign-commander-control-plane-repair*'
       - 'scripts/sovereign-core-job-custody*'
       - 'scripts/sovereign-core-directory-action*'
@@ -90,4 +92,4 @@ jobs:
           shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
           scripts/battle-bridge-frontend-visibility-mailbox.test.mjs
       - name: Core-only admission, held R7, gaming and Windows descendant denial
-        run: node --test scripts/sovereign-maintenance-custody-store-v1.test.mjs scripts/sovereign-maintenance-custody-recovery.test.mjs scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs
+        run: node --test scripts/sovereign-maintenance-custody-store-v1.test.mjs scripts/sovereign-maintenance-custody-recovery.test.mjs scripts/sovereign-commander-stephanos-repair.test.mjs scripts/sovereign-commander-control-plane-repair.test.mjs scripts/sovereign-core-job-custody-preflight-v1.test.mjs scripts/sovereign-core-job-custody-native.test.mjs scripts/sovereign-core-directory-action-v1.test.mjs shared/agents/stephanosCoreDaemonV1.test.mjs shared/agents/sovereignCommanderV1.test.mjs shared/agents/sovereignCommanderMcp.test.mjs shared/agents/sovereignCommanderHttp.test.mjs shared/agents/sovereignMaintenanceAdmissionV1.test.mjs

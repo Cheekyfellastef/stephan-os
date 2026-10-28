@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERSION } from './sovereignMaintenanceAdmissionV1.mjs';
+import vm from 'node:vm';
+import { SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, SOVEREIGN_MAINTENANCE_OWNER_VERSION,
+  unqualifiedCoreWindowsRepairV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from './sovereignCommanderRemoteMailboxV1.mjs';
 import { executeSovereignCommanderCommandV1 } from './sovereignCommanderV1.mjs';
 import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from './stephanosExecutionCommandFabricV1.mjs';
@@ -11,6 +13,87 @@ import { createSovereignCommanderHttpServer, startSovereignCommanderContinuousRe
 
 const root = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
 const idle = { enabled: true, running: false, timeoutCustodyHeld: false };
+
+function coreMaintenanceFunction(name, nextName, overrides = {}) {
+  const source = readFileSync(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf(`async function ${name}(`);
+  const end = source.indexOf(`\nasync function ${nextName}(`, start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({
+    projectStephanosCoreDaemonState: value => value,
+    readCanonicalMissionWorkerHeartbeatAgeMs: () => 0,
+    coreWorkerDependentWorkAllowed: () => true,
+    unqualifiedCoreWindowsRepairV1,
+    repoRoot: root, workspaceRoot: 'C:\\fixture\\workspace',
+    lastOctopusSelfHealAttemptCount: 1, lastDependencySelfHealAttemptCount: 1,
+    OCTOPUS_SELF_HEAL_RELATED_ISSUE: '#2961', RELATED_ISSUE: '#2961', PROOF_REF: 'fixture-proof',
+    STEPHANOS_EXECUTION_SURFACE: { SOVEREIGN_COMMANDER: 'sovereign-commander' },
+    SOVEREIGN_COMMANDER_OPERATION: { MAINTENANCE_ACTION: 'MAINTENANCE_ACTION' },
+    buildStephanosExecutionSurfaceCatalogV1: () => ({}),
+    buildStephanosExecutionCommandEnvelopeV1: value => value,
+    ...overrides,
+  });
+  vm.runInContext(source.slice(start, end), context);
+  return context[name];
+}
+
+test('actual Core automatic initial, escalation and retry cannot enter manual owner admission without native custody', async () => {
+  for (const [actionId, phase] of [
+    ['repair-goal-builder-flow', 'goal-builder'],
+    ['repair-control-plane', 'control-plane'],
+    ['repair-goal-builder-flow', 'goal-builder-retry'],
+  ]) {
+    let automaticCalls = 0;
+    const guardian = startSovereignCommanderContinuousRepairGuardian({
+      setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl() {},
+    });
+    const run = coreMaintenanceFunction('runBoundedOctopusMaintenance', 'runBoundedOctopusSelfHeal', {
+      executeSovereignCommanderCommandV1: envelope => {
+        automaticCalls++;
+        return guardian.withMaintenanceOwner({ plan: { processId: actionId } }, async () => ({
+          ok: false, structuredContent: { status: null, errorCode: 'ETIMEDOUT' },
+        }));
+      },
+    });
+    try {
+      const result = await run(actionId, 'a'.repeat(40), phase);
+      assert.equal(automaticCalls, 0, phase);
+      assert.equal(result.blocker, 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
+      assert.equal(result.executionState, 'NOT_STARTED');
+      assert.equal(result.maintenanceReservationCreated, false);
+      assert.equal(result.nativeCustodyQualified, false);
+      assert.equal(guardian.status().timeoutCustodyHeld, false);
+      let manualCalls = 0;
+      const manual = await guardian.withMaintenanceOwner({ plan: { processId: 'repair-ui-4173' } }, async () => {
+        manualCalls++;
+        return { ok: true, structuredContent: { status: 0, stdout: '' } };
+      });
+      assert.equal(manualCalls, 1);
+      assert.equal(manual.ok, true);
+    } finally { guardian.stop(); }
+  }
+});
+
+test('Core still checks worker custody before considering automatic broad maintenance', async () => {
+  const run = coreMaintenanceFunction('runBoundedOctopusMaintenance', 'runBoundedOctopusSelfHeal', {
+    coreWorkerDependentWorkAllowed: () => false,
+    unqualifiedCoreWindowsRepairV1() { assert.fail('invalid worker reached later admission'); },
+    executeSovereignCommanderCommandV1() { assert.fail('invalid worker reached owner'); },
+  });
+  const result = await run('repair-goal-builder-flow', 'a'.repeat(40), 'goal-builder');
+  assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
+});
+
+test('the separate existing backend dependency action retains its original owner route', async () => {
+  const calls = [];
+  const run = coreMaintenanceFunction('runBoundedDependencyMaintenance', 'maybeRepairCoreDependencies', {
+    unqualifiedCoreWindowsRepairV1() { assert.fail('dependency-specific action acquired broad-repair policy'); },
+    executeSovereignCommanderCommandV1(envelope) { calls.push(envelope.payload.actionId); return { ok: true }; },
+  });
+  const result = await run('repair-battle-bridge', 'a'.repeat(40), 'stephanos-core-backend-self-heal');
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['repair-battle-bridge']);
+});
 function envelope(actionId, operation = 'MAINTENANCE_ACTION') {
   return buildStephanosExecutionCommandEnvelopeV1({
     catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
