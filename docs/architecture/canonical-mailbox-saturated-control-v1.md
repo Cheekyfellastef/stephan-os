@@ -126,7 +126,7 @@ verificationKeySpkiSha256, verificationKeyArtifactSha256, signatureDomain,
 allowedEvidenceKinds, commissionedAtUtc, notBeforeUtc, revokedAtUtc,
 commissioningProofSha256, independentReviewArtifactSha256, operatorApprovalRef.
 algorithm is Ed25519; signatureDomain is exactly
-"stephanos.canonical-mailbox-native-evidence.v2\\0"; allowedEvidenceKinds is exactly
+"stephanos.canonical-mailbox-native-evidence.v2"; allowedEvidenceKinds is exactly
 ["CONTROL_TERMINAL","DRAIN_OBSERVATION"]. The registry contains no private key.
 
 A dedicated existing-producer key must be separately commissioned outside the repository,
@@ -160,7 +160,8 @@ silently enroll a different profile. No currently commissioned rotation record i
 A receipt is exactly {schemaVersion, algorithm, enrollmentId, keyId, payload,
 signatureBase64}. schemaVersion is
 "stephanos.canonical-mailbox-native-evidence.v2". Signature bytes are Ed25519 over the exact
-UTF-8 domain string above followed by a canonical encoding of payload. The canonical
+ASCII domain identifier above, then EXACTLY one NUL byte (0x00), then the canonical UTF-8
+encoding of payload. Backslash/zero characters are not part of the domain bytes. The canonical
 encoding is recursively sorted object keys, array order preserved, UTF-8 JSON with no
 whitespace; reject duplicate JSON keys before parsing, unsafe/non-integer numbers, unknown
 fields, non-plain/accessor/proxy objects and noncanonical encodings. The immutable artifact
@@ -177,7 +178,8 @@ originalTerminalSha256, proofArtifactSha256, observedAtUtc, expiresAtUtc.
 origin is exactly {kind:"ACTIVATION_PR_OWNER_CONTROL_V2", prNumber, commentId,
 commentBodySha256, createdAtUtc}. The verifier independently fetches the real unedited
 owner-authored consent and validates all phase/expiry/identity predicates.
-source is exactly {mainHead, treeSha, installedClosureSha256}.
+source has the exact separate installed/protected identity fields and sourceRole defined
+in the complete phase/state model below.
 activation is exactly {prNumber, headSha, baseSha, treeSha, mergeCommitSha};
 mergeCommitSha is null before adoption and the exact admitted merge afterwards.
 epoch is exactly {predecessorIssue, successorIssue}.
@@ -234,18 +236,75 @@ The original history/outbox inventory remains the ordinary-debt source of truth.
 CONTROL evidence cannot erase, import or redirect ordinary predecessor debt. The zero-debt
 applicability boundary below remains mandatory.
 
-## Phase-specific consent predicates
+## Complete phase/state model
 
-| Phase | Activation/epoch predicates |
+The authoritative phase model distinguishes three source identities: installed native
+generation; fresh protected main; exact merged activation target. They are NOT aliases.
+Consent and signed evidence bind each separately. The payload source object is exactly
+{protectedMainHead, protectedMainTreeSha, installedHead, installedTreeSha,
+installedClosureSha256, sourceRole}. sourceRole is PREPARATION or ADOPTED.
+Every identity comes from actual independent readback; never put the remote head into an
+installed-head field to pass an existing V1 validator.
+
+| State | Required reality |
 | --- | --- |
-| FREEZE | Exact open/unmerged activation PR and reviewed head/base/tree; current protected source still selects predecessor; exactly one nominated inactive successor; no other active transition. |
-| DRAIN / STATUS | Same original transition and explicit current phase/source; before adoption require the open/unmerged activation and inactive successor. After adoption, STATUS is read-only and must prove the exact merged activation/new epoch; it grants no drain/effect permission. |
-| CANCEL | Only the matching pre-cutover transition, current source still predecessor and activation unmerged. Deny after epoch change; no rollback authority. |
-| VERIFY | Exact authenticated merged activation and merge/source tree; current main equals the admitted merged source; successor is active and predecessor retired; original frozen transition and both distinct fresh probe classes proven. Never require an open PR/inactive successor here. |
+| PRE_MERGE | Installed source equals fresh protected main and still selects predecessor. Activation PR is open/unmerged at the exact reviewed head/base/tree; successor is uniquely nominated and inactive. |
+| MERGED_NOT_ADOPTED | Activation is authentically merged. Fresh protected main is EXACTLY its recorded merge commit/tree. Installed native source is still the recorded preparation head/tree and selects predecessor. Original transition is already authentically FROZEN, with retained immutable historical evidence. |
+| ADOPTED_NOT_VERIFIED | Installed source and fresh protected main equal the exact admitted merge commit/tree; successor is active and predecessor retired. Original transition remains FROZEN. |
+| VERIFIED | Exact original transition terminalized as VERIFIED; normal source/epoch authority applies. |
+| CANCELLED | Exact pre-cutover transition cancelled while predecessor remained active and activation unmerged. No cancelled approval/reservation can be replayed. |
 
-Consent binds the phase's current expected source main/tree separately from the immutable
-activation branch head/base/tree and recorded merge identity. Drift refuses admission; do not
-weaken the pre-cutover predicates to accommodate VERIFY.
+Any source/epoch/PR combination outside these rows is SOURCE_STATE_UNPROVEN. No generalized
+behind-main exception exists. A later unrelated main advance does not qualify the bridge.
+
+| Operation | PRE_MERGE | MERGED_NOT_ADOPTED | ADOPTED_NOT_VERIFIED | VERIFIED / CANCELLED |
+| --- | --- | --- | --- | --- |
+| FREEZE | First effect only for a fresh exact approved transition. | DENY | DENY | Old transition DENY; a future rotation needs a new original transition and approval. |
+| DRAIN | Fresh phase consent; original DRAINING/FROZEN transaction only. | DENY | DENY | DENY |
+| STATUS | Guarded observation of original state; no effect replay. | Read-only bridge observation defined below. | Guarded read-only observation of the same transition and adopted epoch. | Historical read-only result only; no reactivation. |
+| CANCEL | Matching pre-cutover transition only; predecessor active and PR unmerged. | DENY | DENY | Idempotent historical return only. |
+| VERIFY | DENY | DENY | Fresh exact VERIFY consent, actual producer/consumer epoch readbacks and both distinct successor probe classes. | Idempotent original verified result only; cancelled transition DENY. |
+
+### Merged-but-not-adopted STATUS bridge
+
+A fresh phase-scoped owner consent binds the original transition, installed preparation
+head/tree/closure, exact merged activation branch head/base/tree, actual merge commit/tree
+and fresh protected main. The consent does not assert adoption. Native admission must
+authenticate this exact pair of generations and original historical FROZEN evidence,
+including its producer signature/commissioning chain. The historical evidence may be
+past its observation TTL for provenance only; that is NOT fresh drain or sync permission.
+
+Under the SAME original exclusive guard, the installed qualified predecessor adapter
+rechecks all accepted work, complete predecessor history, inline/segmented/ordinary debt,
+Actions V2 quiescence and source identities against the exact merged target. It produces
+a fresh signed DRAIN_OBSERVATION with sourceRole PREPARATION, installedHead equal to the
+actual preparation head and protectedMainHead equal to the actual exact merge target.
+This is observation/publication only: no phase transition, barrier advance, command replay,
+writer claim, source sync, epoch adoption, cancellation, merge or restart. Existing
+FROZEN state cannot be inferred or reconstructed from missing records.
+
+The new observation's 120-second freshness is independent of the historical FROZEN
+artifact's identity. The source-sync preflight MUST verify both: the authentic original
+FROZEN transition and this fresh no-debt/action/source observation under the existing
+guard, exact nominated merge target and its independently approved sync authority.
+It must explicitly support the PREPARATION/merged-target identity pair; do not bypass it,
+reuse expired drain permission, label the installed generation current, or silently feed
+a V2 observation to a V1 parser. Re-read under the guard immediately before effect.
+
+Any new debt, moved main/PR, changed installed source, missing/uncertain historical freeze,
+nonzero/unknown native work or lost source generation holds admission/sync. STATUS cannot
+repair those conditions, return DRAINING to FROZEN after merge, or manufacture a terminal.
+Such a case requires its own existing qualified recovery/protected source decision.
+
+After actual adoption, STATUS and VERIFY require sourceRole ADOPTED and installed/protected
+heads equal the exact admitted merge. VERIFY still requires the real successor read-only
+ACCEPTED-to-DONE probes and full recheck. No post-epoch CANCEL is introduced.
+
+Implementation qualification must enumerate the full 5-state x 5-operation matrix plus
+identity drift and TTL boundaries. The positive crash-after-merge case must renew an
+expired historical observation from the real predecessor generation without effects;
+negative tests must prove it cannot admit FREEZE/DRAIN/CANCEL/VERIFY, source mutation,
+wrong merged target, late work or an unqualified producer.
 
 ## Saturated predecessor receipt debt: explicit applicability boundary
 
