@@ -12,13 +12,15 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
     return r;
   };
   const area = r => r.right > r.left && r.bottom > r.top;
+  // Structured callers may declare one rectangle. DOM measurements below
+  // always supply actual client fragments, with no union-paint fallback.
   const fragments = shape => {
-    if (!area(rect(shape.rect))) throw new TypeError('non-degenerate union bounds required');
-    if (!Array.isArray(shape.rects) || !shape.rects.length)
-      throw new TypeError('explicit paint fragments required');
-    const pieces = shape.rects.map(rect).filter(area);
-    if (!pieces.length) throw new TypeError('nonzero paint fragments required');
-    return pieces;
+    const bounds = rect(shape.rect);
+    const raw = shape.rects === undefined ? [bounds] : shape.rects;
+    if (!Array.isArray(raw)) throw new TypeError('paint fragments unavailable');
+    const pieces = raw.map(rect).filter(area);
+    if (area(bounds) !== Boolean(pieces.length)) throw new TypeError('inconsistent paint geometry');
+    return pieces.length ? pieces : null; // null = valid, successfully measured unpainted geometry
   };
   if (!snapshot || !Array.isArray(snapshot.cards)) throw new TypeError('cards required');
   const findings = [], affordances = [];
@@ -30,11 +32,13 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
     : a.top < b.top - tolerance || a.bottom > b.bottom + tolerance;
   const overlap = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > tolerance
     && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > tolerance;
+  let cardCount = 0, measuredItems = 0;
   for (const card of snapshot.cards) {
     if (typeof card.id !== 'string' || !card.id || ids.has(card.id))
       throw new TypeError('unique card ids required');
     ids.add(card.id);
-    fragments(card);
+    if (!fragments(card)) continue;
+    cardCount += 1;
     if (!Array.isArray(card.items)) throw new TypeError('items required');
     const itemIds = new Set(), visible = [];
     for (const item of card.items) {
@@ -44,6 +48,8 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
       if (!['text', 'badge', 'control', 'card'].includes(item.kind))
         throw new TypeError('invalid item kind');
       const pieces = fragments(item);
+      if (!pieces) continue;
+      measuredItems += 1;
       const painted = [];
       for (const piece of pieces) {
         let current = { ...rect(piece) };
@@ -91,12 +97,11 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
     }
   }
   const unique = rows => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
-  const measuredItems = snapshot.cards.reduce((n, c) => n + c.items.length, 0);
   return {
     schemaVersion: 'stephanos.workspace-card-layout-audit.v1',
     evidenceClass: 'GEOMETRY_ONLY',
-    coverage: snapshot.cards.length && measuredItems ? 'MEASURED' : 'EMPTY',
-    cardCount: snapshot.cards.length, itemCount: measuredItems,
+    coverage: cardCount && measuredItems ? 'MEASURED' : 'EMPTY',
+    cardCount, itemCount: measuredItems,
     findings: unique(findings), affordances: unique(affordances),
   };
 }
@@ -120,11 +125,16 @@ export function extractCardLayout({
   const area = r => r.right > r.left && r.bottom > r.top;
   // One geometry model for Elements and Ranges: actual nonzero client fragments
   // describe paint. The union rectangle is broad bounds, never a paint fallback.
-  const paintGeometry = target => {
+  const measureGeometry = target => {
     const rect = box(target.getBoundingClientRect());
-    const rects = [...target.getClientRects()].map(box).filter(area);
-    if (!area(rect) || !rects.length) throw new TypeError('non-degenerate paint geometry required');
-    return { rect, rects };
+    const rawRects = [...target.getClientRects()].map(box);
+    const rects = rawRects.filter(area);
+    if (area(rect) !== Boolean(rects.length)) throw new TypeError('inconsistent paint geometry');
+    // Successful empty/all-zero geometry with degenerate bounds is valid
+    // UNPAINTED, not unavailable. Missing/throwing APIs and malformed or
+    // contradictory measurements still throw before this return.
+    return { bounds: rect, geometry: rects.length ? { rect, rects } : null,
+      clientRectCount: rawRects.length };
   };
   const style = el => view.getComputedStyle(el);
   const visible = el => {
@@ -134,10 +144,18 @@ export function extractCardLayout({
         || s.visibility === 'collapse' || Number(s.opacity) === 0
         || s.contentVisibility === 'hidden') return false;
     }
-    return area(el.getBoundingClientRect());
+    return true; // Visibility metadata and actual paint geometry are separate.
   };
-  const cards = [...root.querySelectorAll(cardSelector)].filter(visible);
-  if (root.matches(cardSelector) && visible(root)) cards.unshift(root);
+  const elementGeometry = new Map();
+  const measureElement = el => {
+    if (!elementGeometry.has(el)) elementGeometry.set(el, measureGeometry(el));
+    return elementGeometry.get(el).geometry;
+  };
+  const candidates = [...root.querySelectorAll(cardSelector)];
+  if (root.matches(cardSelector)) candidates.unshift(root);
+  // Only painted cards become ownership boundaries. Cache before projection
+  // so boxless wrappers cannot hide painted descendants or install false bounds.
+  const cards = candidates.filter(el => visible(el) && measureElement(el) !== null);
   const cardSet = new Set(cards), ids = new Map(), elementIds = new Map();
   cards.forEach((el, i) => ids.set(el, 'card-' + i));
   let nextId = 0;
@@ -150,16 +168,43 @@ export function extractCardLayout({
     return null;
   };
   const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+  // Paint presence, generated boxes and overflow applicability are orthogonal.
+  // A zero-area generated block may clip; a boxless or non-replaced inline
+  // element does not. Unqualified active clipping fails explicitly.
+  const clipLayouts = new Set([
+    'block', 'block flow', 'flow-root', 'block flow-root',
+    'inline-block', 'inline flow-root', 'flex', 'block flex',
+    'inline-flex', 'inline flex', 'grid', 'block grid', 'inline-grid', 'inline grid',
+  ]);
+  const unqualifiedClipElements = new Set([
+    'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'OPTION', 'OPTGROUP', 'PROGRESS', 'METER',
+    'IMG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'TR', 'TD', 'TH', 'CAPTION', 'COL', 'COLGROUP',
+  ]);
+  const clipEligible = (el, computed) => {
+    const display = String(computed.display || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (display === 'contents' || display === 'none') return false;
+    measureElement(el);
+    if (!elementGeometry.get(el).clientRectCount) return false;
+    if (el.namespaceURI !== 'http://www.w3.org/1999/xhtml'
+      || unqualifiedClipElements.has(el.tagName.toUpperCase()))
+      throw new TypeError('unsupported overflow clip element');
+    if (display === 'inline' || display === 'inline flow') return false;
+    if (!clipLayouts.has(display)) throw new TypeError('unsupported overflow clip layout: ' + display);
+    return true;
+  };
   // Text measures contents and retains its own clip. Border-box items must
   // start at the parent: overflow never clips the element's own border box.
   const clips = (el, { includeSelf = true } = {}) => {
     const result = [];
     for (let p = includeSelf ? el : el.parentElement; p; p = p.parentElement) {
-      const s = style(p), r = p.getBoundingClientRect();
+      const s = style(p);
       if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
+      if (!clipEligible(p, s)) continue;
+      const r = elementGeometry.get(p).bounds;
       // client box excludes border and scrollbar; CSS-pixel scaling supports zoom/transforms.
-      const sx = p.offsetWidth ? r.width / p.offsetWidth : 1;
-      const sy = p.offsetHeight ? r.height / p.offsetHeight : 1;
+      const sx = p.offsetWidth ? (r.right - r.left) / p.offsetWidth : 1;
+      const sy = p.offsetHeight ? (r.bottom - r.top) / p.offsetHeight : 1;
       const left = r.left + p.clientLeft * sx, top = r.top + p.clientTop * sy;
       const value = norm(el.textContent);
       result.push({
@@ -178,10 +223,20 @@ export function extractCardLayout({
     tag: el.tagName.toLowerCase(), id: el.id || null,
     classes: typeof el.className === 'string' ? el.className : '',
   });
-  const borderBoxItem = (el, kind) => ({
-    id: id(el), kind, ...paintGeometry(el),
-    clips: clips(el, { includeSelf: false }), element: describe(el),
-  });
+  const outerPaintedBox = (el, card) => {
+    let selected = null;
+    for (let p = el; p && p !== card; p = p.parentElement) {
+      if (owner(p) !== card) break;
+      if (p.matches(controlSelector + ',' + badgeSelector) && visible(p) && measureElement(p))
+        selected = p;
+    }
+    return selected;
+  };
+  const borderBoxItem = (el, kind) => {
+    const geometry = measureElement(el);
+    return geometry ? { id: id(el), kind, ...geometry,
+      clips: clips(el, { includeSelf: false }), element: describe(el) } : null;
+  };
   const results = cards.map(card => {
     const items = [], nodes = [card, ...card.querySelectorAll('*')];
     for (const el of nodes) {
@@ -194,30 +249,28 @@ export function extractCardLayout({
       if (owner(el) !== card || !visible(el)) continue;
       if (el !== card && el.matches(controlSelector + ',' + badgeSelector)) {
         // Nested badge/control wrappers would double-count their descendant boxes.
-        const ancestor = el.parentElement?.closest(controlSelector + ',' + badgeSelector);
-        if (!ancestor || ancestor === card || owner(ancestor) !== card)
-          items.push(borderBoxItem(el, el.matches(controlSelector) ? 'control' : 'badge'));
+        if (outerPaintedBox(el, card) === el) {
+          const measured = borderBoxItem(el, el.matches(controlSelector) ? 'control' : 'badge');
+          if (measured) items.push(measured);
+        }
       }
       if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
       for (const node of el.childNodes) {
         if (node.nodeType !== 3 || !norm(node.textContent)) continue;
         const range = doc.createRange();
         range.selectNodeContents(node);
-        const geometry = paintGeometry(range);
-        let labelOwner = el.closest(controlSelector + ',' + badgeSelector);
-        // Use the outermost item box within this card as the text-label owner.
-        while (labelOwner && labelOwner !== card) {
-          const parent = labelOwner.parentElement?.closest(controlSelector + ',' + badgeSelector);
-          if (!parent || parent === card || owner(parent) !== card) break;
-          labelOwner = parent;
-        }
+        const geometry = measureGeometry(range).geometry;
+        if (!geometry) continue;
+        // Labels belong only to an actual painted box; a boxless wrapper
+        // cannot suppress its painted descendant text or sibling collisions.
+        const labelOwner = outerPaintedBox(el, card);
         items.push({ id: 'text-' + nextId++, kind: 'text',
           ownerId: labelOwner && labelOwner !== card ? id(labelOwner) : null,
           ...geometry, clips: clips(el),
           text: norm(node.textContent), element: describe(el) });
       }
     }
-    return { id: ids.get(card), ...paintGeometry(card), element: describe(card), items };
+    return { id: ids.get(card), ...measureElement(card), element: describe(card), items };
   });
   return { cards: results, selection: { cardSelector, rootSelector },
     viewport: { width: view.innerWidth, height: view.innerHeight, devicePixelRatio: view.devicePixelRatio },
@@ -336,7 +389,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
   function fakeDocument() {
     const elements = [];
     function el(tag, classes, bounds, parent = null, css = {}, title = null) {
-      const e = { tagName: tag, className: classes, id: '', parentElement: parent, hidden: false,
+      const e = { tagName: tag, namespaceURI: 'http://www.w3.org/1999/xhtml', className: classes, id: '', parentElement: parent, hidden: false,
         childNodes: [], css: { display: 'block', visibility: 'visible', opacity: '1',
           overflowX: 'visible', overflowY: 'visible', ...css },
         textContent: '', clientLeft: 0, clientTop: 0, clientWidth: bounds.right - bounds.left,
@@ -422,6 +475,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
       element.childNodes = [];
       element.textContent = '';
     }
+    if (kind === 'control') element.tagName = 'A'; // A non-replaced control in the qualified clip domain.
     setBoxBorder(element, border);
     const data = runInNewContext(
       '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
@@ -595,11 +649,11 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     assert.ok(codes(model.extract()).includes('COLLISION'));
   });
 
-  test('manual geometry rejects null, empty, all-zero fragments and degenerate union bounds', () => {
-    for (const extra of [{ rects: undefined }, { rects: null }, { rects: [] }, { rects: [r(5, 5, 5, 20)] }])
+  test('manual geometry rejects malformed or contradictory fragments without requiring them for single boxes', () => {
+    for (const extra of [{ rects: null }, { rects: [] }, { rects: [r(5, 5, 5, 20)] }])
       assert.throws(() => auditCardLayout(snapshot(item('bad', 'control', r(5, 5, 40, 20), extra))), TypeError);
-    assert.throws(() => auditCardLayout(snapshot(item('bad', 'badge', r(5, 5, 5, 20)))), TypeError);
-    assert.throws(() => auditCardLayout({ cards: [{ id: 'zero', rect: r(0, 0, 0, 80), items: [] }] }), TypeError);
+    assert.throws(() => auditCardLayout(snapshot(item('bad', 'badge', r(5, 5, 5, 20), { rects: [r(5, 5, 40, 20)] }))), TypeError);
+    assert.equal(auditCardLayout({ cards: [{ id: 'zero', rect: r(0, 0, 0, 80), items: [] }] }).coverage, 'EMPTY');
   });
 
   test('visible boxes fail closed when actual client-fragment geometry is unavailable or invalid', () => {
@@ -614,11 +668,292 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     }
   });
 
-  test('text ranges fail closed when their paint fragments are empty or entirely degenerate', () => {
+  test('positive range bounds with empty or entirely degenerate fragments are inconsistent', () => {
     for (const rects of [[], [r(10, 10, 10, 10)]]) {
       const model = wrappedFixture('text');
       model.target.childNodes[0].rects = rects;
       assert.throws(() => model.extract(), error => error.name === 'TypeError');
+    }
+  });
+
+
+  function setMeasuredGeometry(element, bounds, clientRects) {
+    element.getBoundingClientRect = () => ({
+      ...bounds, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top,
+    });
+    element.getClientRects = () => clientRects;
+    element.clientWidth = element.offsetWidth = bounds.right - bounds.left;
+    element.clientHeight = element.offsetHeight = bounds.bottom - bounds.top;
+  }
+
+  test('valid unpainted SHY, ZWSP and formatting ranges are omitted without aborting siblings', () => {
+    for (const text of ['\u00ad', '\u200b', '\u200e']) {
+      for (const clientRects of [[], [r(5, 5, 5, 20)]]) {
+        const model = wrappedFixture('text');
+        Object.assign(model.target.childNodes[0], {
+          textContent: text, rect: r(5, 5, 5, 20), rects: clientRects,
+        });
+        const data = model.extract(), report = auditCardLayout(data);
+        assert.equal(model.findTarget(data), undefined);
+        assert.deepEqual(report.findings, []);
+        assert.equal(report.itemCount, 1, 'painted sibling remains auditable');
+      }
+    }
+  });
+
+  test('unpainted formatting content cannot hide a genuine painted sibling collision', () => {
+    for (const text of ['\u00ad', '\u200b', '\u200e']) {
+      const model = wrappedFixture('text');
+      Object.assign(model.target.childNodes[0], {
+        textContent: text, rect: r(5, 5, 5, 20), rects: [r(5, 5, 5, 20)],
+      });
+      const painted = model.fixture.createElement('SPAN', '', r(55, 35, 80, 50), model.fixture.card);
+      painted.childNodes.push({ nodeType: 3, textContent: 'Visible collision',
+        rect: r(55, 35, 80, 50), rects: [r(55, 35, 80, 50)] });
+      const report = auditCardLayout(model.extract());
+      assert.equal(report.findings.filter(f => f.code === 'COLLISION').length, 1);
+      assert.equal(report.itemCount, 2);
+    }
+  });
+
+  test('valid unpainted control, badge and card boxes omit paint without losing unrelated siblings', () => {
+    for (const kind of ['control', 'badge', 'card']) {
+      for (const clientRects of [[], [r(5, 5, 5, 20)]]) {
+        const model = wrappedFixture(kind);
+        setMeasuredGeometry(model.target, r(5, 5, 5, 20), clientRects);
+        const data = model.extract(), report = auditCardLayout(data);
+        assert.equal(model.findTarget(data), undefined);
+        assert.deepEqual(report.findings, []);
+        assert.equal(report.itemCount, 1);
+      }
+    }
+  });
+
+  test('boxless wrappers retain painted descendant text and its genuine collisions', () => {
+    for (const kind of ['control', 'badge', 'card']) {
+      const model = wrappedFixture(kind);
+      setMeasuredGeometry(model.target, r(5, 5, 5, 20), []);
+      model.target.childNodes.push({ nodeType: 3, textContent: 'Painted child',
+        rect: r(55, 35, 80, 50), rects: [r(55, 35, 80, 50)] });
+      const report = auditCardLayout(model.extract());
+      assert.equal(report.findings.filter(f => f.code === 'COLLISION').length, 1);
+      assert.equal(report.itemCount, 2, 'unpainted wrapper is not a painted owner or box item');
+    }
+  });
+
+  test('a selection of only boxless top-level cards has EMPTY geometry coverage', () => {
+    const fixture = fakeDocument();
+    fixture.nested.css.display = 'none';
+    setMeasuredGeometry(fixture.card, r(5, 5, 5, 20), []);
+    const data = runInNewContext(
+      '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+      { document: fixture.doc },
+    );
+    assert.equal(data.cards.length, 0);
+    assert.equal(auditCardLayout(data).coverage, 'EMPTY');
+  });
+
+  test('missing, throwing and malformed Range APIs remain explicit errors', () => {
+    for (const invalid of ['missing-api', 'throws', 'nan', 'infinity', 'inverted']) {
+      const model = wrappedFixture('text');
+      const createRange = model.fixture.doc.createRange;
+      model.fixture.doc.createRange = () => {
+        const range = createRange();
+        if (invalid === 'missing-api') range.getClientRects = undefined;
+        if (invalid === 'throws') range.getClientRects = () => { throw new Error('measurement unavailable'); };
+        if (invalid === 'nan') range.getClientRects = () => [r(10, 10, NaN, 20)];
+        if (invalid === 'infinity') range.getClientRects = () => [r(10, 10, Infinity, 20)];
+        if (invalid === 'inverted') range.getClientRects = () => [r(50, 10, 10, 20)];
+        return range;
+      };
+      assert.throws(() => model.extract());
+    }
+  });
+
+  test('nonzero client fragments with zero union bounds are contradictory for every kind', () => {
+    for (const kind of ['control', 'badge', 'card', 'text']) {
+      const model = wrappedFixture(kind);
+      if (kind === 'text') model.target.childNodes[0].rect = r(5, 5, 5, 20);
+      else setMeasuredGeometry(model.target, r(5, 5, 5, 20), [r(10, 10, 90, 25)]);
+      assert.throws(() => model.extract(), error => error.name === 'TypeError');
+    }
+  });
+
+  test('manual single-rectangle input remains supported and valid unpainted records do not imply coverage', () => {
+    const declared = snapshot(item('single'));
+    delete declared.cards[0].rects;
+    delete declared.cards[0].items[0].rects;
+    assert.deepEqual(auditCardLayout(declared).findings, []);
+    assert.equal(auditCardLayout(declared).itemCount, 1);
+    const unpainted = snapshot(item('zero', 'text', r(5, 5, 5, 20)));
+    assert.equal(auditCardLayout(unpainted).coverage, 'EMPTY');
+    assert.equal(auditCardLayout(unpainted).itemCount, 0);
+    assert.equal(auditCardLayout({ cards: [{ id: 'zero', rect: r(5, 5, 5, 20), items: [] }] }).cardCount, 0);
+  });
+
+  test('48 translated/tolerance cases preserve findings after adding remote unpainted records', () => {
+    for (const kind of ['control', 'badge', 'card', 'text']) {
+      for (const collides of [false, true]) {
+        const model = wrappedFixture(kind, 'badge',
+          collides ? r(25, 37, 38, 48) : r(55, 35, 80, 50));
+        const original = model.extract();
+        for (const shift of [-321, 0, 411]) {
+          for (const tolerance of [0, 1]) {
+            const data = JSON.parse(JSON.stringify(original)), moved = new Set();
+            const move = box => {
+              if (!box || moved.has(box)) return;
+              moved.add(box); box.left += shift; box.right += shift;
+              box.top -= shift; box.bottom -= shift;
+            };
+            for (const card of data.cards) {
+              move(card.rect); card.rects?.forEach(move);
+              for (const item of card.items) {
+                move(item.rect); item.rects?.forEach(move);
+                item.clips.forEach(clip => move(clip.rect));
+              }
+            }
+            const zero = r(1000 + shift, 2000 - shift, 1000 + shift, 2010 - shift);
+            data.cards[0].items.push({ id: 'remote-unpainted', kind: 'text',
+              rect: zero, rects: [zero], clips: [] });
+            const result = auditCardLayout(data, { tolerance });
+            const before = auditCardLayout(original, { tolerance });
+            assert.deepEqual(result.findings, before.findings);
+            assert.equal(result.itemCount, before.itemCount);
+          }
+        }
+      }
+    }
+  });
+
+  test('adding remote zero-area actual client fragments does not change observed paint', () => {
+    for (const kind of ['control', 'badge', 'card', 'text']) {
+      const model = wrappedFixture(kind);
+      const before = auditCardLayout(model.extract());
+      model.target.fragments.push(r(1000, 2000, 1000, 2010));
+      const after = auditCardLayout(model.extract());
+      assert.deepEqual(after.findings, before.findings);
+      assert.equal(after.itemCount, before.itemCount);
+    }
+  });
+
+
+  function clipWrapperFixture(display, { clipped = false, zeroAxis = '', tag = 'SPAN', namespace } = {}) {
+    const fixture = fakeDocument();
+    fixture.title.css.display = 'none';
+    fixture.nested.css.display = 'none';
+    const boxless = display === 'contents' || display === 'none';
+    const inline = display === 'inline' || display === 'inline flow';
+    const bounds = boxless ? r(0, 0, 0, 0)
+      : inline ? r(10, 10, 70, 25)
+      : zeroAxis === 'X' ? r(5, 5, 5, 67)
+      : zeroAxis === 'Y' ? r(5, 5, 87, 5)
+      : r(5, 5, clipped ? 47 : 87, 67);
+    const wrapper = fixture.createElement(tag, 'badge', bounds, fixture.card,
+      { display, overflowX: 'hidden', overflowY: 'hidden' });
+    wrapper.id = 'clip-wrapper';
+    if (namespace !== undefined) wrapper.namespaceURI = namespace;
+    setMeasuredGeometry(wrapper, bounds, boxless ? [] : [bounds]);
+    wrapper.clientLeft = wrapper.clientTop = boxless || inline || zeroAxis ? 0 : 1;
+    if (boxless || inline) {
+      wrapper.clientWidth = wrapper.clientHeight = 0;
+      wrapper.offsetWidth = wrapper.offsetHeight = 0;
+    } else {
+      wrapper.clientWidth = bounds.right - bounds.left - 2 * wrapper.clientLeft;
+      wrapper.clientHeight = bounds.bottom - bounds.top - 2 * wrapper.clientTop;
+    }
+    wrapper.childNodes.push({ nodeType: 3, textContent: 'Painted label',
+      rect: r(10, 10, 70, 25), rects: [r(10, 10, 70, 25)] });
+    const extract = () => runInNewContext(
+      '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+      { document: fixture.doc },
+    );
+    return { fixture, wrapper, extract };
+  }
+
+  test('boxless contents wrappers contribute no overflow clip to painted descendant text', () => {
+    const model = clipWrapperFixture('contents');
+    const data = model.extract();
+    assert.deepEqual(auditCardLayout(data).findings, []);
+    assert.equal(auditCardLayout(data).itemCount, 1);
+  });
+
+  test('real zero-width and zero-height block boxes still clip on the collapsed axis', () => {
+    for (const axis of ['X', 'Y']) {
+      const model = clipWrapperFixture('block', { zeroAxis: axis });
+      assert.ok(auditCardLayout(model.extract()).findings.some(f => f.code === 'CLIPPED_' + axis));
+    }
+  });
+
+  test('ordinary non-replaced inline boxes do not overflow-clip despite zero client metrics', () => {
+    for (const display of ['inline', 'inline flow']) {
+      const model = clipWrapperFixture(display);
+      assert.deepEqual(auditCardLayout(model.extract()).findings, []);
+    }
+  });
+
+  const CLIP_LAYOUT_GROUPS = [
+    ['block', 'block flow'],
+    ['flow-root', 'block flow-root'],
+    ['inline-block', 'inline flow-root'],
+    ['flex', 'block flex'],
+    ['inline-flex', 'inline flex'],
+    ['grid', 'block grid'],
+    ['inline-grid', 'inline grid'],
+  ];
+
+  test('qualified block, flow-root, flex and grid variants retain contained and true-clipped cases', () => {
+    for (const display of CLIP_LAYOUT_GROUPS.flat()) {
+      assert.deepEqual(auditCardLayout(clipWrapperFixture(display).extract()).findings, []);
+      const result = auditCardLayout(clipWrapperFixture(display, { clipped: true }).extract());
+      assert.deepEqual(result.findings.map(f => f.code), ['CLIPPED_X']);
+    }
+  });
+
+  test('supported shorthand and two-keyword displays have equivalent clipping projections', () => {
+    for (const [short, expanded] of CLIP_LAYOUT_GROUPS) {
+      for (const clipped of [false, true]) {
+        const before = auditCardLayout(clipWrapperFixture(short, { clipped }).extract());
+        const after = auditCardLayout(clipWrapperFixture(expanded, { clipped }).extract());
+        assert.deepEqual(after.findings, before.findings);
+        assert.deepEqual(after.affordances, before.affordances);
+      }
+    }
+  });
+
+  test('unqualified active clipping remains an explicit error rather than passing geometry', () => {
+    for (const display of ['table', 'inline-table', 'table-cell', 'ruby', 'list-item', 'unknown-layout']) {
+      assert.throws(() => clipWrapperFixture(display).extract(), /unsupported overflow clip layout/);
+    }
+    for (const tag of ['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'TABLE']) {
+      assert.throws(() => clipWrapperFixture('block', { tag }).extract(), /unsupported overflow clip/);
+    }
+    assert.throws(() => clipWrapperFixture('block', {
+      namespace: 'http://www.w3.org/2000/svg',
+    }).extract(), /unsupported overflow clip/);
+  });
+
+  test('unqualified layouts with visible overflow do not invent a clipping operation', () => {
+    for (const display of ['table', 'ruby', 'unknown-layout']) {
+      const model = clipWrapperFixture(display);
+      model.wrapper.css.overflowX = model.wrapper.css.overflowY = 'visible';
+      assert.deepEqual(auditCardLayout(model.extract()).findings, []);
+    }
+  });
+
+  test('a genuine clipping ancestor beyond a contents or inline wrapper remains effective', () => {
+    for (const display of ['contents', 'inline']) {
+      const model = clipWrapperFixture(display);
+      const ancestor = model.fixture.createElement('DIV', '', r(5, 5, 47, 67),
+        model.fixture.card, { overflowX: 'hidden', overflowY: 'hidden' });
+      ancestor.clientLeft = ancestor.clientTop = 1;
+      ancestor.clientWidth = 40; ancestor.clientHeight = 60;
+      model.wrapper.parentElement = ancestor;
+      const data = model.extract();
+      const text = data.cards.flatMap(card => card.items).find(item => item.text === 'Painted label');
+      const realClip = text.clips.find(clip => clip.rect.left === 6 && clip.rect.right === 46);
+      assert.ok(realClip, 'ineligible wrapper must not hide the next qualified ancestor');
+      assert.ok(auditCardLayout(data).findings.some(f =>
+        f.itemId === text.id && f.code === 'CLIPPED_X' && f.clipId === realClip.id));
     }
   });
 

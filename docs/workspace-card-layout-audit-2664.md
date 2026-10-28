@@ -17,7 +17,7 @@ This child task adds a reusable read-only geometry oracle and a source-derived s
 
 An empty selection has coverage `EMPTY`, never a passing workspace. A measured selection is `MEASURED`, never a runtime-health or whole-workspace verdict. Coordinates are axis-aligned rectangles; rotated/skewed geometry needs visual review.
 
-All card/item geometry includes explicit nonempty `rects` containing nonzero paint fragments. Manually constructed snapshots must also provide these fragments; a single box is expressed as `[rect]`. Missing, null, empty or entirely degenerate geometry fails closed. Union `rect` values provide broad bounds; they are never substituted for missing painted fragments.
+DOM measurements distinguish three states: PAINTED retains actual nonzero client fragments; VALID_UNPAINTED is a successful empty/all-zero fragment list with compatible degenerate union bounds and is omitted; INVALID_UNAVAILABLE includes missing/throwing APIs, malformed coordinates and contradictory bounds/fragments and remains an error. Union `rect` values provide broad bounds, never a fallback for unavailable DOM paint geometry. Manually declared single-rectangle snapshots remain supported; optional fragment arrays are validated when supplied.
 
 One shared extractor geometry normalizer reads actual `Element.getClientRects()` and `Range.getClientRects()` for controls, badges, nested cards, card boundaries and text. One border-box item builder applies ancestor-only clipping to all box kinds; text retains content self-clipping. Wrapped controls and badges therefore leave the empty corner beside a short final line unpainted, just like wrapped text. Distinct text labels still collide, even if they share a control. A control/badge box may contain its own label. The nearest selected card owns its content; a nested card is also checked as an outer-boundary item of its immediate parent. Use an explicit card selector that includes both outer and inner primitives.
 
@@ -124,7 +124,7 @@ Inspect every finding, every intentional affordance and all zero-match selection
 ## Verification and durable lesson
 
 Focused command: `node --test tests/workspace-card-layout-audit.test.mjs`.
-The 43 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, serialized extractor usage/hidden ancestors, bordered control/badge/nested-card boxes at 0px and 1px tolerance, true ancestor clipping, originating-element text clipping, cross-kind wrapped paint fragments, real collisions in each line, missing/degenerate geometry rejection, and 240 translated/tolerance model cases.
+The 61 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, serialized extractor usage/hidden ancestors, bordered control/badge/nested-card boxes at 0px and 1px tolerance, true ancestor clipping, originating-element text clipping, cross-kind wrapped paint fragments, real collisions in each line, malformed/contradictory geometry rejection, valid unpainted formatting ranges and boxes, boxless-wrapper descendants, preserved manual inputs, 288 translated/tolerance model cases, and paired clip-applicability cases for boxless, inline, zero-sized and qualified block/flex/grid layouts.
 
 Lesson/invariant: clipping CSS is evidence to inspect, not proof of intentional truncation; retain affordance debt and nearest-card ownership so nested or scrollable layouts cannot hide genuine defects. This supports the parent goal's reusable R5 capability without claiming visual acceptance.
 
@@ -136,8 +136,58 @@ Independent review identified false self-clipping of bordered controls, badges a
 
 ## Second geometry review repair and convergence rule
 
-Review https://github.com/Cheekyfellastef/stephan-os/pull/3307#discussion_r4407011433 identified that wrapped inline controls were measured by their union box while text already used line fragments. The systemic correction makes actual nonzero client fragments mandatory for every measurement kind, through one extractor normalizer and one shared border-box item builder. There is no link-specific exemption and no union fallback for unavailable geometry. The first repair's parent-only border-box clipping and originating-text clipping remain binding.
+Review https://github.com/Cheekyfellastef/stephan-os/pull/3307#discussion_r4407011433 identified that wrapped inline controls were measured by their union box while text already used line fragments. The second repair preserved actual client fragments through one extractor normalizer and one shared border-box item builder. It incorrectly treated valid unpainted measurements as errors; the structural review below corrects that model. There is no link-specific exemption and no union fallback for unavailable DOM geometry. The first repair's parent-only border-box clipping and originating-text clipping remain binding.
 
 The deterministic DOM double implements the actual element `getClientRects()` API. The cross-kind model covers controls, badges, nested cards and text, unrelated control/badge/text siblings in the empty short-line corner, real intersections in either painted line, clipping of one fragment, own-label versus sibling-label behavior, and 240 coordinate-translation/tolerance variants. All previous 26 tests remain. On the preceding published helper at `e848c292af8f5ac7b5f9a3af15c4e863170cadf5`, the expanded suite has 11 failures; the normalized model must pass all 43 tests.
 
 Durable invariant: paint fragments and clip ownership travel with geometry; a union box is not proof of paint. This is the second current-head repair in the same geometry class. If a third current-head P1/P2 in that class is found, stop narrow source patches and perform an explicit structural design review before editing, as required by AGENTS.md. Neither this lesson nor green tests grant independent review, merge, runtime or UI acceptance authority.
+
+## Third published-head finding: structural design review and agreed model
+
+Independent convergence review of published head `e1fa8dfb34c5550eeb88a352ee84967c6287a17d` (test blob `f9eeb62e01490c4c0a11aef7af6326df2fe8a875`, SHA-256 `377613b6f7087715495328939735729a26957026a245de91c91be90ae57eb20d`) found that successfully measured nonpainting text could abort the whole extraction. A standalone soft hyphen, zero-width space or formatting mark can yield zero-area Range geometry; the previous helper omitted it, while that head threw. Its 43 passing tests had conflated valid unpainted results with malformed evidence. This was a third published-head geometry P2, so narrow source patching stopped and an independent structural design review completed before the correction.
+
+The agreed Element-and-Range state model is:
+
+| State | Evidence | Behavior |
+| --- | --- | --- |
+| PAINTED | Successful APIs; finite ordered bounds/fragments; nonzero union and actual client fragments | Retain nonzero fragments and audit them; box items clip from parent, text retains its originating element clip |
+| VALID_UNPAINTED | Successful APIs; empty/all-zero actual client fragments with compatible degenerate union bounds | Omit the painted item, continue other content, and count only painted records |
+| INVALID_UNAVAILABLE | Missing/throwing APIs, malformed/nonfinite/inverted coordinates, or positive bounds paired with empty fragments (or the reverse) | Explicit error; no union fallback, character ignore list or tolerance waiver |
+
+The [CSSOM View Range geometry algorithm](https://drafts.csswg.org/cssom-view/#dom-range-getboundingclientrect) includes empty and zero-area results. This is a geometry-state distinction, not a special exemption for particular characters. The extractor caches card geometry before ownership projection; boxless cards cannot become painted boundaries, and boxless controls/badges cannot hide painted descendant text or suppress genuine sibling collisions. A selection containing only unpainted cards/items has EMPTY coverage. The existing manual single-rectangle snapshot contract remains supported; exact union equality is not imposed on manual inputs.
+
+The structural regression suite retains prior border, wrapped-fragment, real-collision, ancestor-clip and label tests. It adds SHY/ZWSP/formatting ranges alone and mixed with painted collisions, equivalent Element states, malformed/throwing APIs, contradictory positive/empty measurements, boxless wrapper descendants, manual-input continuity, and invariance under translation or addition of remote unpainted geometry. There are 53 deterministic tests and 288 translated/tolerance model cases. The expanded suite has seven failures against the published helper; the corrected model must pass all 53. Deterministic DOM doubles remain distinct from real-browser acceptance.
+
+Durable convergence lesson: absence of paint, absence of measurement and invalid measurement are different states. Preserve paint fragments and clip ownership without turning valid nonpainting content into a failure, or missing evidence into healthy geometry. The structural review, red/green proof, independent exact-head review and later operator gate remain separate evidence. No parent-goal completion or UI/runtime fix is claimed.
+
+## Structural clip applicability refinement before publication
+
+Internal review of the unpublished 53-test candidate found that a boxless wrapper could still invent a zero client clip. Paint presence, associated boxes and overflow applicability are separate facts. The refined structural contract was independently reviewed before implementation; no extra source publication or external-review request was made for that intermediate candidate.
+
+| Ancestor evidence | Overflow-clip projection |
+| --- | --- |
+| `display:contents`, `display:none`, or no associated box | No clip from that element; continue to later ancestors |
+| Ordinary non-replaced HTML `inline` / `inline flow` | No overflow clip; zero clientWidth/clientHeight is normal and is not used to infer clipping |
+| Qualified block, flow-root, inline-block, flex, inline-flex, grid, inline-grid and their supported two-keyword forms | Apply the declared client-box clip even when its width or height is zero |
+| Table/native-form/replaced/SVG/other unqualified layout with active non-visible overflow | Explicit unsupported overflow-clip error; do not invent a clip or silently call it healthy |
+| Unqualified layout with visible overflow | No clipping operation to project |
+
+The shared normalizer retains actual raw client-rectangle presence separately from positive-area paint fragments. Therefore a genuine zero-width block remains an associated clipping box, while a boxless wrapper does not. A later genuine clipping ancestor remains effective beyond an ineligible wrapper. Border-box items still start their chain at the parent and text still includes its own eligible content clip; there is no blanket skip for unpainted ancestors.
+
+This bounded qualification follows [CSS Overflow applicability](https://drafts.csswg.org/css-overflow-3/#overflow-properties), [CSSOM View client dimensions](https://drafts.csswg.org/cssom-view/#dom-element-clientwidth) and [CSS Display box generation](https://drafts.csswg.org/css-display/#box-generation). It does not implement all native, table, SVG, replaced-element or fragmented-layout clipping behavior. Unsupported active clipping remains outside the automatic proof contract and requires qualified visual/browser evidence or an explicit subsequent capability extension.
+
+Paired regressions cover contents versus real zero-width/height block clips, normal inline versus inline-block, all supported shorthand/two-keyword equivalences, contained and clipped block/flex/grid variants, explicit unqualified-active failures, visible-overflow neutrality, and genuine clipping beyond ineligible wrappers. The suite has 61 tests; four of the expanded tests fail against the frozen preceding candidate, and the refined candidate must pass all 61. The border-box regression uses a non-replaced anchor control within the qualified clipping domain; native active clipping is independently tested as unsupported. This preserves the earlier geometric invariant without silently claiming native clipping coverage.
+
+The next candidate remains subject to internal exact-byte verification, a new two-file source commit, full current-head CI, one fresh independent external review and a new operator approval. None of these later gates are implied by this design record or deterministic test result.
+
+## Exact structural convergence proof packet
+
+| Exact helper/model under test | Passed | Failed | Total |
+| --- | ---: | ---: | ---: |
+| Published `e1fa8dfb34c5550eeb88a352ee84967c6287a17d` helpers with the complete new regression suite | 49 | 12 | 61 |
+| Frozen intermediate structural model `b9f7bb86e2cc5e4c7903253a658d1e747f8dafe93a60797f2c7e6ad73840e9bf` with the clip-applicability regressions | 57 | 4 | 61 |
+| Refined candidate source SHA-256 `38d712a549eae8ae127addca510620ac9816f34f9b207398fe4f2b20e6285b43` | 61 | 0 | 61 |
+
+Focused command: `node --test tests/workspace-card-layout-audit.test.mjs`, Node v24.13.1; zero skipped tests. The published-head red run keeps the actual published helper prefix unchanged and substitutes only the expanded test/DOM-double section. The candidate also passes `node --check`. Parent independently reran all 61 tests against the same candidate source and verified Git blob `fd565624f0b2909c2ff54d5443c28fa76706fab5`. That internal replay is distinct from the pending focused internal review, subsequent hosted CI, external current-head code review and operator merge approval.
+
+The source remained frozen while its final internal check ran. Publication is limited to this document and the existing audit module on the same reserved branch. The follow-on UI candidate, Forge/recovery, source lease, canonical checkout and served runtime remain outside this repair.
