@@ -233,13 +233,18 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const goalGateTrust = await loadCommissionedGoalGateTrust(input);
-  const feed = await readSharedWorkspaceDashboardFeed({
-    ...input,
-    goalGateTrust,
-    root: validation.root,
-    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
-  });
-  const live = await resolveLiveProjection(input, nowMs);
+  // These independent read models share the same observation clock. A slow
+  // optional GitHub overlay must not add its entire latency after the history
+  // scan; its existing unavailable/error semantics remain unchanged.
+  const [feed, live] = await Promise.all([
+    readSharedWorkspaceDashboardFeed({
+      ...input,
+      goalGateTrust,
+      root: validation.root,
+      recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
+    }),
+    resolveLiveProjection(input, nowMs),
+  ]);
   let conversationUplift;
   try {
     const reader = input.readConversationUplift || readSharedConversationUpliftV1;

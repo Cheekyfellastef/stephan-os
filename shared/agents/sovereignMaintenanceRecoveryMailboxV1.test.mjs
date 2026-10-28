@@ -195,7 +195,10 @@ export function collectCanonicalIgnitionSourceTruth() { return result; }\n`);
   writeFileSync(join(root, 'shared', 'agents', 'goalDiscoveryWorkspaceV1.mjs'),
     'export function resolveGoalDiscoveryWorkspaceV1() { throw new Error("unexpected workspace operation"); }\n');
   writeFileSync(join(root, 'scripts', 'sovereign-maintenance-os-anchor-v1.mjs'),
-    'export function createMaintenanceOsAnchorV1() { throw new Error("unexpected custody operation"); }\n');
+    'export function createMaintenanceOsAnchorV1() { throw new Error("unexpected custody operation"); }\n'
+    + 'export function readMaintenanceLegacyAuditObservationV1() { throw new Error("unexpected legacy audit operation"); }\n');
+  writeFileSync(join(root, 'scripts', 'sovereign-maintenance-owner-observation-v2.mjs'),
+    'export function readMaintenanceOwnerObservationV2() { throw new Error("unexpected owner observation"); }\n');
   return { ...(await import(pathToFileURL(collectorPath).href)),
     ...(await import(pathToFileURL(readerPath).href)) };
 }
