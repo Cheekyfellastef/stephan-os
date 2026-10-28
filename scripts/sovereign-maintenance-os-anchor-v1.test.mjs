@@ -199,7 +199,8 @@ test('elevated source-probe boundary excludes hostile Node bootstrap and caller 
   const command = ". '" + policyFile.replaceAll("'", "''") + "'; $info=New-MaintenanceSourceProbeStartInfoV2; "
     + "if($info.FileName -cne 'C:\\Program Files\\nodejs\\node.exe' -or $info.UseShellExecute -or "
     + "$info.Arguments -cne '\"C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-maintenance-journal-source-proof-v2.mjs\"') { throw 'FIXED_PROBE_CHANGED' }; "
-    + "$info.Arguments='-e \"console.log(JSON.stringify(process.env))\"'; "
+    + "if($info.WorkingDirectory -cne 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os') { throw 'FIXED_DIRECTORY_CHANGED' }; "
+    + "$info.WorkingDirectory=[IO.Path]::GetTempPath(); $info.Arguments='-e \"console.log(JSON.stringify(process.env))\"'; "
     + "$p=[Diagnostics.Process]::new(); try { $p.StartInfo=$info; [void]$p.Start(); "
     + "if(-not $p.WaitForExit(10000)) { $p.Kill(); throw 'PROBE_TIMEOUT' }; "
     + "[Console]::Write($p.StandardOutput.ReadToEnd()); if($p.ExitCode -ne 0) { throw 'PROBE_FAILED' } } finally { $p.Dispose() }";
