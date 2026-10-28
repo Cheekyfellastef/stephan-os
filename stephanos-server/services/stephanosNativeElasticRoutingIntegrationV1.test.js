@@ -16,7 +16,7 @@ function mission(overrides = {}) {
     title: 'Prove native elastic construction',
     repository: 'Cheekyfellastef/stephan-os',
     currentPhase: 'AGENT_IMPLEMENTATION',
-    allowedFiles: ['shared/agents/native-live-proof.mjs'],
+    allowedFiles: ['shared/agents/native-live-proof.mjs', 'shared/agents/native-live-proof.mjs/**'],
     ...overrides,
   };
 }

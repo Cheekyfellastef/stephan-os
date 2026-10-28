@@ -13,16 +13,20 @@ export async function runMaintenanceCustodyRecoveryV1({ mode, expectedCycle, exp
   expectedDigest, expectedMain, operatorApproval, workspaceRoot = resolveGoalDiscoveryWorkspaceV1(),
   bootReader = readMaintenanceBootWitnessV1, fetchFn = fetch,
   tokenReader = loadSovereignCommanderToken, sourceReader = readMaintenanceRecoverySourceV1, anchor } = {}) {
-  if (!['status', 'prepare', 'recover'].includes(mode)) return { ok: false, blocker: 'CUSTODY_RECOVERY_MODE_INVALID' };
-  if (mode === 'recover') {
+  if (!['status', 'prepare', 'recover', 'prepare-after-audit-loss'].includes(mode)) return { ok: false, blocker: 'CUSTODY_RECOVERY_MODE_INVALID' };
+  if (mode === 'recover' || mode === 'prepare-after-audit-loss') {
     if (operatorApproval !== 'operator-approved' || !/^[a-f0-9]{64}$/.test(expectedDigest ?? '')
         || !/^[a-f0-9]{40}$/.test(expectedMain ?? ''))
       return { ok: false, blocker: 'MAINTENANCE_CUSTODY_EXACT_APPROVAL_REQUIRED' };
+    if (mode === 'prepare-after-audit-loss' && (typeof expectedCycle !== 'string' || !expectedCycle))
+      return { ok: false, blocker: 'MAINTENANCE_AUDIT_LOSS_EXACT_APPROVAL_REQUIRED' };
     const token = await tokenReader();
-    const response = await fetchFn('http://127.0.0.1:18791/maintenance-custody/recover-after-boot', {
+    const endpoint = mode === 'recover' ? 'recover-after-boot' : 'prepare-after-audit-loss';
+    const response = await fetchFn('http://127.0.0.1:18791/maintenance-custody/' + endpoint, {
       method: 'POST', signal: AbortSignal.timeout(15_000),
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
-      body: JSON.stringify({ expectedDigest, expectedMain, operatorApproval }),
+      body: JSON.stringify({ expectedDigest, expectedMain, operatorApproval,
+        ...(mode === 'prepare-after-audit-loss' ? { expectedReservationId: expectedCycle } : {}) }),
     });
     return response.json();
   }

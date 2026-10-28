@@ -1227,7 +1227,9 @@ while ($true) {
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
     # Keep an independently observed idle-state heartbeat fresh for bounded
     # GPU/CPU model admission. Without this, Watch refreshes its JSON only on
-    # transitions and a safe idle state ages past the reviewer's 30s window.
+    # transitions. Core expires evidence at 15s (the reviewer at 30s), so
+    # refresh at 5s to leave room for observation and reconciliation latency.
+    # Do not extend consumer freshness limits or reuse an unobserved idle state.
     # The watcher still scans game/headset signals on every tick BEFORE this.
     $idleHeartbeatDue = $false
     if (-not $effective.active) {
@@ -1237,7 +1239,7 @@ while ($true) {
                 [System.Globalization.CultureInfo]::InvariantCulture,
                 [System.Globalization.DateTimeStyles]::RoundtripKind
             ).ToUniversalTime()
-            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 15
+            $idleHeartbeatDue = ($now.ToUniversalTime() - $observedUtc).TotalSeconds -ge 5
         } catch {
             $idleHeartbeatDue = $true
         }

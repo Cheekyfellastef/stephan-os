@@ -1,3 +1,4 @@
+import { resolveStephanosNativeFocusedSourceFile } from '../../shared/agents/stephanosNativeFocusedTaskV1.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
@@ -295,9 +296,7 @@ export function resolveElasticExternalCapacityCandidates(
   const probe = routeCapacity({ ...baseInput, codexStatus: null, nativeRoutingCandidate: null });
   const taskClass = text(probe?.task?.taskClass).toUpperCase();
   const singleFileNativeMission = taskClass === STEPHANOS_NATIVE_SOURCE_TASK_CLASS
-    && Array.isArray(mission?.allowedFiles)
-    && mission.allowedFiles.length === 1
-    && text(mission.allowedFiles[0]);
+    && Boolean(resolveStephanosNativeFocusedSourceFile(mission?.allowedFiles));
   const nativeRoutingCandidate = singleFileNativeMission
     ? capacityRouting.nativeRoutingCandidatesByTaskClass?.[STEPHANOS_NATIVE_SOURCE_TASK_CLASS] ?? null
     : null;

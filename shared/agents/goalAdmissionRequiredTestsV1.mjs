@@ -9,7 +9,8 @@ export function projectGoalAdmissionRequiredTestsV1(value) {
   for (const command of value) {
     if (typeof command !== 'string' || command.length > 256 || command !== command.trim()) return invalid();
     if (command !== 'npm run stephanos:verify'
-      && command !== 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs') {
+      && command !== 'node --test scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs'
+      && command !== 'node --test scripts/acceptance/generated-functional-scope.acceptance.mjs') {
       const match = /^node --test ((?:scripts|shared|stephanos-server|packages|tests?)\/[A-Za-z0-9._/-]+\.test\.(?:mjs|cjs|js))$/.exec(command);
       if (!match || match[1].split('/').some(segment => !segment || segment === '.' || segment === '..'
           || ['.git', 'node_modules', 'dist', 'data', 'runtime-data', 'root-data'].includes(segment))) return invalid();
@@ -18,6 +19,18 @@ export function projectGoalAdmissionRequiredTestsV1(value) {
     commands.push(command);
   }
   return Object.freeze({ valid: true, supplied: true, commands: Object.freeze(commands) });
+}
+
+// Read-only context for already admitted tests. Never a mutation scope or an
+// import crawler: the legacy acceptance wrapper needs its declared oracle.
+export function projectGoalTestContextPathsV1(requiredTests) {
+  const plan = projectGoalAdmissionRequiredTestsV1(requiredTests);
+  if (!plan.valid || !plan.supplied) return Object.freeze([]);
+  const paths = plan.commands.filter(command => command.startsWith('node --test '))
+    .map(command => command.slice('node --test '.length));
+  if (paths.includes('scripts/acceptance/legacy-goal-declared-tests.acceptance.mjs'))
+    paths.unshift('shared/agents/legacyGoalTestPlanAcceptanceV1.mjs');
+  return Object.freeze([...new Set(paths)]);
 }
 
 export function projectOwnerGoalRequiredTestsV1(record, issueNumber, repository) {

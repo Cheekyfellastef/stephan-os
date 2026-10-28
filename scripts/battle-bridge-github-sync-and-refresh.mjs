@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +13,12 @@ import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentW
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
 export const MAX_SYNC_REFRESH_CYCLES = 3;
+// Execution task remains five minutes. Leave 120 seconds for fixed host cleanup,
+// in-process checks and the final durable status write; never let child waits
+// consume the whole Windows Scheduled Task window.
+export const SYNC_AND_REFRESH_CHILD_BUDGET_MS = 180_000;
+export const SYNC_AND_REFRESH_MIN_REMAINING_MS = 5_000;
+export const SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS = Object.freeze({ sync: 60_000, refresh: 90_000, mailbox: 30_000 });
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 
 function text(value) {
@@ -36,6 +43,11 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
     syncAndRefreshStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'),
   });
+}
+
+function boundedChildTimeoutMs(requested, ceiling) {
+  return Number.isSafeInteger(requested) && requested > 0
+    ? Math.min(requested, ceiling) : 0;
 }
 
 function fixedNodeRun(scriptPath, args, {
@@ -153,14 +165,20 @@ function parseMarkedJson(stdout, marker) {
 
 export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {}) {
   return Object.freeze({
-    runSync(paths) {
-      const execution = fixedNodeRun(paths.syncExecutor, [], { cwd: paths.repoRoot, spawnSyncFn, timeout: 300_000 });
+    runSync(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.sync);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
+      const execution = fixedNodeRun(paths.syncExecutor, [], { cwd: paths.repoRoot, spawnSyncFn, timeout });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'SYNC_EXECUTOR_TIMEOUT', execution };
       const result = parseJsonObject(execution.stdout);
       if (!result) return { ok: false, blocker: 'SYNC_EXECUTOR_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
     },
-    runMailboxPulse(paths) {
-      const execution = fixedNodeRun(paths.mailboxRunner, [], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+    runMailboxPulse(paths, { timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS } = {}) {
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.mailbox);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
+      const execution = fixedNodeRun(paths.mailboxRunner, [], { cwd: paths.repoRoot, spawnSyncFn, timeout });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'MAILBOX_PULSE_TIMEOUT', execution };
       const result = parseJsonObject(execution.stdout);
       return Object.freeze({
         ok: execution.ok && result?.ok === true,
@@ -169,16 +187,19 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
         execution,
       });
     },
-    runRefresh({ beforeHead, afterHead, paths }) {
+    runRefresh({ beforeHead, afterHead, paths, timeoutMs = SYNC_AND_REFRESH_CHILD_BUDGET_MS }) {
       if (!safeHead(beforeHead) || !safeHead(afterHead) || beforeHead === afterHead) {
         return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID' };
       }
+      const timeout = boundedChildTimeoutMs(timeoutMs, SYNC_AND_REFRESH_CHILD_TIMEOUTS_MS.refresh);
+      if (!timeout) return { ok: false, blocker: 'SYNC_AND_REFRESH_CHILD_BUDGET_MISSING' };
       const execution = fixedNodeRun(paths.refreshCoordinator, ['--before', beforeHead, '--after', afterHead], {
         cwd: paths.repoRoot,
         spawnSyncFn,
-        timeout: 900_000,
+        timeout,
         env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
+      if (execution.errorCode === 'ETIMEDOUT') return { ok: false, blocker: 'POST_SYNC_REFRESH_TIMEOUT', execution };
       const result = parseMarkedJson(execution.stdout, 'POST_SYNC_REFRESH_RESULT=');
       if (!result) return { ok: false, blocker: 'POST_SYNC_REFRESH_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
@@ -232,7 +253,7 @@ async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
   return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
 }
 
-function pulseConvergedMailbox({ paths, adapter, platform }) {
+function pulseConvergedMailbox({ paths, adapter, platform, timeoutMs }) {
   if (platform !== 'win32') {
     return Object.freeze({
       ok: true,
@@ -247,7 +268,7 @@ function pulseConvergedMailbox({ paths, adapter, platform }) {
       pulseAttempted: false,
     });
   }
-  const pulse = adapter.runMailboxPulse(paths);
+  const pulse = adapter.runMailboxPulse(paths, { timeoutMs });
   if (pulse?.ok === true) {
     return Object.freeze({
       ok: true,
@@ -315,6 +336,7 @@ export async function runBattleBridgeSyncAndRefresh({
   goalDiscoveryHeartbeat = null,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
+  nowMs = () => performance.now(),
 } = {}) {
   if (path.resolve(paths.repoRoot) !== path.resolve(expectedPaths.repoRoot)
     || path.resolve(paths.workspaceRoot) !== path.resolve(expectedPaths.workspaceRoot)) {
@@ -322,6 +344,25 @@ export async function runBattleBridgeSyncAndRefresh({
   }
 
   const refreshes = [];
+  const start = nowMs();
+  if (!Number.isFinite(start)) {
+    return Object.freeze({ ok: false, blocker: 'SYNC_AND_REFRESH_CLOCK_INVALID', finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
+  }
+  const deadline = start + SYNC_AND_REFRESH_CHILD_BUDGET_MS;
+  const remaining = () => {
+    const observed = nowMs();
+    return Number.isFinite(observed)
+      ? Math.max(0, Math.floor(deadline - observed)) : 0;
+  };
+  const budgetHeld = (phase, sourceHead = '') => Object.freeze({
+    ok: false,
+    blocker: 'SYNC_AND_REFRESH_PARENT_BUDGET_EXHAUSTED',
+    budgetPhase: phase,
+    sourceHead: safeHead(sourceHead),
+    refreshes: Object.freeze([...refreshes]),
+    finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+  });
+  const safeRemaining = () => remaining() - SYNC_AND_REFRESH_MIN_REMAINING_MS;
   const pending = await pendingReader(paths);
   const pendingInvalid = pending?.ok === false ? pending : null;
   let pendingDebt = pending?.ok === true ? pending : null;
@@ -329,11 +370,13 @@ export async function runBattleBridgeSyncAndRefresh({
   let refreshDebtCoalesced = false;
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
-    const sync = adapter.runSync(paths);
+    if (safeRemaining() <= 0) return budgetHeld('SYNC');
+    const sync = adapter.runSync(paths, { timeoutMs: safeRemaining() });
     if (!sync.ok) {
       return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
 
+    if (safeRemaining() <= 0) return budgetHeld('POST_SYNC', syncHead(sync.result));
     const converged = syncIsConverged(sync.result);
     const currentHeads = refreshHeadsFromSyncResult(sync.result);
     const currentSourceHead = syncHead(sync.result);
@@ -394,7 +437,8 @@ export async function runBattleBridgeSyncAndRefresh({
     }
 
     if (refreshHeads) {
-      const refresh = adapter.runRefresh({ ...refreshHeads, paths });
+      if (safeRemaining() <= 0) return budgetHeld('REFRESH', currentSourceHead);
+      const refresh = adapter.runRefresh({ ...refreshHeads, paths, timeoutMs: safeRemaining() });
       refreshes.push(Object.freeze({
         ...refreshHeads,
         pendingAfterHead,
@@ -414,6 +458,7 @@ export async function runBattleBridgeSyncAndRefresh({
           finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
         });
       }
+      if (safeRemaining() <= 0) return budgetHeld('POST_REFRESH', currentSourceHead);
       pendingDebt = null;
       continue;
     }
@@ -427,10 +472,13 @@ export async function runBattleBridgeSyncAndRefresh({
       // Source-building lanes are independently bounded and must get one work-conserving
       // tick before auxiliary control-plane repair. A degraded recovery subsystem must not
       // starve Forge/GitHub lifeboat capacity or canonical Mission Worker handoffs.
+      if (safeRemaining() <= 0) return budgetHeld('GOAL_DISCOVERY', sourceHead);
       const goalDiscovery = typeof goalDiscoveryHeartbeat === 'function'
         ? await goalDiscoveryHeartbeat()
         : await runFreshGoalDiscoveryHeartbeat(sourceHead);
-      const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform });
+      if (safeRemaining() <= 0) return budgetHeld('POST_GOAL_DISCOVERY', sourceHead);
+      const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform, timeoutMs: safeRemaining() });
+      if (safeRemaining() <= 0) return budgetHeld('POST_MAILBOX_PULSE', sourceHead);
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
@@ -438,6 +486,7 @@ export async function runBattleBridgeSyncAndRefresh({
         platform,
       });
 
+      if (safeRemaining() <= 0) return budgetHeld('POST_CONTROL_PLANE', sourceHead);
       if (goalDiscovery?.ok !== true) {
         return Object.freeze({
           ok: false,
