@@ -17,7 +17,9 @@ This child task adds a reusable read-only geometry oracle and a source-derived s
 
 An empty selection has coverage `EMPTY`, never a passing workspace. A measured selection is `MEASURED`, never a runtime-health or whole-workspace verdict. Coordinates are axis-aligned rectangles; rotated/skewed geometry needs visual review.
 
-Text uses Range line fragments, avoiding false collisions in the empty corner of a wrapped title's union box. Distinct text labels still collide, even if they share a control. A control/badge box may contain its own label. The nearest selected card owns its content; a nested card is also checked as an outer-boundary item of its immediate parent. Use an explicit card selector that includes both outer and inner primitives.
+All card/item geometry includes explicit nonempty `rects` containing nonzero paint fragments. Manually constructed snapshots must also provide these fragments; a single box is expressed as `[rect]`. Missing, null, empty or entirely degenerate geometry fails closed. Union `rect` values provide broad bounds; they are never substituted for missing painted fragments.
+
+One shared extractor geometry normalizer reads actual `Element.getClientRects()` and `Range.getClientRects()` for controls, badges, nested cards, card boundaries and text. One border-box item builder applies ancestor-only clipping to all box kinds; text retains content self-clipping. Wrapped controls and badges therefore leave the empty corner beside a short final line unpainted, just like wrapped text. Distinct text labels still collide, even if they share a control. A control/badge box may contain its own label. The nearest selected card owns its content; a nested card is also checked as an outer-boundary item of its immediate parent. Use an explicit card selector that includes both outer and inner primitives.
 
 Control, badge and nested-card rectangles measure border boxes. Their clip chains start at the parent because overflow clips contents, not the element's own border. Text fragments measure contents and retain their originating element's client clip. This distinction preserves real ancestor clipping without treating a 1px or 2px border as lost content.
 
@@ -122,7 +124,7 @@ Inspect every finding, every intentional affordance and all zero-match selection
 ## Verification and durable lesson
 
 Focused command: `node --test tests/workspace-card-layout-audit.test.mjs`.
-The 26 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, serialized extractor usage/hidden ancestors, bordered control/badge/nested-card boxes at 0px and 1px tolerance, true ancestor clipping, and originating-element text clipping.
+The 43 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, serialized extractor usage/hidden ancestors, bordered control/badge/nested-card boxes at 0px and 1px tolerance, true ancestor clipping, originating-element text clipping, cross-kind wrapped paint fragments, real collisions in each line, missing/degenerate geometry rejection, and 240 translated/tolerance model cases.
 
 Lesson/invariant: clipping CSS is evidence to inspect, not proof of intentional truncation; retain affordance debt and nearest-card ownership so nested or scrollable layouts cannot hide genuine defects. This supports the parent goal's reusable R5 capability without claiming visual acceptance.
 
@@ -131,3 +133,11 @@ Low-risk scope: one test module and this inventory document. Regression risks: c
 ## First geometry review repair
 
 Independent review identified false self-clipping of bordered controls, badges and nested cards. The original helper at `b05bff4cec700144bf1ab47fb46ebe2dc7ffc514` fails nine new border/tolerance regressions; all three real-ancestor clipping cases and the originating-text clip case remain required. The repair changes clip-chain origin by measurement kind, preserving the default 1px tolerance and all existing tests. Review finding: https://github.com/Cheekyfellastef/stephan-os/pull/3307#discussion_r4406950263 . Source repair is not independent review approval, merge approval or UI acceptance.
+
+## Second geometry review repair and convergence rule
+
+Review https://github.com/Cheekyfellastef/stephan-os/pull/3307#discussion_r4407011433 identified that wrapped inline controls were measured by their union box while text already used line fragments. The systemic correction makes actual nonzero client fragments mandatory for every measurement kind, through one extractor normalizer and one shared border-box item builder. There is no link-specific exemption and no union fallback for unavailable geometry. The first repair's parent-only border-box clipping and originating-text clipping remain binding.
+
+The deterministic DOM double implements the actual element `getClientRects()` API. The cross-kind model covers controls, badges, nested cards and text, unrelated control/badge/text siblings in the empty short-line corner, real intersections in either painted line, clipping of one fragment, own-label versus sibling-label behavior, and 240 coordinate-translation/tolerance variants. All previous 26 tests remain. On the preceding published helper at `e848c292af8f5ac7b5f9a3af15c4e863170cadf5`, the expanded suite has 11 failures; the normalized model must pass all 43 tests.
+
+Durable invariant: paint fragments and clip ownership travel with geometry; a union box is not proof of paint. This is the second current-head repair in the same geometry class. If a third current-head P1/P2 in that class is found, stop narrow source patches and perform an explicit structural design review before editing, as required by AGENTS.md. Neither this lesson nor green tests grant independent review, merge, runtime or UI acceptance authority.

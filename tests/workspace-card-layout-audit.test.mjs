@@ -11,6 +11,15 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
       || r.right < r.left || r.bottom < r.top) throw new TypeError('invalid rectangle');
     return r;
   };
+  const area = r => r.right > r.left && r.bottom > r.top;
+  const fragments = shape => {
+    if (!area(rect(shape.rect))) throw new TypeError('non-degenerate union bounds required');
+    if (!Array.isArray(shape.rects) || !shape.rects.length)
+      throw new TypeError('explicit paint fragments required');
+    const pieces = shape.rects.map(rect).filter(area);
+    if (!pieces.length) throw new TypeError('nonzero paint fragments required');
+    return pieces;
+  };
   if (!snapshot || !Array.isArray(snapshot.cards)) throw new TypeError('cards required');
   const findings = [], affordances = [];
   const ids = new Set();
@@ -25,7 +34,7 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
     if (typeof card.id !== 'string' || !card.id || ids.has(card.id))
       throw new TypeError('unique card ids required');
     ids.add(card.id);
-    rect(card.rect);
+    fragments(card);
     if (!Array.isArray(card.items)) throw new TypeError('items required');
     const itemIds = new Set(), visible = [];
     for (const item of card.items) {
@@ -34,10 +43,7 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
       itemIds.add(item.id);
       if (!['text', 'badge', 'control', 'card'].includes(item.kind))
         throw new TypeError('invalid item kind');
-      rect(item.rect);
-      if (item.rect.right === item.rect.left || item.rect.bottom === item.rect.top) continue;
-      const pieces = item.rects || [item.rect];
-      if (!Array.isArray(pieces) || !pieces.length) throw new TypeError('rects required');
+      const pieces = fragments(item);
       const painted = [];
       for (const piece of pieces) {
         let current = { ...rect(piece) };
@@ -106,8 +112,20 @@ export function extractCardLayout({
   const doc = document, root = doc.querySelector(rootSelector);
   if (!root) throw new TypeError('audit root missing');
   const view = doc.defaultView;
-  const box = r => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+  const box = r => {
+    if (!r || !['left', 'top', 'right', 'bottom'].every(key => Number.isFinite(r[key]))
+      || r.right < r.left || r.bottom < r.top) throw new TypeError('invalid rectangle');
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  };
   const area = r => r.right > r.left && r.bottom > r.top;
+  // One geometry model for Elements and Ranges: actual nonzero client fragments
+  // describe paint. The union rectangle is broad bounds, never a paint fallback.
+  const paintGeometry = target => {
+    const rect = box(target.getBoundingClientRect());
+    const rects = [...target.getClientRects()].map(box).filter(area);
+    if (!area(rect) || !rects.length) throw new TypeError('non-degenerate paint geometry required');
+    return { rect, rects };
+  };
   const style = el => view.getComputedStyle(el);
   const visible = el => {
     for (let p = el; p; p = p.parentElement) {
@@ -160,14 +178,17 @@ export function extractCardLayout({
     tag: el.tagName.toLowerCase(), id: el.id || null,
     classes: typeof el.className === 'string' ? el.className : '',
   });
+  const borderBoxItem = (el, kind) => ({
+    id: id(el), kind, ...paintGeometry(el),
+    clips: clips(el, { includeSelf: false }), element: describe(el),
+  });
   const results = cards.map(card => {
     const items = [], nodes = [card, ...card.querySelectorAll('*')];
     for (const el of nodes) {
       if (el !== card && cardSet.has(el)) {
         // Only the immediate nested card is a parent item. Its content is audited separately.
         if (owner(el.parentElement) === card && visible(el))
-          items.push({ id: id(el), kind: 'card', rect: box(el.getBoundingClientRect()),
-            clips: clips(el, { includeSelf: false }), element: describe(el) });
+          items.push(borderBoxItem(el, 'card'));
         continue;
       }
       if (owner(el) !== card || !visible(el)) continue;
@@ -175,16 +196,14 @@ export function extractCardLayout({
         // Nested badge/control wrappers would double-count their descendant boxes.
         const ancestor = el.parentElement?.closest(controlSelector + ',' + badgeSelector);
         if (!ancestor || ancestor === card || owner(ancestor) !== card)
-          items.push({ id: id(el), kind: el.matches(controlSelector) ? 'control' : 'badge',
-            rect: box(el.getBoundingClientRect()), clips: clips(el, { includeSelf: false }), element: describe(el) });
+          items.push(borderBoxItem(el, el.matches(controlSelector) ? 'control' : 'badge'));
       }
       if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
       for (const node of el.childNodes) {
         if (node.nodeType !== 3 || !norm(node.textContent)) continue;
         const range = doc.createRange();
         range.selectNodeContents(node);
-        const rects = [...range.getClientRects()].filter(area).map(box);
-        if (!rects.length) continue;
+        const geometry = paintGeometry(range);
         let labelOwner = el.closest(controlSelector + ',' + badgeSelector);
         // Use the outermost item box within this card as the text-label owner.
         while (labelOwner && labelOwner !== card) {
@@ -194,11 +213,11 @@ export function extractCardLayout({
         }
         items.push({ id: 'text-' + nextId++, kind: 'text',
           ownerId: labelOwner && labelOwner !== card ? id(labelOwner) : null,
-          rect: box(range.getBoundingClientRect()), rects, clips: clips(el),
+          ...geometry, clips: clips(el),
           text: norm(node.textContent), element: describe(el) });
       }
     }
-    return { id: ids.get(card), rect: box(card.getBoundingClientRect()), element: describe(card), items };
+    return { id: ids.get(card), ...paintGeometry(card), element: describe(card), items };
   });
   return { cards: results, selection: { cardSelector, rootSelector },
     viewport: { width: view.innerWidth, height: view.innerHeight, devicePixelRatio: view.devicePixelRatio },
@@ -211,8 +230,8 @@ if (typeof process !== 'undefined' && process.versions?.node) {
   const { default: assert } = await import('node:assert/strict');
   const { runInNewContext } = await import('node:vm');
   const r = (left = 0, top = 0, right = 100, bottom = 80) => ({ left, top, right, bottom });
-  const item = (id, kind = 'text', rect = r(5, 5, 40, 20), extra = {}) => ({ id, kind, rect, ...extra });
-  const snapshot = (...items) => ({ cards: [{ id: 'card', rect: r(), items }] });
+  const item = (id, kind = 'text', rect = r(5, 5, 40, 20), extra = {}) => ({ id, kind, rect, rects: [rect], ...extra });
+  const snapshot = (...items) => { const rect = r(); return { cards: [{ id: 'card', rect, rects: [rect], items }] }; };
   const codes = data => auditCardLayout(data).findings.map(f => f.code);
   const clip = (extra = {}) => ({ id: 'clip', rect: r(0, 0, 70, 70), x: 'hidden', y: 'visible', ...extra });
 
@@ -288,12 +307,12 @@ if (typeof process !== 'undefined' && process.versions?.node) {
   });
 
   test('nested cards own content independently while their outer boundary remains checked', () => {
-    const child = { id: 'child', rect: r(10, 30, 80, 70), items: [item('title', 'text', r(15, 35, 50, 50))] };
-    const parent = { id: 'parent', rect: r(), items: [item('child-box', 'card', child.rect)] };
+    const child = { id: 'child', rect: r(10, 30, 80, 70), rects: [r(10, 30, 80, 70)], items: [item('title', 'text', r(15, 35, 50, 50))] };
+    const parent = { id: 'parent', rect: r(), rects: [r()], items: [item('child-box', 'card', child.rect)] };
     assert.deepEqual(codes({ cards: [parent, child] }), []);
-    child.items[0].rect = r(15, 35, 90, 50);
+    Object.assign(child.items[0].rect, r(15, 35, 90, 50));
     assert.equal(auditCardLayout({ cards: [parent, child] }).findings[0].cardId, 'child');
-    parent.items[0].rect = r(10, 30, 105, 70);
+    Object.assign(parent.items[0].rect, r(10, 30, 105, 70));
     assert.ok(codes({ cards: [parent, child] }).includes('ESCAPE_X'));
   });
 
@@ -303,7 +322,8 @@ if (typeof process !== 'undefined' && process.versions?.node) {
       const before = JSON.stringify(data);
       assert.equal(codes(data).includes('ESCAPE_X'), shift < -1);
       const translated = JSON.parse(before);
-      for (const rect of [translated.cards[0].rect, translated.cards[0].items[0].rect]) {
+      for (const rect of new Set([translated.cards[0].rect, ...translated.cards[0].rects,
+        translated.cards[0].items[0].rect, ...translated.cards[0].items[0].rects])) {
         rect.left += 321; rect.right += 321; rect.top -= 77; rect.bottom -= 77;
       }
       assert.deepEqual(codes(translated), codes(data));
@@ -323,12 +343,14 @@ if (typeof process !== 'undefined' && process.versions?.node) {
         clientHeight: bounds.bottom - bounds.top, offsetWidth: bounds.right - bounds.left,
         offsetHeight: bounds.bottom - bounds.top,
         getBoundingClientRect: () => ({ ...bounds, width: bounds.right - bounds.left, height: bounds.bottom - bounds.top }),
-        getAttribute: name => name === 'title' ? title : null,
-        matches(selector) { return selector.split(',').some(s => s === 'body' ? tag === 'BODY'
-          : s === '.card' ? classes.includes('card')
-          : s === 'button' ? tag === 'BUTTON'
-          : s.includes('badge') ? classes.includes('badge') : false); },
-        closest(selector) { return this.matches(selector) ? this : parent?.closest(selector) || null; },
+        getClientRects() { return this.fragments || [this.getBoundingClientRect()]; },
+        getAttribute(name) { return name === 'title' ? title : name === 'href' && this.tagName === 'A' ? '#fixture' : null; },
+        matches(selector) { return selector.split(',').some(s => s === 'body' ? this.tagName === 'BODY'
+          : s === '.card' ? this.className.split(/\s+/).includes('card')
+          : s === 'button' ? this.tagName === 'BUTTON'
+          : s === 'a[href]' ? this.tagName === 'A' && this.getAttribute('href') !== null
+          : s.includes('badge') ? this.className.includes('badge') : false); },
+        closest(selector) { return this.matches(selector) ? this : this.parentElement?.closest(selector) || null; },
         querySelectorAll(selector) { return elements.filter(x => x !== this && x.closestAncestor(this) && (selector === '*' || x.matches(selector))); },
         closestAncestor(ancestor) { for (let p = this.parentElement; p; p = p.parentElement) if (p === ancestor) return true; return false; },
       };
@@ -350,10 +372,10 @@ if (typeof process !== 'undefined' && process.versions?.node) {
       createRange() {
         let selected;
         return { selectNodeContents: n => { selected = n; },
-          getClientRects: () => [selected === node ? r(5, 5, 95, 20) : r(15, 38, 50, 50)],
-          getBoundingClientRect: () => selected === node ? r(5, 5, 95, 20) : r(15, 38, 50, 50) };
+          getClientRects: () => selected.rects || [selected === node ? r(5, 5, 95, 20) : r(15, 38, 50, 50)],
+          getBoundingClientRect: () => selected.rect || (selected === node ? r(5, 5, 95, 20) : r(15, 38, 50, 50)) };
       } };
-    return { doc, root, card, title, nested, button };
+    return { doc, root, card, title, nested, button, createElement: el };
   }
 
   test('both helpers survive serialization; extraction preserves nested ownership, text and full-value evidence', () => {
@@ -456,6 +478,148 @@ if (typeof process !== 'undefined' && process.versions?.node) {
       'text must retain the originating element content clip, including its border inset');
     assert.ok(auditCardLayout(data).findings.some(finding =>
       finding.itemId === text.id && finding.code === 'CLIPPED_X'));
+  });
+
+
+  // One cross-kind geometry model: the union has an empty lower-right corner.
+  // Real client rectangles, rather than node-specific exceptions, decide paint.
+  function wrappedFixture(kind, siblingKind = 'badge', siblingRect = r(55, 35, 80, 50)) {
+    const fixture = fakeDocument();
+    fixture.title.css.display = 'none';
+    fixture.nested.css.display = 'none';
+    const union = r(10, 10, 90, 50);
+    const fragments = [r(10, 10, 10, 10), r(10, 10, 90, 25), r(10, 35, 40, 50)];
+    const target = fixture.createElement(kind === 'control' ? 'A' : 'SPAN',
+      kind === 'card' ? 'card' : kind === 'badge' ? 'badge' : '', union, fixture.card,
+      { display: 'inline' });
+    target.id = 'wrapped-target';
+    target.fragments = fragments;
+    if (kind === 'text') target.childNodes.push({
+      nodeType: 3, textContent: 'Wrapped title', rect: union, rects: fragments,
+    });
+    const sibling = fixture.createElement(siblingKind === 'control' ? 'A' : 'SPAN',
+      siblingKind === 'badge' ? 'badge' : '', siblingRect, fixture.card);
+    sibling.id = 'corner-sibling';
+    if (siblingKind === 'text') sibling.childNodes.push({
+      nodeType: 3, textContent: 'Sibling', rect: siblingRect, rects: [siblingRect],
+    });
+    const extract = () => runInNewContext(
+      '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+      { document: fixture.doc },
+    );
+    const findTarget = data => data.cards.flatMap(card => card.items)
+      .find(item => item.element.id === 'wrapped-target' && item.kind === kind);
+    return { fixture, target, sibling, extract, findTarget };
+  }
+
+  for (const kind of ['control', 'badge', 'card', 'text']) {
+    test(kind + ' fragments leave the short-line corner empty for unrelated siblings', () => {
+      for (const siblingKind of ['control', 'badge', 'text']) {
+        const model = wrappedFixture(kind, siblingKind);
+        const data = model.extract(), target = model.findTarget(data);
+        assert.ok(target, 'every measurement kind must use the same fragment model');
+        assert.equal(target.rects?.length, 2, 'retain actual nonzero client fragments');
+        assert.deepEqual(codes(data), [], 'the union empty corner is not painted');
+      }
+    });
+
+    test(kind + ' fragments still collide with a sibling in either painted line', () => {
+      for (const siblingKind of ['control', 'badge', 'text']) {
+        for (const siblingRect of [r(55, 12, 80, 23), r(25, 37, 38, 48)]) {
+          const model = wrappedFixture(kind, siblingKind, siblingRect);
+          const data = model.extract(), target = model.findTarget(data);
+          assert.ok(auditCardLayout(data).findings.some(finding =>
+            finding.code === 'COLLISION'
+              && [finding.itemId, finding.otherItemId].includes(target.id)),
+          'real intersections in either fragment must remain defects');
+        }
+      }
+    });
+
+    test(kind + ' retains ancestor clipping of one wrapped fragment', () => {
+      const model = wrappedFixture(kind);
+      model.fixture.card.css.overflowX = 'hidden';
+      model.fixture.card.clientWidth = 60;
+      const data = model.extract(), target = model.findTarget(data);
+      assert.ok(auditCardLayout(data).findings.some(finding =>
+        finding.itemId === target.id && finding.code === 'CLIPPED_X'));
+      assert.equal(target.rects?.length, 2, 'clipping must operate on retained fragments');
+    });
+  }
+
+  test('cross-kind fragment collision model is invariant under 240 translated/tolerance cases', () => {
+    for (const kind of ['control', 'badge', 'card', 'text']) {
+      for (const collides of [false, true]) {
+        const model = wrappedFixture(kind, 'badge',
+          collides ? r(25, 37, 38, 48) : r(55, 35, 80, 50));
+        model.fixture.card.css.overflowX = 'auto';
+        model.fixture.card.clientWidth = 95;
+        const source = model.extract();
+        const before = JSON.stringify(source);
+        for (const dx of [-321, -5, 0, 6, 411]) {
+          for (const dy of [-77, 0, 99]) {
+            for (const tolerance of [0, 1]) {
+              const data = JSON.parse(before), moved = new Set();
+              const move = box => {
+                if (!box || moved.has(box)) return;
+                moved.add(box);
+                box.left += dx; box.right += dx;
+                box.top += dy; box.bottom += dy;
+              };
+              for (const card of data.cards) {
+                move(card.rect); card.rects?.forEach(move);
+                for (const item of card.items) {
+                  move(item.rect); item.rects?.forEach(move);
+                  item.clips.forEach(clip => move(clip.rect));
+                }
+              }
+              const result = auditCardLayout(data, { tolerance });
+              assert.equal(result.findings.filter(f => f.code === 'COLLISION').length,
+                collides ? 1 : 0);
+              assert.deepEqual(result.findings, auditCardLayout(source, { tolerance }).findings);
+              assert.equal(JSON.stringify(source), before, 'translation cannot mutate the input');
+            }
+          }
+        }
+      }
+    }
+  });
+
+  test('wrapped own labels are exempt only from their control, not from sibling labels', () => {
+    const model = wrappedFixture('control');
+    const label = { nodeType: 3, textContent: 'Own label',
+      rect: r(10, 10, 90, 50), rects: model.target.fragments };
+    model.target.childNodes.push(label);
+    assert.deepEqual(codes(model.extract()), []);
+    model.target.childNodes.push({ ...label, textContent: 'Another label' });
+    assert.ok(codes(model.extract()).includes('COLLISION'));
+  });
+
+  test('manual geometry rejects null, empty, all-zero fragments and degenerate union bounds', () => {
+    for (const extra of [{ rects: undefined }, { rects: null }, { rects: [] }, { rects: [r(5, 5, 5, 20)] }])
+      assert.throws(() => auditCardLayout(snapshot(item('bad', 'control', r(5, 5, 40, 20), extra))), TypeError);
+    assert.throws(() => auditCardLayout(snapshot(item('bad', 'badge', r(5, 5, 5, 20)))), TypeError);
+    assert.throws(() => auditCardLayout({ cards: [{ id: 'zero', rect: r(0, 0, 0, 80), items: [] }] }), TypeError);
+  });
+
+  test('visible boxes fail closed when actual client-fragment geometry is unavailable or invalid', () => {
+    for (const kind of ['control', 'badge', 'card']) {
+      for (const bad of ['missing-api', [], [r(10, 10, 10, 10)], [r(10, 10, Infinity, 25)], [r(90, 10, 10, 25)]]) {
+        const model = wrappedFixture(kind);
+        if (bad === 'missing-api') model.target.getClientRects = undefined;
+        else model.target.getClientRects = () => bad;
+        assert.throws(() => model.extract(), error => error.name === 'TypeError',
+          'no union-box fallback may turn missing paint geometry into passing proof');
+      }
+    }
+  });
+
+  test('text ranges fail closed when their paint fragments are empty or entirely degenerate', () => {
+    for (const rects of [[], [r(10, 10, 10, 10)]]) {
+      const model = wrappedFixture('text');
+      model.target.childNodes[0].rects = rects;
+      assert.throws(() => model.extract(), error => error.name === 'TypeError');
+    }
   });
 
 }
