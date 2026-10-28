@@ -10,6 +10,11 @@ on:
       - 'scripts/sovereign-commander-http.mjs'
       - 'scripts/sovereign-maintenance-custody*'
       - 'scripts/sovereign-maintenance-os-anchor*'
+      - 'scripts/sovereign-maintenance-owner-observation*'
+      - 'scripts/sovereign-maintenance-retained-migration*'
+      - 'scripts/sovereign-maintenance-journal-source-proof*'
+      - 'scripts/windows/*sovereign-maintenance*'
+      - 'scripts/windows/MaintenanceJournalAclFixtureV2.cs'
       - 'scripts/sovereign-observation-offline-regression.test.mjs'
       - 'scripts/sovereign-frontend-start-only*'
       - 'scripts/battle-bridge-frontend-visibility-mailbox.test.mjs'
@@ -37,6 +42,7 @@ permissions:
 jobs:
   custody:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -49,7 +55,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Register only the operator-approved isolated retained-journal fixture
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./scripts/windows/install-sovereign-maintenance-journal-v2.ps1 -Fixture -OperatorApproved
       - name: Bounded OS audit anchor proof before CPU-heavy native fixtures
+        env:
+          STEPHANOS_CUSTODY_NATIVE_FIXTURE: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: node --test scripts/sovereign-maintenance-os-anchor-v1.test.mjs
       - name: Bootstrap-isolated source proof and native racy-index regression
         env:
@@ -60,6 +72,9 @@ jobs:
           shared/agents/battleBridgeExecutionBoundaryV1.test.mjs
           scripts/battle-bridge-ignition-supervisor.test.mjs
           shared/agents/sovereignMaintenanceRecoveryMailboxV1.test.mjs
+      - name: Retained migration and held-owner adversarial regressions
+        run: node --test scripts/sovereign-maintenance-owner-observation-v2.test.mjs scripts/sovereign-maintenance-retained-migration-v2.test.mjs
+
       - name: Observation remains reachable without remote source proof
         run: node --test scripts/sovereign-observation-offline-regression.test.mjs
       - name: Disjoint constrained frontend start-only and existing server regression
