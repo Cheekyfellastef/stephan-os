@@ -11,10 +11,13 @@ function Get-MaintenanceJournalSddlV2 {
     try { $sid = $identity.User.Value } finally { $identity.Dispose() }
     return 'O:BAG:SYD:P(A;;0xf0007;;;SY)(A;;0xf0007;;;BA)(A;;0x3;;;' + $sid + ')'
 }
-function Assert-MaintenanceJournalRegistryV2($policy) {
+function Get-MaintenanceJournalRegistryPathsV2($policy) {
     $base = 'SYSTEM\CurrentControlSet\Services\EventLog\' + $policy.Log
-    foreach ($suffix in @('', '\' + $policy.Source)) {
-        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($base + $suffix, $false)
+    return @($base, ($base + '\' + $policy.Source))
+}
+function Assert-MaintenanceJournalRegistryV2($policy) {
+    foreach ($registryPath in (Get-MaintenanceJournalRegistryPathsV2 $policy)) {
+        $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($registryPath, $false)
         if ($null -eq $key) { throw 'JOURNAL_SOURCE_MAPPING_UNPROVEN' }
         try {
             $security = $key.GetAccessControl()

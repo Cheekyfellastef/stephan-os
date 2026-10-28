@@ -148,3 +148,21 @@ test('hosted Windows cannot substitute skipped native retained-journal proof', {
   skip: process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true'
 }, () => assert.equal(process.env.STEPHANOS_CUSTODY_NATIVE_FIXTURE, '1',
   'Explicitly approved isolated retained-journal fixture setup is required; no production fallback'));
+
+test('actual Windows policy constructs exactly the log root and its fixed source subkey',
+  { skip: process.platform !== 'win32' }, () => {
+    const policyFile = fileURLToPath(new URL('./windows/sovereign-maintenance-journal-policy-v2.ps1', import.meta.url));
+    const command = ". '" + policyFile.replaceAll("'", "''") + "'; foreach ($fixture in @($false,$true)) { "
+      + "$policy=Get-MaintenanceJournalPolicyV2 $fixture; "
+      + "foreach($registryPath in (Get-MaintenanceJournalRegistryPathsV2 $policy)) { [Console]::WriteLine($registryPath) } }";
+    const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoLogo','-NoProfile','-NonInteractive','-Command',command],
+      { shell: false, windowsHide: true, encoding: 'utf8', timeout: 10_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/), [
+      'SYSTEM\\CurrentControlSet\\Services\\EventLog\\Stephanos Maintenance Custody',
+      'SYSTEM\\CurrentControlSet\\Services\\EventLog\\Stephanos Maintenance Custody\\StephanosMaintenanceCustody',
+      'SYSTEM\\CurrentControlSet\\Services\\EventLog\\StphCustodyFixture',
+      'SYSTEM\\CurrentControlSet\\Services\\EventLog\\StphCustodyFixture\\StphCustodyFixtureV2'
+    ]);
+  });
