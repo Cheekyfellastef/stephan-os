@@ -132,7 +132,7 @@ test('native Retain policy, reduced-token denial and capacity refusal preserve t
       assert.equal(r.status, 0, String(r.stderr)); return JSON.parse(r.stdout);
     };
     const acl = runFixture('Acl');
-    for (const field of ['ReadAllowed','WriteAllowed','ClearDenied','ConfigurationDenied','RegistryWriteDenied','AdministratorDisabled'])
+    for (const field of ['ReadAllowed','WriteAllowed','ClearDenied','ConfigurationDenied','RegistryWriteDenied','RegistryDeleteDenied','AdministratorDisabled'])
       assert.equal(acl[field], true, field);
     try { runFixture('Circular'); assert.throws(() => a.readLatest(), /ANCHOR_UNPROVEN/); }
     finally { runFixture('Restore'); }
@@ -216,4 +216,17 @@ test('elevated source-probe boundary excludes hostile Node bootstrap and caller 
     ['PATH','SYSTEMROOT','TEMP','TMP','WINDIR'].filter(x => x === 'PATH' || process.env[x] || process.env[Object.keys(process.env).find(k => k.toUpperCase() === x)]).sort());
   assert.equal(observed.PATH ?? observed.Path, 'C:\\Windows\\System32;C:\\Windows;C:\\Program Files\\nodejs');
   assert.equal(r.stdout.includes('INJECTED_SOURCE_SHA'), false);
+});
+test('native registry mutation model rejects each independent mutation right including delete-only ACEs', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const policyFile = fileURLToPath(new URL('./windows/sovereign-maintenance-journal-policy-v2.ps1', import.meta.url));
+  const command = ". '" + policyFile.replaceAll("'", "''") + "'; "
+    + "foreach($rights in @(1,8,16,0x20000,0x20019,2,4,0x20,0x10000,0x40000,0x80000,0xF003F)) { "
+    + "[Console]::WriteLine((Test-MaintenanceRegistryMutationV2 $rights)) }";
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoLogo','-NoProfile','-NonInteractive','-Command',command],
+    { shell: false, windowsHide: true, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split(/\r?\n/), [...Array(5).fill('False'),...Array(7).fill('True')]);
 });

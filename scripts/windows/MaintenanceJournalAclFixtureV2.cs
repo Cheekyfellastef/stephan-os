@@ -8,7 +8,7 @@ using System.Security.Principal;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 public sealed class MaintenanceJournalAclResultV2 {
-    public bool ReadAllowed, WriteAllowed, ClearDenied, ConfigurationDenied, RegistryWriteDenied, AdministratorDisabled;
+    public bool ReadAllowed, WriteAllowed, ClearDenied, ConfigurationDenied, RegistryWriteDenied, RegistryDeleteDenied, AdministratorDisabled;
 }
 public static class MaintenanceJournalAclFixtureV2 {
     private const string Log = "StphCustodyFixture";
@@ -62,12 +62,23 @@ public static class MaintenanceJournalAclFixtureV2 {
                                 config.SaveChanges();
                             }
                         } catch (Exception e) { result.ConfigurationDenied = AccessDenied(e); }
-                        try {
-                            using (RegistryKey key = Registry.LocalMachine.OpenSubKey(
-                                "SYSTEM\\CurrentControlSet\\Services\\EventLog\\" + Log, true)) {
-                                result.RegistryWriteDenied = false;
-                            }
-                        } catch (Exception e) { result.RegistryWriteDenied = AccessDenied(e); }
+                        result.RegistryWriteDenied = true;
+                        result.RegistryDeleteDenied = true;
+                        foreach (string suffix in new string[] { "", "\\" + Source }) {
+                            string path = "SYSTEM\\CurrentControlSet\\Services\\EventLog\\" + Log + suffix;
+                            bool writeDenied = false, deleteDenied = false;
+                            try {
+                                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(path, true)) { }
+                            } catch (Exception e) { writeDenied = AccessDenied(e); }
+                            // Request DELETE alone, never actually delete even a fixture key.
+                            try {
+                                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(path,
+                                    RegistryKeyPermissionCheck.Default,
+                                    System.Security.AccessControl.RegistryRights.Delete)) { }
+                            } catch (Exception e) { deleteDenied = AccessDenied(e); }
+                            result.RegistryWriteDenied &= writeDenied;
+                            result.RegistryDeleteDenied &= deleteDenied;
+                        }
                     });
                 }
             }

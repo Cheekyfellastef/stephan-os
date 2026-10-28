@@ -83,3 +83,8 @@ NODE_PATH, crypto overrides and provider credentials cannot execute before or
 forge source proof. The Windows regression launches a harmless child under hostile
 preload/module/crypto/PATH settings and proves none reaches the child. No native
 registration is executed by that regression.
+Registry mutation authority includes independent DELETE and CreateLink rights as
+well as SetValue, CreateSubKey, ChangePermissions and TakeOwnership. The shared
+predicate rejects each separately; read/query/enumerate/notify/ReadControl remain
+non-mutating. Native reduced-token proof requests DELETE alone on both the log
+root and source key and requires access denial without attempting deletion.

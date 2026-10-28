@@ -21,6 +21,10 @@ function Get-MaintenanceJournalRegistryPathsV2($policy) {
     $base = 'SYSTEM\CurrentControlSet\Services\EventLog\' + $policy.Log
     return @($base, ($base + '\' + $policy.Source))
 }
+# SetValue, CreateSubKey, CreateLink, Delete, ChangePermissions and TakeOwnership.
+function Test-MaintenanceRegistryMutationV2([int]$Rights) {
+    return (($Rights -band 0xD0026) -ne 0)
+}
 function Assert-MaintenanceJournalRegistryV2($policy) {
     foreach ($registryPath in (Get-MaintenanceJournalRegistryPathsV2 $policy)) {
         $key = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($registryPath, $false)
@@ -31,7 +35,7 @@ function Assert-MaintenanceJournalRegistryV2($policy) {
             if ($owner -notin @('S-1-5-18','S-1-5-32-544')) { throw 'JOURNAL_REGISTRY_OWNER_UNSAFE' }
             foreach ($rule in $security.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
                 if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-                    (([int]$rule.RegistryRights -band 0xC0006) -ne 0) -and
+                    (Test-MaintenanceRegistryMutationV2 ([int]$rule.RegistryRights)) -and
                     $rule.IdentityReference.Value -notin @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')) {
                     throw 'JOURNAL_REGISTRY_WRITE_AUTHORITY_UNSAFE'
                 }
