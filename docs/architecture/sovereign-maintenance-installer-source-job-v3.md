@@ -77,14 +77,57 @@ Historical individual passes and mixed diagnostic runs are not final proof.
 Unchanged Core candidate failures on this desktop must be compared to immutable
 main and reported separately rather than weakening Core's limit to hide them.
 
-Current unprivileged native source observation: the actual canonical collector at
-0b30ed366725640c7c2dfb0911038a288c7eb7d3 passed in 17,938 ms through candidate
-native adapter SHA256 3bc3ca2b593c88825db3cc6fcacc75f708430cccd3a69077be86779c292a5958,
-with assignment before execution, normal exit zero, no cancellation, exact SHA
-and native zero-active proof. This is candidate-component proof at that collector
-head, not installation or current-head production commissioning. The complete
-focused local suite passes 68/72 with four explicitly hosted-only journal fixture
-skips; native storage/ACL fixtures still require their real hosted Windows run.
+### Historical pre-split evidence
+
+At implementation commit 589d0a0e6b26a19cf9b9e38d7131a77dd84547f3, the actual
+canonical collector at 0b30ed366725640c7c2dfb0911038a288c7eb7d3 passed in
+17,938 ms through the former combined native adapter, SHA256
+3bc3ca2b593c88825db3cc6fcacc75f708430cccd3a69077be86779c292a5958.
+That version's focused local run had 68 passes and four hosted-only skips out
+of 72 tests. These are historical component observations, not proof of the
+final split units or current-head production commissioning. Its hosted run
+40715007616 failed four Core preflight cases because the combined source
+exceeded existing loader bounds; those failures were not waived.
+
+### Split-unit evidence and remaining acceptance
+
+The split implementation at 667f9a4e63c1fcb8b542407de832b7f10aa3d6a1 has:
+
+- Core unit: 21,949 bytes, SHA256
+  b4a24d720c2acc9856d1d9f83a120adf30e490c33741d1c5bd27e36056550de1.
+- Installer source unit: 16,515 bytes, SHA256
+  12e9aae1f901a50f8231b8ad2f7d1de08691b8ca10b3de31f7efb4c8458c161b.
+- Actual unchanged canonical collector at 0b30ed366725640c7c2dfb0911038a288c7eb7d3
+  passed through those units in 17,814 ms. The native receipt records PID 34192,
+  birth 2026-10-28T15:33:33.9492935Z, assignment before execution, normal exit zero,
+  exact source SHA, no cancellation and positive zero-active accounting.
+- Targeted source/bootstrap/Core-consumer run: 26/26 pass. Its retained TAP
+  SHA256 is b52d32e0e37ff81a245e4d434003df1269b60dd9ee3b17e7d39d9f28fdd2fd99.
+- Broader affected local run: 59 tests, 54 passes, four explicit hosted-journal
+  skips and one unchanged Core completion-timing failure (deadline exit 77
+  instead of the fixture's expected exit zero). Retained TAP SHA256 is
+  3f43d3cb63dc9786ad7543fd47afd87aa8c590769ec3d978497b126122192db7.
+  This is a disclosed failed local result, not a complete local pass.
+- Complete hosted custody run
+  [40717096307](https://github.com/Cheekyfellastef/stephan-os/actions/runs/40717096307)
+  is terminal SUCCESS on Windows and Linux at that exact split implementation.
+  Its Windows Core/admission step passes 155/155 with zero skips; the hosted
+  native source and retained-journal steps also pass. Hosted proof is distinct
+  from the local timing failure and does not erase its record.
+
+This evidence correction changes no native code. The hashes and workload
+observation above bind the split units; the hosted run binds commit 667f9a4e6,
+not any later documentation commit. A later head still needs its own required
+checks and complete-diff specialist acceptance.
+
+The recorded 16:46:41 UTC review-surface observation found no current-head
+terminal specialist response or submitted review. Request 6473326859 was
+created at 15:35:01 UTC and exceeded the existing 30-minute response-causality
+window at 16:05:01 UTC. A later clean response cannot qualify that expired
+request pair. Preserve the bound, independent specialist class and no-duplicate
+review rule; neither a running marker nor passing tests is review acceptance.
+No protected integration, production journal registration, ACTIVE preparation,
+restart, custody release or material build is established by these observations.
 
 ### Bounded compilation invariant
 
