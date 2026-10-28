@@ -73,3 +73,8 @@ scripts/launcher-readiness-planner.mjs text eol=lf
 scripts/launcher-readiness-report.mjs text eol=lf
 scripts/stephanos-ignition-preflight.mjs text eol=lf
 package.json text eol=lf
+
+# Fixed runtime Job native source/proof byte identity.
+scripts/windows/SovereignFixedRuntimeJobV1.cs text eol=lf
+scripts/windows/test-sovereign-fixed-runtime-job-v1.ps1 text eol=lf
+scripts/sovereign-fixed-runtime-job-v1.test.mjs text eol=lf
