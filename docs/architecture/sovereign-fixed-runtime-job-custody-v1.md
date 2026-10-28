@@ -105,3 +105,18 @@ deployment authority before distinguishing compile identity from execution head.
 No caller flag, normalized hash, mutable active file or new trust root can waive
 that proof. This conservative limitation is recorded implementation debt; it is
 not an additional predicate for recovering historical e244 or a first safe build.
+
+
+## Witness publication invariant
+
+A visible fixture path is not a complete witness. The producer closes a private
+staging file before atomic rename; only the committed file can be parsed and
+bound to held native process handles, birth identity and Job membership. A
+deterministically paused producer proves the observer ignores incomplete staged
+contents. The old visible-before-close protocol reproduces a rejected read or
+format failure and cannot supply process identity. No retry, weaker identity or
+larger deadline repairs that publication contract.
+
+The independently reproduced paused producer caused IOException while its writer
+was open. Earlier hosted AggregateException inner causes remain unproven; this
+counterexample must not be retroactively reported as their authenticated cause.

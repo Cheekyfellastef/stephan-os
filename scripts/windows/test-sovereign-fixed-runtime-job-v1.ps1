@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$FixtureNodePath,
-  [ValidateSet('None','Cancel','ParentDeath')][string]$FixtureTerminalGuardBaseline='None')
+  [ValidateSet('None','Cancel','ParentDeath')][string]$FixtureTerminalGuardBaseline='None',
+  [ValidateSet('Atomic','VisiblePartial')][string]$FixtureWitnessPublication='Atomic')
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -18,14 +19,29 @@ if ($copyDigest -cne $originalDigest) { throw 'FIXTURE_EXECUTABLE_COPY_CHANGED' 
 $worker = @'
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
-const [mode,witness,ack] = process.argv.slice(2);
+const [mode,witness,ack,publicationVariant] = process.argv.slice(2);
 let child;
 if (mode === 'orphan') child = spawn(process.execPath,['-e','setTimeout(()=>{},30000)'],{stdio:'ignore',windowsHide:true,detached:true});
-fs.writeFileSync(witness,String(process.pid)+'|'+String(child?.pid||0));
+const payload=String(process.pid)+'|'+String(child?.pid||0);
+const pending=witness+'.pending';
+if(mode==='witness-paused') {
+  const staged=publicationVariant==='VisiblePartial'?witness:pending;
+  const fd=fs.openSync(staged,'wx');
+  fs.writeSync(fd,'not-an-identity');
+  const publishing=setInterval(()=>{
+    if(!fs.existsSync(witness+'.publish')) return;
+    clearInterval(publishing);
+    fs.ftruncateSync(fd,0);fs.writeSync(fd,payload,0,'utf8');fs.closeSync(fd);
+    if(staged!==witness) fs.renameSync(staged,witness);
+  },5);
+} else {
+  fs.writeFileSync(pending,payload,{flag:'wx'});
+  fs.renameSync(pending,witness);
+}
 const waiting = setInterval(()=>{
   if (!fs.existsSync(ack)) return;
   clearInterval(waiting);
-  if (['normal','drain-cancel','drain-parent-death'].includes(mode)) { process.stdout.write('normal'); process.exitCode=0; }
+  if (['normal','drain-cancel','drain-parent-death','witness-paused'].includes(mode)) { process.stdout.write('normal'); process.exitCode=0; }
   else if (mode === 'failed') { process.stdout.write('failed'); process.exitCode=2; }
   else if (mode === 'input') { process.stdout.write(String(fs.readFileSync(0).length)); }
   else if (mode === 'orphan') { process.exit(0); }
@@ -47,21 +63,26 @@ namespace Stephanos.Sovereign {
    public string Mode, RootCreatedAtUtc="", DescendantCreatedAtUtc="", RootImagePath="";
    public FixedRuntimeStageV1 Receipt;
    public bool RootCaptured, RootEndedByHandle, DescendantCaptured, DescendantEndedByHandle;
-   public bool BoundBeforeExecution, TerminalDrainObserved;
+   public bool BoundBeforeExecution, TerminalDrainObserved, PartialWitnessIgnored;
+   public string ObserverFaultCode="", ObserverFaultType="";
    public bool SourceMutationAllowed=false, RuntimeQualified=false;
  }
  public static partial class CoreJobCustodyV1 {
   [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
   static extern bool QueryFullProcessImageNameW(IntPtr process,uint flags,StringBuilder name,ref uint size);
-  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode) {
+  public static FixedRuntimeFixtureResultV1 FixedRuntimeFixtureV1(string directory,string mode,string fixtureNode,string publicationVariant) {
    if(!System.Text.RegularExpressions.Regex.IsMatch(mode,
-     "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail|bind-denied|drain-cancel|drain-parent-death)$"))
+     "^(normal|failed|input|deadline|orphan|overflow|query|cancel|parent-death|spawn-fail|bind-denied|drain-cancel|drain-parent-death|witness-paused)$"))
      throw new InvalidOperationException("FIXTURE_MODE_INVALID");
+   if(publicationVariant!="Atomic" && publicationVariant!="VisiblePartial")
+     throw new InvalidOperationException("FIXTURE_PUBLICATION_VARIANT_INVALID");
+   if(publicationVariant=="VisiblePartial" && mode!="witness-paused")
+     throw new InvalidOperationException("FIXTURE_PUBLICATION_MODE_INVALID");
    var result=new FixedRuntimeFixtureResultV1 { Mode=mode };
    string witness=Path.Combine(directory,mode+".witness"),ack=Path.Combine(directory,mode+".ack");
    var current=Process.GetCurrentProcess(); Process fakeOwner=null;
    IntPtr owner=IntPtr.Zero,launcher=IntPtr.Zero,job=IntPtr.Zero,rootHandle=IntPtr.Zero,descendant=IntPtr.Zero;
-   int captured=0,finished=0,terminalCancel=0; Task observer=null,killer=null;
+   int captured=0,finished=0,terminalCancel=0,observerFailed=0; Task observer=null,killer=null;
    try {
     long created,exited,kernel,user;
     IntPtr currentHandle=RuntimeOpenProcessV1(0x101000,false,(uint)current.Id);
@@ -85,9 +106,23 @@ namespace Stephanos.Sovereign {
     observer=Task.Factory.StartNew(delegate {
       var wait=Stopwatch.StartNew();
       while(wait.ElapsedMilliseconds<10000 && Interlocked.CompareExchange(ref finished,0,0)==0) {
+        if(mode=="witness-paused" && File.Exists(witness+".pending") && !File.Exists(witness)) {
+          // Never read or parse a staged publication. Only its atomic commit
+          // can become a process witness; release the deliberately paused writer.
+          result.PartialWitnessIgnored=true;
+          try { File.WriteAllText(witness+".publish","release"); }
+          catch(Exception error) {
+            result.ObserverFaultCode="WITNESS_PUBLICATION_RELEASE_FAILED";
+            result.ObserverFaultType=error.GetType().FullName;
+            Interlocked.Exchange(ref observerFailed,1); return;
+          }
+        }
         if(File.Exists(witness)) {
           try {
-            string[] ids=File.ReadAllText(witness).Split('|');
+            string raw=File.ReadAllText(witness);
+            if(!System.Text.RegularExpressions.Regex.IsMatch(raw,"^[1-9][0-9]*[|][0-9]+$"))
+              throw new FormatException("WITNESS_COMMITTED_FORMAT_INVALID");
+            string[] ids=raw.Split('|');
             int rootPid=Int32.Parse(ids[0]), childPid=Int32.Parse(ids[1]);
             rootHandle=RuntimeOpenProcessV1(0x101000,false,(uint)rootPid);
             if(rootHandle==IntPtr.Zero) throw new InvalidOperationException("ROOT_CAPTURE_FAILED");
@@ -111,10 +146,14 @@ namespace Stephanos.Sovereign {
             Interlocked.Exchange(ref captured,1);
             File.WriteAllText(ack,"ack");
             return;
-          } catch {
+          } catch(Exception error) {
             if(rootHandle!=IntPtr.Zero) { CloseHandle(rootHandle); rootHandle=IntPtr.Zero; }
             if(descendant!=IntPtr.Zero) { CloseHandle(descendant); descendant=IntPtr.Zero; }
-            throw;
+            result.RootCaptured=false; result.DescendantCaptured=false;
+            result.ObserverFaultCode=error is IOException?"WITNESS_READ_FAILED":
+              error is FormatException?"WITNESS_FORMAT_INVALID":"WITNESS_BINDING_UNPROVEN";
+            result.ObserverFaultType=error.GetType().FullName;
+            Interlocked.Exchange(ref observerFailed,1); return;
           }
         }
         Thread.Sleep(5);
@@ -127,11 +166,11 @@ namespace Stephanos.Sovereign {
     });
     var clock=Stopwatch.StartNew();
     string executable=mode=="spawn-fail"?Path.Combine(directory,"missing-owned-fixture.exe"):fixtureNode;
-    string args=Quote(Path.Combine(directory,"worker.mjs"))+" "+mode+" "+Quote(witness)+" "+Quote(ack);
+    string args=Quote(Path.Combine(directory,"worker.mjs"))+" "+mode+" "+Quote(witness)+" "+Quote(ack)+" "+publicationVariant;
     byte[] input=mode=="input"?Encoding.UTF8.GetBytes("fixed-fixture-input"):new byte[0];
     result.Receipt=RunRuntimeStageV1(job,"FIXTURE_ONLY",executable,args,directory,input,clock,
       mode=="deadline"?3000:7000,owner,launcher,
-      delegate { return (mode=="cancel" && Interlocked.CompareExchange(ref captured,0,0)!=0) || Interlocked.CompareExchange(ref terminalCancel,0,0)!=0; },
+      delegate { return (mode=="cancel" && Interlocked.CompareExchange(ref captured,0,0)!=0) || Interlocked.CompareExchange(ref terminalCancel,0,0)!=0 || Interlocked.CompareExchange(ref observerFailed,0,0)!=0; },
       delegate { return mode=="query" && Interlocked.CompareExchange(ref captured,0,0)!=0; },
       delegate(FixedRuntimeStageV1 prepared) {
         if(mode!="bind-denied") return true;
@@ -199,17 +238,32 @@ $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/Sovereign
   [Environment]::NewLine + $kernel + [Environment]::NewLine + $fixtureCode
 Add-Type -TypeDefinition $source -ErrorAction Stop
 $cases = @()
-$modes = @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail','bind-denied','drain-cancel','drain-parent-death')
+$modes = @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail','bind-denied','drain-cancel','drain-parent-death','witness-paused')
 if ($FixtureTerminalGuardBaseline -ceq 'Cancel') { $modes = @('drain-cancel') }
 if ($FixtureTerminalGuardBaseline -ceq 'ParentDeath') { $modes = @('drain-parent-death') }
+if ($FixtureWitnessPublication -ceq 'VisiblePartial') {
+  if ($FixtureTerminalGuardBaseline -cne 'None') { throw 'FIXTURE_COMBINED_MUTANTS_UNSUPPORTED' }
+  $modes = @('witness-paused')
+}
 foreach($mode in $modes) {
-  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode)
+  $r = [Stephanos.Sovereign.CoreJobCustodyV1]::FixedRuntimeFixtureV1($fixtureRoot,$mode,$fixtureNode,$FixtureWitnessPublication)
   if ($r.RuntimeQualified -ne $false -or $r.SourceMutationAllowed -ne $false) { throw 'FIXTURE_AUTHORITY_INVALID' }
+  if ($FixtureWitnessPublication -ceq 'VisiblePartial') {
+    if ($r.ObserverFaultCode -notin @('WITNESS_READ_FAILED','WITNESS_FORMAT_INVALID') -or
+        $r.RootCaptured -or $r.Receipt.OperationOk -or -not $r.Receipt.Launched -or
+        -not $r.Receipt.AssignedBeforeExecution -or -not $r.Receipt.ExecutionCustodyReleased -or
+        -not $r.Receipt.ZeroActiveProcessesObserved) {
+      throw ('FIXTURE_PARTIAL_WITNESS_COUNTEREXAMPLE_INVALID:'+ ($r|ConvertTo-Json -Depth 6 -Compress))
+    }
+    $cases += $r
+    continue
+  }
+  if ($r.ObserverFaultCode -cne '') { throw ('FIXTURE_OBSERVER_FAILED:'+ ($r|ConvertTo-Json -Depth 6 -Compress)) }
   if ($mode -ne 'spawn-fail') {
     if (-not $r.RootCaptured -or -not $r.RootEndedByHandle -or
         $r.RootCreatedAtUtc -cne $r.Receipt.RootCreatedAtUtc) { throw ('FIXTURE_ROOT_WITNESS_INVALID:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
   }
-  if ($mode -eq 'normal' -or $mode -eq 'input') {
+  if ($mode -eq 'normal' -or $mode -eq 'input' -or $mode -eq 'witness-paused') {
     if (-not $r.Receipt.OperationOk -or -not $r.Receipt.ExecutionCustodyReleased) { throw ('FIXTURE_SUCCESS_INVALID:'+ $mode) }
   } else {
     if ($FixtureTerminalGuardBaseline -ceq 'None' -and $r.Receipt.OperationOk) { throw ('FIXTURE_FALSE_SUCCESS:'+ ($r | ConvertTo-Json -Depth 6 -Compress)) }
@@ -229,4 +283,4 @@ foreach($mode in $modes) {
   if ($mode -eq 'overflow' -and (-not $r.Receipt.OutputOverflow -or $r.Receipt.OutputComplete)) { throw 'FIXTURE_OUTPUT_FALSE_PROOF' }
   $cases += $r
 }
-@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=($FixtureTerminalGuardBaseline -ceq 'None');counterfactualVariant=$FixtureTerminalGuardBaseline;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
+@{schemaVersion='stephanos.fixed-runtime-native-fixture.v1';ok=($FixtureTerminalGuardBaseline -ceq 'None' -and $FixtureWitnessPublication -ceq 'Atomic');witnessPublicationVariant=$FixtureWitnessPublication;counterfactualVariant=$FixtureTerminalGuardBaseline;fixtureExecutable=$fixtureNode;fixtureExecutableSha256=$copyDigest;cases=$cases;runtimeQualified=$false;fixtureRoot=$fixtureRoot} | ConvertTo-Json -Depth 8 -Compress
