@@ -132,9 +132,11 @@ export function extractCardLayout({
     return null;
   };
   const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
-  const clips = el => {
+  // Text measures contents and retains its own clip. Border-box items must
+  // start at the parent: overflow never clips the element's own border box.
+  const clips = (el, { includeSelf = true } = {}) => {
     const result = [];
-    for (let p = el; p; p = p.parentElement) {
+    for (let p = includeSelf ? el : el.parentElement; p; p = p.parentElement) {
       const s = style(p), r = p.getBoundingClientRect();
       if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
       // client box excludes border and scrollbar; CSS-pixel scaling supports zoom/transforms.
@@ -165,7 +167,7 @@ export function extractCardLayout({
         // Only the immediate nested card is a parent item. Its content is audited separately.
         if (owner(el.parentElement) === card && visible(el))
           items.push({ id: id(el), kind: 'card', rect: box(el.getBoundingClientRect()),
-            clips: clips(el), element: describe(el) });
+            clips: clips(el, { includeSelf: false }), element: describe(el) });
         continue;
       }
       if (owner(el) !== card || !visible(el)) continue;
@@ -174,7 +176,7 @@ export function extractCardLayout({
         const ancestor = el.parentElement?.closest(controlSelector + ',' + badgeSelector);
         if (!ancestor || ancestor === card || owner(ancestor) !== card)
           items.push({ id: id(el), kind: el.matches(controlSelector) ? 'control' : 'badge',
-            rect: box(el.getBoundingClientRect()), clips: clips(el), element: describe(el) });
+            rect: box(el.getBoundingClientRect()), clips: clips(el, { includeSelf: false }), element: describe(el) });
       }
       if (['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
       for (const node of el.childNodes) {
@@ -376,4 +378,84 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     const extracted = runInNewContext('(' + extractCardLayout.toString() + ')({cardSelector:".card"})', { document: fixture.doc });
     assert.equal(extracted.cards.length, 0);
   });
+
+  function setBoxBorder(element, border, { x = 'hidden', y = 'hidden' } = {}) {
+    element.css.overflowX = x;
+    element.css.overflowY = y;
+    element.clientLeft = border;
+    element.clientTop = border;
+    element.clientWidth = element.offsetWidth - 2 * border;
+    element.clientHeight = element.offsetHeight - 2 * border;
+  }
+
+  function borderedFixture(kind, border) {
+    const fixture = fakeDocument();
+    const element = kind === 'control' ? fixture.button
+      : kind === 'card' ? fixture.nested : fixture.title;
+    if (kind === 'badge') {
+      element.className = 'badge';
+      const originalMatches = element.matches.bind(element);
+      element.matches = selector => selector.split(',').some(part => part.includes('badge'))
+        || originalMatches(selector);
+      element.childNodes = [];
+      element.textContent = '';
+    }
+    setBoxBorder(element, border);
+    const data = runInNewContext(
+      '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+      { document: fixture.doc },
+    );
+    const boxItem = data.cards.flatMap(card => card.items).find(item => item.kind === kind);
+    assert.ok(boxItem, 'fixture must extract the intended border-box item');
+    return { fixture, data, boxItem };
+  }
+
+  for (const kind of ['control', 'badge', 'card']) {
+    for (const { border, tolerance } of [
+      { border: 2, tolerance: 1 },
+      { border: 1, tolerance: 0 },
+      { border: 2, tolerance: 0 },
+    ]) {
+      test(kind + ' border box excludes its own clip (' + border + 'px border, tolerance ' + tolerance + ')', () => {
+        const { data, boxItem } = borderedFixture(kind, border);
+        const result = auditCardLayout(data, { tolerance });
+        assert.deepEqual(result.findings.filter(finding =>
+          finding.itemId === boxItem.id && finding.code.startsWith('CLIPPED_')), [],
+        'overflow clips contents, not the element own border box');
+        assert.ok(!boxItem.clips.some(clip => clip.id === boxItem.id),
+          'a measured border box must start its clipping chain at the parent');
+      });
+    }
+
+    test(kind + ' border box still respects a real clipping ancestor', () => {
+      const { fixture } = borderedFixture(kind, 2);
+      fixture.card.css.overflowX = 'hidden';
+      fixture.card.clientWidth = 45;
+      const data = runInNewContext(
+        '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+        { document: fixture.doc },
+      );
+      const boxItem = data.cards.flatMap(card => card.items).find(item => item.kind === kind);
+      const result = auditCardLayout(data);
+      assert.ok(result.findings.some(finding =>
+        finding.itemId === boxItem.id && finding.code === 'CLIPPED_X'),
+      'removing self-clipping must not suppress true ancestor clipping');
+    });
+  }
+
+  test('text fragments retain their originating element client clip', () => {
+    const fixture = fakeDocument();
+    setBoxBorder(fixture.title, 2, { x: 'hidden', y: 'visible' });
+    fixture.title.getAttribute = () => 'unrelated tooltip';
+    const data = runInNewContext(
+      '(' + extractCardLayout.toString() + ')({cardSelector:".card"})',
+      { document: fixture.doc },
+    );
+    const text = data.cards.flatMap(card => card.items).find(item => item.text === 'Long title');
+    assert.ok(text.clips.some(clip => clip.rect.right === 68),
+      'text must retain the originating element content clip, including its border inset');
+    assert.ok(auditCardLayout(data).findings.some(finding =>
+      finding.itemId === text.id && finding.code === 'CLIPPED_X'));
+  });
+
 }

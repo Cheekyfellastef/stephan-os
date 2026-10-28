@@ -19,6 +19,8 @@ An empty selection has coverage `EMPTY`, never a passing workspace. A measured s
 
 Text uses Range line fragments, avoiding false collisions in the empty corner of a wrapped title's union box. Distinct text labels still collide, even if they share a control. A control/badge box may contain its own label. The nearest selected card owns its content; a nested card is also checked as an outer-boundary item of its immediate parent. Use an explicit card selector that includes both outer and inner primitives.
 
+Control, badge and nested-card rectangles measure border boxes. Their clip chains start at the parent because overflow clips contents, not the element's own border. Text fragments measure contents and retain their originating element's client clip. This distinction preserves real ancestor clipping without treating a 1px or 2px border as lost content.
+
 Computed `overflow: hidden/clip` is not an exemption. The extractor carries the actual ancestor client clip boxes, excluding borders/scrollbars. Ellipsis is recognized only for a text node's own element with `text-overflow: ellipsis`, `white-space: nowrap`, and a `title` equal to its complete normalized text. A nearby tooltip, unrelated title, or aria-label alone cannot waive clipping. This narrow detection is conservative: inspect custom expansion/tooltips separately rather than adding a blanket allow-list.
 
 Actual `auto/scroll` clipping produces `SCROLL_REQUIRES_INTERACTION_PROOF` affordances for the affected axis only. It never waives a different hidden ancestor, orthogonal escape or visible collision. Ellipsis produces `ELLIPSIS_FULL_VALUE` affordances. Both stay in the report; later keyboard/pointer testing must prove access to the full content. Ellipsis never excuses vertical clipping.
@@ -120,8 +122,12 @@ Inspect every finding, every intentional affordance and all zero-match selection
 ## Verification and durable lesson
 
 Focused command: `node --test tests/workspace-card-layout-audit.test.mjs`.
-The 13 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, and serialized extractor usage/hidden ancestors.
+The 26 deterministic cases cover malformed/empty evidence, wrapped line fragments, four-edge escape and fractional tolerance, long title/status/hash clipping, genuine ellipsis/full-value evidence, axis-specific scroll, adversarial ancestor clipping, badge/control/text collisions, own-label exemptions, nested boundaries, translation invariance/immutability, serialized extractor usage/hidden ancestors, bordered control/badge/nested-card boxes at 0px and 1px tolerance, true ancestor clipping, and originating-element text clipping.
 
 Lesson/invariant: clipping CSS is evidence to inspect, not proof of intentional truncation; retain affordance debt and nearest-card ownership so nested or scrollable layouts cannot hide genuine defects. This supports the parent goal's reusable R5 capability without claiming visual acceptance.
 
 Low-risk scope: one test module and this inventory document. Regression risks: conservative false positives for custom truncation/complex transforms, incomplete selectors and unvisited dynamic content. Unit tests prove the oracle's deterministic behavior only. Source publication, CI, independent review, protected merge, exact-head installation and responsive visual acceptance must each have their own receipt.
+
+## First geometry review repair
+
+Independent review identified false self-clipping of bordered controls, badges and nested cards. The original helper at `b05bff4cec700144bf1ab47fb46ebe2dc7ffc514` fails nine new border/tolerance regressions; all three real-ancestor clipping cases and the originating-text clip case remain required. The repair changes clip-chain origin by measurement kind, preserving the default 1px tolerance and all existing tests. Review finding: https://github.com/Cheekyfellastef/stephan-os/pull/3307#discussion_r4406950263 . Source repair is not independent review approval, merge approval or UI acceptance.
