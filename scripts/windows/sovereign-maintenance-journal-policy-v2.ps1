@@ -6,6 +6,12 @@ function Get-MaintenanceJournalPolicyV2([bool]$Fixture = $false) {
     }
     return @{Log='Stephanos Maintenance Custody';Source='StephanosMaintenanceCustody';Maximum=[long]67108864;Id='retained-v2-production'}
 }
+# Windows may report the requested chunk budget with one additional 4 KiB
+# event-file page (native CI: 1048576 requested, 1052672 read back). Keep
+# requested and reported capacity distinct; no arbitrary larger size is admitted.
+function Test-MaintenanceJournalMaximumV2([long]$Reported, $policy) {
+    return ($Reported -eq $policy.Maximum -or $Reported -eq ($policy.Maximum + 4096))
+}
 function Get-MaintenanceJournalSddlV2 {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     try { $sid = $identity.User.Value } finally { $identity.Dispose() }
@@ -38,7 +44,7 @@ function Assert-MaintenanceJournalPolicyV2($policy) {
     $info = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new($policy.Log)
     try {
         if (-not $info.IsEnabled -or $info.LogMode -ne [Diagnostics.Eventing.Reader.EventLogMode]::Retain -or
-            $info.MaximumSizeInBytes -ne $policy.Maximum -or $info.IsClassicLog -ne $true) {
+            -not (Test-MaintenanceJournalMaximumV2 $info.MaximumSizeInBytes $policy) -or $info.IsClassicLog -ne $true) {
             # Closed native configuration evidence only; no key, SID, path or event payload.
             [Console]::Error.WriteLine('SOVEREIGN_JOURNAL_CONFIG=' + [string]$info.IsEnabled + '/' +
                 [string]$info.LogMode + '/' + [string]$info.MaximumSizeInBytes + '/' + [string]$info.IsClassicLog)
@@ -48,6 +54,11 @@ function Assert-MaintenanceJournalPolicyV2($policy) {
         $expected = [Security.AccessControl.RawSecurityDescriptor]::new((Get-MaintenanceJournalSddlV2))
         if ($actual.GetSddlForm([Security.AccessControl.AccessControlSections]::All) -cne
             $expected.GetSddlForm([Security.AccessControl.AccessControlSections]::All)) {
+            [Console]::Error.WriteLine('SOVEREIGN_JOURNAL_ACCESS=' +
+                [string]($actual.Owner.Value -ceq $expected.Owner.Value) + '/' +
+                [string]($actual.Group.Value -ceq $expected.Group.Value) + '/' +
+                [string][int]$actual.ControlFlags + '/' + [string][int]$expected.ControlFlags + '/' +
+                [string]$actual.DiscretionaryAcl.Count + '/' + [string]$expected.DiscretionaryAcl.Count)
             throw 'JOURNAL_ACCESS_UNPROVEN'
         }
     } finally { $info.Dispose() }

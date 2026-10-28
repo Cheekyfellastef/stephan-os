@@ -166,3 +166,18 @@ test('actual Windows policy constructs exactly the log root and its fixed source
       'SYSTEM\\CurrentControlSet\\Services\\EventLog\\StphCustodyFixture\\StphCustodyFixtureV2'
     ]);
   });
+
+test('Windows capacity model admits only requested bytes or its fixed one-page readback', {
+  skip: process.platform !== 'win32'
+}, () => {
+  const policyFile = fileURLToPath(new URL('./windows/sovereign-maintenance-journal-policy-v2.ps1', import.meta.url));
+  const command = ". '" + policyFile.replaceAll("'", "''") + "'; foreach($fixture in @($false,$true)) { "
+    + "$policy=Get-MaintenanceJournalPolicyV2 $fixture; foreach($n in @($policy.Maximum,($policy.Maximum+4096),"
+    + "($policy.Maximum-1),($policy.Maximum+1),($policy.Maximum+4095),($policy.Maximum+4097),($policy.Maximum*2))) { "
+    + "[Console]::WriteLine((Test-MaintenanceJournalMaximumV2 $n $policy)) } }";
+  const r = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoLogo','-NoProfile','-NonInteractive','-Command',command],
+    { shell: false, windowsHide: true, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.stdout.trim().split(/\r?\n/), Array(2).fill(['True','True','False','False','False','False','False']).flat());
+});

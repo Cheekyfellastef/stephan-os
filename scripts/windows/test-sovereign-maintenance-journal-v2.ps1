@@ -28,7 +28,13 @@ if ($Mode -eq 'Circular') {
     $count = 0; $full = $false
     try {
         for ($i=0;$i -lt 256;$i++) {
-            try { $writer.WriteEntry(('FIXTURE_NON_AUTHORITY_FILL_' + ('x' * 28000)),[Diagnostics.EventLogEntryType]::Information,62518); $count++ }
+            try {
+                $writer.WriteEntry(('FIXTURE_NON_AUTHORITY_FILL_' + ('x' * 28000)),[Diagnostics.EventLogEntryType]::Information,62518)
+                $count++
+                $nativeInformation = [Diagnostics.Eventing.Reader.EventLogSession]::GlobalSession.GetLogInformation(
+                    $policy.Log,[Diagnostics.Eventing.Reader.PathType]::LogName)
+                if ($nativeInformation.IsLogFull -eq $true) { $full=$true; break }
+            }
             catch {
                 $errorItem = $_.Exception
                 while ($null -ne $errorItem) {
