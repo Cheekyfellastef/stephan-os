@@ -34,6 +34,15 @@ import {
 import { createStephanosSharedConversationTurnRecord } from './stephanosSharedConversationThreadV1.mjs';
 import { projectChatHandoffContinuity } from './chatHandoffContinuityV1.mjs';
 
+// Original #1290 proof-index suites are included in this EXISTING CI-tested bridge
+// entrypoint, not by editing protected .github/workflows/build-stephanos-ui.yml.
+// These pure tests retain the same source ownership and fail-closed policies.
+import './sharedWorkspaceProofIndexV1.test.mjs';
+import './sharedWorkspaceProofIndexBridgeV1.test.mjs';
+import './sharedWorkspaceProofIndexIntegrationV1.test.mjs';
+import './sharedWorkspaceProofIndexScopedV1.test.mjs';
+import './shared-workspace-dashboard-feed.test.mjs';
+
 const NOW = Date.parse('2026-07-13T00:00:00.000Z');
 const EXPIRY = '2026-07-13T00:10:00.000Z';
 
