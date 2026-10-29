@@ -46,7 +46,9 @@ function readGitHead(repoRoot) {
 export async function observeForgeReadOnlyCapacity(options = {}) {
   const repoRoot = options.repoRoot || REPO_ROOT;
   const readHead = options.readHead || readGitHead;
-  const sourceHead = String(await readHead(repoRoot) || '').trim().toLowerCase();
+  let sourceHead;
+  try { sourceHead = String(await readHead(repoRoot) || '').trim().toLowerCase(); }
+  catch { return deny('FORGE_SOURCE_HEAD_UNPROVEN'); }
   if (!SOURCE_SHA.test(sourceHead)) return deny('FORGE_SOURCE_HEAD_UNPROVEN');
 
   const endpoint = String(options.endpoint || 'http://127.0.0.1:11434').replace(/\/+$/, '');
@@ -82,6 +84,14 @@ export async function observeForgeReadOnlyCapacity(options = {}) {
     catch { return deny('FORGE_LOCAL_INVENTORY_INVALID', sourceHead); }
     if (!Array.isArray(payload?.models) || payload.models.length > 2048) {
       return deny('FORGE_LOCAL_INVENTORY_INVALID', sourceHead);
+    }
+    // Revalidate Git source identity after asynchronous model inventory I/O.
+    // A transient observation cannot be moved to a new installed source head.
+    let finalHead;
+    try { finalHead = String(await readHead(repoRoot) || '').trim().toLowerCase(); }
+    catch { return deny('FORGE_SOURCE_HEAD_CHANGED_DURING_OBSERVATION', sourceHead); }
+    if (finalHead !== sourceHead) {
+      return deny('FORGE_SOURCE_HEAD_CHANGED_DURING_OBSERVATION', sourceHead);
     }
     const modelListed = payload.models.some((entry) =>
       entry && typeof entry === 'object' && (entry.name === model || entry.model === model));

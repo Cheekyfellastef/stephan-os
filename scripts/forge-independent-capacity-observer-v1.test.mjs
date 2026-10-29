@@ -87,3 +87,22 @@ test('unsupported timeout and failed model inventory never claim execution', asy
   assert.equal(failed.reason, 'FORGE_LOCAL_INVENTORY_REQUEST_FAILED');
   assert.equal(failed.canClaim, false);
 });
+
+test('changes to the source head during the read-only inventory refuse even observation', async () => {
+  let checks = 0;
+  const value = await observeForgeReadOnlyCapacity(base({
+    readHead: () => ++checks === 1 ? HEAD : 'b'.repeat(40),
+  }));
+  assert.equal(checks, 2);
+  assert.equal(value.reason, 'FORGE_SOURCE_HEAD_CHANGED_DURING_OBSERVATION');
+  assert.equal(value.buildCapacityPublished, false);
+  assert.equal(value.canDispatch, false);
+});
+
+test('source head lookup failure is a typed hold instead of a rejected cycle', async () => {
+  const value = await observeForgeReadOnlyCapacity(base({
+    readHead: () => { throw new Error('git-unavailable'); },
+  }));
+  assert.equal(value.reason, 'FORGE_SOURCE_HEAD_UNPROVEN');
+  assert.equal(value.canClaim, false);
+});
