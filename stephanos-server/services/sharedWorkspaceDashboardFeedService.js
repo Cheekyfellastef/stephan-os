@@ -84,23 +84,51 @@ function latestClosedLoopLearning(records = []) {
   return event?.closedLoopLearning || null;
 }
 
+export const OPTIONAL_LIVE_PROJECTION_DEADLINE_MS = 2_500;
+const activeLiveProjectionReaders = new WeakSet();
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
   }
+  const reader = input.readLiveGoalProjection || readLiveGoalProjection;
+  const unavailable = reason => ({ projection: null, state: 'unavailable', reason });
+  // An optional upstream must neither hold local evidence past its budget nor
+  // multiply unfinished reads on every poll. Busy callers get no other caller's
+  // projection, credentials or freshness verdict. There is no completed cache.
+  if (activeLiveProjectionReaders.has(reader)) return unavailable('LIVE_PROJECTION_READ_IN_PROGRESS');
+  activeLiveProjectionReaders.add(reader);
+  const operation = (async () => {
+    try {
+      const configured = input.liveGoalProjectionOptions || {};
+      const projection = await reader({
+        ...configured,
+        now: new Date(nowMs),
+        githubTelemetryOptions: {
+          ...(configured.githubTelemetryOptions || {}),
+          env: configured.githubTelemetryOptions?.env || input.env,
+        },
+      });
+      return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
+    } catch (error) {
+      return unavailable(`LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}`);
+    } finally {
+      activeLiveProjectionReaders.delete(reader);
+    }
+  })();
+  // A smaller internal test/caller budget is allowed; callers cannot extend
+  // the production deadline. Existing upstream timeouts still own cancellation.
+  const requested = Number(input.liveProjectionTimeoutMs);
+  const timeoutMs = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, OPTIONAL_LIVE_PROJECTION_DEADLINE_MS)
+    : OPTIONAL_LIVE_PROJECTION_DEADLINE_MS;
+  let timer;
   try {
-    const configured = input.liveGoalProjectionOptions || {};
-    const projection = await readLiveGoalProjection({
-      ...configured,
-      now: new Date(nowMs),
-      githubTelemetryOptions: {
-        ...(configured.githubTelemetryOptions || {}),
-        env: configured.githubTelemetryOptions?.env || input.env,
-      },
-    });
-    return { projection, state: projection ? 'ready' : 'unavailable', reason: projection ? 'LIVE_PROJECTION_READ' : 'LIVE_PROJECTION_EMPTY' };
-  } catch (error) {
-    return { projection: null, state: 'unavailable', reason: `LIVE_PROJECTION_READ_FAILED:${error?.message || 'unknown'}` };
+    return await Promise.race([operation, new Promise(resolve => {
+      timer = setTimeout(() => resolve(unavailable('LIVE_PROJECTION_DEADLINE_EXCEEDED')), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
