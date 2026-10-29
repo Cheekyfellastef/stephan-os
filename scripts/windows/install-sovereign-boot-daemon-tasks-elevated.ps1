@@ -21,6 +21,8 @@ $expectedHeadLower = $ExpectedHead.ToLowerInvariant()
 $fixedSourcePaths = @(
     'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
     'scripts/windows/install-sovereign-commander.ps1',
+    'scripts/windows/run-sovereign-commander-hidden.ps1',
+    'scripts/windows/sovereign-commander-operator-context-v1.ps1',
     'scripts/windows/install-desktop-commander-watchdog.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
@@ -112,10 +114,12 @@ function Assert-CanonicalSource {
 function Get-BootTaskProof {
     param(
         [Parameter(Mandatory = $true)][string]$TaskName,
-        [Parameter(Mandatory = $true)][string]$ExpectedArguments
+        [Parameter(Mandatory = $true)][string]$ExpectedArguments,
+        [switch]$RequiresInteractiveOperator
     )
     $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
     [xml]$xml = Export-ScheduledTask -TaskName $TaskName
+    $singleAction = @($task.Actions).Count -eq 1
     $action = @($task.Actions)[0]
     $bootTriggerPresent = $null -ne $xml.Task.Triggers.BootTrigger
     $logonType = [string]$xml.Task.Principals.Principal.LogonType
@@ -127,9 +131,20 @@ function Get-BootTaskProof {
     $executeMatches = [string]::Equals([string]$action.Execute, $wscriptExe, [System.StringComparison]::OrdinalIgnoreCase)
     $argumentsMatch = [string]::Equals([string]$action.Arguments, $ExpectedArguments, [System.StringComparison]::Ordinal)
     $runLevel = [string]$xml.Task.Principals.Principal.RunLevel
-    $bootSafe = $bootTriggerPresent -and $logonType -eq 'S4U' -and $runLevel -eq 'LeastPrivilege' -and $hidden -and $startWhenAvailable -and $multipleInstances -eq 'IgnoreNew' -and $restartCount -eq 3 -and $restartInterval -eq 'PT1M' -and $executeMatches -and $argumentsMatch
+    $expectedLogonType = if ($RequiresInteractiveOperator) { 'InteractiveToken' } else { 'S4U' }
+    $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $principalMatches = [string]$xml.Task.Principals.Principal.UserId -ceq $operatorSid
+    $logonTriggerMatches = -not $RequiresInteractiveOperator -or (
+        $null -ne $xml.Task.Triggers.LogonTrigger -and
+        [string]$xml.Task.Triggers.LogonTrigger.UserId -ceq $operatorSid
+    )
+    $configurationVerified = $singleAction -and $bootTriggerPresent -and $logonType -eq $expectedLogonType -and $principalMatches -and $logonTriggerMatches -and $runLevel -eq 'LeastPrivilege' -and $hidden -and $startWhenAvailable -and $multipleInstances -eq 'IgnoreNew' -and $restartCount -eq 3 -and $restartInterval -eq 'PT1M' -and $executeMatches -and $argumentsMatch
+    # This is task-registration evidence only. It cannot certify an actual
+    # runtime token, pre-login execution, custody release or helper admission.
+    $bootSafe = $configurationVerified -and -not $RequiresInteractiveOperator
     [pscustomobject]@{
         taskName = $TaskName
+        singleAction = [bool]$singleAction
         bootTriggerPresent = [bool]$bootTriggerPresent
         logonType = $logonType
         runLevel = $runLevel
@@ -140,7 +155,12 @@ function Get-BootTaskProof {
         restartInterval = $restartInterval
         windowlessWscript = [bool]$executeMatches
         fixedArgumentsMatch = [bool]$argumentsMatch
-        requiresInteractiveLogon = $false
+        principalMatches = [bool]$principalMatches
+        logonTriggerMatches = [bool]$logonTriggerMatches
+        configurationVerified = [bool]$configurationVerified
+        requiresInteractiveLogon = [bool]$RequiresInteractiveOperator
+        normalOperatorRuntimeProven = $false
+        preLoginExecutionProven = $false
         bootSafe = [bool]$bootSafe
     }
 }
@@ -210,6 +230,10 @@ try {
 if ([string]$commanderReceipt.finalVerdict -ne 'SOVEREIGN_COMMANDER_TASK_INSTALLED' -or $commanderReceipt.installed -ne $true -or $commanderReceipt.startedNow -ne $true) {
     Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
+if ($commanderReceipt.requiresInteractiveLogon -ne $true -or [string]$commanderReceipt.logonType -cne 'Interactive' -or
+    $commanderReceipt.normalOperatorRuntimeProven -ne $false -or $commanderReceipt.preLoginExecutionProven -ne $false) {
+    Stop-Bootstrap 'SOVEREIGN_COMMANDER_OPERATOR_SESSION_CONTRACT_UNPROVEN' -Persist
+}
 if ($desktopCommanderReceipt.installed -ne $true -or $desktopCommanderReceipt.startedNow -ne $true -or $desktopCommanderReceipt.atStartup -ne $true -or [string]$desktopCommanderReceipt.logonType -ne 'S4U') {
     Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
@@ -219,23 +243,26 @@ if ([string]$recoveryReceipt.finalVerdict -ne 'BATTLE_BRIDGE_RECOVERY_MESH_INSTA
 
 $launcherPath = Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'
 $quotedLauncher = '"' + $launcherPath + '"'
-$commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher)
+$commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher) -RequiresInteractiveOperator
 $desktopCommanderProof = Get-BootTaskProof -TaskName 'Stephanos Commander Watchdog' -ExpectedArguments ("//B //NoLogo {0} desktop-commander-watchdog" -f $quotedLauncher)
 $recoveryProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh" -f $quotedLauncher)
 $guardianProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh Guardian' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh-guardian" -f $quotedLauncher)
-$allBootSafe = $commanderProof.bootSafe -and $desktopCommanderProof.bootSafe -and $recoveryProof.bootSafe -and $guardianProof.bootSafe
-if (-not $allBootSafe) { Stop-Bootstrap 'BOOT_TASK_LIFECYCLE_PROOF_FAILED' -Persist }
+$allConfigurationsVerified = $commanderProof.configurationVerified -and $desktopCommanderProof.configurationVerified -and $recoveryProof.configurationVerified -and $guardianProof.configurationVerified
+if (-not $allConfigurationsVerified) { Stop-Bootstrap 'BOOT_TASK_LIFECYCLE_PROOF_FAILED' -Persist }
 
 Write-Receipt -Persist -Payload ([ordered]@{
     schemaVersion = 'stephanos.sovereign-boot-daemon-bootstrap.v1'
     ok = $true
-    finalVerdict = 'SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN'
+    finalVerdict = 'SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED'
     blocker = ''
     expectedHead = $expectedHeadLower
     elevated = $true
     oneTimeElevationOnly = $true
     tasks = @($commanderProof, $desktopCommanderProof, $recoveryProof, $guardianProof)
-    requiresInteractiveLogon = $false
+    requiresInteractiveLogon = $true
+    normalOperatorRuntimeProven = $false
+    preLoginExecutionProven = $false
+    runtimeActivationGranted = $false
     visiblePowerShellRequired = $false
     arbitraryShellAllowed = $false
     arbitraryTaskNameAllowed = $false

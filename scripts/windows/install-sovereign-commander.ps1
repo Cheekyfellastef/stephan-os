@@ -59,7 +59,8 @@ $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-ru
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
-foreach ($required in @($launcherPath, $runnerPath, $serverPath, $fleetSupervisorPath, $vrGovernorPath, $wscriptExe)) {
+$operatorContextPath = Join-Path $repoRoot 'scripts\windows\sovereign-commander-operator-context-v1.ps1'
+foreach ($required in @($launcherPath, $runnerPath, $operatorContextPath, $serverPath, $fleetSupervisorPath, $vrGovernorPath, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
 }
 
@@ -99,8 +100,10 @@ if (-not $shouldApply) {
         intervalMinutes = 1
         atStartup = $true
         atLogon = $true
-        requiresInteractiveLogon = $false
-        logonType = 'S4U'
+        requiresInteractiveLogon = $true
+        logonType = 'Interactive'
+        normalOperatorRuntimeProven = $false
+        preLoginExecutionProven = $false
         restartCount = 3
         restartIntervalMinutes = 1
         hidden = $true
@@ -148,10 +151,10 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArgument
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUserSid -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe hidden Sovereign Commander daemon watchdog. Starts before interactive logon, self-recovers, and wakes the canonical fleet/goal conveyor once per minute; source mutation remains with the Mission Worker.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Operator-session Sovereign Commander watchdog. Requires Windows sign-in and rejects privileged runtime context. Reuses the canonical fleet/goal conveyor; source mutation remains with the Mission Worker.' -Force | Out-Null
 $startedNow = $false
 if ($StartNow) {
     Start-ScheduledTask -TaskName $taskName
@@ -185,8 +188,10 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     intervalMinutes = 1
     atStartup = $true
     atLogon = $true
-    requiresInteractiveLogon = $false
-    logonType = 'S4U'
+    requiresInteractiveLogon = $true
+    logonType = 'Interactive'
+    normalOperatorRuntimeProven = $false
+    preLoginExecutionProven = $false
     restartCount = 3
     restartIntervalMinutes = 1
     hidden = $true

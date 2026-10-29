@@ -17,6 +17,25 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
     throw "Sovereign Commander runner must use canonical checkout: $expectedRepoRoot"
 }
 
+# S4U/LeastPrivilege metadata did not exclude an enabled administrator token on
+# the installed machine. Observe this process before any lifecycle mutation.
+. (Join-Path $scriptDir 'sovereign-commander-operator-context-v1.ps1')
+$operatorContext = Get-SovereignCommanderOperatorContextV1
+if ($null -eq $operatorContext -or $operatorContext.normalOperatorObserved -isnot [bool] -or $operatorContext.normalOperatorObserved -ne $true) {
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-watchdog.v1'
+        healthy = $false
+        blocker = $operatorContext.blocker
+        normalOperatorObserved = $false
+        runtimeActivationGranted = $false
+        sourceMutationAllowed = $false
+        arbitraryShellAllowed = $false
+        pcRestartAllowed = $false
+        finalVerdict = 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } | ConvertTo-Json -Compress
+    exit 2
+}
+
 $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
 $fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs'
 $fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='

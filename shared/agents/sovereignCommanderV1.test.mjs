@@ -45,8 +45,9 @@ test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded',
     'utf8',
   );
   assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
-  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
-  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /SOVEREIGN_DAEMON_TASK_CONFIGURATION_VERIFIED/);
+  assert.match(source, /'InteractiveToken' \} else \{ 'S4U'/);
+  assert.match(source, /logonType -eq \$expectedLogonType/);
   assert.match(source, /standingElevatedTaskCreated = \$false/);
   assert.match(source, /arbitraryShellAllowed = \$false/);
   assert.match(source, /mergeAuthority = \$false/);
