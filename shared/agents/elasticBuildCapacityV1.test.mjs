@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+// Goal #3006: exercise the surge-capacity contract in existing hosted scheduler tests.
+import './surgeBuilderQualificationV1.test.mjs';
 import {
   MAXIMUM_BUILD_LANES,
   MINIMUM_BUILD_LANES,
