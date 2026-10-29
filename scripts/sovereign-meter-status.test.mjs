@@ -146,3 +146,20 @@ test('an untrusted newer duplicate cannot replace an older current usable meter'
   assert.equal(meter.observationState, 'CURRENT');
   assert.equal(meter.trafficLight, 'AMBER');
 });
+
+test('even a trusted current numeric quota is not green when provider availability is unknown or unavailable', () => {
+  const base = {
+    participantStatusId: 'codex-capacity-current',
+    timestampUtc: '2026-10-02T11:44:00.000Z',
+    truthState: 'CURRENT',
+    meterTruthUsable: true,
+    remainingPercent: 95,
+  };
+  const observe = (availability) => normalizeWorkspaceMeterRecord({
+    ...base, availability,
+  }, { nowMs: NOW.getTime() });
+  assert.equal(observe('UNKNOWN').trafficLight, 'AMBER');
+  assert.equal(observe('UNAVAILABLE').trafficLight, 'RED');
+  assert.equal(observe('CAPACITY_UNAVAILABLE').trafficLight, 'RED');
+  assert.equal(observe('AVAILABLE').trafficLight, 'GREEN');
+});
