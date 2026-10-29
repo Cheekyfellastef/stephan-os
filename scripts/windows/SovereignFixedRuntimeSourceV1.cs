@@ -102,6 +102,19 @@ namespace Stephanos.Sovereign {
         !RuntimeHexV1(RuntimeStringV1(grant,"sourceRevision"),40) ||
         RuntimeStringV1(action,"branch")!=RuntimeStringV1(grant,"branch"))
         throw new InvalidOperationException("RUNTIME_SOURCE_GRANT_UNPROVEN");
+      // A conservative bounded subset of the already-qualified local class;
+      // the canonical parent classifier remains the admission authority.
+      object pathsValue,evidenceValue;
+      if(!action.TryGetValue("allowedFiles",out pathsValue) || !(pathsValue is object[]) ||
+        ((object[])pathsValue).Length<1 || ((object[])pathsValue).Length>4)
+        throw new InvalidOperationException("RUNTIME_SOURCE_FOCUSED_SCOPE_BOUND");
+      if(action.TryGetValue("requiredEvidence",out evidenceValue)) {
+        var evidenceRows=evidenceValue as object[];
+        if(evidenceRows==null) throw new InvalidOperationException("RUNTIME_SOURCE_EVIDENCE_SHAPE_UNPROVEN");
+        foreach(object evidence in evidenceRows)
+          if(!(evidence is string) || Regex.IsMatch((string)evidence,"windows runtime|battle bridge",RegexOptions.IgnoreCase))
+            throw new InvalidOperationException("RUNTIME_SOURCE_WINDOWS_CLASS_NOT_QUALIFIED");
+      }
       RuntimeFalseV1(grant,"mergeAuthority");RuntimeFalseV1(grant,"leaseSeizureAllowed");
       return binding;
     }

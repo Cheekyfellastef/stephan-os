@@ -1599,10 +1599,13 @@ test('owned local source proposal edits tests and captures bytes without termina
     finalizeMissionWorkerQueueClaim: forbidden,
     localModelFetchImpl: async () => new Response(JSON.stringify({done: true,
       message: {content: JSON.stringify({edits: [{path:'shared/agents/example.mjs',
-        old:'export const value = 1;', new:'export const value = 2;'}], summary:'fixture repair'})}}) + '\n'),
+        old:'export const value = 1;', new:'export const value = 2;'}, {path:'shared/agents/example.identity.test.mjs',old:'',
+        new:"import assert from 'node:assert/strict';\nimport {value} from './example.mjs';\nassert.equal(value,2);\n"}], summary:'fixture repair'})}}) + '\n'),
   });
   assert.equal(result.success, true, result.error);
-  assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.identity.test.mjs','shared/agents/example.mjs']);
+  assert.equal(result.execution.ownedRegressionReceipts.length,1);
+  assert.equal(result.execution.sourceTestReceipts.length,2);
   assert.deepEqual(result.execution.changedFiles, result.changedFiles);
   assert.ok(result.sourceArtifactIdentity);
   assert.equal(await readFile(fx.claim.processingPath, 'utf8'), originalClaim);

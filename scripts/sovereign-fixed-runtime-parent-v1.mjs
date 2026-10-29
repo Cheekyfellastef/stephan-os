@@ -3,11 +3,14 @@ import {spawn, spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {lstatSync, readFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
+import {inspectStephanosNativeCapacityGamingAdmissionV1} from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const ROOT = 'C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1';
 const SOURCE = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const WORKSPACE='C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace';
+const resourceAllowed=()=>{try{return inspectStephanosNativeCapacityGamingAdmissionV1({workspaceRoot:WORKSPACE,repoRoot:SOURCE}).ok===true;}catch{return false;}};
 const SHA = /^[a-f0-9]{64}$/;
 const proof = new WeakMap();
 const qualifications = new WeakMap();
@@ -84,6 +87,7 @@ function singleReport(stdout,marker,maximum=262144) {
 export function inspectFixedRuntimeQualificationV1() {
   if(process.platform!=='win32') return denied('FIXED_RUNTIME_WINDOWS_REQUIRED');
   try {
+    if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
     const installation=protectedInstallation();
     const observed=spawnSync(installation.helper,['--inspect-v1'],{shell:false,windowsHide:true,
       timeout:15000,maxBuffer:32768,encoding:'utf8',env:createBattleBridgeMinimalChildEnvironment()});
@@ -96,6 +100,7 @@ export function inspectFixedRuntimeQualificationV1() {
       !Array.isArray(row.Profiles) || row.Profiles.some(p=>!['MAINTENANCE_GOAL_BUILDER_V1','SOURCE_TASK_V1'].includes(p)) ||
       !SHA.test(row.CustodyRecordSha256??'') || !Number.isSafeInteger(row.NativeRecordId) || row.NativeRecordId<1)
       return denied('FIXED_RUNTIME_AUTHENTICATED_IDLE_UNPROVEN');
+    if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD');
     const qualified=Object.freeze({ok:true,sourceHead:installation.head,
       profiles:Object.freeze([...row.Profiles]), observedAtUtc:new Date().toISOString(),
       bootStartedAtUtc:row.BootStartedAtUtc,custodyRecordSha256:row.CustodyRecordSha256,
@@ -134,6 +139,7 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
     !Number.isSafeInteger(binding.nativeRecordId) || binding.nativeRecordId<1 ||
     typeof onPrepared!=='function' || signal?.aborted)
     return denied('FIXED_RUNTIME_EXACT_RESERVATION_REQUIRED',binding);
+  if(!resourceAllowed())return denied('FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD',binding);
   if(!qualification.profiles.includes(profile)) return denied('FIXED_RUNTIME_PROFILE_NOT_COMPILED',binding);
   const source=profile==='SOURCE_TASK_V1';
   if(source && (!['actionId','missionId'].every(k=>/^[a-z0-9][a-z0-9._-]{0,127}$/.test(binding[k]??'')) ||
@@ -145,13 +151,17 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
     TaskFrameBase64:taskBody.toString('base64'),TaskBindingSha256:digest(taskBody)};
   const raw=JSON.stringify(frame), frameSha256=digest(raw);
   return new Promise(resolve=>{
-    let child,buffer='',terminal=null,prepared=null,protocolFault=false,cancelRequested=false,closed=false,timeout,bindingPending=Promise.resolve();
+    let child,buffer='',terminal=null,prepared=null,protocolFault=false,cancelRequested=false,closed=false,timeout,resourceTimer,bindingPending=Promise.resolve();
     const fail=()=>{protocolFault=true;try{child?.stdin.end('CANCEL\n');}catch{}};
-    const cancel=()=>{cancelRequested=true;try{child?.stdin.end('CANCEL\n');}catch{}};
+    const cancel=()=>{if(cancelRequested)return;cancelRequested=true;try{child?.stdin.end('CANCEL\n');}catch{}};
     try {
       child=spawn(qualified.installation.helper,[],{shell:false,windowsHide:true,
         stdio:['pipe','pipe','pipe'],env:createBattleBridgeMinimalChildEnvironment()});
       timeout=setTimeout(()=>{cancel();try{child.kill();}catch{}},source?1815000:160000);
+      // Task-local cancellation of the existing Job, using the SAME canonical
+      // governor reader; this is not another resource controller or GPU proof.
+      resourceTimer=setInterval(()=>{if(!resourceAllowed())cancel();},1000);
+      resourceTimer.unref?.();
       signal?.addEventListener('abort',cancel,{once:true});
       child.stdin.on('error',()=>{cancelRequested=true;}); child.stderr.on('data',fail);
       child.on('error',fail);
@@ -177,11 +187,11 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
                 !Number.isFinite(Date.parse(prepared.OwnerCreatedAtUtc))) throw new Error('PREPARED_UNBOUND');
               bindingPending=Promise.resolve().then(()=>onPrepared(Object.freeze({...prepared}))).then(accepted=>{
                 if(accepted!==true || cancelRequested || closed || signal?.aborted){
-                  cancelRequested=true;if(!closed)cancel();return;
+                  if(!closed)cancel();else cancelRequested=true;return;
                 }
                 if(protocolFault)return;
                 child.stdin.write(`ACK ${frameSha256} ${process.pid} ${prepared.OwnerCreatedAtUtc} ${prepared.RootPid} ${prepared.RootCreatedAtUtc}\n`);
-              },()=>{cancelRequested=true;if(!closed)cancel();});
+              },()=>{if(!closed)cancel();else cancelRequested=true;});
             } else if(line.startsWith('SOVEREIGN_RUNTIME_TERMINAL_V1=')) {
               if(terminal) throw new Error('DUPLICATE_TERMINAL');
               terminal=JSON.parse(line.slice('SOVEREIGN_RUNTIME_TERMINAL_V1='.length));
@@ -190,7 +200,7 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
         }
       });
       child.on('close',async code=>{
-        closed=true;clearTimeout(timeout);signal?.removeEventListener('abort',cancel);
+        closed=true;clearTimeout(timeout);clearInterval(resourceTimer);signal?.removeEventListener('abort',cancel);
         // The original receipt-binding write must settle before any completion.
         // A late ACK is suppressed once close/cancel is observed.
         await bindingPending;
@@ -208,8 +218,13 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
           stage.ZeroActiveProcessesObserved===true && stage.ActiveProcesses===0 &&
           stage.ExecutionCustodyReleased===true && terminal.ExecutionCustodyReleased===true &&
           [0,2].includes(code) && code===(terminal.OperationOk===true?0:2);
-        const result=Object.freeze({ok:Boolean(bound && !cancelRequested && terminal.OperationOk===true),
-          reason:bound?(cancelRequested?'FIXED_RUNTIME_OPERATION_CANCELLED':terminal.Reason):'FIXED_RUNTIME_TERMINAL_CUSTODY_UNPROVEN',
+        const operationProven=bound && !cancelRequested && terminal.OperationOk===true &&
+          terminal.TaskExecuted===true && terminal.TaskResumed===true && stage.ResumeConfirmed===true &&
+          stage.ParentBindingAccepted===true && stage.NormalRootExit===true && stage.OutputComplete===true &&
+          stage.ExitCode===0 && typeof stage.Output==='string' && Buffer.byteLength(stage.Output)<=16384 &&
+          stage.OutputSha256===digest(stage.Output);
+        const result=Object.freeze({ok:Boolean(operationProven),
+          reason:bound?(cancelRequested?'FIXED_RUNTIME_OPERATION_CANCELLED':terminal.OperationOk===true && !operationProven?'FIXED_RUNTIME_OPERATION_EVIDENCE_UNPROVEN':terminal.Reason):'FIXED_RUNTIME_TERMINAL_CUSTODY_UNPROVEN',
           executionCustodyReleased:Boolean(bound),taskRootCreated:terminal?.TaskRootCreated===true,
           taskExecuted:Boolean(bound && terminal.TaskExecuted===true),stdout:stage?.Output??'',
           nativeReceipt:freezeTree(terminal)});
@@ -218,7 +233,7 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
       });
       child.stdin.write(raw+'\n');
     } catch {
-      clearTimeout(timeout);signal?.removeEventListener('abort',cancel);
+      clearTimeout(timeout);clearInterval(resourceTimer);signal?.removeEventListener('abort',cancel);
       if(child){fail();try{child.kill();}catch{}}
       // Once the native helper launch was attempted, absence of a terminal is held.
       resolve(Object.freeze({ok:false,reason:'FIXED_RUNTIME_TRANSPORT_UNPROVEN',executionCustodyReleased:false}));

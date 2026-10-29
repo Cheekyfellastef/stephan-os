@@ -1,4 +1,4 @@
-# Fixed runtime action custody â€” structural review packet
+# Fixed runtime action custody — structural review packet
 
 Status: implementation in progress; component fixtures do not admit installation or runtime activation. Parent goal2961. Canonical source73e1a79c03cb9dafe8fb17d77a45a9ac502e32ce. Original prepared840b incident recovered after verified full boot; distinct ACTIVE e24400efa624935bca41f23a05a5b7d706fa1f6b01a7cd6729731e43a42002bd, reservationmcp-8d25d34d-751c-4464-815a-9cbde695f80a-0f1099a8-4f66-4f24-a5fa-0df8bb5e3d03, operationrepair-goal-builder-flow started2026-10-28T19:44:56.546Z, nativeanchor26 remains held. Caller and actual terminal result are not yet authenticated. No incident extinction inferred from age, parent exit, failed process lookup or installing this design.
 
@@ -58,7 +58,7 @@ A successful installation is NOT same-boot compiler extinction or runtime qualif
 
 Only after that later full boot may the existing authenticated exact-incident recovery reconcile e244 and prove current native journal IDLE. Qualification is computed from the protected pending receipt, actual boot witness, exact installed source and authenticated custody state; no user-writable active flag or caller boolean can grant it. The old840b restart approval is consumed. A fresh privileged installation or full restart requires its own concrete operator gate after reviewed code and proof exist. No speculative restart is requested by this design.
 
-## Source-task lifecycle boundary â€” proposed internal profile requiring review
+## Source-task lifecycle boundary — proposed internal profile requiring review
 
 The first fixed maintenance profile remains ONLY repair-goal-builder-flow. It cannot itself qualify long source building: its nested heartbeat deadline is25seconds and Control Tower's direct heartbeat deadline60seconds, while the current inline source builder permits two10minute model attempts and unbounded test subprocesses. Native cleanup cannot turn a cancelled build into success or release its independent claim. Source currently has only one production caller of processNextProviderNeutralSourceBuild: the maintenance heartbeat.
 
@@ -71,7 +71,7 @@ Move long execution out of short maintenance reconciliation through that same ex
 Before implementing or activating the internal profile, resolve exact existing provider/task-class qualification and worker handoff semantics in structural review. First-profile maintenance proof, a selected goal or a queue wake is never source-build admission or physical pickup.
 
 
-## Implementation checkpoint — no runtime qualification
+## Implementation checkpoint - no runtime qualification
 
 The private native stage kernel and its Windows fixtures now separate failed
 operations from positively excluded processes, and require the existing parent
@@ -120,3 +120,20 @@ larger deadline repairs that publication contract.
 The independently reproduced paused producer caused IOException while its writer
 was open. Earlier hosted AggregateException inner causes remain unproven; this
 counterexample must not be retroactively reported as their authenticated cause.
+
+
+## Parent/worker integration checkpoint: qualification remains pending
+
+The source implementation now joins the existing supervised worker's actual atomic active-claim heartbeat publication before native launch. The original parent owns one processing claim and one receipt chain. Its suspended-root callback preserves a real Shared Workspace proof artifact and appends that artifact's path and exact byte hash before ACK/resume. Only the real fixed transport can issue one-use provenance for its original immutable request/source/claim binding. JSON copies, changed identities and replay do not inherit it.
+
+Operation outcome and physical extinction are separate facts. Cancellation, root-binding refusal or late binding may yield a failed operation with authentic Job zero. Invalid native identity or protocol retains custody. The parent waits for the receipt-binding write to settle before returning. A fresh prelaunch exclusion applies only to that invocation and cannot clear a prior unknown execution or historical processing claim.
+
+The SOURCE_TASK_V1 driver performs model/apply/test/Git capture inside the same native Job. Its finite total budget is 1,800,000 ms, with the existing two bounded model attempts, an aggregate 300,000 ms Node verification budget, bounded Git calls and cleanup reserve. The 145,000 ms maintenance profile does not execute a long source build inline. New owned regression files run as additive checks; immutable required-test commands stay unchanged. Baseline RED comparison and programme acceptance remain separate evidence requirements where applicable.
+
+The parent preserves proposal bytes, original identities, exact scope/tests and captured Git blobs before pure-I/O escrow/result/receipt/queue reconciliation. It checks canonical mission state at the existing locked event commit and enters the existing mission CAS after collection for final receipt/queue acknowledgement. It never nests a collector under that same lock. Cancellation and missing, invalid, UNKNOWN or partial-source proposals preserve the original processing claim, proposal and worktree for canonical reconciliation; native zero cannot become a no-change claim.
+
+The same canonical resource-governor reader gates qualification, actual launch and each maintenance step. A task-local parent monitor cancels the existing native Job if permission changes during execution. Native Job zero does not prove persistent Ollama/GPU activity has stopped; the existing resource governor retains that responsibility. There is no override, second scheduler, replacement worker or new signer.
+
+The installer is pending-only and requires the independently approved exact source artifact. Compiler inputs, scratch and output are protected before compilation. Six bounded native units, complete source bytes, tool hashes/link counts, operator identity, machine identity, PE and manifest are bound. Runtime qualification requires strict compile-before-install-before-genuine-later-boot ordering, current authenticated custody IDLE with no current-boot fence, and exact physical source/installation pins. No writable active flag enrolls the helper. The source closure must be re-audited for final runtime, literal child, native and runtime-read inputs before approval; a static import inventory alone is insufficient.
+
+This is an implementation checkpoint. It does not assert independent specialist review, installed qualification, authenticated recovery, real source pickup or goal completion. The existing lesson remains: process creation is not entry execution; queue publication is not pickup; operation success is not custody release; and signed retained evidence must precede release.

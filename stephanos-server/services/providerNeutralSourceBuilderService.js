@@ -1091,7 +1091,16 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         }
       }
 
-      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      const requiredTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // Newly owned regression files are additive evidence; never rewrite the
+      // immutable owner-required command identity to make them an oracle.
+      const ownedRegressionCommands = mutationSnapshot
+        .filter(saved => saved.existed === false && files.includes(saved.path)
+          && /\.(?:test|spec)\.(?:mjs|js)$/.test(saved.path))
+        .map(saved => 'node --test ' + saved.path);
+      const ownedRegressionReceipts = ownedRegressionCommands.length
+        ? runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options) : [];
+      const sourceTestReceipts = Object.freeze([...requiredTestReceipts, ...ownedRegressionReceipts]);
       // options.now is an admission snapshot, not the completion clock.
       completedAt = new Date().toISOString();
       const receipt = Object.freeze({
@@ -1112,6 +1121,7 @@ async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
         receipt,
         evidenceReceipts: sourceTestReceipts,
         sourceTestReceipts,
+        ownedRegressionReceipts,
         stage: 'TESTED',
         testsPassed: true,
         summary: generated.summary,

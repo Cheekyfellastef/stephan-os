@@ -313,3 +313,5 @@ stephanos-server/services/sovereignBuilder8CapacityService.js text eol=lf
 stephanos-server/services/supervisedR7RecoveryPreparationV1.mjs text eol=lf
 stephanos-server/services/supervisedR7RecoveryRuntime.js text eol=lf
 stephanos-server/utils/logger.js text eol=lf
+
+scripts/windows/read-sovereign-maintenance-boot-witness.ps1 text eol=lf

@@ -9,14 +9,14 @@ const source=readFileSync(new URL('../sovereign-fixed-runtime-parent-v1.mjs',imp
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const head='a'.repeat(40), custody='b'.repeat(64), manifest='c'.repeat(64), pe=Buffer.from('NONEXECUTABLE-VM-FIXTURE');
 let completed=0;
-for(const mode of ['success','cancel','refuse','reject','late','mutate','mutate-request','mutate-head','malformed']) {
- const context=vm.createContext({Buffer,performance,setTimeout,clearTimeout,AbortController,
+for(const mode of ['success','cancel','refuse','reject','late','mutate','mutate-request','mutate-head','resource-during-run','malformed']) {
+ const context=vm.createContext({Buffer,performance,setTimeout,clearTimeout,setInterval,clearInterval,AbortController,
   process:{platform:'win32',pid:12345,env:{}},console});
  const pending={SchemaVersion:'stephanos.fixed-runtime-pending.v1',SourceHead:head,HelperSha256:hash(pe),ManifestSha256:manifest};
  const fs={lstatSync:path=>({isFile:()=>true,isDirectory:()=>true,isSymbolicLink:()=>false,nlink:1,size:128}),
   readFileSync:path=>path.endsWith('host.exe')?pe:path.endsWith('pending.json')?Buffer.from(JSON.stringify(pending)):
    path.endsWith('HEAD')?Buffer.from('ref: refs/heads/main\n'):Buffer.from(head+'\n')};
- let nativeClose=false,callbackSettled=false;
+ let nativeClose=false,callbackSettled=false,resourceOk=true;
  const spawnSync=(_exe,args)=>args[0]==='--inspect-v1'?{status:0,stdout:'SOVEREIGN_RUNTIME_INVENTORY_V1='+JSON.stringify({
   SchemaVersion:'stephanos.fixed-runtime-inventory.v1',Ok:true,SourceHead:head,HelperSha256:hash(pe),ManifestSha256:manifest,
   AuthenticatedCustodyIdle:true,RuntimeActivationGranted:false,MutationAttempted:false,
@@ -31,9 +31,10 @@ for(const mode of ['success','cancel','refuse','reject','late','mutate','mutate-
     Profile:frame.Profile,OwnerPid:12345,OwnerCreatedAtUtc:'2026-01-01T00:00:01.0000000Z',RuntimeSourceHead:head,
     SourceHeadMatched:true,CustodyRecordSha256:custody,NativeRecordId:26,
     ActionId:meta.actionId,MissionId:meta.missionId,ClaimSha256:meta.claimSha256,
-    TaskRootCreated:true,TaskExecuted:ok,OperationOk:ok,Reason:ok?'COMPLETED':'PARENT_BINDING_UNPROVEN',ExecutionCustodyReleased:true,
+    TaskRootCreated:true,TaskResumed:ok,TaskExecuted:ok,OperationOk:ok,Reason:ok?'COMPLETED':'PARENT_BINDING_UNPROVEN',ExecutionCustodyReleased:true,
     TaskStage:{RootPid:23456,RootCreatedAtUtc:'2026-01-01T00:00:02.0000000Z',AssignedBeforeExecution:true,
-     ZeroActiveProcessesObserved:true,ActiveProcesses:0,ExecutionCustodyReleased:true,Output:''}};
+     ZeroActiveProcessesObserved:true,ActiveProcesses:0,ExecutionCustodyReleased:true,Output:'',OutputSha256:hash(''),
+     ResumeConfirmed:ok,ParentBindingAccepted:ok,NormalRootExit:ok,OutputComplete:true,ExitCode:ok?0:2}};
    if(mode==='malformed')receipt.FrameSha256='f'.repeat(64);
    child.stdout.emit('data',Buffer.from('SOVEREIGN_RUNTIME_TERMINAL_V1='+JSON.stringify(receipt)+'\n'));
    nativeClose=true;child.emit('close',ok?0:2);
@@ -48,13 +49,14 @@ for(const mode of ['success','cancel','refuse','reject','late','mutate','mutate-
       CustodyRecordSha256:custody,NativeRecordId:26})+'\n'));
      if(mode==='late')setTimeout(()=>terminal(false),0);
     });
-   } else if(line.startsWith('ACK '))queueMicrotask(()=>terminal(true));
+   } else if(line.startsWith('ACK ')){if(mode==='resource-during-run')resourceOk=false;else queueMicrotask(()=>terminal(true));}
   };
   child.stdin.end=()=>queueMicrotask(()=>terminal(false));child.kill=()=>terminal(false);
   return child;
  };
  const mocks={'node:child_process':{spawn,spawnSync},'node:crypto':{createHash},'node:fs':fs,
   'node:path':{dirname:win32.dirname,join:win32.join},
+  '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs':{inspectStephanosNativeCapacityGamingAdmissionV1:()=>({ok:resourceOk})},
   '../shared/agents/battleBridgeExecutionBoundaryV1.mjs':{createBattleBridgeMinimalChildEnvironment:()=>({})}};
  const module=new vm.SourceTextModule(source,{context});
  await module.link(specifier=>{const values=mocks[specifier];assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const [k,v]of Object.entries(values))this.setExport(k,v);},{context});});

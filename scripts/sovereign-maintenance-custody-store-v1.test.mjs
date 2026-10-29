@@ -5,7 +5,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMaintenanceCustodyStoreV1 } from './sovereign-maintenance-custody-store-v1.mjs';
-import { startSovereignCommanderContinuousRepairGuardian } from './sovereign-commander-http.mjs';
+import { startSovereignCommanderContinuousRepairGuardian as startActualGuardian } from './sovereign-commander-http.mjs';
+
+// Legacy terminal protocol fixtures exercise the actual guardian with an
+// explicit non-native transport. They never qualify a Windows runtime profile.
+const startSovereignCommanderContinuousRepairGuardian = options => startActualGuardian({
+  spawnImpl: () => assert.fail('manual custody fixture must not spawn'), ...options,
+});
 
 const machineHash = 'a'.repeat(64);
 const clock = Date.now();
