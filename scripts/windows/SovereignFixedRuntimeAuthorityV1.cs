@@ -15,7 +15,7 @@ namespace Stephanos.Sovereign {
   using Microsoft.Win32;
 
   sealed class FixedRuntimeCustodyStateV1 {
-    internal string Phase, ReservationId, OwnerId, Operation, MachineHash, BootStartedAtUtc, RecordSha256;
+    internal string Phase, ReservationId, OwnerId, Operation, TerminalAdmission, MachineHash, BootStartedAtUtc, RecordSha256;
     internal int OwnerPid;
     internal long NativeRecordId;
   }
@@ -104,8 +104,16 @@ namespace Stephanos.Sovereign {
       if(RuntimeStringV1(witness,"schemaVersion")!="stephanos.windows-boot-witness.v1" ||
         !RuntimeHexV1(machine,64)) throw new InvalidOperationException("RUNTIME_CUSTODY_BOOT_UNPROVEN");
       RuntimeInstantV1(boot);
+      string terminalAdmission="";
+      if(phase=="IDLE") {
+        terminalAdmission=RuntimeStringV1(record,"terminalAdmission");
+        if(terminalAdmission!="KNOWN_TERMINAL" && terminalAdmission!="SUCCESSOR_FULL_BOOT")
+          throw new InvalidOperationException("RUNTIME_CUSTODY_TERMINAL_UNPROVEN");
+        if(RuntimeInstantV1(RuntimeStringV1(record,"terminalAtUtc"))>DateTime.UtcNow)
+          throw new InvalidOperationException("RUNTIME_CUSTODY_TERMINAL_UNPROVEN");
+      }
       return new FixedRuntimeCustodyStateV1 {
-        Phase=phase,OwnerPid=(int)owner,ReservationId=RuntimeStringV1(record,"reservationId"),
+        Phase=phase,TerminalAdmission=terminalAdmission,OwnerPid=(int)owner,ReservationId=RuntimeStringV1(record,"reservationId"),
         OwnerId=RuntimeStringV1(record,"ownerId"),Operation=RuntimeStringV1(record,"operation"),MachineHash=machine,BootStartedAtUtc=boot,
         RecordSha256=RuntimeHashV1(stateBytes),NativeRecordId=nativeRecordId };
     }
@@ -146,6 +154,15 @@ namespace Stephanos.Sovereign {
           row.Properties[0].Value as string!="SOVEREIGN_MAINTENANCE_BOOTSTRAP_V2=NON_AUTHORITY")
           throw new InvalidOperationException("RUNTIME_JOURNAL_BOOTSTRAP_UNPROVEN");
       }
+    }
+    static bool RuntimeCurrentBootFenceExistsV1(FixedRuntimeIdentityPinsV1 pins) {
+      string name="sovereign-maintenance-"+RuntimeHashV1(Encoding.UTF8.GetBytes(pins.MachineHash+pins.BootStartedAtUtc))+".lock";
+      string path=Path.Combine(@"C:\Users\Stephan Callear\Documents\Stephanos-openclaw-workspace\status",name);
+      // Any current-boot lock means held, even if an IDLE append preceded a
+      // failed unlock. A lock is never deleted or recovered by this adapter.
+      RuntimePinParentsV1(path,pins);
+      try { File.GetAttributes(path); return true; }
+      catch(FileNotFoundException) { return false; }
     }
     static FixedRuntimeCustodyStateV1 ReadRuntimeCustodyV1(FixedRuntimeIdentityPinsV1 pins) {
       RuntimeJournalPolicyV1();

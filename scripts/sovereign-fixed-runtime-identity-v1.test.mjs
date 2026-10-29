@@ -1,13 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync, existsSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-const native = ['SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs'];
+const native = ['SovereignCoreJobCustodyV1.cs','SovereignFixedRuntimeJobV1.cs','SovereignFixedRuntimeIdentityV1.cs','SovereignFixedRuntimeAuthorityV1.cs','SovereignFixedRuntimeHostV1.cs','SovereignFixedRuntimeSourceV1.cs'];
 const literal = value => "'" + value.replaceAll("'", "''") + "'";
 test('fixed runtime identity keeps each native unit within the original 32KiB bound', () => { for (const name of native) assert.ok(readFileSync(new URL('./windows/'+name, import.meta.url)).length <= 32768, name); });
 test('native identity requires a genuine later boot and denies absent protected installation', { skip: process.platform !== 'win32', timeout: 30000 }, () => {
 const files = native.map(name => literal(fileURLToPath(new URL('./windows/'+name, import.meta.url))));
+const fixedExecutables=[
+  'C:\\Program Files\\nodejs\\node.exe','C:\\Program Files\\Git\\cmd\\git.exe',
+  'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+].filter(existsSync).map(Path => ({Path,Digest:createHash('sha256').update(readFileSync(Path)).digest('hex'),Links:statSync(Path).nlink}));
+assert.ok(fixedExecutables.some(row => row.Path.endsWith('powershell.exe')));
+assert.ok(fixedExecutables.some(row => row.Path.endsWith('git.exe')));
 const code = String.raw`
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
@@ -27,9 +36,15 @@ if($check.Invoke($null,@($pending,$old,$now))) { throw 'OLD_BOOT_ACCEPTED' }
 if($check.Invoke($null,@($pending,$boot,$old))) { throw 'FUTURE_BOOT_ACCEPTED' }
 $pending.InstalledAtUtc=$pending.CompilerCompletedAtUtc
 if($check.Invoke($null,@($pending,$boot,$now))) { throw 'SAME_COMPILE_INSTALL_ACCEPTED' }
-$nativeBoot=$type.GetMethod('RuntimeWindowsBootV1',$flags).Invoke($null,@())
+try { $nativeBoot=$type.GetMethod('RuntimeWindowsBootV1',$flags).Invoke($null,@()) }
+catch {
+  $chain=$_.Exception; $details=@();
+  while($null -ne $chain) { $details+=($chain.GetType().FullName+':'+$chain.Message);$chain=$chain.InnerException }
+  throw ('NATIVE_BOOT_OBSERVATION_FAILED:'+($details -join '|'))
+}
 if($nativeBoot -ge [DateTime]::UtcNow) { throw 'NATIVE_BOOT_NOT_PAST' }
 $machine=$type.GetMethod('RuntimeMachineHashV1',$flags).Invoke($null,@())
+foreach($ancestor in @('C:\','C:\Program Files')) { [void]$type.GetMethod('RuntimeFixedAncestorAclV1',$flags).Invoke($null,@($ancestor)) }
 if($machine -cnotmatch '^[a-f0-9]{64}$') { throw 'NATIVE_MACHINE_INVALID' }
 try { $type.GetMethod('OpenFixedRuntimeIdentityV1',$flags).Invoke($null,@()); throw 'UNINSTALLED_RUNTIME_ACCEPTED' }
 catch { if($_.Exception.InnerException.Message -cne 'RUNTIME_EMBEDDED_MANIFEST_UNPROVEN') { throw } }
@@ -112,8 +127,76 @@ foreach($negative in @(
   }
   if(-not $denied) { throw 'FORGED_AUTHORITY_ACCEPTED' }
 }
+$parse=$type.GetMethod('ParseFixedRuntimeRequestV1',$flags)
+$empty=[Security.Cryptography.SHA256]::Create()
+try { $emptyHash=([BitConverter]::ToString($empty.ComputeHash([byte[]]::new(0)))).Replace('-','').ToLowerInvariant() }
+finally { $empty.Dispose() }
+$frame=[ordered]@{SchemaVersion='stephanos.fixed-runtime-request.v1';RequestId='fixture-request-1234'
+  Profile='MAINTENANCE_GOAL_BUILDER_V1';RuntimeSourceHead=('a'*40);OwnerPid=1234
+  TaskFrameBase64='';TaskBindingSha256=$emptyHash}
+$raw=[string]($frame|ConvertTo-Json -Compress)
+$parsed=$parse.Invoke($null,@($raw))
+if($parsed.OwnerPid -ne 1234 -or $parsed.Profile -cne 'MAINTENANCE_GOAL_BUILDER_V1') { throw 'FRAME_VALID_PARSE_FAILED' }
+foreach($bad in @(
+  $raw.Replace('"OwnerPid":1234','"OwnerPid":"1234"'),
+  $raw.Replace('"OwnerPid":1234','"OwnerPid":1234,"OwnerPid":1235'),
+  $raw.Replace('"OwnerPid":1234','"Executable":"cmd.exe","OwnerPid":1234'),
+  $raw.Replace('MAINTENANCE_GOAL_BUILDER_V1','ARBITRARY_COMMAND'),
+  $raw.Replace($emptyHash,('0'*64))
+)) {
+  $refused=$false
+  try { $parse.Invoke($null,@([string]$bad))|Out-Null }
+  catch { if($_.Exception.InnerException.Message -cnotmatch '^RUNTIME_') { throw };$refused=$true }
+  if(-not $refused) { throw 'CALLER_AUTHORITY_FRAME_ACCEPTED' }
+}
+$parent=$type.GetMethod('RuntimeActualParentV1',$flags).Invoke($null,@())
+if($parent -ne __NODE_PID__) { throw 'ACTUAL_NATIVE_PARENT_CHANGED' }
+$current=[Diagnostics.Process]::GetCurrentProcess()
+$wrongBirth=$current.StartTime.ToUniversalTime().ToFileTimeUtc()+1
+try { $type.GetMethod('RuntimeOwnerHandleV1',$flags).Invoke($null,@($current.Id,[long]$wrongBirth))|Out-Null;throw 'WRONG_BIRTH_ACCEPTED' }
+catch { if($_.Exception.InnerException.Message -cne 'OWNER_BIRTH_UNPROVEN') { throw } }
+$fixed=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__FIXED_EXECUTABLES__'))|ConvertFrom-Json
+$exePins=[Activator]::CreateInstance($type.Assembly.GetType('Stephanos.Sovereign.FixedRuntimeIdentityPinsV1'),$true)
+try {
+  foreach($exe in $fixed) {
+    $type.GetMethod('RuntimePinFixedExecutableV1',$flags).Invoke($null,@([string]$exe.Path,[string]$exe.Digest,[int]$exe.Links,$exePins))|Out-Null
+  }
+} finally { ([IDisposable]$exePins).Dispose() }
+$hardRoot=[IO.Path]::GetFullPath([IO.Path]::Combine([IO.Path]::GetTempPath(),'fixed-runtime-hardlink-'+[Guid]::NewGuid().ToString('N')))
+[IO.Directory]::CreateDirectory($hardRoot)|Out-Null
+$hard=[IO.Path]::Combine($hardRoot,'source.txt')
+$alias=[IO.Path]::Combine($hardRoot,'source-alias.txt')
+[IO.File]::WriteAllText($hard,'fixture-source-alias')
+New-Item -ItemType HardLink -Path $alias -Target $hard -ErrorAction Stop|Out-Null
+$hardPins=[Activator]::CreateInstance($type.Assembly.GetType('Stephanos.Sovereign.FixedRuntimeIdentityPinsV1'),$true)
+try {
+  try { $type.GetMethod('RuntimeReadPinnedV1',$flags).Invoke($null,@($hard,4096,$hardPins))|Out-Null;throw 'SOURCE_HARDLINK_ACCEPTED' }
+  catch { if($_.Exception.InnerException.Message -cne 'RUNTIME_SOURCE_PIN_IDENTITY_UNPROVEN') { throw } }
+  try { $type.GetMethod('RuntimePinFixedExecutableV1',$flags).Invoke($null,@($hard,('0'*64),2,$hardPins))|Out-Null;throw 'CALLER_EXECUTABLE_PATH_ACCEPTED' }
+  catch { if($_.Exception.InnerException.Message -cne 'RUNTIME_FIXED_EXECUTABLE_IDENTITY_UNPROVEN') { throw } }
+} finally {
+  ([IDisposable]$hardPins).Dispose()
+  $expected=[IO.Path]::GetFullPath([IO.Path]::Combine([IO.Path]::GetTempPath(),'fixed-runtime-hardlink-'))
+  if(-not $hardRoot.StartsWith($expected,[StringComparison]::OrdinalIgnoreCase)) { throw 'HARDLINK_FIXTURE_DELETE_SCOPE' }
+  [IO.Directory]::Delete($hardRoot,$true)
+}
 [Console]::WriteLine('{"ok":true,"laterBootRequired":true,"uninstalledRefused":true,"runtimeActivated":false}')
-`.replace('__FILES__', files.join(','));
-const out = execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')], {encoding:'utf8',windowsHide:true,timeout:25000,maxBuffer:128*1024});
+`.replace('__FILES__', files.join(',')).replace('__NODE_PID__', String(process.pid))
+    .replace('__FIXED_EXECUTABLES__', Buffer.from(JSON.stringify(fixedExecutables)).toString('base64'));
+const directory=mkdtempSync(join(tmpdir(),'stph-runtime-identity-driver-'));
+const driver=join(directory,'driver.ps1');
+writeFileSync(driver,code,{encoding:'utf8',flag:'wx'});
+const digest=createHash('sha256').update(Buffer.from(code)).digest('hex');
+const bootstrap="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$bytes=[IO.File]::ReadAllBytes("+literal(driver)+");"
+  +"$sha=[Security.Cryptography.SHA256]::Create();try{$digest=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()};"
+  +"if($digest -cne '"+digest+"'){throw 'IDENTITY_FIXTURE_SOURCE_CHANGED'};& ([scriptblock]::Create([Text.UTF8Encoding]::new($false,$true).GetString($bytes)))";
+assert.ok(bootstrap.length<4096);
+let out;
+try {
+  out=execFileSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(bootstrap,'utf16le').toString('base64')],
+    {encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','pipe'],timeout:25000,maxBuffer:128*1024});
+} catch(error) { throw new Error(String(error.stderr||error.message).slice(0,12000)); }
+finally { unlinkSync(driver); rmdirSync(directory); }
 assert.deepEqual(JSON.parse(out.trim()), {ok:true,laterBootRequired:true,uninstalledRefused:true,runtimeActivated:false});
 });

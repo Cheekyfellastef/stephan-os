@@ -14,10 +14,11 @@ namespace Stephanos.Sovereign {
 
   public sealed class FixedRuntimeStageV1 {
     public string Stage = "", Reason = "NATIVE_STAGE_UNPROVEN", RootCreatedAtUtc = "";
+    public string RootLifecycle = "NOT_CREATED";
     public int RootPid, ObservedLiveDescendantPid;
     public string ObservedLiveDescendantCreatedAtUtc = "";
     public uint ActiveProcesses, ExitCode;
-    public bool Launched, AssignedBeforeExecution, NormalRootExit, CancellationRequested;
+    public bool Launched, AssignedBeforeExecution, ParentBindingAccepted, ResumeConfirmed, NormalRootExit, CancellationRequested;
     public bool ZeroActiveProcessesObserved, ExecutionCustodyReleased, OutputComplete;
     public bool OutputOverflow, OperationOk;
     public string Output = "", OutputSha256 = "";
@@ -27,10 +28,13 @@ namespace Stephanos.Sovereign {
   public sealed class FixedRuntimeReceiptV1 {
     public string SchemaVersion = "stephanos.fixed-runtime-job.v1";
     public string RequestId = "", RuntimeSourceHead = "", Profile = "", FrameSha256 = "";
-    public string Reason = "NATIVE_RUNTIME_UNPROVEN";
+    public string Reason = "NATIVE_RUNTIME_UNPROVEN", CustodyRecordSha256 = "";
+    public long NativeRecordId;
+    public string ActionId="", MissionId="", ClaimSha256="";
     public int OwnerPid, LauncherPid;
     public string OwnerCreatedAtUtc = "", LauncherCreatedAtUtc = "";
-    public bool SourceHeadMatched, TaskExecuted, OperationOk, ExecutionCustodyReleased;
+    public string TaskLifecycle = "NOT_CREATED";
+    public bool SourceHeadMatched, TaskRootCreated, TaskResumed, TaskExecuted, OperationOk, ExecutionCustodyReleased;
     public long ElapsedMilliseconds;
     public FixedRuntimeStageV1 SourceStage, TaskStage;
   }
@@ -142,7 +146,7 @@ namespace Stephanos.Sovereign {
     static FixedRuntimeStageV1 RunRuntimeStageV1(IntPtr job,string stage,string executable,
       string arguments,string cwd,byte[] input,Stopwatch clock,int deadlineMs,
       IntPtr owner,IntPtr launcher,Func<bool> cancelled,Func<bool> queryFault,
-      Func<FixedRuntimeStageV1,bool> bindBeforeResume=null,
+      Func<FixedRuntimeStageV1,bool> bindBeforeResume,
       Action<FixedRuntimeStageV1> terminalDrainFixtureHook=null) {
       var r=new FixedRuntimeStageV1 { Stage=stage };
       var accounting=new CoreJobReceiptV1();
@@ -158,6 +162,7 @@ namespace Stephanos.Sovereign {
       var output=new RuntimeOutputV1();
       int inputFailed=0;
       try {
+        if(bindBeforeResume==null) throw new InvalidOperationException("PARENT_BINDING_REQUIRED");
         if(input==null || input.Length>32768) throw new InvalidOperationException("INPUT_BOUND_UNPROVEN");
         if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
           r.Reason="CANCELLED_BEFORE_LAUNCH"; r.ZeroActiveProcessesObserved=empty();
@@ -192,19 +197,20 @@ namespace Stephanos.Sovereign {
         // no CREATE_BREAKAWAY_FROM_JOB and no inherited Job handle.
         Require(CreateProcessW(executable,new StringBuilder(Quote(executable)+" "+arguments),
           IntPtr.Zero,IntPtr.Zero,true,0x80000|0x4|0x400|0x8|0x20,environment,cwd,ref startup,out pi));
-        r.Launched=true; r.RootPid=(int)pi.pid;
+        r.Launched=true; r.RootPid=(int)pi.pid; r.RootLifecycle="CREATED_SUSPENDED";
         long born,exited,kernel,user;
         Require(RuntimeProcessTimesV1(pi.process,out born,out exited,out kernel,out user));
         r.RootCreatedAtUtc=DateTime.FromFileTimeUtc(born).ToString("O");
         bool member; Require(IsProcessInJob(pi.process,job,out member));
         if(!member) throw new InvalidOperationException("ATOMIC_ASSIGNMENT_UNPROVEN");
-        r.AssignedBeforeExecution=true;
+        r.AssignedBeforeExecution=true; r.RootLifecycle="SUSPENDED_IN_OWNED_JOB";
         // Existing owner durably binds the exact suspended root to its claim
         // before it is allowed to execute. The fixed host bounds this exchange.
-        if(bindBeforeResume!=null && !bindBeforeResume(r)) {
+        if(!bindBeforeResume(r)) {
           r.Reason="PARENT_BINDING_UNPROVEN";
           throw new InvalidOperationException("PARENT_BINDING_UNPROVEN");
         }
+        r.ParentBindingAccepted=true;
         CloseHandle(outputWrite); outputWrite=IntPtr.Zero;
         CloseHandle(inputRead); inputRead=IntPtr.Zero;
         IntPtr reader=outputRead;
@@ -236,7 +242,8 @@ namespace Stephanos.Sovereign {
           } catch { Interlocked.Exchange(ref inputFailed,1); }
           finally { CloseHandle(writer); }
         },CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
-        Require(ResumeThread(pi.thread)!=UInt32.MaxValue);
+        r.RootLifecycle="RESUME_UNPROVEN";
+        Require(ResumeThread(pi.thread)==1); r.ResumeConfirmed=true; r.RootLifecycle="RESUME_CONFIRMED";
         while(true) {
           if(!RuntimeParentsAliveV1(owner,launcher)) { r.Reason="OWNER_ENDED"; interrupted=true; break; }
           if(Cancelled(cancelled)) { r.Reason="CANCELLED"; interrupted=true; break; }
@@ -286,7 +293,7 @@ namespace Stephanos.Sovereign {
         }
         if(terminalDrainFixtureHook!=null) terminalDrainFixtureHook(r);
         if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
-          interrupted=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
+          interrupted=true; r.CancellationRequested=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
         }
         r.OperationOk=!interrupted && r.NormalRootExit && r.ExitCode==0 &&
           r.ZeroActiveProcessesObserved && r.OutputComplete &&

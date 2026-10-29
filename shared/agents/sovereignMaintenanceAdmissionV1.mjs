@@ -16,7 +16,7 @@ const READ_ONLY_ACTIONS = new Set([
 // Both retain ordinary owner admission rather than bypassing a custody hold.
 export const SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER =
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
-export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-21-guardian-reservation-v1';
+export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-28-fixed-runtime-reservation-v2';
 
 // Shared disposition for automatic broad Core repair. Native custody has not
 // been enrolled. Neither a healthy worker nor the manual maintenance route

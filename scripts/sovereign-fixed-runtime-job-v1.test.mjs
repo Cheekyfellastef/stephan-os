@@ -63,11 +63,19 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
       assert.equal(receipt.RootCreatedAtUtc, row.RootCreatedAtUtc, mode);
       assert.ok(Number.isSafeInteger(receipt.RootPid) && receipt.RootPid > 0, mode);
     }
+    assert.equal(receipt.ResumeConfirmed, !['spawn-fail','bind-denied'].includes(mode), mode);
     assert.equal(receipt.OperationOk, ['normal','input','witness-paused'].includes(mode), mode);
     assert.equal(receipt.ExecutionCustodyReleased, mode !== 'query', mode);
     assert.equal(receipt.ZeroActiveProcessesObserved, mode !== 'query', mode);
   }
   assert.equal(cases.get('bind-denied').BoundBeforeExecution, true);
+  const denied=cases.get('bind-denied').HostProjection;
+  assert.equal(denied.TaskRootCreated,true);
+  assert.equal(denied.TaskResumed,false);
+  assert.equal(denied.TaskExecuted,false);
+  assert.equal(denied.TaskLifecycle,'SUSPENDED_IN_OWNED_JOB');
+  assert.equal(denied.OperationOk,false);
+  assert.equal(denied.ExecutionCustodyReleased,true);
   assert.equal(cases.get('bind-denied').Receipt.NormalRootExit, false);
   assert.equal(cases.get('bind-denied').Receipt.Reason, 'PARENT_BINDING_UNPROVEN');
   for (const mode of ['drain-cancel','drain-parent-death']) {
@@ -75,6 +83,7 @@ test('native runtime stage has actual bound zero/exclusion and never promotes cl
     assert.equal(cases.get(mode).Receipt.NormalRootExit, true, mode);
     assert.equal(cases.get(mode).Receipt.ExitCode, 0, mode);
     assert.equal(cases.get(mode).Receipt.OperationOk, false, mode);
+    assert.equal(cases.get(mode).Receipt.CancellationRequested, true, mode);
     assert.equal(cases.get(mode).Receipt.ExecutionCustodyReleased, true, mode);
   }
   assert.equal(cases.get('drain-cancel').Receipt.Reason, 'CANCELLED');

@@ -25,7 +25,9 @@ namespace Stephanos.Sovereign {
   public sealed class FixedRuntimePendingV1 {
     public string SchemaVersion = "", SourceHead = "", SourceTree = "";
     public string HelperSha256 = "", ManifestSha256 = "", MachineHash = "";
-    public string CompilerCompletedAtUtc = "", InstalledAtUtc = "";
+    public string CompilerCompletedAtUtc = "", InstalledAtUtc = "", OperatorSid = "";
+    public string NodeExecutableSha256 = "", GitExecutableSha256 = "", PowerShellExecutableSha256 = "";
+    public int NodeExecutableLinkCount, GitExecutableLinkCount, PowerShellExecutableLinkCount;
   }
   sealed class FixedRuntimeIdentityPinsV1 : IDisposable {
     internal string SourceHead, SourceTree, HelperSha256, ManifestSha256, MachineHash, BootStartedAtUtc;
@@ -92,23 +94,50 @@ namespace Stephanos.Sovereign {
       }
     }
     static void RuntimeProtectedAclV1(string path,bool directory) {
+      RuntimeAclV1(path,directory,false);
+    }
+    static void RuntimeSystemExecutableAclV1(string path) {
+      RuntimeAclV1(path,false,true);
+    }
+    static void RuntimeAclV1(string path,bool directory,bool systemExecutable) {
       FileSystemSecurity acl=directory?(FileSystemSecurity)Directory.GetAccessControl(path):
         (FileSystemSecurity)File.GetAccessControl(path);
       string owner=((SecurityIdentifier)acl.GetOwner(typeof(SecurityIdentifier))).Value;
       var system=new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null);
       var administrators=new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null);
       // Fixed installation artifacts must have an administrative owner.
-      if(owner!=system.Value && owner!=administrators.Value)
+      string installer="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+      if(owner!=system.Value && owner!=administrators.Value && !(systemExecutable && owner==installer))
         throw new InvalidOperationException("RUNTIME_PROTECTED_OWNER_UNPROVEN");
       const FileSystemRights mutation=FileSystemRights.Write|FileSystemRights.Delete|
         FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|
-        FileSystemRights.TakeOwnership;
+        FileSystemRights.TakeOwnership|(FileSystemRights)0x50000000;
       foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier))) {
         if(rule.AccessControlType!=AccessControlType.Allow || (rule.FileSystemRights&mutation)==0) continue;
         string sid=((SecurityIdentifier)rule.IdentityReference).Value;
-        if(sid!=system.Value && sid!=administrators.Value)
+        if(sid!=system.Value && sid!=administrators.Value && !(systemExecutable && sid==installer))
           throw new InvalidOperationException("RUNTIME_PROTECTED_WRITE_AUTHORITY_UNPROVEN");
       }
+    }
+    static void RuntimeFixedAncestorAclV1(string path) {
+      // Exact OS ancestors only. Creating a NEW child does not replace any
+      // existing protected route component. Delete-child/rename/ACL/reparse
+      // mutation rights remain forbidden for every untrusted principal.
+      if(path!=@"C:\" && path!=@"C:\Program Files")
+        throw new InvalidOperationException("RUNTIME_ANCESTOR_PATH_UNPROVEN");
+      var acl=Directory.GetAccessControl(path);
+      string owner=((SecurityIdentifier)acl.GetOwner(typeof(SecurityIdentifier))).Value;
+      string installer="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+      Func<string,bool> trusted=sid=>sid=="S-1-5-18" || sid=="S-1-5-32-544" || sid==installer;
+      if(!trusted(owner)) throw new InvalidOperationException("RUNTIME_ANCESTOR_OWNER_UNPROVEN");
+      const FileSystemRights mutation=FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|
+        FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership|
+        FileSystemRights.WriteAttributes|FileSystemRights.WriteExtendedAttributes|(FileSystemRights)0x50000000;
+      foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier)))
+        if((rule.PropagationFlags&PropagationFlags.InheritOnly)==0 &&
+          rule.AccessControlType==AccessControlType.Allow && (rule.FileSystemRights&mutation)!=0 &&
+          !trusted(((SecurityIdentifier)rule.IdentityReference).Value))
+          throw new InvalidOperationException("RUNTIME_ANCESTOR_WRITE_AUTHORITY_UNPROVEN");
     }
     static FileStream RuntimePinFileV1(string path,int maximum,FixedRuntimeIdentityPinsV1 pins) {
       var handle=CreateFileW(path,0x80000000u,1u,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
@@ -129,6 +158,51 @@ namespace Stephanos.Sovereign {
         offset+=count;
       }
       return bytes;
+    }
+    // Distinct fixed vendor/OS executable case. Source, helper and receipt
+    // pins still forbid every hard link. A protected pending receipt binds
+    // exact bytes AND observed link count for these three fixed paths only.
+    static void RuntimePinFixedExecutableV1(string path,string expected,int links,FixedRuntimeIdentityPinsV1 pins) {
+      if((!String.Equals(path,@"C:\Program Files\nodejs\node.exe",StringComparison.OrdinalIgnoreCase) &&
+          !String.Equals(path,@"C:\Program Files\Git\cmd\git.exe",StringComparison.OrdinalIgnoreCase) &&
+          !String.Equals(path,@"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",StringComparison.OrdinalIgnoreCase)) ||
+        !RuntimeHexV1(expected,64) || links<1 || links>16)
+        throw new InvalidOperationException("RUNTIME_FIXED_EXECUTABLE_IDENTITY_UNPROVEN");
+      RuntimePinParentsV1(path,pins);
+      var handle=CreateFileW(path,0x80000000u,1u,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
+      if(handle.IsInvalid) { handle.Dispose(); throw new IOException("RUNTIME_FIXED_EXECUTABLE_OPEN_FAILED"); }
+      FILE_INFO info;
+      if(!GetFileInformationByHandle(handle,out info) || (info.attributes&0x410)!=0 ||
+        info.links!=(uint)links || info.sizeHigh!=0 || info.sizeLow>134217728) {
+        handle.Dispose(); throw new IOException("RUNTIME_FIXED_EXECUTABLE_IDENTITY_UNPROVEN");
+      }
+      var file=new FileStream(handle,FileAccess.Read,4096,false); pins.Files.Add(file);
+      RuntimeSystemExecutableAclV1(path);
+      using(var sha=System.Security.Cryptography.SHA256.Create()) {
+        string digest=BitConverter.ToString(sha.ComputeHash(file)).Replace("-","").ToLowerInvariant();
+        if(digest!=expected) throw new IOException("RUNTIME_FIXED_EXECUTABLE_CHANGED");
+      }
+    }
+    sealed class FixedRuntimeToolObservationV1 {
+      public string Sha256="";public int LinkCount;
+    }
+    static FixedRuntimeToolObservationV1[] RuntimeObserveFixedToolsV1(FixedRuntimeIdentityPinsV1 pins) {
+      var observations=new List<FixedRuntimeToolObservationV1>();
+      foreach(string path in new string[]{@"C:\Program Files\nodejs\node.exe",@"C:\Program Files\Git\cmd\git.exe",
+        @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"}) {
+        RuntimePinParentsV1(path,pins);RuntimeSystemExecutableAclV1(path);
+        var handle=CreateFileW(path,0x80000000u,1u,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
+        if(handle.IsInvalid) {handle.Dispose();throw new IOException("RUNTIME_FIXED_TOOL_OPEN_UNPROVEN");}
+        FILE_INFO info;
+        if(!GetFileInformationByHandle(handle,out info) || (info.attributes&0x410)!=0 ||
+          info.links<1 || info.links>16 || info.sizeHigh!=0 || info.sizeLow>134217728) {
+          handle.Dispose();throw new IOException("RUNTIME_FIXED_TOOL_IDENTITY_UNPROVEN");
+        }
+        var file=new FileStream(handle,FileAccess.Read,4096,false);pins.Files.Add(file);
+        using(var sha=System.Security.Cryptography.SHA256.Create()) observations.Add(new FixedRuntimeToolObservationV1 {
+          Sha256=BitConverter.ToString(sha.ComputeHash(file)).Replace("-","").ToLowerInvariant(),LinkCount=(int)info.links });
+      }
+      return observations.ToArray();
     }
     static void RuntimePinParentsV1(string path,FixedRuntimeIdentityPinsV1 pins) {
       PinDirectoryChain(Path.GetDirectoryName(path),pins.Directories);
@@ -157,6 +231,8 @@ namespace Stephanos.Sovereign {
         if(!String.Equals(Assembly.GetExecutingAssembly().Location,helper,StringComparison.OrdinalIgnoreCase))
           throw new InvalidOperationException("RUNTIME_HELPER_LOCATION_UNPROVEN");
         RuntimePinParentsV1(helper,pins);
+        RuntimeFixedAncestorAclV1(@"C:\");RuntimeFixedAncestorAclV1(@"C:\Program Files");
+        RuntimeProtectedAclV1(Path.GetDirectoryName(RuntimeProtectedRootV1),true);
         RuntimeProtectedAclV1(RuntimeProtectedRootV1,true);
         RuntimeProtectedAclV1(version,true);
         foreach(string file in Directory.GetFileSystemEntries(version)) {
@@ -175,10 +251,26 @@ namespace Stephanos.Sovereign {
           pending.ManifestSha256!=manifestDigest || pending.HelperSha256!=RuntimeHashV1(helperBytes) ||
           pending.MachineHash!=machine || !RuntimePendingBootOrderV1(pending,boot,DateTime.UtcNow))
           throw new InvalidOperationException("RUNTIME_PENDING_LATER_BOOT_UNPROVEN");
+        using(var principal=WindowsIdentity.GetCurrent()) {
+          if(principal.User.Value!=pending.OperatorSid ||
+            new WindowsPrincipal(principal).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new InvalidOperationException("RUNTIME_NORMAL_OPERATOR_REQUIRED");
+        }
+        string[] executablePaths={
+          @"C:\Program Files\nodejs\node.exe",@"C:\Program Files\Git\cmd\git.exe",
+          @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"};
+        string[] executableHashes={
+          pending.NodeExecutableSha256,pending.GitExecutableSha256,pending.PowerShellExecutableSha256};
+        int[] executableLinks={
+          pending.NodeExecutableLinkCount,pending.GitExecutableLinkCount,pending.PowerShellExecutableLinkCount};
+        for(int i=0;i<executablePaths.Length;i++)
+          RuntimePinFixedExecutableV1(executablePaths[i],executableHashes[i],executableLinks[i],pins);
         var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase); long total=0;
         foreach(var row in manifest.Files) {
           if(row==null || String.IsNullOrEmpty(row.Path) || row.Path.Length>240 ||
             !(row.Path=="package.json" || row.Path==".gitattributes" ||
+              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs" ||
+              row.Path=="integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs" ||
               System.Text.RegularExpressions.Regex.IsMatch(row.Path,@"^(scripts|shared|stephanos-server)/[A-Za-z0-9._/-]+$")) ||
             row.Path.Contains("..") || row.Path.Contains("//") || !RuntimeHexV1(row.Sha256,64) || !seen.Add(row.Path))
             throw new InvalidOperationException("RUNTIME_SOURCE_MEMBER_UNPROVEN");
@@ -191,7 +283,8 @@ namespace Stephanos.Sovereign {
         foreach(string required in new string[]{
           "scripts/windows/SovereignCoreJobCustodyV1.cs","scripts/windows/SovereignFixedRuntimeJobV1.cs",
           "scripts/windows/SovereignFixedRuntimeIdentityV1.cs","scripts/windows/SovereignFixedRuntimeAuthorityV1.cs",
-          "scripts/windows/SovereignFixedRuntimeHostV1.cs",
+          "scripts/windows/SovereignFixedRuntimeHostV1.cs","scripts/windows/SovereignFixedRuntimeSourceV1.cs",
+          "scripts/sovereign-fixed-runtime-source-task-v1.mjs",
           "scripts/sovereign-commander-goal-builder-repair.mjs","package.json",".gitattributes"})
           if(!seen.Contains(required)) throw new InvalidOperationException("RUNTIME_MANIFEST_CLOSURE_INCOMPLETE");
         foreach(string relative in new string[]{".git/HEAD",".git/refs/heads/main",".git/index",".git/config"}) {

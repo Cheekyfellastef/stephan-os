@@ -409,3 +409,39 @@ test('closed capacity refusal admits no reservation and preserves the prior nati
   assert.equal(r.ok, false); assert.equal(r.blocker, 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE');
   assert.equal(s.status().held, true); assert.deepEqual(anchors.get(root).readLatest(), prior); s.close();
 });
+
+
+test('native failed operation retains signed terminal evidence before releasing proven zero', t => {
+  const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+  const state=owner.status();
+  const common={RequestId:reservation.reservationId,OwnerPid:process.pid,
+    CustodyRecordSha256:state.digest,NativeRecordId:state.anchorRecordId,
+    Profile:'MAINTENANCE_GOAL_BUILDER_V1'};
+  assert.equal(owner.recordNativeRoot({...common,SchemaVersion:'stephanos.fixed-runtime-prepared.v1',
+    RootPid:1234,RootCreatedAtUtc:oldNow}).ok,true);
+  const terminal={...common,SchemaVersion:'stephanos.fixed-runtime-job.v1',
+    OperationOk:false,Reason:'DEADLINE_CANCELLED',ExecutionCustodyReleased:true,
+    TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}};
+  const released=owner.releaseNativeTerminal(terminal);
+  assert.equal(released.ok,true); assert.equal(owner.status().held,false);
+  const receipt=JSON.parse(readFileSync(join(root,released.terminalEvidenceRef),'utf8'));
+  assert.equal(receipt.receipt.evidence.OperationOk,false);
+  assert.equal(receipt.receipt.evidence.Reason,'DEADLINE_CANCELLED');
+  assert.match(receipt.mac,/^[a-f0-9]{64}$/);
+  const anchored=JSON.parse(anchors.get(root).readLatest().bytes).record;
+  assert.equal(anchored.terminalEvidence.sha256,released.terminalEvidenceSha256);
+});
+
+test('foreign native terminal and failed archive preserve the original hold', t => {
+  for(const scenario of ['foreign','archive']) {
+    const root=fixture(t), owner=store(root); owner.prepareIncident(reservation);
+    const state=owner.status();
+    if(scenario==='archive') writeFileSync(join(root,'events','sovereign-maintenance-custody'),'retain');
+    const result=owner.releaseNativeTerminal({SchemaVersion:'stephanos.fixed-runtime-job.v1',
+      Profile:'MAINTENANCE_GOAL_BUILDER_V1',RequestId:reservation.reservationId,OwnerPid:process.pid,
+      CustodyRecordSha256:scenario==='foreign'?'f'.repeat(64):state.digest,NativeRecordId:state.anchorRecordId,
+      ExecutionCustodyReleased:true,TaskStage:{ExecutionCustodyReleased:true,ZeroActiveProcessesObserved:true,ActiveProcesses:0}});
+    assert.equal(result.ok,false);assert.equal(owner.status().held,true);assert.equal(owner.status().digest,state.digest);
+    owner.close();
+  }
+});

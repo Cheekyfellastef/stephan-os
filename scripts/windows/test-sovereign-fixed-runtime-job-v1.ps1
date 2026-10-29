@@ -62,6 +62,7 @@ namespace Stephanos.Sovereign {
  public sealed class FixedRuntimeFixtureResultV1 {
    public string Mode, RootCreatedAtUtc="", DescendantCreatedAtUtc="", RootImagePath="";
    public FixedRuntimeStageV1 Receipt;
+   public FixedRuntimeReceiptV1 HostProjection;
    public bool RootCaptured, RootEndedByHandle, DescendantCaptured, DescendantEndedByHandle;
    public bool BoundBeforeExecution, TerminalDrainObserved, PartialWitnessIgnored;
    public string ObserverFaultCode="", ObserverFaultType="";
@@ -201,6 +202,8 @@ namespace Stephanos.Sovereign {
             throw new InvalidOperationException("OWNED_PARENT_NOT_ENDED");
         }
       });
+    result.HostProjection=new FixedRuntimeReceiptV1 { Profile="MAINTENANCE_GOAL_BUILDER_V1" };
+    ProjectRuntimeTaskEvidenceV1(result.HostProjection,result.Receipt);
     Interlocked.Exchange(ref finished,1);
     if(observer!=null && !observer.Wait(5000)) throw new InvalidOperationException("OBSERVER_NOT_TERMINAL");
     if(killer!=null && !killer.Wait(5000)) throw new InvalidOperationException("KILLER_NOT_TERMINAL");
@@ -226,7 +229,7 @@ if ($FixtureTerminalGuardBaseline -cne 'None') {
   # Fixture counterfactual never rewrites production source or grants authority.
   $guard = @'
         if(!RuntimeParentsAliveV1(owner,launcher) || Cancelled(cancelled)) {
-          interrupted=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
+          interrupted=true; r.CancellationRequested=true; r.Reason=!RuntimeParentsAliveV1(owner,launcher)?"OWNER_ENDED":"CANCELLED";
         }
 '@
   $guard = $guard.Replace([string][char]13,'')
@@ -235,8 +238,13 @@ if ($FixtureTerminalGuardBaseline -cne 'None') {
   $kernel = $kernel.Replace($guard,'')
 }
 $source = [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignCoreJobCustodyV1.cs')) +
-  [Environment]::NewLine + $kernel + [Environment]::NewLine + $fixtureCode
-Add-Type -TypeDefinition $source -ErrorAction Stop
+  [Environment]::NewLine + $kernel +
+  [Environment]::NewLine + [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeIdentityV1.cs')) +
+  [Environment]::NewLine + [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeAuthorityV1.cs')) +
+  [Environment]::NewLine + [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeHostV1.cs')) +
+  [Environment]::NewLine + [IO.File]::ReadAllText((Join-Path $repoRoot 'scripts/windows/SovereignFixedRuntimeSourceV1.cs')) +
+  [Environment]::NewLine + $fixtureCode
+Add-Type -TypeDefinition $source -ReferencedAssemblies 'System.Web.Extensions','System.Core','System.Management' -ErrorAction Stop
 $cases = @()
 $modes = @('normal','failed','input','deadline','orphan','overflow','query','cancel','parent-death','spawn-fail','bind-denied','drain-cancel','drain-parent-death','witness-paused')
 if ($FixtureTerminalGuardBaseline -ceq 'Cancel') { $modes = @('drain-cancel') }
