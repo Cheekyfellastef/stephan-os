@@ -64,3 +64,12 @@ test('the real launcher fences both initial and final dispatch admission',()=>{
  assert.match(source,/import \{ findExistingIndependentReviewEvidenceHintV1 \} from '\.\.\/shared\/agents\/independentReviewExistingEvidenceFenceV1\.mjs'/);
  assert.equal([...source.matchAll(/if \(suppressOnPriorReviewEvidence\(context, repository\)\) return;/g)].length,2);
 });
+
+test('owner immutable sha256 is retained without elevating review authority',()=>{
+ const found=result([comment(realOwner)]);
+ assert.equal(found.sha256,DIGEST);assert.equal(found.mutationAllowed,false);assert.equal(found.reviewQualified,false);
+});
+test('conflicting same-head owner references remain fail-closed',()=>{
+ const found=result([comment(realOwner),comment(realOwner.replaceAll(String(RUN),String(RUN+1)))]);
+ assert.equal(found.status,'HOLD_CONFLICTING_EXISTING_REVIEW_REFERENCES');assert.equal(found.mutationAllowed,false);
+});

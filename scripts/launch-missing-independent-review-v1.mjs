@@ -546,6 +546,15 @@ function suppressOnPriorReviewEvidence(context, repository) {
   if (hint.status === 'NO_EXISTING_EVIDENCE_HINT') return false;
   console.log(`INDEPENDENT_REVIEW_DUPLICATE_LAUNCH_HELD=${hint.status}`);
   if (hint.runId) console.log(`INDEPENDENT_REVIEW_POSSIBLE_RUN_ID=${hint.runId}`);
+  if (hint.status === 'HOLD_EXISTING_REVIEW_NEEDS_READBACK'
+    && hint.kind === 'OWNER_REVIEW_ARTIFACT_REFERENCE'
+    && hint.runId && hint.artifactId && /^[a-f0-9]{64}$/.test(hint.sha256 || '')) {
+    appendOutput('decision', 'RECOVER_EXISTING_OWNER_REVIEW');
+    appendOutput('recovery_run_id', hint.runId);
+    appendOutput('recovery_artifact_id', hint.artifactId);
+    appendOutput('recovery_sha256', hint.sha256);
+    return true;
+  }
   appendOutput('decision', hint.status);
   return true;
 }

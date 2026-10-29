@@ -40,9 +40,11 @@ function ownerHint(comment, identity) {
     runIds.add(runId);
     if (match[2] && integer(Number(match[2]))) artifactIds.set(runId, Number(match[2]));
   }
+  const digest = body.match(/\bsha256\s*[:=]?\s*([a-f0-9]{64})\b/i)?.[1]?.toLowerCase();
+  if (!digest) return null;
   for (const runId of runIds) {
     if (!artifactIds.has(runId)) continue;
-    return { kind: 'OWNER_REVIEW_ARTIFACT_REFERENCE', runId, artifactId: artifactIds.get(runId) };
+    return { kind: 'OWNER_REVIEW_ARTIFACT_REFERENCE', runId, artifactId: artifactIds.get(runId), sha256: digest };
   }
   return null;
 }
@@ -87,12 +89,30 @@ export function findExistingIndependentReviewEvidenceHintV1(input = {}) {
       mutationAllowed:false, reviewQualified:false});
   }
   const identity = {prNumber,branch,expectedHead,expectedBase};
+  const hints = [];
   for (const comment of input.comments) {
     const hint = actionHint(comment, identity) || ownerHint(comment, identity);
-    if (!hint) continue;
+    if (hint) hints.push({ ...hint, commentId:integer(comment?.id) || null });
+  }
+  if (hints.length) {
+    const runs = new Set(hints.map((hint) => String(hint.runId)));
+    for (const hint of hints) {
+      if (hint.kind !== 'OWNER_REVIEW_ARTIFACT_REFERENCE') continue;
+      for (const other of hints) {
+        if (other.kind !== 'OWNER_REVIEW_ARTIFACT_REFERENCE' || other.runId !== hint.runId) continue;
+        if (other.artifactId !== hint.artifactId || other.sha256 !== hint.sha256) runs.add(String(hint.runId) + ':COLLISION');
+      }
+    }
+    if (runs.size !== 1) {
+      return Object.freeze({schemaVersion:EXISTING_REVIEW_EVIDENCE_FENCE_SCHEMA,
+        status:'HOLD_CONFLICTING_EXISTING_REVIEW_REFERENCES',mutationAllowed:false,reviewQualified:false});
+    }
+    // Prefer an authenticated owner reference with immutable artifact ID/digest.
+    const selected = hints.find((hint) => hint.kind === 'OWNER_REVIEW_ARTIFACT_REFERENCE') || hints[0];
     return Object.freeze({schemaVersion:EXISTING_REVIEW_EVIDENCE_FENCE_SCHEMA,
-      status:'HOLD_EXISTING_REVIEW_NEEDS_READBACK',kind:hint.kind,
-      commentId:integer(comment?.id) || null,runId:hint.runId,artifactId:hint.artifactId || null,
+      status:'HOLD_EXISTING_REVIEW_NEEDS_READBACK',kind:selected.kind,
+      commentId:selected.commentId,runId:selected.runId,attempt:selected.attempt || null,
+      artifactId:selected.artifactId || null,sha256:selected.sha256 || null,
       mutationAllowed:false,reviewQualified:false});
   }
   return Object.freeze({schemaVersion:EXISTING_REVIEW_EVIDENCE_FENCE_SCHEMA,
