@@ -13,6 +13,7 @@ import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, rea
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../shared/runtime/goalBuildGateObservatoryV1.mjs';
+import { projectControlTowerBuildBeaconFactsV1 } from '../shared/agents/controlTowerBuildBeaconFactsV1.mjs';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
 export * from './battle-bridge-outbound-health-beacon-core.mjs';
@@ -36,6 +37,8 @@ const CONTROLLER_LANE_STATUS_SPEC = Object.freeze({
   path: 'status/controller-lane-status-current.json',
   staleAfterMs: 180_000,
 });
+// Existing Sovereign relay status, never another native execution carrier.
+const SOVEREIGN_RELAY_STATUS_PATH = 'status/sovereign-relay-current.json';
 const SOVEREIGN_REPAIR_OUTCOMES = new Set(['HEALTHY', 'REPAIRED', 'NEEDS_REPAIR', 'BLOCKED']);
 const WORKER_WATCHDOG_CLASSIFICATIONS = new Set([
   'WORKER_WATCHDOG_HEALTHY',
@@ -605,6 +608,10 @@ export function buildBattleBridgeOutboundBeacon(args = {}) {
   );
   return Object.freeze({
     ...augmented,
+    controlTowerBuild: projectControlTowerBuildBeaconFactsV1(
+      args.statusRecords?.sovereignRelay || null,
+      { expectedHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
+    ),
     goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(
       args.statusRecords?.coreGateStatus || null,
       { sourceHead: base.sourceHead, nowMs: Date.parse(base.observedAtUtc) },
@@ -790,9 +797,14 @@ export function runBattleBridgeOutboundHealthBeacon(options = {}) {
   const workerWatchdogRecord = readJsonBounded(join(workspaceRoot, ...WORKER_WATCHDOG_SPEC.path.split('/')));
   const sovereignRepairRecord = readJsonBounded(join(workspaceRoot, ...SOVEREIGN_REPAIR_SPEC.path.split('/')));
   const controllerLaneStatusRecord = readJsonBounded(join(workspaceRoot, ...CONTROLLER_LANE_STATUS_SPEC.path.split('/')));
+  const sovereignRelayRecord = readJsonBounded(join(workspaceRoot, ...SOVEREIGN_RELAY_STATUS_PATH.split('/')));
   const coreGateStatus = readJsonBounded(join(workspaceRoot, 'status', 'stephanos-core-daemon-current.json'));
   const record = Object.freeze({
     ...augmentRecordWithWorkerWatchdog(coreResult.record, workerWatchdogRecord, [], sovereignRepairRecord, controllerLaneStatusRecord),
+    controlTowerBuild: projectControlTowerBuildBeaconFactsV1(sovereignRelayRecord, {
+      expectedHead: coreResult.record.sourceHead,
+      nowMs: Date.parse(coreResult.record.observedAtUtc),
+    }),
     goalBuildGateObservatory: projectPublicGoalGateObservatoryV1(coreGateStatus, {
       sourceHead: coreResult.record.sourceHead, nowMs: Date.parse(coreResult.record.observedAtUtc),
       verifiedObservatory: readCommissionedGateLedger(
