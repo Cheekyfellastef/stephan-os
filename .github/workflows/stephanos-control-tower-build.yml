@@ -2,6 +2,10 @@ name: Stephanos Control Tower - Start Next Eligible Build
 
 on:
   workflow_dispatch:
+  # Protected-main owner pushes can re-arm the EXISTING fixed build wake.
+  # The producer still authenticates the exact sender, main HEAD and run.
+  push:
+    branches: [main]
   pull_request:
     paths:
       - '.github/workflows/stephanos-control-tower-build.yml'
@@ -50,7 +54,7 @@ jobs:
           scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs
 
   request-build:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.actor == 'Cheekyfellastef')
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
