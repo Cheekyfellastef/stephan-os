@@ -1,0 +1,56 @@
+/*
+ * Shared containment contract for existing uplift workspace cards.
+ * Presentation only: no new card markup, state or authority.
+ *
+ * Import once after the runtime theme. Theme selectors still own appearance;
+ * this file owns the bounded sizing/wrapping invariant for these primitives.
+ * Changes require responsive browser proof, including long-content fixtures.
+ */
+.uplift-workspace,
+.uplift-deck-card,
+.uplift-stat-deck > article,
+.uplift-agent-node,
+.agent-constellation-card,
+.agent-uplift-queue-card,
+.agent-passport-grid > article {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Grid/flex children must be allowed to shrink before text can wrap. */
+.uplift-workspace > *,
+.uplift-deck-card > *,
+.uplift-agent-node > *,
+.agent-constellation-card > *,
+.agent-uplift-queue-card > *,
+.agent-uplift-queue-head > * {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+/* Keep each established preferred card width, bounded by available space. */
+.uplift-constellation {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+}
+
+.agent-constellation-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr));
+}
+
+.agent-stat-deck {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+}
+
+.agent-uplift-queue-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 285px), 1fr));
+}
+
+.agent-passport-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+}
+
+/* Preserve the existing Flywheel V2 modifier's preferred width. */
+.uplift-constellation.flywheel-constellation--large {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+}
