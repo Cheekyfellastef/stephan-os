@@ -6,6 +6,18 @@ import {dirname, join} from 'node:path';
 import {inspectStephanosNativeCapacityGamingAdmissionV1} from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import {createBattleBridgeMinimalChildEnvironment} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
+// One canonical route for the already compiled maintenance profile. This is
+// declaration, not qualification: the actual owner must still prove its native
+// identity, fresh source, resource budget, reservation and physical custody.
+export const FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 = Object.freeze({
+  actionId: 'repair-goal-builder-flow',
+  profile: 'MAINTENANCE_GOAL_BUILDER_V1',
+  executionTimeoutMs: 160000,
+});
+export function fixedRuntimeMaintenanceActionQualifiedV1(actionId) {
+  return actionId === FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
+}
+
 const ROOT = 'C:\\Program Files\\Stephanos\\SovereignFixedRuntimeV1';
 const SOURCE = 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os';
 const PS = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -124,7 +136,7 @@ export function consumeFixedRuntimeTerminalProvenanceV1(result,binding) {
   return consumeFixedRuntimeCompletionV1(result,binding)!==null;
 }
 export function executeFixedMaintenanceRuntimeV1(qualification,binding,options) {
-  return executeFixedRuntimeV1(qualification,binding,'MAINTENANCE_GOAL_BUILDER_V1',options);
+  return executeFixedRuntimeV1(qualification,binding,FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.profile,options);
 }
 export function executeFixedSourceTaskRuntimeV1(qualification,binding,options) {
   return executeFixedRuntimeV1(qualification,binding,'SOURCE_TASK_V1',options);
@@ -160,7 +172,7 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
     try {
       child=spawn(qualified.installation.helper,[],{shell:false,windowsHide:true,
         stdio:['pipe','pipe','pipe'],env:createBattleBridgeMinimalChildEnvironment()});
-      timeout=setTimeout(()=>{cancel();try{child.kill();}catch{}},source?1815000:160000);
+      timeout=setTimeout(()=>{cancel();try{child.kill();}catch{}},source?1815000:FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs);
       // Task-local cancellation of the existing Job, using the SAME canonical
       // governor reader; this is not another resource controller or GPU proof.
       resourceTimer=setInterval(()=>{if(!resourceAllowed())cancel();},1000);
