@@ -1,4 +1,4 @@
-# Fixed runtime action custody — structural review packet
+# Fixed runtime action custody â€” structural review packet
 
 Status: implementation in progress; component fixtures do not admit installation or runtime activation. Parent goal2961. Canonical source73e1a79c03cb9dafe8fb17d77a45a9ac502e32ce. Original prepared840b incident recovered after verified full boot; distinct ACTIVE e24400efa624935bca41f23a05a5b7d706fa1f6b01a7cd6729731e43a42002bd, reservationmcp-8d25d34d-751c-4464-815a-9cbde695f80a-0f1099a8-4f66-4f24-a5fa-0df8bb5e3d03, operationrepair-goal-builder-flow started2026-10-28T19:44:56.546Z, nativeanchor26 remains held. Caller and actual terminal result are not yet authenticated. No incident extinction inferred from age, parent exit, failed process lookup or installing this design.
 
@@ -58,7 +58,7 @@ A successful installation is NOT same-boot compiler extinction or runtime qualif
 
 Only after that later full boot may the existing authenticated exact-incident recovery reconcile e244 and prove current native journal IDLE. Qualification is computed from the protected pending receipt, actual boot witness, exact installed source and authenticated custody state; no user-writable active flag or caller boolean can grant it. The old840b restart approval is consumed. A fresh privileged installation or full restart requires its own concrete operator gate after reviewed code and proof exist. No speculative restart is requested by this design.
 
-## Source-task lifecycle boundary — proposed internal profile requiring review
+## Source-task lifecycle boundary â€” proposed internal profile requiring review
 
 The first fixed maintenance profile remains ONLY repair-goal-builder-flow. It cannot itself qualify long source building: its nested heartbeat deadline is25seconds and Control Tower's direct heartbeat deadline60seconds, while the current inline source builder permits two10minute model attempts and unbounded test subprocesses. Native cleanup cannot turn a cancelled build into success or release its independent claim. Source currently has only one production caller of processNextProviderNeutralSourceBuild: the maintenance heartbeat.
 
@@ -120,7 +120,6 @@ larger deadline repairs that publication contract.
 The independently reproduced paused producer caused IOException while its writer
 was open. Earlier hosted AggregateException inner causes remain unproven; this
 counterexample must not be retroactively reported as their authenticated cause.
-
 
 ## Parent/worker integration checkpoint: qualification remains pending
 

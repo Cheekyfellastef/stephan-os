@@ -48,3 +48,9 @@ test('fixed manifest covers current static and literal dynamic imports plus cust
  const result=JSON.parse(output);assert.ok(result.memberCount<=256);assert.deepEqual(result.missing,[]);
  assert.deepEqual(result.bare,[]);assert.equal(result.repositoryModulesEvaluated,false);
 });
+
+
+test('custody design source remains strict UTF8 for the independent reviewer',()=>{
+ const bytes=readFileSync(new URL('../docs/architecture/sovereign-fixed-runtime-job-custody-v1.md',import.meta.url));
+ assert.doesNotThrow(()=>new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+});
