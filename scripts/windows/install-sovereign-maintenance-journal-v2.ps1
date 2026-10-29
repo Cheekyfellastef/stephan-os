@@ -1,7 +1,19 @@
 param([switch]$OperatorApproved,[switch]$Fixture,[string]$ExpectedMain='')
 $ErrorActionPreference = 'Stop'
 $PSModuleAutoLoadingPreference = 'None'
-. ([IO.Path]::Combine($PSScriptRoot,'sovereign-maintenance-journal-policy-v2.ps1'))
+if ($Fixture) {
+    if ($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_OS -cne 'Windows' -or
+        $env:GITHUB_REPOSITORY -cne 'Cheekyfellastef/stephan-os') { throw 'FIXTURE_HOST_NOT_ADMITTED' }
+    . ([IO.Path]::Combine($PSScriptRoot,'sovereign-maintenance-journal-policy-v2.ps1'))
+} elseif ($null -eq $script:MaintenanceInstallerPinnedBootstrapV3 -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.ExpectedMain -cne $ExpectedMain -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.ClosureCount -ne 40 -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.Handles.Count -lt 40 -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.Directories.Count -lt 1) {
+    # Direct mutable workspace invocation cannot authenticate itself for elevation.
+    throw 'JOURNAL_INSTALL_IMMUTABLE_BOOTSTRAP_REQUIRED'
+}
 # Registration/configuration is explicit, never performed by normal startup.
 if (-not $OperatorApproved) { throw 'JOURNAL_INSTALL_OPERATOR_APPROVAL_REQUIRED' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -16,22 +28,17 @@ if ($Fixture) {
         $env:GITHUB_REPOSITORY -cne 'Cheekyfellastef/stephan-os') { throw 'FIXTURE_HOST_NOT_ADMITTED' }
 } else {
     if ($ExpectedMain -cnotmatch '^[a-f0-9]{40}$') { throw 'JOURNAL_INSTALL_EXACT_SOURCE_REQUIRED' }
-    $canonical = 'C:\Users\Stephan Callear\Documents\GitHub\stephan-os'
-    if ([IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot,'..','..')) -ine $canonical) {
-        throw 'JOURNAL_INSTALL_CANONICAL_SOURCE_REQUIRED'
+    # The authenticated bootstrap pins all source bytes and directories before
+    # compiling the host. Only this fixed native API launches the source probe.
+    $sourceProof = [Stephanos.Sovereign.CoreJobCustodyV1]::ReadMaintenanceCanonicalSource($ExpectedMain)
+    if (-not $sourceProof.Passed -or -not $sourceProof.AssignedBeforeExecution -or
+        -not $sourceProof.NormalRootExit -or $sourceProof.CancellationRequested -or
+        -not $sourceProof.ZeroActiveProcessesObserved -or -not $sourceProof.CustodyReleased -or
+        $sourceProof.ActiveProcesses -ne 0 -or $sourceProof.ExitCode -ne 0 -or
+        -not $sourceProof.SourceHeadMatched -or $sourceProof.ObservedSourceHead -cne $ExpectedMain) {
+        [Console]::Error.WriteLine('SOURCE_PROBE_REASON=' + $sourceProof.Reason)
+        throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN'
     }
-    # Invoke the unchanged closed source collector, not ordinary Git or a caller probe.
-    $process = [Diagnostics.Process]::new()
-    try {
-        $process.StartInfo = New-MaintenanceSourceProbeStartInfoV2
-        if (-not $process.Start()) { throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN' }
-        if (-not $process.WaitForExit(10000)) {
-            $process.Kill()
-            throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN'
-        }
-        $observed = $process.StandardOutput.ReadToEnd().Trim()
-        if ($process.ExitCode -ne 0 -or $observed -cne $ExpectedMain) { throw 'JOURNAL_INSTALL_SOURCE_UNPROVEN' }
-    } finally { $process.Dispose() }
 }
 $policy = Get-MaintenanceJournalPolicyV2 ([bool]$Fixture)
 $base = 'SYSTEM\CurrentControlSet\Services\EventLog\' + $policy.Log
