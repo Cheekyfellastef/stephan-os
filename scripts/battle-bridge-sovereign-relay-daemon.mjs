@@ -280,7 +280,13 @@ export async function runSovereignRelayCycleWithHeartbeat({
   let buildTask = null;
   const refreshBuild = () => {
     if (typeof observeBuild !== 'function' || buildTask) return;
-    buildTask = Promise.resolve().then(observeBuild).then(value => { buildStatus = value; })
+    // Timestamp the actual fixed consumer observation, not just this relay's
+    // heartbeat. Otherwise an old cached wake could appear newly verified.
+    buildTask = Promise.resolve().then(observeBuild).then(value => {
+      buildStatus = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.freeze({ ...value, observedAtUtc: now().toISOString() })
+        : { state: 'HELD', blocker: 'CONTROL_TOWER_BUILD_OBSERVATION_FAILED' };
+    })
       .catch(() => { buildStatus = { state: 'HELD', blocker: 'CONTROL_TOWER_BUILD_OBSERVATION_FAILED' }; })
       .finally(() => { buildTask = null; });
   };
