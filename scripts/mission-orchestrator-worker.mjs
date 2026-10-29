@@ -1127,11 +1127,18 @@ async function processFixedSourceTaskInWorker(options) {
         : state.dispatch.status==='failed' && state.currentPhase==='BLOCKED');
     if(!own)throw new Error('NATIVE_SOURCE_CURRENT_REVISION_OR_RESULT_MISMATCH');
   };
+  // Native extinction does not make a cancelled invocation eligible to commit.
+  // This monotonic intent check applies to both successful and failed results.
+  const assertInvocationEligible=()=>{
+    if(controller.signal.aborted)throw new Error('NATIVE_SOURCE_INVOCATION_CANCELLED');
+  };
   const assertResultCustody=(state,event)=>{
+    assertInvocationEligible();
     if(!nativeReleased)throw new Error('NATIVE_SOURCE_PHYSICAL_EXCLUSION_REQUIRED');
     assertClaim();
     assertState(state||JSON.parse(fixedSourceFile(before.statePath,4*1024*1024).bytes),true);
     if(options.assertResultCustody)options.assertResultCustody(state,event);
+    assertInvocationEligible();
   };
   try {
     if(claim.pickupProof?.state!=='PROCESSING_CLAIM_PROVEN')
@@ -1243,6 +1250,8 @@ async function processFixedSourceTaskInWorker(options) {
         assertResultCustody(locked);
         chain=await appendMissionWorkerExecutionReceiptTransition(chain,'completed',options,{
           phase:'native-source-result-validated',proofRefs:[...chain.proofRefs,execution.receipt.receiptId]});
+        // This final synchronous guard authorizes the existing queue commit.
+        // A later abort cannot roll back its in-flight result write and rename.
         assertResultCustody(locked);
         await finalizeMissionWorkerQueueClaim(claim,result,true);
         return result;

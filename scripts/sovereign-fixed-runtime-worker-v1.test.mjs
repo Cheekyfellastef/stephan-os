@@ -19,13 +19,20 @@ import {FORGE_LIFEBOAT_WORKER_ID,MISSION_CONTROLLER_ROUTE,projectMissionControll
 import {CODEX_TASK_CLASS} from '../shared/agents/codexCapacityGovernorV1.mjs';
 import {finalizeSourceArtifactEscrowFromCapturedIdentityV1} from '../stephanos-server/services/sourceArtifactEscrowStore.js';
 import {produceProviderNeutralSourceBuildProposalV1} from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
+import {readExecutionReceiptHistory} from '../shared/agents/executionReceiptV1.mjs';
 const source=fs.readFileSync(new URL('./mission-orchestrator-worker.mjs',import.meta.url),'utf8');
 const body=source.slice(source.indexOf('function fixedSourceGrantClass('),source.indexOf('export async function runMissionWorkerTick('));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const proof=(requirement,id)=>({receiptId:id,requirement,source:'test',evidenceType:'command-output',verified:true,exitCode:0});
 const text=(v,f='')=>v===null||v===undefined?f:String(v).trim()||f;
 function run(exe,args,options={}){const env={...process.env,...options.env};delete env.NODE_TEST_CONTEXT;return spawnSync(exe==='git.exe'?'git':exe==='node.exe'?process.execPath:exe,args,{cwd:options.cwd,env,shell:false,encoding:options.encoding===null?null:'utf8',timeout:10000,windowsHide:true});}
-for(const mode of ['success','missing-proposal','cancelled','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal'])test('native source parent integration: '+mode,async t=>{
+for(const mode of ['success','missing-proposal','cancelled','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
+ 'abort-terminal-evidence','abort-clean-failure-evidence','abort-escrow','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt','abort-caller-assert','abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'])test('native source parent integration: '+mode,async t=>{
+ const invocation=new AbortController();let invocationAborts=0;
+ const abortInvocation=()=>{if(!invocation.signal.aborted){invocationAborts++;invocation.abort();}};
+ const invocationCase=mode.startsWith('abort-');
+ const cleanFailure=mode==='clean-failed'||mode.startsWith('abort-clean-failure-');
+ const committedAbort=['abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'].includes(mode);
  const parent=await mkdtemp(join(tmpdir(),'native-source-parent-'));
  t.after(async()=>{assert.ok(resolve(parent).startsWith(resolve(tmpdir())+sep));assert.ok(basename(parent).startsWith('native-source-parent-'));await rm(parent,{recursive:true,force:true});});
  const repoRoot=join(parent,'repo'),workspace=join(parent,'workspace'),queueRoot=join(parent,'queue');
@@ -47,7 +54,7 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
  if(mode==='wrong-payload')item.payload.allowedFiles=['shared/agents/outside.mjs'];
  const pending=join(queueRoot,'foundry-forge','pending');await mkdir(pending,{recursive:true});
  await writeFile(join(pending,grant.actionId+'.json'),JSON.stringify(item));
- const brands=new WeakSet(),exclusions=new WeakSet();let attempts=0,collections=0;
+ const brands=new WeakSet(),exclusions=new WeakSet();let attempts=0,collections=0,nativeReturned=false,escrowFinalizations=0;
  const inspect=()=>({ok:true,sourceHead:head,profiles:['SOURCE_TASK_V1'],custodyRecordSha256:'b'.repeat(64),nativeRecordId:26});
  const native=async(_q,binding,{onPrepared})=>{
   attempts++;
@@ -56,9 +63,9 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
   assert.equal(await onPrepared(prepared),true);
   const processingPath=join(queueRoot,'foundry-forge','processing',grant.actionId+'.json');
   let stdout='';
-  if(['success','cancel-after-result','clean-failed'].includes(mode)){
-   const proposal=await produceProviderNeutralSourceBuildProposalV1({adapter:'foundry-forge',processingPath,item},{...options,actionGrant:grant,runCommand:run,loadGoalContext:async()=>'',localModelFetchImpl:async()=>new Response(JSON.stringify({done:mode!=='clean-failed',message:{content:JSON.stringify({edits:[{path:'shared/agents/example.mjs',old:'value=1',new:'value=2'}],summary:'fixture source'})}})+'\n')});
-   assert.equal(proposal.success,mode!=='clean-failed',proposal.error);
+  if(['success','cancel-after-result','clean-failed'].includes(mode)||invocationCase){
+   const proposal=await produceProviderNeutralSourceBuildProposalV1({adapter:'foundry-forge',processingPath,item},{...options,actionGrant:grant,runCommand:run,loadGoalContext:async()=>'',localModelFetchImpl:async()=>new Response(JSON.stringify({done:!cleanFailure,message:{content:JSON.stringify({edits:[{path:'shared/agents/example.mjs',old:'value=1',new:'value=2'}],summary:'fixture source'})}})+'\n')});
+   assert.equal(proposal.success,!cleanFailure,proposal.error);
    const content=Buffer.from(JSON.stringify({schemaVersion:'stephanos.fixed-source-task-proposal.v1',requestId:binding.requestId,actionId:grant.actionId,missionId,claimSha256:binding.claimSha256,frameSha256:prepared.FrameSha256,sourceHead:head,rootPid:23456,proposal}));
    const name=grant.actionId+'.json.source-task-'+binding.requestId+'.proposal';
    await writeFile(processingPath+'.source-task-'+binding.requestId+'.proposal',content);
@@ -72,34 +79,62 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
   } else if(mode==='missing-proposal'||mode==='cancelled')await writeFile(join(repoRoot,'shared','agents','example.mjs'),'export const value=2;\n');
   if(mode==='cancelled')await store.appendMissionEvent(missionId,{eventId:'cancel-during-source',eventType:'MISSION_CANCELLED'},options);
   if(mode==='changed-claim')await writeFile(processingPath,JSON.stringify({...item,payload:{...action,operatorIntent:'changed'}}));
-  const result={ok:['success','cancel-after-result'].includes(mode),taskExecuted:['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode),reason:'FIXTURE_STOP',stdout,nativeReceipt:{Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
-  if(mode!=='forged-zero')brands.add(result);return result;
+  const result={ok:['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure),taskExecuted:['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:'FIXTURE_STOP',stdout,nativeReceipt:{Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
+  if(mode!=='forged-zero')brands.add(result);nativeReturned=true;return result;
  };
  const context=vm.createContext({Buffer,process,console,AbortController,setInterval,clearInterval,createHash,randomUUID,resolve,relative,join,homedir,text,
   lstatSync:fs.lstatSync,openSync:fs.openSync,fstatSync:fs.fstatSync,readFileSync:fs.readFileSync,readSync:fs.readSync,closeSync:fs.closeSync,
   FORGE_LIFEBOAT_WORKER_ID,MISSION_CONTROLLER_ROUTE,CODEX_TASK_CLASS,projectMissionControllerTaskV1,projectNarrowedMissionSourceScopeV1,
-  ...store,...consumer,createSharedWorkspaceProofRecord,writeAtomicJson,finalizeSourceArtifactEscrowFromCapturedIdentityV1,
-  collectAgentWorkerResult:async(...args)=>{collections++;const result=await collectAgentWorkerResult(...args);if(mode==='cancel-after-result')await store.appendMissionEvent(missionId,{eventId:'cancel-after-result',eventType:'MISSION_CANCELLED'},options);return result;},
+  ...store,...consumer,createSharedWorkspaceProofRecord,
+  writeAtomicJson:async(...args)=>{const result=await writeAtomicJson(...args);if(['abort-terminal-evidence','abort-clean-failure-evidence'].includes(mode)&&args[1][1].endsWith('-terminal.json'))abortInvocation();return result;},
+  finalizeSourceArtifactEscrowFromCapturedIdentityV1:async(...args)=>{escrowFinalizations++;const result=await finalizeSourceArtifactEscrowFromCapturedIdentityV1(...args);if(mode==='abort-escrow')abortInvocation();return result;},
+  collectAgentWorkerResult:async(...args)=>{collections++;const result=await collectAgentWorkerResult(...args);if(mode==='cancel-after-result')await store.appendMissionEvent(missionId,{eventId:'cancel-after-result',eventType:'MISSION_CANCELLED'},options);if(['abort-collector','abort-clean-failure-collector'].includes(mode))abortInvocation();return result;},
+  appendMissionWorkerExecutionReceiptTransition:async(...args)=>{const result=await consumer.appendMissionWorkerExecutionReceiptTransition(...args);if((mode==='abort-final-receipt'&&args[1]==='completed')||(mode==='abort-clean-failure-receipt'&&args[1]==='failed'))abortInvocation();return result;},
+  finalizeMissionWorkerQueueClaim:async(...args)=>{const committing=consumer.finalizeMissionWorkerQueueClaim(...args);if(['abort-queue-commit','abort-clean-failure-queue-commit'].includes(mode))abortInvocation();const result=await committing;if(mode==='abort-after-queue-commit')abortInvocation();return result;},
   FIXED_SOURCE_PROPOSAL_MAX_BYTES_V1:4*1024*1024,
   inspectStephanosNativeCapacityGamingAdmissionV1:()=>({ok:true}),inspectFixedRuntimeQualificationV1:inspect,executeFixedSourceTaskRuntimeV1:native,
   consumeFixedRuntimeTerminalProvenanceV1:value=>{const yes=brands.has(value);brands.delete(value);return yes;},consumeFixedRuntimePrelaunchExclusionV1:value=>{const yes=exclusions.has(value);exclusions.delete(value);return yes;}});
  vm.runInContext(body+'\nglobalThis.runFixed=processFixedSourceTaskInWorker;',context);
  if(mode==='prior-receipt')await consumer.beginMissionWorkerExecutionReceiptChain({adapter:'foundry-forge',item,processingPath:join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')},{...options,actionGrant:grant});
- const result=await context.runFixed({...options,actionGrant:grant,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed'});
+ const result=await context.runFixed({...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})});
  const current=await store.readMissionRecord(missionId,options);
- if(mode==='success'){
+ if(invocationCase){
+  assert.equal(invocationAborts,1,'The actual external invocation must abort at the selected boundary');
+  assert.equal(invocation.signal.aborted,true);
+  assert.equal(result.executionCustodyReleased,true,'Native-zero evidence remains independent of invocation cancellation');
+  const proofNames=await fs.promises.readdir(join(workspace,'proof'));
+  assert.ok(proofNames.some(name=>name.endsWith('-terminal.json')),'Actual terminal evidence must remain preserved');
+  assert.notEqual(current.state.currentPhase,'CANCELLED','No mission cancellation event substitutes for the invocation signal');
+  if(['abort-terminal-evidence','abort-clean-failure-evidence','abort-caller-assert'].includes(mode))
+   assert.equal(escrowFinalizations,0,'Cancellation before commit eligibility cannot start escrow finalization');
+  if(committedAbort){
+   const terminalDirectory=cleanFailure?'failed':'completed';
+   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge',terminalDirectory,grant.actionId+'.json')),true);
+   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge',terminalDirectory,grant.actionId+'.result.json')),true);
+  }
+ }
+ if(mode==='success'||(committedAbort&&!cleanFailure)){
   assert.equal(result.success,true,JSON.stringify(result));assert.equal(collections,1);
   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),false);
   assert.equal(current.state.dispatch.status,'complete');assert.ok(current.state.sourcePublication?.artifactSha256);
- }else if(mode==='clean-failed'){
+ }else if(mode==='clean-failed'||(committedAbort&&cleanFailure)){
   assert.equal(result.success,false,JSON.stringify(result));assert.equal(collections,1);
   assert.equal(current.state.dispatch.status,'failed');assert.equal(current.state.currentPhase,'BLOCKED');
   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),false);
  }else{
-  assert.equal(result.success,false,JSON.stringify(result));assert.equal(collections,mode==='cancel-after-result'?1:0);
+  const collected=['cancel-after-result','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt'].includes(mode);
+  assert.equal(result.success,false,JSON.stringify(result));assert.equal(collections,collected?1:0);
   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),true,mode);
   assert.equal(attempts,['wrong-payload','prior-receipt','publication-failed'].includes(mode)?0:1);
-  assert.equal(current.state.dispatch.resultId,mode==='cancel-after-result'?grant.actionId:'');
+  assert.equal(current.state.dispatch.resultId,collected?grant.actionId:'');
+  if(invocationCase)assert.equal(result.reason,'NATIVE_SOURCE_INVOCATION_CANCELLED');
   if(['cancelled','cancel-after-result'].includes(mode))assert.equal(current.state.currentPhase,'CANCELLED');
+ }
+ if(invocationCase){
+  const history=await readExecutionReceiptHistory(workspace,{executionId:grant.actionId},{repoRoot});
+  assert.equal(history.ok,true);
+  const terminal=['completed','failed'].includes(history.latestReceipt?.state);
+  assert.equal(terminal,committedAbort||['abort-final-receipt','abort-clean-failure-receipt'].includes(mode),'Retain any real receipt already committed; never invent or roll it back');
+  if(['abort-collector','abort-final-receipt'].includes(mode))assert.ok(current.state.sourcePublication?.artifactSha256,'Retain already-collected source identity');
  }
 });

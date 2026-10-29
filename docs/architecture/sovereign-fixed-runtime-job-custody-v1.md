@@ -136,3 +136,24 @@ The same canonical resource-governor reader gates qualification, actual launch a
 The installer is pending-only and requires the independently approved exact source artifact. Compiler inputs, scratch and output are protected before compilation. Six bounded native units, complete source bytes, tool hashes/link counts, operator identity, machine identity, PE and manifest are bound. Runtime qualification requires strict compile-before-install-before-genuine-later-boot ordering, current authenticated custody IDLE with no current-boot fence, and exact physical source/installation pins. No writable active flag enrolls the helper. The source closure must be re-audited for final runtime, literal child, native and runtime-read inputs before approval; a static import inventory alone is insufficient.
 
 This is an implementation checkpoint. It does not assert independent specialist review, installed qualification, authenticated recovery, real source pickup or goal completion. The existing lesson remains: process creation is not entry execution; queue publication is not pickup; operation success is not custody release; and signed retained evidence must precede release.
+
+## Invocation eligibility and queue commit
+
+Native process extinction, invocation eligibility and durable source completion
+are independent facts. The existing shared completion guard checks the monotonic
+invocation cancellation signal before its claim/state checks and again after the
+caller assertion. Both successful and known unchanged-failure paths use that
+guard before collection and inside the final mission CAS. Cancellation during
+terminal evidence, escrow, collection or terminal receipt persistence preserves
+the original processing claim and all evidence already durably written. It does
+not invent a mission cancellation event, erase source, undo an already collected
+result or rewrite a real terminal receipt.
+
+The last successful synchronous shared guard inside that CAS immediately before
+the existing queue finalizer is the queue commit authorization point. The
+already-authorized asynchronous result write and atomic claim rename then finish
+as one queue acknowledgement. Cancellation during that commit or after its
+return cannot retroactively undo it or claim that the original processing file
+was retained. Temporary-store regressions cover these in-flight and completed
+commit boundaries separately from cancellation before authorization. This is
+not native qualification or permission to repeat an unknown source execution.
