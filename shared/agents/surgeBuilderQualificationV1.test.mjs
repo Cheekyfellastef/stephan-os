@@ -38,6 +38,31 @@ test('a second model slot cannot inflate capacity when queue, worktree or resour
     assert.equal(r.liveBuilders,1);
   }
 });
+test('whitespace-equivalent queue, worktree and resource spellings cannot inflate independent capacity',async()=>{
+  for(const key of ['queueId','worktreeId','capacityResourceId']) {
+    const a=slot(9),b=slot(10);
+    b[key]=` ${a[key]} `;
+    let signedCalls=0;
+    const v=verifiers();
+    const r=await qualify({nowUtc:NOW,expectedHead:HEAD,instances:[a,b]},
+      {...v,verifySignedCapacity:async c=>{signedCalls++;return v.verifySignedCapacity(c);}});
+    assert.equal(r.valid,true);
+    assert.equal(r.instances[1].state,'HELD');
+    assert.equal(r.instances[1].reason,'SCOPED_IDENTITY_OR_PROOF_REF_INVALID');
+    assert.equal(r.verifiedCapacitySlots,1);
+    assert.equal(r.liveBuilders,1);
+    assert.equal(signedCalls,1,'noncanonical second slot cannot enter the trusted host verifier');
+  }
+});
+test('one noncanonical ID, claim or proof reference fails without source admission',async()=>{
+  for(const key of ['queueId','worktreeId','capacityResourceId','capacityProofRef','canonicalClaimId','nativeBuildProofRef','protectedLiveProofRef']) {
+    const candidate=slot();candidate[key]=` ${candidate[key]} `;
+    const r=await run([candidate]);
+    assert.equal(r.liveBuilders,0,key);
+    assert.notEqual(r.instances[0].state,'LIVE_PROVEN',key);
+    assert.ok(r.instances[0].reason,key);
+  }
+});
 test('Builder 10-13 cannot be counted as material before the Builder 9 canary',async()=>{
   const r=await run([slot(10)]);assert.equal(r.verifiedCapacitySlots,1);assert.equal(r.materialBuilders,0);
   assert.equal(r.instances[1].state,'CAPACITY_ONLY');

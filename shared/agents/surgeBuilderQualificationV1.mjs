@@ -13,7 +13,10 @@ const exactId = slot => `surge-builder-${String(slot).padStart(2, '0')}`;
 const freeze = x => Object.freeze(x);
 const held = (slot, code) => freeze({ slot, workerId:exactId(slot), state:'HELD', reason:code,
   capacityQualified:false, materialBuildProven:false, liveProven:false });
-const validProofRef = value => REF.test(text(value));
+// Identity-bearing values must already be canonical: trimming only during
+// comparison would let distinct spellings claim the same queue/worktree.
+const canonicalId = value => typeof value === 'string' && ID.test(value);
+const validProofRef = value => typeof value === 'string' && REF.test(value);
 
 // These are TRUSTED HOST callbacks, not fields accepted from GitHub comments or a
 // task. They MUST authenticate current signed producer and OS evidence against
@@ -52,8 +55,8 @@ export async function qualifySurgeBuilderFleetV1(input = {}, trusted = {}) {
     const workerId = exactId(slot);
     if (text(item.workerId) !== workerId || text(item.expectedHead).toLowerCase() !== expectedHead)
       { verdicts.push(held(slot,'WORKER_OR_HEAD_IDENTITY_MISMATCH')); continue; }
-    if (!ID.test(text(item.worktreeId)) || !ID.test(text(item.capacityResourceId))
-        || !ID.test(text(item.queueId)) || !validProofRef(item.capacityProofRef))
+    if (!canonicalId(item.worktreeId) || !canonicalId(item.capacityResourceId)
+        || !canonicalId(item.queueId) || !validProofRef(item.capacityProofRef))
       { verdicts.push(held(slot,'SCOPED_IDENTITY_OR_PROOF_REF_INVALID')); continue; }
     const keys = [item.worktreeId, item.capacityResourceId, item.queueId];
     if (keys.some(x=>occupied.has(x)) || new Set(keys).size !== keys.length)
@@ -81,7 +84,7 @@ export async function qualifySurgeBuilderFleetV1(input = {}, trusted = {}) {
       verdicts.push(freeze({slot,workerId,state:'CAPACITY_ONLY',reason:'BUILDER_09_MATERIAL_CANARY_REQUIRED',
         capacityQualified:true,materialBuildProven:false,liveProven:false})); continue;
     }
-    if (!ID.test(text(item.canonicalClaimId)) || !validProofRef(item.nativeBuildProofRef)) {
+    if (!canonicalId(item.canonicalClaimId) || !validProofRef(item.nativeBuildProofRef)) {
       verdicts.push(freeze({slot,workerId,state:'CAPACITY_ONLY',reason:'CANONICAL_CLAIM_OR_NATIVE_BUILD_PROOF_MISSING',
         capacityQualified:true,materialBuildProven:false,liveProven:false})); continue;
     }
