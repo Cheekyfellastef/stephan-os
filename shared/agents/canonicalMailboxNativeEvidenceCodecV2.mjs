@@ -5,6 +5,7 @@ import { types } from 'node:util';
 // enrolls a producer, authenticates a transaction or relaxes the rotation fence.
 export const MAILBOX_NATIVE_EVIDENCE_DOMAIN_V2 = 'stephanos.canonical-mailbox-native-evidence.v2';
 export const MAILBOX_NATIVE_EVIDENCE_MAX_BYTES_V2 = 16 * 1024;
+export const MAILBOX_ROTATION_OWNER_CONTROL_SCHEMA_V2 = 'stephanos.canonical-mailbox-owner-control.v2';
 const repository = 'Cheekyfellastef/stephan-os';
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const sha40 = /^[a-f0-9]{40}$/;
@@ -38,6 +39,17 @@ function snapshot(value, depth = 0, budget = { nodes: 0 }) {
   }
   assert(typeof value === 'object' && !types.isProxy(value), 'MAILBOX_NATIVE_EVIDENCE_PLAIN_DATA_REQUIRED');
   const prototype = Object.getPrototypeOf(value);
+  if (Array.isArray(value)) {
+    assert(prototype === Array.prototype && value.length <= 16
+      && Reflect.ownKeys(value).length === value.length + 1, 'MAILBOX_NATIVE_EVIDENCE_PLAIN_DATA_REQUIRED');
+    const result = [];
+    for (let index = 0; index < value.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      assert(descriptor && Object.hasOwn(descriptor, 'value') && descriptor.enumerable, 'MAILBOX_NATIVE_EVIDENCE_PLAIN_DATA_REQUIRED');
+      result.push(snapshot(descriptor.value, depth + 1, budget));
+    }
+    return result;
+  }
   assert(prototype === Object.prototype || prototype === null, 'MAILBOX_NATIVE_EVIDENCE_PLAIN_DATA_REQUIRED');
   const result = Object.create(null);
   for (const key of Reflect.ownKeys(value)) {
@@ -50,6 +62,7 @@ function snapshot(value, depth = 0, budget = { nodes: 0 }) {
 }
 function canonical(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
 }
 function closed(value, fields) {
@@ -65,6 +78,30 @@ function timestamp(value) {
   assert(typeof value === 'string' && iso.test(value) && Number.isFinite(Date.parse(value))
     && new Date(value).toISOString() === value, 'MAILBOX_NATIVE_EVIDENCE_TIMESTAMP_INVALID');
 }
+function validateSource(source) {
+  closed(source, ['protectedMainHead', 'protectedMainTreeSha', 'installedHead', 'installedTreeSha', 'installedClosureSha256', 'sourceRole']);
+  for (const key of ['protectedMainHead', 'protectedMainTreeSha', 'installedHead', 'installedTreeSha']) git(source[key]);
+  digest(source.installedClosureSha256); assert(['PREPARATION', 'ADOPTED'].includes(source.sourceRole));
+}
+function validateActivation(activation, includeMergeTree = false) {
+  closed(activation, ['prNumber', 'headSha', 'baseSha', 'treeSha', 'mergeCommitSha', ...(includeMergeTree ? ['mergeTreeSha'] : [])]);
+  count(activation.prNumber, true);
+  for (const key of ['headSha', 'baseSha', 'treeSha']) git(activation[key]);
+  if (activation.mergeCommitSha !== null) git(activation.mergeCommitSha);
+  if (includeMergeTree) {
+    if (activation.mergeTreeSha !== null) git(activation.mergeTreeSha);
+    assert((activation.mergeTreeSha === null) === (activation.mergeCommitSha === null));
+  }
+}
+function validateEpoch(epoch) {
+  closed(epoch, ['predecessorIssue', 'successorIssue']);
+  count(epoch.predecessorIssue, true); count(epoch.successorIssue, true);
+  assert(epoch.successorIssue > epoch.predecessorIssue);
+}
+function validateBarrier(barrier) {
+  closed(barrier, ['highestCommandCommentId', 'inventorySha256', 'commentCount']);
+  count(barrier.highestCommandCommentId); count(barrier.commentCount); digest(barrier.inventorySha256);
+}
 function validatePayload(value) {
   closed(value, payloadKeys);
   assert(['CONTROL_TERMINAL', 'DRAIN_OBSERVATION'].includes(value.kind) && value.repository === repository);
@@ -76,20 +113,8 @@ function validatePayload(value) {
   closed(origin, ['kind', 'prNumber', 'commentId', 'commentBodySha256', 'createdAtUtc']);
   assert(origin.kind === 'ACTIVATION_PR_OWNER_CONTROL_V2');
   count(origin.prNumber, true); count(origin.commentId, true); digest(origin.commentBodySha256); timestamp(origin.createdAtUtc);
-  const source = value.source;
-  closed(source, ['protectedMainHead', 'protectedMainTreeSha', 'installedHead', 'installedTreeSha', 'installedClosureSha256', 'sourceRole']);
-  for (const key of ['protectedMainHead', 'protectedMainTreeSha', 'installedHead', 'installedTreeSha']) git(source[key]);
-  digest(source.installedClosureSha256); assert(['PREPARATION', 'ADOPTED'].includes(source.sourceRole));
-  const activation = value.activation;
-  closed(activation, ['prNumber', 'headSha', 'baseSha', 'treeSha', 'mergeCommitSha']);
-  count(activation.prNumber, true);
-  for (const key of ['headSha', 'baseSha', 'treeSha']) git(activation[key]);
-  if (activation.mergeCommitSha !== null) git(activation.mergeCommitSha);
-  closed(value.epoch, ['predecessorIssue', 'successorIssue']);
-  count(value.epoch.predecessorIssue, true); count(value.epoch.successorIssue, true);
-  assert(value.epoch.successorIssue > value.epoch.predecessorIssue);
-  closed(value.barrier, ['highestCommandCommentId', 'inventorySha256', 'commentCount']);
-  count(value.barrier.highestCommandCommentId); count(value.barrier.commentCount); digest(value.barrier.inventorySha256);
+  validateSource(value.source); validateActivation(value.activation);
+  validateEpoch(value.epoch); validateBarrier(value.barrier);
   closed(value.guard, ['generationId', 'ownerInstanceId', 'transactionSha256']);
   id(value.guard.generationId); id(value.guard.ownerInstanceId); digest(value.guard.transactionSha256);
   const drain = value.drain;
@@ -113,8 +138,8 @@ function validateEnvelope(value) {
 
 // A bounded JSON reader detects duplicate *decoded* keys while constructing the
 // document, before any whole-document JSON.parse could erase them. Only JSON
-// string tokens use the platform parser. Arrays/floats have no place in this
-// closed wire schema and are rejected rather than silently normalized.
+// string tokens use the platform parser. Array order is preserved; only closed
+// purpose schemas may admit them. Floats are never silently normalized.
 function parseUnique(text) {
   let index = 0, nodes = 0;
   function whitespace() { while (/[\x20\t\r\n]/.test(text[index] || '\0')) index++; }
@@ -133,6 +158,17 @@ function parseUnique(text) {
     assert(++nodes <= 512 && depth <= 12, 'MAILBOX_NATIVE_EVIDENCE_COMPLEXITY_LIMIT');
     whitespace();
     if (text[index] === '"') return string();
+    if (text[index] === '[') {
+      index++; whitespace(); const result = [];
+      if (text[index] === ']') { index++; return result; }
+      for (;;) {
+        assert(result.length < 16, 'MAILBOX_NATIVE_EVIDENCE_COMPLEXITY_LIMIT');
+        result.push(read(depth + 1)); whitespace();
+        const separator = text[index++];
+        if (separator === ']') return result;
+        assert(separator === ',', 'MAILBOX_NATIVE_EVIDENCE_JSON_INVALID'); whitespace();
+      }
+    }
     if (text[index] === '{') {
       index++; whitespace();
       const result = Object.create(null);
@@ -210,4 +246,40 @@ export function mailboxNativeEvidenceSignatureInputV2(payload) {
   const bytes = Buffer.from(canonical(clean), 'utf8');
   assert(bytes.length <= MAILBOX_NATIVE_EVIDENCE_MAX_BYTES_V2, 'MAILBOX_NATIVE_EVIDENCE_SIZE_LIMIT');
   return Buffer.concat([Buffer.from(MAILBOX_NATIVE_EVIDENCE_DOMAIN_V2, 'ascii'), Buffer.from([0]), bytes]);
+}
+
+function validateOwnerControl(value) {
+  closed(value, ['schemaVersion', 'repository', 'operatorApproval', 'transitionId', 'rotationAction', 'state',
+    'source', 'activation', 'epoch', 'barrier', 'preparation', 'expiresAtUtc', 'probeRequestIds']);
+  assert(value.schemaVersion === MAILBOX_ROTATION_OWNER_CONTROL_SCHEMA_V2 && value.repository === repository
+    && value.operatorApproval === 'operator-approved');
+  id(value.transitionId);
+  assert(['FREEZE', 'DRAIN', 'STATUS', 'CANCEL', 'VERIFY'].includes(value.rotationAction));
+  assert(['PRE_MERGE', 'MERGED_NOT_ADOPTED', 'ADOPTED_NOT_VERIFIED', 'VERIFIED', 'CANCELLED'].includes(value.state));
+  validateSource(value.source); validateActivation(value.activation, true);
+  validateEpoch(value.epoch); validateBarrier(value.barrier);
+  closed(value.preparation, ['headSha', 'treeSha', 'closureSha256', 'originalFrozenArtifactSha256']);
+  git(value.preparation.headSha); git(value.preparation.treeSha); digest(value.preparation.closureSha256);
+  if (value.preparation.originalFrozenArtifactSha256 !== null) digest(value.preparation.originalFrozenArtifactSha256);
+  timestamp(value.expiresAtUtc);
+  assert(Array.isArray(value.probeRequestIds));
+  if (value.rotationAction === 'VERIFY') {
+    assert(value.probeRequestIds.length === 2 && new Set(value.probeRequestIds).size === 2);
+    for (const requestId of value.probeRequestIds) id(requestId);
+  } else assert(value.probeRequestIds.length === 0);
+}
+export function encodeMailboxRotationOwnerControlV2(value) {
+  const clean = snapshot(value); validateOwnerControl(clean);
+  const bytes = Buffer.from(canonical(clean), 'utf8');
+  assert(bytes.length <= MAILBOX_NATIVE_EVIDENCE_MAX_BYTES_V2, 'MAILBOX_NATIVE_EVIDENCE_SIZE_LIMIT');
+  return bytes;
+}
+export function decodeMailboxRotationOwnerControlV2(bytes) {
+  bytes = snapshotBytes(bytes);
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { reject('MAILBOX_NATIVE_EVIDENCE_UTF8_INVALID'); }
+  const value = snapshot(parseUnique(text)); validateOwnerControl(value);
+  assert(canonical(value) === text, 'MAILBOX_NATIVE_EVIDENCE_NONCANONICAL');
+  return freeze(value);
 }

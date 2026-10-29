@@ -401,7 +401,7 @@ and canonical epoch are separate identities. A finite ordinary transport must no
 only carrier for its own guarded retirement. A recovery carrier inherits no additional
 execution or merge authority.
 
-## Source implementation checkpoint: wire encoding and pinned origin verification
+## Source implementation checkpoint: wire/origin and owner-control parsing
 
 Independent structural review 6508231563 completed CLEAN against original PR 3302
 head dec76e13926623a6c84fa033254e7e764ab12f4e. That is a design assessment,
@@ -438,3 +438,46 @@ No production entrypoint is wired to these primitives yet. Complete exact-head p
 and qualified independent review must cover the final implementation before protected
 integration. No ready/merge, signer enrollment, installation, custody recovery, live
 FREEZE, epoch cutover or material build is asserted by this checkpoint.
+
+### Owner-control candidate wire contract
+
+The same bounded canonical codec now supports a separate purpose schema,
+"stephanos.canonical-mailbox-owner-control.v2". Its closed fields are schemaVersion,
+repository, operatorApproval, transitionId, rotationAction, state, source, activation,
+epoch, barrier, preparation, expiresAtUtc and probeRequestIds. operatorApproval is
+exactly "operator-approved"; it is a wire assertion, not proof of human intent.
+rotationAction and state use the existing five-operation/five-state vocabulary.
+source, epoch and barrier reuse the signed evidence shapes. Consent activation adds
+mergeTreeSha to the evidence activation shape and requires paired null/exact merge
+identities. preparation is exactly {headSha, treeSha, closureSha256,
+originalFrozenArtifactSha256}; the artifact digest is null or an exact SHA256.
+VERIFY carries two distinct ordered probe IDs; every other operation carries [].
+The common codec preserves arrays in order and refuses sparse/accessor/proxy arrays.
+
+The owner comment body is exactly the marker
+"<!-- stephanos-canonical-mailbox-owner-control:v2 -->", LF, a json code fence,
+the single canonical JSON document, LF and closing code fence plus final LF.
+Only the original activation PR origin qualifies as a candidate. The parser checks
+the fixed repository owner login AND numeric ID, User type, OWNER association,
+exact REST issue locator/PR comment URL/ID and unchanged created/updated timestamps.
+It accepts GitHub second-resolution timestamps but normalizes the tagged origin
+to canonical milliseconds. Current-time freshness and maximum consent lifetime
+are 15 minutes from comment creation; native observation freshness remains the
+separate 120-second bound. No edited/expired/future/foreign/wrapped or extra-field
+comment becomes a fresh candidate.
+
+The stable request ID is "rotation-v2-" plus SHA256 of the NUL-delimited repository,
+activation PR number, real comment ID, exact full-body SHA256, transition ID and
+rotationAction. There is no caller request-ID override. Its origin is the activation
+PR consent, NEVER selectedCommentId or the predecessor command barrier. A new ID
+does not bypass original-ledger transition/phase replay protection.
+
+These routines parse metadata, not authenticated GitHub transport. They perform no
+API read and return ownerConsentAuthenticated/nativeExecutionAuthorized and every
+freeze/merge/sync/adoption permission as FALSE even for a valid candidate. They do
+not adjudicate claimed state/source/barrier reality. The original native adapter
+must still independently fetch/re-fetch the exact real comment, validate phase and
+actual source/epoch identities, original historical evidence and native producer,
+and acquire the original exclusive guard/ledger before effects. No owner approval
+comment, request, network call, native reservation or rotation effect was issued by
+this implementation checkpoint.
