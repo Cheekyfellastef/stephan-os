@@ -26,12 +26,13 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const proof=(requirement,id)=>({receiptId:id,requirement,source:'test',evidenceType:'command-output',verified:true,exitCode:0});
 const text=(v,f='')=>v===null||v===undefined?f:String(v).trim()||f;
 function run(exe,args,options={}){const env={...process.env,...options.env};delete env.NODE_TEST_CONTEXT;return spawnSync(exe==='git.exe'?'git':exe==='node.exe'?process.execPath:exe,args,{cwd:options.cwd,env,shell:false,encoding:options.encoding===null?null:'utf8',timeout:10000,windowsHide:true});}
-for(const mode of ['success','missing-proposal','cancelled','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
+for(const mode of ['success','missing-proposal','cancelled','transport-cancel-success','transport-cancel-clean-failure','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
  'abort-terminal-evidence','abort-clean-failure-evidence','abort-escrow','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt','abort-caller-assert','abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'])test('native source parent integration: '+mode,async t=>{
  const invocation=new AbortController();let invocationAborts=0;
  const abortInvocation=()=>{if(!invocation.signal.aborted){invocationAborts++;invocation.abort();}};
  const invocationCase=mode.startsWith('abort-');
- const cleanFailure=mode==='clean-failed'||mode.startsWith('abort-clean-failure-');
+ const cleanFailure=mode==='clean-failed'||mode==='transport-cancel-clean-failure'||mode.startsWith('abort-clean-failure-');
+ const transportCancelled=mode.startsWith('transport-cancel-');
  const committedAbort=['abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'].includes(mode);
  const parent=await mkdtemp(join(tmpdir(),'native-source-parent-'));
  t.after(async()=>{assert.ok(resolve(parent).startsWith(resolve(tmpdir())+sep));assert.ok(basename(parent).startsWith('native-source-parent-'));await rm(parent,{recursive:true,force:true});});
@@ -63,7 +64,7 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
   assert.equal(await onPrepared(prepared),true);
   const processingPath=join(queueRoot,'foundry-forge','processing',grant.actionId+'.json');
   let stdout='';
-  if(['success','cancel-after-result','clean-failed'].includes(mode)||invocationCase){
+  if(['success','cancel-after-result','clean-failed'].includes(mode)||transportCancelled||invocationCase){
    const proposal=await produceProviderNeutralSourceBuildProposalV1({adapter:'foundry-forge',processingPath,item},{...options,actionGrant:grant,runCommand:run,loadGoalContext:async()=>'',localModelFetchImpl:async()=>new Response(JSON.stringify({done:!cleanFailure,message:{content:JSON.stringify({edits:[{path:'shared/agents/example.mjs',old:'value=1',new:'value=2'}],summary:'fixture source'})}})+'\n')});
    assert.equal(proposal.success,!cleanFailure,proposal.error);
    const content=Buffer.from(JSON.stringify({schemaVersion:'stephanos.fixed-source-task-proposal.v1',requestId:binding.requestId,actionId:grant.actionId,missionId,claimSha256:binding.claimSha256,frameSha256:prepared.FrameSha256,sourceHead:head,rootPid:23456,proposal}));
@@ -79,7 +80,7 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
   } else if(mode==='missing-proposal'||mode==='cancelled')await writeFile(join(repoRoot,'shared','agents','example.mjs'),'export const value=2;\n');
   if(mode==='cancelled')await store.appendMissionEvent(missionId,{eventId:'cancel-during-source',eventType:'MISSION_CANCELLED'},options);
   if(mode==='changed-claim')await writeFile(processingPath,JSON.stringify({...item,payload:{...action,operatorIntent:'changed'}}));
-  const result={ok:['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure),taskExecuted:['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:'FIXTURE_STOP',stdout,nativeReceipt:{Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
+  const result={ok:!transportCancelled&&(['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure)),taskExecuted:transportCancelled||['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:transportCancelled?'FIXED_RUNTIME_OPERATION_CANCELLED':'FIXTURE_STOP',stdout,nativeReceipt:{Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
   if(mode!=='forged-zero')brands.add(result);nativeReturned=true;return result;
  };
  const context=vm.createContext({Buffer,process,console,AbortController,setInterval,clearInterval,createHash,randomUUID,resolve,relative,join,homedir,text,
@@ -129,6 +130,20 @@ for(const mode of ['success','missing-proposal','cancelled','changed-claim','wro
   assert.equal(current.state.dispatch.resultId,collected?grant.actionId:'');
   if(invocationCase)assert.equal(result.reason,'NATIVE_SOURCE_INVOCATION_CANCELLED');
   if(['cancelled','cancel-after-result'].includes(mode))assert.equal(current.state.currentPhase,'CANCELLED');
+ }
+ if(transportCancelled){
+  assert.equal(invocation.signal.aborted,false,'Native transport cancelled without caller signal');
+  assert.equal(result.reason,'NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED');
+  assert.equal(result.executionCustodyReleased,true,'Preserve separately authenticated physical native zero');
+  assert.equal(collections,0,'Cancelled transport cannot collect even a clean failure');
+  assert.equal(current.state.dispatch.resultId,'','Original claim stays owned');
+  const retained=await fs.promises.readdir(join(queueRoot,'foundry-forge','processing'));
+  assert.ok(retained.some(name=>name.endsWith('.proposal')),'Original source proposal remains retained');
+  const proofNames=await fs.promises.readdir(join(workspace,'proof'));
+  assert.ok(proofNames.some(name=>name.endsWith('-terminal.json')),'Authentic terminal evidence remains retained');
+  const history=await readExecutionReceiptHistory(workspace,{executionId:grant.actionId},{repoRoot});
+  assert.equal(history.ok,true);
+  assert.equal(history.latestReceipt?.state,'progress','No completed/failed terminal receipt after native transport cancellation');
  }
  if(invocationCase){
   const history=await readExecutionReceiptHistory(workspace,{executionId:grant.actionId},{repoRoot});

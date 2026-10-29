@@ -1209,6 +1209,19 @@ async function processFixedSourceTaskInWorker(options) {
       return held('NATIVE_SOURCE_CANCELLED_SOURCE_PRESERVED');
     }
     assertState(current);
+    // Native transport can cancel independently of the caller's AbortSignal.
+    // The consumed terminal identity proves this was the bound native result,
+    // but physical zero does not permit either success or clean-failure
+    // collection following cancellation. Retain claim and source for reconciliation.
+    if(nativeTerminalProven && nativeResult?.ok===false
+      && nativeResult?.reason==='FIXED_RUNTIME_OPERATION_CANCELLED') {
+      if(chain)chain=await appendMissionWorkerExecutionReceiptTransition(chain,'progress',options,{
+        phase:'native-source-transport-cancelled-reconciliation-held',
+        blocker:'NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED',
+        proofRefs:[...chain.proofRefs,...nativeProofRefs],
+        expectedNextAction:'Preserve claim/proposal/worktree and reconcile native cancellation without another execution.'});
+      return held('NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED');
+    }
     let failure=nativeResult.ok && nativeResult.taskExecuted===true?'':(nativeResult.reason||'NATIVE_SOURCE_OPERATION_FAILED');
     failure=failure||proposalReadError;
     if(!failure && proposal?.success===true) {
