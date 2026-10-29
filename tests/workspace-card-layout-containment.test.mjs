@@ -163,6 +163,41 @@ function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
  * A fresh context blocks service workers and installs HTTP AND WebSocket routing
  * before any page exists. No browser/server startup or navigation occurs here.
  */
+async function fulfillOwnedAssetWithoutRedirects(route, blockedRequests = []) {
+  const deny = async code => {
+    if (Array.isArray(blockedRequests)) blockedRequests.push({ kind: code });
+    if (typeof route?.abort === 'function') {
+      try { await route.abort('blockedbyclient'); } catch { /* Caller closes its owned context. */ }
+    }
+    const error = new TypeError('CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED: ' + code);
+    error.code = 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED';
+    throw error;
+  };
+  if (typeof route?.fetch !== 'function' || typeof route?.fulfill !== 'function'
+    || typeof route?.abort !== 'function') return deny('OWNED_ASSET_CAPABILITY_MISSING');
+  let response;
+  try {
+    response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 10000 });
+  } catch {
+    return deny('OWNED_ASSET_FETCH_FAILED');
+  }
+  if (typeof response?.status !== 'function') return deny('OWNED_ASSET_STATUS_UNAVAILABLE');
+  let status;
+  try { status = response.status(); } catch { return deny('OWNED_ASSET_STATUS_UNAVAILABLE'); }
+  if (!Number.isInteger(status) || status < 200 || status > 599)
+    return deny('OWNED_ASSET_STATUS_INVALID');
+  // A 3xx is rejected before fulfill: even forwarding its Location header
+  // would let the browser follow without re-entering the original route.
+  if (status >= 300 && status < 400) return deny('OWNED_ASSET_REDIRECT');
+  if (status !== 200) return deny('OWNED_ASSET_STATUS_UNQUALIFIED');
+  try {
+    await route.fulfill({ response });
+  } catch {
+    return deny('OWNED_ASSET_FULFILL_FAILED');
+  }
+  return { state: 'OWNED_ASSET_FULFILLED_WITHOUT_REDIRECT', status };
+}
+
 export async function prepareAdmittedCardLayoutContext(browser, inputs) {
   const binding = boundInputs(inputs); // Missing admission fails before resources.
   if (typeof browser?.newContext !== 'function') blocked('admitted browser capability missing');
@@ -195,7 +230,12 @@ export async function prepareAdmittedCardLayoutContext(browser, inputs) {
             && [...url.searchParams.keys()].every(key => key === 'surface')
             && CARD_LAYOUT_SURFACES.some(value => value.surface === url.searchParams.get('surface'))
           : !url.search)) {
-        await route.continue(); // Exact owned asset surface only; never backend.
+        try {
+          await fulfillOwnedAssetWithoutRedirects(route, blockedRequests);
+        } catch (error) {
+          await context.close(); // Only this independently owned QA context.
+          throw error;
+        }
       } else {
         blockedRequests.push({ kind: 'HTTP', method: request.method(), origin: url.origin, path: url.pathname });
         await route.abort('blockedbyclient');
@@ -360,6 +400,94 @@ test('an arbitrary existing page is not a guarded actual-app proof target', asyn
   await assert.rejects(inspectAdmittedCardLayout(page, {}),
     error => error.code === 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED');
   assert.equal(reads, 0);
+});
+
+
+function ownedAssetRouteFixture({ status = 200, location = '', missing = '', throws = '' } = {}) {
+  const calls = { fetch: 0, fulfill: 0, abort: 0, continue: 0, forbiddenAttachment: 0 };
+  const response = { status: () => {
+    if (throws === 'status') throw new Error('status unavailable');
+    return status;
+  } };
+  if (missing === 'status') delete response.status;
+  const route = {
+    fetch: async options => {
+      calls.fetch += 1;
+      calls.options = options;
+      if (throws === 'fetch') throw new Error('fetch failed');
+      if (options.maxRedirects !== 0 && location) calls.forbiddenAttachment += 1;
+      return response;
+    },
+    fulfill: async options => {
+      calls.fulfill += 1;
+      calls.fulfilled = options.response;
+      if (throws === 'fulfill') throw new Error('fulfill failed');
+      if (status >= 300 && status < 400 && location) calls.forbiddenAttachment += 1;
+    },
+    abort: async () => {
+      calls.abort += 1;
+      if (throws === 'abort') throw new Error('abort failed');
+    },
+    continue: async () => {
+      calls.continue += 1;
+      if (location) calls.forbiddenAttachment += 1;
+    },
+  };
+  if (missing && missing !== 'status') delete route[missing];
+  return { route, response, calls };
+}
+const assetBlocked = error => error.code === 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED';
+
+test('owned-asset redirects are rejected before browser fulfillment or forbidden attachment', async () => {
+  for (const status of [301, 302, 303, 304, 307, 308]) {
+    for (const location of ['http://127.0.0.1:8787/api/health', 'http://192.168.1.20:8787/api/health']) {
+      const { route, calls } = ownedAssetRouteFixture({ status, location });
+      const blockedRequests = [];
+      await assert.rejects(fulfillOwnedAssetWithoutRedirects(route, blockedRequests), assetBlocked);
+      assert.deepEqual(calls.options, { maxRedirects: 0, maxRetries: 0, timeout: 10000 });
+      assert.equal(calls.fulfill, 0);
+      assert.equal(calls.abort, 1);
+      assert.equal(calls.continue, 0);
+      assert.equal(calls.forbiddenAttachment, 0);
+      assert.deepEqual(blockedRequests, [{ kind: 'OWNED_ASSET_REDIRECT' }]);
+    }
+  }
+});
+test('ordinary owned200 fetch disables redirects and fulfills only that response', async () => {
+  const { route, response, calls } = ownedAssetRouteFixture();
+  assert.deepEqual(await fulfillOwnedAssetWithoutRedirects(route),
+    { state: 'OWNED_ASSET_FULFILLED_WITHOUT_REDIRECT', status: 200 });
+  assert.deepEqual(calls.options, { maxRedirects: 0, maxRetries: 0, timeout: 10000 });
+  assert.equal(calls.fulfilled, response);
+  assert.equal(calls.fulfill, 1);
+  assert.equal(calls.abort, 0);
+  assert.equal(calls.continue, 0);
+});
+test('missing owned-asset capabilities fail before any network fetch', async () => {
+  for (const missing of ['fetch', 'fulfill', 'abort']) {
+    const { route, calls } = ownedAssetRouteFixture({ missing });
+    await assert.rejects(fulfillOwnedAssetWithoutRedirects(route), assetBlocked);
+    assert.equal(calls.fetch, 0);
+    assert.equal(calls.fulfill, 0);
+    assert.equal(calls.continue, 0);
+    assert.equal(calls.forbiddenAttachment, 0);
+  }
+});
+test('owned-asset fetch/status/fulfill/abort errors remain fail-closed', async () => {
+  for (const scenario of [
+    { missing: 'status' }, { throws: 'fetch' }, { throws: 'status' }, { throws: 'fulfill' },
+    { throws: 'abort', status: 302, location: 'http://127.0.0.1:8787/api/health' },
+    { status: NaN }, { status: 404 },
+  ]) {
+    const { route, calls } = ownedAssetRouteFixture(scenario);
+    await assert.rejects(fulfillOwnedAssetWithoutRedirects(route), assetBlocked);
+    assert.equal(calls.continue, 0);
+    assert.equal(calls.forbiddenAttachment, 0);
+  }
+});
+test('owned-asset handling has no route continuation or fallback escape', () => {
+  const source = readFileSync(new URL(import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /await\s+route\.(?:continue|fallback)\s*\(/);
 });
 
 console.info('STEPHANOS_CARD_LAYOUT_BROWSER_PROOF=NOT_RUN; SOURCE_TESTS_ONLY; '
