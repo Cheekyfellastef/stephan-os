@@ -59,9 +59,12 @@ async function limitedBody(response, maximum) {
 
 // Fetch only fixed GitHub REST endpoints under the canonical repository.
 // Never forward the bearer token to a redirected or task-selected URL.
-async function jsonGET(fetchImpl, path, token) {
+export async function readMailboxFreeGitHubJsonV1(fetchImpl, path, token, signal) {
   const url = path === '/git/ref/heads/main' ? BASE + path
-    : /^\/actions\/runs\/[1-9][0-9]*$/.test(path)
+    : path === '/actions/workflows/stephanos-control-tower-build.yml'
+      || /^\/actions\/workflows\/stephanos-control-tower-build\.yml\/runs\?event=workflow_dispatch&per_page=5&head_sha=[a-f0-9]{40}$/.test(path)
+      || /^\/actions\/workflows\/stephanos-control-tower-build\.yml\/runs\?per_page=10&head_sha=[a-f0-9]{40}$/.test(path)
+      || /^\/actions\/runs\/[1-9][0-9]*$/.test(path)
       || /^\/actions\/runs\/[1-9][0-9]*\/(?:jobs|artifacts)\?per_page=100$/.test(path)
       || /^\/issues\/[1-9][0-9]{0,6}$/.test(path)
       ? BASE + path : null;
@@ -70,7 +73,7 @@ async function jsonGET(fetchImpl, path, token) {
     method: 'GET',
     redirect: 'error',
     headers: headers(token),
-    signal: AbortSignal.timeout(10000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
   });
   if (!response?.ok || response.status !== 200) throw Error('GITHUB_GET_FAILED');
   const bytes = await limitedBody(response, MAX_JSON);
@@ -102,12 +105,13 @@ function redirectAllowed(text) {
         || h.endsWith('.blob.core.windows.net'));
   } catch { return false; }
 }
-async function zipGET(fetchImpl, artifactId, token) {
+export async function readMailboxFreeGitHubArchiveV1(fetchImpl, artifactId, token, signal) {
+  if (!positive(artifactId)) throw Error('ARTIFACT_ID_INVALID');
   const response = await fetchImpl(BASE + '/actions/artifacts/' + artifactId + '/zip', {
     method: 'GET',
     redirect: 'manual',
     headers: headers(token),
-    signal: AbortSignal.timeout(10000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
   });
   if (response?.status !== 302) throw Error('ARTIFACT_SIGNED_LINK_REQUIRED');
   const location = response.headers?.get?.('location') || '';
@@ -118,7 +122,7 @@ async function zipGET(fetchImpl, artifactId, token) {
     method: 'GET',
     redirect: 'error',
     headers: { 'User-Agent': 'stephanos-mailbox-free-artifact-v1' },
-    signal: AbortSignal.timeout(10000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
   });
   if (!zipResponse?.ok || zipResponse.status !== 200) throw Error('ARTIFACT_DOWNLOAD_FAILED');
   return limitedBody(zipResponse, MAX_ZIP);
@@ -139,6 +143,8 @@ export async function readMailboxFreeGoalEvidenceFromGitHubV1({
   if (typeof fetchImpl !== 'function' || !Number.isFinite(Date.parse(nowUtc)))
     return denied('READER_ENVIRONMENT_INVALID');
   try {
+    const jsonGET = readMailboxFreeGitHubJsonV1;
+    const zipGET = readMailboxFreeGitHubArchiveV1;
     const first = readMainSha(await jsonGET(fetchImpl, '/git/ref/heads/main', token));
     if (!first) return denied('PROTECTED_MAIN_READBACK_INVALID');
     const run = await jsonGET(fetchImpl, '/actions/runs/' + runId, token);

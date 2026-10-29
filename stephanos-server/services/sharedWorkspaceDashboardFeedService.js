@@ -233,13 +233,18 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const goalGateTrust = await loadCommissionedGoalGateTrust(input);
-  const feed = await readSharedWorkspaceDashboardFeed({
-    ...input,
-    goalGateTrust,
-    root: validation.root,
-    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
-  });
-  const live = await resolveLiveProjection(input, nowMs);
+  // These independent read models share the same observation clock. A slow
+  // optional GitHub overlay must not add its entire latency after the history
+  // scan; its existing unavailable/error semantics remain unchanged.
+  const [feed, live] = await Promise.all([
+    readSharedWorkspaceDashboardFeed({
+      ...input,
+      goalGateTrust,
+      root: validation.root,
+      recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
+    }),
+    resolveLiveProjection(input, nowMs),
+  ]);
   let conversationUplift;
   try {
     const reader = input.readConversationUplift || readSharedConversationUpliftV1;
@@ -280,7 +285,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     goalBuildGateObservatory: feed.projection?.goalBuildGateObservatory || null,
   };
   const projection = Object.freeze({ ...overviewInput,
-    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs }),
+    goalBuildConveyorOverview: projectGoalBuildConveyorOverviewV1(overviewInput, { nowMs, staleAfterMs: input.staleAfterMs, statusRecords: records.statusRecords }),
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
