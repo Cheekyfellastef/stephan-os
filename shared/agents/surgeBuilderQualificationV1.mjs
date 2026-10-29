@@ -31,6 +31,7 @@ const snapshot = (slot, state, reason, capacityQualified, materialBuildProven, l
   freeze({slot, workerId:workerId(slot), state, reason, capacityQualified, materialBuildProven,
     liveProven, proofRefs:freeze([...proofRefs])});
 const safeRef = value => REF.test(text(value));
+const canonicalId = value => typeof value === 'string' && value === text(value) && ID.test(value);
 const proofTime = (receipt, nowMs) => observed(receipt,nowMs) && instant(receipt?.expiresAtUtc) > nowMs
   && instant(receipt.expiresAtUtc) - instant(receipt.observedAtUtc) <= MAX_AGE_MS;
 
@@ -81,8 +82,8 @@ export async function projectSurgeBuilderQualificationV1(input = {}, trusted = {
     if (capacity?.verified !== true || text(capacity.workerId) !== id
       || text(capacity.sourceHead).toLowerCase() !== head || !proofTime(capacity,nowMs)
       || !safeRef(capacity.proofRef) || capacity.gamingIdle !== true
-      || capacity.resourceBudgetReady !== true || !ID.test(text(capacity.worktreeId))
-      || !ID.test(text(capacity.queueId)) || !ID.test(text(capacity.capacityResourceId))) {
+      || capacity.resourceBudgetReady !== true || !canonicalId(capacity.worktreeId)
+      || !canonicalId(capacity.queueId) || !canonicalId(capacity.capacityResourceId)) {
       results.push(held(slot,'SIGNED_CAPACITY_OR_GAMING_PROOF_MISSING')); continue;
     }
     const keys = ['worktreeId','queueId','capacityResourceId'];
@@ -95,7 +96,7 @@ export async function projectSurgeBuilderQualificationV1(input = {}, trusted = {
     try { native = await trusted.verifyNativeBuild(request); }
     catch { results.push(snapshot(slot,'CAPACITY_ONLY','NATIVE_BUILD_VERIFIER_FAILED',true,false,false,proofs)); continue; }
     if (native?.verified !== true || text(native.workerId) !== id
-      || !ID.test(text(native.canonicalClaimId)) || !SHA.test(text(native.sourceCommitSha))
+      || !canonicalId(native.canonicalClaimId) || !SHA.test(text(native.sourceCommitSha))
       || !DIGEST.test(text(native.materialDiffSha256))
       || native.physicalPickupProven !== true || native.focusedTestsPassed !== true
       || !safeRef(native.proofRef) || !observed(native,nowMs)

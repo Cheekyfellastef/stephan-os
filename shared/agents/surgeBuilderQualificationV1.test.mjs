@@ -97,3 +97,18 @@ test('Builder 10 stays held even if Builder 9 edited source but has no reviewed 
   assert.equal(result.instances[1].reason,'BUILDER_09_LIVE_CANARY_REQUIRED');
   assert.equal(result.nextEligibleSlot,9);
 });
+
+test('whitespace variants never qualify distinct physical capacity or claims',async()=>{
+  for (const field of ['worktreeId','queueId','capacityResourceId']) {
+    const result=await projectSlots([9,10],trusted({verifySignedCapacity:async({slot})=>({
+      ...cap(slot),...(slot===10?{[field]:' '+cap(9)[field]+' '}:{}),
+    })}));
+    assert.equal(result.liveBuilders,1);
+    assert.equal(result.instances[1].reason,'SIGNED_CAPACITY_OR_GAMING_PROOF_MISSING');
+  }
+  const claim=await projectSlots([9,10],trusted({verifyNativeBuild:async({slot})=>({
+    ...build(slot),...(slot===10?{canonicalClaimId:' claim-9 '}:{}),
+  })}));
+  assert.equal(claim.liveBuilders,1);
+  assert.equal(claim.instances[1].reason,'NATIVE_PHYSICAL_BUILD_UNPROVEN');
+});
