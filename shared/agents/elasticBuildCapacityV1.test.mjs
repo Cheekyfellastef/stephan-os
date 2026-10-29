@@ -119,3 +119,4 @@ test('resource selection fails closed for duplicate candidate identities', () =>
   ]);
   assert.ok(result.reasonCodes.includes('DUPLICATE_CANDIDATE_ID'));
 });
+\n// Goal #3006: exercise the surge-capacity contract in existing hosted scheduler tests.\nimport './surgeBuilderQualificationV1.test.mjs';\n
