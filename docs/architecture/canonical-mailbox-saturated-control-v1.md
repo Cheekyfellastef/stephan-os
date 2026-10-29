@@ -1,8 +1,10 @@
 # Saturated canonical mailbox: bounded rotation control adapter
 
-Status: DESIGN ONLY / NOT ENROLLED. Structural review 5688751020 identified native
+Status: SOURCE IMPLEMENTATION IN PROGRESS / NOT ENROLLED. Structural review 5688751020 identified native
 provenance, receipt debt, phase and crash-recovery gaps. This revision specifies a concrete
-candidate evidence contract; no producer, key, verifier or live carrier is qualified by it.
+candidate evidence contract; no producer, key or live carrier is qualified by it.
+The implementation checkpoint below distinguishes the tested wire/origin primitives
+from the remaining native transaction and independently commissioned producer.
 
 Canonical owner: #2315 — Goal: Automatic canonical mailbox rollover before GitHub comment ceiling.
 Existing activation remains PR #3268 — Goal #2315: activate canonical mailbox #3258 and retire #3149.
@@ -125,6 +127,7 @@ producerPrincipalSha256, producerProfileSha256, keyId, algorithm,
 verificationKeySpkiSha256, verificationKeyArtifactSha256, signatureDomain,
 allowedEvidenceKinds, commissionedAtUtc, notBeforeUtc, revokedAtUtc,
 commissioningProofSha256, independentReviewArtifactSha256, operatorApprovalRef.
+schemaVersion is "stephanos.canonical-mailbox-native-enrollment.v2".
 algorithm is Ed25519; signatureDomain is exactly
 "stephanos.canonical-mailbox-native-evidence.v2"; allowedEvidenceKinds is exactly
 ["CONTROL_TERMINAL","DRAIN_OBSERVATION"]. The registry contains no private key.
@@ -397,3 +400,41 @@ Control origin, command ordering, execution ownership, terminal receipt, operato
 and canonical epoch are separate identities. A finite ordinary transport must not be the
 only carrier for its own guarded retirement. A recovery carrier inherits no additional
 execution or merge authority.
+
+## Source implementation checkpoint: wire encoding and pinned origin verification
+
+Independent structural review 6508231563 completed CLEAN against original PR 3302
+head dec76e13926623a6c84fa033254e7e764ab12f4e. That is a design assessment,
+not commissioning, current-head implementation review or proof of a native effect.
+
+The original branch now includes the closed V2 wire codec and pinned-origin verifier.
+The codec rejects duplicate decoded keys before constructing a complete JSON document,
+noncanonical bytes, malformed UTF-8, unknown fields, unsafe integers, getters/proxies,
+shared mutable input buffers and identity/size violations. It computes the immutable
+artifact digest and the exact domain-plus-one-NUL signature input. It never signs,
+generates keys or claims authenticated evidence. It intentionally handles the closed
+envelope only; the separate bounded proof-bundle contract is not implemented yet.
+
+The origin verifier reads only its fixed protected-source enrollment/public-artifact
+module. That registry is EMPTY. Production therefore returns
+NATIVE_ROTATION_PRODUCER_UNQUALIFIED for every well-formed candidate; extra caller
+options cannot supply a key, profile or clock. Future enrollment remains a separate
+protected commissioning change. The implemented checks bind both public-key pins,
+exact device/principal/profile/domain, commissioning/revocation and the 120-second
+receipt/Actions observation limits. Even a pinned valid signature proves only origin:
+the result explicitly retains ORIGINAL_GUARDED_TRANSACTION_PROOF_REQUIRED and denies
+native authority, freeze certification, merge and source-sync permission.
+
+Positive crypto tests use ephemeral in-memory keys and an isolated copy of the exact
+verifier with a public fixture-registry import. Production exposes no injection API,
+test override, signer or enrollment writer. Those tests are not native qualification.
+
+Still required on this SAME original prerequisite branch: authenticated phase consent;
+the tagged V2 state and explicit predecessor inventory barrier; durable original-ledger
+phase checkpoints and immutable artifacts; purpose-scoped ingress through the original
+serialized executor/guard; evidence-only publication/recovery through the existing
+outbox; full referenced-proof validation and V2 fence/source-sync integration.
+No production entrypoint is wired to these primitives yet. Complete exact-head proof
+and qualified independent review must cover the final implementation before protected
+integration. No ready/merge, signer enrollment, installation, custody recovery, live
+FREEZE, epoch cutover or material build is asserted by this checkpoint.
