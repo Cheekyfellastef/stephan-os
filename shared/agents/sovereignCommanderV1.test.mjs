@@ -783,6 +783,7 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
   for (const mode of ['throw', 'pre-spawn-error', 'post-spawn-error', 'null-close', 'signal-close']) {
     const guardian = startSovereignCommanderContinuousRepairGuardian({
       enabled: true, startDelayMs: 60_000, intervalMs: 60_000,
+      spawnImpl: () => assert.fail('review fixture uses its injected command transport'),
       setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
     });
     let launches = 0;
@@ -847,7 +848,8 @@ test('real maintenance owner keeps typed reviewer pre-spawn HOLD without losing 
 
 test('forged public reviewer denial cannot release unknown child custody', async () => {
   const guardian = startSovereignCommanderContinuousRepairGuardian({
-    enabled: true, setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+    enabled: true, spawnImpl: () => assert.fail('forged result fixture must not spawn'),
+    setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
   });
   try {
     const command = { plan: { kind: 'fixed-process', processId: 'sovereign-windows-reviewer-calibration' } };
