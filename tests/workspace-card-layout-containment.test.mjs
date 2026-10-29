@@ -1,8 +1,9 @@
 /**
  * Source regression and read-only browser inspection contract for goal #2664.
- * This module never creates a browser, server, fixture, process or canonical
+ * This module never launches a browser, server, fixture, process or canonical
  * state. Source tests cannot establish responsive/browser acceptance.
- * inspectAdmittedCardLayout requires a page already supplied by an independently
+ * The guarded-context helper requires an already owned browser; inspection
+ * requires its page supplied by an independently
  * resource/custody-qualified executor, serving the exact UI head and admitted
  * long-content data. Neither page arguments nor environment values grant that
  * authority. The denied synthetic local-file fixture is never a valid target.
@@ -10,6 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { auditCardLayout, extractCardLayout } from './workspace-card-layout-audit.test.mjs';
 
 const css = readFileSync(new URL('../shared/styles/stephanos-card-layout.css', import.meta.url), 'utf8');
@@ -65,14 +67,160 @@ export const CARD_LAYOUT_SURFACES = Object.freeze([
 ].map(Object.freeze));
 
 /**
- * Collect one matrix case without navigation, resize, API fetch, data/style
+ * Collect one case only from the guarded context above: no navigation, resize, API fetch, data/style
  * injection or resource startup. The caller owns prior admission, actual-asset
  * identity, fixture provenance, viewport, screenshots and later adjudication.
  * Valid metadata is necessary but does not prove the served asset bytes.
  */
+
+const preparedContexts = new WeakMap();
+const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+function blocked(message) {
+  const error = new TypeError('CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED: ' + message);
+  error.code = 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED';
+  throw error;
+}
+function boundInputs({ admission, fixtureContract, assetManifest } = {}) {
+  if (!admission || !fixtureContract || !assetManifest
+    || typeof admission !== 'object' || typeof fixtureContract !== 'object' || typeof assetManifest !== 'object')
+    blocked('resource/fixture/asset bindings required');
+  for (const key of ['resourceId', 'ownerTaskId', 'browserLaunchId', 'fixtureContractId']) {
+    if (typeof admission[key] !== 'string' || !admission[key].trim()) blocked('missing ' + key);
+  }
+  for (const key of ['custodyProofSha256', 'serverConfigProofSha256', 'fixtureSha256', 'assetManifestSha256']) {
+    if (!/^[a-f0-9]{64}$/i.test(admission[key] || '')) blocked('missing exact ' + key);
+  }
+  if (!/^[a-f0-9]{40}$/i.test(admission.sourceHead || '')
+    || !/^[a-f0-9]{64}$/i.test(admission.sourceFingerprint || '')) blocked('exact source identity required');
+  if (admission.custodyState !== 'QUALIFIED' || admission.serverProxyDisabled !== true)
+    blocked('independently qualified custody and no-proxy server receipt required');
+  const expires = Date.parse(admission.expiresAtUtc || '');
+  if (!Number.isFinite(expires) || expires <= Date.now()) blocked('resource admission expired or unavailable');
+  let origin;
+  try { origin = new URL(admission.qaOrigin); } catch { blocked('invalid admitted origin'); }
+  if (!['http:', 'https:'].includes(origin.protocol)
+    || !['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname)
+    || !origin.port || ['4173', '5173', '8787'].includes(origin.port)
+    || origin.username || origin.password || origin.href !== origin.origin + '/')
+    blocked('distinct admitted loopback origin required');
+  if (!['/index.html', '/apps/stephanos/dist/index.html'].includes(admission.pathname))
+    blocked('unadmitted actual-app mount');
+  if (fixtureContract.id !== admission.fixtureContractId
+    || fixtureContract.resourceId !== admission.resourceId
+    || fixtureContract.sourceHead !== admission.sourceHead
+    || fixtureContract.qaOrigin !== origin.origin
+    || assetManifest.sourceHead !== admission.sourceHead
+    || assetManifest.sourceFingerprint !== admission.sourceFingerprint
+    || digest(fixtureContract) !== admission.fixtureSha256
+    || digest(assetManifest) !== admission.assetManifestSha256)
+    blocked('conflicting resource/source/fixture/asset identities');
+  if (!Array.isArray(assetManifest.assets) || !assetManifest.assets.length
+    || !Array.isArray(fixtureContract.responses) || !fixtureContract.responses.length)
+    blocked('qualified asset and fixture inventories required');
+  const prefix = admission.pathname.slice(0, admission.pathname.lastIndexOf('/') + 1);
+  const assetPaths = new Set([admission.pathname, prefix + 'stephanos-build.json']);
+  for (const asset of assetManifest.assets) {
+    if (!asset || typeof asset.pathname !== 'string'
+      || new URL(asset.pathname, origin).pathname !== asset.pathname
+      || !asset.pathname.startsWith(prefix + 'assets/')
+      || !/\.(?:m?js|css|woff2?|ttf|otf|png|jpe?g|svg|webp|ico)$/i.test(asset.pathname)
+      || !/^[a-f0-9]{64}$/i.test(asset.sha256 || '') || assetPaths.has(asset.pathname))
+      blocked('invalid or duplicate asset binding');
+    assetPaths.add(asset.pathname);
+  }
+  const responses = new Map();
+  if (fixtureContract.responses.length > 2) blocked('fixture route scope widened');
+  for (const fixture of fixtureContract.responses) {
+    if (!fixture || typeof fixture.url !== 'string') blocked('fixture URL required');
+    let url;
+    try { url = new URL(fixture.url); } catch { blocked('invalid fixture URL'); }
+    const query = [...url.searchParams.entries()];
+    const dashboard = url.pathname === '/api/shared-workspace/dashboard-feed'
+      && query.length === 1 && url.searchParams.get('scope') === 'full-history';
+    const hydration = url.pathname === '/api/shared-workspace/hydrate'
+      && query.length === 2 && url.searchParams.get('workspace') === 'flywheel'
+      && url.searchParams.get('datasets') === 'dashboard';
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
+      || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+      || !(url.origin === origin.origin || url.port === '8787')
+      || fixture.method !== 'GET' || (!dashboard && !hydration)
+      || !Number.isInteger(fixture.status) || fixture.status < 200 || fixture.status > 599
+      || typeof fixture.body !== 'string' || fixture.body.length > 1_000_000
+      || responses.has(url.href)) blocked('unadmitted fixture request/response');
+    try { JSON.parse(fixture.body); } catch { blocked('fixture JSON unavailable'); }
+    responses.set(url.href, { status: fixture.status, body: fixture.body });
+  }
+  return { resourceId: admission.resourceId, sourceHead: admission.sourceHead,
+    sourceFingerprint: admission.sourceFingerprint, origin: origin.origin,
+    pathname: admission.pathname, expires, assetPaths, responses,
+    fixtureContractId: fixtureContract.id, browserLaunchId: admission.browserLaunchId };
+}
+
+/**
+ * Consume an externally authenticated manual QA/resource packet; these shape
+ * checks do NOT authenticate operator approval or grant execution authority.
+ * The caller must independently establish that authority and browser ownership.
+ * A fresh context blocks service workers and installs HTTP AND WebSocket routing
+ * before any page exists. No browser/server startup or navigation occurs here.
+ */
+export async function prepareAdmittedCardLayoutContext(browser, inputs) {
+  const binding = boundInputs(inputs); // Missing admission fails before resources.
+  if (typeof browser?.newContext !== 'function') blocked('admitted browser capability missing');
+  const context = await browser.newContext({ serviceWorkers: 'block', deviceScaleFactor: 1 });
+  try {
+    if (typeof context.route !== 'function' || typeof context.routeWebSocket !== 'function'
+      || typeof context.pages !== 'function' || context.pages().length)
+      blocked('HTTP/WebSocket pre-navigation isolation capability missing');
+    const blockedRequests = [];
+    await context.route('**/*', async route => {
+      const request = route.request(), url = new URL(request.url());
+      if (binding.expires <= Date.now()) {
+        blockedRequests.push({ kind: 'EXPIRED_RESOURCE_ADMISSION' });
+        await route.abort('blockedbyclient');
+        return;
+      }
+      const fixture = binding.responses.get(url.href);
+      if (request.method() === 'GET' && fixture) {
+        await route.fulfill({ status: fixture.status, body: fixture.body,
+          contentType: 'application/json', headers: { 'access-control-allow-origin': binding.origin } });
+      } else if (request.method() === 'OPTIONS' && fixture
+        && request.headers()['access-control-request-method'] === 'GET') {
+        await route.fulfill({ status: 204, body: '', headers: {
+          'access-control-allow-origin': binding.origin, 'access-control-allow-methods': 'GET',
+          'access-control-allow-headers': 'content-type,accept' } });
+      } else if (request.method() === 'GET' && url.origin === binding.origin
+        && binding.assetPaths.has(url.pathname)
+        && (url.pathname === binding.pathname
+          ? [...url.searchParams.entries()].length === 1
+            && [...url.searchParams.keys()].every(key => key === 'surface')
+            && CARD_LAYOUT_SURFACES.some(value => value.surface === url.searchParams.get('surface'))
+          : !url.search)) {
+        await route.continue(); // Exact owned asset surface only; never backend.
+      } else {
+        blockedRequests.push({ kind: 'HTTP', method: request.method(), origin: url.origin, path: url.pathname });
+        await route.abort('blockedbyclient');
+      }
+    });
+    await context.routeWebSocket(() => true, async socket => {
+      blockedRequests.push({ kind: 'WEBSOCKET' });
+      await socket.close(); // No connectToServer: no actual backend connection.
+    });
+    if (context.pages().length) blocked('page existed before both isolation guards');
+    preparedContexts.set(context, { ...binding, blockedRequests });
+    return context;
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
+}
+
 export async function inspectAdmittedCardLayout(page, {
   surface, expectedUrl, expectedHead, expectedFingerprint, viewport,
 } = {}) {
+  const binding = preparedContexts.get(page?.context?.());
+  if (!binding || binding.expires <= Date.now()) blocked('page is not in a current guarded resource context');
+  if (expectedHead !== binding.sourceHead || expectedFingerprint !== binding.sourceFingerprint)
+    blocked('inspection head differs from admitted source');
   const config = CARD_LAYOUT_SURFACES.find(entry => entry.surface === surface);
   assert.ok(config, 'Explicit supported surface required.');
   assert.match(expectedHead || '', /^[a-f0-9]{40}$/i);
@@ -85,7 +233,10 @@ export async function inspectAdmittedCardLayout(page, {
     'A separately admitted distinct loopback port is required.');
   assert.ok(['/index.html', '/apps/stephanos/dist/index.html'].includes(url.pathname),
     'Bind the actual admitted application mount, not a synthetic specimen.');
+  assert.equal([...url.searchParams.entries()].length, 1, 'Only the admitted surface query is allowed.');
   assert.equal(url.searchParams.get('surface'), surface);
+  if (url.origin !== binding.origin || url.pathname !== binding.pathname)
+    blocked('inspection origin/path differs from resource admission');
   assert.equal(page.url(), url.href, 'Page differs from the admitted exact URL.');
   assert.ok(CARD_LAYOUT_VIEWPORTS.some(value =>
     value.width === viewport?.width && value.height === viewport?.height));
@@ -138,6 +289,9 @@ export async function inspectAdmittedCardLayout(page, {
   // All geometry findings and affordances remain intact; no font/ellipsis waiver.
   return { evidenceClass: 'GEOMETRY_ONLY', acceptance: 'UNPROVEN',
     expectedHead, expectedFingerprint, build, snapshot, report, containment, modifierTracks,
+    isolation: { resourceId: binding.resourceId, fixtureContractId: binding.fixtureContractId,
+      browserLaunchId: binding.browserLaunchId, httpAndWebSocketGuards: 'BEFORE_FIRST_PAGE',
+      serviceWorkers: 'BLOCKED', blockedRequests: [...binding.blockedRequests] },
     modifierCoverage: modifierTracks.length ? 'MEASURED' : 'ABSENT_FROM_SOURCE_VARIANT',
     remainingProof: ['actual served-asset identity', 'fixture provenance', 'font readiness',
       'screenshots and visual adjudication', 'all findings/affordances', 'affected interactions'] };
@@ -191,6 +345,21 @@ test('responsive contract covers the three actual surfaces at six viewport sizes
   assert.deepEqual(CARD_LAYOUT_SURFACES.map(value => value.surface), ['agents', 'flywheel', 'skill-forge']);
   assert.equal(CARD_LAYOUT_SURFACES.length * CARD_LAYOUT_VIEWPORTS.length, 18);
   assert.equal(new Set(CARD_LAYOUT_VIEWPORTS.map(value => value.width + 'x' + value.height)).size, 6);
+});
+
+test('missing physical resource/fixture bindings fail before context creation', async () => {
+  let contexts = 0;
+  const browser = { newContext: async () => { contexts += 1; throw new Error('must not run'); } };
+  await assert.rejects(prepareAdmittedCardLayoutContext(browser, {}),
+    error => error.code === 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED');
+  assert.equal(contexts, 0);
+});
+test('an arbitrary existing page is not a guarded actual-app proof target', async () => {
+  let reads = 0;
+  const page = { context: () => ({}), evaluate: () => { reads += 1; } };
+  await assert.rejects(inspectAdmittedCardLayout(page, {}),
+    error => error.code === 'CARD_LAYOUT_BROWSER_PROOF_NOT_RUN_BLOCKED');
+  assert.equal(reads, 0);
 });
 
 console.info('STEPHANOS_CARD_LAYOUT_BROWSER_PROOF=NOT_RUN; SOURCE_TESTS_ONLY; '
