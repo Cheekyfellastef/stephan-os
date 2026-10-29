@@ -111,14 +111,17 @@ export function inspectFixedRuntimeQualificationV1() {
 }
 // Pure validation cannot mint provenance. Only the actual fixed private transport
 // below can put an original object into proof; JSON roundtrips/copies never inherit it.
-export function consumeFixedRuntimeTerminalProvenanceV1(result,binding) {
+// A single consumption authenticates both independent facts. Compatibility
+// boolean consumers use this same one-use store; neither API permits replay.
+export function consumeFixedRuntimeCompletionV1(result,binding) {
   const stored=proof.get(result);
   proof.delete(result);
-  return Boolean(stored && binding && stored.requestId===binding.requestId &&
-    stored.custodyRecordSha256===binding.custodyRecordSha256 &&
-    stored.nativeRecordId===binding.nativeRecordId && stored.sourceHead===binding.sourceHead &&
-    ['actionId','missionId','claimSha256'].every(key=>stored[key]===binding[key]) &&
-    result.executionCustodyReleased===true);
+  if(!stored || !binding || !['requestId','sourceHead','custodyRecordSha256','nativeRecordId','actionId','missionId','claimSha256']
+    .every(key=>stored.binding[key]===binding[key]) || result.executionCustodyReleased!==true) return null;
+  return stored.completion;
+}
+export function consumeFixedRuntimeTerminalProvenanceV1(result,binding) {
+  return consumeFixedRuntimeCompletionV1(result,binding)!==null;
 }
 export function executeFixedMaintenanceRuntimeV1(qualification,binding,options) {
   return executeFixedRuntimeV1(qualification,binding,'MAINTENANCE_GOAL_BUILDER_V1',options);
@@ -218,17 +221,28 @@ async function executeFixedRuntimeV1(qualification,inputBinding,profile,{signal,
           stage.ZeroActiveProcessesObserved===true && stage.ActiveProcesses===0 &&
           stage.ExecutionCustodyReleased===true && terminal.ExecutionCustodyReleased===true &&
           [0,2].includes(code) && code===(terminal.OperationOk===true?0:2);
-        const operationProven=bound && !cancelRequested && terminal.OperationOk===true &&
+        // Zero is physical exclusion, never permission to accept a task result.
+        // Only fully observed normal entry/exit can authorize finalization; all
+        // interruption origins and missing evidence remain ineligible even if
+        // a clean proposal was emitted before interruption.
+        const normalCompletion=bound && !cancelRequested && stage.CancellationRequested===false &&
           terminal.TaskExecuted===true && terminal.TaskResumed===true && stage.ResumeConfirmed===true &&
           stage.ParentBindingAccepted===true && stage.NormalRootExit===true && stage.OutputComplete===true &&
-          stage.ExitCode===0 && typeof stage.Output==='string' && Buffer.byteLength(stage.Output)<=16384 &&
+          stage.OutputOverflow===false && typeof stage.Output==='string' && Buffer.byteLength(stage.Output)<=16384 &&
           stage.OutputSha256===digest(stage.Output);
+        const operationProven=normalCompletion && terminal.OperationOk===true &&
+          stage.OperationOk===true && stage.ExitCode===0 && stage.Reason==='';
+        const normalFailure=normalCompletion && terminal.OperationOk===false &&
+          stage.OperationOk===false && stage.ExitCode===2 && stage.Reason==='CHILD_FAILED';
+        const operationDisposition=cancelRequested || stage?.CancellationRequested===true?'CANCELLED':
+          operationProven?'SUCCEEDED':normalFailure?'FAILED':'UNPROVEN';
         const result=Object.freeze({ok:Boolean(operationProven),
           reason:bound?(cancelRequested?'FIXED_RUNTIME_OPERATION_CANCELLED':terminal.OperationOk===true && !operationProven?'FIXED_RUNTIME_OPERATION_EVIDENCE_UNPROVEN':terminal.Reason):'FIXED_RUNTIME_TERMINAL_CUSTODY_UNPROVEN',
           executionCustodyReleased:Boolean(bound),taskRootCreated:terminal?.TaskRootCreated===true,
           taskExecuted:Boolean(bound && terminal.TaskExecuted===true),stdout:stage?.Output??'',
           nativeReceipt:freezeTree(terminal)});
-        if(bound) proof.set(result,Object.freeze({...binding}));
+        if(bound) proof.set(result,Object.freeze({binding:Object.freeze({...binding}),
+          completion:Object.freeze({executionCustodyReleased:true,operationDisposition})}));
         resolve(result);
       });
       child.stdin.write(raw+'\n');

@@ -5,7 +5,7 @@ import { projectNarrowedMissionSourceScopeV1 } from '../shared/agents/missionOrc
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { readMissionRecord, runWithMissionStatePrecondition } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { finalizeSourceArtifactEscrowFromCapturedIdentityV1 } from '../stephanos-server/services/sourceArtifactEscrowStore.js';
-import { inspectFixedRuntimeQualificationV1, executeFixedSourceTaskRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { inspectFixedRuntimeQualificationV1, executeFixedSourceTaskRuntimeV1, consumeFixedRuntimeCompletionV1, consumeFixedRuntimePrelaunchExclusionV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { FIXED_SOURCE_PROPOSAL_MAX_BYTES_V1 } from './sovereign-fixed-runtime-source-task-v1.mjs';
 import { resolveCanonicalMissionWorkerPaths } from './mission-orchestrator-worker-heartbeat.mjs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1080,7 +1080,7 @@ async function processFixedSourceTaskInWorker(options) {
   const claim=await claimNextMissionWorkerItem('foundry-forge',{...options,actionGrant:grant});
   if(!claim)return {processed:false,reason:'native-source-exact-claim-unavailable'};
   let nativeProofRefs=[];
-  let chain=null,nativeReleased=false,nativeTerminalProven=false,nativeResult=null,proposal=null,proposalReadError='',expectedResult=null;
+  let chain=null,nativeReleased=false,nativeTerminalProven=false,nativeCompletion=null,nativeResult=null,proposal=null,proposalReadError='',expectedResult=null;
   let claimSnapshot,binding,claimedState,originalRevision,monitor,monitorBusy=false;
   const controller=new AbortController();
   const forwardAbort=()=>controller.abort();
@@ -1135,6 +1135,9 @@ async function processFixedSourceTaskInWorker(options) {
   const assertResultCustody=(state,event)=>{
     assertInvocationEligible();
     if(!nativeReleased)throw new Error('NATIVE_SOURCE_PHYSICAL_EXCLUSION_REQUIRED');
+    const expectedDisposition=proposal?.success===true?'SUCCEEDED':proposal?.success===false?'FAILED':'';
+    if(!expectedDisposition || nativeCompletion?.operationDisposition!==expectedDisposition)
+      throw new Error('NATIVE_SOURCE_OPERATION_COMPLETION_INELIGIBLE');
     assertClaim();
     assertState(state||JSON.parse(fixedSourceFile(before.statePath,4*1024*1024).bytes),true);
     if(options.assertResultCustody)options.assertResultCustody(state,event);
@@ -1190,7 +1193,8 @@ async function processFixedSourceTaskInWorker(options) {
         return !controller.signal.aborted;
       }});
     clearInterval(monitor);monitor=undefined;
-    nativeTerminalProven=consumeFixedRuntimeTerminalProvenanceV1(nativeResult,binding);
+    nativeCompletion=consumeFixedRuntimeCompletionV1(nativeResult,binding);
+    nativeTerminalProven=nativeCompletion?.executionCustodyReleased===true;
     nativeReleased=nativeTerminalProven || consumeFixedRuntimePrelaunchExclusionV1(nativeResult,binding);
     if(!nativeReleased)return held('NATIVE_SOURCE_CUSTODY_UNPROVEN');
     if(nativeTerminalProven)nativeProofRefs=await preserveNativeSourceEvidence('terminal',nativeResult.nativeReceipt,binding,grant,options);
@@ -1209,19 +1213,7 @@ async function processFixedSourceTaskInWorker(options) {
       return held('NATIVE_SOURCE_CANCELLED_SOURCE_PRESERVED');
     }
     assertState(current);
-    // Native transport can cancel independently of the caller's AbortSignal.
-    // The consumed terminal identity proves this was the bound native result,
-    // but physical zero does not permit either success or clean-failure
-    // collection following cancellation. Retain claim and source for reconciliation.
-    if(nativeTerminalProven && nativeResult?.ok===false
-      && nativeResult?.reason==='FIXED_RUNTIME_OPERATION_CANCELLED') {
-      if(chain)chain=await appendMissionWorkerExecutionReceiptTransition(chain,'progress',options,{
-        phase:'native-source-transport-cancelled-reconciliation-held',
-        blocker:'NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED',
-        proofRefs:[...chain.proofRefs,...nativeProofRefs],
-        expectedNextAction:'Preserve claim/proposal/worktree and reconcile native cancellation without another execution.'});
-      return held('NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED');
-    }
+    assertResultCustody(current);
     let failure=nativeResult.ok && nativeResult.taskExecuted===true?'':(nativeResult.reason||'NATIVE_SOURCE_OPERATION_FAILED');
     failure=failure||proposalReadError;
     if(!failure && proposal?.success===true) {

@@ -35,5 +35,5 @@ test('a mutable or nonprimitive caller binding cannot issue a cross-task exclusi
 test('isolated actual parent protocol preserves zero across refusal cancellation late binding and input mutation', () => {
   const output=execFileSync(process.execPath,['--experimental-vm-modules',fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-parent-protocol-fixture-v1.mjs',import.meta.url))],{encoding:'utf8',timeout:10000,windowsHide:true});
   const result=JSON.parse(output);
-  assert.equal(result.cases,10);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
+  assert.equal(result.cases,27);assert.equal(result.nativeExecuted,false);assert.equal(result.productionQualification,false);
 });

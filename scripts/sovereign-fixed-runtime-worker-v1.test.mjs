@@ -26,13 +26,14 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const proof=(requirement,id)=>({receiptId:id,requirement,source:'test',evidenceType:'command-output',verified:true,exitCode:0});
 const text=(v,f='')=>v===null||v===undefined?f:String(v).trim()||f;
 function run(exe,args,options={}){const env={...process.env,...options.env};delete env.NODE_TEST_CONTEXT;return spawnSync(exe==='git.exe'?'git':exe==='node.exe'?process.execPath:exe,args,{cwd:options.cwd,env,shell:false,encoding:options.encoding===null?null:'utf8',timeout:10000,windowsHide:true});}
-for(const mode of ['success','missing-proposal','cancelled','transport-cancel-success','transport-cancel-clean-failure','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
+for(const mode of ['success','missing-proposal','cancelled','transport-cancel-success','transport-cancel-clean-failure','transport-unproven-clean-failure','transport-unproven-success','transport-mismatch-clean-failure','transport-mismatch-success','transport-missing-clean-failure','transport-missing-success','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
  'abort-terminal-evidence','abort-clean-failure-evidence','abort-escrow','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt','abort-caller-assert','abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'])test('native source parent integration: '+mode,async t=>{
  const invocation=new AbortController();let invocationAborts=0;
  const abortInvocation=()=>{if(!invocation.signal.aborted){invocationAborts++;invocation.abort();}};
  const invocationCase=mode.startsWith('abort-');
- const cleanFailure=mode==='clean-failed'||mode==='transport-cancel-clean-failure'||mode.startsWith('abort-clean-failure-');
+ const cleanFailure=mode==='clean-failed'||mode.endsWith('-clean-failure')||mode.startsWith('abort-clean-failure-');
  const transportCancelled=mode.startsWith('transport-cancel-');
+ const transportHeld=mode.startsWith('transport-');
  const committedAbort=['abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'].includes(mode);
  const parent=await mkdtemp(join(tmpdir(),'native-source-parent-'));
  t.after(async()=>{assert.ok(resolve(parent).startsWith(resolve(tmpdir())+sep));assert.ok(basename(parent).startsWith('native-source-parent-'));await rm(parent,{recursive:true,force:true});});
@@ -64,7 +65,7 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   assert.equal(await onPrepared(prepared),true);
   const processingPath=join(queueRoot,'foundry-forge','processing',grant.actionId+'.json');
   let stdout='';
-  if(['success','cancel-after-result','clean-failed'].includes(mode)||transportCancelled||invocationCase){
+  if(['success','cancel-after-result','clean-failed'].includes(mode)||transportHeld||invocationCase){
    const proposal=await produceProviderNeutralSourceBuildProposalV1({adapter:'foundry-forge',processingPath,item},{...options,actionGrant:grant,runCommand:run,loadGoalContext:async()=>'',localModelFetchImpl:async()=>new Response(JSON.stringify({done:!cleanFailure,message:{content:JSON.stringify({edits:[{path:'shared/agents/example.mjs',old:'value=1',new:'value=2'}],summary:'fixture source'})}})+'\n')});
    assert.equal(proposal.success,!cleanFailure,proposal.error);
    const content=Buffer.from(JSON.stringify({schemaVersion:'stephanos.fixed-source-task-proposal.v1',requestId:binding.requestId,actionId:grant.actionId,missionId,claimSha256:binding.claimSha256,frameSha256:prepared.FrameSha256,sourceHead:head,rootPid:23456,proposal}));
@@ -94,7 +95,7 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   finalizeMissionWorkerQueueClaim:async(...args)=>{const committing=consumer.finalizeMissionWorkerQueueClaim(...args);if(['abort-queue-commit','abort-clean-failure-queue-commit'].includes(mode))abortInvocation();const result=await committing;if(mode==='abort-after-queue-commit')abortInvocation();return result;},
   FIXED_SOURCE_PROPOSAL_MAX_BYTES_V1:4*1024*1024,
   inspectStephanosNativeCapacityGamingAdmissionV1:()=>({ok:true}),inspectFixedRuntimeQualificationV1:inspect,executeFixedSourceTaskRuntimeV1:native,
-  consumeFixedRuntimeTerminalProvenanceV1:value=>{const yes=brands.has(value);brands.delete(value);return yes;},consumeFixedRuntimePrelaunchExclusionV1:value=>{const yes=exclusions.has(value);exclusions.delete(value);return yes;}});
+  consumeFixedRuntimeCompletionV1:value=>{const yes=brands.has(value);brands.delete(value);return yes?Object.freeze({executionCustodyReleased:true,operationDisposition:transportCancelled?'CANCELLED':mode.startsWith('transport-unproven-')?'UNPROVEN':mode.startsWith('transport-missing-')?undefined:mode.startsWith('transport-mismatch-')?(cleanFailure?'SUCCEEDED':'FAILED'):cleanFailure?'FAILED':'SUCCEEDED'}):null;},consumeFixedRuntimePrelaunchExclusionV1:value=>{const yes=exclusions.has(value);exclusions.delete(value);return yes;}});
  vm.runInContext(body+'\nglobalThis.runFixed=processFixedSourceTaskInWorker;',context);
  if(mode==='prior-receipt')await consumer.beginMissionWorkerExecutionReceiptChain({adapter:'foundry-forge',item,processingPath:join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')},{...options,actionGrant:grant});
  const result=await context.runFixed({...options,actionGrant:grant,signal:invocation.signal,awaitActiveClaimHeartbeat:async()=>mode!=='publication-failed',...(mode==='abort-caller-assert'?{assertResultCustody:()=>{if(nativeReturned)abortInvocation();}}:{})});
@@ -131,9 +132,9 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   if(invocationCase)assert.equal(result.reason,'NATIVE_SOURCE_INVOCATION_CANCELLED');
   if(['cancelled','cancel-after-result'].includes(mode))assert.equal(current.state.currentPhase,'CANCELLED');
  }
- if(transportCancelled){
+ if(transportHeld){
   assert.equal(invocation.signal.aborted,false,'Native transport cancelled without caller signal');
-  assert.equal(result.reason,'NATIVE_SOURCE_TRANSPORT_CANCELLED_SOURCE_PRESERVED');
+  assert.equal(result.reason,'NATIVE_SOURCE_OPERATION_COMPLETION_INELIGIBLE');
   assert.equal(result.executionCustodyReleased,true,'Preserve separately authenticated physical native zero');
   assert.equal(collections,0,'Cancelled transport cannot collect even a clean failure');
   assert.equal(current.state.dispatch.resultId,'','Original claim stays owned');

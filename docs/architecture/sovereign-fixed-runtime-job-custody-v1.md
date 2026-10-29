@@ -157,3 +157,37 @@ return cannot retroactively undo it or claim that the original processing file
 was retained. Temporary-store regressions cover these in-flight and completed
 commit boundaries separately from cancellation before authorization. This is
 not native qualification or permission to repeat an unknown source execution.
+
+
+## Shared completion eligibility after interruption
+
+The private parent now seals two independent facts in the same one-use proof:
+physical process extinction and operation disposition. Consuming the original
+result with the exact request/source/claim binding returns an immutable
+completion fact. The existing boolean extinction consumer delegates to that
+same consume operation; the APIs cannot each consume the proof or replay it.
+JSON copies, caller fields and public reason strings cannot grant completion.
+
+Disposition is SUCCEEDED only after affirmative normal entry, normal exit zero,
+complete hash-matched bounded output and native operation success. FAILED is
+restricted to affirmative normal entry and normal exit two with CHILD_FAILED,
+complete output, and no parent or native cancellation. Parent resource/timer/
+stdin cancellation and native interruption remain ineligible. Native deadline
+or missing operation evidence is UNPROVEN even when process extinction and an
+earlier unchanged proposal are authentic. A clean proposal alone never proves
+that the operation completed normally.
+
+The worker uses this consumed disposition in its existing shared completion
+guard, matching success or failure to the proposal and combining it with the
+monotonic invocation signal. It checks the guard after terminal preservation
+and at every existing collection and queue authorization boundary. Unknown,
+cancelled or contradictory completion preserves the original claim, proposal,
+source and actual extinction evidence without result terminalization. The
+previous queue commit authorization rule still applies.
+
+This closes the repeated cancellation invariant at its shared model rather
+than enumerating cancellation reason strings in extra worker branches. The
+protocol matrix covers independent parent and native interruption origins;
+temporary-store integration tests cover success/failure proposal combinations,
+missing/forged evidence, and cancellation at durable commit boundaries. These
+are deterministic regression proofs, not native installation or commissioning.
