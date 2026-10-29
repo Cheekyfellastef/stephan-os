@@ -40,14 +40,49 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
     if (!fragments(card)) continue;
     cardCount += 1;
     if (!Array.isArray(card.items)) throw new TypeError('items required');
-    const itemIds = new Set(), visible = [];
+    const records = new Map();
     for (const item of card.items) {
-      if (typeof item.id !== 'string' || !item.id || itemIds.has(item.id))
+      if (typeof item.id !== 'string' || !item.id || records.has(item.id))
         throw new TypeError('unique item ids required');
-      itemIds.add(item.id);
       if (!['text', 'badge', 'control', 'card'].includes(item.kind))
         throw new TypeError('invalid item kind');
-      const pieces = fragments(item);
+      records.set(item.id, { item, pieces: fragments(item) });
+    }
+    const ancestors = new Map(), has = (item, key) =>
+      Object.prototype.hasOwnProperty.call(item, key);
+    for (const { item } of records.values()) {
+      const declared = has(item, 'ancestorBoxIds'), legacy = has(item, 'ownerId');
+      if (legacy && item.ownerId !== null && (typeof item.ownerId !== 'string' || !item.ownerId))
+        throw new TypeError('invalid legacy owner');
+      const relation = declared ? item.ancestorBoxIds
+        : legacy && item.ownerId !== null ? [item.ownerId] : [];
+      if (!Array.isArray(relation)) throw new TypeError('ancestor box ids required');
+      const seen = new Set();
+      for (const ancestorId of relation) {
+        const target = records.get(ancestorId);
+        if (typeof ancestorId !== 'string' || !ancestorId || seen.has(ancestorId)
+          || ancestorId === item.id || !target || target.item.kind === 'text' || !target.pieces)
+          throw new TypeError('invalid ancestor box relation');
+        seen.add(ancestorId);
+      }
+      // New arrays are nearest-first. Compatibility ownerId is a projection
+      // of that same relation, never an extra collision-exemption authority.
+      if (declared && legacy && item.ownerId !== (relation[0] ?? null))
+        throw new TypeError('conflicting ownership metadata');
+      ancestors.set(item.id, [...relation]);
+    }
+    const visited = new Set(), visiting = new Set();
+    const visit = id => {
+      if (visiting.has(id)) throw new TypeError('cyclic ancestor box relation');
+      if (visited.has(id)) return;
+      visiting.add(id);
+      for (const ancestorId of ancestors.get(id)) visit(ancestorId);
+      visiting.delete(id);
+      visited.add(id);
+    };
+    for (const id of records.keys()) visit(id);
+    const visible = [];
+    for (const { item, pieces } of records.values()) {
       if (!pieces) continue;
       measuredItems += 1;
       const painted = [];
@@ -82,15 +117,15 @@ export function auditCardLayout(snapshot, { tolerance = 1 } = {}) {
         if (outside(current, card.rect, 'Y')) emit('ESCAPE_Y', card, item);
         painted.push(current);
       }
-      visible.push({ ...item, painted });
+      visible.push({ ...item, ancestorBoxIds: ancestors.get(item.id), painted });
     }
     for (let a = 0; a < visible.length; a++) {
       for (let b = a + 1; b < visible.length; b++) {
         const x = visible[a], y = visible[b];
-        // A button/badge and its own label are intentionally coincident.
-        // Distinct labels inside that same control still collide.
-        if ((x.kind !== 'text' && y.ownerId === x.id)
-          || (y.kind !== 'text' && x.ownerId === y.id)) continue;
+        // Only actual ancestor/descendant coincidence is intentional.
+        // Sharing an ancestor never exempts siblings or distinct labels.
+        if ((x.kind !== 'text' && y.ancestorBoxIds.includes(x.id))
+          || (y.kind !== 'text' && x.ancestorBoxIds.includes(y.id))) continue;
         if (x.painted.some(p => y.painted.some(q => overlap(p, q))))
           emit('COLLISION', card, x, { otherItemId: y.id, kinds: [x.kind, y.kind] });
       }
@@ -273,36 +308,30 @@ export function extractCardLayout({
     tag: el.tagName.toLowerCase(), id: el.id || null,
     classes: typeof el.className === 'string' ? el.className : '',
   });
-  const outerPaintedBox = (el, card) => {
-    let selected = null;
-    for (let p = el; p && p !== card; p = p.parentElement) {
-      if (owner(p) !== card) break;
-      if (p.matches(controlSelector + ',' + badgeSelector) && boxPainted(p) && measureElement(p))
-        selected = p;
-    }
-    return selected;
-  };
   const borderBoxItem = (el, kind) => {
     const geometry = measureElement(el);
     return geometry ? { id: id(el), kind, ...geometry,
       clips: clips(el, { includeSelf: false }), element: describe(el) } : null;
   };
   const results = cards.map(card => {
-    const items = [], nodes = [card, ...card.querySelectorAll('*')];
+    const items = [], origins = new Map(), boxes = new Map();
+    const emitBox = (el, kind) => {
+      const item = borderBoxItem(el, kind);
+      if (item) { items.push(item); origins.set(item, el); boxes.set(el, item); }
+    };
+    const nodes = [card, ...card.querySelectorAll('*')];
     for (const el of nodes) {
       if (el !== card && cardSet.has(el)) {
         // Only the immediate nested card is a parent item. Its content is audited separately.
         if (owner(el.parentElement) === card && boxPainted(el))
-          items.push(borderBoxItem(el, 'card'));
+          emitBox(el, 'card');
         continue;
       }
       if (owner(el) !== card || !boundaryEligible(el)) continue;
       if (el !== card && boxPainted(el) && el.matches(controlSelector + ',' + badgeSelector)) {
-        // Nested badge/control wrappers would double-count their descendant boxes.
-        if (outerPaintedBox(el, card) === el) {
-          const measured = borderBoxItem(el, el.matches(controlSelector) ? 'control' : 'badge');
-          if (measured) items.push(measured);
-        }
+        // Every painted box is measured. Intentional ancestry is described
+        // afterward; it never suppresses clipping, escape or sibling checks.
+        emitBox(el, el.matches(controlSelector) ? 'control' : 'badge');
       }
       if (!contentPainted(el) || ['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(el.tagName)) continue;
       for (const node of el.childNodes) {
@@ -311,14 +340,25 @@ export function extractCardLayout({
         range.selectNodeContents(node);
         const geometry = measureGeometry(range).geometry;
         if (!geometry) continue;
-        // Labels belong only to an actual painted box; a boxless wrapper
-        // cannot suppress its painted descendant text or sibling collisions.
-        const labelOwner = outerPaintedBox(el, card);
-        items.push({ id: 'text-' + nextId++, kind: 'text',
-          ownerId: labelOwner && labelOwner !== card ? id(labelOwner) : null,
+        const item = { id: 'text-' + nextId++, kind: 'text',
           ...geometry, clips: clips(el),
-          text: norm(node.textContent), element: describe(el) });
+          text: norm(node.textContent), element: describe(el) };
+        items.push(item);
+        origins.set(item, el);
       }
+    }
+    // One complete emitted-box registry supplies every relation, including
+    // nested-card borders inside semantic wrappers. Hidden/boxless nodes are
+    // absent from this registry and cannot become painted ancestors.
+    for (const item of items) {
+      const origin = origins.get(item), ancestorBoxIds = [];
+      for (let p = item.kind === 'text' ? origin : origin.parentElement;
+        p && p !== card; p = p.parentElement) {
+        if (owner(p) !== card) break;
+        if (boxes.has(p)) ancestorBoxIds.push(boxes.get(p).id);
+      }
+      item.ancestorBoxIds = ancestorBoxIds;
+      item.ownerId = ancestorBoxIds[0] ?? null;
     }
     return { id: ids.get(card), ...measureElement(card), element: describe(card), items };
   });
@@ -1413,5 +1453,272 @@ if (typeof process !== 'undefined' && process.versions?.node) {
         }
       }
     }
+  });
+
+  function nestedBoxCoverageFixture() {
+    const fixture = fakeDocument();
+    fixture.title.css.display = 'none';
+    fixture.nested.css.display = 'none';
+    const wrapper = fixture.createElement('SPAN', 'badge', r(10, 10, 20, 30), fixture.card);
+    wrapper.id = 'wrapper';
+    const control = fixture.createElement('A', '', r(80, 10, 120, 30), wrapper);
+    control.id = 'nested-control';
+    const sibling = fixture.createElement('SPAN', 'badge', r(85, 10, 95, 30), fixture.card);
+    sibling.id = 'sibling';
+    return { fixture, extract: () => extractFixture(fixture) };
+  }
+
+  test('nested-box reproduction: actual visible nested control remains measured', () => {
+    const data = nestedBoxCoverageFixture().extract();
+    assert.equal(data.cards[0].items.filter(x => x.kind === 'control'
+      && x.element.id === 'nested-control').length, 1);
+  });
+
+  test('nested-box reproduction: nested control escape remains a finding', () => {
+    const report = auditCardLayout(nestedBoxCoverageFixture().extract());
+    assert.ok(report.findings.some(x => x.code === 'ESCAPE_X'));
+  });
+
+  test('nested-box reproduction: real nested-control sibling collision remains a finding', () => {
+    const report = auditCardLayout(nestedBoxCoverageFixture().extract());
+    assert.ok(report.findings.some(x => x.code === 'COLLISION'));
+  });
+
+
+  function nestedHierarchyFixture(outerKind = 'badge', innerKind = 'control', { clipped = false } = {}) {
+    const fixture = fakeDocument();
+    fixture.title.css.display = fixture.nested.css.display = 'none';
+    const wrapper = fixture.createElement(outerKind === 'control' ? 'A' : 'SPAN',
+      outerKind === 'badge' ? 'badge' : '', clipped ? r(10, 10, 130, 30) : r(10, 10, 20, 30),
+      fixture.card, clipped ? { overflowX: 'hidden' } : {});
+    wrapper.id = 'wrapper';
+    const child = fixture.createElement(innerKind === 'control' ? 'A' : innerKind === 'card' ? 'ARTICLE' : 'SPAN',
+      innerKind === 'control' ? '' : innerKind, clipped ? r(80, 10, 140, 30) : r(80, 10, 120, 30), wrapper);
+    child.id = 'nested-box';
+    const sibling = fixture.createElement('SPAN', 'badge', r(85, 10, 95, 30), fixture.card);
+    sibling.id = 'sibling';
+    return { fixture, wrapper, child, sibling, extract: () => extractFixture(fixture) };
+  }
+  const findElementItem = (data, elementId) => data.cards.flatMap(c => c.items)
+    .find(x => x.element.id === elementId);
+  const plain = value => JSON.parse(JSON.stringify(value));
+
+  for (const outerKind of ['control', 'badge']) {
+    for (const innerKind of ['control', 'badge', 'card']) {
+      test(outerKind + ' ancestor retains nested ' + innerKind + ' escape and unrelated sibling collision', () => {
+        const model = nestedHierarchyFixture(outerKind, innerKind);
+        const data = model.extract(), report = auditCardLayout(data);
+        const parent = findElementItem(data, 'wrapper'), child = findElementItem(data, 'nested-box');
+        const sibling = findElementItem(data, 'sibling');
+        assert.ok(child, 'every actual painted nested box must be retained');
+        assert.deepEqual(plain(child.ancestorBoxIds), [parent.id]);
+        assert.equal(child.ownerId, parent.id);
+        assert.ok(report.findings.some(x => x.itemId === child.id && x.code === 'ESCAPE_X'));
+        assert.ok(report.findings.some(x => x.code === 'COLLISION'
+          && [x.itemId, x.otherItemId].includes(child.id)
+          && [x.itemId, x.otherItemId].includes(sibling.id)));
+      });
+    }
+  }
+
+  test('nested box ancestry never suppresses genuine clipping or remaining escape', () => {
+    const model = nestedHierarchyFixture('badge', 'control', { clipped: true });
+    const data = model.extract(), report = auditCardLayout(data), child = findElementItem(data, 'nested-box');
+    assert.ok(report.findings.some(x => x.itemId === child.id && x.code === 'CLIPPED_X'));
+    assert.ok(report.findings.some(x => x.itemId === child.id && x.code === 'ESCAPE_X'));
+  });
+
+  test('fully contained multi-kind ancestors remain measured without false coincidence collisions', () => {
+    const model = nestedHierarchyFixture();
+    setMeasuredGeometry(model.wrapper, r(5, 5, 95, 60), [r(5, 5, 95, 60)]);
+    setMeasuredGeometry(model.child, r(10, 10, 70, 50), [r(10, 10, 70, 50)]);
+    model.sibling.css.display = 'none';
+    const inner = model.fixture.createElement('SPAN', 'badge', r(15, 15, 60, 40), model.child);
+    inner.id = 'inner';
+    inner.childNodes.push({ nodeType: 3, textContent: 'One actual label',
+      rect: r(20, 20, 50, 30), rects: [r(20, 20, 50, 30)] });
+    const data = model.extract(), report = auditCardLayout(data);
+    assert.equal(report.itemCount, 4, 'three boxes and text are all retained');
+    assert.deepEqual(report.findings, []);
+    const wrapper = findElementItem(data, 'wrapper'), child = findElementItem(data, 'nested-box');
+    const innerItem = findElementItem(data, 'inner');
+    const label = data.cards[0].items.find(x => x.kind === 'text');
+    assert.deepEqual(plain(innerItem.ancestorBoxIds), [child.id, wrapper.id]);
+    assert.deepEqual(plain(label.ancestorBoxIds), [innerItem.id, child.id, wrapper.id],
+      'text begins at its originating semantic box, inclusive');
+    assert.equal(label.ownerId, innerItem.id);
+  });
+
+  test('sharing multiple ancestors never exempts sibling boxes or distinct labels', () => {
+    const model = nestedHierarchyFixture();
+    setMeasuredGeometry(model.wrapper, r(5, 5, 95, 60), [r(5, 5, 95, 60)]);
+    setMeasuredGeometry(model.child, r(10, 10, 70, 50), [r(10, 10, 70, 50)]);
+    model.sibling.css.display = 'none';
+    const a = model.fixture.createElement('SPAN', 'badge', r(20, 20, 50, 40), model.child);
+    a.id = 'sibling-a';
+    const b = model.fixture.createElement('A', '', r(25, 20, 55, 40), model.child);
+    b.id = 'sibling-b';
+    model.child.childNodes.push(
+      { nodeType: 3, textContent: 'Label A', rect: r(12, 12, 30, 18), rects: [r(12, 12, 30, 18)] },
+      { nodeType: 3, textContent: 'Label B', rect: r(12, 12, 30, 18), rects: [r(12, 12, 30, 18)] });
+    const data = model.extract(), report = auditCardLayout(data);
+    const siblingA = findElementItem(data, 'sibling-a'), siblingB = findElementItem(data, 'sibling-b');
+    const labels = data.cards[0].items.filter(x => x.kind === 'text');
+    assert.deepEqual(plain(siblingA.ancestorBoxIds), plain(siblingB.ancestorBoxIds));
+    assert.ok(report.findings.some(x => x.code === 'COLLISION'
+      && [x.itemId, x.otherItemId].includes(siblingA.id)
+      && [x.itemId, x.otherItemId].includes(siblingB.id)));
+    assert.ok(report.findings.some(x => x.code === 'COLLISION'
+      && [x.itemId, x.otherItemId].includes(labels[0].id)
+      && [x.itemId, x.otherItemId].includes(labels[1].id)));
+  });
+
+  test('hidden and boxless wrappers never become emitted painted ancestors', () => {
+    for (const state of ['hidden', 'collapse', 'boxless']) {
+      const model = nestedHierarchyFixture();
+      if (state === 'boxless') {
+        model.wrapper.css.display = 'contents';
+        setMeasuredGeometry(model.wrapper, r(10, 10, 10, 10), []);
+      } else model.wrapper.css.visibility = state;
+      const data = model.extract(), child = findElementItem(data, 'nested-box');
+      assert.ok(child);
+      assert.equal(findElementItem(data, 'wrapper'), undefined);
+      assert.deepEqual(plain(child.ancestorBoxIds), []);
+      assert.equal(child.ownerId, null);
+      const report = auditCardLayout(data);
+      assert.ok(report.findings.some(x => x.itemId === child.id && x.code === 'ESCAPE_X'));
+      assert.ok(report.findings.some(x => x.code === 'COLLISION'));
+    }
+  });
+
+  test('nested-card border ancestry stays in parent while child content stops at nearest card', () => {
+    const model = nestedHierarchyFixture('badge', 'card');
+    const inside = model.fixture.createElement('A', '', r(82, 12, 110, 25), model.child);
+    inside.id = 'inside-child';
+    inside.childNodes.push({ nodeType: 3, textContent: 'Nested card label',
+      rect: r(84, 14, 105, 23), rects: [r(84, 14, 105, 23)] });
+    const data = model.extract();
+    const parent = data.cards[0], childCard = data.cards[1];
+    const wrapper = findElementItem(data, 'wrapper'), childBorder = findElementItem(data, 'nested-box');
+    assert.ok(parent.items.includes(childBorder));
+    assert.deepEqual(plain(childBorder.ancestorBoxIds), [wrapper.id]);
+    const control = childCard.items.find(x => x.kind === 'control');
+    const label = childCard.items.find(x => x.kind === 'text');
+    assert.deepEqual(plain(control.ancestorBoxIds), []);
+    assert.deepEqual(plain(label.ancestorBoxIds), [control.id]);
+    assert.ok(!childCard.items.some(x => x.ancestorBoxIds.includes(wrapper.id)
+      || x.ancestorBoxIds.includes(childBorder.id)));
+  });
+
+  test('registry-based ancestry survives irrelevant hidden branches and coherent translation', () => {
+    for (const outerKind of ['badge', 'control']) {
+      for (const innerKind of ['badge', 'control', 'card']) {
+        for (const offset of [-321, 0, 654]) {
+          const model = nestedHierarchyFixture(outerKind, innerKind);
+          const before = auditCardLayout(model.extract());
+          for (const el of [model.fixture.root, model.fixture.card, model.wrapper, model.child, model.sibling]) {
+            const rect = el.getBoundingClientRect();
+            const metrics = { clientWidth: el.clientWidth, clientHeight: el.clientHeight,
+              offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight };
+            const moved = r(rect.left + offset, rect.top - offset, rect.right + offset, rect.bottom - offset);
+            setMeasuredGeometry(el, moved, [moved]);
+            Object.assign(el, metrics);
+          }
+          const hidden = model.fixture.createElement('SPAN', 'badge', r(), model.fixture.card, { display: 'none' });
+          model.fixture.createElement('A', '', r(), hidden);
+          assert.deepEqual(auditCardLayout(model.extract()), before);
+        }
+      }
+    }
+  });
+
+  function declaredAncestrySnapshot() {
+    return snapshot(
+      item('outer', 'control', r(5, 5, 95, 70)),
+      item('middle', 'badge', r(10, 10, 80, 60), { ancestorBoxIds: ['outer'], ownerId: 'outer' }),
+      item('inner', 'control', r(15, 15, 70, 50), { ancestorBoxIds: ['middle', 'outer'], ownerId: 'middle' }),
+      item('label', 'text', r(20, 20, 60, 30), { ancestorBoxIds: ['inner', 'middle', 'outer'], ownerId: 'inner' }));
+  }
+
+  test('manual multi-level ancestry is validated without mutating declared inputs', () => {
+    const data = declaredAncestrySnapshot(), before = JSON.stringify(data);
+    assert.deepEqual(codes(data), []);
+    assert.equal(JSON.stringify(data), before);
+    data.cards[0].items.push(item('sibling-label', 'text', r(20, 20, 60, 30),
+      { ancestorBoxIds: ['inner', 'middle', 'outer'] }));
+    assert.ok(codes(data).includes('COLLISION'));
+  });
+
+  test('legacy ownerId remains a singleton only, while new arrays encode all ancestor pairs', () => {
+    const outer = item('outer', 'control', r(5, 5, 95, 70));
+    const middle = item('middle', 'badge', r(10, 10, 80, 60), { ownerId: 'outer' });
+    const inner = item('inner', 'control', r(15, 15, 70, 50), { ownerId: 'middle' });
+    const data = snapshot(outer, middle, inner), before = JSON.stringify(data);
+    assert.equal(auditCardLayout(data).findings.filter(x => x.code === 'COLLISION').length, 1,
+      'legacy single-owner metadata does not invent missing multi-level DOM ancestry');
+    assert.equal(JSON.stringify(data), before);
+    inner.ancestorBoxIds = ['middle', 'outer'];
+    assert.deepEqual(codes(data), []);
+  });
+
+  test('conflicting old and new metadata never unions exemption authorities', () => {
+    for (const ownerId of ['outer', null, 'missing']) {
+      const data = declaredAncestrySnapshot();
+      data.cards[0].items[3].ownerId = ownerId;
+      assert.throws(() => auditCardLayout(data), /conflicting ownership metadata/);
+    }
+    const empty = declaredAncestrySnapshot();
+    empty.cards[0].items[3].ancestorBoxIds = [];
+    assert.throws(() => auditCardLayout(empty), /conflicting ownership metadata/);
+    const consistentEmpty = snapshot(item('box', 'control', r(), { ancestorBoxIds: [], ownerId: null }));
+    assert.deepEqual(codes(consistentEmpty), []);
+  });
+
+  test('invalid new ancestry shape and duplicate or empty identifiers fail explicitly', () => {
+    for (const relation of [null, 'outer', {}, [undefined], [''], ['outer', 'outer'], Array(1)]) {
+      const data = snapshot(item('outer', 'control'), item('label', 'text', r(5, 5, 30, 20),
+        { ancestorBoxIds: relation }));
+      assert.throws(() => auditCardLayout(data), /ancestor box/);
+    }
+  });
+
+  test('self, text, absent, unpainted and other-card ancestor targets fail explicitly', () => {
+    for (const target of ['label', 'text-target', 'absent', 'unpainted', 'other-card-box']) {
+      const data = snapshot(
+        item('text-target', 'text'),
+        item('unpainted', 'badge', r(5, 5, 5, 5), { rects: [] }),
+        item('label', 'text', r(10, 10, 30, 20), { ancestorBoxIds: [target] }));
+      data.cards.push({ id: 'other-card', rect: r(), items: [item('other-card-box', 'control')] });
+      assert.throws(() => auditCardLayout(data), /invalid ancestor box relation/);
+    }
+  });
+
+  test('cyclic ancestry is rejected for new arrays and legacy owner chains', () => {
+    for (const legacy of [false, true]) {
+      for (const count of [2, 3]) {
+        const boxes = Array.from({ length: count }, (_, index) => item('box-' + index, 'badge', r(),
+          legacy ? { ownerId: 'box-' + ((index + 1) % count) }
+            : { ancestorBoxIds: ['box-' + ((index + 1) % count)] }));
+        assert.throws(() => auditCardLayout(snapshot(...boxes)), /cyclic ancestor box relation/);
+      }
+    }
+  });
+
+  test('malformed legacy owners fail instead of silently granting exemptions', () => {
+    for (const ownerId of ['', undefined, 0, false, {}, ['outer']]) {
+      const data = snapshot(item('outer', 'control'), item('label', 'text', r(), { ownerId }));
+      assert.throws(() => auditCardLayout(data), /invalid legacy owner/);
+    }
+  });
+
+  test('ancestry exemption never skips individual escape or clipping in manual snapshots', () => {
+    const data = snapshot(
+      item('outer', 'badge', r(5, 5, 130, 60)),
+      item('child', 'control', r(80, 10, 140, 30), { ancestorBoxIds: ['outer'],
+        clips: [{ id: 'real-clip', rect: r(5, 5, 130, 60), x: 'hidden', y: 'visible' }] }));
+    const report = auditCardLayout(data);
+    assert.ok(report.findings.some(x => x.itemId === 'child' && x.code === 'CLIPPED_X'));
+    assert.ok(report.findings.some(x => x.itemId === 'child' && x.code === 'ESCAPE_X'));
+    assert.equal(report.findings.filter(x => x.code === 'COLLISION').length, 0);
   });
 }
