@@ -731,3 +731,31 @@ test('failed result replay is atomically identity-bound and never recollects or 
   assert.equal(current.state.revision, failed.state.revision);
   assert.equal(current.state.storeMetadata.processedEventIds.filter(id => id === `result-${dispatch.action.actionId}`).length, 1);
 });
+
+
+test('result custody receives original and own-result states at each locked event commit', async () => {
+  const options=await runtime();options.capacityRouting=freshCodexCapacityRouting();
+  const created=await createMissionRecord(intent,options);
+  await publishMissionWorkerAction(created.state,options);
+  const ready=await appendMissionEvent(intent.missionId,{eventId:'state-callback-worktree',eventType:'WORKTREE_READY',
+    worktreePath:intent.worktreePath,clean:true,receipt:proof('isolated worktree','state-callback-worktree')},options);
+  const dispatch=await publishMissionWorkerAction(ready.state,options);
+  assert.ok(await claimNextMissionWorkerItem('codex',options));
+  const original=(await readMissionRecord(intent.missionId,options)).state;
+  const samples=[];
+  const result={missionId:intent.missionId,actionId:dispatch.action.actionId,adapter:'codex',success:true,
+    resultId:dispatch.action.actionId,changedFiles:['shared/agents/example.mjs'],
+    receipt:proof('codex result','state-callback-result'),
+    evidenceReceipts:[proof('focused test output','state-callback-evidence')]};
+  const collected=await collectAgentWorkerResult(result,{...options,assertResultCustody:(state,event)=>{
+    assert.equal(state.missionId,intent.missionId);
+    samples.push({revision:state.revision,status:state.dispatch.status,event:event.eventType});
+  }});
+  assert.deepEqual(samples,[
+    {revision:original.revision,status:'running',event:'AGENT_RESULT_RECEIVED'},
+    {revision:original.revision,status:'running',event:'AGENT_RESULT_RECEIVED'},
+    {revision:original.revision+1,status:'complete',event:'EVIDENCE_RECORDED'},
+    {revision:original.revision+1,status:'complete',event:'EVIDENCE_RECORDED'},
+  ]);
+  assert.equal(collected.state.revision,original.revision+2);
+});

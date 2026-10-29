@@ -965,3 +965,21 @@ test('custody expiring inside lifeboat await prevents claim acknowledgement and 
   assert.equal(result.blocker, 'MISSION_WORKER_CUSTODY_UNPROVEN');
   assert.deepEqual(calls, []);
 });
+
+
+test('production heartbeat retains pending pickup without claiming or executing a source build inline', async()=>{
+ const missionId='critical-1557-elastic-goal';
+ const result=await heartbeat({
+  maxWorkConservingAttempts:1,
+  conveyor:async()=>({ok:true,classification:'ELASTIC_MISSION_ADMITTED',elasticAdmission:{runnableMissions:[{missionId}],selectedMission:{missionId}}}),
+  builderOptions:{claimNext:()=>assert.fail('short heartbeat cannot claim source'),
+    runCommand:()=>assert.fail('short heartbeat cannot execute source'),
+    localModelFetchImpl:()=>assert.fail('short heartbeat cannot invoke model')},
+  publishTrack:async()=>({ok:true}),
+ });
+ assert.equal(result.sourceBuild.processed,false);
+ assert.equal(result.sourceBuild.pickupProven,false);
+ assert.equal(result.sourceBuild.finalVerdict,'CANONICAL_MISSION_WORKER_SOURCE_PICKUP_PENDING');
+ assert.equal(result.materialActionsSucceeded,0);
+ assert.equal(result.noRunnableSourceWorkProven,false);
+});

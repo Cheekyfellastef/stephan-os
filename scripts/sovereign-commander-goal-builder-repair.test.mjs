@@ -697,3 +697,18 @@ test('uncompiled native gap backlog prevents green when unrelated missions dispa
   assert.equal(result.mergeAuthority, false);
   assert.equal(calls.filter((id) => id === 'fleet-goal-supervisor').length, 2);
 });
+
+
+test('goal repair resource hold prevents initial work and is rechecked between fixed steps',()=>{
+ for(const allowedReads of [0,1]) {
+  let reads=0;const launched=[];
+  const result=runSovereignCommanderGoalBuilderRepair({
+   readResourceAdmission:()=>({ok:reads++<allowedReads}),
+   runStep:step=>{launched.push(step.id);return {ok:true,status:0,stdout:'{}'};},
+  });
+  assert.equal(result.ok,false);
+  assert.equal(result.blocker,'SOVEREIGN_GOAL_BUILDER_RESOURCE_GOVERNOR_HOLD');
+  assert.equal(launched.length,allowedReads);
+  assert.equal(result.steps.length,allowedReads);
+ }
+});

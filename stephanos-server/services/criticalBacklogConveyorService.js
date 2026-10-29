@@ -475,6 +475,10 @@ export async function retrySafelyBlockedAgentFailure({
   let candidateRecord = null;
   let firstBlockedCandidate = null;
   let retryAuthority;
+  // One bounded cohort request keeps negative owner lookups cached across the scan.
+  const requiredPrimaryOwnerCommentIssueNumbers = [...new Set(candidates.filter(record =>
+    record.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') && !record.blockers.some(isModelTransportFailureV1))
+    .map(record => issueFromMissionId(record.missionId)).filter(id => Number.isSafeInteger(id) && id > 0))];
   for (const currentCandidate of candidates) {
     evaluatedCount += 1;
     if (!Number.isSafeInteger(currentCandidate.revision) || currentCandidate.revision < 0) {
@@ -495,7 +499,8 @@ export async function retrySafelyBlockedAgentFailure({
     if (currentCandidate.blockers.includes('SOURCE_ARTIFACT_DIFF_CHECK_FAILED') || transportRetry) {
       // Re-admission is not repair/completion proof. Require a newly strengthened
       // owner-authenticated acceptance contract before another consumed attempt.
-      retryAuthority ??= await readProgrammeProjection({ env, nowUtc: now.toISOString(),
+      retryAuthority ??= await readProgrammeProjection({ env, nowUtc: retryNow(),
+        ...(requiredPrimaryOwnerCommentIssueNumbers.length ? { requiredPrimaryOwnerCommentIssueNumbers } : {}),
         root: paths.workspaceRoot, repoRoot: paths.repoRoot,
         orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
       const issueNumber = issueFromMissionId(currentCandidate.missionId);
@@ -632,7 +637,9 @@ export async function retrySafelyBlockedAgentFailure({
     if (retryPlanBinding) {
       // Custody and worktree checks await external reads. Re-observe the same
       // authenticated plan/head before the existing revision-guarded event.
-      const refreshed = await readProgrammeProjection({ env, root: paths.workspaceRoot, repoRoot: paths.repoRoot,
+      const refreshed = await readProgrammeProjection({ env,
+        ...(requiredPrimaryOwnerCommentIssueNumbers.length ? { requiredPrimaryOwnerCommentIssueNumbers } : {}),
+        root: paths.workspaceRoot, repoRoot: paths.repoRoot,
         orchestratorRoot: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot });
       const issueNumber = issueFromMissionId(currentCandidate.missionId);
       const selectedOwner = selectRetryOwnerPlan(refreshed, issueNumber, currentCandidate.repository,
