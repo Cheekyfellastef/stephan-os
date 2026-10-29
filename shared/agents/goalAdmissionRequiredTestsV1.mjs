@@ -1,6 +1,7 @@
 // Optional acceptance commands on the existing owner-authenticated goal
 // admission. This is a strict subset of the existing bounded test executor,
 // never a shell, environment, dependency-install or mutation-scope grant.
+import { projectCanonicalResourceIds } from './elasticBuildCapacityV1.mjs';
 export function projectGoalAdmissionRequiredTestsV1(value) {
   if (value === undefined) return Object.freeze({ valid: true, supplied: false, commands: Object.freeze([]) });
   const invalid = () => Object.freeze({ valid: false, supplied: true, commands: Object.freeze([]) });
@@ -46,6 +47,53 @@ export function projectOwnerGoalRequiredTestsV1(record, issueNumber, repository)
     && String(record?.mirrorRepository).toLowerCase() === String(repository).toLowerCase()
     && record?.mirrorBuildPickupAllowed === true;
   return Object.freeze({ ...tests, valid: tests.valid && (!tests.supplied || identity) });
+}
+
+// Retained workspace reservations and a fresh owner's future retry contract
+// are separate truths. This selector cannot alter either record or a claim.
+export function projectFreshOwnerGoalRetryContractV1(record, estate, issueNumber, repository, nowUtc) {
+  const invalid = () => Object.freeze({ valid: false, supplied: false,
+    commands: Object.freeze([]), resourceIds: Object.freeze([]) });
+  if (estate?.ok !== true || !Array.isArray(estate.issues) || estate.issues.length > 1000) return invalid();
+  const matches = estate.issues.filter(issue => issue?.issueNumber === issueNumber);
+  if (matches.length !== 1) return invalid();
+  const issue = matches[0], admission = issue.admission;
+  if (issue.admissionProofSource !== 'OWNER_AUTHENTICATED_COMMENT'
+      || issue.admissionState !== 'ADMISSION_PROVEN' || issue.schedulerEligible !== true
+      || issue.operatorLaneContainment?.active === true || issue.state !== 'open'
+      || !Array.isArray(issue.labels) || !issue.labels.includes('goal')
+      || String(issue.repository).toLowerCase() !== String(repository).toLowerCase()
+      || admission?.schemaVersion !== 'stephanos.github-goal-admission.v1'
+      || admission.issueNumber !== issueNumber
+      || String(admission.repository).toLowerCase() !== String(repository).toLowerCase()
+      || admission.state !== 'READY' || admission.route !== 'OPENCLAW_LOCAL'
+      || !Array.isArray(admission.prerequisites) || admission.prerequisites.length
+      || admission.sourceImplementationAllowed !== true || admission.mergeAuthority !== false
+      || admission.deploymentAuthority !== false || admission.runtimeMutationAuthority !== false
+      || admission.arbitraryShellAllowed !== false) return invalid();
+  const tests = projectOwnerGoalRequiredTestsV1({ ...record, requiredTests: admission.requiredTests }, issueNumber, repository);
+  const now = Date.parse(nowUtc), observed = Date.parse(issue.retrievedAt);
+  const previous = Date.parse(record?.mirrorObservedAtUtc), updated = Date.parse(issue.updatedAt);
+  if (!tests.valid || !tests.supplied || record?.operatorLaneContainment?.active === true
+      || record?.state !== 'READY' || record?.route !== 'OPENCLAW_LOCAL'
+      || record?.mergeAuthority !== false || record?.deploymentAuthority !== false
+      || record?.runtimeMutationAuthority !== false || record?.arbitraryShellAllowed !== false
+      || !Number.isFinite(now) || !Number.isFinite(observed)
+      || !Number.isFinite(previous) || !Number.isFinite(updated) || updated > observed
+      || observed < previous || observed > now || now - observed > 300_000
+      || !Array.isArray(record?.resourceIds) || !Array.isArray(admission.resourceIds)) return invalid();
+  const before = projectCanonicalResourceIds(record.resourceIds);
+  const after = projectCanonicalResourceIds(admission.resourceIds);
+  const prefix = `repo:${String(repository).toLowerCase()}:path:`;
+  if (!before.valid || !after.valid || !after.resourceIds.length
+      || before.resourceIds.length !== record.resourceIds.length
+      || after.resourceIds.length !== admission.resourceIds.length
+      || after.resourceIds.length >= before.resourceIds.length
+      || before.resourceIds.some(path => !path.startsWith(prefix))) return invalid();
+  const retained = new Set(before.resourceIds);
+  if (after.resourceIds.some(path => !retained.has(path))) return invalid();
+  return Object.freeze({ valid: true, supplied: true, commands: tests.commands,
+    resourceIds: Object.freeze([...admission.resourceIds].sort()), updatedAtUtc: issue.updatedAt });
 }
 
 // A fresh owner plan may strengthen a failed attempt, never weaken it. Its

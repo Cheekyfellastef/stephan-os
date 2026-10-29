@@ -18,6 +18,21 @@ export const SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER =
   'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN';
 export const SOVEREIGN_MAINTENANCE_OWNER_VERSION = '2026-10-21-guardian-reservation-v1';
 
+// Shared disposition for automatic broad Core repair. Native custody has not
+// been enrolled. Neither a healthy worker nor the manual maintenance route
+// can turn an automatic caller into an operator-approved repair. There is no
+// caller-provided qualification flag and no maintenance reservation to release.
+export function unqualifiedCoreWindowsRepairV1() {
+  return Object.freeze({
+    ok: false, attempted: false, dispatchAllowed: false,
+    executionState: 'NOT_STARTED', maintenanceReservationCreated: false,
+    nativeCustodyQualified: false,
+    blocker: 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE',
+    sourceMutationAllowed: false,
+    finalVerdict: 'CORE_AUTOMATIC_MAINTENANCE_NOT_STARTED',
+  });
+}
+
 export function isSovereignMaintenanceObservationV1(processId) {
   return READ_ONLY_ACTIONS.has(processId);
 }
