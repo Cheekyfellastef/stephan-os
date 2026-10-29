@@ -15,9 +15,19 @@ const utc = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(
 const denied = blocker => Object.freeze({ ok: false, blocker });
 
 export function createControlTowerBuildRequestV1(event, env, mainHead, nowUtc) {
-  if (env?.GITHUB_ACTIONS !== 'true' || env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
+  // A protected-main push by the exact owner is a bounded standing intent to
+  // wake the ORIGINAL scheduler. It is not source, runtime or merge authority.
+  // Manual workflow_dispatch remains available as the explicit fallback.
+  const manual = env?.GITHUB_EVENT_NAME === 'workflow_dispatch'
+    && ['main', 'refs/heads/main'].includes(event?.ref);
+  const ownerMainPush = env?.GITHUB_EVENT_NAME === 'push'
+    && event?.ref === 'refs/heads/main' && event?.after === mainHead
+    && SHA.test(event?.before || '') && event.before !== mainHead
+    && event?.head_commit?.id === mainHead
+    && event?.created === false && event?.deleted === false && event?.forced === false
+    && event?.inputs == null;
+  if (env?.GITHUB_ACTIONS !== 'true' || (!manual && !ownerMainPush)
     || env.GITHUB_JOB !== 'request-build' || env.GITHUB_REF !== 'refs/heads/main'
-    || !['main', 'refs/heads/main'].includes(event?.ref)
     || env.GITHUB_REPOSITORY !== CONTROL_TOWER_BUILD_REPOSITORY
     || env.GITHUB_WORKFLOW_REF !== CONTROL_TOWER_BUILD_REPOSITORY + '/' + CONTROL_TOWER_BUILD_WORKFLOW + '@refs/heads/main'
     || event?.repository?.full_name !== CONTROL_TOWER_BUILD_REPOSITORY || event.repository.id !== 1179385578
@@ -54,7 +64,8 @@ export function validateControlTowerBuildRequestV1(request, run, mainHead, nowUt
       .every(k => request[k] === false)) return denied('BUILD_REQUEST_SCOPE_INVALID');
   if (!SHA.test(mainHead || '') || request.sourceHead !== mainHead || run?.head_sha !== mainHead
     || run.id !== request.runId || run.head_branch !== 'main' || run.run_attempt !== 1
-    || run.event !== 'workflow_dispatch' || run.status !== 'completed' || run.conclusion !== 'success'
+    || !['workflow_dispatch', 'push'].includes(run.event)
+    || run.status !== 'completed' || run.conclusion !== 'success'
     || run.path !== CONTROL_TOWER_BUILD_WORKFLOW || run.repository?.full_name !== CONTROL_TOWER_BUILD_REPOSITORY
     || run.repository?.id !== 1179385578 || run.actor?.login !== 'Cheekyfellastef' || run.actor?.id !== 267490109
     || run.triggering_actor?.login !== 'Cheekyfellastef' || run.triggering_actor?.id !== 267490109)

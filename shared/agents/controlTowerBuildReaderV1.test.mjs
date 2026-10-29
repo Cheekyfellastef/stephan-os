@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from './controlTowerBuildReaderV1.mjs';
-import { fixture, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
+import { fixture, inputs, HEAD, NOW, SIGNED } from './fixtures/controlTowerBuildV1.mjs';
+import { createControlTowerBuildRequestV1 } from './controlTowerBuildRequestV1.mjs';
 const read = (f, extra = {}) => readControlTowerBuildRequestV1({ token: 'test-only', fetchImpl: f.fetchImpl, now: () => NOW, ...extra });
 
 test('fixed GET, owner run, full job estate and archive digest mint a frozen native intent', async () => {
@@ -42,7 +43,7 @@ test('source moving during IO, expired request and untrusted signed redirects ne
 });
 test('already recorded requests are not returned and more than five active requests cause backpressure', async () => {
   const f = fixture(); assert.equal((await read(f, { isRecorded: id => id === 100 })).blocker, 'NO_CONTROL_TOWER_BUILD_REQUEST');
-  const g = fixture(); g.list = { total_count: 6, workflow_runs: Array.from({ length: 5 }, (_, i) => ({ ...g.run, id: i + 1 })) };
+  const g = fixture(); g.list = { total_count: 11, workflow_runs: Array.from({ length: 10 }, (_, i) => ({ ...g.run, id: i + 1 })) };
   assert.equal((await read(g)).blocker, 'CONTROL_TOWER_BUILD_ACTIVE_WINDOW_OVERFLOW');
   assert.equal(g.calls.length, 3);
 });
@@ -60,4 +61,47 @@ test('a stale-head request cannot starve a newer current-main build request', as
   assert.equal(result.ok, true); assert.equal(result.request.runId, 100);
   assert.ok(f.calls.some(c => c.url.endsWith('head_sha=' + HEAD)));
   assert.ok(!f.calls.some(c => c.url.endsWith('/actions/runs/99')));
+});
+
+test('current-head authenticated owner push run is accepted from the same bounded GET carrier', async () => {
+  const f = fixture();
+  const { event, env } = inputs();
+  env.GITHUB_EVENT_NAME = 'push';
+  event.ref = 'refs/heads/main';
+  event.before = 'b'.repeat(40);
+  event.after = HEAD;
+  event.head_commit = { id: HEAD };
+  event.created = false;
+  event.deleted = false;
+  event.forced = false;
+  delete event.inputs;
+  const minted = createControlTowerBuildRequestV1(event, env, HEAD, '2026-10-28T12:00:05.000Z');
+  assert.equal(minted.ok, true);
+  f.repack(minted.request);
+  f.run.event = 'push';
+  f.list.workflow_runs[0].event = 'push';
+  const value = await read(f);
+  assert.equal(value.ok, true);
+  assert.equal(value.request.runId, 100);
+  assert.equal(isAuthenticatedControlTowerBuildRequestV1(value.request), true);
+  assert.ok(f.calls.some(c => c.url.includes('runs?per_page=10&head_sha=' + HEAD)));
+});
+
+test('other event classes and wrong owner cannot wake through unfiltered run inventory', async () => {
+  const f = fixture();
+  f.run.event = 'pull_request';
+  f.list.workflow_runs[0].event = 'pull_request';
+  assert.equal((await read(f)).blocker, 'NO_CONTROL_TOWER_BUILD_REQUEST');
+  const g = fixture();
+  g.run.event = 'push';
+  g.list.workflow_runs[0].event = 'push';
+  g.run.actor.id = 1;
+  assert.equal((await read(g)).ok, false);
+});
+
+test('unfiltered current-head inventory still prevents oldest current run starvation', async () => {
+  const f = fixture();
+  f.list.workflow_runs.push({ ...f.run, id: 99, event: 'pull_request', created_at: '2026-10-28T11:59:00Z' });
+  f.list.total_count = 2;
+  assert.equal((await read(f)).request.runId, 100);
 });
