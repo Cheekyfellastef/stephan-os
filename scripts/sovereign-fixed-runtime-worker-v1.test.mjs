@@ -81,7 +81,10 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   } else if(mode==='missing-proposal'||mode==='cancelled')await writeFile(join(repoRoot,'shared','agents','example.mjs'),'export const value=2;\n');
   if(mode==='cancelled')await store.appendMissionEvent(missionId,{eventId:'cancel-during-source',eventType:'MISSION_CANCELLED'},options);
   if(mode==='changed-claim')await writeFile(processingPath,JSON.stringify({...item,payload:{...action,operatorIntent:'changed'}}));
-  const result={ok:!transportCancelled&&(['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure)),taskExecuted:transportCancelled||['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:transportCancelled?'FIXED_RUNTIME_OPERATION_CANCELLED':'FIXTURE_STOP',stdout,nativeReceipt:{Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
+  // Reproduce the independent native deadline counterexample: clean proposal
+  // and physical zero remain authentic while operation completion is UNPROVEN.
+  const nativeReason=mode==='transport-unproven-clean-failure'?'DEADLINE':transportCancelled?'FIXED_RUNTIME_OPERATION_CANCELLED':'FIXTURE_STOP';
+  const result={ok:!transportCancelled&&(['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure)),taskExecuted:transportCancelled||['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:nativeReason,stdout,nativeReceipt:{Reason:nativeReason,Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
   if(mode!=='forged-zero')brands.add(result);nativeReturned=true;return result;
  };
  const context=vm.createContext({Buffer,process,console,AbortController,setInterval,clearInterval,createHash,randomUUID,resolve,relative,join,homedir,text,
