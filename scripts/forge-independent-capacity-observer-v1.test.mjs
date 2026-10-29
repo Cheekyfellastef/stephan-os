@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { observeForgeReadOnlyCapacity } from './forge-independent-capacity-observer-v1.mjs';
 
 const HEAD = 'a'.repeat(40);
-const models = (names) => ({ ok: true, status: 200,
-  headers: { get: () => null },
-  text: async () => JSON.stringify({ models: names.map((name) => ({ name })) }),
+const models = (names) => new Response(JSON.stringify({ models: names.map((name) => ({ name })) }), {
+  status: 200,
 });
 const base = (overrides = {}) => ({
   readHead: () => HEAD,
@@ -67,10 +66,11 @@ test('remote or malicious model endpoints are refused', async () => {
 
 test('host errors and malformed responses fail closed', async () => {
   for (const response of [
-    { ok: false, status: 503, text: async () => '' },
-    { ok: true, status: 200, text: async () => '{bad' },
-    { ok: true, status: 200, text: async () => JSON.stringify({ models: {} }) },
-    { ok: true, status: 200, headers: {get: () => '2000000'}, text: async () => '' },
+    new Response('', { status: 503 }),
+    new Response('{bad', { status: 200 }),
+    new Response(JSON.stringify({ models: {} }), { status: 200 }),
+    new Response('', { status: 200, headers: { 'content-length': '2000000' } }),
+    { ok: true, status: 200, headers: { get: () => null }, text: async () => '{"models":[]}' },
   ]) {
     const value = await observeForgeReadOnlyCapacity(base({ fetchImpl: async () => response }));
     assert.equal(value.ok, false);
@@ -105,4 +105,67 @@ test('source head lookup failure is a typed hold instead of a rejected cycle', a
   }));
   assert.equal(value.reason, 'FORGE_SOURCE_HEAD_UNPROVEN');
   assert.equal(value.canClaim, false);
+});
+
+
+test('chunked oversized inventory stops at the first over-budget chunk without calling text()', async () => {
+  let pulls = 0;
+  let cancels = 0;
+  let fullTextCalled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      pulls += 1;
+      controller.enqueue(new Uint8Array(512 * 1024));
+    },
+    cancel() { cancels += 1; },
+  }, { highWaterMark: 0 });
+  const value = await observeForgeReadOnlyCapacity(base({
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      body,
+      text: async () => { fullTextCalled = true; throw new Error('unbounded read'); },
+    }),
+  }));
+  assert.equal(value.ok, false);
+  assert.equal(value.reason, 'FORGE_LOCAL_INVENTORY_TOO_LARGE');
+  assert.equal(pulls, 3);
+  assert.equal(cancels, 1);
+  assert.equal(fullTextCalled, false);
+  assert.equal(value.canClaim, false);
+  assert.equal(value.canDispatch, false);
+});
+
+test('valid chunked UTF-8 inventory is accepted without content length', async () => {
+  const bytes = Buffer.from(JSON.stringify({ models: [{ name: 'qwen3-coder:30b' }], note: 'caf\u00e9' }), 'utf8');
+  const split = bytes.indexOf(0xc3) + 1;
+  assert.ok(split > 1);
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes.subarray(0, split));
+      controller.enqueue(bytes.subarray(split));
+      controller.close();
+    },
+  });
+  const value = await observeForgeReadOnlyCapacity(base({
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => null }, body }),
+  }));
+  assert.equal(value.ok, true);
+  assert.equal(value.modelListed, true);
+  assert.equal(value.canClaim, false);
+});
+
+test('invalid UTF-8 bytes in a streamed inventory are rejected', async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([0xc3, 0x28]));
+      controller.close();
+    },
+  });
+  const value = await observeForgeReadOnlyCapacity(base({
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => null }, body }),
+  }));
+  assert.equal(value.ok, false);
+  assert.equal(value.reason, 'FORGE_LOCAL_INVENTORY_INVALID');
 });

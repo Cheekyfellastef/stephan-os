@@ -73,11 +73,41 @@ export async function observeForgeReadOnlyCapacity(options = {}) {
     if (response.status !== 200 || response.ok !== true) {
       return deny('FORGE_LOCAL_INVENTORY_HTTP_UNAVAILABLE', sourceHead);
     }
-    const advertisedBytes = Number(response.headers?.get?.('content-length') || 0);
+    const advertised = response.headers?.get?.('content-length');
+    const advertisedBytes = advertised == null ? 0 : Number(advertised);
+    if (!Number.isSafeInteger(advertisedBytes) || advertisedBytes < 0) {
+      return deny('FORGE_LOCAL_INVENTORY_INVALID', sourceHead);
+    }
     if (advertisedBytes > MAX_RESPONSE_BYTES) return deny('FORGE_LOCAL_INVENTORY_TOO_LARGE', sourceHead);
-    const raw = await response.text();
-    if (Buffer.byteLength(raw, 'utf8') > MAX_RESPONSE_BYTES) {
-      return deny('FORGE_LOCAL_INVENTORY_TOO_LARGE', sourceHead);
+
+    // Response.text() would fully buffer a chunked response BEFORE checking
+    // the size. Count bytes while reading, and abort as soon as the cap is
+    // exceeded. Never fall back to an unbounded body reader.
+    if (!response.body || typeof response.body.getReader !== 'function') {
+      return deny('FORGE_LOCAL_INVENTORY_STREAM_REQUIRED', sourceHead);
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    let raw;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!(value instanceof Uint8Array)) return deny('FORGE_LOCAL_INVENTORY_INVALID', sourceHead);
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_RESPONSE_BYTES) {
+          controller.abort();
+          void reader.cancel('forge-inventory-over-limit').catch(() => {});
+          return deny('FORGE_LOCAL_INVENTORY_TOO_LARGE', sourceHead);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      raw = new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, totalBytes));
+    } catch {
+      return deny('FORGE_LOCAL_INVENTORY_INVALID', sourceHead);
+    } finally {
+      reader.releaseLock();
     }
     let payload;
     try { payload = JSON.parse(raw); }
