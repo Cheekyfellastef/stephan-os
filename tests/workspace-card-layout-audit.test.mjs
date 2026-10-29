@@ -144,7 +144,8 @@ export function extractCardLayout({
         || !['visible', 'hidden', 'collapse'].includes(s.visibility)
         || typeof s.opacity !== 'string' || !s.opacity.trim()
         || !Number.isFinite(Number(s.opacity)) || Number(s.opacity) < 0 || Number(s.opacity) > 1
-        || !['visible', 'hidden', 'auto'].includes(s.contentVisibility))
+        || !['visible', 'hidden', 'auto'].includes(s.contentVisibility)
+        || !['static', 'relative', 'sticky', 'absolute', 'fixed'].includes(s.position))
         throw new TypeError('invalid computed render evidence');
       styleCache.set(el, s);
     }
@@ -233,27 +234,38 @@ export function extractCardLayout({
   };
   // Text measures contents and retains its own clip. Border-box items must
   // start at the parent: overflow never clips the element's own border box.
+  // Overflow ancestry can diverge from DOM ancestry after crossing an
+  // associated absolute/fixed box. Do not infer its containing block.
+  const outOfFlowBox = el => {
+    if (!['absolute', 'fixed'].includes(style(el).position)) return false;
+    measureElement(el);
+    return elementGeometry.get(el).clientRectCount > 0;
+  };
+
   const clips = (el, { includeSelf = true } = {}) => {
     const result = [];
+    let crossedOutOfFlow = !includeSelf && outOfFlowBox(el);
     for (let p = includeSelf ? el : el.parentElement; p; p = p.parentElement) {
       const s = style(p);
-      if (s.overflowX === 'visible' && s.overflowY === 'visible') continue;
-      if (!clipEligible(p, s)) continue;
-      const r = elementGeometry.get(p).bounds;
-      // client box excludes border and scrollbar; CSS-pixel scaling supports zoom/transforms.
-      const sx = p.offsetWidth ? (r.right - r.left) / p.offsetWidth : 1;
-      const sy = p.offsetHeight ? (r.bottom - r.top) / p.offsetHeight : 1;
-      const left = r.left + p.clientLeft * sx, top = r.top + p.clientTop * sy;
-      const value = norm(el.textContent);
-      result.push({
-        id: id(p),
-        rect: { left, top, right: left + p.clientWidth * sx, bottom: top + p.clientHeight * sy },
-        x: s.overflowX, y: s.overflowY,
-        // Only the text's own clipping element can grant ellipsis. An unrelated ancestor
-        // tooltip, aria-label or overflow:hidden is never sufficient.
-        ellipsis: p === el && s.textOverflow === 'ellipsis' && s.whiteSpace === 'nowrap',
-        fullValueAvailable: p === el && value.length > 0 && norm(p.getAttribute('title')) === value,
-      });
+      if ((s.overflowX !== 'visible' || s.overflowY !== 'visible') && clipEligible(p, s)) {
+        if (crossedOutOfFlow) throw new TypeError('UNSUPPORTED_CONTAINING_BLOCK_PROJECTION');
+        const r = elementGeometry.get(p).bounds;
+        // client box excludes border and scrollbar; CSS-pixel scaling supports zoom/transforms.
+        const sx = p.offsetWidth ? (r.right - r.left) / p.offsetWidth : 1;
+        const sy = p.offsetHeight ? (r.bottom - r.top) / p.offsetHeight : 1;
+        const left = r.left + p.clientLeft * sx, top = r.top + p.clientTop * sy;
+        const value = norm(el.textContent);
+        result.push({
+          id: id(p),
+          rect: { left, top, right: left + p.clientWidth * sx, bottom: top + p.clientHeight * sy },
+          x: s.overflowX, y: s.overflowY,
+          // Only the text's own clipping element can grant ellipsis. An unrelated ancestor
+          // tooltip, aria-label or overflow:hidden is never sufficient.
+          ellipsis: p === el && s.textOverflow === 'ellipsis' && s.whiteSpace === 'nowrap',
+          fullValueAvailable: p === el && value.length > 0 && norm(p.getAttribute('title')) === value,
+        });
+      }
+      crossedOutOfFlow ||= outOfFlowBox(p);
     }
     return result;
   };
@@ -428,7 +440,7 @@ if (typeof process !== 'undefined' && process.versions?.node) {
     const elements = [];
     function el(tag, classes, bounds, parent = null, css = {}, title = null) {
       const e = { tagName: tag, namespaceURI: 'http://www.w3.org/1999/xhtml', className: classes, id: '', parentElement: parent, hidden: false,
-        childNodes: [], css: { display: 'block', visibility: 'visible', opacity: '1', contentVisibility: 'visible',
+        childNodes: [], css: { display: 'block', visibility: 'visible', opacity: '1', contentVisibility: 'visible', position: 'static',
           overflowX: 'visible', overflowY: 'visible', ...css },
         textContent: '', clientLeft: 0, clientTop: 0, clientWidth: bounds.right - bounds.left,
         clientHeight: bounds.bottom - bounds.top, offsetWidth: bounds.right - bounds.left,
@@ -1241,6 +1253,164 @@ if (typeof process !== 'undefined' && process.versions?.node) {
         omitted.childNodes.push({ nodeType: 3, textContent: 'Irrelevant hidden branch' });
         const after = auditCardLayout(model.extract());
         assert.deepEqual(after, original);
+      }
+    }
+  });
+
+  function containingBlockFixture(position, { at = 'origin', clip = true } = {}) {
+    const model = renderFixture();
+    model.fixture.card.css.position = 'relative';
+    model.wrapper.css.overflowX = clip ? 'hidden' : 'visible';
+    model.wrapper.clientWidth = 20;
+    const positioned = at === 'origin' ? model.label : model.wrapper;
+    positioned.css.position = position;
+    const bounds = r(40, 10, 80, 25);
+    setMeasuredGeometry(model.label, bounds, [bounds]);
+    model.label.childNodes[0].rect = bounds;
+    model.label.childNodes[0].rects = [bounds];
+    const sibling = model.fixture.createElement('SPAN', 'badge', r(60, 10, 80, 25), model.fixture.card);
+    return { ...model, positioned, sibling };
+  }
+  const containingBlockError = error => error.name === 'TypeError'
+    && error.message === 'UNSUPPORTED_CONTAINING_BLOCK_PROJECTION';
+
+  for (const position of ['static', 'relative', 'sticky']) {
+    test(position + ' retains qualified ordinary ancestor clipping', () => {
+      const model = containingBlockFixture(position);
+      const data = model.extract(), text = data.cards[0].items.find(x => x.kind === 'text');
+      assert.ok(text.clips.some(x => x.rect.right === 25));
+      const report = auditCardLayout(data);
+      assert.ok(report.findings.some(x => x.code === 'CLIPPED_X'));
+      assert.equal(report.findings.filter(x => x.code === 'COLLISION').length, 0);
+    });
+  }
+
+  for (const position of ['absolute', 'fixed']) {
+    test(position + ' origin rejects higher eligible clips rather than masking a real collision', () => {
+      assert.throws(containingBlockFixture(position).extract, containingBlockError);
+    });
+
+    test(position + ' ancestor rejects eligible clips above its boundary', () => {
+      const model = containingBlockFixture(position, { at: 'ancestor', clip: false });
+      model.fixture.card.css.overflowX = 'hidden';
+      assert.throws(model.extract, containingBlockError);
+    });
+
+    test(position + ' border-box chain initializes from its origin for control, badge and nested card', () => {
+      for (const kind of ['control', 'badge', 'card']) {
+        const model = containingBlockFixture(position);
+        model.label.childNodes = [];
+        model.label.tagName = kind === 'control' ? 'A' : 'SPAN';
+        model.label.className = kind === 'control' ? '' : kind;
+        assert.throws(model.extract, containingBlockError);
+      }
+    });
+
+    test(position + ' own text clip is processed before crossing to the parent', () => {
+      const model = containingBlockFixture(position, { clip: false });
+      model.label.css.overflowX = 'hidden';
+      model.label.clientWidth = 20;
+      const data = model.extract(), text = data.cards[0].items.find(x => x.kind === 'text');
+      assert.ok(text.clips.some(x => x.rect.left === 40 && x.rect.right === 60));
+      assert.ok(auditCardLayout(data).findings.some(x => x.code === 'CLIPPED_X'));
+    });
+
+    test(position + ' ancestor own clip and descendant clips below the boundary remain supported', () => {
+      const model = containingBlockFixture(position, { at: 'ancestor' });
+      model.label.css.overflowY = 'hidden';
+      model.label.clientHeight = 5;
+      const data = model.extract(), text = data.cards[0].items.find(x => x.kind === 'text');
+      assert.ok(text.clips.some(x => x.rect.right === 25), 'out-of-flow box own clip still applies');
+      assert.ok(text.clips.some(x => x.rect.bottom === 15), 'clip below crossing still applies');
+      assert.ok(auditCardLayout(data).findings.some(x => x.code === 'CLIPPED_X'));
+    });
+
+    test(position + ' visible-only ancestry retains actual fragments and sibling collision', () => {
+      for (const at of ['origin', 'ancestor']) {
+        const model = containingBlockFixture(position, { at, clip: false });
+        const data = model.extract(), text = data.cards[0].items.find(x => x.kind === 'text');
+        assert.equal(text.rects.length, 1);
+        assert.equal(text.rects[0].left, 40);
+        assert.equal(text.clips.length, 0);
+        assert.equal(auditCardLayout(data).findings.filter(x => x.code === 'COLLISION').length, 1);
+      }
+    });
+
+    test(position + ' crossing survives visible, inline and contents intermediates', () => {
+      for (const display of ['block', 'inline', 'inline flow', 'contents']) {
+        const model = containingBlockFixture(position);
+        model.wrapper.css.display = display;
+        model.wrapper.css.overflowX = display === 'block' ? 'visible' : 'hidden';
+        if (display === 'contents') setMeasuredGeometry(model.wrapper, r(5, 5, 5, 5), []);
+        model.fixture.card.css.overflowX = 'hidden';
+        assert.throws(model.extract, containingBlockError);
+      }
+    });
+
+    test(position + ' crossing never clears at guessed containing-block indicators', () => {
+      for (const indicators of [
+        { position: 'relative' }, { transform: 'matrix(1, 0, 0, 1, 0, 0)' },
+        { filter: 'blur(0px)' }, { contain: 'paint' }, { willChange: 'transform' },
+      ]) {
+        const model = containingBlockFixture(position, { clip: false });
+        Object.assign(model.wrapper.css, indicators);
+        model.fixture.card.css.overflowX = 'hidden';
+        model.label.offsetParent = model.fixture.card; // never a containing-block authority
+        assert.throws(model.extract, containingBlockError);
+      }
+    });
+
+    test(position + ' boxless declaration adds no boundary, but real zero-area associated box does', () => {
+      for (const at of ['origin', 'ancestor']) {
+        const model = containingBlockFixture(position, { at, clip: false });
+        model.positioned.css.display = 'contents';
+        setMeasuredGeometry(model.positioned, r(5, 5, 5, 5), []);
+        model.fixture.card.css.overflowX = 'hidden';
+        model.fixture.card.clientWidth = 50;
+        const data = model.extract(), text = data.cards[0].items.find(x => x.kind === 'text');
+        assert.ok(text, 'painted descendant Range survives boxless declaration');
+        assert.ok(auditCardLayout(data).findings.some(x => x.itemId === text.id && x.code === 'CLIPPED_X'));
+
+        model.positioned.css.display = 'block';
+        setMeasuredGeometry(model.positioned, r(5, 5, 5, 50), [r(5, 5, 5, 50)]);
+        assert.throws(model.extract, containingBlockError);
+      }
+    });
+  }
+
+  test('missing and malformed computed position are explicit errors', () => {
+    for (const position of [undefined, null, '', 'inherit', 'ABSOLUTE', 'floating', 1]) {
+      const model = containingBlockFixture('static');
+      model.wrapper.css.position = position;
+      assert.throws(model.extract, /invalid computed render evidence/);
+    }
+  });
+
+  test('out-of-flow qualification and collision outcomes are translation invariant', () => {
+    for (const position of ['static', 'relative', 'sticky', 'absolute', 'fixed']) {
+      for (const clip of [false, true]) {
+        for (const offset of [-321, 0, 654]) {
+          const model = containingBlockFixture(position, { clip });
+          for (const el of [model.fixture.root, model.fixture.card, model.wrapper, model.label, model.sibling]) {
+            const rect = el.getBoundingClientRect();
+            const translated = r(rect.left + offset, rect.top - offset,
+              rect.right + offset, rect.bottom - offset);
+            const metrics = { clientWidth: el.clientWidth, clientHeight: el.clientHeight,
+              offsetWidth: el.offsetWidth, offsetHeight: el.offsetHeight };
+            setMeasuredGeometry(el, translated, [translated]);
+            Object.assign(el, metrics);
+          }
+          const text = model.label.childNodes[0];
+          text.rect = r(40 + offset, 10 - offset, 80 + offset, 25 - offset);
+          text.rects = [text.rect];
+          if (clip && ['absolute', 'fixed'].includes(position)) {
+            assert.throws(model.extract, containingBlockError);
+          } else {
+            const findings = auditCardLayout(model.extract()).findings;
+            assert.equal(findings.filter(x => x.code === 'COLLISION').length, clip ? 0 : 1);
+            assert.equal(findings.filter(x => x.code === 'CLIPPED_X').length, clip ? 1 : 0);
+          }
+        }
       }
     }
   });
