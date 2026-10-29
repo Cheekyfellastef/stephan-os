@@ -66,11 +66,13 @@ function meterLikeRecord(record = {}) {
 }
 
 function trafficLight({ remainingPercent, availability, truthState, fresh }) {
-  const posture = `${safeText(availability, 80)} ${safeText(truthState, 80)}`.toUpperCase();
-  if (/(METER_STALLED|EXHAUSTED|DEPLETED|INSUFFICIENT_QUOTA|QUOTA_EXHAUSTED|BLOCKED_BY_METER)/.test(posture)) return 'RED';
+  const availabilityState = safeText(availability, 80).toUpperCase();
+  const posture = `${availabilityState} ${safeText(truthState, 80)}`.toUpperCase();
+  if (/(METER_STALLED|EXHAUSTED|DEPLETED|INSUFFICIENT_QUOTA|QUOTA_EXHAUSTED|BLOCKED_BY_METER|CAPACITY_UNAVAILABLE|UNAVAILABLE|NOT_AVAILABLE|OFFLINE|DISABLED)/.test(posture)) return 'RED';
   if (remainingPercent === 0) return 'RED';
   if (remainingPercent !== null) {
-    if (fresh === false) return 'AMBER';
+    // Percent remaining does not prove that the provider is accepting work.
+    if (fresh !== true || !['AVAILABLE', 'READY', 'HEALTHY'].includes(availabilityState)) return 'AMBER';
     if (remainingPercent < 5) return 'RED';
     if (remainingPercent < 25) return 'AMBER';
     return 'GREEN';
