@@ -18,6 +18,26 @@ const expected = 'a'.repeat(40);
 const literal = s => "'" + s.replaceAll("'", "''") + "'";
 const encoded = s => Buffer.from(s, 'utf16le').toString('base64');
 const gitExecution = resolveBattleBridgeGitExecution();
+
+test('maintenance bootstrap pins the complete transitive probe graph before module evaluation', () => {
+  const fixture = fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs', import.meta.url));
+  const observe = omitted => JSON.parse(spawnSync(process.execPath,
+    ['--experimental-vm-modules', fixture, '--maintenance-v3', ...(omitted ? ['--omit=' + omitted] : [])],
+    { encoding: 'utf8', windowsHide: true, timeout: 10000 }).stdout);
+  const complete = observe();
+  assert.deepEqual(complete.missing, []);
+  assert.deepEqual(complete.bare, []);
+  assert.equal(complete.repositoryModulesEvaluated, false);
+  assert.equal(complete.memberCount, MAINTENANCE_SOURCE_CLOSURE_V3.length);
+  const installer = readFileSync(resolve(root, 'scripts/windows/install-sovereign-maintenance-journal-v2.ps1'), 'utf8');
+  assert.ok(installer.includes('ClosureCount -ne ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
+  assert.ok(installer.includes('Handles.Count -lt ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
+  for (const omitted of ['shared/agents/battleBridgePublisher.mjs', 'shared/agents/verificationHarness.mjs']) {
+    const negative = observe(omitted);
+    assert.ok(negative.missing.some(row => row.target === omitted), 'must reject omitted transitive dependency: ' + omitted);
+    assert.equal(negative.repositoryModulesEvaluated, false);
+  }
+});
 function gitBytes(args, { cwd = root, input } = {}) {
   const r = spawnSync(gitExecution.executable, [...gitExecution.fixedConfigArgs, ...args], {
     cwd, env: gitExecution.environment, input, shell: false, windowsHide: true,
@@ -233,7 +253,7 @@ test('bootstrap candidate binds each fixed blob, never promotes caller input to 
   assert.match(c.script, /foreach\(\$relative in \$manifest.Keys\)\{\$texts\[\$relative\]=Read-Pinned[\s\S]*Add-Type/);
   assert.match(c.script, /PinDirectoryChain/);
   assert.match(c.script, /FileShare\]::Read/);
-  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 40);
+  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 42);
   for (const bad of [records.slice(1), [...records.slice(1), records[1]],
     records.map((r, i) => i ? r : { ...r, blobSha: '0'.repeat(40) }),
     records.map((r, i) => i ? r : { ...r, path: '../untrusted.ps1' })]) {

@@ -50,6 +50,13 @@ use isolated workspaces so tests cannot read or write the operator's live estate
 Independent baseline was seven failures and one pass; candidate proof is source
 validation, not installed or browser acceptance.
 
+The maintenance installer and fixed runtime authenticate separate source
+closures. Both must cover the full transitive probe graph before evaluation;
+the maintenance bootstrap and its receiving installer agree on exactly 42
+pinned files. A parse-only graph regression rejects either missing new import.
+Publication state proof references must each be nonempty, trimmed strings;
+coerced values and whitespace cannot establish publication authority.
+
 Reusable lesson: publication integrity, observation freshness, component
 readiness and execution admission need distinct canonical projections. A
 repair's prerequisite must not depend on the successful outcome it is meant to

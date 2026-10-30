@@ -8,8 +8,8 @@ if ($Fixture) {
 } elseif ($null -eq $script:MaintenanceInstallerPinnedBootstrapV3 -or
     $script:MaintenanceInstallerPinnedBootstrapV3.ExpectedMain -cne $ExpectedMain -or
     $script:MaintenanceInstallerPinnedBootstrapV3.SourceTree -cnotmatch '^[a-f0-9]{40}$' -or
-    $script:MaintenanceInstallerPinnedBootstrapV3.ClosureCount -ne 40 -or
-    $script:MaintenanceInstallerPinnedBootstrapV3.Handles.Count -lt 40 -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.ClosureCount -ne 42 -or
+    $script:MaintenanceInstallerPinnedBootstrapV3.Handles.Count -lt 42 -or
     $script:MaintenanceInstallerPinnedBootstrapV3.Directories.Count -lt 1) {
     # Direct mutable workspace invocation cannot authenticate itself for elevation.
     throw 'JOURNAL_INSTALL_IMMUTABLE_BOOTSTRAP_REQUIRED'

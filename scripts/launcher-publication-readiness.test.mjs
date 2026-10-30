@@ -163,3 +163,13 @@ test('the publication projection exposes no positive runtime-health or activatio
     assert.equal(projected.fresh, timestampUtc === NOW);
   }
 });
+
+for (const [index, refs] of [[], [' '], [null], [false], [0], [{}], [['proof/x.json']],
+  ['proof/battle-bridge-current.json', ' '], [' proof/x.json'], ['proof/x.json ']].entries()) {
+  test(`malformed proof-reference elements fail closed in a status-only publication (${index})`, async () => {
+    const root = workspace('status-only-bad-refs-' + index);
+    const record = createBattleBridgePublisherWorkspaceRecords({ status: 'UNKNOWN', timestampUtc: NOW }).statusRecord;
+    put(root, 'status', { ...record, proofRefs: refs });
+    assert.equal((await project(root)).repair.allowedToStart, false);
+  });
+}

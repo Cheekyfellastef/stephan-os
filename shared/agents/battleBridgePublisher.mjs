@@ -42,7 +42,9 @@ export function projectBattleBridgePublicationEvidence(record, {
   // Canonical event envelopes intentionally have no proofRefs/status fields;
   // status/proof observations must carry their declared proof references.
   const publicationShapeValid = idKey === 'eventId' || (Array.isArray(record?.proofRefs)
-    && record.proofRefs.length > 0 && Object.values(BATTLE_BRIDGE_SERVICE_STATUS).includes(record?.status));
+    && record.proofRefs.length > 0
+    && record.proofRefs.every(ref => typeof ref === 'string' && ref.length > 0 && ref === ref.trim())
+    && Object.values(BATTLE_BRIDGE_SERVICE_STATUS).includes(record?.status));
   const timestamp = Date.parse(record?.timestampUtc);
   const clockValid = Number.isFinite(nowMs) && Number.isFinite(timestamp)
     && Number.isFinite(maxAgeMs) && maxAgeMs >= 0;
