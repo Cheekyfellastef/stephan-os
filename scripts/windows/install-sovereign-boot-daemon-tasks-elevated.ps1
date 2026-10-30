@@ -22,7 +22,6 @@ $fixedSourcePaths = @(
     'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
     'scripts/windows/install-sovereign-commander.ps1',
     'scripts/windows/run-sovereign-commander-hidden.ps1',
-    'scripts/windows/sovereign-commander-operator-context-v1.ps1',
     'scripts/windows/install-desktop-commander-watchdog.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
@@ -132,11 +131,18 @@ function Get-BootTaskProof {
     $argumentsMatch = [string]::Equals([string]$action.Arguments, $ExpectedArguments, [System.StringComparison]::Ordinal)
     $runLevel = [string]$xml.Task.Principals.Principal.RunLevel
     $expectedLogonType = if ($RequiresInteractiveOperator) { 'InteractiveToken' } else { 'S4U' }
-    $operatorSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $operatorIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    try {
+        $operatorSid = [string]$operatorIdentity.User.Value
+        $operatorAccountName = [string]$operatorIdentity.Name
+    } finally { $operatorIdentity.Dispose() }
     $principalMatches = [string]$xml.Task.Principals.Principal.UserId -ceq $operatorSid
     $logonTriggerMatches = -not $RequiresInteractiveOperator -or (
         $null -ne $xml.Task.Triggers.LogonTrigger -and
-        [string]$xml.Task.Triggers.LogonTrigger.UserId -ceq $operatorSid
+        (
+            [string]$xml.Task.Triggers.LogonTrigger.UserId -ceq $operatorSid -or
+            ($operatorAccountName.Contains('\') -and [string]::Equals([string]$xml.Task.Triggers.LogonTrigger.UserId, $operatorAccountName, [System.StringComparison]::OrdinalIgnoreCase))
+        )
     )
     $configurationVerified = $singleAction -and $bootTriggerPresent -and $logonType -eq $expectedLogonType -and $principalMatches -and $logonTriggerMatches -and $runLevel -eq 'LeastPrivilege' -and $hidden -and $startWhenAvailable -and $multipleInstances -eq 'IgnoreNew' -and $restartCount -eq 3 -and $restartInterval -eq 'PT1M' -and $executeMatches -and $argumentsMatch
     # This is task-registration evidence only. It cannot certify an actual

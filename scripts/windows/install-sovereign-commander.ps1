@@ -59,8 +59,7 @@ $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-ru
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
-$operatorContextPath = Join-Path $repoRoot 'scripts\windows\sovereign-commander-operator-context-v1.ps1'
-foreach ($required in @($launcherPath, $runnerPath, $operatorContextPath, $serverPath, $fleetSupervisorPath, $vrGovernorPath, $wscriptExe)) {
+foreach ($required in @($launcherPath, $runnerPath, $serverPath, $fleetSupervisorPath, $vrGovernorPath, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
 }
 
@@ -149,7 +148,7 @@ $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
 $startupTrigger = New-ScheduledTaskTrigger -AtStartup
-$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUserSid
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUserSid -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)

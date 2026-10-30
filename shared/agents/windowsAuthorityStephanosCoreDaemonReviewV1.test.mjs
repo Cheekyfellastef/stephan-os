@@ -204,24 +204,20 @@ test('trusted switchboard byte-pins and invokes the Core Daemon specialist', asy
     < wrapper.lastIndexOf('return base.analyzeWindowsAuthoritySpecialistReview(input)'));
 });
 
-test('only the two exact pinned v4 and v6 runner blobs qualify, never an arbitrary default or extra authority', () => {
+test('only exact admitted runner blobs qualify, never a modified default or extra authority', () => {
   const v4 = '2026-10-05-continuous-repair-reporting-v4';
   const v6 = '2026-10-18-island-action-contract-v6';
-  // The protected runner may be at either reviewed generation when this
-  // reviewer lands. Reconstruct the counterpart from the *observed* source,
-  // rather than assuming the checkout still contains v4 after v6 rollout.
-  const installedV4 = runner.includes(v4) && !runner.includes(v6);
-  const installedV6 = runner.includes(v6) && !runner.includes(v4);
-  assert.equal(installedV4 || installedV6, true,
-    'checked-in runner must contain exactly one reviewed capability default');
-  const candidateV4 = installedV4 ? runner : runner.replace(v6, v4);
-  const candidateV6 = installedV6 ? runner : runner.replace(v4, v6);
-  assert.notEqual(candidateV4, candidateV6);
-  for (const candidate of [candidateV4, candidateV6]) {
+  // The context successor has one exact v6 source binding. Merely changing
+  // its default to historical v4 does not inherit a historical blob's review.
+  assert.equal(runner.includes(v6) && !runner.includes(v4), true);
+  const candidateV4 = runner.replace(v6, v4);
+  const candidateV6 = runner;
+  for (const candidate of [runner]) {
     const accepted = review(candidate, status);
     assert.equal(accepted.clean, true, accepted.findings.map(x => x.code).join(','));
   }
   for (const candidate of [
+    candidateV4,
     candidateV6.replace(v6, '2026-10-19-unreviewed-v7'),
     candidateV6 + '\nStart-Process -FilePath $env:USER_COMMAND',
     candidateV6.replace('duplicateLeaseAllowed = $false', 'duplicateLeaseAllowed = $true'),

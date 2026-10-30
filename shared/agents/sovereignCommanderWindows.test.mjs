@@ -9,7 +9,6 @@ const installer = await readFile(new URL('../../scripts/windows/install-sovereig
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const commanderHttp = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
-const operatorContext = await readFile(new URL('../../scripts/windows/sovereign-commander-operator-context-v1.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
 
@@ -21,10 +20,9 @@ test('boot recovery installers parse with the Windows PowerShell used by the boo
     'stephanos-core-process-observation.ps1',
     'status-stephanos-core-daemon.ps1',
     'run-sovereign-commander-hidden.ps1',
-    'sovereign-commander-operator-context-v1.ps1',
   ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
   const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
-  const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
+  const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($parseIssue in $parseErrors) { Write-Output ($path + ':' + $parseIssue.Extent.StartLineNumber + ': ' + $parseIssue.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
   const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
     '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64'),
   ], { encoding: 'utf8', windowsHide: true, shell: false, timeout: 30_000 });
@@ -268,10 +266,12 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
 });
 
 test('actual operator token decisions reject privileged, missing and coerced evidence', { skip: process.platform !== 'win32' }, () => {
-  const path = fileURLToPath(new URL('../../scripts/windows/sovereign-commander-operator-context-v1.ps1', import.meta.url)).replace(/'/g, "''");
+  const contextStart = runner.indexOf('function Resolve-SovereignCommanderOperatorContextV1 {');
+  const contextEnd = runner.indexOf('$operatorContext = Get-SovereignCommanderOperatorContextV1', contextStart);
+  assert.ok(contextStart > 0 && contextEnd > contextStart);
   const script = `
 $ErrorActionPreference='Stop'
-. '${path}'
+${runner.slice(contextStart, contextEnd)}
 $sid='S-1-5-21-1-2-3-1002'
 $rows=@()
 foreach($case in @(
@@ -321,13 +321,13 @@ function Get-ScheduledTask {
 function Export-ScheduledTask {
  $type=if($script:case -eq 'legacy-s4u' -or $script:case -eq 'other-existing-s4u'){'S4U'}else{'InteractiveToken'}
  $user=if($script:case -eq 'wrong-user'){'S-1-5-19'}else{$script:sid}
- $logonUser=if($script:case -eq 'wrong-logon-user'){'S-1-5-19'}else{$script:sid}
+ $logonUser=if($script:case -eq 'wrong-logon-user'){'S-1-5-19'}elseif($script:case -eq 'normal-account-name'){[Security.Principal.WindowsIdentity]::GetCurrent().Name}elseif($script:case -eq 'foreign-account-name'){'OTHERDOMAIN\OtherUser'}else{$script:sid}
  $level=if($script:case -eq 'highest'){'HighestAvailable'}else{'LeastPrivilege'}
  '<Task><Principals><Principal><UserId>'+ $user +'</UserId><LogonType>'+ $type +'</LogonType><RunLevel>'+ $level +'</RunLevel></Principal></Principals><Triggers><BootTrigger/><LogonTrigger><UserId>'+ $logonUser +'</UserId></LogonTrigger></Triggers><Settings><Hidden>true</Hidden><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure></Settings></Task>'
 }
 ${elevatedBootstrap.slice(start, end)}
 $rows=@()
-foreach($script:case in @('normal-registration','legacy-s4u','wrong-user','wrong-logon-user','highest','wrong-action','extra-action','other-existing-s4u')) {
+foreach($script:case in @('normal-registration','normal-account-name','foreign-account-name','legacy-s4u','wrong-user','wrong-logon-user','highest','wrong-action','extra-action','other-existing-s4u')) {
  $interactive=$script:case -ne 'other-existing-s4u'
  $proof=Get-BootTaskProof -TaskName 'fixed-task' -ExpectedArguments 'fixed-arguments' -RequiresInteractiveOperator:$interactive
  $rows += [pscustomobject]@{name=$script:case;verified=$proof.configurationVerified;interactive=$proof.requiresInteractiveLogon;bootSafe=$proof.bootSafe;runtime=$proof.normalOperatorRuntimeProven;preLogin=$proof.preLoginExecutionProven}
@@ -338,7 +338,7 @@ $rows | ConvertTo-Json -Compress
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   for (const row of JSON.parse(result.stdout.trim())) {
-    assert.equal(row.verified, ['normal-registration', 'other-existing-s4u'].includes(row.name), row.name);
+    assert.equal(row.verified, ['normal-registration', 'normal-account-name', 'other-existing-s4u'].includes(row.name), row.name);
     assert.equal(row.runtime, false, row.name);
     assert.equal(row.preLogin, false, row.name);
     if (row.name === 'normal-registration') {
@@ -355,6 +355,7 @@ test('watchdog stops privileged or unknown startup context before lifecycle muta
   assert.ok(start > 0 && end > start);
   assert.ok(end < runner.indexOf('Stop-Process'));
   assert.ok(end < runner.indexOf('Start-Process'));
+  const operatorContext = runner.slice(runner.indexOf('function Resolve-SovereignCommanderOperatorContextV1 {'), start);
   assert.match(operatorContext, /WindowsIdentity\]::GetCurrent\(\)/);
   assert.doesNotMatch(operatorContext, /Start-Process|Stop-Process|Register-ScheduledTask|SetAccessControl|Impersonate|CreateRestrictedToken/);
   for (const value of ['$false', "'true'"]) {

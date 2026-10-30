@@ -48,3 +48,9 @@ heartbeat permits manual lock deletion or replay of stale grants.
 The reusable invariant is: configured privilege metadata is advisory; actual
 execution-context evidence must qualify the real process. Missing evidence
 holds the affected route without disabling independently qualified workers.
+
+The read-only context adapter is contained in the existing pinned runner, avoiding
+an untracked transitive script dependency. The source-pin and composition changes
+are candidates only: they require trusted protected-main review, authenticated
+independent exact-head Windows/security review, the existing protected operator
+bootstrap and separate exact-head merge approval. Local tests cannot admit them.
