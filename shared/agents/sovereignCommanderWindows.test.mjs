@@ -311,19 +311,20 @@ test('task registration proof rejects legacy or altered Commander context withou
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $wscriptExe='fixed-wscript'
+Import-Module ScheduledTasks -ErrorAction Stop
 $script:sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 function Get-ScheduledTask {
  $actions=@([pscustomobject]@{Execute='fixed-wscript';Arguments='fixed-arguments'})
  if($script:case -eq 'extra-action'){$actions+= [pscustomobject]@{Execute='other-program';Arguments='other-arguments'}}
  if($script:case -eq 'wrong-action'){$actions[0].Arguments='different-arguments'}
- [pscustomobject]@{Actions=$actions}
+ [pscustomobject]@{Actions=$actions;Principal=(New-ScheduledTaskPrincipal -UserId $script:sid -LogonType Interactive -RunLevel $(if($script:case -eq 'highest'){'Highest'}else{'Limited'}))}
 }
 function Export-ScheduledTask {
  $type=if($script:case -eq 'legacy-s4u' -or $script:case -eq 'other-existing-s4u'){'S4U'}else{'InteractiveToken'}
  $user=if($script:case -eq 'wrong-user'){'S-1-5-19'}else{$script:sid}
  $logonUser=if($script:case -eq 'wrong-logon-user'){'S-1-5-19'}elseif($script:case -eq 'normal-account-name'){[Security.Principal.WindowsIdentity]::GetCurrent().Name}elseif($script:case -eq 'foreign-account-name'){'OTHERDOMAIN\OtherUser'}else{$script:sid}
  $level=if($script:case -eq 'highest'){'HighestAvailable'}else{'LeastPrivilege'}
- '<Task><Principals><Principal><UserId>'+ $user +'</UserId><LogonType>'+ $type +'</LogonType><RunLevel>'+ $level +'</RunLevel></Principal></Principals><Triggers><BootTrigger/><LogonTrigger><UserId>'+ $logonUser +'</UserId></LogonTrigger></Triggers><Settings><Hidden>true</Hidden><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure></Settings></Task>'
+ '<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal><UserId>'+ $user +'</UserId><LogonType>'+ $type +'</LogonType><RunLevel>'+ $level +'</RunLevel></Principal></Principals><Triggers><BootTrigger/><LogonTrigger><UserId>'+ $logonUser +'</UserId></LogonTrigger></Triggers><Settings><Hidden>true</Hidden><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><RestartOnFailure><Count>3</Count><Interval>PT1M</Interval></RestartOnFailure></Settings></Task>'
 }
 ${elevatedBootstrap.slice(start, end)}
 $rows=@()

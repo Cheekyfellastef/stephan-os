@@ -57,3 +57,12 @@ The existing external-first route requires authentic independent exact-head/base
 Windows/security evidence before formal review can clear the new surfaces.
 Local tests are not qualification. Protected integration and separate runtime
 approval remain required; no reviewer bootstrap authority is introduced.
+
+
+## Installer proof contract
+
+A successful child process is not a completed installation bundle. The bootstrap consumes each fixed producer's actual versioned receipt schema and strict Boolean execution fields. The Recovery Mesh schema has no finalVerdict field; the consumer must not invent one or substitute exit status for its task and guardian evidence. Missing, mistyped, partial or dry-run receipts fail closed.
+
+Task Scheduler can omit the default RunLevel from exported XML. Configuration proof requires the actual normalized Windows CIM RunLevel enum to be Limited and the canonical namespaced XML to agree. Only a genuinely absent optional RunLevel is consistent with that independently observed enum. Empty, duplicate, foreign, malformed, contradictory or unknown authority evidence cannot qualify. Unreadable definitions yield a typed failed bundle receipt. Neither this registration observation nor a successful bundle proves the running process token, custody clearance, helper admission or later boot.
+
+The regression exercises the actual Recovery Mesh producer expression under StrictMode, typed negative receipts, Windows task serialization with the observed persisted default omission and contradictory XML/CIM cases. It creates no scheduled task. Live acceptance still requires protected installation and actual native/runtime proof.
