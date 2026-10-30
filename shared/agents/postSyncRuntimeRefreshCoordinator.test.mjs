@@ -777,4 +777,3 @@ test('relay and ignition allowances refuse unknown neighboring scripts before an
     assert.deepEqual(calls, [], path);
   }
 });
-
