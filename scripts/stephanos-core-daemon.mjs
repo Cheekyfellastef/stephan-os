@@ -55,6 +55,8 @@ import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-disc
 import { readCanonicalMissionWorkerHeartbeatAgeMs, canonicalMissionWorkerEvidenceAllowsWork } from '../shared/agents/canonicalMissionWorkerEvidenceV1.mjs';
 import { createSovereignOuterBridgeSupervisorV1 } from './sovereign-outer-bridge-service.mjs';
 import { CORE_LOCK_SCHEMA, exactCoreLockOwnerV1 } from '../shared/agents/stephanosCoreLockOwnerV1.mjs';
+import { inspectFixedRuntimeQualificationV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { unqualifiedCoreWindowsRepairV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 import {
   buildStephanosBuildTruth,
   collectSovereignControllerLaneStatus,
@@ -88,7 +90,6 @@ const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
 const RELATED_ISSUE = '#2593';
-const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 const bootstrapSovereignParentProofEligible = (
   process.env.STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN === '1'
@@ -458,19 +459,24 @@ async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
     return Object.freeze({ ok: false, attempted: false, blocker: 'MISSION_WORKER_CUSTODY_UNPROVEN',
       finalVerdict: 'OCTOPUS_WORKER_CUSTODY_HELD', sourceMutationAllowed: false });
   }
+  // Compute actual installed identity here, then let the authenticated owner
+  // independently qualify again at reservation. No qualification flag crosses
+  // the transport and an unsupported escalation never reserves custody.
+  if (actionId !== 'repair-goal-builder-flow' || typeof inspectFixedRuntimeQualificationV1 !== 'function')
+    return unqualifiedCoreWindowsRepairV1();
+  const native = inspectFixedRuntimeQualificationV1();
+  if (native?.ok !== true || native.sourceHead !== sourceHead
+      || !native.profiles?.includes('MAINTENANCE_GOAL_BUILDER_V1'))
+    return unqualifiedCoreWindowsRepairV1();
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
-    repositoryRoot: repoRoot,
-    sharedWorkspaceRoot: workspaceRoot,
+    repositoryRoot: repoRoot, sharedWorkspaceRoot: workspaceRoot,
   });
   const envelope = buildStephanosExecutionCommandEnvelopeV1({
-    catalog,
-    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-    actionId: `stephanos-core-octopus-self-heal-${lastOctopusSelfHealAttemptCount}-${phase}`,
-    missionId: 'stephanos-core-octopus-self-heal',
-    relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
+    catalog, surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: `stephanos-core-native-goal-repair-${lastOctopusSelfHealAttemptCount}-${phase}`,
+    missionId: 'stephanos-core-octopus-self-heal', relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
     operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
-    payload: { actionId },
-    proofRefs: [PROOF_REF, `source:${sourceHead}`],
+    payload: { actionId }, proofRefs: [PROOF_REF, `source:${sourceHead}`],
   });
   return executeSovereignCommanderCommandV1(envelope, { repoRoot });
 }

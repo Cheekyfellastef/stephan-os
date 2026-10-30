@@ -4,15 +4,29 @@ Owner: #2315 — Goal: Automatic canonical mailbox rollover before GitHub commen
 Builder admission: #2961 — Goal: Core Daemon Blocked-Goal Repair Steward and Proof-Gated Re-Admission.
 
 The previous Control Tower could inspect goals but could not request a build.
-Its read-only workflows and nomination proofs remain read-only. This change
-adds a separate, owner-authenticated manual Actions request for exactly
-BUILD_NEXT_ELIGIBLE_GOAL. The operator supplies no script, path, operation,
-provider, goal grant, source scope, merge or runtime approval.
+Its read-only workflows and nomination proofs remain read-only. The existing
+high-risk reviewed manual Actions request for exactly BUILD_NEXT_ELIGIBLE_GOAL
+now accepts a **second, bounded trigger from the same original workflow**:
+an authentic non-forced owner push to protected main. A merge on main can
+therefore request the next eligible cycle without spending Codex or using the
+saturated #3149 issue. Manual workflow_dispatch remains an optional fallback.
+No additional worker, queue, lease, scheduler, endpoint, privileged instruction,
+merge or runtime approval is introduced.
+
+The owner supplies no script, path, operation, provider, goal grant, source scope,
+merge or runtime approval. The existing native caller still proves protected
+source identity, independent signed artifact, original mission/worker custody,
+gaming gates and execution permission before any native pickup.
 
 ## Actual command path
 
-1. Run **Stephanos Control Tower - Start Next Eligible Build** on protected main.
+1. An owner-authenticated, non-forced push to protected main automatically
+   invokes the existing **Stephanos Control Tower - Start Next Eligible Build**
+   workflow. The operator may still use Run workflow on main to request a
+   manual wake, with no workflow inputs. Never use a PR, fork, bot identity,
+   branch creation, forced update or arbitrary command as a build request.
 2. Its fixed request-build job verifies repository and numeric owner identity,
+   the exact push after/before/head-commit or manual dispatch identity,
    workflow path, main, first attempt, empty inputs and current source before
    and after GETs. It retains one request artifact, valid for ten minutes.
 3. The existing Sovereign relay reads that workflow through authenticated GETs,
@@ -34,10 +48,17 @@ provider, goal grant, source scope, merge or runtime approval.
    wake outcome. Actual build progress remains in the original worker receipts
    and autonomy track. A successful wake does not prove a source build.
 
+The existing relay heartbeat services both allowed event classes through one bounded
+current-head GET inventory (at most ten recent runs; overflow is a typed hold),
+while preserving authenticated full run, job, artifact and payload checks. Other
+event classes are not eligible; host source drift or an absent native consumer
+continues to hold rather than assert construction.
+
 The existing relay heartbeat services this carrier while the legacy mailbox
 child remains in flight. A saturated issue cannot prevent request acquisition.
 Concurrent ticks share one observer; its 30-second cooldown also applies to
-failures. Up to five recent requests are considered oldest first. Already
+failures. Up to ten recent workflow runs are inspected for authentic, eligible
+requests oldest first. Already
 recorded IDs are excluded. More than five requests in the active window fail
 closed with backpressure rather than silently dropping older work.
 
@@ -75,3 +96,19 @@ remain open until their acceptance is independently met.
 Reusable invariant: a carrier can request the existing build cycle without
 owning admission. Exactly-once wake delivery and material source execution are
 separate proofs, even when both belong to the same operator intent.
+
+## Continuous-build convergence
+
+This source addition changes only the existing read-only staging trigger and
+native request verifier, not the underlying Mission Worker. It becomes
+effective only after complete current-head CI, independently qualified HIGH
+risk review, separately approved protected integration and physical installed
+source reconciliation. A GitHub push without an authenticated 10-minute
+native readback is not a live build. A signed wake response still is not
+the original goal's SELECT/CLAIM/PICKUP/source/test/review/merge proof.
+
+Every accepted protected-main owner push can cause at most one request ID
+bound to its own GitHub run and first attempt. Existing durable command
+ledger deduplication retains an ambiguous request without replay.
+Foreign actor pushes are skipped before the job, and the JS producer and
+native artifact reader independently fail closed on unexpected provenance.
