@@ -887,4 +887,3 @@ test('production Windows guardian keeps the qualified owner live without widenin
   assert.equal(result.nativeExecuted, false);
   assert.equal(result.productionQualification, false);
 });
-

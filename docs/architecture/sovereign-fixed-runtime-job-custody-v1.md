@@ -228,4 +228,3 @@ integration and actual host acceptance remain necessary. The deterministic VM
 regression exercises the production Windows branch with isolated native/report
 adapters and no production qualification injection; it is not Windows kernel
 or installed-host proof.
-

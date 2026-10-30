@@ -222,4 +222,3 @@ test('unbound, malformed and broader maintenance claims remain blocked', () => {
   assert.equal(denied.status.verification.operationCompleted, false);
   assert.equal(denied.status.verification.runtimeQualificationGranted, false);
 });
-
