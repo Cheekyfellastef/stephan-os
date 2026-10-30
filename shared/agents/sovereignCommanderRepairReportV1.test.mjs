@@ -8,6 +8,7 @@ import {
   buildSovereignCommanderRepairReport,
   classifySovereignCommanderRepairOutcome,
   publishSovereignCommanderRepairReport,
+  SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
 } from './sovereignCommanderRepairReportV1.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -150,4 +151,74 @@ test('repair report preserves missing or invalid heartbeat age as unknown, not z
     assert.equal(report.status.verification.heartbeatFresh, false);
     assert.equal(report.status.status, 'ATTENTION_REQUIRED');
   }
+});
+
+const qualifiedMaintenance = () => ({
+  scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+  ok: true, blocker: '', sourceHead: HEAD,
+  maintenance: {
+    actionId: 'repair-goal-builder-flow', profile: 'MAINTENANCE_GOAL_BUILDER_V1',
+    operationOk: true, terminalProven: true,
+    terminalEvidenceSha256: 'b'.repeat(64), proofHash: 'c'.repeat(64),
+  },
+  steps: [{ actionId: 'repair-goal-builder-flow', ok: true,
+    finalVerdict: 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED', blocker: '' }],
+});
+
+test('qualified maintenance completion preserves its bounded scope and never claims whole-system health', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-maintenance-report-'));
+  try {
+    const repair = { ...qualifiedMaintenance(),
+      core: { readiness: 'READY', wakeState: 'AWAKE', awake: true, repairRequired: false } };
+    const published = await publishSovereignCommanderRepairReport({
+      repair, workspaceRoot, repoRoot: process.cwd(), cycleId: 'qualified-maintenance',
+    });
+    assert.equal(published.ok, true);
+    assert.equal(published.outcome, 'MAINTENANCE_COMPLETED');
+    assert.equal(published.status, 'OBSERVED');
+    const current = JSON.parse(await readFile(join(workspaceRoot, 'status', 'sovereign-commander-repair-current.json'), 'utf8'));
+    const event = JSON.parse((await readFile(join(workspaceRoot, 'events', 'sovereign-commander-repair-cycles.ndjson'), 'utf8')).trim());
+    for (const record of [current, event]) {
+      assert.equal(record.scope, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE);
+      assert.equal(record.fullStephanosRepairProven, false);
+      assert.equal(record.verification.readiness, 'UNPROVEN');
+      assert.equal(record.verification.operationCompleted, true);
+      assert.equal(record.verification.runtimeQualificationGranted, false);
+      assert.equal(record.verification.terminalEvidenceSha256, 'b'.repeat(64));
+      assert.deepEqual(record.detectedFaults, []);
+      assert.doesNotMatch(record.summary, /verified Stephanos healthy|repaired Stephanos/);
+      assert.equal('awake' in record.verification, false);
+    }
+  } finally { await rm(workspaceRoot, { recursive: true, force: true }); }
+});
+
+test('unbound, malformed and broader maintenance claims remain blocked', () => {
+  const variants = [
+    { sourceHead: '' }, { sourceHead: 'a'.repeat(39) }, { ok: 'true' },
+    { blocker: 'FIXED_RUNTIME_OPERATION_CANCELLED' },
+    { scope: 'ALL_STEPHANOS_REPAIRED' },
+    ...[
+      { actionId: 'repair-stephanos' }, { profile: 'SOURCE_TASK_V1' },
+      { operationOk: false }, { operationOk: 'true' },
+      { terminalProven: false }, { terminalProven: 'true' },
+      { terminalEvidenceSha256: '' }, { terminalEvidenceSha256: 'private-path' },
+      { proofHash: '' }, { proofHash: 'a'.repeat(63) },
+    ].map(patch => ({ maintenance: { ...qualifiedMaintenance().maintenance, ...patch } })),
+  ];
+  for (const patch of variants) {
+    const report = buildSovereignCommanderRepairReport({ repair: { ...qualifiedMaintenance(), ...patch } });
+    assert.equal(report.outcome, 'BLOCKED', JSON.stringify(patch));
+    assert.equal(report.status.status, 'ATTENTION_REQUIRED');
+    assert.ok(report.status.detectedFaults.length > 0);
+  }
+  const denied = buildSovereignCommanderRepairReport({ repair: {
+    ...qualifiedMaintenance(), ok: false, sourceHead: '',
+    blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD', maintenance: undefined,
+    steps: [{ actionId: 'repair-goal-builder-flow', ok: false,
+      blocker: 'FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD' }],
+  } });
+  assert.equal(denied.outcome, 'BLOCKED');
+  assert.deepEqual(denied.status.detectedFaults, ['FIXED_RUNTIME_RESOURCE_GOVERNOR_HOLD']);
+  assert.equal(denied.status.verification.operationCompleted, false);
+  assert.equal(denied.status.verification.runtimeQualificationGranted, false);
 });

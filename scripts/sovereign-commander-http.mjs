@@ -8,10 +8,12 @@ import { resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1, fixedRuntimeMaintenanceActionQualifiedV1, FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
 import { createMaintenanceCustodyStoreV1, readMaintenanceRecoverySourceV1 } from './sovereign-maintenance-custody-store-v1.mjs';
-import { isProvenSovereignWindowsReviewerPreExecutionDenialV1 } from '../shared/agents/sovereignCommanderV1.mjs';
+import { isProvenSovereignWindowsReviewerPreExecutionDenialV1, buildSovereignCommanderCommandV1, SOVEREIGN_COMMANDER_OPERATION } from '../shared/agents/sovereignCommanderV1.mjs';
+import { buildStephanosExecutionCommandEnvelopeV1, buildStephanosExecutionSurfaceCatalogV1, STEPHANOS_EXECUTION_SURFACE } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
+import { publishSovereignCommanderRepairReport, SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { SOVEREIGN_MAINTENANCE_OWNER_VERSION, SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER, sovereignMaintenanceCustodyUnprovenV1, readSovereignMaintenanceTerminalReceiptV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
@@ -72,6 +74,13 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   let killTimer = null;
   let child = null;
   let lastFailureKey = '';
+  let nativeCyclePromise = null;
+  let nativeCycleController = null;
+  let activeMaintenanceController = null;
+  let custodyClosed = false;
+  // Private result identity is retained only after this owner consumes the
+  // native adapter's one-use provenance and records the terminal release.
+  const nativeResults = new WeakMap();
   const state = {
     enabled: options.enabled !== false,
     maintenanceInFlight: false,
@@ -93,6 +102,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     lastReportOutcome: '',
     lastReportStatus: '',
     lastReportBlocker: '',
+    lastActionId: '',
+    lastActionOk: null,
+    lastSourceHead: '',
+    fullStephanosRepairProven: false,
     // Node child kill is not proof that spawned Windows descendants have exited.
     timeoutCustodyHeld: persisted?.held === true,
   };
@@ -115,8 +128,16 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     }
   };
 
+  const closeStoppedCustody = () => {
+    if (stopped && !custodyClosed && !state.maintenanceInFlight && !nativeCyclePromise) {
+      custodyClosed = true;
+      custodyStore?.close();
+    }
+  };
+
   const schedule = (delayMs) => {
-    if (stopped || !state.enabled || state.timeoutCustodyHeld || state.maintenanceInFlight) return;
+    if (stopped || !state.enabled || state.timeoutCustodyHeld || state.maintenanceInFlight
+        || state.running || nativeCyclePromise || scheduledTimer) return;
     state.scheduled = true;
     state.nextDelayMs = delayMs;
     scheduledTimer = setTimeoutImpl(() => {
@@ -128,14 +149,241 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     scheduledTimer?.unref?.();
   };
 
-  const runNow = () => {
-    if (stopped || !state.enabled || child || state.maintenanceInFlight || state.timeoutCustodyHeld) return false;
-    if (process.platform === 'win32' && !options.spawnImpl) {
-      state.lastOk = false;
-      state.lastBlocker = 'SOVEREIGN_BROAD_RUNTIME_PROFILE_NOT_QUALIFIED';
-      state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
-      return false; // No broad-profile reservation or unowned Windows child.
+  const withMaintenanceOwner = async (command, run, executionOptions = {}) => {
+    const blocked = blocker => Object.freeze({ ok: false, command,
+      blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+    // Reserve synchronously BEFORE the first await. This is the existing
+    // guardian owner, shared by all authenticated HTTP sessions and its timer.
+    if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+    if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
+    if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
+    const nativeWindows = process.platform === 'win32' && !options.spawnImpl;
+    if (nativeWindows && !fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId))
+      return blocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
+    const nativeGoal = nativeWindows
+      && fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId);
+    const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
+    if (nativeGoal && (!custodyStore || qualification?.ok !== true))
+      return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
+    const resumeDelayMs = state.nextDelayMs ?? intervalMs;
+    if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+    scheduledTimer = null;
+    state.scheduled = false;
+    state.nextDelayMs = null;
+    if (!reserve(command?.commandId || randomUUID(), command?.plan?.processId || 'fixed-maintenance'))
+      return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+    state.maintenanceInFlight = true;
+    const controller = nativeGoal ? new AbortController() : null;
+    const forwardAbort = () => controller?.abort();
+    if (controller) {
+      activeMaintenanceController = controller;
+      executionOptions.signal?.addEventListener('abort', forwardAbort, { once: true });
+      if (executionOptions.signal?.aborted) controller.abort();
     }
+    try {
+      if (nativeGoal) {
+        const active = custodyStore.status();
+        const binding = { requestId: command.commandId, sourceHead: qualification.sourceHead,
+          custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId };
+        const native = await executeFixedMaintenanceRuntimeV1(qualification, binding, {
+          signal: controller.signal,
+          onPrepared: root => custodyStore.recordNativeRoot(root).ok === true,
+        });
+        const excluded = consumeFixedRuntimePrelaunchExclusionV1(native, binding);
+        const zero = !excluded && consumeFixedRuntimeTerminalProvenanceV1(native, binding);
+        const released = excluded ? custodyStore.release()
+          : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt) : { ok: false };
+        state.timeoutCustodyHeld = released.ok !== true;
+        state.lastOk = native.ok === true && released.ok === true;
+        state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+          : native.ok === true ? '' : native.reason;
+        state.lastFinalVerdict = state.lastOk ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+          : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED';
+        const structuredContent = Object.freeze({ ...native, processId: command.plan.processId,
+          status: native.ok ? 0 : 2, terminalEvidenceRef: released.terminalEvidenceRef || '',
+          terminalEvidenceSha256: released.terminalEvidenceSha256 || '' });
+        const contentText = native.stdout || native.reason;
+        const owned = Object.freeze({ ok: state.lastOk, command, structuredContent, contentText,
+          blocker: state.lastBlocker, finalVerdict: state.lastFinalVerdict,
+          proofHash: createHash('sha256').update(JSON.stringify({ commandId: command.commandId,
+            missionId: command.missionId, operation: command.operation, plan: command.plan,
+            contentText, structuredContent })).digest('hex') });
+        nativeResults.set(owned, Object.freeze({
+          sourceHead: qualification.sourceHead,
+          terminalProven: zero === true && released.ok === true,
+          prelaunchProven: excluded === true && released.ok === true,
+        }));
+        return owned;
+      }
+      const result = await run();
+      // A direct-child timeout/unknown result cannot release Windows
+      // descendant custody. No caller retry or timer clears this hold.
+      const execution = result?.structuredContent;
+      const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
+      if (!provenPreExecutionDenial
+          && sovereignMaintenanceCustodyUnprovenV1(execution,
+            readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId), command?.plan?.processId)) {
+        state.timeoutCustodyHeld = true;
+        state.lastOk = false;
+        state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+        return Object.freeze({ ...result, ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
+      }
+      if (provenPreExecutionDenial) {
+        // Keep the typed independent reviewer HOLD visible and allow only
+        // the guardian's ordinary scheduled retry, never reviewer authority.
+        state.lastOk = false;
+        state.lastBlocker = result.blocker;
+        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+      }
+      release();
+      if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+      return result;
+    } catch (error) {
+      state.timeoutCustodyHeld = true;
+      state.lastOk = false;
+      state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
+      state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+      return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
+    } finally {
+      executionOptions.signal?.removeEventListener('abort', forwardAbort);
+      if (activeMaintenanceController === controller) activeMaintenanceController = null;
+      state.maintenanceInFlight = false;
+      if (!state.timeoutCustodyHeld) schedule(resumeDelayMs);
+      closeStoppedCustody();
+    }
+  };
+
+  const runNativeCycle = () => {
+    if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+    scheduledTimer = null;
+    state.scheduled = false;
+    state.nextDelayMs = null;
+    state.cycleCount += 1;
+    state.currentCycleId = randomUUID();
+    state.lastStartedAtUtc = now();
+    state.lastActionId = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
+    state.lastActionOk = null;
+    state.lastBlocker = '';
+    state.lastFinalVerdict = '';
+    nativeCycleController = new AbortController();
+    const controller = nativeCycleController;
+    let pending;
+    try {
+      const catalog = buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot });
+      const envelope = buildStephanosExecutionCommandEnvelopeV1({
+        catalog, surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+        actionId: state.currentCycleId, missionId: 'sovereign-continuous-repair',
+        relatedIssue: '#2961', operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+        targetPaths: [], payload: { actionId: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId },
+      });
+      const command = buildSovereignCommanderCommandV1(envelope, { repoRoot });
+      if (command.dispatchAllowed !== true || command.plan?.kind !== 'fixed-process'
+          || command.plan.processId !== FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId) {
+        pending = Promise.resolve({ ok: false, blocker: 'SOVEREIGN_CONTINUOUS_FIXED_COMMAND_NOT_ADMITTED' });
+      } else {
+        // The same owner reserves synchronously before its first await. Do not
+        // pre-set running and reject our own request, or use a second owner.
+        pending = withMaintenanceOwner(command, () => {
+          throw new Error('SOVEREIGN_CONTINUOUS_NATIVE_FALLBACK_FORBIDDEN');
+        }, { signal: controller.signal });
+      }
+    } catch {
+      // Command construction is synchronous and occurs before owner admission.
+      pending = Promise.resolve({ ok: false, blocker: 'SOVEREIGN_CONTINUOUS_FIXED_COMMAND_NOT_ADMITTED' });
+    }
+    state.running = true;
+    nativeCyclePromise = (async () => {
+      let result;
+      try { result = await pending; }
+      catch {
+        // An owner exception can be a reservation/journal failure. Never infer
+        // prelaunch exclusion from an exception or schedule another request.
+        state.timeoutCustodyHeld = true;
+        result = { ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER };
+      }
+      const proof = nativeResults.get(result);
+      nativeResults.delete(result);
+      const actionOk = result?.ok === true && proof?.terminalProven === true
+        && !state.timeoutCustodyHeld && !controller.signal.aborted && !stopped;
+      const blocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
+        : controller.signal.aborted || stopped ? 'SOVEREIGN_CONTINUOUS_MAINTENANCE_CANCELLED'
+        : actionOk ? '' : text(result?.blocker || 'SOVEREIGN_CONTINUOUS_MAINTENANCE_UNPROVEN');
+      const sourceHead = text(proof?.sourceHead);
+      const repair = {
+        scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+        ok: actionOk, blocker, sourceHead,
+        maintenance: {
+          actionId: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId,
+          profile: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.profile,
+          operationOk: actionOk, terminalProven: proof?.terminalProven === true,
+          terminalEvidenceSha256: text(result?.structuredContent?.terminalEvidenceSha256),
+          proofHash: text(result?.proofHash),
+        },
+        steps: [{ actionId: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId,
+          ok: actionOk, blocker,
+          finalVerdict: actionOk ? 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED'
+            : 'SOVEREIGN_QUALIFIED_MAINTENANCE_BLOCKED' }],
+      };
+      let reporting;
+      try {
+        reporting = await publishSovereignCommanderRepairReport({
+          repair, repoRoot, cycleId: state.currentCycleId,
+          startedAtUtc: state.lastStartedAtUtc, completedAtUtc: now(),
+          source: 'continuous-repair-guardian',
+        });
+      } catch {
+        reporting = { ok: false, blocker: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLICATION_FAILED' };
+      }
+      const reportCompleted = reporting?.outcome === 'MAINTENANCE_COMPLETED'
+        && reporting?.status === 'OBSERVED';
+      const ok = actionOk && reporting?.ok === true && reportCompleted
+        && !controller.signal.aborted && !stopped;
+      state.lastActionOk = actionOk;
+      state.lastSourceHead = sourceHead;
+      state.lastOk = ok;
+      state.lastReportOk = reporting?.ok === true;
+      state.lastReportOutcome = text(reporting?.outcome).slice(0, 64);
+      state.lastReportStatus = text(reporting?.status).slice(0, 64);
+      state.lastReportBlocker = reporting?.ok === true ? ''
+        : text(reporting?.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING').slice(0, 160);
+      state.lastBlocker = ok ? '' : (blocker || state.lastReportBlocker
+        || (actionOk && !reportCompleted ? 'SOVEREIGN_QUALIFIED_MAINTENANCE_REPORT_UNPROVEN' : '')
+        || 'SOVEREIGN_CONTINUOUS_MAINTENANCE_CANCELLED').slice(0, 160);
+      state.lastFinalVerdict = ok ? 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED'
+        : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
+      state.lastCycleId = state.currentCycleId;
+      state.currentCycleId = '';
+      state.lastCompletedAtUtc = now();
+      if (ok) {
+        state.successCount += 1;
+        state.consecutiveFailureCount = 0;
+        lastFailureKey = '';
+      } else {
+        state.failureCount += 1;
+        const failureKey = JSON.stringify([sourceHead, state.lastBlocker]);
+        state.consecutiveFailureCount = failureKey === lastFailureKey
+          ? Math.min(1_000_000, state.consecutiveFailureCount + 1) : 1;
+        lastFailureKey = failureKey;
+      }
+    })().finally(() => {
+      nativeCyclePromise = null;
+      nativeCycleController = null;
+      state.running = false;
+      if (!state.timeoutCustodyHeld) schedule(state.lastOk ? intervalMs : Math.min(
+        Math.max(intervalMs, SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_BACKOFF_MS),
+        intervalMs * 2 ** Math.min(20, state.consecutiveFailureCount - 1),
+      ));
+      closeStoppedCustody();
+    });
+    return true;
+  };
+
+  const runNow = () => {
+    if (stopped || !state.enabled || child || state.running || nativeCyclePromise
+        || state.maintenanceInFlight || state.timeoutCustodyHeld) return false;
+    if (process.platform === 'win32' && !options.spawnImpl) return runNativeCycle();
     if (scheduledTimer) {
       clearTimeoutImpl(scheduledTimer);
       scheduledTimer = null;
@@ -261,7 +509,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     status,
     runNow,
     prepareAfterAuditLoss: async (request) => {
-      if (!custodyStore?.prepareAfterAuditLoss || state.running || state.maintenanceInFlight
+      if (stopped || !custodyStore?.prepareAfterAuditLoss || state.running || state.maintenanceInFlight
           || !state.timeoutCustodyHeld
           || (state.lastCycleId && state.lastCycleId !== request.expectedReservationId))
         return { ok: false, blocker: 'MAINTENANCE_AUDIT_LOSS_OWNER_UNPROVEN', custodyReleased: false };
@@ -271,10 +519,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         if (result.ok) state.lastCycleId = result.reservationId;
         return result;
       }
-      finally { state.maintenanceInFlight = false; }
+      finally { state.maintenanceInFlight = false; closeStoppedCustody(); }
     },
     recoverAfterBoot: async (request) => {
-      if (!custodyStore || state.running || state.maintenanceInFlight)
+      if (stopped || !custodyStore || state.running || state.maintenanceInFlight)
         return { ok: false, blocker: 'MAINTENANCE_CUSTODY_RECOVERY_OWNER_BUSY' };
       state.maintenanceInFlight = true;
       try {
@@ -287,110 +535,28 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
           state.lastFinalVerdict = 'SOVEREIGN_MAINTENANCE_CUSTODY_RECOVERED_REPAIR_PENDING';
         }
         return result;
-      } finally { state.maintenanceInFlight = false; }
-    },
-    withMaintenanceOwner: async (command, run, executionOptions = {}) => {
-      const blocked = blocker => Object.freeze({ ok: false, command,
-        blocker, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
-      // Reserve synchronously BEFORE the first await. This is the existing
-      // guardian owner, shared by all authenticated HTTP sessions and its timer.
-      if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
-      if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
-      if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
-      const nativeWindows = process.platform === 'win32' && !options.spawnImpl;
-      if (nativeWindows && !fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId))
-        return blocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
-      const nativeGoal = nativeWindows
-        && fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId);
-      const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
-      if (nativeGoal && (!custodyStore || qualification?.ok !== true))
-        return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
-      const resumeDelayMs = state.nextDelayMs ?? intervalMs;
-      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
-      scheduledTimer = null;
-      state.scheduled = false;
-      state.nextDelayMs = null;
-      if (!reserve(command?.commandId || randomUUID(), command?.plan?.processId || 'fixed-maintenance'))
-        return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
-      state.maintenanceInFlight = true;
-      try {
-        if (nativeGoal) {
-          const active = custodyStore.status();
-          const binding = { requestId: command.commandId, sourceHead: qualification.sourceHead,
-            custodyRecordSha256: active.digest, nativeRecordId: active.anchorRecordId };
-          const native = await executeFixedMaintenanceRuntimeV1(qualification, binding, {
-            signal: executionOptions.signal,
-            onPrepared: root => custodyStore.recordNativeRoot(root).ok === true,
-          });
-          const excluded = consumeFixedRuntimePrelaunchExclusionV1(native, binding);
-          const zero = !excluded && consumeFixedRuntimeTerminalProvenanceV1(native, binding);
-          const released = excluded ? custodyStore.release()
-            : zero ? custodyStore.releaseNativeTerminal(native.nativeReceipt) : { ok: false };
-          state.timeoutCustodyHeld = released.ok !== true;
-          state.lastOk = native.ok === true && released.ok === true;
-          state.lastBlocker = state.timeoutCustodyHeld ? SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER
-            : native.ok === true ? '' : native.reason;
-          state.lastFinalVerdict = state.lastOk ? 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
-            : 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED';
-          const structuredContent = Object.freeze({ ...native, processId: command.plan.processId,
-            status: native.ok ? 0 : 2, terminalEvidenceRef: released.terminalEvidenceRef || '',
-            terminalEvidenceSha256: released.terminalEvidenceSha256 || '' });
-          const contentText = native.stdout || native.reason;
-          return Object.freeze({ ok: state.lastOk, command, structuredContent, contentText,
-            blocker: state.lastBlocker, finalVerdict: state.lastFinalVerdict,
-            proofHash: createHash('sha256').update(JSON.stringify({ commandId: command.commandId,
-              missionId: command.missionId, operation: command.operation, plan: command.plan,
-              contentText, structuredContent })).digest('hex') });
-        }
-        const result = await run();
-        // A direct-child timeout/unknown result cannot release Windows
-        // descendant custody. No caller retry or timer clears this hold.
-        const execution = result?.structuredContent;
-        const provenPreExecutionDenial = isProvenSovereignWindowsReviewerPreExecutionDenialV1(command, result);
-        if (!provenPreExecutionDenial
-            && sovereignMaintenanceCustodyUnprovenV1(execution,
-              readSovereignMaintenanceTerminalReceiptV1(execution?.stdout, command?.plan?.processId), command?.plan?.processId)) {
-          state.timeoutCustodyHeld = true;
-          state.lastOk = false;
-          state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
-          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
-          return Object.freeze({ ...result, ok: false, blocker: SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER,
-            finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' });
-        }
-        if (provenPreExecutionDenial) {
-          // Keep the typed independent reviewer HOLD visible and allow only
-          // the guardian's ordinary scheduled retry, never reviewer authority.
-          state.lastOk = false;
-          state.lastBlocker = result.blocker;
-          state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
-        }
-        release();
-        if (state.timeoutCustodyHeld) return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
-        return result;
-      } catch (error) {
-        state.timeoutCustodyHeld = true;
-        state.lastOk = false;
-        state.lastBlocker = SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER;
-        state.lastFinalVerdict = 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED';
-        return blocked(SOVEREIGN_MAINTENANCE_CUSTODY_BLOCKER);
       } finally {
         state.maintenanceInFlight = false;
-        if (!state.timeoutCustodyHeld) schedule(resumeDelayMs);
+        if (!state.timeoutCustodyHeld) schedule(intervalMs);
+        closeStoppedCustody();
       }
     },
+    withMaintenanceOwner,
     stop: () => {
       stopped = true;
       state.enabled = false;
       state.scheduled = false;
       state.nextDelayMs = null;
-      state.running = false;
+      if (!nativeCyclePromise) state.running = false;
+      nativeCycleController?.abort();
+      activeMaintenanceController?.abort();
       if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
       if (killTimer) clearTimeoutImpl(killTimer);
       try { child?.kill?.(); } catch {}
       scheduledTimer = null;
       killTimer = null;
       child = null;
-      custodyStore?.close();
+      closeStoppedCustody();
     },
   });
 }
