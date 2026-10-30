@@ -19,5 +19,16 @@
     "isolated_ephemeral_clone_for_analysis": true,
     "source_copy_into_stephanos": false,
     "binary_execution": false
+  },
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "4ee5c6b6162dee2291fc75f9dfc57667f6d45a2d",
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "uevr-current-analysis",
+    "local_cache_allowed": false,
+    "reuse_class": "analysis-only"
   }
 }

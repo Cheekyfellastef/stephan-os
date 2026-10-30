@@ -28,8 +28,13 @@ function ensurePanel() {
   findings.appendChild(element('li', 'No playtest evidence yet.'));
   const method = element('p', 'Reusable VR method candidates will appear here after Flywheel promotion.');
   method.dataset.role = 'method';
+  const intelligence = element('p', 'Stephanos correlation view is waiting for canonical evidence.');
+  intelligence.dataset.role = 'intelligence';
+  const correlations = element('ul');
+  correlations.dataset.role = 'correlations';
+  correlations.appendChild(element('li', 'No corpus correlation candidates yet.'));
 
-  shell.append(heading, status, summary, findings, method);
+  shell.append(heading, status, summary, findings, method, intelligence, correlations);
   panel.appendChild(shell);
 
   const main = document.querySelector('main') || document.body;
@@ -43,7 +48,20 @@ function render(feed) {
   const panel = ensurePanel();
   const latest = feed?.vrResearchLab?.latest;
   const summary = summarizeVrPlaytestFeed(feed);
+  const intelligence = feed?.intelligence;
   panel.dataset.playtestFlywheel = feed?.state || 'unknown';
+  panel.querySelector('[data-role="intelligence"]').textContent =
+    'Stephanos: ' + (intelligence?.vrResearchAgent?.action || 'NO_ACTION') +
+    ' | pinned corpus ' + (intelligence?.referenceCorpus?.sourceCount || 0) +
+    ' | reusable ' + (intelligence?.referenceCorpus?.reusableSourceCount || 0) +
+    ' | correlations ' + (intelligence?.correlationCandidates?.length || 0);
+  const correlations = panel.querySelector('[data-role="correlations"]');
+  correlations.replaceChildren();
+  for (const candidate of intelligence?.correlationCandidates?.slice(0, 5) || []) {
+    correlations.appendChild(element('li',
+      candidate.sourceId + ' | ' + candidate.repository + ' | ' + (candidate.role || 'VR reference')));
+  }
+  if (!correlations.children.length) correlations.appendChild(element('li', 'No current evidence-to-corpus correlations yet.'));
   panel.querySelector('[data-role="state"]').textContent = !summary.hasEvidence
     ? 'WAITING'
     : summary.current

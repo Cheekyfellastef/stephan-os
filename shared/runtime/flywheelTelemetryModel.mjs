@@ -35,6 +35,12 @@ export function deriveFlywheelTelemetryView(payload = {}) {
       statusLabel: 'BACKEND UNREACHABLE',
       reason: text(payload?.reason, 'Live Flywheel telemetry is unavailable.'),
       stateItems: [],
+      blockerRouting: {
+        publishedBlockerCount: 0,
+        routineRepairActionCount: 0,
+        operatorApprovalCount: 0,
+        routineRepairs: [],
+      },
       metrics: [],
       exactNextAction: 'Restore the shared workspace telemetry feed.',
     };
@@ -50,6 +56,9 @@ export function deriveFlywheelTelemetryView(payload = {}) {
   const portfolio = payload.livePortfolio || {};
   const goals = projection.goals;
   const blockers = asArray(attention.blockers);
+  const maintenanceActions = asArray(attention.maintenanceActions);
+  const routineRepairActions = maintenanceActions.filter((action) => action?.operatorDecisionRequired !== true);
+  const approvals = asArray(attention.approvals);
   const runnable = asArray(capability.canRunNow);
   const blockedCapacity = asArray(capability.blocked);
   const githubEvidenceSource = text(portfolio.source || projection.portfolioSource, 'UNKNOWN').toUpperCase();
@@ -59,6 +68,11 @@ export function deriveFlywheelTelemetryView(payload = {}) {
     : 'UNKNOWN';
   const currentJob = text(queue.currentJob, 'No current job published');
   const selectedGoal = text(build.selectedGoal, currentJob);
+  const learningEvent = asArray(payload?.records?.eventRecords)
+    .find((record) => record?.closedLoopLearning?.telemetry);
+  const learning = projection?.closedLoopLearning?.telemetry
+    || learningEvent?.closedLoopLearning?.telemetry
+    || null;
 
   return {
     valid: true,
@@ -110,16 +124,54 @@ export function deriveFlywheelTelemetryView(payload = {}) {
         label: 'Next Action',
         source: 'operatorAttention',
         value: text(attention.exactNextAction || bridge.exactNextAction || payload.exactNextAction, 'No action published'),
-        summary: blockers.length ? `${blockers.length} blocker(s) published` : 'No blocker is explicitly published.',
+        summary: blockers.length
+          ? `${blockers.length} blocker(s) · ${routineRepairActions.length} routine repair action(s) · ${approvals.length} approval gate(s)`
+          : 'No blocker is explicitly published.',
       },
+      {
+        id: 'blocker-routing',
+        label: 'Blocker Routing',
+        source: 'operatorAttention.maintenanceActions',
+        value: `${routineRepairActions.length} routine repair action(s)`,
+        summary: `${blockers.length} blocker(s) observed · ${approvals.length} operator approval gate(s)`,
+      },
+      ...(learning ? [{
+        id: 'learning-loop',
+        label: 'Learning Loop',
+        source: 'projection.closedLoopLearning',
+        value: text(learning.state),
+        summary: `${text(learning.capabilityId)} → ${text(learning.teacherId)} · exam ${learning.examPassed ? 'PASS' : 'WAIT'} · proof ${learning.proofPassed ? 'PASS' : 'WAIT'}`,
+      }] : []),
     ],
+    blockerRouting: {
+      publishedBlockerCount: blockers.length,
+      routineRepairActionCount: routineRepairActions.length,
+      operatorApprovalCount: approvals.length,
+      routineRepairs: routineRepairActions.map((action) => ({
+        actionId: text(action?.actionId, ''),
+        relatedGoal: text(action?.relatedGoal, ''),
+        owner: text(action?.owner, 'UNKNOWN'),
+        exactNextAction: text(action?.exactNextAction, 'Refresh current evidence.'),
+      })),
+    },
     metrics: [
       { label: 'Goals in Feed', value: String(goals.length), detail: 'Canonical goals currently projected by the shared workspace.' },
       { label: 'Queue Depth', value: String(queue.queueDepth ?? 'UNKNOWN'), detail: text(queue.dispatcherState, 'Queue state unknown') },
       { label: 'Open PRs', value: String(openPrCount), detail: text(portfolio.source || projection.portfolioSource, 'GitHub source unavailable') },
-      { label: 'Blockers', value: String(blockers.length), detail: blockers.length ? blockers.slice(0, 3).map((item) => text(item)).join(' · ') : 'No blockers published.' },
+      {
+        label: 'Blockers',
+        value: String(blockers.length),
+        detail: blockers.length
+          ? `${routineRepairActions.length} routine repair action(s) published · ${approvals.length} operator approval gate(s) · ${blockers.slice(0, 3).map((item) => text(item)).join(' · ')}`
+          : 'No blockers published.',
+      },
       { label: 'Runnable Capacity', value: String(runnable.length), detail: runnable.length ? runnable.slice(0, 3).map((item) => text(item)).join(' · ') : 'No runnable OpenClaw capacity published.' },
       { label: 'Live Services', value: String(count(runtime.services)), detail: `Runtime traffic light: ${text(runtime.overallTrafficLight)}` },
+      ...(learning ? [{
+        label: 'Learning Retry Ready',
+        value: learning.retryReady ? 'YES' : 'NO',
+        detail: `${text(learning.lessonId)} · retained ${learning.retained ? 'YES' : 'NO'}`,
+      }] : []),
     ],
   };
 }

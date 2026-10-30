@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <IsPackable>false</IsPackable>
+    <UseAppHost>false</UseAppHost>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="OwnedObservationJobFixture.cs" />
+    <!-- Link the exact production mechanisms, not a test reimplementation. -->
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7EffectiveWriteDenial.cs" Link="R7EffectiveWriteDenial.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7ProcessBoundWriteDenial.cs" Link="R7ProcessBoundWriteDenial.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7ExistingCapabilityObservation.cs" Link="R7ExistingCapabilityObservation.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7RetainedRegionSnapshotDiscovery.cs" Link="R7RetainedRegionSnapshotDiscovery.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7RetainedHandleMetadataDiscovery.cs" Link="R7RetainedHandleMetadataDiscovery.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7NativePrincipalIdentity.cs" Link="R7NativePrincipalIdentity.cs" />
+    <Compile Include="../Stephanos.OriginalR7DaclReadback/R7PrincipalGroupsInventory.cs" Link="R7PrincipalGroupsInventory.cs" />
+  </ItemGroup>
+</Project>

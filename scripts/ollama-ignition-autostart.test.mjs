@@ -100,14 +100,16 @@ test('asynchronous spawn ENOENT is captured before detach and reported as a boun
     platform: 'win32',
     env: { STEPHANOS_OLLAMA_EXECUTABLE: 'C:\\Missing\\ollama.exe' },
     fetchFn: async () => { throw new Error('connection refused'); },
-    spawnFn: () => child,
+    spawnFn: () => {
+      queueMicrotask(() => {
+        const error = Object.assign(new Error('spawn C:\\Missing\\ollama.exe ENOENT'), { code: 'ENOENT' });
+        child.emit('error', error);
+      });
+      return child;
+    },
     readinessTimeoutMs: 0,
     retryIntervalMs: 0,
     log: () => {},
-  });
-  queueMicrotask(() => {
-    const error = Object.assign(new Error('spawn C:\\Missing\\ollama.exe ENOENT'), { code: 'ENOENT' });
-    child.emit('error', error);
   });
   await assert.rejects(pending, /could not start .* ENOENT/i);
   assert.equal(unrefCalled, false);

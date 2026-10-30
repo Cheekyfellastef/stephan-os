@@ -15,7 +15,10 @@
     "webxr-holodeck-baseline-source",
     "spatial-workspace-starting-chamber-v1",
     "stereo-room-grid-renderer",
-    "idea-cube-visual-primitive"
+    "idea-cube-visual-primitive",
+    "shared-workspace-vr-telemetry-v1",
+    "vr-lab-live-telemetry-feed",
+    "vr-atlas-capability-proof-publisher"
   ],
   "eventsPublished": [],
   "eventsConsumed": [],

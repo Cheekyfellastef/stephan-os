@@ -4,6 +4,9 @@ import { join, resolve } from 'node:path';
 import { resolveSharedWorkspacePath } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { VR_PLAYTEST_EVIDENCE_PACKET_SCHEMA_V1 } from '../../shared/agents/vrPlaytestFlywheelBridgeV1.mjs';
+import { buildVrCanonicalEvidenceFanoutV1 } from '../../shared/agents/vrCanonicalEvidenceFanoutV1.mjs';
+import { buildVrResearchWorkspaceProjection } from '../../shared/agents/vrResearchWorkspaceProjectionV1.mjs';
+import { planVrResearchAgentCycle } from '../../shared/agents/vrResearchAgentV1.mjs';
 
 export const VR_PLAYTEST_FEED_ROUTE = '/api/shared-workspace/vr-playtest-feed';
 export const VR_PLAYTEST_LIVE_FEED_SCHEMA_V1 = 'stephanos.vr-playtest-live-feed.v1';
@@ -34,6 +37,69 @@ function packetIsSafe(packet = {}) {
   if (!packet?.flywheel || !packet?.authority) return false;
   if (packet.authority.sourceMutationAllowed === true || packet.authority.runtimeMutationAllowed === true) return false;
   return true;
+}
+
+async function readRepoResearchModels(repoRoot) {
+  const read = async (name) => JSON.parse(await readFile(resolve(repoRoot, 'VR-Research-Lab', name), 'utf8'));
+  const [sourceRegistry, referenceSourceLock, workspaceModel] = await Promise.all([
+    read('knowledge-sources.json'),
+    read('reference-source-lock.json'),
+    read('lab-workspace.json'),
+  ]);
+  return { sourceRegistry, referenceSourceLock, workspaceModel };
+}
+
+function buildResearchIntelligence({
+  sourceRegistry,
+  referenceSourceLock,
+  workspaceModel,
+  latest = null,
+  vrResearchLab = { latest: null, history: [] },
+  starfieldReferenceLab = { latest: null, history: [] },
+  flywheel = {},
+  nowMs = Date.now(),
+  battleBridgeAvailable = false,
+} = {}) {
+  const fanout = buildVrCanonicalEvidenceFanoutV1({
+    sourceRegistry,
+    referenceSourceLock,
+    latest,
+    vrResearchLab,
+    starfieldReferenceLab,
+    flywheel,
+  });
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry,
+    workspaceModel,
+    canonicalEvidenceFanout: fanout,
+    updatedAt: latest?.observedAtUtc || new Date(nowMs).toISOString(),
+    currentTarget: starfieldReferenceLab?.latest ? 'Starfield VR' : workspaceModel?.targets?.[0]?.name,
+    battleBridgeEvidence: latest ? [fanout.latestEvidence] : [],
+    proofRefs: fanout.proofRefs,
+  });
+  const cycle = planVrResearchAgentCycle({
+    nowMs,
+    workspaceProjection: projection,
+    sourceRegistry,
+    availableSurfaces: {
+      openClaw: false,
+      battleBridge: battleBridgeAvailable,
+    },
+  });
+  return Object.freeze({
+    ...fanout,
+    vrResearchAgent: Object.freeze({
+      verdict: cycle.verdict,
+      action: cycle.proposal.action,
+      route: cycle.proposal.route,
+      reason: cycle.proposal.reason,
+      requiresOperator: cycle.proposal.requiresOperator,
+      target: cycle.readModel.target,
+      programmeStage: cycle.readModel.programmeStage,
+      correlationCandidateCount: cycle.readModel.correlationCandidates?.length || 0,
+      analysisQuestionCount: cycle.readModel.analysisQuestions?.length || 0,
+    }),
+  });
 }
 
 async function resolveRuntimeRoot({ root, env, repoRoot }) {
@@ -118,8 +184,14 @@ export async function readVrPlaytestFeed({
   nowMs = Date.now(),
   staleAfterMs = DEFAULT_VR_PLAYTEST_STALE_AFTER_MS,
 } = {}) {
+  const researchModels = await readRepoResearchModels(repoRoot);
   const runtime = await resolveRuntimeRoot({ root, env, repoRoot });
   if (!runtime.ok) {
+    const intelligence = buildResearchIntelligence({
+      ...researchModels,
+      nowMs,
+      battleBridgeAvailable: false,
+    });
     return Object.freeze({
       schemaVersion: VR_PLAYTEST_LIVE_FEED_SCHEMA_V1,
       route: VR_PLAYTEST_FEED_ROUTE,
@@ -132,6 +204,7 @@ export async function readVrPlaytestFeed({
       vrResearchLab: Object.freeze({ latest: null, history: Object.freeze([]) }),
       starfieldReferenceLab: Object.freeze({ latest: null, history: Object.freeze([]) }),
       flywheel: Object.freeze({ learningCandidateCount: 0, improvementCandidateCount: 0, latestLessonId: '' }),
+      intelligence,
     });
   }
 
@@ -158,6 +231,21 @@ export async function readVrPlaytestFeed({
         : 'VR_PLAYTEST_EVIDENCE_UNKNOWN';
   const learningCandidateCount = packets.filter((packet) => packet.flywheel?.learningCandidate === true).length;
   const improvementCandidateCount = packets.filter((packet) => packet.flywheel?.improvementCandidate).length;
+  const flywheel = Object.freeze({
+    learningCandidateCount,
+    improvementCandidateCount,
+    latestLessonId: text(latest?.flywheel?.lessonId),
+    latestProtectReady: latestFreshness === 'current' && latest?.modeProgression?.protectReady === true,
+  });
+  const intelligence = buildResearchIntelligence({
+    ...researchModels,
+    latest,
+    vrResearchLab: { latest: generalHistory[0] || null, history: generalHistory },
+    starfieldReferenceLab: { latest: starfieldHistory[0] || null, history: starfieldHistory },
+    flywheel,
+    nowMs,
+    battleBridgeAvailable: true,
+  });
 
   return Object.freeze({
     schemaVersion: VR_PLAYTEST_LIVE_FEED_SCHEMA_V1,
@@ -179,11 +267,7 @@ export async function readVrPlaytestFeed({
       latest: starfieldHistory[0] || null,
       history: Object.freeze(starfieldHistory),
     }),
-    flywheel: Object.freeze({
-      learningCandidateCount,
-      improvementCandidateCount,
-      latestLessonId: text(latest?.flywheel?.lessonId),
-      latestProtectReady: latestFreshness === 'current' && latest?.modeProgression?.protectReady === true,
-    }),
+    flywheel,
+    intelligence,
   });
 }

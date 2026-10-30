@@ -37,6 +37,29 @@ $wscriptPath = 'C:\Windows\System32\wscript.exe'
 $authorityHead = ''
 $hostProofConsumed = $false
 
+function Resolve-TaskPrincipalSid {
+    param([string]$PrincipalUserId)
+
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) { return '' }
+    try {
+        if ($PrincipalUserId -match '^S-\d-\d+(?:-\d+)+$') {
+            return ([System.Security.Principal.SecurityIdentifier]::new($PrincipalUserId)).Value
+        }
+        return ([System.Security.Principal.NTAccount]::new($PrincipalUserId)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        return ''
+    }
+}
+
+function Test-TaskPrincipalMatchesCurrentUser {
+    param([string]$PrincipalUserId)
+
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentSid = if ($identity -and $identity.User) { [string]$identity.User.Value } else { '' }
+    $principalSid = Resolve-TaskPrincipalSid -PrincipalUserId $PrincipalUserId
+    return (-not [string]::IsNullOrWhiteSpace($currentSid) -and -not [string]::IsNullOrWhiteSpace($principalSid) -and [string]::Equals($principalSid, $currentSid, [System.StringComparison]::Ordinal))
+}
+
 function Assert-NoReparseAncestor {
     param([string]$TargetPath)
     $cursor = [System.IO.Path]::GetFullPath($TargetPath)
@@ -303,9 +326,8 @@ if (-not [string]::Equals($taskExecute, $wscriptPath, [System.StringComparison]:
     -or -not [string]::Equals(([string]$taskAction.Arguments).Trim(), $expectedArguments, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'RECOVERY_MESH_TASK_ACTION_INVALID'
 }
-$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-if (-not [string]::Equals([string]$task.Principal.UserId, $currentUser, [System.StringComparison]::OrdinalIgnoreCase)
-    -or [string]$task.Principal.LogonType -ne 'Interactive'
+if (-not (Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId ([string]$task.Principal.UserId))
+    -or [string]$task.Principal.LogonType -ne 'S4U'
     -or [string]$task.Principal.RunLevel -ne 'Limited') { throw 'RECOVERY_MESH_TASK_PRINCIPAL_INVALID' }
 if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew'
     -or $task.Settings.Hidden -ne $true

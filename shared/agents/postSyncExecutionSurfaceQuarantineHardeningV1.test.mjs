@@ -27,6 +27,7 @@ test('execution-surface quarantine hardening estate is automatically refreshable
   assert.deepEqual(plan.targetIds, [
     POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
     POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
     POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
   ]);
   assert.equal(plan.changedPathCount, QUARANTINE_HARDENING_ESTATE.length);

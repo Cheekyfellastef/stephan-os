@@ -40,7 +40,28 @@
     "Do not reproduce Nintendo game data or require an unauthorised game image for research.",
     "Any local Battle Bridge or Quest 3 experiment remains separately approval- and proof-gated."
   ],
-  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1605, 1606, 1643],
+  "programme_links": [
+    1591,
+    1593,
+    1594,
+    1595,
+    1596,
+    1597,
+    1605,
+    1606,
+    1643
+  ],
   "refresh_owner": 1596,
-  "promotion_rule": "Promote only exact-release, evidence-linked methods from the MIT BetterVR source while keeping emulator, game, graphic-pack and dependency rights separate. Treat the emulator-layer conversion architecture as reusable research knowledge, not as proof that Starfield or other native PC games expose the same hooks."
+  "promotion_rule": "Promote only exact-release, evidence-linked methods from the MIT BetterVR source while keeping emulator, game, graphic-pack and dependency rights separate. Treat the emulator-layer conversion architecture as reusable research knowledge, not as proof that Starfield or other native PC games expose the same hooks.",
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "2e06b31f062408d3293a392df418da0ab37b1f23",
+    "commits_ahead_of_registered_snapshot": 46,
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "botw-bettervr-current",
+    "local_cache_allowed": true
+  }
 }

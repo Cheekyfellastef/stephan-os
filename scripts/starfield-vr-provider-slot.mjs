@@ -67,6 +67,12 @@ export async function buildProviderSlotPlan({ manifestPath, provider }) {
   const providerRoot = path.join(workspaceVrRoot, 'providers');
   const gameRoot = path.resolve(text(manifest.gameRoot));
   const liveSlotPath = path.resolve(text(manifest.liveSlotPath));
+  const gameExecutablePath = path.resolve(text(manifest.gameExecutablePath));
+  const gameExecutableSha256 = text(manifest.gameExecutableSha256).toLowerCase();
+  requireCondition(normalized(gameExecutablePath) === normalized(path.join(gameRoot, 'Starfield.exe')), 'game-executable-path-not-fixed');
+  requireCondition(SHA256.test(gameExecutableSha256), 'game-executable-hash-invalid');
+  requireCondition(await exists(gameExecutablePath), 'game-executable-missing');
+  requireCondition(await sha256File(gameExecutablePath) === gameExecutableSha256, 'game-executable-hash-mismatch');
   requireCondition(normalized(liveSlotPath) === normalized(path.join(gameRoot, 'dxgi.dll')), 'live-slot-path-not-fixed');
 
   const providerSpec = manifest?.providers?.[provider];
@@ -118,6 +124,8 @@ export async function buildProviderSlotPlan({ manifestPath, provider }) {
     workspaceVrRoot,
     providerRoot,
     gameRoot,
+    gameExecutablePath,
+    gameExecutableSha256,
     liveSlotPath,
     provider,
     providerVersion: text(providerSpec.version),
@@ -138,11 +146,21 @@ async function writeReceipt(plan, payload) {
     providerVersion: plan.providerVersion,
     manifestPath: plan.manifestPath,
     gameRoot: plan.gameRoot,
+    gameExecutablePath: plan.gameExecutablePath,
+    gameExecutableSha256: plan.gameExecutableSha256,
     ...payload,
   };
-  await writeJson(receiptPath, receipt);
+
   await writeJson(currentPath, receipt);
-  return receiptPath;
+
+  try {
+    await writeJson(receiptPath, receipt);
+  } catch {
+    // The current receipt is the authoritative durable state. Historical receipt
+    // publication is best-effort once the authoritative state is committed.
+  }
+
+  return currentPath;
 }
 
 async function removeIfPresent(filePath) {
@@ -228,10 +246,6 @@ export async function applyProviderSlot({ manifestPath, provider, apply = false 
       requireCondition(finalHash === item.expectedHash, 'provider-target-hash-mismatch:' + item.role);
     }
 
-    for (const item of committed) {
-      await removeIfPresent(item.backupPath);
-    }
-
     const finalFiles = [];
     for (const entry of plan.entries) {
       finalFiles.push({
@@ -248,6 +262,11 @@ export async function applyProviderSlot({ manifestPath, provider, apply = false 
       changed: true,
       files: finalFiles,
     });
+
+    for (const item of committed) {
+      await removeIfPresent(item.backupPath);
+    }
+
     return Object.freeze({
       ok: true,
       verdict: STARFIELD_VR_PROVIDER_SLOT_READY,

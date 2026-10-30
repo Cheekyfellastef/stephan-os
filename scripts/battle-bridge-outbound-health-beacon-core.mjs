@@ -24,12 +24,16 @@ export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER = 'Cheekyfellastef';
 export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
 export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+export const MAILBOX_INGRESS_PAGE_SIZE = 25;
+export const MAILBOX_INGRESS_MAX_PAGES = 24;
 export const DIRT_ITEM_IDENTITY_SCHEME = 'sha256-domain-separated-path-v1';
 
 const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const MAX_DIRT_IDENTITIES = 64;
+const SYNC_AND_REFRESH_STATUS_PATH = 'status/battle-bridge-sync-and-refresh-current.json';
+const STEPHANOS_CORE_STATUS_PATH = 'status/stephanos-core-daemon-current.json';
 const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'githubSync', path: 'status/battle-bridge-github-sync-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'postSyncRefresh', path: 'status/post-sync-runtime-refresh-current.json', staleAfterMs: 300_000 }),
@@ -43,6 +47,11 @@ const STATUS_SPECS = Object.freeze([
 function text(value, limit = 180) {
   const normalized = String(value ?? '').trim();
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function safeStatusCode(value) {
+  const normalized = text(value, 180).toUpperCase();
+  return normalized && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
 }
 
 function safeSha(value) {
@@ -93,6 +102,7 @@ function recordObservedAt(record = {}) {
   return timestamp(
     record.timestampUtc
     || record.observedAtUtc
+    || record.heartbeatAtUtc
     || record.heartbeatAt
     || record.completedAt
     || record.updatedAtUtc
@@ -321,6 +331,82 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
   });
 }
 
+export function projectAutonomyFacts(record = {}, { nowMs = Date.now(), expectedHead = '' } = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return Object.freeze({
+      observed: false,
+      state: 'UNPROVEN',
+      observedAtUtc: '',
+      ageMs: null,
+      head: '',
+      exactHeadMatch: false,
+      daemonHealthy: false,
+      flywheelCycleRunning: false,
+      flywheelLastStatus: '',
+      flywheelLastAction: '',
+      flywheelLastBlockerCount: null,
+      octopusBuildVerdict: '',
+      octopusNeedsRepair: false,
+      octopusMaterialActionsLastCycle: null,
+      octopusEligibleWorkRemaining: null,
+      octopusProvenSafeFreeLanes: null,
+      octopusSelfHealAttemptCount: null,
+      octopusSelfHealLastVerdict: '',
+      octopusSelfHealLastBlocker: '',
+      octopusSelfHealControlPlaneEscalationCount: null,
+      refillFinalVerdict: '',
+      refillSafeEligibleWorkRemaining: null,
+      refillMaterialActionsSucceeded: null,
+      logicalLaneTruth: '',
+      logicalActiveLaneCount: null,
+      logicalSelectedForAdmissionCount: null,
+      blocker: 'CORE_STATUS_MISSING',
+    });
+  }
+  const observedAtUtc = recordObservedAt(record);
+  const observedMs = Date.parse(observedAtUtc);
+  const futureDated = Number.isFinite(observedMs) && observedMs - nowMs > 60_000;
+  const ageMs = Number.isFinite(observedMs) && !futureDated ? Math.max(0, nowMs - observedMs) : null;
+  const head = recordHead(record);
+  const expected = safeSha(expectedHead);
+  const daemonHealthy = record.daemonHealthy === true;
+  const fresh = !futureDated && ageMs !== null && ageMs <= 60_000;
+  const exactHeadMatch = Boolean(expected && head && expected === head);
+  const state = daemonHealthy && fresh && exactHeadMatch ? 'CURRENT' : (!fresh ? 'STALE' : (!exactHeadMatch ? 'HEAD_MISMATCH' : 'UNHEALTHY'));
+  const safeCount = (value) => numericCount(value);
+  return Object.freeze({
+    observed: true,
+    state,
+    observedAtUtc,
+    ageMs,
+    head,
+    exactHeadMatch,
+    daemonHealthy,
+    flywheelCycleRunning: record.flywheelCycleRunning === true,
+    flywheelLastStatus: safeStatusCode(record.flywheelLastStatus),
+    flywheelLastAction: safeStatusCode(record.flywheelLastAction),
+    flywheelLastBlockerCount: safeCount(record.flywheelLastBlockerCount),
+    octopusBuildVerdict: safeStatusCode(record.octopusBuildVerdict),
+    octopusNeedsRepair: record.octopusNeedsRepair === true,
+    octopusMaterialActionsLastCycle: safeCount(record.octopusMaterialActionsLastCycle),
+    octopusEligibleWorkRemaining: safeCount(record.octopusEligibleWorkRemaining),
+    octopusProvenSafeFreeLanes: safeCount(record.octopusProvenSafeFreeLanes),
+    octopusSelfHealAttemptCount: safeCount(record.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeStatusCode(record.octopusSelfHealLastVerdict),
+    octopusSelfHealLastBlocker: safeStatusCode(record.octopusSelfHealLastBlocker),
+    octopusSelfHealControlPlaneEscalationCount: safeCount(record.octopusSelfHealControlPlaneEscalationCount),
+    refillFinalVerdict: safeStatusCode(record.refillFinalVerdict),
+    refillSafeEligibleWorkRemaining: safeCount(record.refillSafeEligibleWorkRemaining),
+    refillMaterialActionsSucceeded: safeCount(record.refillMaterialActionsSucceeded),
+    logicalLaneTruth: safeStatusCode(record.logicalLaneTruth),
+    logicalActiveLaneCount: safeCount(record.logicalActiveLaneCount),
+    logicalSelectedForAdmissionCount: safeCount(record.logicalSelectedForAdmissionCount),
+    blocker: futureDated
+      ? 'CORE_STATUS_FUTURE_DATED'
+      : text(record.octopusSelfHealLastBlocker || record.refillBlocker || record.flywheelLastError || '', 160),
+  });
+}
+
 function commandExpiryUtc(comment = {}) {
   const body = String(comment?.body || '');
   const match = body.match(/```stephanos-battle-bridge-command\s*([\s\S]*?)```/i);
@@ -396,16 +482,54 @@ export function projectMailboxIngressLiveness(comments = [], {
   return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 }
 
-function combineMailboxStatus(localStatus, ingressObservation) {
+export function projectMailboxPulseFacts(record = {}) {
+  const pulse = record?.mailboxPulse;
+  const compatibleRecord = record?.schemaVersion === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || (
+      record?.schemaVersion === 'shared-agent-workspace-record.v1'
+      && record?.schema === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+      && record?.statusId === 'battle-bridge-sync-and-refresh-current'
+    );
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+    || !compatibleRecord
+    || !pulse || typeof pulse !== 'object' || Array.isArray(pulse)) {
+    return Object.freeze({
+      observed: false,
+      observedAtUtc: '',
+      sourceHead: '',
+      ok: null,
+      classification: '',
+      blocker: '',
+      detailCode: '',
+      finalVerdict: '',
+      pulseAttempted: false,
+    });
+  }
+  return Object.freeze({
+    observed: record.mailboxPulseObserved === true,
+    observedAtUtc: timestamp(record.observedAtUtc),
+    sourceHead: safeSha(record.sourceHead),
+    ok: typeof pulse.ok === 'boolean' ? pulse.ok : null,
+    classification: text(pulse.classification, 120).toUpperCase(),
+    blocker: text(pulse.blocker, 180),
+    detailCode: safeStatusCode(pulse.detailCode),
+    finalVerdict: text(pulse.finalVerdict, 120).toUpperCase(),
+    pulseAttempted: pulse.pulseAttempted === true,
+  });
+}
+
+function combineMailboxStatus(localStatus, ingressObservation, mailboxPulseFacts = null) {
   if (!ingressObservation || ingressObservation.state === 'OBSERVED') return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation?.state || 'UNKNOWN',
     ingressBlocker: ingressObservation?.blocker || '',
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
   if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
   return Object.freeze({
     ...localStatus,
@@ -413,19 +537,22 @@ function combineMailboxStatus(localStatus, ingressObservation) {
     blocker: ingressObservation.blocker,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
 }
 
-export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
+export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, syncAndRefreshRecord = null, coreStatusRecord = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
   const head = safeSha(sourceHead);
   if (!head) throw new Error('OUTBOUND_BEACON_SOURCE_HEAD_INVALID');
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
+  const mailboxPulseFacts = projectMailboxPulseFacts(syncAndRefreshRecord || {});
   const surfaces = STATUS_SPECS.map((spec) => {
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
-    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
+    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
+  const autonomy = projectAutonomyFacts(coreStatusRecord, { nowMs, expectedHead: head });
   const blockers = telemetry.repairCandidates
     .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
@@ -446,6 +573,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     operatorAuthorizationState: telemetry.operatorAuthorizationState,
     nextAutomaticAction: telemetry.nextAutomaticAction,
     telemetry,
+    autonomy,
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
@@ -455,7 +583,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     liveOpenClawUpdateAllowed: false,
     pcRestartAllowed: false,
     secretValuesPublished: false,
-    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_BEACON_PUBLISHED',
+    // A completed observation is durable locally before external publication.
+    // Only the runner's publication result describes that transport outcome.
+    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY',
   });
 }
 
@@ -476,6 +606,7 @@ function runFixed(executable, args, options = {}) {
     shell: false,
     windowsHide: true,
     timeout: options.timeout || 60_000,
+    input: options.input,
     maxBuffer: MAX_GITHUB_BYTES,
   });
   return Object.freeze({
@@ -514,30 +645,122 @@ function existingBeaconCommentId(repoRoot) {
   return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function recentMailboxComments(repoRoot, observedAt = new Date()) {
-  const exactSinceMs = observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS;
-  const bucketMs = 5 * 60 * 1000;
-  const bucketedSinceMs = Math.floor(exactSinceMs / bucketMs) * bucketMs;
-  const since = new Date(bucketedSinceMs).toISOString();
-  const endpoint = `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`;
-  const observation = readBrokeredGithubJson({
-    key: `command-mailbox-comments-window:${MAILBOX_RECEIPT_GITHUB_ISSUE}:${since}`,
-    endpoint,
-    args: ['--paginate', '--slurp'],
-    ttlMs: 90_000,
-    maxStaleMs: 5 * 60_000,
-    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
-    cwd: repoRoot,
-  });
-  if (!observation.ok || !Array.isArray(observation.payload)) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
-  return observation.payload
-    .flat()
-    .filter((comment) => comment && typeof comment === 'object')
+function parseJsonObject(response, failureCode) {
+  if (!response?.ok) throw new Error(failureCode);
+  try {
+    const parsed = JSON.parse(response.stdout);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(failureCode);
+    return parsed;
+  } catch {
+    throw new Error(failureCode);
+  }
+}
+
+function parseJsonArray(response, failureCode) {
+  if (!response?.ok) throw new Error(failureCode);
+  try {
+    const parsed = JSON.parse(response.stdout);
+    if (!Array.isArray(parsed)) throw new Error(failureCode);
+    return parsed.filter((value) => value && typeof value === 'object');
+  } catch {
+    throw new Error(failureCode);
+  }
+}
+
+export function readRecentMailboxComments(repoRoot, observedAt, {
+  runCommand = runFixed,
+  pageSize = MAILBOX_INGRESS_PAGE_SIZE,
+  maxPages = MAILBOX_INGRESS_MAX_PAGES,
+} = {}) {
+  const sinceMs = observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS;
+  const issueResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    'api',
+    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}`,
+  ], { cwd: repoRoot, timeout: 120_000 });
+  const issue = parseJsonObject(issueResponse, 'OUTBOUND_BEACON_MAILBOX_INGRESS_ISSUE_READ_FAILED');
+  const commentCount = Number(issue.comments);
+  if (!Number.isSafeInteger(commentCount) || commentCount < 0) {
+    throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_COMMENT_COUNT_INVALID');
+  }
+  if (commentCount === 0) return [];
+
+  const boundedPageSize = Math.max(1, Math.min(100, Number(pageSize) || MAILBOX_INGRESS_PAGE_SIZE));
+  const boundedMaxPages = Math.max(1, Math.min(48, Number(maxPages) || MAILBOX_INGRESS_MAX_PAGES));
+  const lastPage = Math.max(1, Math.ceil(commentCount / boundedPageSize));
+  const collected = [];
+  let cutoffReached = false;
+
+  const upperTailPage = lastPage + 1;
+  const upperTailResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    'api',
+    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${upperTailPage}`,
+  ], { cwd: repoRoot, timeout: 120_000 });
+  const upperTailComments = parseJsonArray(
+    upperTailResponse,
+    'OUTBOUND_BEACON_MAILBOX_INGRESS_TAIL_PROBE_FAILED',
+  );
+  collected.push(...upperTailComments);
+
+  for (let offset = 0; offset < boundedMaxPages; offset += 1) {
+    const page = lastPage - offset;
+    if (page < 1) {
+      cutoffReached = true;
+      break;
+    }
+    const pageResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+      'api',
+      `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${page}`,
+    ], { cwd: repoRoot, timeout: 120_000 });
+    const comments = parseJsonArray(pageResponse, 'OUTBOUND_BEACON_MAILBOX_INGRESS_PAGE_READ_FAILED');
+    collected.push(...comments);
+    const oldestMs = Math.min(...comments
+      .map((comment) => Date.parse(timestamp(comment?.created_at || comment?.createdAt)))
+      .filter(Number.isFinite));
+    if (Number.isFinite(oldestMs) && oldestMs <= sinceMs) {
+      cutoffReached = true;
+      break;
+    }
+    if (page === 1) {
+      cutoffReached = true;
+      break;
+    }
+  }
+
+  for (const tailPage of [lastPage, upperTailPage]) {
+    const finalTailResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+      'api',
+      `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${tailPage}`,
+    ], { cwd: repoRoot, timeout: 120_000 });
+    const finalTailComments = parseJsonArray(
+      finalTailResponse,
+      'OUTBOUND_BEACON_MAILBOX_INGRESS_TAIL_REPROBE_FAILED',
+    );
+    collected.push(...finalTailComments);
+  }
+
+  if (!cutoffReached) {
+    throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW');
+  }
+
+  const uniqueComments = [...new Map(collected
+    .map((comment) => [String(comment?.id || ''), comment])
+    .filter(([id]) => id))
+    .values()];
+
+  return uniqueComments
     .filter((comment) => {
-      const createdMs = Date.parse(String(comment?.created_at || comment?.createdAt || ''));
-      return Number.isFinite(createdMs) && createdMs >= exactSinceMs;
+      const createdAtMs = Date.parse(timestamp(comment?.created_at || comment?.createdAt));
+      return Number.isFinite(createdAtMs) && createdAtMs >= sinceMs;
     })
-    .sort((left, right) => Number(left.id) - Number(right.id));
+    .sort((left, right) => {
+      const leftMs = Date.parse(timestamp(left?.created_at || left?.createdAt));
+      const rightMs = Date.parse(timestamp(right?.created_at || right?.createdAt));
+      return leftMs - rightMs || Number(left?.id || 0) - Number(right?.id || 0);
+    });
+}
+
+function recentMailboxComments(repoRoot, observedAt) {
+  return readRecentMailboxComments(repoRoot, observedAt);
 }
 
 function publishBeacon(repoRoot, body) {
@@ -549,9 +772,9 @@ function publishBeacon(repoRoot, body) {
     heartbeatMs: 5 * 60_000,
     publish: (nextBody) => {
       const args = existingId
-        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
-        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
-      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '--input', '-']
+        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '--input', '-'];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000, input: JSON.stringify({ body: nextBody }) });
       if (result.ok && !existingId) {
         invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
       }
@@ -576,6 +799,8 @@ export function runBattleBridgeOutboundHealthBeacon({
   const sourceHead = exactLocalHead(repoRoot);
   const observedAt = now();
   const statusRecords = Object.fromEntries(STATUS_SPECS.map((spec) => [spec.id, readJsonBounded(join(workspaceRoot, ...spec.path.split('/')))]));
+  const coreStatusRecord = readJsonBounded(join(workspaceRoot, ...STEPHANOS_CORE_STATUS_PATH.split('/')));
+  const syncAndRefreshRecord = readJsonBounded(join(workspaceRoot, ...SYNC_AND_REFRESH_STATUS_PATH.split('/')));
   let mailboxIngressObservation;
   try {
     mailboxIngressObservation = projectMailboxIngressLiveness(recentMailboxComments(repoRoot, observedAt), {
@@ -589,7 +814,7 @@ export function runBattleBridgeOutboundHealthBeacon({
       pendingRequestCount: 0,
     });
   }
-  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, now: observedAt });
+  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, syncAndRefreshRecord, coreStatusRecord, now: observedAt });
   const publication = publish(repoRoot, buildBattleBridgeOutboundBeaconBody(record));
   return Object.freeze({ ok: true, publication, sourceHead, issueNumber: BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE, record });
 }

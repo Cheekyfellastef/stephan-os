@@ -22,7 +22,24 @@
     "profile publishing and community validation",
     "beginner-oriented failure prevention"
   ],
-  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "programme_links": [
+    1593,
+    1594,
+    1595,
+    1596,
+    1597
+  ],
   "refresh_owner": 1596,
-  "promotion_rule": "Study public behaviour, workflow and metadata architecture. Do not copy, redistribute or commercially reuse source without permission; treat UEVR and profile artefacts under their own rights."
+  "promotion_rule": "Study public behaviour, workflow and metadata architecture. Do not copy, redistribute or commercially reuse source without permission; treat UEVR and profile artefacts under their own rights.",
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "20b0a47b8a2f0078ccc31e200c9786b147531662",
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "uevr-deluxe-current-analysis",
+    "local_cache_allowed": false,
+    "reuse_class": "analysis-only"
+  }
 }

@@ -115,6 +115,7 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   '.github/workflows/operator-merge-approval-gate.yml',
   '.github/workflows/independent-merge-security-review.yml',
   '.github/workflows/build-stephanos-ui.yml',
+  '.github/workflows/deploy-stephanos-pages.yml',
   '.github/workflows/pr-clean.yml',
   '.github/workflows/exact-head-review-dispatch.yml',
   '.github/workflows/battle-bridge-publisher-proof.yml',
@@ -133,6 +134,9 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
   'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
   'shared/agents/operatorMergeReviewArtifactV1.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+  'shared/agents/protectedMergeReadOnlyPriorFailureV1.mjs',
+  'shared/agents/protectedWorkflowDispatchMailboxV1.mjs',
+  'scripts/dispatch-protected-merge-from-mailbox.mjs',
   'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
   'shared/agents/providerNeutralReviewV1.mjs',
   'shared/agents/qualifiedSpecialistReviewV1.mjs',
@@ -142,7 +146,9 @@ export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
   'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
   'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
+  'shared/agents/windowsAuthorityStephanosCoreDaemonReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+  'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 

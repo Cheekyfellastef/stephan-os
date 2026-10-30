@@ -29,9 +29,22 @@ on:
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
 
 jobs:
   scheduler-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -46,11 +59,16 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             shared/runtime/missionScheduler*.test.mjs \
+            shared/runtime/missionEngineV1.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
   runtime-guardrail-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -72,6 +90,10 @@ jobs:
             stephanos-server/tests/provider-routing.test.js
 
   surface-ignition-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -86,9 +108,11 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             scripts/stephanos-build-utils.test.mjs \
+            shared/agents/buildStephanosUiParallelWorkflow.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs \
+            scripts/sovereign-commander-ui-4173-repair.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
             shared/agents/autonomyBuildTrackV1.test.mjs \
@@ -97,12 +121,28 @@ jobs:
             shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
             shared/agents/missionControllerCapacityRouterV1.test.mjs \
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            shared/agents/flywheelAgentUpliftV1.test.mjs \
+            shared/agents/starfieldVrOutcomeOwnershipSeedV1.test.mjs \
+            shared/agents/agentSystem.test.mjs \
+            shared/runtime/upliftWorkspaceProjectionV1.test.mjs \
+            shared/runtime/fullSovereigntySeedV1.test.mjs \
+            shared/ai/missionKernelV1.test.mjs \
+            stephanos-ui/src/components/upliftWorkspaceSurfaces.test.mjs \
+            tests/command-deck-protected-canon.test.mjs \
+            stephanos-ui/src/ai/missionExecutionEngine.test.mjs \
+            stephanos-ui/src/state/missionBridge.test.mjs \
             stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
             stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
+            stephanos-server/services/flywheelCanonicalGoalAdmissionService.test.js \
+            stephanos-server/services/flywheelLearningGoalBridgeService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs
 
   vr-research-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -117,9 +157,21 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             shared/agents/vrResearchAgentV1.test.mjs \
-            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs
+            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs \
+            shared/agents/sovereignCommanderVrResourceGovernor.test.mjs \
+            shared/agents/chatGptParticipantBridgeV1.test.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.test.mjs \
+            scripts/starfield-vr-launcher-source.test.mjs \
+            scripts/starfield-vr-storage-telemetry.test.mjs \
+            scripts/starfield-vr-project-performance-loop.test.mjs \
+            scripts/starfield-vr-crash-recovery.test.mjs \
+            scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
   build:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

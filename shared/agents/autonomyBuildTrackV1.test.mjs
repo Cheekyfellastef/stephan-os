@@ -19,6 +19,35 @@ test('heartbeat track shows safe idle before an eligible goal exists', () => {
   assert.equal(track.autonomousLoopProven, false);
 });
 
+test('canonical programme HOLD is exposed instead of masquerading as an empty goal queue', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-10-08T04:00:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'PARKED_BLOCKERS_ONLY',
+      programmeStatus: 'HOLD',
+      programmeBlockers: ['active-lane-execution-receipt-missing', 'critical-backlog-active-lane-status-mismatch'],
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'ELIGIBLE_GOAL').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.blocker, 'PROGRAMME_ADMISSION_HOLD:active-lane-execution-receipt-missing');
+  assert.match(track.exactNextAction, /canonical programme blocker/);
+  assert.equal(track.autonomousLoopProven, false);
+});
+
+test('ordinary empty queue retains WAITING rather than borrowing programme HOLD', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-10-08T04:00:01.000Z',
+    conveyorResult: { ok: true, classification: 'PARKED_BLOCKERS_ONLY', programmeStatus: 'READY', programmeBlockers: [] },
+  });
+  assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.currentState, 'WAITING');
+  assert.equal(track.blocker, '');
+});
+
 test('heartbeat track proves select claim source test and terminal receipt when a real build succeeds', () => {
   const track = projectHeartbeatAutonomyBuildTrack({
     timestampUtc: '2026-09-15T12:01:00.000Z',

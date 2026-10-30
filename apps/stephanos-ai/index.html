@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stephanos AI</title>
+  <link rel="stylesheet" href="./workspace.css" />
+</head>
+<body>
+  <div class="space-layer"></div>
+  <main class="shell" aria-label="Stephanos AI workspace">
+    <aside class="agent-rail">
+      <div class="brand">
+        <div class="brand-mark">✦</div>
+        <div><strong>Stephanos</strong><small>HUMAN + AI OPERATING SYSTEM</small></div>
+      </div>
+      <div class="rail-heading"><span>AGENTS</span><span class="truth-pill">live route</span></div>
+      <nav id="agentList" class="agent-list" aria-label="Project agents"></nav>
+      <div class="rail-heading group-heading"><span>GROUP CHATS</span></div>
+      <nav id="groupList" class="agent-list groups" aria-label="Project groups"></nav>
+    </aside>
+
+    <section class="conversation-stage">
+      <header class="conversation-header">
+        <div>
+          <p class="eyebrow">ONE PROJECT · MANY AGENTS · ONE CONVERSATION FABRIC</p>
+          <h1 id="targetTitle">Stephanos AI</h1>
+          <p id="targetSubtitle">Chat with the whole project, agents, and teams.</p>
+        </div>
+        <div class="route-badge"><span class="pulse"></span><span id="routeLabel">Canonical AI route</span></div>
+      </header>
+
+      <section id="welcome" class="welcome">
+        <div class="orbit"></div>
+        <p class="kicker">STEPHANOS AI</p>
+        <h2>Talk to <span>everyone.</span></h2>
+        <p class="lede">One quiet surface over the project’s agents, knowledge, goals, tools, and governed execution paths.</p>
+        <div class="action-grid">
+          <button data-prompt="Show me the current project status and what needs attention next."><b>Get Status</b><span>Ask for the project truth</span></button>
+          <button data-prompt="@Flywheel what have you learned recently and what should improve next?"><b>Learn</b><span>Talk to the Flywheel</span></button>
+          <button data-prompt="@Sovereign Commander show me the latest Battle Bridge telemetry."><b>Command</b><span>Address Sovereign Commander</span></button>
+          <button data-prompt="Ask the builders what is merge-ready and what is blocked."><b>Coordinate</b><span>Bring the build fabric together</span></button>
+        </div>
+      </section>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <form id="composer" class="composer">
+        <div class="composer-glow"></div>
+        <textarea id="prompt" rows="1" placeholder="Message Stephanos AI…" aria-label="Message Stephanos AI"></textarea>
+        <div class="composer-footer">
+          <span id="addressChip" class="address-chip">Everyone</span>
+          <span class="hint">Enter to send · Shift+Enter for newline</span>
+          <button id="sendButton" class="send" type="submit" aria-label="Send message">➜</button>
+        </div>
+      </form>
+    </section>
+
+    <aside class="context-rail">
+      <section class="context-card">
+        <div class="card-title"><span>PROJECT CONTEXT</span><span class="live-dot"></span></div>
+        <dl>
+          <div><dt>Conversation surface</dt><dd>Stephanos AI</dd></div>
+          <div><dt>Backend path</dt><dd>/api/ai/chat</dd></div>
+          <div><dt>Target</dt><dd id="contextTarget">Everyone</dd></div>
+          <div><dt>Shared continuity</dt><dd>backend-governed</dd></div>
+        </dl>
+      </section>
+      <section class="context-card">
+        <div class="card-title"><span>ROUTE TRUTH</span><span id="healthDot" class="status-dot unknown"></span></div>
+        <dl>
+          <div><dt>Stephanos router</dt><dd id="routerTruth">not yet observed</dd></div>
+          <div><dt>Direct agent presence</dt><dd id="presenceTruth">unknown until proven</dd></div>
+          <div><dt>Last response</dt><dd id="lastResponse">none</dd></div>
+        </dl>
+      </section>
+      <section class="context-card">
+        <div class="card-title"><span>IDENTITY FABRIC</span></div>
+        <p class="context-copy">Agent tabs change the addressed project identity while preserving the same Stephanos conversation route. No separate pretend chatbot is created for each tab.</p>
+      </section>
+      <section class="context-card accent">
+        <div class="card-title"><span>SPATIAL READY</span></div>
+        <p class="context-copy">These identities are intended to map to the same agents in the future Spatial Workspace, so 2D chat and 3D embodiment remain two surfaces over one identity.</p>
+      </section>
+    </aside>
+  </main>
+  <script type="module" src="./workspace.js"></script>
+</body>
+</html>
