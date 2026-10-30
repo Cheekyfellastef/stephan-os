@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -10,12 +11,17 @@ import { RESCUE_ISLAND_NATIVE_HOST_FILES, RESCUE_ISLAND_NATIVE_HOST_RELATIVE,
   resolveRescueIslandNativeHostV1 } from './rescueIslandNativeHostLocationV1.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+// Derive the fixture from the checkout, not the observer's own allowlist.
+// This includes tracked metadata such as both projects' .gitignore files.
+const trackedNativeFiles = execFileSync('git', ['ls-files', '-z', '--',
+  'src/windows/Stephanos.RescueIslandHost', 'src/windows/Stephanos.RescueIslandCustody'],
+{ cwd: repo, encoding: 'utf8' }).split('\0').filter(Boolean);
 function fixture(t) {
   const base = resolve(tmpdir()), root = mkdtempSync(join(base, 'island-host-location-'));
   assert.ok(!relative(base, root).startsWith('..'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, '.git'));
-  for (const path of Object.keys(RESCUE_ISLAND_NATIVE_SOURCE_BLOBS)) {
+  for (const path of trackedNativeFiles) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(repo, path), join(root, path));
   }
@@ -39,8 +45,14 @@ test('uses the existing generated-estate classification without exempting source
   assert.equal(evaluateGitStatusForIgnition('?? .stephanos/local-state-checkpoints/\n').meaningfulEntries.length, 1);
 });
 
-test('a complete inventory of arbitrary binaries cannot become an approved host', t => {
-  const f = fixture(t); rejects(f.root, 'ISLAND_HOST_NATIVE_ARTIFACT_CHANGED');
+test('the actual tracked native inventory reaches artifact validation without admitting arbitrary binaries', t => {
+  const f = fixture(t);
+  for (const project of ['Stephanos.RescueIslandHost', 'Stephanos.RescueIslandCustody']) {
+    const path = `src/windows/${project}/.gitignore`;
+    assert.ok(trackedNativeFiles.includes(path));
+    assert.deepEqual(readFileSync(join(f.root, path)), readFileSync(join(repo, path)));
+  }
+  rejects(f.root, 'ISLAND_HOST_NATIVE_ARTIFACT_CHANGED');
 });
 
 test('oversized artifacts are refused before reading their contents', t => {

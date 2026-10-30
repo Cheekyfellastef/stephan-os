@@ -87,7 +87,9 @@ function verifySource(root) {
     const expected = Object.keys(RESCUE_ISLAND_NATIVE_SOURCE_BLOBS)
       .filter(p => p.startsWith(directory + '/')).map(p => p.slice(directory.length + 1));
     physical(root, join(root, directory), true);
-    if (readdirSync(join(root, directory)).some(name => ![...expected, 'README.md', 'bin', 'obj'].includes(name)))
+    // Existing checkout metadata is not a native build input. Keep this exact
+    // name allowance separate from the pinned source/project inventory.
+    if (readdirSync(join(root, directory)).some(name => ![...expected, '.gitignore', 'README.md', 'bin', 'obj'].includes(name)))
       held('ISLAND_HOST_NATIVE_SOURCE_INVENTORY_CHANGED');
   }
   for (const [path, blob] of Object.entries(RESCUE_ISLAND_NATIVE_SOURCE_BLOBS)) {
