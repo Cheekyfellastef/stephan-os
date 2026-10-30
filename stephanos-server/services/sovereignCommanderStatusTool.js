@@ -10,6 +10,11 @@ const MAX_RESPONSE_BYTES = 16 * 1024;
 const MAX_HEALTH_AGE_MS = 60_000;
 const MAX_FUTURE_SKEW_MS = 5_000;
 const TIMEOUT_MS = 2_500;
+const MAX_CONFIGURED_DELAY_MS = 24 * 60 * 60_000;
+
+function safeBoolean(value) {
+  return typeof value === 'boolean' ? value : null;
+}
 
 function safeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000 ? value : null;
@@ -26,6 +31,76 @@ function isoTimestamp(value) {
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : '';
 }
 
+function observedEventTimestamp(value, observedAtMs, nowMs) {
+  const timestamp = isoTimestamp(value);
+  const time = Date.parse(timestamp);
+  return timestamp && time <= observedAtMs && time <= nowMs ? timestamp : '';
+}
+
+function safeCycleId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(value)
+    ? value : '';
+}
+
+function safeSourceHead(value) {
+  return typeof value === 'string' && /^[a-f0-9]{40}$/i.test(value) ? value.toLowerCase() : '';
+}
+
+function guardianOperationalState(guardian) {
+  if (guardian.timeoutCustodyHeld === true) return 'HELD';
+  // A running maintenance operation legitimately holds its reservation.
+  if (guardian.running === true || guardian.maintenanceInFlight === true) return 'WORKING';
+  if (guardian.custodyHeld === true) return 'HELD';
+  if (guardian.enabled === false) return 'DISABLED';
+  if (guardian.enabled !== true || guardian.running !== false
+    || guardian.maintenanceInFlight !== false || guardian.timeoutCustodyHeld !== false
+    || guardian.custodyHeld !== false) return 'UNKNOWN';
+  if (guardian.scheduled === true) return 'WAITING';
+  return guardian.scheduled === false ? 'NO_NEXT_CYCLE' : 'UNKNOWN';
+}
+
+function projectGuardian(guardian, observedAtMs, nowMs) {
+  if (!guardian || typeof guardian !== 'object' || Array.isArray(guardian)) return null;
+  const lastCompletedAtUtc = observedEventTimestamp(guardian.lastCompletedAtUtc, observedAtMs, nowMs);
+  const custody = guardian.persistentCustody;
+  const projected = {
+    enabled: safeBoolean(guardian.enabled),
+    running: safeBoolean(guardian.running),
+    scheduled: safeBoolean(guardian.scheduled),
+    maintenanceInFlight: safeBoolean(guardian.maintenanceInFlight),
+    timeoutCustodyHeld: safeBoolean(guardian.timeoutCustodyHeld),
+    custodyHeld: custody && typeof custody === 'object' && !Array.isArray(custody)
+      ? safeBoolean(custody.held) : null,
+    cycleCount: safeInteger(guardian.cycleCount),
+    successCount: safeInteger(guardian.successCount),
+    failureCount: safeInteger(guardian.failureCount),
+    consecutiveFailureCount: safeInteger(guardian.consecutiveFailureCount),
+    currentCycleId: safeCycleId(guardian.currentCycleId),
+    lastCycleId: safeCycleId(guardian.lastCycleId),
+    lastStartedAtUtc: observedEventTimestamp(guardian.lastStartedAtUtc, observedAtMs, nowMs),
+    lastCompletedAtUtc,
+    lastCompletedAgeMs: lastCompletedAtUtc ? nowMs - Date.parse(lastCompletedAtUtc) : null,
+    lastOk: safeBoolean(guardian.lastOk),
+    lastFinalVerdict: safeToken(guardian.lastFinalVerdict),
+    lastBlocker: safeToken(guardian.lastBlocker),
+    lastActionId: safeToken(guardian.lastActionId, 96),
+    lastActionOk: safeBoolean(guardian.lastActionOk),
+    lastReportOk: safeBoolean(guardian.lastReportOk),
+    lastReportOutcome: safeToken(guardian.lastReportOutcome, 64),
+    lastReportStatus: safeToken(guardian.lastReportStatus, 64),
+    lastReportBlocker: safeToken(guardian.lastReportBlocker),
+    // This identifies the last qualified maintenance operation, not the
+    // currently installed helper or the source loaded by this daemon.
+    lastSourceHead: safeSourceHead(guardian.lastSourceHead),
+    // The original delay passed to the existing timer is not a countdown or
+    // a proven next-attempt timestamp. Never infer a due time from a fresh GET.
+    configuredRetryDelayMs: guardian.scheduled === true
+      && Number.isSafeInteger(guardian.nextDelayMs) && guardian.nextDelayMs >= 0
+      && guardian.nextDelayMs <= MAX_CONFIGURED_DELAY_MS ? guardian.nextDelayMs : null,
+  };
+  return Object.freeze({ ...projected, operationalState: guardianOperationalState(projected) });
+}
+
 function held(reason = 'COMMANDER_HEALTH_UNVERIFIED') {
   return Object.freeze({
     schemaVersion: COMMANDER_HEALTH_PROJECTION_SCHEMA,
@@ -34,6 +109,7 @@ function held(reason = 'COMMANDER_HEALTH_UNVERIFIED') {
     state: 'UNKNOWN',
     blocker: reason,
     observedAtUtc: '',
+    heartbeatAgeMs: null,
     capabilityVersion: '',
     guardian: null,
     localLoopbackOnly: true,
@@ -56,25 +132,11 @@ export function projectLocalCommanderHealth(payload, nowMs = Date.now()) {
   }
   const observedAtUtc = isoTimestamp(payload.observedAtUtc);
   const observedAtMs = Date.parse(observedAtUtc);
-  if (!observedAtUtc || observedAtMs > nowMs + MAX_FUTURE_SKEW_MS
+  if (!Number.isFinite(nowMs) || !observedAtUtc || observedAtMs > nowMs + MAX_FUTURE_SKEW_MS
     || nowMs - observedAtMs > MAX_HEALTH_AGE_MS) {
     return held('COMMANDER_HEALTH_TIMESTAMP_NOT_CURRENT');
   }
-  const guardian = payload.continuousRepairGuardian;
-  const safeGuardian = guardian && typeof guardian === 'object' && !Array.isArray(guardian)
-    ? Object.freeze({
-      enabled: guardian.enabled === true,
-      running: guardian.running === true,
-      scheduled: guardian.scheduled === true,
-      cycleCount: safeInteger(guardian.cycleCount),
-      successCount: safeInteger(guardian.successCount),
-      failureCount: safeInteger(guardian.failureCount),
-      lastOk: guardian.lastOk === true ? true : guardian.lastOk === false ? false : null,
-      lastFinalVerdict: safeToken(guardian.lastFinalVerdict),
-      lastBlocker: safeToken(guardian.lastBlocker),
-      lastCompletedAtUtc: isoTimestamp(guardian.lastCompletedAtUtc),
-    })
-    : null;
+  const safeGuardian = projectGuardian(payload.continuousRepairGuardian, observedAtMs, nowMs);
   return Object.freeze({
     schemaVersion: COMMANDER_HEALTH_PROJECTION_SCHEMA,
     available: true,
@@ -82,6 +144,7 @@ export function projectLocalCommanderHealth(payload, nowMs = Date.now()) {
     state: payload.ok === true ? 'SERVICE_REACHABLE' : 'SERVICE_DEGRADED',
     blocker: payload.ok === true ? '' : 'COMMANDER_HEALTH_NOT_READY',
     observedAtUtc,
+    heartbeatAgeMs: observedAtMs <= nowMs ? nowMs - observedAtMs : null,
     capabilityVersion: safeToken(payload.capabilityVersion, 100),
     guardian: safeGuardian,
     localLoopbackOnly: true,
