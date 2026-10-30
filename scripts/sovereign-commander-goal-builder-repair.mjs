@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
@@ -267,9 +268,23 @@ export function runFixedGoalBuilderRepairStep(step) {
 
 export function runSovereignCommanderGoalBuilderRepair({
   runStep = runFixedGoalBuilderRepairStep,
+  readResourceAdmission,
   readWorkerHeartbeatAgeMs = readGoalBuilderWorkerHeartbeatAgeMs,
 } = {}) {
   const steps = [];
+  const resourceAllowed = () => {
+    try {
+      if (readResourceAdmission) return readResourceAdmission()?.ok === true;
+      if (runStep !== runFixedGoalBuilderRepairStep) return true; // isolated step fixtures only
+      return inspectStephanosNativeCapacityGamingAdmissionV1({
+        workspaceRoot: 'C:\\Users\\Stephan Callear\\Documents\\Stephanos-openclaw-workspace', repoRoot,
+      }).ok === true;
+    } catch { return false; }
+  };
+  const resourceHold = () => Object.freeze({ok:false,schemaVersion:SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
+    repairApplied:steps.length>0,blocker:'SOVEREIGN_GOAL_BUILDER_RESOURCE_GOVERNOR_HOLD',
+    steps:Object.freeze(steps),canonicalGoalFabricOnly:true,duplicateSchedulerAllowed:false,
+    mergeAuthority:false,arbitraryShellAllowed:false,finalVerdict:'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED'});
   const workerAllowed = () => {
     try {
       const age = readWorkerHeartbeatAgeMs();
@@ -283,8 +298,10 @@ export function runSovereignCommanderGoalBuilderRepair({
   // The supervisor can itself reconcile/dispatch. Check before the first step,
   // then sample again at each subsequent mutation boundary.
   if (!workerAllowed()) return workerHold();
+  if (!resourceAllowed()) return resourceHold();
   const initialSupervisor = runStep(STEPS.supervisor);
   steps.push(compactStep(STEPS.supervisor, initialSupervisor));
+  if (!resourceAllowed()) return resourceHold();
   const initialLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, initialLaneStatus));
 
@@ -336,6 +353,7 @@ export function runSovereignCommanderGoalBuilderRepair({
   // shared boundary. Heartbeat loss is never permission to start another
   // worker; only its qualified lifecycle owner can recover missing custody.
   for (const step of [STEPS.goalHeartbeat]) {
+    if (!resourceAllowed()) return resourceHold();
     const result = runStep(step);
     steps.push(compactStep(step, result));
     if (result?.ok !== true) {
@@ -356,8 +374,10 @@ export function runSovereignCommanderGoalBuilderRepair({
   }
 
   if (!workerAllowed()) return Object.freeze({ ...workerHold(), repairApplied: true });
+  if (!resourceAllowed()) return resourceHold();
   const finalSupervisor = runStep(STEPS.supervisor);
   steps.push(compactStep(STEPS.supervisor, finalSupervisor));
+  if (!resourceAllowed()) return resourceHold();
   const finalLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, finalLaneStatus));
   const green = supervisorFlowGreen(finalSupervisor) && laneStatusGreen(finalLaneStatus);

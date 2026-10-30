@@ -4,9 +4,10 @@ import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledg
 import { readControlTowerBuildRequestV1, isAuthenticatedControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
 import { callSovereignMaintenanceOwnerV1 } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 import { resolveGithubAuth } from '../stephanos-server/services/githubAuthResolver.js';
+import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 
 const SCHEMA = 'stephanos.control-tower-build-consumer.v1';
-const ACTION = 'goal-discovery-heartbeat';
+const ACTION = FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId;
 const SHA = /^[a-f0-9]{40}$/;
 const code = value => /^[A-Z0-9_:-]{1,160}$/.test(value || '') ? value : 'CONTROL_TOWER_BUILD_WAKE_UNPROVEN';
 const result = (state, blocker = '', extra = {}) => Object.freeze({
@@ -54,7 +55,12 @@ export async function consumeControlTowerBuildRequestV1({
     // lost response or incomplete terminal publication retain the reservation.
     if (await readSourceHead() !== sourceHead || Date.parse(request.expiresAtUtc) <= now().getTime())
       return result('HELD', 'CONTROL_TOWER_BUILD_SOURCE_OR_EXPIRY_CHANGED', evidence());
-    const owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION }, timeoutMs: 60000 });
+    // Reuse the original compiled goal-builder profile and its complete bounded
+    // deadline. A legacy heartbeat is not an admitted native Windows operation.
+    // Request authentication grants intent only; the original owner retains
+    // every identity/qualification/lease/goal/resource/custody gate.
+    const owned = await deps.execute({ actionId: ACTION, arguments: { actionId: ACTION },
+      timeoutMs: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.executionTimeoutMs });
     const exactOwnerAction = owned?.command?.plan?.processId === ACTION;
     const completed = exactOwnerAction && owned?.ok === true
       && owned.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' && /^[a-f0-9]{64}$/.test(owned.proofHash || '');

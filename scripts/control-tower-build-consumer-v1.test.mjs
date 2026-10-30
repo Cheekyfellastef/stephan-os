@@ -8,6 +8,7 @@ import { createMailboxExecutionLedger } from './canonical-mailbox-execution-ledg
 import { readControlTowerBuildRequestV1 } from '../shared/agents/controlTowerBuildReaderV1.mjs';
 import { fixture, HEAD, NOW } from '../shared/agents/fixtures/controlTowerBuildV1.mjs';
 import { runSovereignRelayCycleWithHeartbeat, buildSovereignRelayStatus } from './battle-bridge-sovereign-relay-daemon.mjs';
+import { FIXED_MAINTENANCE_RUNTIME_ROUTE_V1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 
 function setup(t, overrides = {}) {
   const parent = resolve(tmpdir()), root = mkdtempSync(join(parent, 'control-tower-test-'));
@@ -17,8 +18,15 @@ function setup(t, overrides = {}) {
     now: () => new Date(NOW), testOnly: true, dependencies: {
       resolveAuth: async () => ({ token: 'fixture-only' }),
       readRequest: args => readControlTowerBuildRequestV1({ ...args, fetchImpl: f.fetchImpl }),
-      execute: async args => { calls.push(args); return { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
-        command: { plan: { processId: 'goal-discovery-heartbeat' } }, proofHash: 'b'.repeat(64) }; },
+      execute: async args => { calls.push(args);
+        // Use the SAME predicate as the real native Windows guardian. The old
+        // heartbeat target is rejected here, so the lifecycle test detects
+        // cross-module route drift rather than approving any fixture action.
+        if (!fixedRuntimeMaintenanceActionQualifiedV1(args.actionId)) return {
+          ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+          command: { plan: { processId: args.actionId } }, blocker: 'FIXED_RUNTIME_PROFILE_NOT_QUALIFIED' };
+        return { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+          command: { plan: { processId: args.actionId } }, proofHash: 'b'.repeat(64) }; },
       ...overrides,
     } };
   return { root, f, calls, options, consume: extra => consumeControlTowerBuildRequestV1({ ...options, ...extra }) };
@@ -27,7 +35,7 @@ function setup(t, overrides = {}) {
 test('owner dispatch to authenticated artifact to original guarded build action has one durable invocation', async t => {
   const s = setup(t), result = await s.consume();
   assert.equal(result.state, 'WAKE_COMPLETED');
-  assert.deepEqual(s.calls, [{ actionId: 'goal-discovery-heartbeat', arguments: { actionId: 'goal-discovery-heartbeat' }, timeoutMs: 60000 }]);
+  assert.deepEqual(s.calls, [{ actionId: 'repair-goal-builder-flow', arguments: { actionId: 'repair-goal-builder-flow' }, timeoutMs: 160000 }]);
   const ledger = createMailboxExecutionLedger(join(s.root, 'github-command-mailbox'));
   assert.equal(ledger.read(result.requestId).phase, 'TERMINAL');
   assert.equal(ledger.read(result.requestId).terminalState, 'DONE');
@@ -52,7 +60,7 @@ test('invalid terminal proof cannot discharge the original execution reservation
 });
 test('existing custody refusal becomes a bounded blocked wake without a fabricated build', async t => {
   const s = setup(t, { execute: async () => ({ ok: false, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING',
-    command: { plan: { processId: 'goal-discovery-heartbeat' } }, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }) });
+    command: { plan: { processId: FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.actionId } }, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED' }) });
   const result = await s.consume(); assert.equal(result.state, 'WAKE_BLOCKED');
   assert.equal(result.blocker, 'MAINTENANCE_CUSTODY_STATE_MISSING'); assert.equal(result.nativePickupProven, false);
   assert.equal(createMailboxExecutionLedger(join(s.root, 'github-command-mailbox')).read(result.requestId).terminalState, 'BLOCKED');
@@ -95,6 +103,15 @@ test('wrong owner action or missing proof is never a successful wake', async t =
     command: { plan: { processId: 'repair-stephanos' } }, proofHash: 'b'.repeat(64) }]) {
     const s = setup(t, { execute: async () => owned }); assert.equal((await s.consume()).state, 'UNKNOWN');
   }
+});
+
+test('the fixed native allowlist remains closed while the consumer uses its compiled route', () => {
+  assert(Object.isFrozen(FIXED_MAINTENANCE_RUNTIME_ROUTE_V1));
+  assert.equal(FIXED_MAINTENANCE_RUNTIME_ROUTE_V1.profile, 'MAINTENANCE_GOAL_BUILDER_V1');
+  assert.equal(fixedRuntimeMaintenanceActionQualifiedV1('repair-goal-builder-flow'), true);
+  for (const action of ['goal-discovery-heartbeat', 'repair-stephanos', 'restart-stephanos-runtime',
+    'MANAGE_CANONICAL_MAILBOX_ROTATION', 'FREEZE', 'DRAIN', 'STATUS', '', null, undefined, {},
+    'repair-goal-builder-flow\n']) assert.equal(fixedRuntimeMaintenanceActionQualifiedV1(action), false);
 });
 test('relay cooldown coalesces overlapping reads and re-observes after 30 seconds', async t => {
   const s = setup(t); let at = new Date(NOW);

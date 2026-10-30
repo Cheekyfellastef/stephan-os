@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { projectPrimaryOwnerCommentReadRequirementV1, goalEstateCoversPrimaryOwnerCommentReadV1, projectRequestedPrimaryOwnerEvidenceV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
 import { createHash } from 'node:crypto';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
@@ -367,6 +368,8 @@ export async function readGithubGoalEstateSharedSnapshot(options = {}) {
   const cachedAtUtc = safeNow(document.cachedAtUtc);
   const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
   const ageMs = cachedAtUtc ? Date.parse(nowUtc) - Date.parse(cachedAtUtc) : Number.POSITIVE_INFINITY;
+  const requirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!goalEstateCoversPrimaryOwnerCommentReadV1(document.goalEstateRead, requirement, nowUtc)) return null;
   const maxAgeMs = options.allowStale === true
     ? GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS
     : GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS;
@@ -469,6 +472,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
       priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
+      requiredPrimaryOwnerCommentIssueNumbers: options.requiredPrimaryOwnerCommentIssueNumbers,
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
       const staleSnapshot = sharedSnapshotEnabled
@@ -479,6 +483,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
     const result = Object.freeze({
       ok: true,
       reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+      ...(observation.primaryOwnerCommentRequestIssueNumbers ? { primaryOwnerCommentRequestIssueNumbers: observation.primaryOwnerCommentRequestIssueNumbers } : {}),
       issues: observation.issues,
       discoveredIssues: Array.isArray(observation.discoveredIssues) ? observation.discoveredIssues : observation.issues,
       retrievedAt: safeNow(observation.retrievedAt) || nowUtc,
@@ -2286,6 +2291,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   const deps = dependencies(options);
   const suppliedNow = options.nowUtc === undefined ? '' : safeNow(options.nowUtc);
   let nowUtc = suppliedNow || new Date().toISOString();
+  const primaryRequirement = projectPrimaryOwnerCommentReadRequirementV1(options.requiredPrimaryOwnerCommentIssueNumbers);
+  if (!primaryRequirement.valid) return holdProjection(nowUtc, 'PRIMARY_OWNER_READ_REQUIREMENT_INVALID');
   if (options.nowUtc !== undefined && !suppliedNow) {
     const projection = holdProjection(nowUtc, 'PROGRAMME_OBSERVATION_TIME_INVALID');
     return Object.freeze({
@@ -2555,6 +2562,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   return Object.freeze({
     ...projection,
     schema: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
+    ...(primaryRequirement.requested ? { githubGoalEstateRead: projectRequestedPrimaryOwnerEvidenceV1(githubGoalEstateRead, primaryRequirement) } : {}),
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
     goalClosurePlan,
