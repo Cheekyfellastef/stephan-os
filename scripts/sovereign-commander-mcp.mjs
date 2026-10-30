@@ -145,6 +145,20 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'starfield_vr_telemetry_archive',
+    title: 'Read Starfield VR playtest archive',
+    description: 'Read a bounded page of historical and current Starfield VR flight-recorder sessions; no raw CSV, host paths or game mutation. Read-only on each call, so newly recorded playtests appear automatically.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        offset: { type: 'integer', minimum: 0, maximum: 1000000, default: 0 },
+        limit: { type: 'integer', minimum: 1, maximum: 12, default: 12 },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'maintenance_action',
     title: 'Run fixed Stephanos maintenance action',
     description: 'Run one source-controlled maintenance action from the Sovereign Commander fixed registry.',
@@ -168,6 +182,7 @@ const TOOLS = Object.freeze([
             'restart-stephanos-runtime',
             'status-recovery-mesh',
             'status-worker-watchdog',
+            'sovereign-windows-reviewer-calibration',
             'qwen35-canary',
             'vr-resource-governor',
             'gaming-resource-status',
@@ -180,6 +195,7 @@ const TOOLS = Object.freeze([
             'gaming-resource-acceptance',
             'vr-virtual-airlink-acceptance',
             'starfield-vr-performance-diagnosis',
+            'starfield-vr-telemetry-archive',
             'report-starfield-vr-telemetry',
             'starfield-vr-telemetry-refresh',
             'ignite-stephanos',
@@ -211,6 +227,26 @@ const TOOLS = Object.freeze([
         targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         controllerActivityPayloadBase64: { type: 'string', minLength: 1, maxLength: 48000, pattern: '^[A-Za-z0-9_-]+$' },
+        reviewIdentity: {
+          type: 'object', additionalProperties: false,
+          required: ['schemaVersion','repository','issueNumber','prNumber','branch',
+            'sourceHead','baseSha','implementerProvider','implementerSessionId',
+            'reviewerSessionId','implementerPrincipal','reviewerPrincipal'],
+          properties: {
+            schemaVersion: { const: 'stephanos.sovereign-review-exact-request.v1' },
+            repository: { const: 'Cheekyfellastef/stephan-os' },
+            issueNumber: { type: 'integer', minimum: 1 },
+            prNumber: { type: 'integer', minimum: 1 },
+            branch: { type: 'string', minLength: 1, maxLength: 160 },
+            sourceHead: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+            baseSha: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+            implementerProvider: { type: 'string', minLength: 1, maxLength: 80 },
+            implementerSessionId: { type: 'string', minLength: 1, maxLength: 80 },
+            reviewerSessionId: { type: 'string', minLength: 1, maxLength: 80 },
+            implementerPrincipal: { type: 'string', minLength: 1, maxLength: 80 },
+            reviewerPrincipal: { type: 'string', minLength: 1, maxLength: 80 },
+          },
+        },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -246,6 +282,7 @@ function operationForTool(name) {
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
     search_project: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
+    starfield_vr_telemetry_archive: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
     maintenance_action: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
   })[name] || '';
 }
@@ -262,7 +299,18 @@ function payloadForTool(name, args = {}) {
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
+  if (name === 'starfield_vr_telemetry_archive') {
+    return { actionId: 'starfield-vr-telemetry-archive', offset: args.offset, limit: args.limit };
+  }
   if (name === 'maintenance_action') {
+    if (args.actionId === 'repair-core-publication-directories') {
+      if (Object.keys(args).some(key => !['actionId','expectedMain'].includes(key)))
+        throw new Error('CORE_DIRECTORY_FIXED_SCOPE_REQUIRED');
+      return { actionId: args.actionId, expectedMain: args.expectedMain };
+    }
+    if (args.actionId === 'sovereign-windows-reviewer-calibration') {
+      return { actionId: args.actionId, reviewIdentity: args.reviewIdentity };
+    }
     if (args.actionId === 'publish-controller-activity') {
       return {
         actionId: args.actionId,
@@ -283,13 +331,35 @@ function payloadForTool(name, args = {}) {
   return {};
 }
 
+// Admission belongs to the existing server, not to an individual HTTP session.
+// Session-local maps below still own cancellation; matching JSON-RPC IDs in a
+// different authenticated session cannot cancel or replace the original.
+const activeCoreRequests = new Map();
+
+function explicitCoreCustodyReleased(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  let witnesses = 0;
+  for (const container of [result, result.structuredContent]) {
+    if (container && Object.hasOwn(container, 'executionCustodyReleased')) {
+      if (typeof container !== 'object' || Array.isArray(container)
+        || container.executionCustodyReleased !== true) return false;
+      witnesses++;
+    }
+  }
+  return witnesses > 0;
+}
+
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
+  withMaintenanceOwner,
   now = () => new Date().toISOString(),
 } = {}) {
   let session = null;
   let toolsListed = false;
+  // Ephemeral cancellation for this session's existing requests; no durable
+  // queue, lease, retry or second executor is introduced.
+  const coreRequests = new Map();
 
   return async function handle(method, params = {}, message = {}) {
     const request = message.isRequest === true && message.isNotification !== true;
@@ -324,6 +394,11 @@ export function createSovereignCommanderMcpHandler({
       return undefined;
     }
 
+    if (method === 'notifications/cancelled') {
+      if (notification && session?.ready && message.transportAuthenticated === true)
+        coreRequests.get(params.requestId)?.abort();
+      return undefined;
+    }
     if (method.startsWith('notifications/')) return undefined;
     if (!session?.ready) throw new Error('MCP_SESSION_NOT_READY');
 
@@ -359,8 +434,33 @@ export function createSovereignCommanderMcpHandler({
         transport: text(message.transportKind) || 'mcp-session',
         authenticatedMcp: message.transportAuthenticated === true,
       });
-      const result = await executor(envelope, { repoRoot, routeProof });
-      return asTextResult(result, result?.ok !== true);
+      const isCoreRepair = name === 'maintenance_action' && args.actionId === 'repair-core-publication-directories';
+      if (!isCoreRepair) {
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner });
+        return asTextResult(result, result?.ok !== true);
+      }
+      if (!request || !(typeof message.id === 'string' || Number.isSafeInteger(message.id))
+        || activeCoreRequests.size !== 0)
+        return asTextResult({ ok: false, blocker: 'CORE_DIRECTORY_ORIGINAL_REQUEST_REQUIRED_OR_BUSY' }, true);
+      const controller = new AbortController();
+      const admission = Symbol('original-core-request');
+      let retainCustody = true;
+      const cancel = () => controller.abort();
+      coreRequests.set(message.id, controller);
+      activeCoreRequests.set(admission, controller);
+      message.signal?.addEventListener('abort', cancel, { once: true });
+      if (message.signal?.aborted) cancel();
+      try {
+        const result = await executor(envelope, { repoRoot, routeProof, withMaintenanceOwner, signal: controller.signal });
+        retainCustody = !explicitCoreCustodyReleased(result);
+        return asTextResult(result, result?.ok !== true);
+      } finally {
+        message.signal?.removeEventListener('abort', cancel);
+        coreRequests.delete(message.id);
+        // A timeout, missing OS witness or thrown executor does not release
+        // the server lane. No payload or subsequent session may clear it.
+        if (!retainCustody) activeCoreRequests.delete(admission);
+      }
     }
 
     throw new Error(`Unsupported MCP method: ${method}`);

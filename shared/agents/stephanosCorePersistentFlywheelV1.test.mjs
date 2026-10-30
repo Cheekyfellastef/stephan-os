@@ -288,6 +288,20 @@ test('Octopus productivity exposes material build truth and detects unused capac
   assert.equal(building.octopusMaterialActionsLastCycle, 3);
   assert.equal(building.octopusLastMaterialBuildAtUtc, '2026-10-03T21:45:00.000Z');
 
+  const partialProgress = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 2,
+    refillSweepAttemptCount: 15,
+    refillSafeEligibleWorkRemaining: 4,
+    refillProvenSafeFreeLanes: 3,
+    refillWorkConservingSweepExhausted: true,
+  });
+  assert.equal(partialProgress.octopusBuildVerdict, 'BUILDING_WITH_STRANDED_CAPACITY');
+  assert.equal(partialProgress.octopusMaterialActionsLastCycle, 2);
+  assert.equal(partialProgress.octopusNeedsRepair, true);
+  assert.equal(partialProgress.octopusBuildStallDetected, true);
+  assert.equal(projectOctopusSelfHealDecision(partialProgress, { nowMs: 1_000 }).shouldRepair, true);
+
   const stalled = summarizeOctopusBuildProductivity({
     refillStatus: 'READY',
     refillMaterialActionsSucceeded: 0,
@@ -378,7 +392,7 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
 test('persistent refill stays behind genuine gaming protection without latching on stale phase text', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
-  assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
+  assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive, state\)/);
   assert.match(source, /coreGamingProtectionFromGovernor\(JSON\.parse\(await readFile\(gamingStatePath, 'utf8'\)\)\)/);
   assert.match(source, /const gamingStatePath = resolve\(workspaceRoot, 'vr', 'vr-resource-governor-current\.json'\)/);
   assert.doesNotMatch(source, /gaming\|vr\|flat/);
@@ -391,7 +405,8 @@ test('Core daemon breaks the Commander repair circular dependency and publishes 
   assert.match(source, /probeSovereignCommanderRuntimeCompatibility/);
   assert.match(source, /maybeRepairCoreDependencies/);
   assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);
-  assert.match(source, /MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker'/);
+  assert.match(source, /MISSION_WORKER_CUSTODY_UNPROVEN/);
+  assert.doesNotMatch(source, /MISSION_WORKER_START_ACTION_ID/);
   assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED/);
   assert.match(source, /projectStephanosControlPlaneSpine/);
   assert.match(source, /controlPlane\.wakeState/);

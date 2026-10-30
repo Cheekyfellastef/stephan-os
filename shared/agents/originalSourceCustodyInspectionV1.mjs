@@ -6,7 +6,7 @@ const LEASE = 'critical-2962-elastic-goal-r7-lease';
 const REPO = 'Cheekyfellastef/stephan-os';
 const UNKNOWN = new Set([
   'CHECKOUT_PROBE_UNAVAILABLE', 'CIM_PROCESS_INVENTORY_UNAVAILABLE',
-  'TASK_INVENTORY_UNAVAILABLE', 'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
+  'CIM_PROCESS_COMMAND_LINE_UNOBSERVED', 'TASK_INVENTORY_UNAVAILABLE', 'CHECKOUT_UNAVAILABLE', 'CHECKOUT_ACL_UNAVAILABLE',
 ]);
 const count = v => v === null || (Number.isSafeInteger(v) && v >= 0 && v <= 1000000);
 const exactTime = value => typeof value === 'string'

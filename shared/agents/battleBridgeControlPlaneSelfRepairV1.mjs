@@ -45,7 +45,7 @@ export const BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS = Object.freeze([
 
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
-const REQUIRED_SOVEREIGN_COMMANDER_CAPABILITY_VERSION = '2026-10-13-private-mcp-batch-metadata-v5';
+const REQUIRED_SOVEREIGN_COMMANDER_CAPABILITY_VERSION = '2026-10-18-island-action-contract-v6';
 
 function text(value) {
   return String(value ?? '').trim();

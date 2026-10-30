@@ -40,6 +40,7 @@ test('registry is a status-only boundary with unique fixed filenames and narrowl
   }
   const digest = 'a'.repeat(64);
   const patternFiles = [
+    `frontend-boot-attempt-${digest}.json`,
     `mission-orchestrator-worker-launch-identity-${digest}.json`,
     `mission-orchestrator-worker-restart-claim-${digest}.json`,
     `mission-orchestrator-worker-restart-receipt-${digest}.json`,
@@ -68,7 +69,20 @@ test('every registry entry is bound to its real producer filename and schema sou
   for (const entry of SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS) {
     const sources = await Promise.all(entry.sourcePaths.map((sourcePath) => readFile(join(REPOSITORY_ROOT, sourcePath), 'utf8')));
     const combined = sources.join('\n');
-    assert.match(combined, /mission-orchestrator-worker-launch-identity-/);
+    const namespace = entry.fileNamePattern.slice(1).split('[0-9a-f]')[0];
+    assert.ok(combined.includes(namespace), `producer must own ${namespace}`);
     for (const schemaId of entry.schemaIds) assert.match(combined, new RegExp(schemaId.replaceAll('.', '\\.')));
   }
+});
+
+test('frontend reservation namespace does not exempt adjacent or caller-selected status paths', () => {
+  for (const fileName of [
+    `frontend-boot-attempt-${'a'.repeat(63)}.json`,
+    `frontend-boot-attempt-${'a'.repeat(65)}.json`,
+    `frontend-boot-attempt-${'g'.repeat(64)}.json`,
+    `frontend-boot-attempt-${'a'.repeat(64)}.json.extra`,
+    `prefix-frontend-boot-attempt-${'a'.repeat(64)}.json`,
+    `../frontend-boot-attempt-${'a'.repeat(64)}.json`,
+    'frontend-boot-attempt-current.json',
+  ]) assert.equal(isSharedWorkspaceSpecializedStatusFile({ directory: 'status', fileName }), false);
 });

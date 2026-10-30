@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { projectElasticMissionExecutionObligation } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
@@ -306,15 +307,20 @@ export function controllerRequiresMaterialProgress(controller) {
   const projection = ownData(controller, 'authoritativeProjection');
   const status = boundedText(ownData(projection, 'status'), 32).toUpperCase();
   if (!status || status === 'HOLD') return false;
-  // READY alone is not an executable grant. Preserve defect reporting if a
-  // specific mission was selected but the controller failed to grant it.
+  // An observed PR/lease is not material execution. Consume the canonical
+  // lane's ACTIVE decision rather than recreating authority from its presence.
+  // An elastic selected mission may instead be an occupied external fallback.
+  // Only a coherent canonical inventory can establish that observation state.
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
+  const occupied = ownData(critical, 'decision') === 'WAIT_EXTERNAL_ACTIVE_MISSION'
+    && Boolean(ownData(critical, 'activeMission'))
+    && projectElasticMissionExecutionObligation(admission, ownData(critical, 'activeMission')).state === 'OCCUPIED';
   return ownData(controller, 'allowWorkerTick') === true
-    || Boolean(ownData(projection, 'lane'))
-    || Boolean(ownData(admission, 'selectedMission'))
-    || Boolean(ownData(critical, 'activeMission'));
+    || ownData(ownData(projection, 'lane'), 'active') === true
+    || (!occupied && (Boolean(ownData(admission, 'selectedMission'))
+      || Boolean(ownData(critical, 'activeMission'))));
 }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -485,7 +491,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       }
     }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
-    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
+    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { return await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
     await queueHeartbeat(authoritativeHeartbeatVerdict(), checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict()); }, heartbeatIntervalMs);
     try {
@@ -572,9 +578,54 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       materialProgressRequired = controllerRequiresMaterialProgress(controller);
       if (controller?.allowWorkerTick === true) {
         const actionGrant = controller.workerActionGrant; attemptedSurfaceId = executionSurfaceId(actionGrant); attemptedMissionId = boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(); adapterInvocationStarted = false; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
-        const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat(authoritativeHeartbeatVerdict()); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
+        // Publication completion is task-local. A selected or merely read claim
+        // cannot stand in for the existing heartbeat writer's atomic receipt.
+        const originalGrantJson = JSON.stringify(actionGrant);
+        let settleClaimPublication, claimPublicationOutcome = null, claimPublicationTimer;
+        const claimPublication = new Promise(resolvePublication => { settleClaimPublication = resolvePublication; });
+        const finishClaimPublication = value => {
+          if (claimPublicationOutcome !== null) return;
+          claimPublicationOutcome = value === true;
+          clearTimeout(claimPublicationTimer);
+          settleClaimPublication(claimPublicationOutcome);
+        };
+        const sameInFlightGrant = grant => !tickSettled && activeActionGrant === actionGrant
+          && JSON.stringify(actionGrant) === originalGrantJson && JSON.stringify(grant) === originalGrantJson;
+        const awaitActiveClaimHeartbeat = async grant => {
+          if (!sameInFlightGrant(grant)) return false;
+          if (!claimPublicationTimer && claimPublicationOutcome === null)
+            claimPublicationTimer = setTimeout(() => finishClaimPublication(false), 5000);
+          const published = await claimPublication;
+          return published && sameInFlightGrant(grant);
+        };
+        const watchActiveClaim = async () => {
+          while (!tickSettled && !activeClaimHeartbeatPublished && claimPublicationOutcome !== false) {
+            let activeClaim = null;
+            try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; }
+            if (tickSettled) { finishClaimPublication(false); return; }
+            if (activeClaim) {
+              const published = await queueHeartbeat(authoritativeHeartbeatVerdict());
+              const record = ownData(published, 'record');
+              const exact = sameInFlightGrant(actionGrant) && ownData(published, 'ok') === true
+                && ownData(record, 'activeTaskId') === ownData(actionGrant, 'actionId')
+                && ownData(record, 'activeTaskId') === ownData(activeClaim, 'activeTaskId')
+                && ownData(record, 'activeReceiptId') === ownData(activeClaim, 'activeReceiptId')
+                && ownData(record, 'executionPhase') === ownData(activeClaim, 'executionPhase')
+                && ownData(record, 'lastTickVerdict') === 'MISSION_WORKER_TICK_RUNNING';
+              activeClaimHeartbeatPublished = exact;
+              finishClaimPublication(exact);
+              return;
+            }
+            await sleepActiveClaimProbe(claimProbeIntervalMs);
+          }
+          if (!activeClaimHeartbeatPublished) finishClaimPublication(false);
+        };
         adapterInvocationStarted = true;
-        let result; const tickPromise = runTick({ env, actionGrant, capacityRouting }); const activeClaimWatcher = watchActiveClaim(); try { result = await tickPromise; } finally { tickSettled = true; await activeClaimWatcher; activeActionGrant = undefined; }
+        let result;
+        const tickPromise = runTick({ env, actionGrant, capacityRouting, awaitActiveClaimHeartbeat });
+        const activeClaimWatcher = watchActiveClaim();
+        try { result = await tickPromise; }
+        finally { tickSettled = true; finishClaimPublication(false); await activeClaimWatcher; activeActionGrant = undefined; }
         const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
         if (externalHandoffPending(result)) {
           pendingExternalHandoff = Object.freeze({

@@ -19,6 +19,8 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createBattleBridgeMinimalChildEnvironment } from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { preflightCanonicalMailboxRotationSync } from './canonical-mailbox-rotation-sync-preflight-v1.mjs';
+import { withMailboxOutboxGuardLock } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import {
   CANONICAL_SYNC_CONTRACT,
   FIXED_GIT_COMMANDS,
@@ -239,9 +241,12 @@ export function getFixedSyncGitCommand(id) {
 
 export function createFixedGitAdapter({ spawnSyncFn = spawnSync } = {}) {
   return Object.freeze({
-    run(id, cwd) {
+    run(id, cwd, { expectedHead } = {}) {
       const command = getFixedSyncGitCommand(id);
-      const result = spawnSyncFn(command.executable, [...command.argv], {
+      if (expectedHead !== undefined && (id !== FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id
+        || !SHA_PATTERN.test(expectedHead))) throw new Error('SYNC_EXACT_TARGET_REQUIRED');
+      const argv = expectedHead === undefined ? [...command.argv] : ['merge', '--ff-only', expectedHead];
+      const result = spawnSyncFn(command.executable, argv, {
         cwd,
         encoding: 'utf8',
         shell: false,
@@ -475,6 +480,8 @@ export async function runBattleBridgeGitHubSync({
   staleAfterMs = SYNC_LOCK_STALE_AFTER_MS,
   housekeeperFn = runBoundedSyncHousekeeper,
   platform = process.platform,
+  rotationPreflightFn = preflightCanonicalMailboxRotationSync,
+  rotationGuardFn = withMailboxOutboxGuardLock,
 } = {}) {
   const { repoRoot, workspaceRoot } = paths;
   const pathValidation = validateCanonicalSyncPaths({ repoRoot, workspaceRoot, expectedPaths });
@@ -566,7 +573,25 @@ export async function runBattleBridgeGitHubSync({
       return Object.freeze({ ok: evaluation.classification === SYNC_CLASSIFICATIONS.SYNC_NO_CHANGE, evaluation, facts, housekeeperObservation, heartbeat, plan, receipt });
     }
 
-    const mergeResult = git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id, repoRoot);
+    const admission = rotationPreflightFn({ repoRoot, expectedHead: facts.remoteHead, env });
+    if (!admission?.ok) throw new Error(admission?.blocker || 'MAILBOX_ROTATION_SYNC_ADMISSION_UNPROVEN');
+    const mergePinned = () => {
+      const local = requireGitResult(git.run(FIXED_SYNC_GIT_COMMANDS.localHead.id, repoRoot));
+      const remote = requireGitResult(git.run(FIXED_SYNC_GIT_COMMANDS.remoteHead.id, repoRoot));
+      const status = git.run(FIXED_SYNC_GIT_COMMANDS.statusPorcelain.id, repoRoot);
+      requireGitResult(status);
+      if (local !== facts.localHead || remote !== facts.remoteHead || classifyDirt(splitLines(status.stdout)).blocksSync) {
+        throw new Error('MAILBOX_ROTATION_SYNC_SOURCE_CHANGED_BEFORE_FAST_FORWARD');
+      }
+      return git.run(FIXED_SYNC_GIT_COMMANDS.mergeFfOnlyOriginMain.id, repoRoot, { expectedHead: facts.remoteHead });
+    };
+    const mergeResult = admission.required ? rotationGuardFn(guard => {
+      const fresh = rotationPreflightFn({ repoRoot, expectedHead: facts.remoteHead, env, guardToken: guard.token });
+      if (!fresh?.ok || fresh.required !== true || fresh.sourceHead !== facts.remoteHead) {
+        throw new Error(fresh?.blocker || 'MAILBOX_ROTATION_SYNC_LOCKED_ADMISSION_UNPROVEN');
+      }
+      return mergePinned();
+    }, { env }) : mergePinned();
     if (!mergeResult.ok) {
       const failedFacts = { ...facts, mergeAttempted: true, mergeOk: false };
       evaluation = evaluateSyncPolicy(failedFacts);

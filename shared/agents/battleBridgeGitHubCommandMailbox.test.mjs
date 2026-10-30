@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import './rescueIslandSupervisedMailboxV1.test.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_MARKER,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
@@ -31,7 +32,7 @@ function command(overrides = {}) {
     requestId: 'req-1507-0001',
     operation: 'UPDATE_STEPHANOS_FROM_CHAT',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2808,
+    issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'fb10c39a5c0178158bc3b43c5539e8f5d023bc2a',
