@@ -166,6 +166,27 @@ test('lock-release failure reads actual state instead of synthesizing a closed f
   }
 });
 
+test('failed fence write and lock release cannot resurrect an older durable READY goal', async () => {
+  const observed = '2026-10-30T00:59:30.000Z';
+  const olderFence = fence({ timestampUtc: observed, mirrorObservedAtUtc: observed,
+    mirrorLeaseExpiresAtUtc: '2026-10-31T00:59:30.000Z' });
+  const olderReady = { ...mirror.records[0], mirrorObservedAtUtc: observed };
+  const closed = { ...mirror.records[0], state: 'CLOSED', mirrorBuildPickupAllowed: false };
+  const current = { ...mirror, records: [closed] };
+  const publication = await publishGithubGoalMirrorEstate(current, { root, nowUtc: NOW, testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({ ok: true, release: async () => false }),
+      readFile: async () => JSON.stringify(olderFence),
+      writeAtomicJson: async () => ({ ok: false, reason: 'FIXTURE_STORAGE_WRITE_FAILED' }),
+    } });
+  assert.equal(publication.ok, false);
+  assert.equal(publication.fallbackFenced, true);
+  const records = selectGoalRecordsForProgrammeProjection(current, publication,
+    { records: { goalRecords: [olderReady] } });
+  assert.deepEqual(records, [closed]);
+  assert.equal(records[0].state, 'CLOSED');
+});
+
 test('actual programme projection clears only the proven BUSY fence veto and refreshes durable winner records', async () => {
   const controller = createProgrammeControllerHeartbeat({ controllerId: 'durable-flywheel-controller',
     sourceRevision: HEAD, cycleState: 'RECONCILING', timestampUtc: NOW, boundedMutationSteps: 0 });

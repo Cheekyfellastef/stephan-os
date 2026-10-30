@@ -42,7 +42,11 @@ it does not grant permission to rebuild stale ones. A newer live primary
 observation remains the primary source when the held publisher is older.
 
 Failed lock release also reads the actual canonical state. It never turns a
-READY mirror into a disabled-fallback claim or certifies caller-memory records.
+READY mirror into a disabled-fallback claim or certifies publication. Observation
+order is part of the same state model, used by every exit: NEWER_WINNER,
+SAME_OBSERVATION, OLDER_PUBLISHER or UNPROVEN. In particular, a failed fence write
+followed by failed lock release can leave an older durable fence. That fence
+must not displace a newer live CLOSED observation or revive its old READY row.
 No new scheduler, writer, queue, lease-release path or runtime authority exists.
 
 Regression evidence includes the actual programme projection with all live
