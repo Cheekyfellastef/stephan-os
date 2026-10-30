@@ -394,6 +394,25 @@ test('agent handoff stays pending until atomic processing claim proves pickup', 
   assert.equal(running.dispatch.adapter, 'codex');
 });
 
+test('pending contract refusal preserves the original queue and mission before pickup',async()=>{
+  const options=await runtime();options.capacityRouting=freshCodexCapacityRouting();
+  await createMissionRecord(intent('preclaim-contract-test'),options);
+  const ready=await appendMissionEvent('preclaim-contract-test',{
+    eventId:'preclaim-worktree',eventType:'WORKTREE_READY',worktreePath:'C:\\worktree',
+    clean:true,receipt:proof('isolated worktree','preclaim-worktree-proof')},options);
+  const published=await publishMissionWorkerAction(ready.state,options);
+  assert.equal(published.published,true);
+  const pending=join(options.queueRoot,'codex','pending');
+  const names=await readdir(pending),before=await readFile(join(pending,names[0]));
+  await assert.rejects(claimNextMissionWorkerItem('codex',{...options,
+    assertPendingClaimContract:()=>{throw new Error('PENDING_CONTRACT_REFUSED');}}),/PENDING_CONTRACT_REFUSED/);
+  assert.deepEqual(await readFile(join(pending,names[0])),before);
+  assert.deepEqual(await readdir(join(options.queueRoot,'codex','processing')),[]);
+  const after=(await readMissionRecord('preclaim-contract-test',options)).state;
+  assert.equal(after.revision,ready.state.revision);
+  assert.equal(after.dispatch.status,'pending');
+});
+
 test('exact action grant cannot consume another mission queue item', async () => {
   const options = await runtime();
   const first = await createMissionRecord(intent('claim-first'), options);

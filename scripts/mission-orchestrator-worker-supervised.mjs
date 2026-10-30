@@ -88,20 +88,42 @@ export function createMissionWorkerControllerLogProjection(controller, checkedAt
 
 export function createMissionWorkerTickLogProjection(result, checkedAt) {
   const publication = ownData(result, 'publish');
-  return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true });
+  const processing = ownData(result, 'processed');
+  return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true,
+    processed:ownData(processing,'processed')===true,
+    processingSuccess:ownData(processing,'success')===true,
+    processingVerdict:typedProcessingCode(result,'finalVerdict'),
+    processingBlocker:typedProcessingCode(result,'reason') });
 }
 
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
-export function missionWorkerTickMadeProgress(result) { const processing = ownData(result, 'processed'); return ownData(processing, 'processed') === true; }
-function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || missionWorkerTickMadeProgress(result); }
+function typedProcessingCode(result,key) {
+  const code=processResultText(ownData(result,'processed'),key);
+  return /^[A-Z][A-Z0-9_:-]{0,95}$/.test(code)?code:'';
+}
+export function missionWorkerTickMadeProgress(result) {
+  const processing = ownData(result, 'processed');
+  if(ownData(processing,'schemaVersion')==='stephanos.provider-neutral-source-builder.v1') {
+    return ownData(processing,'processed')===true && ownData(processing,'success')===true
+      && ownData(processing,'testsPassed')===true && ownData(processing,'executionCustodyReleased')===true
+      && processResultText(processing,'finalVerdict')==='PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
+      && Boolean(processResultText(processing,'sourceArtifactRef'))
+      && Boolean(processResultText(processing,'offlinePublicationOutboxId'));
+  }
+  return ownData(processing, 'processed') === true
+    && ownData(processing, 'success') !== false
+    && !/HELD|BLOCKED|FAILED|UNKNOWN/.test(processResultText(processing, 'finalVerdict'));
+}
+function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || ownData(ownData(result,'processed'),'processed')===true; }
 
 function executionSurfaceId(actionGrant) {
   return boundedText(ownData(actionGrant, 'adapter'), 80).toLowerCase();
 }
 
 function executionSurfaceFailureClass(result, fallback = 'NO_MATERIAL_PROGRESS') {
-  return boundedText(ownData(result, 'blocker'), 96)
+  return typedProcessingCode(result,'reason') || typedProcessingCode(result,'finalVerdict')
+    || boundedText(ownData(result, 'blocker'), 96)
     || boundedText(ownData(result, 'finalVerdict'), 96)
     || boundedText(ownData(result, 'status'), 64)
     || fallback;

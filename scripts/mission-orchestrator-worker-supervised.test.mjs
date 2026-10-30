@@ -26,6 +26,23 @@ function sink() {
   return { stream: { write(chunk) { value += chunk; } }, read: () => value };
 }
 
+test('held native source processing is activity, never successful material progress', () => {
+  const held={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,
+    success:false,finalVerdict:'NATIVE_SOURCE_FINALIZATION_HELD'};
+  assert.equal(missionWorkerTickMadeProgress({processed:held}),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:undefined}}),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true}}),false);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
+    testsPassed:true,executionCustodyReleased:true,sourceArtifactRef:'proof/artifact.json',
+    offlinePublicationOutboxId:'outbox-fixture',finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}}),true);
+  assert.equal(missionWorkerTickMadeProgress({processed:{...held,success:true,
+    finalVerdict:'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'}}),false);
+  const projection=createMissionWorkerTickLogProjection({processed:{...held,
+    reason:'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED'}},'2026-10-30T14:00:00Z');
+  assert.equal(projection.processingBlocker,'NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED');
+  assert.equal(projection.processingSuccess,false);
+});
+
 function timerHarness() {
   let callback = null;
   let cleared = false;

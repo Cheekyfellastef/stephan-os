@@ -533,6 +533,9 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         continue;
       }
       // Lane 7 admission must survive the awaited queue and source-fence reads.
+      // Fixed source admission checks the actual pending envelope before it can
+      // acquire a processing claim; post-claim bytes are checked again by owner.
+      if (options.assertPendingClaimContract) options.assertPendingClaimContract(item);
       if (options.assertClaimCustody) options.assertClaimCustody();
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
