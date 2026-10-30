@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   BATTLE_BRIDGE_PREFLIGHT_PROOF_COMMAND,
   OPENCLAW_GATEWAY_VERDICTS,
+  PLUGIN_VERIFIER_VERDICTS,
+  WORKER_VERIFIER_VERDICTS,
   runBattleBridgePreflightVerifier,
   runVerificationHarness,
   runVerifier,
@@ -77,6 +79,38 @@ test('OpenClaw gateway verifier accepts executable gateway fixture', () => {
 
   assert.equal(result.status, 'PASS');
   assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.VERIFIED);
+});
+
+test('OpenClaw gateway verifier rejects non-approved executable port even with gateway command', () => {
+  const result = runVerifier('OpenClawGatewayVerifier', {
+    endpoint: 'http://127.0.0.1:8790/health',
+    httpStatus: 200,
+    endpointIdentity: 'openclaw-executable-gateway',
+    canExecute: true,
+    command: 'node.exe npm/node_modules/openclaw/dist/index.js gateway --port 8790',
+    safeRestartTarget: 'OpenClaw Gateway',
+    safeRestartTargetVerified: true,
+  });
+
+  assert.equal(result.status, 'FAIL');
+  assert.equal(result.finalVerdict, OPENCLAW_GATEWAY_VERDICTS.UNVERIFIED_OWNER);
+  assert.match(result.reason, /18789/);
+});
+
+test('Worker verifier distinguishes not configured configured stopped and running states', () => {
+  assert.equal(runVerifier('WorkerVerifier', {}).finalVerdict, WORKER_VERIFIER_VERDICTS.NOT_CONFIGURED);
+  assert.equal(runVerifier('WorkerVerifier', { workerConfigured: true, workerRunning: false, workerMode: 'queue' }).finalVerdict, WORKER_VERIFIER_VERDICTS.CONFIGURED_STOPPED);
+  const running = runVerifier('WorkerVerifier', { workerConfigured: true, workerRunning: true, workerMode: 'queue', taskState: 'ready' });
+  assert.equal(running.finalVerdict, WORKER_VERIFIER_VERDICTS.RUNNING);
+  assert.equal(running.status, 'PASS');
+});
+
+test('Plugin verifier distinguishes runtime missing installed not loaded and loaded states', () => {
+  assert.equal(runVerifier('PluginVerifier', {}).finalVerdict, PLUGIN_VERIFIER_VERDICTS.RUNTIME_MISSING);
+  assert.equal(runVerifier('PluginVerifier', { pluginInstalled: true, pluginRuntimePresent: false }).finalVerdict, PLUGIN_VERIFIER_VERDICTS.INSTALLED_NOT_LOADED);
+  const loaded = runVerifier('PluginVerifier', { pluginInstalled: true, pluginRuntimePresent: true, pluginLoaded: true });
+  assert.equal(loaded.finalVerdict, PLUGIN_VERIFIER_VERDICTS.RUNTIME_LOADED);
+  assert.equal(loaded.status, 'PASS');
 });
 
 test('Battle Bridge preflight blocks with deterministic reasons', () => {
