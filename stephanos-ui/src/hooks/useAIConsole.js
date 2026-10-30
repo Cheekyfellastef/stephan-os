@@ -51,7 +51,7 @@ import { mergeProofSession, routeCommandDeckUniversalIntake } from '../state/com
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 const OLLAMA_MODEL_MATCHERS = ['llama', 'qwen', 'gpt-oss'];
 
 function normalizeProviderKey(value = '') {
@@ -3608,14 +3608,57 @@ export function useAIConsole() {
     }
     healthRefreshInFlightRef.current = true;
     let resolvedRuntimeContext = runtimeConfig;
+    let backendHealthPublished = false;
 
     try {
       ({ runtimeConfig: resolvedRuntimeContext } = await resolveRuntimeConfig());
       recordPerfCounter('polling', 'checkApiHealth.attempt');
       const health = await checkApiHealth(resolvedRuntimeContext);
       const hydratedRuntimeContext = buildRuntimeContextFromHealth(resolvedRuntimeContext, health);
-      const providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
-      const nextProviderHealth = providerHealth.data || {};
+      // Publish service evidence as soon as /api/health resolves. Optional
+      // provider telemetry can be slow or fail without erasing this receipt.
+      const healthFinalized = finalizeRuntimeContext(hydratedRuntimeContext, providerHealthRef.current, health.ok);
+      setApiStatus({
+        state: health.ok ? 'online' : 'error',
+        label: `Connected to ${health.target} API`,
+        detail: health.ok
+          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'mock'}.`
+          : `Health check failed (${health.status}).`,
+        target: health.target,
+        baseUrl: health.baseUrl,
+        frontendOrigin: healthFinalized.runtimeContext.frontendOrigin,
+        strategy: healthFinalized.runtimeContext.strategy,
+        backendTargetEndpoint: health.data?.backend_target_endpoint || healthFinalized.runtimeContext.backendTargetEndpoint,
+        healthEndpoint: healthFinalized.runtimeContext.healthEndpoint,
+        backendReachable: health.ok,
+        backendDefaultProvider: health.data?.default_provider || 'mock',
+        runtimeContext: {
+          ...healthFinalized.runtimeContext,
+          healthProbeTruth: reconcileBackendHealthTruth({
+            runtimeContext: healthFinalized.runtimeContext,
+            healthOk: health.ok === true,
+            source: 'refresh-health-poll',
+            status: health.status || 0,
+            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
+          }),
+        },
+        lastCheckedAt: new Date().toISOString(),
+        meta: {
+          ...(health.data || {}),
+          final_route: healthFinalized.runtimeStatus.finalRoute,
+        },
+      });
+      recordPerfCounter('store_writes', 'apiStatus');
+      backendHealthPublished = true;
+      // Backend reachability is independent of provider telemetry. A provider
+      // probe exception must not turn a successful /api/health into "backend dead".
+      let providerHealth = { data: {} };
+      try {
+        providerHealth = await getProviderHealth({ provider, routeMode, providerConfigs: effectiveProviderConfigs, fallbackEnabled, fallbackOrder, devMode, runtimeContext: hydratedRuntimeContext }, hydratedRuntimeContext);
+      } catch (providerError) {
+        recordPerfEvent('polling', 'getProviderHealth.error', providerError?.message || 'unknown');
+      }
+      const nextProviderHealth = providerHealth?.data || {};
       setProviderHealth(nextProviderHealth);
       recordPerfCounter('store_writes', 'providerHealth');
       ['groq', 'gemini'].forEach((providerKey) => {
@@ -3640,38 +3683,12 @@ export function useAIConsole() {
           source: finalized.runtimeContext.nodeAddressSource || finalized.runtimeContext.homeNode.source || 'route-diagnostics',
         });
       }
-      setApiStatus({
-        state: health.ok ? 'online' : 'error',
-        label: `Connected to ${health.target} API`,
-        detail: health.ok
-          ? `Backend reachable. Default provider: ${health.data?.default_provider || 'mock'}.`
-          : `Health check failed (${health.status}).`,
-        target: health.target,
-        baseUrl: health.baseUrl,
-        frontendOrigin: finalized.runtimeContext.frontendOrigin,
-        strategy: finalized.runtimeContext.strategy,
-        backendTargetEndpoint: health.data?.backend_target_endpoint || finalized.runtimeContext.backendTargetEndpoint,
-        healthEndpoint: finalized.runtimeContext.healthEndpoint,
-        backendReachable: health.ok,
-        backendDefaultProvider: health.data?.default_provider || 'mock',
-        runtimeContext: {
-          ...finalized.runtimeContext,
-          healthProbeTruth: reconcileBackendHealthTruth({
-            runtimeContext: finalized.runtimeContext,
-            healthOk: health.ok === true,
-            source: 'refresh-health-poll',
-            status: health.status || 0,
-            hadRouteUnavailableFailure: ['ROUTE_UNAVAILABLE', 'BACKEND_ROUTE_UNAVAILABLE'].includes(String(lastExecutionMetadata?.command_pipeline_last_failure_reason || '').trim().toUpperCase()),
-          }),
-        },
-        lastCheckedAt: new Date().toISOString(),
-        meta: {
-          ...(health.data || {}),
-          final_route: finalized.runtimeStatus.finalRoute,
-        },
-      });
-      recordPerfCounter('store_writes', 'apiStatus');
+
     } catch (error) {
+      if (backendHealthPublished) {
+        recordPerfEvent('polling', 'optionalHealthTelemetry.error', error?.message || 'unknown');
+        return;
+      }
       recordPerfEvent('polling', 'checkApiHealth.error', error?.message || 'unknown');
       healthRefreshBackoffUntilMsRef.current = Date.now() + 30_000;
       const uiError = transportErrorToUi(error);
@@ -4469,9 +4486,12 @@ export function useAIConsole() {
         projectContext: operatorContext,
       });
       const missionPacket = buildMissionExecutionPacket({
+        operatorIntent: prompt,
         intent: intentResult,
         proposalPacket: contextAssembly?.proposalPacket || {},
         missionWorkflow: missionPacketWorkflow || {},
+        missionLineage: missionLineage || {},
+        finalRouteTruth: requestRouteTruthView || {},
         graphState: contextAssembly?.contextBundle?.knowledgeGraph || {},
       });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;

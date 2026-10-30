@@ -27,12 +27,13 @@ test('installed consumer has no caller arguments and reads only the bounded tail
   assert.doesNotMatch(text, /Restart-Computer/i);
 });
 
-test('consumer admits only the three currently qualified fixed R1 recovery actions', async () => {
+test('consumer admits only the fixed probe, wake and last-resort remote-access actions', async () => {
   const text = await source(consumerUrl);
   const allowed = text.match(/\$allowedActions = @\(([^\n]+)\)/)?.[1] ?? '';
   assert.match(allowed, /'PROBE_BATTLE_BRIDGE'/);
   assert.match(allowed, /'WAKE_CANONICAL_MAILBOX'/);
   assert.match(allowed, /'WAKE_CANONICAL_RECOVERY_MESH'/);
+  assert.match(allowed, /'RECOVER_REMOTE_ACCESS_STACK'/);
   assert.doesNotMatch(allowed, /RESTART_CANONICAL_BACKEND/);
   assert.doesNotMatch(allowed, /FULL_BATTLE_BRIDGE_RECOVERY/);
   assert.match(text, /-File \$actionPath -Action \$request\.action/);
@@ -77,6 +78,10 @@ test('bank manifest binds the GitHub consumer and candidate self-test cannot pol
   assert.match(runner, /claim=\$claimConsumerHash/);
   assert.match(runner, /\[switch\]\$SelfTestOnly/);
   assert.match(runner, /if \(-not \$SelfTestOnly -and \$ok\)/);
+  assert.match(runner, /-Action RECOVER_REMOTE_ACCESS_STACK/);
+  assert.match(runner, /remoteAccessAutoHealVerdict/);
+  assert.match(runner, /remoteChatTransportReauthenticationClaimed = \$false/);
+  assert.match(runner, /physicalPowerRecoveryClaimed = \$false/);
   assert.match(installer, /sourceClaimConsumer/);
   assert.match(installer, /claim=\$claimHash/);
   assert.match(installer, /-File \$candidateRunner -SelfTestOnly/);

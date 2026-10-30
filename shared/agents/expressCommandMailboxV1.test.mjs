@@ -44,7 +44,7 @@ function durableReceipt(commandId, overrides = {}) {
     requestId: commandId,
     operation: 'READ_SHARED_WORKSPACE_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 3149,
     branch: 'main',
     state: 'DONE',
     proofRefs: [proofRef],

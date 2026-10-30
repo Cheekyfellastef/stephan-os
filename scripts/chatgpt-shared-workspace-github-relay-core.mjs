@@ -11,11 +11,13 @@ import {
   CHATGPT_BRIDGE_PARTICIPANT_ID,
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
   CHATGPT_BRIDGE_READ_OPERATIONS,
+  CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
   CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
   buildChatGptBridgeRecord,
   createInMemoryReplayStore,
   createSanitizedSharedWorkspaceProjection,
+  readSanitizedStarfieldVrTelemetry,
   verifyChatGptBridgeRequest,
 } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
@@ -39,7 +41,10 @@ import {
   decodeStephanosWorkspaceAnswerRecord,
   decodeStephanosWorkspaceQuestionRecord,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
-import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import {
+  answerStephanosWorkspaceQuestionRecord,
+  isStephanosSharedParticipantSecretShapedText,
+} from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
 import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   buildRecurringCapabilityCalibrationReadinessV1,
@@ -292,6 +297,45 @@ function compactConversationRecord(record = null) {
   }) : null;
 }
 
+function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date.now()) {
+  if (!answerRecord) return null;
+  const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecord, {
+    expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    workspaceValidationOptions: { nowMs },
+  });
+  if (!decoded.valid || !decoded.answer) return null;
+
+  const answer = decoded.answer;
+  const rawAnswerText = text(answer.answerText);
+  const redacted = !rawAnswerText
+    || isStephanosSharedParticipantSecretShapedText(rawAnswerText)
+    || UNSAFE_REMOTE_TEXT.test(rawAnswerText);
+  const sourcesConsulted = Array.isArray(answer.sourcesConsulted)
+    ? answer.sourcesConsulted
+      .map((source) => bounded(source, 120))
+      .filter((source) => source
+        && !isStephanosSharedParticipantSecretShapedText(source)
+        && !UNSAFE_REMOTE_TEXT.test(source))
+      .slice(0, 8)
+    : [];
+
+  return Object.freeze({
+    answerId: safeId(answer.answerId),
+    questionId: safeId(answer.questionId),
+    roundId: safeId(answer.roundId),
+    responderParticipantId: safeId(answer.responderParticipantId),
+    answerText: redacted ? '[REDACTED]' : bounded(rawAnswerText, 1000),
+    epistemicState: safeId(answer.epistemicState),
+    freshness: safeId(answer.freshness),
+    answerVerdict: safeId(answer.answerVerdict),
+    sourcesConsulted: Object.freeze(sourcesConsulted),
+    evidenceRefCount: Array.isArray(answer.evidenceRefs) ? answer.evidenceRefs.length : 0,
+    redacted,
+    rawAnswerIncluded: false,
+    authorityWidening: false,
+  });
+}
+
 export function resolveChatGptSharedWorkspaceRelayPaths({ env = process.env, home = os.homedir() } = {}) {
   const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
   return Object.freeze({
@@ -362,7 +406,7 @@ export function renderChatGptSharedWorkspaceResponse(payload = {}) {
 ## ChatGPT Shared Workspace Response Outbox
 
 \`\`\`json
-${JSON.stringify(safePayload, null, 2)}
+${JSON.stringify(safePayload, null, 1)}
 \`\`\`
 
 The Shared Agent Workspace remains authoritative. This is a bounded sanitized projection and audit handoff only.`;
@@ -561,6 +605,16 @@ function eventIdFor(receiptId) {
 }
 
 function readProjectionForOperation(operation, projection) {
+  if (operation === 'READ_PROOF_INDEX') {
+    const index = projection.proofIndex || null;
+    return Object.freeze({
+      projectionKind: 'proof-index-projection',
+      proofIndex: index,
+      freshnessUtc: projection.freshnessUtc,
+      aggregationOk: projection.aggregationOk !== false && index?.sourceAvailable === true,
+      aggregationReason: index?.sourceAvailable === true ? projection.aggregationReason : 'PROOF_INDEX_SOURCE_UNAVAILABLE',
+    });
+  }
   if (operation === 'READ_LATEST_PROOF') {
     return Object.freeze({
       projectionKind: 'latest-proof-projection',
@@ -621,6 +675,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
+  starfieldVrTelemetryReader = readSanitizedStarfieldVrTelemetry,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
   projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
@@ -791,6 +846,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
         projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
         capabilityCalibration: compactCapabilityCalibration(capabilityCalibration),
+      });
+    } else if (request.operation === CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION) {
+      projection = await starfieldVrTelemetryReader({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        readFileFn,
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
@@ -1080,6 +1141,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       summary: workspaceRecord.summary,
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
+    sanitizedAnswer: sanitizedConversationAnswerProjection(answerRecord, nowMs),
     conversationCanvasHandoff: canvasPersistence?.ok && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
       ? {
           classification: text(canvasPersistence.classification),

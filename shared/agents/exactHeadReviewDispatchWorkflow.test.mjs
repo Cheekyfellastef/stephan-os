@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import {
+  selectExactHeadDiscoveryWindowV1,
+  EXACT_HEAD_DISCOVERY_MAX_PER_PASS,
+  EXACT_HEAD_DISCOVERY_WINDOW_MS,
+} from './exactHeadReviewDiscoveryWindowV1.mjs';
 
 const workflowUrl = new URL('../../.github/workflows/exact-head-review-dispatch.yml', import.meta.url);
 const deterministicReviewWorkflowUrl = new URL('../../.github/workflows/stephanos-exact-head-review.yml', import.meta.url);
@@ -53,13 +58,13 @@ test('pull-request planning succeeds neutrally without entering the real planner
   const neutral = workflowStep(
     plan,
     'Publish pull-request neutral planning truth',
-    'Check out trusted default-branch planner',
+    'Gate hosted review on its own GitHub installation API budget',
   );
   const discovery = plan.match(
     /^      - name: Discover canonical PR targets without mutation\n[\s\S]*$/m,
   )?.[0] || '';
 
-  assert.match(plan, /^  plan:\n    runs-on: ubuntu-latest/m);
+  assert.match(plan, /^  plan:\n(?:    #[^\n]*\n)*    if: github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\n    runs-on: ubuntu-latest/m);
   assert.match(neutral, /if: github\.event_name == 'pull_request'/);
   assert.match(neutral, /Progress: `PULL_REQUEST_PLAN_NEUTRAL`/);
   assert.doesNotMatch(neutral, /uses:|GITHUB_TOKEN|STEPHANOS_|node |gh |curl |workflow_dispatch|pull-requests: write|issues: write/);
@@ -74,7 +79,7 @@ test('every real planning dependency is gated away from pull-request verificatio
   const workflow = readWorkflow();
   const plan = workflowJob(workflow, 'plan', 'coordinate');
   const admitted = /if: >-\n          github\.event_name != 'pull_request' &&\n          \(github\.event_name != 'issue_comment' \|\| github\.event\.issue\.pull_request != null\)/g;
-  assert.equal([...plan.matchAll(admitted)].length, 3);
+  assert.equal([...plan.matchAll(admitted)].length, 4); // Includes fail-closed quota admission
   assert.match(plan, /permissions:\n      actions: read\n      contents: read\n      issues: read\n      pull-requests: read/);
   assert.match(workflow, /coordinate:\n    needs: plan\n    if: >-\n      needs\.plan\.outputs\.targets != ''/);
 });
@@ -169,4 +174,81 @@ test('isolates provider-neutral assurance intake from Codex review command vocab
   assert.match(workflow, /test "\$\{head_sha\}" = "\$\{expected_head\}"/);
   assert.match(workflow, /contains\(fromJSON\('\["OWNER","MEMBER","COLLABORATOR"\]'\), github\.event\.comment\.author_association\)/);
   assert.doesNotMatch(workflow, /\/stephanos-review|@codex|\/codex|chatgpt-codex/i);
+});
+
+test('hosted reviews fail closed before API reads when the installation budget is low', () => {
+  const hosted = [
+    readDeterministicReviewWorkflow(),
+    fs.readFileSync(new URL('../../.github/workflows/independent-merge-security-review.yml', import.meta.url), 'utf8'),
+  ];
+  for (const workflow of hosted) {
+    assert.ok(workflow.includes('name: Gate hosted review on its own GitHub installation API budget'));
+    assert.ok(workflow.includes('gh api rate_limit 2>/dev/null'));
+    assert.ok(workflow.includes('remaining <= reserve'));
+    assert.ok(workflow.includes('GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN'));
+    assert.ok(workflow.includes('GITHUB_HOSTED_REVIEW_BUDGET_HOLD'));
+    assert.ok(workflow.includes('reset_epoch=$reset'));
+    assert.ok(workflow.includes("steps.github_budget.outcome == 'success'"));
+    assert.ok(!workflow.includes('continue-on-error: true'));
+  }
+  assert.ok(hosted[0].indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < hosted[0].indexOf('name: Resolve immutable review identity'));
+  assert.ok(hosted[1].indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < hosted[1].indexOf('name: Check out trusted exact-base reviewer'));
+  assert.ok(hosted[1].includes('name: Surface terminal exact-head findings or pre-artifact failure'));
+});
+
+test('canonical plan and coordinate jobs enforce installation reserve before GitHub API reads', () => {
+  const source = readWorkflow();
+  const plan = workflowJob(source, 'plan', 'coordinate');
+  const coordinate = source.slice(source.indexOf('  coordinate:'));
+  for (const job of [plan, coordinate]) {
+    const gateIndex = job.indexOf('name: Gate hosted review on its own GitHub installation API budget');
+    assert.ok(gateIndex > -1, 'missing installation quota gate');
+    assert.ok(job.includes('gh api rate_limit 2>/dev/null'));
+    assert.ok(job.includes('GITHUB_HOSTED_REVIEW_BUDGET_HOLD'));
+    assert.ok(job.includes('GITHUB_HOSTED_REVIEW_BUDGET_UNKNOWN'));
+    assert.ok(job.includes('remaining <= reserve'));
+  }
+  assert.ok(plan.indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < plan.indexOf('name: Discover canonical PR targets without mutation'));
+  assert.ok(coordinate.indexOf('name: Gate hosted review on its own GitHub installation API budget')
+    < coordinate.indexOf('name: Recheck target exact-current-main admission'));
+  assert.ok(plan.includes("github.event_name != 'pull_request'"));
+});
+
+test('15-minute review discovery observes at most 12 of 145 PR comment threads per pass without starvation', () => {
+  const estate = Array.from({ length: 145 }, (_, index) => ({
+    number: 4000 - index, draft: index % 6 === 0,
+  }));
+  const everObserved = new Set();
+  const windows = Math.ceil((estate.length - 2) / 10);
+  for (let index = 0; index < windows; index += 1) {
+    const chosen = selectExactHeadDiscoveryWindowV1(estate, {
+      nowMs: index * EXACT_HEAD_DISCOVERY_WINDOW_MS,
+    });
+    assert.ok(chosen.length <= EXACT_HEAD_DISCOVERY_MAX_PER_PASS);
+    assert.deepEqual(chosen.slice(0, 2), estate.slice(0, 2));
+    assert.equal(new Set(chosen.map((pr) => pr.number)).size, chosen.length);
+    for (const pr of chosen) everObserved.add(pr.number);
+  }
+  assert.equal(everObserved.size, estate.length,
+    'every old PR is eventually observed without probing the full estate in one run');
+  assert.equal(selectExactHeadDiscoveryWindowV1(estate.slice(0, 4)).length, 4);
+  assert.equal(selectExactHeadDiscoveryWindowV1([]).length, 0);
+});
+
+test('discovery fails closed for duplicated/unknown PR identity and bounded selection is actually wired', () => {
+  assert.throws(
+    () => selectExactHeadDiscoveryWindowV1([{ number: 7 }, { number: 7 }]),
+    /EXACT_HEAD_DISCOVERY_PR_IDENTITIES_UNVERIFIED/,
+  );
+  assert.throws(
+    () => selectExactHeadDiscoveryWindowV1([{ number: 7 }], { nowMs: NaN }),
+    /EXACT_HEAD_DISCOVERY_INPUT_UNVERIFIED/,
+  );
+  const dispatcher = fs.readFileSync(new URL('../../scripts/exact-head-review-dispatch.mjs', import.meta.url), 'utf8');
+  assert.match(dispatcher, /selectExactHeadDiscoveryWindowV1\(openPullRequests\)/);
+  assert.match(dispatcher, /mapWithConcurrency\(boundedCandidates, 8,/);
+  assert.doesNotMatch(dispatcher, /mapWithConcurrency\(openPullRequests, 8,/);
 });

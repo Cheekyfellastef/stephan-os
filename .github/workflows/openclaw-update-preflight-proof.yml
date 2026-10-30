@@ -1,0 +1,51 @@
+name: OpenClaw Update Preflight Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/openclaw-update-preflight-proof.yml'
+      - 'shared/agents/openClawUpdatePreflightV1.mjs'
+      - 'shared/agents/openClawUpdatePreflightV1.test.mjs'
+      - 'scripts/openclaw-update-preflight.mjs'
+      - 'scripts/openclaw-update-preflight.test.mjs'
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: openclaw-update-preflight-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse source
+        run: |
+          node --check shared/agents/openClawUpdatePreflightV1.mjs
+          node --check shared/agents/openClawUpdatePreflightV1.test.mjs
+          node --check scripts/openclaw-update-preflight.mjs
+          node --check scripts/openclaw-update-preflight.test.mjs
+
+      - name: Run focused proof
+        run: |
+          node --test shared/agents/openClawUpdatePreflightV1.test.mjs scripts/openclaw-update-preflight.test.mjs
+
+      - name: Check patch hygiene
+        env:
+          BASE_REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+        run: |
+          git diff --check
+          git diff --check "$BASE_REVISION...HEAD"

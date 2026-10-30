@@ -5,9 +5,9 @@ export const CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION = 'stephanos.controller-ac
 export const CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION = 'stephanos.controller-fleet-telemetry.v1';
 
 export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
+  Object.freeze({ controllerId: '6ac3999164b88191a1c866c70ab51bd7', title: 'Stephanos Continuous Foreman' }),
   Object.freeze({ controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01', title: 'Stephanos Autonomous Goal Builder' }),
   Object.freeze({ controllerId: '6aa425918c8881918c1763ee6acf3cb6', title: 'Stephanos Hourly Build Controller' }),
-  Object.freeze({ controllerId: '6a9bb24c04748191ada675a686f3b3fa', title: 'Stephanos Elastic Product Build' }),
   Object.freeze({ controllerId: '6a859e0d499c8191aeeee31838d64118', title: 'OpenClaw Autonomy Controller' }),
   Object.freeze({ controllerId: '6a6f32b20d8c8191bcb991d043d967f6', title: 'VR Research & Battle Bridge Build' }),
 ]);
@@ -56,6 +56,19 @@ function controllerRecords(statusRecords, controllerId) {
     .sort((a, b) => (timestampMs(a?.timestampUtc) || 0) - (timestampMs(b?.timestampUtc) || 0));
 }
 
+function boundedAutonomyProvenance(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    schemaVersion: text(value.schemaVersion),
+    missionId: text(value.missionId),
+    initiatorId: text(value.initiatorId),
+    triggerClass: text(value.triggerClass),
+    operatorInitiated: value.operatorInitiated === true,
+    chatgptInitiated: value.chatgptInitiated === true,
+    manualPoke: value.manualPoke === true,
+  });
+}
+
 function laneFacts(value) {
   return (Array.isArray(value) ? value : []).slice(0, TARGET_MATERIAL_LANES).map((lane) => Object.freeze({
     laneId: text(lane?.laneId),
@@ -71,6 +84,7 @@ function laneFacts(value) {
     retryState: text(lane?.retryState),
     failoverState: text(lane?.failoverState),
     nextAutomaticAction: text(lane?.nextAutomaticAction),
+    autonomyProvenance: boundedAutonomyProvenance(lane?.autonomyProvenance),
   }));
 }
 
@@ -174,6 +188,8 @@ export function createControllerActivityStatusRecord(input = {}) {
     mergesCompleted: count(input.mergesCompleted),
     activeLanes: list(input.activeLanes),
     parkedLanes: list(input.parkedLanes),
+    activeLaneCount: input.activeLaneCount === undefined ? list(input.activeLanes).length : Math.min(15, count(input.activeLaneCount)),
+    parkedLaneCount: input.parkedLaneCount === undefined ? list(input.parkedLanes).length : Math.min(15, count(input.parkedLaneCount)),
     materialLanes: laneFacts(input.materialLanes),
     targetMaterialLanes: count(input.targetMaterialLanes) || TARGET_MATERIAL_LANES,
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining),
@@ -208,6 +224,8 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
       materialActionsSucceeded: 0,
       activeLanes: [],
       parkedLanes: [],
+      activeLaneCount: 0,
+      parkedLaneCount: 0,
       materialLanes: [],
       targetMaterialLanes: TARGET_MATERIAL_LANES,
       safeEligibleWorkRemaining: 0,
@@ -231,6 +249,12 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
   const proofRefs = verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, staleAfterMs);
   const activeLanes = list(activity.activeLanes);
   const parkedLanes = list(activity.parkedLanes);
+  const activeLaneCount = activity.activeLaneCount === undefined
+    ? activeLanes.length
+    : Math.min(15, count(activity.activeLaneCount));
+  const parkedLaneCount = activity.parkedLaneCount === undefined
+    ? parkedLanes.length
+    : Math.min(15, count(activity.parkedLaneCount));
   const materialLanes = laneFacts(activity.materialLanes);
   const safeEligibleWorkRemaining = count(activity.safeEligibleWorkRemaining);
   const observedEnabled = typeof activity.observedEnabled === 'boolean' ? activity.observedEnabled : null;
@@ -301,7 +325,7 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
     trafficLight = 'AMBER';
     blocker = 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION';
     exactNextAction = 'Execute safe eligible work instead of returning a narration-only cycle.';
-  } else if (parkedLanes.length > 0) {
+  } else if (parkedLaneCount > 0) {
     activityState = 'WAITING_OR_BLOCKED';
     trafficLight = 'AMBER';
     blocker = 'CONTROLLER_LANES_PARKED';
@@ -322,6 +346,8 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
     mergesCompleted: count(activity.mergesCompleted),
     activeLanes,
     parkedLanes,
+    activeLaneCount,
+    parkedLaneCount,
     materialLanes,
     targetMaterialLanes: count(activity.targetMaterialLanes) || TARGET_MATERIAL_LANES,
     safeEligibleWorkRemaining,

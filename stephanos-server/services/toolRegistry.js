@@ -12,8 +12,23 @@ import { activityLogService } from './activityLogService.js';
 import { roadmapService } from './roadmapService.js';
 import { simulationHistoryService } from './simulationHistoryService.js';
 import { assistantContextService } from './assistantContextService.js';
+import { readSovereignCommanderStatus } from './sovereignCommanderStatusTool.js';
 
 const tools = [
+  {
+    name: 'getSovereignCommanderStatus',
+    description: 'Read the existing local Sovereign Commander service and bounded repair-guardian status. Read-only, never execution proof.',
+    category: 'system',
+    subsystem: 'sovereign-commander',
+    state: 'live',
+    async execute() {
+      const observation = await readSovereignCommanderStatus();
+      const output_text = observation.healthy
+        ? 'Sovereign Commander local service is reachable. This does not prove Core wake, repairs or autonomous worker pickup.'
+        : 'Sovereign Commander local health is unverified: ' + observation.blocker + '. No repair or restart was attempted.';
+      return { output_text, data: { observation } };
+    },
+  },
   { name: 'getSystemStatus', description: 'Returns operational status for core Stephanos services.', category: 'system', subsystem: 'ai_core', state: 'live', async execute(_args, context) { return { output_text: 'Stephanos systems nominal.', data: { ai_available: context.aiAvailable, subsystems: getSubsystemRegistry(), app_version: process.env.APP_VERSION ?? '0.1.0' } }; } },
   { name: 'listSubsystems', description: 'Lists unified subsystem registry entries.', category: 'system', subsystem: 'ai_core', state: 'live', async execute() { return { output_text: 'Subsystem registry loaded.', data: { subsystems: getSubsystemRegistry() } }; } },
   { name: 'listAvailableTools', description: 'Lists all registered tools and their callability/state.', category: 'system', subsystem: 'tool_registry', state: 'live', async execute() { const grouped = tools.reduce((acc, tool) => { const key = `${tool.subsystem}:${tool.category}`; acc[key] = acc[key] ?? { subsystem: tool.subsystem, category: tool.category, tools: [] }; acc[key].tools.push({ name: tool.name, description: tool.description, state: tool.state, callable_now: tool.state === 'live' || tool.state === 'mock' }); return acc; }, {}); return { output_text: `Registered tools: ${tools.length}`, data: { tools: tools.map((t) => ({ name: t.name, description: t.description, category: t.category, subsystem: t.subsystem, state: t.state })), grouped_tools: Object.values(grouped) } }; } },

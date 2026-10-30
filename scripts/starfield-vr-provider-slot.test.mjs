@@ -34,20 +34,25 @@ async function fixture() {
   const mutarLoader = path.join(mutar, 'openxr_loader.dll');
   const liveDxgi = path.join(game, 'dxgi.dll');
   const liveLoader = path.join(game, 'openxr_loader.dll');
+  const gameExecutable = path.join(game, 'Starfield.exe');
 
   await writeFile(vorpxDxgi, 'vorpx-driver');
   await writeFile(mutarDxgi, 'mutar-driver');
   await writeFile(mutarLoader, 'mutar-openxr-loader');
   await writeFile(liveDxgi, 'vorpx-driver');
   await writeFile(liveLoader, 'old-loader');
+  await writeFile(gameExecutable, 'starfield-executable');
 
   const vorpxHash = await sha256File(vorpxDxgi);
   const mutarHash = await sha256File(mutarDxgi);
   const loaderHash = await sha256File(mutarLoader);
+  const gameExecutableHash = await sha256File(gameExecutable);
   const manifestPath = path.join(vr, 'starfield-vr-provider-cache.json');
   const manifest = {
     schemaVersion: 'stephanos.starfield-vr-provider-cache.v1',
     gameRoot: game,
+    gameExecutablePath: gameExecutable,
+    gameExecutableSha256: gameExecutableHash,
     liveSlotPath: liveDxgi,
     providers: {
       vorpx: {
@@ -81,6 +86,8 @@ async function fixture() {
     mutarLoader,
     liveDxgi,
     liveLoader,
+    gameExecutable,
+    gameExecutableHash,
     vorpxHash,
     mutarHash,
     loaderHash,
@@ -185,6 +192,47 @@ test('bad source hashes and unsupported providers fail closed', async () => {
     () => buildProviderSlotPlan({ manifestPath: fx.manifestPath, provider: 'hybrid' }),
     /provider-not-allowlisted/,
   );
+});
+
+test('manifest game root is bound to exact Starfield executable identity', async () => {
+  const fx = await fixture();
+  fx.manifest.gameExecutableSha256 = '0'.repeat(64);
+  await writeFile(fx.manifestPath, JSON.stringify(fx.manifest, null, 2));
+
+  await assert.rejects(
+    () => buildProviderSlotPlan({ manifestPath: fx.manifestPath, provider: 'vorpx' }),
+    /game-executable-hash-mismatch/,
+  );
+
+  fx.manifest.gameExecutableSha256 = fx.gameExecutableHash;
+  fx.manifest.gameExecutablePath = path.join(fx.root, 'elsewhere', 'Starfield.exe');
+  await writeFile(fx.manifestPath, JSON.stringify(fx.manifest, null, 2));
+
+  await assert.rejects(
+    () => buildProviderSlotPlan({ manifestPath: fx.manifestPath, provider: 'vorpx' }),
+    /game-executable-path-not-fixed/,
+  );
+});
+
+test('authoritative receipt failure rolls provider mutation back before backups are discarded', async () => {
+  const fx = await fixture();
+  const beforeDxgi = await sha256File(fx.liveDxgi);
+  const beforeLoader = await sha256File(fx.liveLoader);
+  const currentReceiptPath = path.join(fx.vr, 'starfield-vr-provider-slot-current.json');
+  await mkdir(currentReceiptPath);
+
+  await assert.rejects(
+    () => applyProviderSlot({
+      manifestPath: fx.manifestPath,
+      provider: 'mutar-openxr',
+      apply: true,
+    }),
+  );
+
+  assert.equal(await sha256File(fx.liveDxgi), beforeDxgi);
+  assert.equal(await sha256File(fx.liveLoader), beforeLoader);
+  await assert.rejects(() => readFile(fx.liveDxgi + '.stephanos-backup'));
+  await assert.rejects(() => readFile(fx.liveLoader + '.stephanos-backup'));
 });
 
 test('manifest cannot redirect the live slot away from Starfield dxgi.dll', async () => {

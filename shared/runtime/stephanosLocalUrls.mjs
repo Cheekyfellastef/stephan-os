@@ -168,3 +168,5 @@ export function resolveStephanosLocalUrls(...candidates) {
   const resolvedPort = resolveStephanosServePort(...candidates);
   return createStephanosLocalUrls({ port: resolvedPort });
 }
+
+// Fixed frontend source admission requires canonical LF deployment bytes.

@@ -1,3 +1,5 @@
+import { formatGalaxiansLabDiagnostics, isGalaxiansLabDiagnosticsKey } from './diagnostics.mjs';
+
 const FRAME_WIDTH = 12;
 const FRAME_HEIGHT = 13;
 const SCALE = 4;
@@ -28,10 +30,16 @@ const ctx = canvas.getContext('2d', { alpha: false });
 ctx.imageSmoothingEnabled = false;
 
 const modeLabel = document.getElementById('mode-label');
-const modeButtons = Array.from(document.querySelectorAll('.mode-btn'));
+// Only palette controls belong to this group. The Diagnostics toggle
+// maintains its own visible/aria-expanded state independently of setMode().
+const modeButtons = Array.from(document.querySelectorAll('.mode-btn[data-mode]'));
+const debugButton = document.getElementById('lab-diagnostics-toggle');
+const debugPanel = document.getElementById('lab-diagnostics');
 
 let currentMode = 'original';
 let currentFrameIndex = 0;
+let imageStatus = 'loading';
+let diagnosticsVisible = false;
 let sourceFrames = [];
 let remappedFrames = {
   basic: { red: [], purple: [], blue: [] },
@@ -157,6 +165,30 @@ function getFrameFor(rowIndex, frameIndex) {
   return remappedFrames[currentMode][rowColor][frameIndex];
 }
 
+function refreshDiagnostics() {
+  if (!diagnosticsVisible || !debugPanel) return;
+  debugPanel.textContent = formatGalaxiansLabDiagnostics({
+    mode: currentMode,
+    imageStatus,
+    frameIndex: currentFrameIndex,
+    frameCount: FRAME_COORDS.length,
+    loadedFrames: sourceFrames.length,
+    sourceWidth: FRAME_WIDTH,
+    sourceHeight: FRAME_HEIGHT,
+    scale: SCALE,
+    frameMs: FRAME_MS,
+  });
+}
+
+function setDiagnosticsVisible(visible) {
+  diagnosticsVisible = Boolean(visible);
+  if (!debugPanel || !debugButton) return;
+  debugPanel.hidden = !diagnosticsVisible;
+  debugButton.setAttribute('aria-expanded', String(diagnosticsVisible));
+  debugButton.classList.toggle('is-active', diagnosticsVisible);
+  refreshDiagnostics();
+}
+
 function render() {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -181,6 +213,8 @@ function render() {
       ctx.drawImage(sprite, x, y, spriteW, spriteH);
     }
   }
+
+  refreshDiagnostics();
 }
 
 function setMode(mode) {
@@ -203,6 +237,13 @@ function attachControls() {
       }
     });
   }
+
+  debugButton?.addEventListener('click', () => setDiagnosticsVisible(!diagnosticsVisible));
+  document.addEventListener('keydown', (event) => {
+    if (!isGalaxiansLabDiagnosticsKey(event)) return;
+    event.preventDefault();
+    setDiagnosticsVisible(!diagnosticsVisible);
+  });
 }
 
 function startAnimationLoop() {
@@ -227,9 +268,12 @@ async function init() {
   try {
     const spriteSheet = await loadImage(SPRITE_PATH);
     buildFrameCache(spriteSheet);
+    imageStatus = 'ready';
     render();
     startAnimationLoop();
   } catch (error) {
+    imageStatus = 'error';
+    refreshDiagnostics();
     console.error(error);
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);

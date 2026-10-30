@@ -298,6 +298,79 @@ test('current-status read uses canonical head truth and does not let unrelated g
   assert.match(responseBody, /"currentStatus"/);
 });
 
+test('Starfield VR telemetry read uses the dedicated Shared Workspace projection and avoids the global status path', async () => {
+  let responseBody = '';
+  let globalProjectionCalls = 0;
+  let telemetryReadCalls = 0;
+  const workspace = fakeWorkspace();
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, {
+      readRequest: () => ({
+        ok: true,
+        body: envelope(request({
+          operation: 'READ_STARFIELD_VR_TELEMETRY',
+          recordKind: 'starfield-vr-telemetry-projection',
+          requestId: 'request-starfield-vr-telemetry-1',
+          correlationId: 'goal-1506-starfield-vr-telemetry',
+        })),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      }),
+      writeResponse: (body) => {
+        responseBody = body;
+        return { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+      },
+    }),
+    projectionBuilder: async () => {
+      globalProjectionCalls += 1;
+      return projection();
+    },
+    starfieldVrTelemetryReader: async () => {
+      telemetryReadCalls += 1;
+      return {
+        projectionKind: 'starfield-vr-telemetry-projection',
+        aggregationOk: true,
+        aggregationReason: 'STARFIELD_VR_TELEMETRY_CURRENT_AND_HISTORY_READ',
+        current: {
+          sessionId: 'starfield-vr-performance-20261002-003000',
+          provider: 'mutar-openxr',
+          providerIdentityStatus: 'VERIFIED_PROVIDER',
+          sessionOutcome: 'CRASHED',
+          focus: 'CRASH_FORENSICS',
+          sampleCount: 73,
+          maxGpuMemoryPct: 98.3,
+          crashEvidence: [{
+            moduleName: 'RuntimeIPCServiceClient_64.dll',
+            exceptionCode: '0xc0000409',
+            faultOffset: '0x0000000000248541',
+          }],
+        },
+        history: {
+          available: true,
+          sessionCount: 3,
+          rawTelemetryAlreadyCanonicalInSharedWorkspace: true,
+        },
+        recentSessions: [],
+        authority: {
+          readOnlyProjection: true,
+          arbitraryFilesystemAccess: false,
+          commandExecutionAccess: false,
+          sourceMutationAccess: false,
+          mergeAuthority: false,
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.deliveryStatus, 'WORKSPACE_READ_PASS');
+  assert.equal(globalProjectionCalls, 0);
+  assert.equal(telemetryReadCalls, 1);
+  assert.match(responseBody, /"projectionKind": "starfield-vr-telemetry-projection"/);
+  assert.match(responseBody, /"provider": "mutar-openxr"/);
+  assert.match(responseBody, /RuntimeIPCServiceClient_64\.dll/);
+  assert.match(responseBody, /"rawTelemetryAlreadyCanonicalInSharedWorkspace": true/);
+});
+
 test('authenticated bounded write persists only the canonical message, audit, event and completion records', async () => {
   let responseBody = '';
   const workspace = fakeWorkspace();
