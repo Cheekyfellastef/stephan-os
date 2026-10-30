@@ -1694,6 +1694,7 @@ test('GitHub goal estate is mirrored durably with a bounded outage lease', async
 
   const writes = [];
   const publication = await publishGithubGoalMirrorEstate(mirror, {
+    nowUtc: NOW,
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,
@@ -1964,6 +1965,7 @@ test('goal mirror publication serializes observations and rejects an older overl
   };
   let writes = 0;
   const result = await publishGithubGoalMirrorEstate(older, {
+    nowUtc: '2026-07-30T10:30:00.000Z',
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,
@@ -2012,6 +2014,7 @@ test('failed goal revocation leaves a durable fail-closed reconciliation fence',
   }, NOW);
   const statusWrites = [];
   const result = await publishGithubGoalMirrorEstate(revoked, {
+    nowUtc: NOW,
     root: '/workspace',
     repoRoot: '/repo',
     testOnly: true,

@@ -761,6 +761,13 @@ export function selectGoalRecordsForProgrammeProjection(
   goalMirrorPublication = {},
   effectiveWorkspaceFeed = {},
 ) {
+  if (goalMirrorPublication?.goalRecordsSource === 'durable-winner') {
+    const observedAtUtc = goalMirrorPublication.projectionMirrorObservedAtUtc;
+    return Object.freeze(list(effectiveWorkspaceFeed?.records?.goalRecords).filter((record) => (
+      record?.mirrorSchema !== GITHUB_GOAL_MIRROR_SCHEMA
+      || record.mirrorObservedAtUtc === observedAtUtc
+    )));
+  }
   return Object.freeze(
     goalMirrorPublication?.ok === true
       ? list(effectiveWorkspaceFeed?.records?.goalRecords)
@@ -782,6 +789,48 @@ function validGoalMirrorLeaseWindow(observedAtUtc, expiresAtUtc, nowUtc) {
     && durationMs > 0
     && durationMs <= MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS
   );
+}
+
+// Publication completion and outage eligibility are different truths. All
+// publisher paths and the outage consumer must interpret this one state model.
+export function projectGoalMirrorReconciliationState(record, nowUtc) {
+  const nowMs = Date.parse(nowUtc);
+  const observedMs = Date.parse(record?.mirrorObservedAtUtc);
+  const timestampMs = Date.parse(record?.timestampUtc);
+  const envelope = validateSharedWorkspaceRecord(record ?? {}, {
+    nowMs, staleAfterMs: MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS,
+  });
+  const ready = record?.status === 'READY' && record?.fallbackAllowed === true;
+  const fenced = ['RECONCILING', 'BLOCKED'].includes(record?.status) && record?.fallbackAllowed === false;
+  const issues = record?.mirroredIssueNumbers;
+  const valid = Boolean(
+    envelope.valid && !envelope.stale
+    && record?.kind === 'stephanos.shared_workspace.status'
+    && record?.schema === GITHUB_GOAL_MIRROR_RECONCILIATION_SCHEMA
+    && record?.statusId === GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID
+    && record?.participantId === 'programme-authority'
+    // Historical canonical records bind identity by path/status/participant;
+    // they have no repository field. An explicit foreign binding is forbidden.
+    && (record.repository === undefined || record.repository === CANONICAL_GOAL_REPOSITORY)
+    && record.singleCanonicalScheduler === true
+    && record.duplicateMissionPreventionByCanonicalIssueIdentity === true
+    && ['mergeAuthority', 'deploymentAuthority', 'runtimeMutationAuthority', 'arbitraryShellAllowed']
+      .every((field) => record[field] === false)
+    && Array.isArray(issues)
+    && issues.every((issue) => Number.isSafeInteger(issue) && issue > 0)
+    && new Set(issues).size === issues.length
+    && Number.isFinite(timestampMs) && timestampMs >= observedMs
+    && timestampMs <= nowMs + MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    && validGoalMirrorLeaseWindow(record.mirrorObservedAtUtc, record.mirrorLeaseExpiresAtUtc, nowUtc)
+    && (ready || fenced)
+  );
+  return Object.freeze({
+    valid,
+    state: valid ? (ready ? 'READY' : 'FENCED') : 'UNKNOWN',
+    fallbackAllowed: valid && ready,
+    fallbackFenced: valid && fenced,
+    observedAtUtc: valid ? record.mirrorObservedAtUtc : '',
+  });
 }
 
 function stampGoalMirrorRecord(record = {}, {
@@ -983,6 +1032,7 @@ async function readExistingGoalMirror(root, repoRoot, issueNumber, deps) {
 
 export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options = {}) {
   const deps = dependencies(options);
+  const observationTime = () => safeNow(options.nowUtc) || new Date().toISOString();
   const records = list(mirrorEstate.records).filter((record) => record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA);
   if (mirrorEstate.ok !== true) {
     return Object.freeze({
@@ -1007,13 +1057,22 @@ export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options =
     },
   );
   if (!lock?.ok) {
+    const currentStatus = await readGoalMirrorReconciliationStatus(options.root, options.repoRoot, deps);
+    const state = projectGoalMirrorReconciliationState(currentStatus.record, observationTime());
+    const candidateObservedMs = Date.parse(mirrorEstate.observedAtUtc);
+    const durableWinner = state.valid && Number.isFinite(candidateObservedMs)
+      && Date.parse(state.observedAtUtc) >= candidateObservedMs;
     return Object.freeze({
-      ok: false,
+      ok: durableWinner && state.state === 'READY',
       classification: 'GITHUB_GOAL_MIRROR_RECONCILIATION_BUSY',
       publishedIssueNumbers: Object.freeze([]),
       supersededIssueNumbers: Object.freeze([]),
       failures: Object.freeze([{ issueNumber: null, reason: text(lock?.reason, 'GOAL_MIRROR_LOCK_FAILED') }]),
-      fallbackFenced: false,
+      fallbackFenced: state.fallbackFenced,
+      reconciliationState: state,
+      reconciliationStatus: currentStatus.record,
+      goalRecordsSource: durableWinner ? 'durable-winner' : 'live-observation',
+      projectionMirrorObservedAtUtc: durableWinner ? state.observedAtUtc : '',
     });
   }
 
@@ -1021,22 +1080,26 @@ export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options =
   let thrown = null;
   try {
     const currentStatus = await readGoalMirrorReconciliationStatus(options.root, options.repoRoot, deps);
+    const currentState = projectGoalMirrorReconciliationState(currentStatus.record, observationTime());
     const candidateObservedAtMs = Date.parse(text(mirrorEstate.observedAtUtc));
     const currentObservedAtMs = Date.parse(text(currentStatus.record?.mirrorObservedAtUtc));
     if (
-      currentStatus.present
+      currentState.valid
       && Number.isFinite(candidateObservedAtMs)
       && Number.isFinite(currentObservedAtMs)
       && currentObservedAtMs > candidateObservedAtMs
     ) {
       result = Object.freeze({
-        ok: true,
+        ok: currentState.state === 'READY',
         classification: 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED',
         publishedIssueNumbers: Object.freeze([]),
         supersededIssueNumbers: Object.freeze([...records.map(goalIssueNumber).filter(Boolean)].sort((a, b) => a - b)),
         failures: Object.freeze([]),
-        fallbackFenced: currentStatus.record?.fallbackAllowed !== true,
+        fallbackFenced: currentState.fallbackFenced,
         reconciliationStatus: currentStatus.record,
+        reconciliationState: currentState,
+        goalRecordsSource: 'durable-winner',
+        projectionMirrorObservedAtUtc: currentState.observedAtUtc,
       });
     } else {
       const reconcilingStatus = createGoalMirrorReconciliationStatus(mirrorEstate, {
@@ -1145,7 +1208,7 @@ export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options =
           publishedIssueNumbers: Object.freeze([...new Set(publishedIssueNumbers)].sort((a, b) => a - b)),
           supersededIssueNumbers: Object.freeze([...new Set(supersededIssueNumbers)].sort((a, b) => a - b)),
           failures: Object.freeze(failures),
-          fallbackFenced: terminalStatus.fallbackAllowed !== true,
+          fallbackFenced: projectGoalMirrorReconciliationState(terminalStatus, observationTime()).fallbackFenced,
           reconciliationStatus: terminalStatus,
           fenceWrite,
           terminalWrite,
@@ -1159,11 +1222,18 @@ export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options =
   const released = await lock.release();
   if (thrown) throw thrown;
   if (!released) {
+    const currentStatus = await readGoalMirrorReconciliationStatus(options.root, options.repoRoot, deps);
+    const state = projectGoalMirrorReconciliationState(currentStatus.record, observationTime());
     return Object.freeze({
       ...(result || {}),
       ok: false,
       classification: 'GITHUB_GOAL_MIRROR_LOCK_RELEASE_FAILED',
-      fallbackFenced: true,
+      fallbackFenced: state.fallbackFenced,
+      reconciliationState: state,
+      reconciliationStatus: currentStatus.record,
+      // Lost lock ownership never certifies the caller's in-memory estate.
+      goalRecordsSource: 'durable-winner',
+      projectionMirrorObservedAtUtc: state.observedAtUtc,
     });
   }
   return result;
@@ -1222,22 +1292,9 @@ export function projectGithubGoalMirrorFallback(goalRecords, goalEstateRead, sch
       && record?.statusId === GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID
     ))
     .sort((left, right) => Date.parse(text(right?.timestampUtc)) - Date.parse(text(left?.timestampUtc)))[0] ?? null;
-  const nowMs = Date.parse(nowUtc);
   const reconciliationIssues = new Set(list(reconciliationStatus?.mirroredIssueNumbers).map(positiveInteger).filter(Boolean));
   const reconciliationValid = Boolean(
-    reconciliationStatus
-    && validateSharedWorkspaceRecord(reconciliationStatus, { nowMs }).valid
-    && text(reconciliationStatus.status).toUpperCase() === 'READY'
-    && reconciliationStatus.fallbackAllowed === true
-    && reconciliationStatus.singleCanonicalScheduler === true
-    && reconciliationStatus.duplicateMissionPreventionByCanonicalIssueIdentity === true
-    && reconciliationStatus.mergeAuthority === false
-    && reconciliationStatus.runtimeMutationAuthority === false
-    && validGoalMirrorLeaseWindow(
-      reconciliationStatus?.mirrorObservedAtUtc,
-      reconciliationStatus?.mirrorLeaseExpiresAtUtc,
-      nowUtc,
-    )
+    projectGoalMirrorReconciliationState(reconciliationStatus, nowUtc).fallbackAllowed
     && candidateIssues.every((issueNumber) => reconciliationIssues.has(issueNumber))
   );
   const missing = [];
@@ -2385,7 +2442,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     root,
     repoRoot: options.repoRoot,
   });
-  const effectiveWorkspaceFeed = goalMirrorPublication.ok === true
+  const effectiveWorkspaceFeed = goalMirrorPublication.ok === true || goalMirrorPublication.goalRecordsSource === 'durable-winner'
     ? await deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
