@@ -583,7 +583,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     liveOpenClawUpdateAllowed: false,
     pcRestartAllowed: false,
     secretValuesPublished: false,
-    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_BEACON_PUBLISHED',
+    // A completed observation is durable locally before external publication.
+    // Only the runner's publication result describes that transport outcome.
+    finalVerdict: 'BATTLE_BRIDGE_OUTBOUND_HEALTH_OBSERVATION_READY',
   });
 }
 
@@ -604,6 +606,7 @@ function runFixed(executable, args, options = {}) {
     shell: false,
     windowsHide: true,
     timeout: options.timeout || 60_000,
+    input: options.input,
     maxBuffer: MAX_GITHUB_BYTES,
   });
   return Object.freeze({
@@ -769,9 +772,9 @@ function publishBeacon(repoRoot, body) {
     heartbeatMs: 5 * 60_000,
     publish: (nextBody) => {
       const args = existingId
-        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
-        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
-      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '--input', '-']
+        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '--input', '-'];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000, input: JSON.stringify({ body: nextBody }) });
       if (result.ok && !existingId) {
         invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
       }

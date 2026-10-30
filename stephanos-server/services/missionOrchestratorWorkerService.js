@@ -751,7 +751,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
       expectedRevision: previous.revision, expectedCurrentPhase: previous.currentPhase,
     }, state => {
       if (!exactFailedReplay(state)) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_UNPROVEN');
-      if (options.assertResultCustody) options.assertResultCustody();
+      if (options.assertResultCustody) options.assertResultCustody(state, resultEvent);
       return { state, duplicate: true, eventId };
     }, options);
     if (locked.preconditionFailed) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_PRECONDITION_FAILED');
@@ -781,13 +781,13 @@ export async function collectAgentWorkerResult(result, options = {}) {
   if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
     throw new Error('Mission has no active agent dispatch.');
   }
-  if (options.assertResultCustody) options.assertResultCustody();
+  if (options.assertResultCustody) options.assertResultCustody(previous, resultEvent);
   let collected = exactSuccessfulReplay
     ? { state: previous, duplicate: true, eventId }
     : await appendMissionEvent(missionId, resultEvent, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
-    if (options.assertResultCustody) options.assertResultCustody();
+    if (options.assertResultCustody) options.assertResultCustody(collected.state, { eventType: 'EVIDENCE_RECORDED' });
     collected = await appendMissionEvent(missionId, {
       eventId: `evidence-${actionId}`.slice(0, 128),
       eventType: 'EVIDENCE_RECORDED',
