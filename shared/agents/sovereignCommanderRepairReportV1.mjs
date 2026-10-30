@@ -16,13 +16,73 @@ export const SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE =
 export const SOVEREIGN_COMMANDER_REPAIR_REPORT_EVENT_FILE =
   'sovereign-commander-repair-cycles.ndjson';
 export const SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE = 'QUALIFIED_GOAL_BUILDER_MAINTENANCE';
-export const SOVEREIGN_COMMANDER_REPAIR_OUTCOMES = Object.freeze([
-  'NEEDS_REPAIR',
-  'REPAIRED',
-  'BLOCKED',
-  'HEALTHY',
-  'MAINTENANCE_COMPLETED',
+const REPAIR_STATUS_BY_OUTCOME = Object.freeze({
+  NEEDS_REPAIR: 'ATTENTION_REQUIRED',
+  REPAIRED: 'READY',
+  BLOCKED: 'ATTENTION_REQUIRED',
+  HEALTHY: 'READY',
+  MAINTENANCE_COMPLETED: 'OBSERVED',
+});
+export const SOVEREIGN_COMMANDER_REPAIR_OUTCOMES = Object.freeze(Object.keys(REPAIR_STATUS_BY_OUTCOME));
+const MAINTENANCE_VERIFICATION_FIELDS = Object.freeze([
+  'fullStephanosRepairProven', 'maintenanceActionId', 'maintenanceProfile',
+  'operationCompleted', 'terminalEvidenceSha256', 'proofHash', 'runtimeQualificationGranted',
 ]);
+
+// Shared report consumers must retain the maintenance scope instead of
+// admitting a new outcome through an independent, broader health allowlist.
+// This projects bounded observations only; hashes never grant native authority.
+export function projectSovereignCommanderRepairReportContract(record = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+    || typeof record.outcome !== 'string' || typeof record.status !== 'string') return null;
+  const outcome = text(record.outcome).toUpperCase();
+  const status = text(record.status).toUpperCase();
+  if (!SOVEREIGN_COMMANDER_REPAIR_OUTCOMES.includes(outcome)
+    || status !== REPAIR_STATUS_BY_OUTCOME[outcome]) return null;
+  const verification = record.verification && typeof record.verification === 'object'
+    && !Array.isArray(record.verification) ? record.verification : {};
+  if (record.scope === undefined) {
+    if (outcome === 'MAINTENANCE_COMPLETED' || record.fullStephanosRepairProven !== undefined
+      || MAINTENANCE_VERIFICATION_FIELDS.some(field => Object.hasOwn(verification, field))) return null;
+    return Object.freeze({ outcome, status });
+  }
+
+  const completed = outcome === 'MAINTENANCE_COMPLETED';
+  const sha = (value, length) => typeof value === 'string'
+    && (length === 40 ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/).test(value);
+  const optionalDigest = value => sha(value, 64) || (!completed && value === '');
+  if (record.scope !== SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE
+    || (!completed && outcome !== 'BLOCKED')
+    || record.fullStephanosRepairProven !== false
+    || record.arbitraryShellAllowed !== false || record.sourceMutationAllowed !== false
+    || record.mergeAuthority !== false
+    || (!sha(record.sourceHead, 40) && (completed || record.sourceHead !== ''))
+    || verification.sourceHead !== record.sourceHead
+    || verification.readiness !== 'UNPROVEN' || verification.fullStephanosRepairProven !== false
+    || verification.maintenanceActionId !== 'repair-goal-builder-flow'
+    || verification.maintenanceProfile !== 'MAINTENANCE_GOAL_BUILDER_V1'
+    || verification.operationCompleted !== completed || verification.runtimeQualificationGranted !== false
+    || !optionalDigest(verification.terminalEvidenceSha256) || !optionalDigest(verification.proofHash)
+    || !Array.isArray(record.detectedFaults)
+    || (completed ? record.detectedFaults.length !== 0 : record.detectedFaults.length === 0)
+    || !Array.isArray(record.actions) || record.actions.length !== 1
+    || record.actions.some(action => !action || typeof action !== 'object' || Array.isArray(action)
+      || action.actionId !== 'repair-goal-builder-flow' || typeof action.ok !== 'boolean'
+      || (completed && (action.ok !== true || action.blocker !== ''
+        || action.finalVerdict !== 'SOVEREIGN_QUALIFIED_MAINTENANCE_COMPLETED')))) return null;
+
+  return Object.freeze({
+    outcome, status, scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+    fullStephanosRepairProven: false,
+    verification: Object.freeze({
+      sourceHead: record.sourceHead, readiness: 'UNPROVEN', fullStephanosRepairProven: false,
+      maintenanceActionId: 'repair-goal-builder-flow', maintenanceProfile: 'MAINTENANCE_GOAL_BUILDER_V1',
+      operationCompleted: completed,
+      terminalEvidenceSha256: verification.terminalEvidenceSha256, proofHash: verification.proofHash,
+      runtimeQualificationGranted: false,
+    }),
+  });
+}
 
 function text(value) {
   return String(value ?? '').trim();
@@ -109,10 +169,7 @@ export function buildSovereignCommanderRepairReport({
   const normalizedCycleId = safeCycleId(cycleId);
   const outcome = classifySovereignCommanderRepairOutcome(repair);
   const scopedMaintenance = repair.scope === SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE;
-  const status = outcome === 'MAINTENANCE_COMPLETED' ? 'OBSERVED'
-    : outcome === 'BLOCKED' || outcome === 'NEEDS_REPAIR'
-    ? 'ATTENTION_REQUIRED'
-    : 'READY';
+  const status = REPAIR_STATUS_BY_OUTCOME[outcome];
   const blocker = text(repair?.blocker) || (repair.scope !== undefined && outcome === 'BLOCKED'
     ? 'SOVEREIGN_QUALIFIED_MAINTENANCE_PROOF_UNPROVEN' : '');
   const detectedFaults = blocker
