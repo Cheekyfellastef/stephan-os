@@ -76,3 +76,15 @@ const server = http.createServer((request, response) => {
 server.listen(DEFAULT_PORT, DEFAULT_HOST, () => {
   console.log(`[openclaw-stub] listening on http://${DEFAULT_HOST}:${DEFAULT_PORT}`);
 });
+
+function closeServer(signal) {
+  server.close((error) => {
+    if (error) {
+      console.error(`[openclaw-stub] failed to close after ${signal}: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+}
+
+process.once('SIGINT', () => closeServer('SIGINT'));
+process.once('SIGTERM', () => closeServer('SIGTERM'));
