@@ -149,17 +149,67 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
         ? 'MAINTENANCE_CUSTODY_JOURNAL_CAPACITY_UNAVAILABLE' : 'MAINTENANCE_CUSTODY_RESERVATION_UNPROVEN');
     }
   };
-  const release = () => {
+  const release = (terminalEvidence = null) => {
     if (!owned) return held('MAINTENANCE_CUSTODY_NOT_OWNED');
     try {
       const current = read();
       if (current?.digest !== owned.digest || current.record.ownerId !== ownerId)
         return held('MAINTENANCE_CUSTODY_OWNER_CHANGED');
-      write({ ...owned.record, phase: 'IDLE', terminalAtUtc: now(), terminalAdmission: 'KNOWN_TERMINAL' },
+      write({ ...owned.record, phase: 'IDLE', terminalAtUtc: now(), terminalAdmission: 'KNOWN_TERMINAL',
+        ...(terminalEvidence ? { terminalEvidence } : {}) },
         false, current.anchorRecordId);
       unlock(owned.fd); owned = null;
       return { ok: true };
     } catch { return held('MAINTENANCE_CUSTODY_RELEASE_UNPROVEN'); }
+  };
+  const archiveOwnedNativeEvidence = (kind, evidence) => {
+    if (!owned) return held('MAINTENANCE_CUSTODY_NOT_OWNED');
+    try {
+      const current = read();
+      if (current?.digest !== owned.digest || current.record.ownerId !== ownerId
+          || evidence?.RequestId !== owned.record.reservationId
+          || evidence?.OwnerPid !== process.pid
+          || evidence?.CustodyRecordSha256 !== owned.digest
+          || evidence?.NativeRecordId !== current.anchorRecordId)
+        return held('MAINTENANCE_NATIVE_EVIDENCE_OWNER_CHANGED');
+      const receipt = { schemaVersion: 'stephanos.maintenance-native-evidence.v1', kind,
+        originalDigest: owned.digest, nativeRecordId: current.anchorRecordId,
+        reservationId: owned.record.reservationId, ownerId, capturedAtUtc: now(), evidence };
+      const bytes = Buffer.from(encode('receipt', receipt));
+      if (bytes.length > 65536) return held('MAINTENANCE_NATIVE_EVIDENCE_UNBOUNDED');
+      if (!existsSync(archive)) mkdirSync(archive);
+      directory(archive);
+      const fileName = 'native-' + kind + '-' + owned.digest + '.json';
+      const fd = openSync(resolve(archive, fileName), 'wx', 0o600);
+      try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+      if (read()?.digest !== owned.digest) return held('MAINTENANCE_NATIVE_EVIDENCE_OWNER_CHANGED');
+      return { ok: true, evidenceRef: 'events/sovereign-maintenance-custody/' + fileName,
+        evidenceSha256: sha(bytes) };
+    } catch { return held('MAINTENANCE_NATIVE_EVIDENCE_ARCHIVE_UNPROVEN'); }
+  };
+  // Existing guardian calls these only after its private transport adjudication.
+  // They add bounded signed evidence, never a public execution/recovery lane.
+  const recordNativeRoot = evidence => {
+    if (evidence?.SchemaVersion !== 'stephanos.fixed-runtime-prepared.v1'
+        || evidence.Profile !== 'MAINTENANCE_GOAL_BUILDER_V1'
+        || !Number.isSafeInteger(evidence.RootPid) || evidence.RootPid <= 0
+        || !Number.isFinite(instant(evidence.RootCreatedAtUtc)))
+      return held('MAINTENANCE_NATIVE_ROOT_UNPROVEN');
+    return archiveOwnedNativeEvidence('root', evidence);
+  };
+  const releaseNativeTerminal = evidence => {
+    if (evidence?.SchemaVersion !== 'stephanos.fixed-runtime-job.v1'
+        || evidence.Profile !== 'MAINTENANCE_GOAL_BUILDER_V1'
+        || evidence.ExecutionCustodyReleased !== true
+        || evidence.TaskStage?.ExecutionCustodyReleased !== true
+        || evidence.TaskStage?.ZeroActiveProcessesObserved !== true
+        || evidence.TaskStage?.ActiveProcesses !== 0)
+      return held('MAINTENANCE_NATIVE_TERMINAL_UNPROVEN');
+    const archived = archiveOwnedNativeEvidence('terminal', evidence);
+    if (!archived.ok) return archived;
+    // Failure of the operation stays in the archive; zero only releases custody.
+    return { ...release({ ref: archived.evidenceRef, sha256: archived.evidenceSha256 }),
+      terminalEvidenceRef: archived.evidenceRef, terminalEvidenceSha256: archived.evidenceSha256 };
   };
   const recoverAfterBoot = async ({ expectedDigest, operatorApproval }) => {
     if (operatorApproval !== 'operator-approved' || !/^[a-f0-9]{64}$/.test(expectedDigest ?? ''))
@@ -299,7 +349,7 @@ export function createMaintenanceCustodyStoreV1({ workspaceRoot = resolveGoalDis
   };
   const prepareAfterAuditLoss = request => prepareFromAuditLoss(request, false);
   const prepareRetainedMigration = request => prepareFromAuditLoss(request, true);
-  return Object.freeze({ status, reserve, release, recoverAfterBoot, prepareAfterAuditLoss, prepareRetainedMigration,
+  return Object.freeze({ status, reserve, release, recordNativeRoot, releaseNativeTerminal, recoverAfterBoot, prepareAfterAuditLoss, prepareRetainedMigration,
     // This only ADDS an ACTIVE fence. The fixed migration adapter independently
     // checks the exact live held owner/report before calling it. No idle seed.
     prepareIncident: request => reserve(request, true),

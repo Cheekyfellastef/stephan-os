@@ -26,18 +26,22 @@ export async function readControlTowerBuildRequestV1({
     const definition = await get(workflow);
     if (!positive(definition?.id) || definition.path !== CONTROL_TOWER_BUILD_WORKFLOW || definition.state !== 'active')
       return held('CONTROL_TOWER_BUILD_WORKFLOW_UNAVAILABLE');
-    const list = await get(workflow + '/runs?event=workflow_dispatch&per_page=5&head_sha=' + first);
-    if (!Array.isArray(list.workflow_runs) || list.workflow_runs.length > 5
+    // One bounded current-head inventory covers BOTH authenticated manual
+    // requests and owner-protected-main pushes. Other event classes cannot
+    // qualify as an owner build wake; pagination overflow fails closed.
+    const list = await get(workflow + '/runs?per_page=10&head_sha=' + first);
+    if (!Array.isArray(list.workflow_runs) || list.workflow_runs.length > 10
       || !Number.isSafeInteger(list.total_count) || list.total_count < list.workflow_runs.length)
       return held('CONTROL_TOWER_RUN_INVENTORY_INVALID');
     if (typeof isRecorded !== 'function') return held('CONTROL_TOWER_REQUEST_HISTORY_INVALID');
     const cutoff = Date.parse(now()) - 600000;
     if (!Number.isFinite(cutoff)) return held('CONTROL_TOWER_BUILD_CLOCK_INVALID');
-    if (list.total_count > 5 && list.workflow_runs.length === 5
-      && Date.parse(list.workflow_runs[4]?.created_at) >= cutoff)
+    if (list.total_count > 10 && list.workflow_runs.length === 10
+      && Date.parse(list.workflow_runs[9]?.created_at) >= cutoff)
       return held('CONTROL_TOWER_BUILD_ACTIVE_WINDOW_OVERFLOW');
     const candidate = [...list.workflow_runs].reverse().find(r =>
       positive(r.id) && r.head_sha === first && Date.parse(r.created_at) >= cutoff && !isRecorded(r.id)
+      && ['workflow_dispatch', 'push'].includes(r.event)
       && r.status === 'completed' && r.conclusion === 'success');
     if (!positive(candidate?.id)) return held('NO_CONTROL_TOWER_BUILD_REQUEST');
     const run = await get('/actions/runs/' + candidate.id);

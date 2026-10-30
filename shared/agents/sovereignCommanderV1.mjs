@@ -957,7 +957,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
   const run = () => executeAdmittedSovereignCommandV1(command, options);
   if (command.plan.kind === 'fixed-process' && !isSovereignMaintenanceObservationV1(command.plan.processId)) {
     if (typeof options.withMaintenanceOwner === 'function') {
-      return options.withMaintenanceOwner(command, run);
+      return options.withMaintenanceOwner(command, run, { signal: options.signal });
     }
     // Local Core/stdio callers never launch beside an independently scheduled
     // guardian. The existing authenticated HTTP owner performs the operation.

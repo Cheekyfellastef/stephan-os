@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { publishSovereignCommanderRepairReport } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { projectOctopusRepairEscalation } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { sovereignControlPlaneGamingSafeV1 } from './sovereign-commander-control-plane-repair.mjs';
+import { unqualifiedCoreWindowsRepairV1 } from '../shared/agents/sovereignMaintenanceAdmissionV1.mjs';
 
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-stephanos-repair.v1';
@@ -103,7 +104,7 @@ export function runFixedStephanosRepairStep(step, { spawnSyncFn = spawnSync } = 
   // not executable. Do not accept a caller flag or child's self-attestation as
   // a substitute. Read-only fixed Core status remains available.
   if (step.requiresWindowsJobCustody === true) {
-    return denyBeforeLaunch('SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
+    return denyBeforeLaunch(unqualifiedCoreWindowsRepairV1().blocker);
   }
   const result = spawnSyncFn(step.executable, [...step.args], {
     encoding: 'utf8',
