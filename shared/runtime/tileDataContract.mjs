@@ -1,5 +1,6 @@
 import {
   readPersistedStephanosHomeNode,
+  resolveStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
 } from './stephanosHomeNode.mjs';
@@ -28,11 +29,26 @@ function isStorageAvailable(storage) {
 }
 
 function detectApiBaseUrl({ locationObj = globalThis.location, storage, explicitBaseUrl = globalThis.__STEPHANOS_BACKEND_BASE_URL } = {}) {
+  const currentOrigin = normalizeString(locationObj?.origin || '');
+  const hostedExecutionBridgeUrl = resolveStephanosHostedExecutionBridgeUrl({
+    frontendOrigin: currentOrigin,
+    storage,
+    candidates: [explicitBaseUrl],
+  });
+  const hostname = normalizeString(locationObj?.hostname || '').toLowerCase();
+  const hostedSurface = String(locationObj?.protocol || '').toLowerCase() === 'https:'
+    && !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname);
+
+  if (hostedSurface && !hostedExecutionBridgeUrl && !normalizeString(explicitBaseUrl || '')) {
+    return '';
+  }
+
   return resolveStephanosBackendBaseUrl({
-    currentOrigin: normalizeString(locationObj?.origin || ''),
+    currentOrigin,
     manualNode: readPersistedStephanosHomeNode(storage),
     lastKnownNode: readPersistedStephanosLastKnownNode(storage),
     explicitBaseUrl: normalizeString(explicitBaseUrl || ''),
+    bridgeUrl: hostedExecutionBridgeUrl,
   }).replace(/\/$/, '');
 }
 

@@ -4,9 +4,13 @@ import { mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 import { fileURLToPath } from 'node:url';
 
-import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import {
+  BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
+  reconcileBattleBridgeControlPlane,
+} from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import {
   buildPostSyncRefreshProjection,
   classifyPostSyncRefresh,
@@ -25,8 +29,11 @@ import { refreshStephanosUi4173 } from './refresh-stephanos-ui-4173.mjs';
 export const POST_SYNC_REFRESH_RUNTIME_SCHEMA = 'stephanos.post-sync-runtime-refresh-runtime.v1';
 export const POST_SYNC_REFRESH_RESULT_MARKER = 'POST_SYNC_REFRESH_RESULT=';
 export const POST_SYNC_REFRESH_LOCK_STALE_AFTER_MS = 15 * 60 * 1000;
+export const MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS = 90_000;
+export const MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_PATHS = 4000;
+const CONTROL_PLANE_TASK_IDS = new Set(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.id));
 
 function text(value) {
   return String(value ?? '').trim();
@@ -38,6 +45,13 @@ function splitLines(value) {
 
 function isSafeHead(value) {
   return SHA_PATTERN.test(text(value));
+}
+
+export function projectControlPlaneFailureBlocker(reconcile = {}) {
+  const blocker = text(reconcile?.blocker);
+  if (!blocker) return '';
+  const failedTaskId = text(reconcile?.failedTaskId);
+  return CONTROL_PLANE_TASK_IDS.has(failedTaskId) ? `${blocker}:${failedTaskId}` : blocker;
 }
 
 function processIsAlive(pid) {
@@ -58,11 +72,13 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
+    vrAtlasProofScript: path.resolve(repoRoot, 'scripts', 'sovereign-commander-ui-runtime-proof.mjs'),
+    mailboxInstaller: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-command-mailbox.ps1'),
     receiptRelative: '',
   });
 }
 
-function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSync } = {}) {
+function fixedRun(command, args, { cwd, timeout = 180_000, maxBuffer = 1024 * 1024, spawnSyncFn = spawnSync } = {}) {
   const result = spawnSyncFn(command, [...args], {
     cwd,
     encoding: 'utf8',
@@ -70,6 +86,7 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout,
+    maxBuffer,
   });
   return Object.freeze({
     ok: !result?.error && result?.status === 0,
@@ -81,6 +98,13 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
 }
 
 function parseJsonOutput(stdout) {
+  const full = String(stdout ?? '').trim();
+  if (full) {
+    try {
+      const value = JSON.parse(full);
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
+  }
   const lines = splitLines(stdout);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
@@ -93,7 +117,18 @@ function parseJsonOutput(stdout) {
 
 export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, refreshUiFn = refreshStephanosUi4173 } = {}) {
   const gitCommand = process.platform === 'win32' ? 'git.exe' : 'git';
+  let ancestryBudgetMs = 5_000;
   return Object.freeze({
+    isAncestor(beforeHead, afterHead, repoRoot) {
+      if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
+        || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const started = Date.now();
+      const result = fixedRun(gitCommand, ['merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd: repoRoot, spawnSyncFn, timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      });
+      ancestryBudgetMs -= Math.max(1, Date.now() - started);
+      return { ok: !result.errorCode && [0, 1].includes(result.status), ancestor: result.status === 0 };
+    },
     inspectHeads({ beforeHead, afterHead, repoRoot }) {
       if (!isSafeHead(beforeHead) || !isSafeHead(afterHead)) return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID' };
       const branch = fixedRun(gitCommand, ['branch', '--show-current'], { cwd: repoRoot, spawnSyncFn });
@@ -115,7 +150,7 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       return { ok: true, paths: parsed.paths };
     },
     async refreshUi({ afterHead }) {
-      const result = await refreshUiFn();
+      const result = await refreshUiFn({ expectedHead: afterHead });
       const sourceHead = text(result?.currentHead).toLowerCase();
       const exactHeadProofOk = sourceHead === text(afterHead).toLowerCase() && result?.exactHeadProof?.ready === true;
       return {
@@ -125,17 +160,54 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         exactHeadProofOk,
       };
     },
+    proveVrAtlas({ afterHead, paths }) {
+      const result = fixedRun(process.execPath, [
+        paths.vrAtlasProofScript,
+        '--profile', 'vr-atlas-status-pills',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      if (!payload) {
+        return { ok: false, blocker: 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
+      const sourceHead = text(payload.sourceHead).toLowerCase();
+      const exactHeadProofOk = payload.exactHeadProofOk === true && sourceHead === text(afterHead).toLowerCase();
+      return {
+        ok: result.ok && payload.ok === true && exactHeadProofOk,
+        blocker: text(payload.blocker || (payload.ok === true ? '' : 'VR_ATLAS_BROWSER_PROOF_BLOCKED')),
+        sourceHead,
+        exactHeadProofOk,
+        profile: text(payload.profile),
+        evidenceHash: text(payload.evidenceHash),
+        screenshotCaptured: Boolean(payload.screenshotPath),
+        receiptCaptured: Boolean(payload.receiptPath),
+      };
+    },
     restartApprovedTarget({ target, afterHead, paths }) {
       if (!['backend', 'mission-worker'].includes(target)) return { ok: false, blocker: 'RUNTIME_TARGET_NOT_ALLOWLISTED', exactHeadProofOk: false, sourceHead: '' };
-      const result = fixedRun('powershell.exe', [
+      const restartArguments = [
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
         '-File', paths.restartScript,
         '-Target', target,
         '-ExpectedHead', afterHead,
-      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 240_000 });
+      ];
+      let runtimeTimeoutMs = 240_000;
+      if (target === 'mission-worker') {
+        const restartDeadlineMs = Date.now() + MISSION_WORKER_POST_SYNC_RESTART_BUDGET_MS;
+        restartArguments.push('-DeadlineUtc', new Date(restartDeadlineMs).toISOString());
+        runtimeTimeoutMs = Math.max(
+          1,
+          restartDeadlineMs - Date.now() + MISSION_WORKER_POST_SYNC_CHILD_EXIT_RESERVE_MS,
+        );
+      }
+      const result = fixedRun('powershell.exe', restartArguments, { cwd: paths.repoRoot, spawnSyncFn, timeout: runtimeTimeoutMs });
       const payload = parseJsonOutput(result.stdout);
-      if (!payload) return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      if (!payload) {
+        if (result.errorCode === 'ETIMEDOUT') {
+          return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT', exactHeadProofOk: false, sourceHead: '' };
+        }
+        return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
       return {
         ok: result.ok && payload.ok === true,
         blocker: text(payload.blocker),
@@ -153,6 +225,86 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         platform: process.platform,
         spawnSyncFn,
       });
+    },
+    refreshSovereignCommander({ afterHead, paths }) {
+      const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', runnerPath,
+        '-RequireCapabilityVersion', '2026-10-18-island-action-contract-v6',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const requiredCapabilityVersion = text(payload?.requiredCapabilityVersion);
+      const capabilityVersionAfter = text(payload?.capabilityVersionAfter);
+      const receiptValid = Boolean(
+        payload
+        && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+        && payload.taskName === 'Stephanos Sovereign Commander'
+        && payload.daemonHealthy === true
+        && payload.healthyAfter === true
+        && requiredCapabilityVersion
+        && capabilityVersionAfter === requiredCapabilityVersion
+        && payload.vendorMeterRequired === false
+        && payload.externalSaasRelayRequired === false
+        && payload.arbitraryShellAllowed === false
+        && payload.pcRestartAllowed === false
+        && payload.visiblePowerShellRequired === false
+      );
+      return {
+        ok: receiptValid && exactHeadProofOk,
+        blocker: !payload
+          ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
+          : !receiptValid
+            ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: receiptValid,
+        capabilityVersion: capabilityVersionAfter,
+        requiredCapabilityVersion,
+        watchdogExitStatus: result.status,
+        staleCapabilityRecycleRequested: payload?.staleCapabilityRecycleRequested === true,
+      };
+    },
+    restartGitHubMailbox({ afterHead, paths }) {
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', paths.mailboxInstaller,
+        '-StartNow',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const quiesceProofOk = payload?.quiesceAttempted === true
+        ? payload?.staleRunningInstanceQuiesced === true
+        : payload?.quiesceAttempted === false && payload?.staleRunningInstanceQuiesced === false;
+      const taskHealthy = payload?.installed === true
+        && payload?.startedNow === true
+        && quiesceProofOk;
+      return {
+        ok: result.ok && taskHealthy && exactHeadProofOk,
+        blocker: !result.ok
+          ? 'GITHUB_MAILBOX_RESTART_FAILED'
+          : !taskHealthy
+            ? 'GITHUB_MAILBOX_RESTART_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: result.ok && taskHealthy,
+        staleRunningInstanceQuiesced: payload?.staleRunningInstanceQuiesced === true,
+      };
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
@@ -276,7 +428,7 @@ export async function runBattleBridgePostSyncRefresh({
   expectedPaths = resolveCanonicalPostSyncRefreshPaths({ env }),
   adapter = createFixedPostSyncRuntimeAdapter(),
 } = {}) {
-  const normalizedBefore = text(beforeHead).toLowerCase();
+  let normalizedBefore = text(beforeHead).toLowerCase();
   const normalizedAfter = text(afterHead).toLowerCase();
   if (!isSafeHead(normalizedBefore) || !isSafeHead(normalizedAfter) || normalizedBefore === normalizedAfter) {
     return Object.freeze({ ok: false, blocker: 'POST_SYNC_HEADS_INVALID', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
@@ -290,10 +442,38 @@ export async function runBattleBridgePostSyncRefresh({
   try {
     const inspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!inspection.ok) return Object.freeze({ ok: false, blocker: inspection.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    const requestedBefore = normalizedBefore;
+    const records = {};
+    for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
+      try {
+        const raw = await readFile(path.join(paths.workspaceRoot, 'status', filename), 'utf8');
+        records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
+      } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
+    }
+    const evidence = collectPostSyncRefreshDebt(records);
+    if (!evidence.ok) return Object.freeze({ ok: false, blocker: evidence.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    const retained = resolvePostSyncRefreshDebt({ ...evidence,
+      requestedSpans: [{ beforeHead: normalizedBefore, afterHead: normalizedAfter }],
+      currentHead: normalizedAfter,
+      isAncestor: (before, after) => before === requestedBefore && after === normalizedAfter ? { ok: true, ancestor: true }
+        : before === normalizedAfter && after === requestedBefore ? { ok: true, ancestor: false }
+          : adapter.isAncestor?.(before, after, paths.repoRoot),
+    });
+    if (!retained.ok) return Object.freeze({ ok: false, blocker: retained.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    if (!retained.debt) return Object.freeze({
+      ...records.refreshRecord, schemaVersion: 'stephanos.post-sync-runtime-refresh.v1', ok: true,
+      sourceHead: normalizedAfter, retainedCompletionReused: true, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+    });
+    normalizedBefore = retained.debt.beforeHead;
+    const retainedInspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
+    if (!retainedInspection.ok) return Object.freeze({ ok: false, blocker: retainedInspection.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     const changed = adapter.changedPaths({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!changed.ok) return Object.freeze({ ok: false, blocker: changed.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
     const plan = classifyPostSyncRefresh(changed.paths);
+    if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    }
     const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
     const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
     const planPublication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection: planProjection, afterHead: normalizedAfter, phase: 'plan', now });
@@ -306,8 +486,11 @@ export async function runBattleBridgePostSyncRefresh({
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
+        proveVrAtlas: ({ afterHead: head }) => adapter.proveVrAtlas({ afterHead: head, paths }),
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
+        restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {
@@ -335,7 +518,7 @@ export async function runBattleBridgePostSyncRefresh({
       ? adapter.reconcileControlPlane({ afterHead: normalizedAfter, paths })
       : Object.freeze({ ok: false, skipped: true, blocker: '', sourceHead: '', exactHeadProofOk: false });
     const effectiveExecution = execution.ok === true && controlPlaneReconcile.ok !== true
-      ? Object.freeze({ ...execution, ok: false, blocker: controlPlaneReconcile.blocker || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
+      ? Object.freeze({ ...execution, ok: false, blocker: projectControlPlaneFailureBlocker(controlPlaneReconcile) || 'CONTROL_PLANE_RECONCILE_BLOCKED', exactHeadProofOk: false })
       : execution;
 
     const projection = buildPostSyncRefreshProjection(effectiveExecution, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
@@ -344,6 +527,7 @@ export async function runBattleBridgePostSyncRefresh({
     return Object.freeze({
       ...projection,
       ok: effectiveExecution.ok === true,
+      phase: effectiveExecution.ok ? 'complete' : 'blocked',
       proofRefs: publication.proofRefs,
       sourceHead: normalizedAfter,
       exactHeadProofOk: effectiveExecution.exactHeadProofOk === true && controlPlaneReconcile.ok === true,

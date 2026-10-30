@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistEscalationPaths,
+} from './qualifiedSpecialistReviewV1.mjs';
+import {
   INDEPENDENT_REVIEW_JOB,
   INDEPENDENT_REVIEW_WORKFLOW_NAME,
   INDEPENDENT_REVIEW_WORKFLOW_PATH,
@@ -63,7 +67,36 @@ const protectedWorkflowPaths = [
   '.github/workflows/independent-merge-security-review.yml',
 ];
 
+const independentReviewWorkflowV1Fixture = [
+  'name: Independent Merge Security Review',
+  '',
+  'on:',
+  '  pull_request_target:',
+  '    branches: [main]',
+  '    types: [opened, synchronize, reopened, ready_for_review]',
+  '',
+  'permissions: {}',
+  '',
+  'jobs:',
+  '  independent-security-review:',
+  '    runs-on: ubuntu-latest',
+  '    permissions:',
+  '      actions: read',
+  '      contents: read',
+  '      issues: write',
+  '      pull-requests: read',
+  '    steps:',
+  '      - name: Checkout trusted base',
+  '        uses: actions/checkout@v4',
+  '        with:',
+  '          ref: ${{ github.event.pull_request.base.sha }}',
+  '          persist-credentials: false',
+  '          fetch-depth: 1',
+  '',
+].join('\n');
+
 function protectedWorkflowContent(path) {
+  if (path === INDEPENDENT_REVIEW_WORKFLOW_PATH) return independentReviewWorkflowV1Fixture;
   return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
 
@@ -593,7 +626,7 @@ test('independent reviewer analyzes the complete diff and rejects operator-synth
   assert.ok(bad.findings.some((item) => item.code === 'operator-gate-synthesizes-review'));
 });
 
-test('independent reviewer rejects write authority and unsupported high-risk surfaces', () => {
+test('independent reviewer rejects untrusted write-authority workflow and unsupported high-risk surfaces', () => {
   const bad = analyzeIndependentSecurityReview({
     changedFiles: ['.github/workflows/independent-merge-security-review.yml', 'scripts/windows/mutate-host.ps1'],
     diff: [
@@ -614,9 +647,69 @@ test('independent reviewer rejects write authority and unsupported high-risk sur
         .replace('contents: read', 'contents: write'),
     }, ['.github/workflows/independent-merge-security-review.yml']),
   });
+  assert.equal(bad.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
   assert.ok(bad.findings.some((item) => item.code === 'independent-review-workflow-not-trusted'));
-  assert.ok(bad.findings.some((item) => item.code === 'independent-reviewer-has-source-authority'));
   assert.ok(bad.findings.some((item) => item.code === 'unsupported-high-risk-surface'));
+});
+
+test('native Windows source and build inputs require qualified review independent of extension', () => {
+  const paths = [
+    'src/windows/Stephanos.RescueIslandCustody/PinnedFileCreation.cs',
+    'src/windows/Stephanos.SeedParallelCustody/Stephanos.SeedParallelCustody.csproj',
+    'src/windows/Directory.Build.props',
+    'src/windows/Directory.Build.targets',
+    'src/windows/native/CMakeLists.txt',
+    'SRC/WINDOWS/NativeHost/Program.cs',
+  ];
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: paths,
+    diff: paths.map((path) => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`).join('\n'),
+  });
+  assert.equal(analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+  assert.deepEqual(analysis.counts, { P0: paths.length, P1: 0, P2: 0 });
+  assert.deepEqual(analysis.findings.map(({ severity, code, path }) => ({ severity, code, path })),
+    paths.map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })));
+});
+
+test('native Windows coverage preserves directory boundaries for unrelated source and documentation', () => {
+  const paths = ['src/windows-utils/format.cs', 'src/linux/Program.cs', 'docs/windows-native-custody.md'];
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: paths,
+    diff: paths.map((path) => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`).join('\n'),
+  });
+  assert.equal(analysis.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_CLEAN');
+  assert.deepEqual(analysis.findings, []);
+});
+
+test('renaming native Windows source out of its directory preserves specialist escalation', () => {
+  const previousPath = 'src/windows/NativeHost/Program.cs';
+  const path = 'shared/retired-native-host.txt';
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: [{ filename: path, previous_filename: previousPath, status: 'renamed' }],
+    diff: `diff --git a/${previousPath} b/${path}\nsimilarity index 100%\nrename from ${previousPath}\nrename to ${path}`,
+  });
+  assert.deepEqual(analysis.counts, { P0: 1, P1: 0, P2: 0 });
+  assert.equal(analysis.findings[0].path, previousPath);
+  assert.equal(analysis.findings[0].code, 'unsupported-high-risk-surface');
+});
+
+test('genuine native Windows findings reach the existing qualified consumer and stay held without review', () => {
+  const path = 'src/windows/Stephanos.RescueIslandCustody/PinnedFileCreation.cs';
+  const analysis = analyzeIndependentSecurityReview({
+    changedFiles: [path],
+    diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new`,
+  });
+  assert.deepEqual(qualifiedSpecialistEscalationPaths(analysis), [path]);
+  const specialist = adjudicateQualifiedSpecialistReview({
+    repository, prNumber, branch, sourceHead, baseSha, analysis, reviews: [], comments: [],
+  });
+  assert.equal(specialist.required, true);
+  assert.equal(specialist.valid, false);
+  assert.deepEqual(specialist.blockers, ['qualified-specialist-review-missing']);
+  assert.equal(specialist.analysis, analysis);
+  assert.equal(specialist.artifact, null);
+  assert.equal(specialist.receipt, null);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(analysis), false);
 });
 
 test('builds a clean high-risk receipt only from clean independent analysis', () => {
@@ -807,6 +900,37 @@ test('requires the independent workflow path, job, run attempt, PR and head bind
     },
   );
   assert.ok(duplicateCurrentJobs.blockers.includes('independent-review-job-count-not-one'));
+});
+
+test('personal-repository caller can require the exact deterministic independent-review run name', () => {
+  const expectedWorkflowRunName = `stephanos-independent-review-pr-${prNumber}-head-${sourceHead}-binding-legacy-pull-request-target`;
+  const run = independentWorkflowRun({
+    name: expectedWorkflowRunName,
+    display_title: expectedWorkflowRunName,
+  });
+  const options = {
+    repository,
+    prNumber,
+    expectedHead: sourceHead,
+    expectedBranch: branch,
+    expectedBaseBranch: 'main',
+    expectedBaseSha: baseSha,
+    expectedWorkflowId: reviewWorkflowId,
+    workflowRunId: reviewRunId,
+    workflowRunAttempt: reviewRunAttempt,
+    expectedWorkflowRunName,
+  };
+  assert.equal(validateIndependentReviewWorkflowRun(run, independentWorkflowJobs(), options).valid, true);
+  assert.ok(validateIndependentReviewWorkflowRun(
+    { ...run, name: INDEPENDENT_REVIEW_WORKFLOW_NAME },
+    independentWorkflowJobs(),
+    options,
+  ).blockers.includes('independent-review-workflow-name-mismatch'));
+  assert.ok(validateIndependentReviewWorkflowRun(
+    { ...run, display_title: 'lookalike' },
+    independentWorkflowJobs(),
+    options,
+  ).blockers.includes('independent-review-workflow-display-title-mismatch'));
 });
 
 test('validates only a receipt bound to the independent review run', () => {

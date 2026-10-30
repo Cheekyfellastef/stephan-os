@@ -1,0 +1,29 @@
+{
+  "name": "VR Capability Atlas",
+  "icon": "🌌",
+  "entry": "index-v3.html",
+  "type": "research",
+  "packaging": "classic-static",
+  "capabilities": [
+    "vr-analysis",
+    "research-workspace",
+    "technique-catalog",
+    "live-capability-atlas",
+    "research-linked-concept-gallery",
+    "responsive-4k-concept-assets",
+    "keyboard-concept-navigation",
+    "concept-lightbox",
+    "media-asset-fabric-v1",
+    "content-addressed-media-cache",
+    "vector-native-sharp-fallback"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [
+    "vr:experiment_logged",
+    "vr:finding_recorded",
+    "memory:context_updated"
+  ],
+  "memoryUsage": "read-only-canonical-vr-research-projection",
+  "continuityParticipation": "read-only-live-projection",
+  "aiAddressable": true
+}

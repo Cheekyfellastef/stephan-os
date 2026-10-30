@@ -7,8 +7,10 @@ import {
   bindIndependentReviewReceiptToBase,
   validateIndependentReviewBaseBinding,
 } from './operatorMergeBaseBindingV1.mjs';
+import { validateQualifiedSpecialistReviewArtifact } from './qualifiedSpecialistReviewV1.mjs';
 
 export const INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION = 'stephanos.independent-review-artifact.v1';
+export const INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION = 'stephanos.independent-review-artifact.v2';
 export const INDEPENDENT_REVIEW_ARTIFACT_KIND = 'stephanos.independent-review.artifact';
 export const INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_SCHEMA_VERSION = 'stephanos.independent-review-findings-artifact.v1';
 export const INDEPENDENT_REVIEW_FINDINGS_ARTIFACT_KIND = 'stephanos.independent-review.findings-artifact';
@@ -23,7 +25,7 @@ const API_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const REPOSITORY_PATTERN = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const BRANCH_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
-const ARTIFACT_KEYS = Object.freeze([
+const ARTIFACT_V1_KEYS = Object.freeze([
   'schemaVersion',
   'kind',
   'artifactName',
@@ -39,6 +41,10 @@ const ARTIFACT_KEYS = Object.freeze([
   'createdAtUtc',
   'receipt',
   'payloadSha256',
+]);
+const ARTIFACT_V2_KEYS = Object.freeze([
+  ...ARTIFACT_V1_KEYS,
+  'specialistReviewArtifact',
 ]);
 
 function text(value) {
@@ -96,7 +102,7 @@ function boundFindingsAnalysis(analysis = {}) {
 }
 
 function payloadCore(artifact = {}) {
-  return {
+  const core = {
     schemaVersion: artifact.schemaVersion,
     kind: artifact.kind,
     artifactName: artifact.artifactName,
@@ -112,6 +118,10 @@ function payloadCore(artifact = {}) {
     createdAtUtc: artifact.createdAtUtc,
     receipt: artifact.receipt,
   };
+  if (artifact.schemaVersion === INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION) {
+    core.specialistReviewArtifact = artifact.specialistReviewArtifact;
+  }
+  return core;
 }
 
 function findingsPayloadCore(artifact = {}) {
@@ -212,6 +222,11 @@ export function buildIndependentReviewArtifact(input = {}) {
   const workflowRunId = strictPositiveInteger(input.workflowRunId);
   const workflowRunAttempt = strictPositiveInteger(input.workflowRunAttempt);
   const createdAtUtc = text(input.createdAtUtc || new Date().toISOString());
+  const specialistReviewArtifact = input.specialistReviewArtifact
+    && typeof input.specialistReviewArtifact === 'object'
+    && !Array.isArray(input.specialistReviewArtifact)
+    ? input.specialistReviewArtifact
+    : null;
   const receipt = bindIndependentReviewReceiptToBase(buildProtectedSecurityReviewReceipt({
     repository,
     prNumber,
@@ -231,14 +246,34 @@ export function buildIndependentReviewArtifact(input = {}) {
     workflowRunAttempt,
   });
   const base = validateIndependentReviewBaseBinding(receipt, baseSha);
-  if (!review.valid || !base.valid) {
+  const specialist = specialistReviewArtifact
+    ? validateQualifiedSpecialistReviewArtifact(specialistReviewArtifact, {
+      repository,
+      prNumber,
+      branch,
+      sourceHead,
+      baseSha,
+    })
+    : null;
+  const specialistDigestProof = specialistReviewArtifact
+    ? `proofs/specialist-review/artifact-sha256-${specialistReviewArtifact.payloadSha256}`
+    : '';
+  const receiptProofRefs = Array.isArray(receipt.proofRefs) ? receipt.proofRefs : [];
+  if (!review.valid || !base.valid || (specialist && !specialist.valid)
+    || (specialistDigestProof && !receiptProofRefs.includes(specialistDigestProof))) {
     throw new Error(`Independent review artifact receipt is invalid: ${[
       ...review.blockers,
       ...base.blockers,
+      ...(specialist?.blockers || []),
+      ...(specialistDigestProof && !receiptProofRefs.includes(specialistDigestProof)
+        ? ['specialist-artifact-digest-proof-missing']
+        : []),
     ].join(', ')}`);
   }
   const core = {
-    schemaVersion: INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION,
+    schemaVersion: specialistReviewArtifact
+      ? INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION
+      : INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION,
     kind: INDEPENDENT_REVIEW_ARTIFACT_KIND,
     artifactName: independentReviewArtifactName(workflowRunId, workflowRunAttempt),
     artifactFile: INDEPENDENT_REVIEW_ARTIFACT_FILE,
@@ -252,6 +287,7 @@ export function buildIndependentReviewArtifact(input = {}) {
     reviewMode: review.reviewMode,
     createdAtUtc,
     receipt,
+    ...(specialistReviewArtifact ? { specialistReviewArtifact } : {}),
   };
   return Object.freeze({
     ...core,
@@ -273,8 +309,12 @@ export function validateIndependentReviewArtifact(artifact = {}, options = {}) {
   artifact = artifactIsObject ? artifact : {};
 
   if (!artifactIsObject) blockers.push('independent-review-artifact-invalid');
-  if (!sameKeys(artifact, ARTIFACT_KEYS)) blockers.push('independent-review-artifact-unbounded-schema');
-  if (artifact.schemaVersion !== INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION) {
+  const specialistArtifactSchema = artifact.schemaVersion === INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION;
+  if (!sameKeys(artifact, specialistArtifactSchema ? ARTIFACT_V2_KEYS : ARTIFACT_V1_KEYS)) {
+    blockers.push('independent-review-artifact-unbounded-schema');
+  }
+  if (![INDEPENDENT_REVIEW_ARTIFACT_SCHEMA_VERSION, INDEPENDENT_REVIEW_ARTIFACT_SPECIALIST_SCHEMA_VERSION]
+    .includes(artifact.schemaVersion)) {
     blockers.push('independent-review-artifact-schema-mismatch');
   }
   if (artifact.kind !== INDEPENDENT_REVIEW_ARTIFACT_KIND) blockers.push('independent-review-artifact-kind-mismatch');
@@ -332,8 +372,24 @@ export function validateIndependentReviewArtifact(artifact = {}, options = {}) {
     workflowRunAttempt,
   });
   const base = validateIndependentReviewBaseBinding(artifact.receipt, expectedBaseSha);
+  const specialist = specialistArtifactSchema
+    ? validateQualifiedSpecialistReviewArtifact(artifact.specialistReviewArtifact, {
+      repository,
+      prNumber,
+      branch,
+      sourceHead: expectedHead,
+      baseSha: expectedBaseSha,
+    })
+    : null;
   if (!review.valid) blockers.push(...review.blockers);
   if (!base.valid) blockers.push(...base.blockers);
+  if (specialist && !specialist.valid) blockers.push(...specialist.blockers);
+  if (specialistArtifactSchema) {
+    const digestProof = `proofs/specialist-review/artifact-sha256-${text(artifact.specialistReviewArtifact?.payloadSha256)}`;
+    if (!Array.isArray(artifact.receipt?.proofRefs) || !artifact.receipt.proofRefs.includes(digestProof)) {
+      blockers.push('independent-review-specialist-artifact-digest-proof-missing');
+    }
+  }
   if (review.valid && artifact.reviewMode !== review.reviewMode) {
     blockers.push('independent-review-artifact-mode-mismatch');
   }
@@ -351,6 +407,7 @@ export function validateIndependentReviewArtifact(artifact = {}, options = {}) {
     artifact,
     review,
     base,
+    specialist,
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
       ? 'INDEPENDENT_REVIEW_ARTIFACT_BLOCKED'

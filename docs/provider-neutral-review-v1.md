@@ -61,6 +61,10 @@ It is not accepted for high-risk work.
 
 High-risk work requires an authenticated specialist reviewer class. High risk includes authority such as credentials, destructive Git, live Windows or OpenClaw mutation, security boundaries, or money-spending capability. Deterministic checks alone cannot satisfy that gate.
 
+For GitHub-hosted Windows-authority escalation, a repository owner, member, or collaborator may issue one exact-head and exact-base `@codex` specialist request that names every escalated path and the complete specialist scope. A clean response is accepted only when GitHub proves the fixed external review App identity, the response remains unedited, its abbreviated commit resolves through the repository API to the exact source head, it arrives inside the bounded request window, and no later operator invocation has superseded that request.
+
+The trusted base workflow normalizes that authenticated request/response pair into a `stephanos.provider-neutral-review.v1` receipt and embeds the complete evidence in a digest-bound `stephanos.qualified-specialist-review-artifact.v1`. The final immutable independent-review artifact uses schema `stephanos.independent-review-artifact.v2` and embeds that specialist artifact. A forged actor, App, head resolution, scope, timestamp, body, path set, receipt, or payload digest fails closed. An ordinary issue comment by itself is never merge authority.
+
 ## Route selection
 
 The selector:

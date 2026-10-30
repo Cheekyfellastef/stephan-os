@@ -20,7 +20,10 @@ import {
   buildIndependentReviewArtifact,
 } from '../shared/agents/operatorMergeReviewArtifactV1.mjs';
 import { resolve } from 'node:path';
-import { adjudicateQualifiedSpecialistReview } from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
+import {
+  adjudicateQualifiedSpecialistReview,
+  qualifiedSpecialistCommentHeadRef,
+} from '../shared/agents/qualifiedSpecialistReviewV1.mjs';
 import { TextDecoder } from 'node:util';
 
 const API_VERSION = '2022-11-28';
@@ -83,6 +86,27 @@ async function githubPages(path, itemKey = null) {
     if (pageItems.length < 100) return items;
   }
   throw new Error(`Pagination exceeded ${MAX_PAGES * 100} records for ${path}`);
+}
+
+async function resolveQualifiedSpecialistCommentHeads(owner, repo, comments = []) {
+  return Promise.all(comments.map(async (comment) => {
+    const reviewedCommitRef = qualifiedSpecialistCommentHeadRef(comment);
+    if (!reviewedCommitRef) return comment;
+    try {
+      const commit = await githubRequest(
+        `/repos/${owner}/${repo}/commits/${encodeURIComponent(reviewedCommitRef)}`,
+        { allowNotFound: true, maxResponseBytes: 512 * 1024 },
+      );
+      const resolvedCommitId = text(commit?.sha).toLowerCase();
+      return /^[a-f0-9]{40}$/.test(resolvedCommitId)
+        ? Object.freeze({ ...comment, resolved_commit_id: resolvedCommitId })
+        : comment;
+    } catch {
+      // A malformed, ambiguous or unavailable abbreviated commit cannot seal
+      // the review, but it must not deny service to deterministic analysis.
+      return comment;
+    }
+  }));
 }
 
 function changedFilePaths(files = []) {
@@ -257,28 +281,37 @@ async function main() {
   const specialistProbe = adjudicateQualifiedSpecialistReview({
     analysis: deterministicAnalysis,
     reviews: [],
+    comments: [],
     repository,
     prNumber,
     branch,
     sourceHead,
     baseSha,
   });
-  const specialist = !deterministicBootstrapRequired && specialistProbe.required
-    ? adjudicateQualifiedSpecialistReview({
+  let specialist = specialistProbe;
+  if (!deterministicBootstrapRequired && specialistProbe.required) {
+    const [reviews, rawComments] = await Promise.all([
+      githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
+      githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`),
+    ]);
+    const comments = await resolveQualifiedSpecialistCommentHeads(owner, repo, rawComments);
+    specialist = adjudicateQualifiedSpecialistReview({
       analysis: deterministicAnalysis,
-      reviews: await githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`),
+      reviews,
+      comments,
       repository,
       prNumber,
       branch,
       sourceHead,
       baseSha,
-    })
-    : specialistProbe;
+    });
+  }
   const analysis = !deterministicBootstrapRequired && specialist.required && specialist.valid
     ? specialist.analysis
     : deterministicAnalysis;
   console.log(`SPECIALIST_REVIEW_DECISION=${specialist.required ? (specialist.valid ? 'SEALED' : 'REQUIRED') : 'NOT_REQUIRED'}`);
   console.log(`SPECIALIST_REVIEW_ID=${specialist.reviewId || ''}`);
+  console.log(`SPECIALIST_REVIEW_ARTIFACT_SHA256=${specialist.artifact?.payloadSha256 || ''}`);
 
   const bootstrapRequired = deterministicBootstrapRequired || isApprovalBoundaryBootstrapAnalysis(analysis);
   const finalPullRequest = await githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`);
@@ -333,6 +366,7 @@ async function main() {
     workflowRunAttempt: runAttempt,
     createdAtUtc,
     analysis,
+    specialistReviewArtifact: specialist.artifact,
   });
   const artifactPath = writeReviewArtifact(artifact);
   const receipt = artifact.receipt;

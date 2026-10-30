@@ -20,9 +20,14 @@ test('stale shared workspace records block ready', () => {
   assert.equal(plan.safetyBlockers[0].id, 'stale-workspace-records');
 });
 
-test('missing OpenClaw gateway returns partial-openclaw-missing', () => {
+test('missing OpenClaw gateway keeps core readiness green and records optional degradation', () => {
   const plan = planLauncherReadiness({ observedFacts: { services: { backend: true, 'stephanos-ui': true, 'shared-workspace': true } } });
-  assert.equal(plan.finalVerdict, 'partial-openclaw-missing');
+  assert.equal(plan.finalVerdict, 'ready');
+  assert.deepEqual(plan.missingServices, []);
+  assert.deepEqual(plan.degradedOptionalServices, ['openclaw-gateway']);
+  assert.equal(plan.requiredServices.some((service) => service.id === 'openclaw-gateway'), false);
+  assert.equal(plan.optionalServices.some((service) => service.id === 'openclaw-gateway'), true);
+  assert.equal(plan.requiredProofs.some((proof) => /OpenClaw/.test(proof)), false);
 });
 
 test('dirty source blocks launcher repair', () => {
@@ -34,6 +39,75 @@ test('runtime-only dirt is caveat, not source blocker', () => {
   const plan = planLauncherReadiness({ observedFacts: { services: allReady }, sourceFacts: { dirtyPaths: ['runtime-activity/events.jsonl'] } });
   assert.equal(plan.finalVerdict, 'ready');
   assert.equal(plan.caveats[0].id, 'runtime-only-dirt');
+});
+
+test('status-aware readiness accepts only the exact unstaged durable-memory runtime write', () => {
+  const allowed = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [' M stephanos-server/data/memory/durable-memory.json'],
+      dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'],
+    },
+  });
+  assert.equal(allowed.finalVerdict, 'ready');
+  assert.deepEqual(allowed.safetyBlockers, []);
+  assert.deepEqual(allowed.caveats[0].paths, ['stephanos-server/data/memory/durable-memory.json']);
+
+  for (const statusLine of [
+    'M  stephanos-server/data/memory/durable-memory.json',
+    ' D stephanos-server/data/memory/durable-memory.json',
+    '?? stephanos-server/data/memory/durable-memory.json',
+  ]) {
+    const blocked = planLauncherReadiness({
+      observedFacts: { services: allReady },
+      sourceFacts: {
+        statusLines: [statusLine],
+        dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'],
+      },
+    });
+    assert.equal(blocked.finalVerdict, 'blocked-dirty-source', statusLine);
+    assert.equal(blocked.safetyBlockers[0].id, 'dirty-source');
+  }
+});
+
+test('path-only durable-memory evidence stays fail closed because status qualification is missing', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: { dirtyPaths: ['stephanos-server/data/memory/durable-memory.json'] },
+  });
+  assert.equal(plan.finalVerdict, 'blocked-dirty-source');
+  assert.deepEqual(plan.safetyBlockers[0].paths, ['stephanos-server/data/memory/durable-memory.json']);
+});
+
+test('generated dist deletion is runtime build churn rather than source dirt', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [' D apps/stephanos/dist/assets/index-oldhash.js'],
+      dirtyPaths: ['apps/stephanos/dist/assets/index-oldhash.js'],
+    },
+  });
+  assert.equal(plan.finalVerdict, 'ready');
+  assert.deepEqual(plan.safetyBlockers, []);
+  assert.deepEqual(plan.caveats[0].paths, ['apps/stephanos/dist/assets/index-oldhash.js']);
+});
+
+test('status-aware runtime dirt cannot hide an ordinary tracked source modification', () => {
+  const plan = planLauncherReadiness({
+    observedFacts: { services: allReady },
+    sourceFacts: {
+      statusLines: [
+        ' M stephanos-server/data/memory/durable-memory.json',
+        ' M scripts/source.mjs',
+      ],
+      dirtyPaths: [
+        'stephanos-server/data/memory/durable-memory.json',
+        'scripts/source.mjs',
+      ],
+    },
+  });
+  assert.equal(plan.finalVerdict, 'blocked-dirty-source');
+  assert.deepEqual(plan.safetyBlockers[0].paths, ['scripts/source.mjs']);
 });
 
 test('unsafe launcher command is rejected', () => {

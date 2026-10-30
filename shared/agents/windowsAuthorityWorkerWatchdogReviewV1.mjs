@@ -12,11 +12,12 @@ const SHA = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
 const REVIEWED_IDENTITY = Object.freeze({
   repository: 'Cheekyfellastef/stephan-os',
-  prNumber: 1732,
-  branch: 'agent/watchdog-control-plane-bootstrap-recovery-v1',
+  prNumber: 2045,
+  branch: 'codex/worker-watchdog-current-main-binding-v2',
 });
-const REVIEWED_LINEAGE_ANCHOR = 'd1508b4d7f2bf30d8db47784505e2d509c8e36b1';
+const REVIEWED_LINEAGE_ANCHOR = 'e0b9f8786a51211d2b0ca3a394ee4bc1876855fd';
 const SUPERSEDED_LINEAGE_HEADS = new Set([
+  'd1508b4d7f2bf30d8db47784505e2d509c8e36b1',
   '44db9156eeee26f1ab146fb447c0c59851ca3dcb',
   '707f7db9964b5e100aab21d6735108a4c5e53457',
   'a552b13c0a3e6a338d21e8d395dfcf12d12a3475',
@@ -41,12 +42,12 @@ const REVIEWED_SOURCE_MANIFEST = Object.freeze({
     size: 16961,
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
-    blobSha: '1a9d166be395f3b3a1246ab5f2de9a2647639f83',
-    size: 56458,
+    blobSha: '051545af1dce4360946e72ea613d51077ffbb433',
+    size: 59741,
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
-    blobSha: '911a9c7265668c8f9942449010b0452d1ac14aa8',
-    size: 24663,
+    blobSha: '84b7f6ac4a1e53462a3c5e882fd2c3a081050a72',
+    size: 31123,
   }),
 });
 const SOURCE_RECORD_KEYS = Object.freeze([
@@ -61,12 +62,12 @@ const EXECUTION_ESTATE_BY_PATH = Object.freeze({
   }),
   'scripts/windows/restart-approved-stephanos-runtime.ps1': Object.freeze({
     callTargets: Object.freeze({ '$canonicalgit': 2, '$condition': 2, '$gitexecutable': 4 }),
-    functions: Object.freeze(['assert-beforeoperationdeadline', 'convertfrom-windowscommandline', 'get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedinvocationprocessfromlaunchreceipt', 'get-verifiedworkerprocessfromheartbeat', 'new-cryptographicinvocationid', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'test-exactcanonicalworkerprocess', 'test-exactjsonpropertyestate', 'wait-until', 'wait-untiloperationdeadline', 'write-boundedatomicjson']),
+    functions: Object.freeze(['assert-beforeoperationdeadline', 'convertfrom-windowscommandline', 'get-canonicaltaskplan', 'get-verifiedbackendlistener', 'get-verifiedfreshworkerinstance', 'get-verifiedinvocationprocessfromlaunchreceipt', 'get-verifiedworkerprocessfromheartbeat', 'new-cryptographicinvocationid', 'publish-backendexpectedheadhandoff', 'read-canonicalworkersourceproof', 'read-freshbackendreceipt', 'read-publicmainhead', 'stop-newlystartedownedworker', 'stop-withblocker', 'test-backendhealth', 'test-exactcanonicalworkerprocess', 'test-exactjsonpropertyestate', 'wait-until', 'wait-untiloperationdeadline', 'write-boundedatomicjson']),
     fixedBindings: Object.freeze({ canonicalgit: 1, missionworkercleanuptimeoutseconds: 1, missionworkerstoptimeoutseconds: 1, publicremote: 1 }),
   }),
   'scripts/windows/start-mission-orchestrator-worker.ps1': Object.freeze({
     callTargets: Object.freeze({ '$canonicalgit': 4 }),
-    functions: Object.freeze(['new-cryptographiclaunchidentityid', 'read-exactinvocationsignal', 'start-exactworkerwithlaunchidentity', 'stop-exactownedworkerprocess', 'write-boundedatomicjson', 'write-boundedcreateonlyjson']),
+    functions: Object.freeze(['invoke-boundedworkerlogretention', 'new-cryptographiclaunchidentityid', 'read-exactinvocationsignal', 'start-exactworkerwithlaunchidentity', 'stop-exactownedworkerprocess', 'write-boundedatomicjson', 'write-boundedcreateonlyjson', 'write-boundedworkerlogline']),
     fixedBindings: Object.freeze({ canonicalgit: 1, canonicalnode: 1, workerscript: 1 }),
   }),
 });

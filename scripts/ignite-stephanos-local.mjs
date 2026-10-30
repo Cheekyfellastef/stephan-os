@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, cpSync, existsSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
 import { projectGitBranchIntelligence } from './git-branch-intelligence.mjs';
@@ -11,6 +11,7 @@ import {
   buildOpenClawWorkspaceHygieneProjection,
   isOpenClawWorkspaceDirtPath,
   isSanctionedOpenClawWorkspacePath,
+  normalizeOpenClawWorkspacePath,
   resolveOpenClawWorkspaceRepairPath,
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
@@ -30,10 +31,37 @@ import {
   hasForbiddenOpenClawGatewayStartupToken,
   splitOpenClawGatewayStartupCommand,
 } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  battleBridgeCanonicalRepositoryArgs,
+  resolveBattleBridgeGitExecution,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
 
 const args = new Set(process.argv.slice(2));
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const OPENCLAW_STARTUP_RESTART_FLAG = '--approve-openclaw-service-restart';
+const IGNITION_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const SHA40 = /^[0-9a-f]{40}$/;
+
+export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
+  expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
+  cwd = IGNITION_REPO_ROOT,
+  platform = process.platform,
+  environment = process.env,
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  if (!expected) return null;
+  if (!SHA40.test(expected)) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_INVALID');
+  const gitExecution = resolveBattleBridgeGitExecution({ platform, environment });
+  const proof = spawnSyncFn(
+    gitExecution.executable,
+    [...gitExecution.fixedConfigArgs, ...battleBridgeCanonicalRepositoryArgs(cwd), 'rev-parse', 'HEAD'],
+    { cwd, env: gitExecution.environment, encoding: 'utf8', shell: false, windowsHide: true, timeout: 120_000 },
+  );
+  const observed = String(proof?.stdout || '').trim().toLowerCase();
+  if (proof?.error || proof?.status !== 0 || observed !== expected) throw new Error('IGNITION_BOUND_EXPECTED_HEAD_MISMATCH');
+  return Object.freeze({ expectedHead: expected, observedHead: observed });
+}
 
 const OPENCLAW_AUTOSTART_SURFACES = Object.freeze([
   { id: 'gateway', envKey: 'STEPHANOS_OPENCLAW_GATEWAY_COMMAND', required: true },
@@ -169,12 +197,13 @@ export function resolveStepExecution(command, commandArgs, platform = process.pl
   };
 }
 
-function runStep(label, command, commandArgs) {
+function runStep(label, command, commandArgs, { env = process.env } = {}) {
   console.log(formatStep(label, command, commandArgs));
   const execution = resolveStepExecution(command, commandArgs);
   const result = spawnSync(execution.command, execution.commandArgs, {
     cwd: process.cwd(),
     stdio: 'inherit',
+    env,
   });
 
   if (result.error || result.status !== 0) {
@@ -703,7 +732,12 @@ export function runApprovedLocalMergeRecoveryWithDeps({
 
   runStepFn('git-fetch-approved-local-merge', 'git', ['fetch', '--prune', '--tags', 'origin']);
   try {
-    runStepFn('git-merge-origin-main-approved', 'git', ['merge', '--no-edit', 'origin/main']);
+    runStepFn(
+      'git-merge-origin-main-approved',
+      'git',
+      ['merge', '--no-edit', 'origin/main'],
+      { env: { ...process.env, STEPHANOS_APPROVED_LOCAL_MERGE_RECOVERY: '1' } },
+    );
   } catch (error) {
     const conflictPaths = splitLines(captureStep('git-unmerged-conflict-paths', 'git', ['diff', '--name-only', '--diff-filter=U']).stdout);
     const nonDistConflicts = conflictPaths.filter((path) => !isApprovedGeneratedDistPath(path));
@@ -856,64 +890,19 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
   report.serverStarted = true;
   report.restartRequired = true;
-  if (verifyServedAfterStart && report.previousServerStatus === 'running') {
-    let servedHealth = null;
-    try {
-      const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
-      if (!servedResponse?.ok) {
-        throw new Error(`health endpoint returned ${servedResponse?.status || 'unknown'}`);
-      }
-      servedHealth = await servedResponse.json();
-    } catch (error) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'static-server-start-verification-failed',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: `Restart the 4173 server manually and rerun the localhost health/source-truth probes. Verification failure: ${error.message}`,
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    report.servedCommit = servedHealth?.gitCommit || null;
-    report.servedBuildTimestamp = servedHealth?.buildTimestamp || null;
-    report.servedSourceFingerprint = servedHealth?.sourceFingerprint || null;
-    const metadataMatchesExpected = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
-    report.moduleMimeChecks = await probeIgnitionModuleMimeChecks(fetchFn, servedUrl);
-    report.moduleMimeChecksPass = report.moduleMimeChecks.ok;
-    report.servedRuntimeMatchesExpectedDistMetadata = metadataMatchesExpected && report.moduleMimeChecksPass;
-    if (!metadataMatchesExpected) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-metadata-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served metadata matches dist.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    if (!report.moduleMimeChecksPass) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-module-mime-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served module MIME checks pass.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-  }
+  // The restart endpoint intentionally shuts the current 4173 server down. The
+  // replacement server is started by the immediately-following serve handoff,
+  // so probing here races the shutdown/start boundary and can only produce a
+  // false negative. Exact served-runtime proof belongs after the new listener
+  // is live (the supervisor/UI repair path performs that proof).
+  report.postStartVerificationRequested = Boolean(verifyServedAfterStart);
+  report.postStartVerificationDeferred = Boolean(verifyServedAfterStart);
   log(`[IGNITION] static-server-restart=${JSON.stringify(report)}`);
   return report;
 }
 
 const APPROVED_GENERATED_DIST_PREFIX = 'apps/stephanos/dist/';
 const RUNTIME_MEMORY_PATH = 'stephanos-server/data/memory/durable-memory.json';
-const ROOT_TRANSIENT_DATA_PREFIX = 'data/';
 const ROOT_TRANSIENT_TMP_PATH = 'tmp/';
 const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/activity/',
@@ -921,12 +910,34 @@ const ROOT_RUNTIME_ALLOWLIST_PREFIXES = [
   'data/proposals/',
   'data/roadmap/',
   'data/simulations/',
+  'logs/',
+  'memory/.dreams/',
+  'memory/dreaming/deep/',
+  'memory/dreaming/light/',
+  'memory/dreaming/rem/',
 ];
 const DEPENDENCY_DIR_PREFIXES = ['node_modules/', 'stephanos-server/node_modules/', 'stephanos-ui/node_modules/'];
 const SECRETS_PATTERN = /(^|\/)(\.env($|\.)|.*(secret|token|credential|passwd|password|private[-_]?key).*)/i;
 const ALLOWLIST_UNTRACKED_AUTOCLEAN_PREFIXES = [APPROVED_GENERATED_DIST_PREFIX];
 const KNOWN_SOURCE_PREFIXES = ['stephanos-ui/src/', 'scripts/', 'tests/', 'shared/', 'docs/'];
 const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
+const APPROVED_IGNORED_LOCAL_PATHS = new Set([
+  '.stephanos/build-concierge/',
+  '.stephanos/local-state-checkpoints/',
+  'package-lock.json',
+  'VR-Research-Lab/internal/',
+  'stephanos-server/data/durable-memory.json',
+  'stephanos-server/data/local-rag/',
+  'stephanos-server/data/provider-secrets.json',
+  'stephanos-server/data/tile-state.json',
+  'stephanos-server/package-lock.json',
+  'stephanos-ui/package-lock.json',
+]);
+const APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS = new Set([
+  '.stephanos/build-concierge/',
+  '.stephanos/local-state-checkpoints/',
+  'stephanos-server/data/local-rag/',
+]);
 
 function normalizeGitPath(rawPath) {
   const trimmed = String(rawPath || '').trim();
@@ -936,20 +947,12 @@ function normalizeGitPath(rawPath) {
   return trimmed;
 }
 
-function isApprovedLocalDirtPath(path) {
-  if (APPROVED_LOCAL_FILE_PATHS.has(path)) {
-    return true;
-  }
-
-  return APPROVED_LOCAL_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
+function isApprovedIgnoredLocalPath(path) {
+  return APPROVED_IGNORED_LOCAL_PATHS.has(path);
 }
 
-function isApprovedTrackedGeneratedPath(path) {
-  return APPROVED_TRACKED_GENERATED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function isRuntimeStatePath(path) {
-  return path.startsWith(RUNTIME_STATE_DIR_PREFIX);
+function isApprovedIgnoredLocalAggregatePath(path) {
+  return APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS.has(path);
 }
 
 
@@ -959,10 +962,6 @@ function isApprovedGeneratedDistPath(path) {
 
 function isDependencyDirtPath(path) {
   return DEPENDENCY_DIR_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-function isTransientRootDataPath(path) {
-  return path === 'data' || path.startsWith(ROOT_TRANSIENT_DATA_PREFIX);
 }
 
 function isTransientRootTmpDirectoryStatusPath(path) {
@@ -987,12 +986,17 @@ function isAllowlistedRootRuntimePath(path) {
 }
 
 function classifyStatusEntry(entry) {
+  // Ignored local state is not source truth, but the exception is deliberately
+  // status- and path-exact. Tracked/untracked lookalikes and children surfaced by
+  // aggregate scanning continue through the fail-closed source/secret checks.
+  if (entry.status === '!!' && entry.paths.every(isApprovedIgnoredLocalPath)) return 'approved-ignored-local-runtime';
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
   if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
+  if (entry.status.includes('?') && entry.paths.every((path) => isOpenClawWorkspaceDirtPath(path))) return 'runtime-state';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.status.includes('?') && entry.paths.every((path) => isTransientRootTmpDirectoryStatusPath(path))) return 'runtime-state';
-  if (entry.paths.every((path) => isTransientRootDataPath(path))) return 'transient-root-data';
+  if (entry.paths.every((path) => isAllowlistedRootRuntimePath(path))) return 'transient-root-data';
   if (entry.paths.every((path) => isDependencyDirtPath(path))) return 'dependency-dirt';
   if (entry.paths.every((path) => isApprovedGeneratedDistPath(path))) return 'approved-generated-dist';
   if (entry.status.includes('?') && entry.paths.some((path) => path.includes('.'))) {
@@ -1027,6 +1031,116 @@ function parsePorcelainStatusLine(line) {
   return { status, paths, rawLine: line };
 }
 
+export function collectIgnoredRuntimeAggregatePaths(statusOutput) {
+  return String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter((line) => line.startsWith('!! '))
+    .map(parsePorcelainStatusLine)
+    .flatMap((entry) => entry.paths)
+    .filter((path) => path.endsWith('/') && (
+      classifyIgnitionDirtPath(path) === 'RUNTIME_CHECKPOINT_CLEAN'
+      || isApprovedIgnoredLocalAggregatePath(path)
+    ));
+}
+
+export function mergeIgnoredRuntimeChildrenIntoStatus(statusOutput, ignoredChildrenOutput) {
+  const lines = String(statusOutput || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  const seen = new Set(lines);
+  for (const rawPath of String(ignoredChildrenOutput || '').split('\n')) {
+    const path = normalizeGitPath(rawPath);
+    if (!path) continue;
+    const line = `!! ${path}`;
+    if (!seen.has(line)) {
+      seen.add(line);
+      lines.push(line);
+    }
+  }
+  return lines.length > 0 ? `${lines.join('\n')}\n` : '';
+}
+
+function ignoredRuntimeAggregateScanError(detail) {
+  const error = new Error(`ignored-runtime-aggregate-scan:${detail}`);
+  error.code = 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED';
+  return error;
+}
+
+export function scanIgnoredRuntimeAggregatePathsForBlockers({
+  repoRoot = process.cwd(),
+  aggregatePaths = [],
+  lstatSyncFn = lstatSync,
+  opendirSyncFn = opendirSync,
+  maxDepth = 64,
+  maxEntries = 100_000,
+} = {}) {
+  const canonicalRoot = resolve(repoRoot);
+  const blockers = [];
+  let entriesInspected = 0;
+
+  const walk = (absoluteDirectory, relativeDirectory, depth) => {
+    if (depth > maxDepth) throw ignoredRuntimeAggregateScanError('maximum-depth-exceeded');
+    let directory;
+    try {
+      directory = opendirSyncFn(absoluteDirectory);
+      for (let entry = directory.readSync(); entry; entry = directory.readSync()) {
+        entriesInspected += 1;
+        if (entriesInspected > maxEntries) throw ignoredRuntimeAggregateScanError('maximum-entry-budget-exceeded');
+        if (entry.name.includes('\0') || entry.name.includes('\n') || entry.name.includes('\r')) {
+          throw ignoredRuntimeAggregateScanError('unsafe-entry-name');
+        }
+        const childPath = `${relativeDirectory}/${entry.name}`.replace(/\\/g, '/');
+        if (SECRETS_PATTERN.test(childPath)) {
+          blockers.push(childPath);
+          return;
+        }
+        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) {
+          throw ignoredRuntimeAggregateScanError('unsupported-entry-identity');
+        }
+        if (entry.isDirectory()) walk(resolve(absoluteDirectory, entry.name), childPath, depth + 1);
+        if (blockers.length > 0) return;
+      }
+    } catch (error) {
+      if (error?.code === 'IGNITION_RUNTIME_AGGREGATE_SCAN_FAILED') throw error;
+      throw ignoredRuntimeAggregateScanError(error?.code || 'filesystem-read-failed');
+    } finally {
+      directory?.closeSync();
+    }
+  };
+
+  for (const rawAggregatePath of aggregatePaths) {
+    const aggregatePath = normalizeGitPath(rawAggregatePath).replace(/\\/g, '/').replace(/\/+$/, '');
+    const segments = aggregatePath.split('/');
+    if (!aggregatePath || isAbsolute(aggregatePath) || segments.includes('..') || segments.includes('.')) {
+      throw ignoredRuntimeAggregateScanError('unsafe-aggregate-path');
+    }
+    if (classifyIgnitionDirtPath(`${aggregatePath}/`) !== 'RUNTIME_CHECKPOINT_CLEAN'
+        && !isApprovedIgnoredLocalAggregatePath(`${aggregatePath}/`)) {
+      throw ignoredRuntimeAggregateScanError('non-runtime-aggregate');
+    }
+    const absoluteAggregate = resolve(canonicalRoot, aggregatePath);
+    const relativeToRoot = relative(canonicalRoot, absoluteAggregate);
+    if (!relativeToRoot || relativeToRoot.startsWith('..') || isAbsolute(relativeToRoot)) {
+      throw ignoredRuntimeAggregateScanError('aggregate-outside-repository');
+    }
+    let identity;
+    try {
+      identity = lstatSyncFn(absoluteAggregate);
+    } catch (error) {
+      throw ignoredRuntimeAggregateScanError(error?.code || 'aggregate-identity-unproven');
+    }
+    if (identity.isSymbolicLink() || !identity.isDirectory()) {
+      throw ignoredRuntimeAggregateScanError('aggregate-identity-invalid');
+    }
+    walk(absoluteAggregate, aggregatePath, 0);
+    if (blockers.length > 0) break;
+  }
+
+  return blockers.length > 0 ? `${blockers.join('\n')}\n` : '';
+}
+
 export function evaluateGitStatusForIgnition(statusOutput) {
   const lines = String(statusOutput || '')
     .split('\n')
@@ -1034,14 +1148,19 @@ export function evaluateGitStatusForIgnition(statusOutput) {
     .filter((line) => line.length > 0);
 
   const entries = lines.map(parsePorcelainStatusLine).map((entry) => ({ ...entry, category: classifyStatusEntry(entry) }));
-  const approvedEntries = entries.filter((entry) => entry.category === 'approved-generated-dist' || entry.category === 'dependency-dirt');
+  const approvedEntries = entries.filter((entry) => (
+    entry.category === 'approved-generated-dist'
+    || entry.category === 'dependency-dirt'
+    || entry.category === 'approved-ignored-local-runtime'
+  ));
+  const ignoredLocalRuntimeEntries = entries.filter((entry) => entry.category === 'approved-ignored-local-runtime');
   const runtimeStateEntries = entries.filter((entry) => entry.category === 'runtime-state');
   const transientRootDataEntries = entries.filter((entry) => entry.category === 'transient-root-data');
   const dependencyEntries = entries.filter((entry) => entry.category === 'dependency-dirt');
   const forbiddenOrUnknownEntries = entries.filter((entry) => entry.category === 'forbidden-or-unknown');
   const meaningfulEntries = entries.filter((entry) => entry.category === 'meaningful-source-dirt' || entry.category === 'forbidden-or-unknown');
 
-  return { entries, approvedEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
+  return { entries, approvedEntries, ignoredLocalRuntimeEntries, runtimeStateEntries, transientRootDataEntries, dependencyEntries, forbiddenOrUnknownEntries, meaningfulEntries };
 }
 
 
@@ -1049,9 +1168,11 @@ function normalizeRootCandidatePath(path = '') {
   return normalizeGitPath(path).replace(/\\/g, '/').replace(/\/+$/g, '');
 }
 
-function isRootOpenClawWorkspaceDirtPath(path = '') {
+function rootOpenClawWorkspaceMigrationUnit(path = '') {
   const normalized = normalizeRootCandidatePath(path);
-  return normalized.length > 0 && !normalized.includes('/') && isOpenClawWorkspaceDirtPath(normalized);
+  if (!normalized || !isOpenClawWorkspaceDirtPath(normalized)) return '';
+  const migrationUnit = normalizeOpenClawWorkspacePath(normalized);
+  return OPENCLAW_WORKSPACE_DIRT_PATHS.includes(migrationUnit) ? migrationUnit : '';
 }
 
 function collectMovableRootOpenClawWorkspaceDirt(assessment) {
@@ -1059,7 +1180,8 @@ function collectMovableRootOpenClawWorkspaceDirt(assessment) {
   for (const entry of assessment.entries || []) {
     if (!entry.status.includes('?')) continue;
     for (const path of entry.paths) {
-      if (isRootOpenClawWorkspaceDirtPath(path)) paths.add(normalizeRootCandidatePath(path));
+      const migrationUnit = rootOpenClawWorkspaceMigrationUnit(path);
+      if (migrationUnit) paths.add(migrationUnit);
     }
   }
   return OPENCLAW_WORKSPACE_DIRT_PATHS.filter((path) => paths.has(path));
@@ -1091,7 +1213,7 @@ export function moveRootOpenClawWorkspaceDirt({
 } = {}) {
   const moved = [];
   const skipped = [];
-  const normalizedPaths = [...new Set(paths.map((path) => normalizeRootCandidatePath(path)).filter(isRootOpenClawWorkspaceDirtPath))];
+  const normalizedPaths = [...new Set(paths.map((path) => rootOpenClawWorkspaceMigrationUnit(path)).filter(Boolean))];
   if (normalizedPaths.length === 0) return { destinationRoot, migrationDirectory: null, moved, skipped };
   makeDir(destinationRoot, { recursive: true });
   const migrationDirectory = uniqueMigrationDirectory(destinationRoot, pathExists, now);
@@ -1800,15 +1922,19 @@ export async function evaluateOpenClawStartupConnectRecoveryWithDeps({ captureSt
   return { healthy: true, state: 'connected-healthy', recoveryApplied: true, readiness };
 }
 
-export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt } = {}) {
-  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain']);
-  const assessment = evaluateGitStatusForIgnition(capture.stdout);
+export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = false, preserveRuntimeDirt = false, captureStepFn = runStepCapture, runStepFn = runStep, moveRootOpenClawWorkspaceDirtFn = moveRootOpenClawWorkspaceDirt, scanIgnoredRuntimeAggregatePathsFn = scanIgnoredRuntimeAggregatePathsForBlockers, repoRoot = process.cwd() } = {}) {
+  const capture = captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+  const ignoredRuntimeAggregates = collectIgnoredRuntimeAggregatePaths(capture.stdout);
+  const ignoredRuntimeBlockers = ignoredRuntimeAggregates.length > 0
+    ? scanIgnoredRuntimeAggregatePathsFn({ repoRoot, aggregatePaths: ignoredRuntimeAggregates })
+    : '';
+  const assessment = evaluateGitStatusForIgnition(mergeIgnoredRuntimeChildrenIntoStatus(capture.stdout, ignoredRuntimeBlockers));
   const runtimeDataListing = captureStepFn('git-untracked-data', 'git', ['ls-files', '--others', '--exclude-standard', '--', 'data']);
   const runtimeDataPaths = normalizeCaptureStdout(runtimeDataListing).split('\n').map((line) => normalizeGitPath(line)).filter((line) => line.startsWith('data/'));
   const plan = assessment.entries.map((entry) => ({
     status: entry.status,
     paths: entry.paths,
-    category: classifyIgnitionDirtPath(entry.paths[0]),
+    category: entry.category,
   }));
   console.log(`[HOUSEKEEP] mode=${dryRun ? 'dry-run' : 'clean'}`);
   if (debug || !compact) {
@@ -1820,10 +1946,14 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
   const entryPaths = assessment.entries.flatMap((entry) => entry.paths);
   const autoCleanTargets = entryPaths.filter((path) => isApprovedGeneratedDistPath(path));
   const runtimeTargets = [...entryPaths.filter((path) => path === RUNTIME_MEMORY_PATH || isAllowlistedRootRuntimePath(path)), ...runtimeDataPaths.filter((path) => isAllowlistedRootRuntimePath(path))];
-  const sourceTargets = entryPaths.filter((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
+  const sourceTargets = assessment.entries
+    .filter((entry) => entry.category === 'meaningful-source-dirt')
+    .flatMap((entry) => entry.paths);
   const dependencyTargets = entryPaths.filter((path) => isDependencyDirtPath(path));
-  let hardBlockTargets = [...entryPaths, ...runtimeDataPaths]
-    .filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK')
+  let hardBlockTargets = [
+    ...assessment.forbiddenOrUnknownEntries.flatMap((entry) => entry.paths),
+    ...runtimeDataPaths.filter((path) => classifyIgnitionDirtPath(path) === 'HARD_BLOCK'),
+  ]
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
@@ -1844,18 +1974,20 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
 
   let runtimeCleaned = 0;
   if (!dryRun) {
-    if (trackedAuto.length > 0) {
+    if (!preserveRuntimeDirt && trackedAuto.length > 0) {
       runStepFn('git-restore-auto-generated', 'git', ['restore', '--worktree', '--staged', '--', ...trackedAuto]);
     }
-    if (trackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && trackedRuntime.length > 0) {
       runStepFn('git-restore-runtime-tracked', 'git', ['restore', '--worktree', '--staged', '--', ...trackedRuntime]);
       runtimeCleaned += trackedRuntime.length;
     }
-    if (untrackedRuntime.length > 0) {
+    if (!preserveRuntimeDirt && untrackedRuntime.length > 0) {
       runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', ...untrackedRuntime]);
       runtimeCleaned += untrackedRuntime.length;
     }
-    runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    if (!preserveRuntimeDirt) {
+      runStepFn('git-clean-dist-untracked', 'git', ['clean', '-fd', '--', APPROVED_GENERATED_DIST_PREFIX]);
+    }
   }
 
   const uniqueRuntimeTargets = [...new Set(runtimeTargets)];
@@ -1864,18 +1996,24 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ? buildTrackedRuntimeActivityDirtBlocker({ timestamp: '<timestamp>' })
     : null;
   const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
-  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ hardBlockPaths: uniqueHardBlockTargets, sourcePaths: sourceTargets, blocksIgnition: blocked });
+  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({
+    hardBlockPaths: uniqueHardBlockTargets,
+    sourcePaths: sourceTargets,
+    paths: dryRun ? movableRootOpenClawDirt : [],
+    blocksIgnition: blocked,
+  });
   const status = {
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
     ignitionCleanlinessVerdict: blocked ? 'blocked' : 'ready',
-    ignitionAutoCleaned: dryRun ? 0 : autoCleanTargets.length,
+    ignitionAutoCleaned: dryRun || preserveRuntimeDirt ? 0 : autoCleanTargets.length,
     ignitionRuntimeCleaned: dryRun ? 0 : runtimeCleaned,
     ignitionOpenClawWorkspaceMoved: dryRun ? 0 : openClawMoveResult.moved.length,
     ignitionOpenClawWorkspaceMoveDestination: openClawMoveResult.destinationRoot,
     ignitionOpenClawWorkspaceMovedPaths: dryRun ? [] : openClawMoveResult.moved.map((entry) => entry.path),
-    ignitionRuntimeCleanedPaths: dryRun ? [] : uniqueRuntimeTargets.slice(0, 10),
-    ignitionAutoCleanedPaths: dryRun ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimeCleanedPaths: dryRun || preserveRuntimeDirt ? [] : uniqueRuntimeTargets.slice(0, 10),
+    ignitionAutoCleanedPaths: dryRun || preserveRuntimeDirt ? [] : [...new Set(autoCleanTargets)].slice(0, 10),
+    ignitionRuntimePreservationEnabled: preserveRuntimeDirt,
     ignitionSourceDirtCount: sourceTargets.length,
     ignitionDependencyWarningCount: dependencyTargets.length,
     ignitionHardBlockCount: uniqueHardBlockTargets.length,
@@ -1912,6 +2050,8 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
       console.log(`[HOUSEKEEP] root OpenClaw files safely moved: ${openClawMoveResult.moved.map((entry) => entry.path).join(',')}`);
       console.log(`[HOUSEKEEP] OpenClaw workspace destination: ${openClawMoveResult.destinationRoot}`);
       console.log('[HOUSEKEEP] no OpenClaw memory was deleted');
+    } else if (dryRun && movableRootOpenClawDirt.length > 0) {
+      console.log('[HOUSEKEEP] root OpenClaw files will be safely preserved and moved during ignition');
     } else {
       console.log('[HOUSEKEEP] root OpenClaw files still block ignition');
     }
@@ -2018,6 +2158,7 @@ export function autoPublishDistWithDeps({ statusAssessment, captureStep = runSte
 }
 
 export async function run() {
+  assertBoundIgnitionHeadImmediatelyBeforeMutation();
   const preflightState = readLocalBuildState();
   const autoPullEnabled = shouldAutoPull();
   const ignitionMode = resolveIgnitionMode();
@@ -2098,6 +2239,7 @@ export async function run() {
       console.log('[IGNITION] launcher guardrail passed');
     },
     runBuild: async () => {
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       console.log('[IGNITION] build starting');
       try {
         runStep('build', npmCommand, ['run', 'stephanos:build']);
@@ -2186,6 +2328,7 @@ export async function run() {
         console.error(`[IGNITION] repair-packet=${JSON.stringify(distFreshness)}`);
         throw new Error(`blocked for safety: ${distFreshness.reason}. ${distFreshness.nextSafeAction}`);
       }
+      assertBoundIgnitionHeadImmediatelyBeforeMutation();
       const restartReport = await ensureLocalStaticServerRestartWithDeps({
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
         verifyServedAfterStart: true,

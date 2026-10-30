@@ -67,7 +67,7 @@ function ingressFixture() {
     "throw 'OPENCLAW_GATEWAY_PROCESS_OWNERSHIP_INVALID'",
     "if ([string]$hostProof.runtimeId -like 'openclaw-plugin-host:*') { $expected = \"openclaw-plugin-host:$($hostProcess.ProcessId)\" }",
     "throw 'OPENCLAW_HOST_PROOF_ALREADY_CONSUMED'",
-    "if ([string]$task.Principal.LogonType -ne 'Interactive') { throw 'x' }",
+    "if ([string]$task.Principal.LogonType -ne 'S4U') { throw 'x' }",
     "if ([string]$task.Principal.RunLevel -ne 'Limited') { throw 'x' }",
     "if ([string]$task.Settings.MultipleInstances -ne 'IgnoreNew') { throw 'x' }",
     "action = 'WAKE_CANONICAL_BATTLE_BRIDGE_DISPATCHER'",

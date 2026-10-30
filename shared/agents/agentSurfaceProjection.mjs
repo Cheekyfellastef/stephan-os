@@ -6,6 +6,7 @@ export function resolveAgentSurfaceMode(surfaceParam = '') {
   const normalized = String(surfaceParam || '').trim().toLowerCase();
   if (normalized === 'cockpit') return 'cockpit';
   if (normalized === 'agents') return 'agents';
+  if (normalized === 'flywheel') return 'flywheel';
   if (normalized === 'mission-console') return 'mission-console';
   if (normalized === 'openclaw') return 'openclaw';
   if (normalized === 'capability-radar') return 'capability-radar';

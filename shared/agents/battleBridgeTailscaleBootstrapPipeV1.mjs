@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_SCHEMA = 'stephanos.battle-bridge-tailscale-bootstrap.v1';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_MARKER = 'stephanos-battle-bridge-tailscale-bootstrap';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_OPERATION = 'BOOTSTRAP_CANONICAL_GITHUB_SYNC';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = 1507;
+export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_AUTHOR = 'Cheekyfellastef';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_TAG = 'tag:stephanos-github-recovery';
 export const BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_VERDICT = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY';
@@ -113,14 +114,22 @@ export function buildFixedBattleBridgeBootstrapPowerShell(expectedHead) {
     "$repo = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\\GitHub\\stephan-os'))",
     "$installer = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\windows\\install-battle-bridge-github-sync.ps1'))",
     "$statusScript = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\windows\\status-battle-bridge-github-sync.ps1'))",
+    "$preservationSync = [System.IO.Path]::GetFullPath((Join-Path $repo 'scripts\\battle-bridge-exact-head-preservation-sync.mjs'))",
     "$git = 'C:\\Program Files\\Git\\cmd\\git.exe'",
+    "$node = 'C:\\Program Files\\nodejs\\node.exe'",
+    "if (-not (Test-Path -LiteralPath $preservationSync -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_ADAPTER_MISSING' }",
+    "if (-not (Test-Path -LiteralPath $node -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_CANONICAL_NODE_MISSING' }",
+    "if (-not (Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_CANONICAL_GIT_MISSING' }",
+    `$expectedHead = ${expected}`,
+    "try { $syncOutput = @(& $node $preservationSync $expectedHead) } catch { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
+    "if ($LASTEXITCODE -ne 0 -or $syncOutput.Count -lt 1) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_FAILED' }",
+    "$sync = (($syncOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
+    "if ($null -eq $sync -or $sync.ok -ne $true -or $sync.exactHeadBound -ne $true -or [string]$sync.expectedHead -ne $expectedHead -or [string]$sync.afterHead -ne $expectedHead -or $null -eq $sync.preservation -or $sync.preservation.ok -ne $true -or [int]$sync.preservation.receipt.itemCount -ne 6 -or $sync.preservation.receipt.allHashesVerified -ne $true -or $sync.preservation.destructiveCleanupPerformed -ne $false) { throw 'TAILSCALE_BOOTSTRAP_PRESERVATION_SYNC_INVALID' }",
     "if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_MISSING' }",
     "if (-not (Test-Path -LiteralPath $statusScript -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_SCRIPT_MISSING' }",
-    "if (-not (Test-Path -LiteralPath $git -PathType Leaf)) { throw 'TAILSCALE_BOOTSTRAP_CANONICAL_GIT_MISSING' }",
     "try { $installerOutput = @(& $installer -StartNow) } catch { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_FAILED' }",
     "$installerReceipt = (($installerOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
-    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 15 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
-    `$expectedHead = ${expected}`,
+    "if ([string]$installerReceipt.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $installerReceipt.installed -ne $true -or $installerReceipt.startedNow -ne $true -or [int]$installerReceipt.intervalMinutes -ne 1 -or $installerReceipt.atLogon -ne $true -or $installerReceipt.hidden -ne $true -or [string]$installerReceipt.runLevel -ne 'Limited' -or $installerReceipt.arbitraryShellAllowed -ne $false -or $installerReceipt.liveOpenClawUpdateAllowed -ne $false -or $installerReceipt.headlessLauncher -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_INSTALLER_RECEIPT_INVALID' }",
     "$observedHead = ''",
     "for ($attempt = 0; $attempt -lt 24; $attempt += 1) {",
     "  $headLine = @(& $git -C $repo rev-parse HEAD 2>$null | Select-Object -First 1)",
@@ -132,7 +141,7 @@ export function buildFixedBattleBridgeBootstrapPowerShell(expectedHead) {
     "try { $statusOutput = @(& $statusScript) } catch { throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_FAILED' }",
     "$status = (($statusOutput -join [Environment]::NewLine) | ConvertFrom-Json)",
     "if ([string]$status.taskName -ne 'Stephanos Battle Bridge GitHub Sync' -or $status.installed -ne $true) { throw 'TAILSCALE_BOOTSTRAP_SYNC_STATUS_INVALID' }",
-    "[pscustomobject]@{ schemaVersion = 'stephanos.battle-bridge-tailscale-bootstrap-receipt.v1'; repository = 'Cheekyfellastef/stephan-os'; taskName = 'Stephanos Battle Bridge GitHub Sync'; expectedHead = $expectedHead; observedHead = $observedHead; taskInstalled = $true; taskState = [string]$status.taskState; lastTaskResult = $status.lastTaskResult; codexRequired = $false; arbitraryCommandAllowed = $false; arbitraryPathAllowed = $false; arbitraryTaskNameAllowed = $false; sourceMutationOutsideCanonicalSyncAllowed = $false; destructiveGitAllowed = $false; pcRestartAllowed = $false; finalVerdict = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY' } | ConvertTo-Json -Compress",
+    "[pscustomobject]@{ schemaVersion = 'stephanos.battle-bridge-tailscale-bootstrap-receipt.v1'; repository = 'Cheekyfellastef/stephan-os'; taskName = 'Stephanos Battle Bridge GitHub Sync'; expectedHead = $expectedHead; observedHead = $observedHead; taskInstalled = $true; taskState = [string]$status.taskState; lastTaskResult = $status.lastTaskResult; preservationProfile = 'battle-bridge-runtime-data-v1'; preservationItemCount = 6; preservationHashesVerified = $true; codexRequired = $false; arbitraryCommandAllowed = $false; arbitraryPathAllowed = $false; arbitraryTaskNameAllowed = $false; sourceMutationOutsideCanonicalSyncAllowed = $false; destructiveGitAllowed = $false; pcRestartAllowed = $false; finalVerdict = 'BATTLE_BRIDGE_TAILSCALE_BOOTSTRAP_READY' } | ConvertTo-Json -Compress",
   ].join('; ');
 }
 
@@ -154,6 +163,9 @@ export function validateBattleBridgeTailscaleBootstrapReceipt(value = {}, expect
     && text(value?.expectedHead).toLowerCase() === expected
     && text(value?.observedHead).toLowerCase() === expected
     && value?.taskInstalled === true
+    && value?.preservationProfile === 'battle-bridge-runtime-data-v1'
+    && value?.preservationItemCount === 6
+    && value?.preservationHashesVerified === true
     && value?.codexRequired === false
     && value?.arbitraryCommandAllowed === false
     && value?.arbitraryPathAllowed === false

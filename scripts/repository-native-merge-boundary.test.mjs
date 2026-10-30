@@ -1,6 +1,269 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { preflightBeforeProtectedApproval } from './operator-protected-personal-repository-merge.mjs';
+import { PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS, validatePersonalRepositoryConversationState, validatePersonalRepositoryEvidence } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+
+function preApprovalFixture() {
+  const repository = 'Cheekyfellastef/stephan-os';
+  const identity = { prNumber: 3178, branch: 'feature/r7-test', sourceHead: 'a'.repeat(40),
+    sourceTree: 'c'.repeat(40), baseSha: 'b'.repeat(40) };
+  const context = { repository, dispatch: { identity } };
+  const state = {
+    pullRequest: { number: identity.prNumber, state: 'open', draft: false,
+      head: { ref: identity.branch, sha: identity.sourceHead, repo: { full_name: repository } },
+      base: { ref: 'main', sha: identity.baseSha, repo: { full_name: repository } } },
+    liveMainRef: { object: { sha: identity.baseSha } },
+    headCommit: { sha: identity.sourceHead, tree: { sha: identity.sourceTree } },
+    review: { mergeable: 'MERGEABLE', mergeStateStatus: 'UNSTABLE', unresolvedThreadCount: 0, reviewDecision: null },
+  };
+  const definitions = PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.map((required, index) => ({
+    id: 700 + index, name: required.name, path: required.path, state: 'active',
+  }));
+  const workflows = [
+    { id: 100, name: 'Stephanos Exact-Head Review', path: '.github/workflows/stephanos-exact-head-review.yml', conclusion: 'failure' },
+    { id: 101, name: 'Independent Merge Security Review', path: '.github/workflows/independent-merge-security-review.yml', conclusion: 'success' },
+    ...PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.map((required, index) => ({
+      id: 200 + index, ...required, workflow_id: definitions[index].id, conclusion: 'success',
+    })),
+  ].map((run) => ({ ...run, run_attempt: 1, check_suite_id: run.id + 1000,
+    repository: { full_name: repository }, head_sha: identity.sourceHead,
+    event: run.event || 'pull_request_target', status: 'completed',
+    pull_requests: [{ number: identity.prNumber, head: state.pullRequest.head, base: state.pullRequest.base }] }));
+  const snapshot = { workflowRuns: workflows, commitStatuses: [], checkRuns: workflows.map((run, index) => ({
+    id: run.id + 2000, name: index ? 'independent-security-review' : 'exact-head-review',
+    head_sha: identity.sourceHead, app: { id: 15368, slug: 'github-actions' },
+    check_suite: { id: run.check_suite_id }, status: 'completed', conclusion: run.conclusion,
+    details_url: `https://github.com/${repository}/actions/runs/${run.id}/job/${run.id + 2000}`,
+  })) };
+  const events = [];
+  const adapters = {
+    readExecution: async () => { events.push('execution'); return { definitions }; },
+    readIdentity: async () => { events.push('identity'); return structuredClone(state); },
+    readReview: async () => { events.push('review'); return { reviewMode: 'clean-independent', findings: [] }; },
+    readChecks: async () => { events.push('checks'); return structuredClone(snapshot); },
+  };
+  return { context, state, snapshot, definitions, events, adapters };
+}
+
+test('pre-approval check rejects the R7 stale attached security failure despite clean selected review', async () => {
+  const f = preApprovalFixture();
+  f.snapshot.checkRuns[1].conclusion = 'failure';
+  f.snapshot.workflowRuns[1].conclusion = 'failure';
+  await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+    error.details?.blockers?.includes('personal-repository-check-run-not-exact-green'));
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks']);
+});
+
+test('pre-approval success rechecks live identity and has no approval or mutation authority', async () => {
+  const f = preApprovalFixture();
+  const result = await preflightBeforeProtectedApproval(f.context, f.adapters);
+  assert.deepEqual(f.events, ['execution', 'identity', 'review', 'checks', 'identity', 'checks', 'identity', 'review', 'execution']);
+  assert.equal(result.checkEvidence.length, 2 + PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
+  assert.equal(result.requiredWorkflowEvidence.length, PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length);
+  assert.equal(result.operatorApproval, false);
+  assert.equal(result.mutationAuthority, false);
+  assert.equal(result.finalRevalidationRequired, true);
+  assert.equal(result.advisoryOnly, true);
+});
+
+test('pre-approval stops on a consumed attempt before collecting or approving anything', async () => {
+  const f = preApprovalFixture();
+  f.adapters.readExecution = async () => { throw Error('prior attempt consumed'); };
+  await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), /prior attempt consumed/);
+  assert.deepEqual(f.events, []);
+});
+
+test('pre-approval rereads newly pending or failed checks after identity refresh', async () => {
+  for (const conclusion of [null, 'failure']) {
+    const f = preApprovalFixture();
+    const readIdentity = f.adapters.readIdentity;
+    let observations = 0;
+    f.adapters.readIdentity = async () => {
+      if (++observations === 2) {
+        f.state.review.mergeStateStatus = 'BLOCKED';
+        f.snapshot.checkRuns[1].status = conclusion === null ? 'in_progress' : 'completed';
+        f.snapshot.checkRuns[1].conclusion = conclusion;
+      }
+      return readIdentity();
+    };
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+      error.details?.blockers?.includes(conclusion === null
+        ? 'personal-repository-check-run-not-terminal' : 'personal-repository-check-run-not-exact-green'));
+    assert.equal(f.events.filter((event) => event === 'checks').length, 2);
+  }
+});
+
+test('pre-approval rechecks source identity and merge state after the second check read', async () => {
+  for (const move of [
+    state => { state.pullRequest.head.sha = 'd'.repeat(40); },
+    state => { state.review.mergeStateStatus = 'BLOCKED'; },
+  ]) {
+    const f = preApprovalFixture(); const read = f.adapters.readChecks;
+    let reads = 0;
+    f.adapters.readChecks = async () => { const value = await read(); if (++reads === 2) move(f.state); return value; };
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+    assert.equal(reads, 2);
+  }
+});
+
+test('pre-approval requires every mandatory workflow even when all present checks pass', async () => {
+  for (let index = 0; index < PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS.length; index++) {
+    for (const phase of ['initial', 'refresh']) {
+      const f = preApprovalFixture(); const read = f.adapters.readChecks; let reads = 0;
+      f.adapters.readChecks = async () => {
+        const snapshot = await read();
+        if (++reads === (phase === 'initial' ? 1 : 2)) {
+          const removed = snapshot.workflowRuns.splice(index + 2, 1)[0];
+          snapshot.checkRuns = snapshot.checkRuns.filter((check) => check.check_suite.id !== removed.check_suite_id);
+        }
+        return snapshot;
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters), (error) =>
+        error.details?.blockers?.includes('personal-repository-workflow-run-not-exact-green:'
+          + PERSONAL_REPOSITORY_REQUIRED_WORKFLOWS[index].name));
+    }
+  }
+});
+
+test('pre-approval rejects missing, disabled, duplicated or wrongly bound workflow definitions', async () => {
+  for (const mutate of [
+    f => { f.definitions.pop(); },
+    f => { f.definitions[0].state = 'disabled_manually'; },
+    f => { f.definitions.push({ ...f.definitions[0] }); },
+    f => { f.snapshot.workflowRuns[2].workflow_id++; },
+  ]) {
+    const f = preApprovalFixture(); mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
+});
+
+test('pre-approval rejects identity, review and collection gaps and concurrent movement', async () => {
+  for (const mutate of [
+    f => { f.state.pullRequest.draft = true; },
+    f => { f.state.headCommit.tree.sha = 'd'.repeat(40); },
+    f => { f.state.review.unresolvedThreadCount = 1; },
+    f => { f.state.review.reviewDecision = 'CHANGES_REQUESTED'; },
+    f => { delete f.snapshot.commitStatuses; },
+    f => { f.snapshot.checkRuns[1].status = 'in_progress'; },
+    f => { f.adapters.readReview = async () => { throw Error('artifact not authenticated'); }; },
+    f => { f.adapters.readReview = async () => ({ reviewMode: 'qualified-operator-bootstrap', findings: [] }); },
+    f => { const read = f.adapters.readChecks; f.adapters.readChecks = async () => {
+      const result = await read(); f.state.liveMainRef.object.sha = 'd'.repeat(40); return result;
+    }; },
+    f => { const read = f.adapters.readChecks; f.adapters.readChecks = async () => {
+      const result = await read(); f.state.review.mergeStateStatus = 'CLEAN'; return result;
+    }; },
+  ]) {
+    const f = preApprovalFixture(); mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
+});
+
+test('pre-approval and protected evidence share the review and conversation acceptance contract', async () => {
+  for (const decision of [null, '', 'APPROVED', ' approved ', undefined,
+    'REVIEW_REQUIRED', 'CHANGES_REQUESTED', 'UNKNOWN', 'changes_requested', 'review_required']) {
+    const review = { reviewDecision: decision, mergeable: 'MERGEABLE', unresolvedThreadCount: 0 };
+    const expected = [null, '', 'APPROVED', ' approved ', undefined].includes(decision);
+    const contract = validatePersonalRepositoryConversationState(review);
+    assert.equal(contract.valid, expected, String(decision));
+    const final = validatePersonalRepositoryEvidence(review);
+    for (const blocker of contract.blockers) assert.ok(final.blockers.includes(blocker));
+    const f = preApprovalFixture();
+    f.state.review.reviewDecision = decision;
+    if (expected) await preflightBeforeProtectedApproval(f.context, f.adapters);
+    else await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters),
+      error => contract.blockers.every(blocker => error.details?.blockers?.includes(blocker)));
+  }
+});
+
+test('every pre-approval identity read rejects unsupported or missing review state', async () => {
+  for (const readNumber of [1, 2, 3]) {
+    for (const mutate of [
+      review => { review.reviewDecision = 'REVIEW_REQUIRED'; },
+      review => { review.reviewDecision = 'CHANGES_REQUESTED'; },
+      review => { review.reviewDecision = 'UNKNOWN'; },
+      review => { delete review.reviewDecision; },
+      review => { review.mergeable = 'UNKNOWN'; },
+      review => { delete review.mergeable; },
+      review => { review.unresolvedThreadCount = 1; },
+      review => { delete review.unresolvedThreadCount; },
+    ]) {
+      const f = preApprovalFixture();
+      const readIdentity = f.adapters.readIdentity;
+      let observations = 0;
+      f.adapters.readIdentity = async () => {
+        if (++observations === readNumber) mutate(f.state.review);
+        return readIdentity();
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+      assert.equal(observations, readNumber);
+    }
+  }
+});
+
+test('pre-approval rejects replay or artifact changes discovered by closing reauthentication', async () => {
+  for (const adapter of ['readExecution', 'readReview']) {
+    for (const checkNumber of [1, 2]) {
+      const f = preApprovalFixture();
+      const original = f.adapters[adapter];
+      const readChecks = f.adapters.readChecks;
+      let invalidated = false;
+      let observations = 0;
+      let authentications = 0;
+      f.adapters[adapter] = async () => {
+        authentications++;
+        if (invalidated) throw Error('new dispatch or changed artifact binding');
+        return original();
+      };
+      f.adapters.readChecks = async () => {
+        const result = await readChecks();
+        if (++observations === checkNumber) invalidated = true;
+        return result;
+      };
+      await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters),
+        /new dispatch or changed artifact binding/);
+      assert.equal(authentications, 2);
+    }
+  }
+});
+
+test('pre-approval applies closing workflow definitions and rejects a later nonclean review', async () => {
+  for (const mutate of [
+    f => { const original = f.adapters.readExecution; let reads = 0;
+      f.adapters.readExecution = async () => {
+        const result = await original();
+        return ++reads === 2 ? { definitions: result.definitions.slice(1) } : result;
+      };
+    },
+    f => { const original = f.adapters.readReview; let reads = 0;
+      f.adapters.readReview = async () => ++reads === 2
+        ? { reviewMode: 'clean-independent', findings: [{ code: 'new-finding' }] }
+        : original();
+    },
+    f => { const original = f.adapters.readReview; let reads = 0;
+      f.adapters.readReview = async () => ++reads === 2
+        ? { reviewMode: 'qualified-operator-bootstrap', findings: [] }
+        : original();
+    },
+  ]) {
+    const f = preApprovalFixture();
+    mutate(f);
+    await assert.rejects(preflightBeforeProtectedApproval(f.context, f.adapters));
+  }
+});
+
+test('read-only preflight precedes approval and does not replace protected final validation', async () => {
+  const source = await readFile(new URL('../.github/workflows/operator-merge-approval-gate.yml', import.meta.url), 'utf8');
+  const early = source.slice(source.indexOf('  personal-repository-evidence:'), source.indexOf('  operator-personal-repository-approval:'));
+  assert.match(early, /run: node scripts\/operator-protected-personal-repository-merge\.mjs preflight/);
+  assert.doesNotMatch(early.replace(/^\s*#.*$/gm, ''), /environment:|contents: write|issues: write|pull-requests: write|STEPHANOS_RULESET_PROOF_TOKEN/);
+  const final = source.slice(source.indexOf('  operator-personal-repository-squash-merge:'));
+  assert.match(final, /environment: operator-merge-approval/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs evidence/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs approve/);
+  assert.match(final, /operator-protected-personal-repository-merge\.mjs merge/);
+});
 
 const publishScript = new URL('./repository-native-publish-merge-lane.mjs', import.meta.url);
 const protectedMergeScript = new URL('./operator-protected-merge-gate-v2.mjs', import.meta.url);
@@ -27,7 +290,7 @@ test('no local npm command exposes merge authority', async () => {
   assert.equal(packageJson.scripts['stephanos:publish-merge'], 'node scripts/repository-native-publish-merge-lane.mjs');
 });
 
-test('protected boundary keeps the native queue and adds only the exact user-owned dispatch fallback', async () => {
+test('protected boundary keeps the native queue and adds only the exact mobile-safe user-owned dispatch fallback', async () => {
   const protectedSource = await readFile(protectedWorkflow, 'utf8');
   const independentSource = await readFile(independentWorkflow, 'utf8');
   assert.match(protectedSource, /^  merge_group:\s*$/m);
@@ -54,6 +317,7 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.match(protectedSource, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
   assert.equal([...protectedSource.matchAll(/contents: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/issues: write/g)].length, 1);
+  assert.equal([...protectedSource.matchAll(/issues: read/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/pull-requests: write/g)].length, 1);
   assert.equal([...protectedSource.matchAll(/actions\/create-github-app-token@v2/g)].length, 3);
   assert.equal([...protectedSource.matchAll(/secrets\.STEPHANOS_RULESET_PROOF_APP_ID/g)].length, 3);
@@ -63,7 +327,12 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   assert.equal([...protectedSource.matchAll(/steps\.ruleset-proof-token\.outputs\.token/g)].length, 3);
   assert.doesNotMatch(protectedSource, /permission-(?!administration: write)/);
   assert.doesNotMatch(protectedSource, /skip-token-revoke:/);
-  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 4);
+  assert.equal([...protectedSource.matchAll(/name: operator-merge-approval/g)].length, 1);
+  assert.match(protectedSource, /readonly CANONICAL_OPERATOR='Cheekyfellastef'/);
+  const mergeQueueJob = protectedSource.slice(
+    protectedSource.indexOf('  operator-merge-queue-boundary:'),
+    protectedSource.indexOf('  personal-repository-evidence:'),
+  );
   const evidenceJob = protectedSource.slice(
     protectedSource.indexOf('  personal-repository-evidence:'),
     protectedSource.indexOf('  operator-personal-repository-approval:'),
@@ -75,28 +344,34 @@ test('protected boundary keeps the native queue and adds only the exact user-own
   const mergeJob = protectedSource.slice(
     protectedSource.indexOf('  operator-personal-repository-squash-merge:'),
   );
+  assert.match(mergeQueueJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.match(evidenceJob, /actions\/create-github-app-token@v2/);
   assert.match(evidenceJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
-  assert.match(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
+  assert.doesNotMatch(evidenceJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.match(evidenceJob, /Collect exact personal-repository evidence after protected admission/);
+  assert.match(evidenceJob, /issues: read/);
   assert.doesNotMatch(evidenceJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(approvalJob, /actions\/create-github-app-token@v2/);
   assert.match(approvalJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.match(approvalJob, /needs: \[personal-repository-evidence\]/);
   assert.match(approvalJob, /Re-prove immutable evidence after protected approval/);
+  assert.doesNotMatch(approvalJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.doesNotMatch(approvalJob, /contents: write|issues: write|pull-requests: write/);
   assert.match(mergeJob, /actions\/create-github-app-token@v2/);
   assert.match(mergeJob, /STEPHANOS_RULESET_PROOF_TOKEN: \$\{\{ steps\.ruleset-proof-token\.outputs\.token \}\}/);
   assert.match(mergeJob, /needs: \[personal-repository-evidence, operator-personal-repository-approval\]/);
   assert.match(mergeJob, /Re-prove, squash exact head and publish the bounded receipt/);
+  assert.doesNotMatch(mergeJob, /environment:\s*\n      name: operator-merge-approval/);
   assert.doesNotMatch(protectedSource, /\b(?:actions|deployments|statuses|checks): write\b/);
   assert.doesNotMatch(protectedSource, /recover|repository_dispatch|workflow_call|continue-on-error/);
   assert.doesNotMatch(protectedSource, /STEPHANOS_RULESET_PROOF_TOKEN[^\n]*(?:GITHUB_OUTPUT|GITHUB_ENV|upload-artifact)/i);
 
   assert.match(independentSource, /pull_request_target:/);
+  assert.match(independentSource, /^  workflow_dispatch:\s*$/m);
   assert.match(independentSource, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
-  assert.match(independentSource, /persist-credentials: false/);
-  assert.match(independentSource, /independent-merge-security-review-v2\.mjs/);
+  assert.match(independentSource, /ref: \$\{\{ github\.sha \}\}/);
+  assert.equal([...independentSource.matchAll(/persist-credentials: false/g)].length, 2);
+  assert.match(independentSource, /independent-merge-security-review-entry-v1\.mjs/);
 });
 
 test('personal-repository executor is workflow-dispatch-only and performs one exact-head squash without branch deletion', async () => {
@@ -104,6 +379,15 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.match(source, /GITHUB_EVENT_NAME !== 'workflow_dispatch'/);
   assert.match(source, /triggering_actor\?\.login \|\| run\?\.actor\?\.login/);
   assert.match(source, /validatePersonalRepositoryEvidence/);
+  assert.match(source, /validatePersonalRepositoryCheckRunsWithBoundedReread/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRunHydration/);
+  assert.match(source, /hydrateExactHeadWorkflowRuns/);
+  assert.match(source, /actions\/runs\/\$\{run\?\.id\}/);
+  assert.doesNotMatch(source, /CHECK_SNAPSHOT_REREAD_DELAY_MS/);
+  assert.match(source, /if \(attempt === 1\) return initialCheckSnapshot/);
+  assert.match(source, /snapshotAttempts: checks\.snapshotAttempts/);
+  assert.match(source, /acceptedWorkflowRuns = checks\.selectedSnapshot\.workflowRuns/);
+  assert.match(source, /validatePersonalRepositoryWorkflowRuns\([\s\S]*?acceptedWorkflowRuns/);
   assert.match(source, /validatePersonalRepositoryConfiguration/);
   assert.match(source, /validatePersonalRepositoryWorkflowRuns/);
   assert.match(source, /authorization === 'omit' && \(method !== 'GET' \|\| body !== null\)/);
@@ -132,15 +416,27 @@ test('personal-repository executor is workflow-dispatch-only and performs one ex
   assert.doesNotMatch(source, /GH_TOKEN[^\n]*rules|GITHUB_TOKEN[^\n]*rules/);
   assert.match(source, /loadSelectedIndependentReview/);
   assert.match(source, /personal-repository-prior-attempt-exists/);
+  assert.match(source, /execution\.replayRunIds\.length > PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX/);
+  assert.match(source, /execution\.blockers\.includes\('personal-repository-prior-run-attempt-limit-exceeded'\)/);
+  assert.match(source, /actions\/runs\/\$\{runId\}\/jobs/);
+  assert.match(source, /jobs\?filter=all/);
+  assert.match(source, /retryablePriorFailures: execution\.retryablePriorFailures/);
+  assert.match(source, /retryablePriorFailures: collected\.packet\.retryablePriorFailures/);
   assert.match(source, /expectedDisplayTitle = `Protected operator merge \$\{context\.dispatch\.identity\.sourceHead\}`/);
   assert.doesNotMatch(source, /expectedDisplayTitle = `Protected operator merge PR #/);
   assert.match(source, /mismatches: runIdentityMismatches/);
   assert.doesNotMatch(source, /mismatches:[^\n]*run\?\./);
+  assert.doesNotMatch(source, /jobs\?filter=latest/);
   assert.match(source, /validatePersonalRepositoryApprovalReceipt/);
   assert.match(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_AFTER_PROTECTED_ADMISSION/);
   assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_APPROVAL_READY/);
   assert.match(source, /PERSONAL_REPOSITORY_PROTECTED_SQUASH_MERGED/);
-  assert.doesNotMatch(source, /PREAPPROVAL|BEFORE_PROTECTED_ENVIRONMENT|Pre-environment|before protected approval/i);
+  // A read-only early rejection may precede approval; reusable authority
+  // evidence must still be produced only inside the protected final job.
+  assert.doesNotMatch(source, /PERSONAL_REPOSITORY_EVIDENCE_READY_BEFORE_PROTECTED_ENVIRONMENT|Pre-environment personal-repository evidence/i);
+  const earlyMode = source.slice(source.indexOf("  if (mode === 'preflight') {"), source.indexOf("  if (mode === 'evidence') {"));
+  assert.doesNotMatch(earlyMode, /appendOutputs|collectEvidence|buildPersonalRepositoryApprovalReceipt|apiJson/);
+  assert.match(earlyMode, /preflightBeforeProtectedApproval\(context\)/);
   assert.match(source, /method: 'PUT',[\s\S]*?merge_method: 'squash',[\s\S]*?sha: receipt\.sourceHead/);
   assert.equal([...source.matchAll(/pulls\/\$\{receipt\.prNumber\}\/merge/g)].length, 1);
   assert.doesNotMatch(source, /delete_branch|DELETE|git\s+(?:push|reset|clean|rebase)|--force/);

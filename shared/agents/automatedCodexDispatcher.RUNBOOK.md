@@ -31,6 +31,21 @@ V1 exposes the state machine as structured records so supervisors and dashboards
 4. Verify the receipt with the Verification Harness `CommandReceiptVerifier` and `ProofReferenceVerifier`.
 5. Publish status/event records to the Shared Agent Workspace and wait for result proof.
 
+## Codex meter / capacity outage procedure
+
+An empty Codex meter, explicit usage-limit response, exhausted code-review quota, or equivalent Codex capacity error is a provider-capacity outage, not a programme stop condition.
+
+1. Preserve the exact mission, goal, branch, PR, head/base/tree, proof and operator authority already in flight.
+2. Do not keep retrying Codex after quota exhaustion is proven for that surface.
+3. Route immediately through the existing provider-neutral Stephanos machinery using an already-qualified OpenClaw, Forge/Foundry, Stephanos Native, GitHub Actions independent-review, GitHub App publication, or Battle Bridge route that admits the task.
+4. For review work, keep the same review class and exact-head/base requirements. Use the provider-neutral exact-head review coordinator and immutable-artifact recovery path rather than waiting for Codex.
+5. If no qualified alternative can perform that exact task class, park only that lane with a typed capacity blocker and continue resource-disjoint eligible work.
+6. Never create duplicate controllers, workers, schedulers, branches, PRs or review lanes merely to escape a Codex quota condition.
+7. Never weaken merge, deployment, runtime, credential, spending or other operator gates because Codex is unavailable.
+8. Report the condition as `CODEX_CAPACITY_UNAVAILABLE` or equivalent provider-specific truth. Do not describe GitHub, Stephanos, or the whole programme as blocked while another qualified route exists.
+
+New chats and controllers should also follow `docs/codex-capacity-outage-runbook.md` and the repository-wide `AGENTS.md` **Provider/review capacity continuity** doctrine. The expected behavior is route-around and continue, not narration-and-wait.
+
 ## Safety boundaries
 
 - No fake dispatch or simulated success.

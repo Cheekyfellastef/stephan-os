@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
+import './battle-bridge-ignition-sync-preflight.test.mjs';
+import './battle-bridge-ignition-sync-package-contract.test.mjs';
+import './battle-bridge-github-sync-and-refresh.test.mjs';
+
 const launcherCmd = new URL('../windows/Launch-Stephanos-Local.cmd', import.meta.url);
 const launcherPs1 = new URL('../windows/Launch-Stephanos-Local.ps1', import.meta.url);
 const aiCoreHtml = new URL('../stephanos-ui/index.html', import.meta.url);
@@ -18,10 +22,44 @@ test('desktop ignition enters the complete existing launcher-root cockpit flow',
 test('cockpit mode preserves splash, landing page, and AI Core browser surfaces', async () => {
   const script = await readFile(launcherPs1, 'utf8');
   assert.match(script, /Show-IgnitionSplashScreen/);
-  assert.match(script, /launcher\s*=\s*\[ordered\]@\{ Label = 'launcher'; Url = \$launcherShellUrl \}/);
-  assert.match(script, /runtime\s*=\s*\[ordered\]@\{ Label = 'runtime'; Url = \$launcherRuntimeUrl \}/);
+  assert.match(script, /Get-StephanosBrowserSurfaceDefinition -Id 'launcher' -Label 'launcher' -Url \$launcherShellUrl -ExpectedTitle 'Stephanos OS'/);
+  assert.match(script, /Get-StephanosBrowserSurfaceDefinition -Id 'runtime' -Label 'runtime' -Url \$launcherRuntimeUrl -ExpectedTitle 'Stephanos AI Core'/);
   assert.match(script, /'cockpit' \{ return @\(\$surfaceMap\.launcher, \$surfaceMap\.runtime\) \}/);
-  assert.match(script, /Open-CockpitSurface -Url \$surface\.Url -Label \$surface\.Label/);
+  assert.match(script, /Open-CockpitSurface -Url \$surface\.Url -Label \$surface\.Label -Id \$surface\.Id -ExpectedTitle \$surface\.ExpectedTitle/);
+});
+
+test('repeat ignition presses reuse exact verified Edge app windows instead of duplicating cockpit surfaces', async () => {
+  const script = await readFile(launcherPs1, 'utf8');
+  assert.match(script, /stephanos\.ignition-browser-surface-receipt\.v1/);
+  assert.match(script, /fixed-per-surface-profile/);
+  assert.match(script, /Local\\Stephanos-Ignition-Browser-Surface-\$Id/);
+  assert.match(script, /Get-VerifiedEdgeAppSurface -Surface \$Surface -EdgeExecutable \$edgeExecutable/);
+  assert.match(script, /reused-existing-window/);
+  assert.match(script, /opened-new-window/);
+  assert.match(script, /--app=\$\(\$Surface\.Url\)/);
+  assert.match(script, /--user-data-dir=/);
+  assert.match(script, /GetVisibleTopLevelWindows\(\[int\]\$candidate\.ProcessId\)/);
+  assert.match(script, /GetWindowThreadProcessId/);
+  assert.match(script, /IsWindowVisible/);
+  assert.match(script, /\[string\]\$_\.Title, \[string\]\$Surface\.ExpectedTitle/);
+  assert.match(script, /windowHandle = \[int64\]\$surfaceWindow\.Handle/);
+  assert.doesNotMatch(script, /\$process\.MainWindowHandle/);
+  assert.doesNotMatch(script, /\$process\.MainWindowTitle/);
+  assert.match(script, /arbitraryBrowserExecutableAllowed = \$false/);
+});
+
+test('ignition truth files use one BOM-free UTF-8 persistence boundary', async () => {
+  const script = await readFile(launcherPs1, 'utf8');
+  assert.match(script, /function Write-IgnitionUtf8NoBomText[\s\S]*?UTF8Encoding\(\$false\)[\s\S]*?\[System\.IO\.File\]::WriteAllText\(\$Path, \$Value, \$encoding\)/);
+  assert.match(script, /function Add-IgnitionUtf8NoBomLine[\s\S]*?UTF8Encoding\(\$false\)[\s\S]*?\[System\.IO\.File\]::AppendAllText/);
+  assert.match(script, /function Write-IgnitionJson[\s\S]*?Write-IgnitionUtf8NoBomText/);
+  assert.match(script, /Write-IgnitionJson -Path \$ignitionStatusPath -Value \$supervisorStatus -Depth 12/);
+  assert.match(script, /Write-IgnitionJson -Path \$ignitionStatusPath -Value \$payload -Depth 8/);
+  assert.match(script, /Write-IgnitionJson -Path \$ignitionBrowserSurfaceReceiptPath -Value \$browserSurfaceProjection -Depth 8/);
+  assert.match(script, /Write-IgnitionJson -Path \$ignitionSupportSnapshotPath -Value \$snapshot -Depth 10/);
+  assert.match(script, /Add-IgnitionUtf8NoBomLine -Path \$ignitionTranscriptPath/);
+  assert.doesNotMatch(script, /Set-Content -LiteralPath \$ignition(?:Status|BrowserSurfaceReceipt|SupportSnapshot)Path -Encoding UTF8/);
+  assert.doesNotMatch(script, /Add-Content -LiteralPath \$ignitionTranscriptPath -Encoding UTF8/);
 });
 
 test('the built runtime browser surface is Stephanos AI Core', async () => {

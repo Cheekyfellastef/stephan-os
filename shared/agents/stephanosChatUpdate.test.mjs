@@ -122,8 +122,8 @@ test('chat update fast-forwards, runs the canonical ignition entry, and proves e
   const head = '443e3bcb6f6da050961b881160f7d5a4ca463fee';
   const diagnostics = [health(head), health(head)];
   const spawnSyncFn = scriptedSpawn({
-    before: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
-    after: ' M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    before: ' D apps/stephanos/dist/assets/old-build.js\n M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
+    after: ' D apps/stephanos/dist/assets/old-build.js\n M apps/stephanos/dist/index.html\n M stephanos-server/data/memory/durable-memory.json\n',
   });
   const result = await updateStephanosFromChat({
     repoRoot: 'C:\\repo',
@@ -145,6 +145,13 @@ test('chat update fast-forwards, runs the canonical ignition entry, and proves e
   assert.equal(result.runtimeProofPassed, true);
   assert.equal(result.runtimeProof.attemptCount, 1);
   assert.equal(result.dirtDelta.sourceMutationDetected, false);
+  assert.deepEqual(result.dirtBefore.source, []);
+  assert.deepEqual(result.dirtBefore.runtime, [
+    'apps/stephanos/dist/assets/old-build.js',
+    'apps/stephanos/dist/index.html',
+    'stephanos-server/data/memory/durable-memory.json',
+  ]);
+  assert.equal(result.dirtBefore.entries[0].status, ' D');
   assert.equal(result.operatorPowerShellRequired, false);
   assert.equal(result.codexChildUsed, false);
   assert.equal(result.processControlPerformed, true);

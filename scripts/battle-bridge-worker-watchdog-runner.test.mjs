@@ -27,7 +27,7 @@ function healthyWatchdog(head = EXACT_HEAD) {
   };
 }
 
-test('runner reconciles visibility, relay and critical backlog before worker and control-plane recovery', async () => {
+test('runner starts conversation relay before control-plane recovery and later auxiliary observers', async () => {
   const calls = [];
   const result = await runBattleBridgeWorkerWatchdogRunner({
     visibilityObserver: async () => {
@@ -53,7 +53,7 @@ test('runner reconciles visibility, relay and critical backlog before worker and
     },
   });
 
-  assert.deepEqual(calls, ['visibility', 'participant-relay', 'critical-backlog', 'watchdog', 'control-plane-recovery']);
+  assert.deepEqual(calls, ['watchdog', 'critical-backlog', 'participant-relay', 'control-plane-recovery', 'visibility']);
   assert.equal(result.ok, true);
   assert.equal(result.visibilityOk, true);
   assert.equal(result.participantRelayOk, true);
@@ -70,6 +70,38 @@ test('runner reconciles visibility, relay and critical backlog before worker and
   assert.equal(result.criticalBacklogConveyor.classification, 'WAIT_ACTIVE_MISSION');
   assert.equal(result.controlPlaneBootstrapRecovery.classification, 'CONTROL_PLANE_MAILBOX_HEALTHY');
   assert.equal(result.classification, 'WORKER_WATCHDOG_HEALTHY');
+});
+
+test('participant relay starts even while watchdog and control-plane recovery are still unresolved', async () => {
+  let releaseWatchdog;
+  let relayStarted = false;
+  let recoveryStarted = false;
+  const pendingWatchdog = new Promise((resolve) => {
+    releaseWatchdog = resolve;
+  });
+
+  const runPromise = runBattleBridgeWorkerWatchdogRunner({
+    visibilityObserver: async () => ({ ok: true, classification: 'REMOTE_CODEX_VISIBILITY_RECONCILED' }),
+    participantRelay: async () => {
+      relayStarted = true;
+      return { ok: true, classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE' };
+    },
+    backlogConveyor: async () => ({ ok: true, classification: 'WAIT_ACTIVE_MISSION' }),
+    workerWatchdog: () => pendingWatchdog,
+    controlPlaneRecovery: async () => {
+      recoveryStarted = true;
+      return { ok: true, classification: 'CONTROL_PLANE_MAILBOX_HEALTHY' };
+    },
+  });
+
+  await Promise.resolve();
+  assert.equal(relayStarted, true);
+  assert.equal(recoveryStarted, false);
+
+  releaseWatchdog(healthyWatchdog());
+  const result = await runPromise;
+  assert.equal(recoveryStarted, true);
+  assert.equal(result.participantRelayOk, true);
 });
 
 test('visibility reconciliation failure is surfaced but does not disable later lanes', async () => {

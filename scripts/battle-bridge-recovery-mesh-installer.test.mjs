@@ -15,6 +15,8 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /-MultipleInstances IgnoreNew/);
   assert.match(installer, /-Hidden/);
   assert.match(installer, /recovery-mesh/);
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$currentUser -LogonType S4U -RunLevel Limited/);
+  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
   assert.match(installer, /maximumConcurrentExecutors = 1/);
   assert.match(installer, /wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
   assert.doesNotMatch(installer, /env:SystemRoot/);
@@ -24,6 +26,45 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /whatIf = \[bool\]\$WhatIfPreference/);
   assert.doesNotMatch(installer, /RunLevel Highest|Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout)/i);
 });
+
+test('canonical S4U Recovery Mesh tasks are reused without privileged re-registration', async () => {
+  const installer = await source('install-battle-bridge-recovery-mesh.ps1');
+  assert.match(installer, /function Test-CanonicalTaskDefinition/);
+  assert.match(installer, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(installer, /MSFT_TaskBootTrigger/);
+  assert.match(installer, /MSFT_TaskLogonTrigger/);
+  assert.match(installer, /MSFT_TaskTimeTrigger/);
+  assert.match(installer, /Principal\.LogonType -ne 'S4U'/);
+  assert.match(installer, /Principal\.RunLevel -ne 'Limited'/);
+  assert.match(installer, /Settings\.MultipleInstances -ne 'IgnoreNew'/);
+  assert.match(installer, /Settings\.StartWhenAvailable -ne \$true/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT3M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT1M'/);
+  assert.match(installer, /if \(\$existingRecoveryTaskCanonical\) \{\s*\$registrationApplied = \$true/s);
+  assert.match(installer, /registrationMutated = \$false/);
+  assert.match(installer, /reusedCanonicalTask = \[bool\]\(\$existingRecoveryTaskCanonical -and -not \$registrationMutated\)/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT2M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT5M'/);
+  assert.match(installer, /if \(\$existingGuardianTaskCanonical\) \{\s*\$guardianRegistrationApplied = \$true\s*\$guardianReusedCanonicalTask = \$true/s);
+  assert.match(installer, /guardianRegistrationMutated = \[bool\]\$guardianRegistrationMutated/);
+  assert.match(installer, /guardianReusedCanonicalTask = \[bool\]\$guardianReusedCanonicalTask/);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$taskName/s);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$guardianTaskName/s);
+});
+
+test('Recovery Mesh installer SID helper remains singular and structurally intact', async () => {
+  const installer = await source('install-battle-bridge-recovery-mesh.ps1');
+  const occurrences = (pattern) => (installer.match(pattern) || []).length;
+
+  assert.equal(occurrences(/function Resolve-TaskPrincipalSid/g), 1);
+  assert.equal(occurrences(/function Test-TaskPrincipalMatchesCurrentUser/g), 1);
+  assert.equal(occurrences(/function Test-CanonicalTaskDefinition/g), 1);
+  assert.equal(occurrences(/\$escapedLauncherPath\s*=/g), 1);
+  assert.equal(occurrences(/\[pscustomobject\]@\{/g), 1);
+  assert.ok(installer.includes("if ($PrincipalUserId -match '^S-\\d-\\d+(?:-\\d+)+$') {"));
+  assert.doesNotMatch(installer, /\+\$escapedLauncherPath\s*=/);
+});
+
 
 test('package lifecycle commands pin the canonical PowerShell host', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -67,11 +108,14 @@ test('windowless launcher pins recovery mesh to one fixed source runner', async 
   assert.match(hidden, /RECOVERY_LOCK_MULTIPLE_LINKS_REJECTED/);
   assert.doesNotMatch(hidden, /\[System\.IO\.File\]::Delete\(\$lockPath\)/);
   assert.match(verifier, /Mutex\]::OpenExisting\('Local\\StephanosBattleBridgeRecoveryMeshV1'\)/);
-  assert.match(verifier, /node\.ParentProcessId -ne \$LauncherPid/);
+  assert.match(verifier, /node\.ParentProcessId -eq \$LauncherPid/);
   assert.match(verifier, /C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
   assert.match(verifier, /launcher\.ExecutablePath/);
   assert.match(verifier, /node\.ExecutablePath/);
-  assert.match(verifier, /launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$expectedCommandLine = '\"\{0\}\"  -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"\{1\}\"'/);
+  assert.match(verifier, /\$launcherCommandLineMatches = \$launcher -and \[string\]::Equals\(\[string\]\$launcher\.CommandLine, \$expectedCommandLine/);
+  assert.match(verifier, /\$processLineageMatches = \[int\]\$verifier\.ParentProcessId -eq \$NodePid -and \[int\]\$node\.ParentProcessId -eq \$LauncherPid/);
+  assert.match(verifier, /if \(-not \$processLineageMatches -or -not \$nodeExecutableMatches -or -not \$launcherExecutableMatches -or -not \$launcherCommandLineMatches\)/);
   assert.doesNotMatch(verifier, /CommandLine -notmatch/);
   assert.match(verifier, /RECOVERY_MESH_MUTEX_NOT_OWNED_BY_LAUNCHER/);
   assert.doesNotMatch(hidden, /["']-Command["']|Invoke-Expression|Start-Process/);
@@ -136,8 +180,9 @@ test('canonical task definition beside an unrelated listener cannot establish ba
   assert.match(probe, /BACKEND_LISTENER_EXECUTABLE_FOREIGN/);
   assert.match(probe, /function Test-CanonicalBackendCommandLine/);
   assert.match(probe, /-replace '\\s\+', ' '/);
-  assert.match(probe, /'node stephanos-server\/server\.js'/);
-  assert.match(probe, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(probe, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(probe, /--input-type=module --eval/);
+  assert.match(probe, /Test-CanonicalBackendCommandLine -CommandLine \(\[string\]\$process\.CommandLine\) -ExpectedSourceHead \$ExpectedSourceHead/);
   assert.match(probe, /BACKEND_LISTENER_COMMAND_FOREIGN/);
   assert.match(probe, /receipt\.pid -eq \$listenerAfter\.pid/);
   assert.doesNotMatch(probe, /CommandLine -match|Invoke-Expression/i);
@@ -187,6 +232,12 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
   assert.match(request, /RECOVERY_MESH_TASK_PRINCIPAL_INVALID/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(request, /Resolve-TaskPrincipalSid/);
+  assert.match(request, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId \(\[string\]\$task\.Principal\.UserId\)/);
+  assert.doesNotMatch(request, /Principal\.UserId, \$currentUser/);
+  assert.match(request, /Principal\.LogonType -ne 'S4U'/);
   assert.match(request, /RECOVERY_MESH_TASK_SETTINGS_INVALID/);
   assert.match(request, /MultipleInstances/);
   assert.match(request, /ExecutionTimeLimit/);
@@ -219,7 +270,8 @@ test('exact-head backend authority tolerates only canonical unstaged runtime-mem
   assert.match(starter, /\$runtimeMemoryPath = 'stephanos-server\/data\/memory\/durable-memory\.json'/);
   assert.match(starter, /\$runtimeDistPrefix = 'apps\/stephanos\/dist\/'/);
   assert.match(starter, /\$status -eq ' M' -and \$path -eq \$runtimeMemoryPath/);
-  assert.match(starter, /\$status -eq ' M' -and \$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
+  assert.match(starter, /function Test-RuntimeUiDistStatus[\s\S]*\$Status -eq ' M' -or \$Status -eq ' D'/);
+  assert.match(starter, /Test-RuntimeUiDistStatus -Status \$status[\s\S]*\$path\.StartsWith\(\$runtimeDistPrefix, \[System\.StringComparison\]::Ordinal\)/);
   assert.match(starter, /Backend startup requires source-tracked files to be unmodified at exact head/);
   assert.match(starter, /trackedWorktreeClean = -not \(\$RuntimeMemoryDirty -or \$RuntimeDistDirty\)/);
   assert.match(starter, /sourceWorktreeClean = \$true/);

@@ -5,17 +5,24 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  applyGoalClosureReceipts,
   buildAffirmativeSchedulerProofSources,
+  buildGithubGoalMirrorEstate,
   buildProgrammeStallMonitorRegistration,
+  closeCanonicalGoalFromProgrammeProjection,
   claimSourceMutationLease,
   finalizeTerminalImplementationLane,
+  publishGithubGoalMirrorEstate,
   publishProgrammeControllerHeartbeat,
+  projectGithubGoalMirrorFallback,
   readAuthoritativeProgrammeProjection,
+  selectGoalRecordsForProgrammeProjection,
   readSourceMutationLease,
   releaseSourceMutationLease,
   renewSourceMutationLease,
 } from './programmeAuthorityService.js';
 import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   buildCanonicalImplementationLaneProjection,
   buildTerminalLaneFinalizationPlan,
   createSourceMutationLeaseReleaseRecord,
@@ -25,8 +32,27 @@ import {
   appendExecutionReceipt,
   createExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
-import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
-import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  createSharedWorkspaceProofRecord,
+  createSharedWorkspaceReceiptRecord,
+  ensureSharedWorkspaceLayout,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  CANONICAL_GOAL_REPOSITORY,
+  planCanonicalGoalClosure,
+} from '../../shared/agents/goalClosureConsumerV1.mjs';
+import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
+import {
+  closeGithubGoalIssue,
+  readGithubGoalIssue,
+} from './githubPrEvidenceService.js';
+import {
+  LEGACY_COMPLETED_RETIRED_MISSION_ID,
+  LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
   createMissionWorkerHeartbeatRecord,
   resolveCanonicalMissionWorkerPaths,
@@ -113,7 +139,7 @@ function githubAuthorityOptions(root, repoRoot, github = githubOpen()) {
   };
 }
 
-async function publishWorkerHeartbeat(home) {
+async function publishWorkerHeartbeat(home, overrides = {}) {
   const paths = resolveCanonicalMissionWorkerPaths({ home, env: {} });
   const record = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
@@ -121,6 +147,9 @@ async function publishWorkerHeartbeat(home) {
     branch: 'main',
     headSha: HEAD,
     pid: 1234,
+    launchIdentityId: '1'.repeat(64),
+    workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
+    ...overrides,
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
   await writeFile(paths.heartbeatPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
@@ -382,6 +411,70 @@ test('lease acquisition is durable, non-seizing, exactly renewable and exactly r
   });
 });
 
+
+test('production Programme Authority keeps r6 CHECK_PULL_REQUEST review leased without claiming source building or requiring source receipt', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const reviewBranch = 'openclaw/elastic-goal-2956';
+    const leaseId = 'critical-2956-elastic-goal-r6-lease';
+    const sourceLease = leaseInput({
+      leaseId, laneId: 'goal-2956-pr-2960',
+      issueNumber: 2956, prNumber: 2960,
+      branch: reviewBranch, headSha: HEAD,
+      ownerId: 'review-worker-2956',
+    });
+    const reviewPr = {
+      ...githubOpen(), prNumber: 2960,
+      headBranch: reviewBranch, headSha: HEAD,
+    };
+    const claimed = await claimSourceMutationLease(
+      sourceLease, githubAuthorityOptions(root, repoRoot, reviewPr),
+    );
+    assert.equal(claimed.ok, true);
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    const dependencies = {
+      resolveGithubTokenConfig: async () => ({ configured: true, token: 'test-only', authority: 'test-only' }),
+      fetchGithubPrEvidence: async () => reviewPr,
+      readRepositoryHead: async () => ({
+        ok: true, branch: 'main', headSha: HEAD,
+        reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+      }),
+      listMissionRecords: async () => [{
+        missionId: 'critical-2956-elastic-goal',
+        revision: 6, currentPhase: 'CHECK_PULL_REQUEST',
+        repository: REPOSITORY,
+        git: { branch: reviewBranch },
+        pullRequest: { number: 2960, headSha: HEAD },
+      }],
+    };
+    const result = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true, dependencies,
+    });
+    assert.equal(result.lane.valid, true);
+    assert.equal(result.lane.active, false);
+    assert.equal(result.lane.status, 'REVIEW_PENDING');
+    assert.equal(result.lane.mutationLeaseIdentity.leaseId, leaseId);
+    assert.equal(result.sourceReads.elasticMissionPhase, 'CHECK_PULL_REQUEST');
+    assert.equal(result.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(!result.blockers.includes('source:NO_EXECUTION_RECEIPTS'));
+    assert.ok(!result.blockers.includes('active-lane-execution-receipt-missing'));
+    assert.ok(!result.blockers.includes('critical-backlog-active-lane-status-mismatch'));
+
+    const mismatched = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: NOW, env: {}, testOnly: true,
+      dependencies: {
+        ...dependencies,
+        listMissionRecords: async () => [{ ...await dependencies.listMissionRecords().then(rows => rows[0]), revision: 5 }],
+      },
+    });
+    assert.equal(mismatched.lane.valid, false);
+    assert.equal(mismatched.lane.status, 'HOLD');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.sourceReads.executionReceipt, 'NO_EXECUTION_RECEIPTS');
+    assert.ok(mismatched.blockers.includes('lane:elastic-mission-phase-binding-unproven'));
+    assert.equal(mismatched.lane.active, false);
+  });
+});
 test('production composition reads real Shared Workspace, receipt, heartbeat, scheduler and conveyor contracts', async () => {
   await fixture(async ({ root, home, repoRoot }) => {
     await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
@@ -440,6 +533,31 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(projection.projectionReceipt.components.some(({ componentId }) => componentId === 'critical-backlog-conveyor'), true);
     assert.deepEqual(calls, ['github-auth', 'github-pr-evidence']);
 
+    const silentWorker = await readAuthoritativeProgrammeProjection({
+      root, home, repoRoot, nowUtc: '2026-07-30T10:31:00.000Z', env: {}, testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main', headSha: HEAD }),
+        listMissionRecords: async () => [{ missionId: LANE_ID, issueNumber: 1497,
+          repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION' }],
+      },
+    });
+    assert.equal(silentWorker.productionSourcesConstructed, true);
+    assert.equal(silentWorker.status, 'HOLD');
+    assert.equal(silentWorker.lane.active, false);
+    assert.equal(silentWorker.lane.pickupPending, false);
+    assert.equal(silentWorker.executionReceipt.leaseKey, LEASE_ID);
+    assert.equal(silentWorker.stallDiagnosis.stalled, true);
+    for (const blocker of ['controller-heartbeat-not-fresh', 'worker-heartbeat-not-fresh',
+      'execution-receipt-heartbeat-expired', 'active-lane-progress-stale']) {
+      assert.ok(silentWorker.stallDiagnosis.blockers.includes(blocker), blocker);
+    }
+    assert.equal(silentWorker.stallDiagnosis.sourceMutationAllowed, false);
+    assert.equal(silentWorker.stallDiagnosis.dispatchAllowed, false);
+
     const staleProcesses = await readAuthoritativeProgrammeProjection({
       root,
       home,
@@ -469,6 +587,205 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(staleProcesses.status, 'HOLD');
     assert.ok(staleProcesses.controllerHeartbeat.errors.includes('controller-source-revision-mismatch'));
     assert.ok(staleProcesses.workerHeartbeat.errors.includes('worker-head-mismatch'));
+  });
+});
+
+test('recognized degraded worker verdict preserves programme liveness authority', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home, {
+      lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT',
+    });
+    await publishExecutionReceipt(root, repoRoot);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [{
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION',
+        }],
+      },
+    });
+
+    assert.equal(projection.status, 'ACTIVE');
+    assert.equal(projection.workerHeartbeat.valid, true);
+    assert.equal(projection.workerHeartbeat.fresh, true);
+    assert.equal(projection.workerHeartbeat.lastTickAffirmative, false);
+    assert.deepEqual(projection.workerHeartbeat.errors, []);
+  });
+});
+
+test('production composition admits an active critical mission when the workspace has no goal records', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'IDLE',
+      activeLaneId: null,
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'wait-for-durable-goal-evidence',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+    }, { root, repoRoot });
+    await publishWorkerHeartbeat(home);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        readWorkspaceFeed: async () => ({
+          state: 'ready',
+          records: { goalRecords: [], statusRecords: [], proofRecords: [] },
+        }),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [
+          {
+            missionId: LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+            currentPhase: 'AGENT_IMPLEMENTATION',
+          },
+          {
+            missionId: LEGACY_COMPLETED_RETIRED_MISSION_ID,
+            currentPhase: 'COMPLETE',
+          },
+          {
+            missionId: 'critical-1292-1293-dispatch-conveyor',
+            repository: REPOSITORY,
+            git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
+            currentPhase: 'CREATE_WORKTREE',
+          },
+        ],
+      },
+    });
+
+    assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, [
+      LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+      LEGACY_COMPLETED_RETIRED_MISSION_ID,
+    ]);
+    assert.deepEqual(
+      projection.criticalBacklog.nonBlockingMissionAcceptances,
+      SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+    );
+    const retiredAcceptance = projection.criticalBacklog.nonBlockingMissionAcceptances
+      .find(({ missionId }) => missionId === LEGACY_COMPLETED_RETIRED_MISSION_ID);
+    assert.deepEqual(retiredAcceptance, RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
+    assert.equal(retiredAcceptance.state, 'CLOSED_RETIRED');
+    assert.deepEqual(retiredAcceptance.successorIssueNumbers, [2158]);
+    assert.equal(projection.scheduler.failClosed, false);
+    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+    assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
+  });
+});
+
+test('an exact durable release marker is inactive evidence and cannot strand the next critical mission', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    const claimed = await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    assert.equal(claimed.ok, true);
+    const interruptedRelease = await releaseSourceMutationLease({
+      ...leaseInput(),
+      nowUtc: NOW,
+    }, {
+      root,
+      repoRoot,
+      testOnly: true,
+      dependencies: {
+        unlink: async () => {
+          const error = new Error('simulated process loss after exact release publication');
+          error.code = 'EIO';
+          throw error;
+        },
+      },
+    });
+    assert.equal(interruptedRelease.ok, false);
+    assert.equal(interruptedRelease.reason, 'SOURCE_MUTATION_LEASE_RELEASE_FAILED');
+    const releasedRead = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(releasedRead.reason, 'SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT');
+
+    await publishProgrammeControllerHeartbeat({
+      controllerId: 'durable-flywheel-controller',
+      sourceRevision: HEAD,
+      cycleState: 'IDLE',
+      activeLaneId: null,
+      lastSuccessfulReconciliationUtc: NOW,
+      lastPublishedReceiptId: 'released-lease-observed',
+      timestampUtc: NOW,
+      boundedMutationSteps: 0,
+    }, { root, repoRoot });
+    await publishWorkerHeartbeat(home);
+    let githubFetches = 0;
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        readWorkspaceFeed: async () => ({
+          state: 'ready',
+          records: { goalRecords: [], statusRecords: [], proofRecords: [] },
+        }),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [{
+          missionId: 'critical-1291-worker-watchdog-repair',
+          repository: REPOSITORY,
+          git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+          currentPhase: 'CREATE_WORKTREE',
+        }],
+        readCapacityRoutingInput: async () => ({
+          provenRouteIds: ['CODEX', 'CHATGPT_GITHUB', 'FOUNDRY_FORGE', 'OPENCLAW_LOCAL'],
+          availableExecutorSlots: 4,
+        }),
+        fetchGithubPrEvidence: async () => {
+          githubFetches += 1;
+          throw new Error('a released lease must not retain GitHub lane authority');
+        },
+      },
+    });
+
+    assert.equal(githubFetches, 0);
+    assert.equal(projection.mutationLease, null);
+    assert.equal(projection.lane, null);
+    assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE');
+    assert.equal(projection.scheduler.selectedGoal, '#1292');
+    assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+    assert.equal(projection.status, 'READY', projection.blockers.join(','));
+    assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
   });
 });
 
@@ -525,7 +842,8 @@ test('production composition can discover exact GitHub lane truth before lease a
     assert.equal(projection.lane.valid, true);
     assert.equal(projection.lane.prNumber, 1617);
     assert.equal(projection.lane.headSha, HEAD);
-    assert.ok(projection.blockers.includes('active-lane-without-source-mutation-lease'));
+    assert.equal(projection.lane.active, false);
+    assert.equal(projection.lane.executionStartedOnLease, false);
     assert.equal(projection.sourceReads.laneSelector, 'complete');
     assert.equal(projection.projectionReceipt.sourceConstructionMode, 'production-contracts');
     assert.equal(projection.projectionReceipt.authorityInjectedByCaller, false);
@@ -929,6 +1247,30 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   }]);
   assert.deepEqual(passed.proofRefs, ['proof/failed.json']);
 
+  const stale = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        timestampUtc: '2026-07-30T08:59:59.999Z',
+      }],
+    },
+  }, null, { nowUtc: NOW });
+  assert.deepEqual(stale.proofHeadShas, []);
+  assert.deepEqual(stale.proofReceipts, []);
+  assert.deepEqual(stale.proofRefs, []);
+
+  const boundaryFresh = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        timestampUtc: '2026-07-30T09:00:00.000Z',
+      }],
+    },
+  }, null, { nowUtc: NOW });
+  assert.deepEqual(boundaryFresh.proofHeadShas, [HEAD]);
+
   for (const incompleteOrConflictingIdentity of [
     { repository: undefined },
     { branch: undefined },
@@ -1011,4 +1353,909 @@ test('programme stall registration exposes only a handler for the existing monit
   assert.equal(registration.createsScheduler, false);
   assert.equal(registration.createsWorker, false);
   assert.equal(typeof Object.values(registration.handlers)[0], 'function');
+});
+
+
+function completedClosureGoal(overrides = {}) {
+  return {
+    issue: 4242,
+    title: 'Goal: canonical completion retirement test',
+    state: 'COMPLETE',
+    prerequisites: [],
+    priority: 1,
+    criticalPathWeight: 1,
+    reversibility: 'HIGH',
+    route: 'CHATGPT_GITHUB',
+    evidenceAt: NOW,
+    resultProofRefs: ['proof/result-4242.json'],
+    reusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    sharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+    ...overrides,
+  };
+}
+
+function goalClosureProjection() {
+  const schedulerInput = {
+    now: NOW,
+    goals: [completedClosureGoal()],
+    correlationId: 'goal-closure-service-test',
+  };
+  const scheduler = buildMissionScheduler(schedulerInput);
+  const goalClosurePlan = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput,
+  });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(goalClosurePlan.state, 'READY');
+  return {
+    schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+    sourceConstructionMode: 'production-contracts',
+    chatMemoryAuthoritative: false,
+    scheduler,
+    goalClosurePlan,
+  };
+}
+
+function goalClosureDependencies(overrides = {}) {
+  return {
+    resolveGithubTokenConfig: async () => ({
+      configured: true,
+      token: 'test-only-token',
+      authority: 'test-only',
+    }),
+    readGithubGoalIssue: async ({ issueNumber }) => ({
+      number: issueNumber,
+      state: 'open',
+      state_reason: '',
+      labels: [{ name: 'goal' }],
+      pull_request: null,
+      repository: CANONICAL_GOAL_REPOSITORY,
+    }),
+    closeGithubGoalIssue: async ({ issueNumber }) => ({
+      number: issueNumber,
+      state: 'closed',
+      state_reason: 'completed',
+      labels: [{ name: 'goal' }],
+      repository: CANONICAL_GOAL_REPOSITORY,
+    }),
+    ...overrides,
+  };
+}
+
+function durableGoalClosureReceipt(overrides = {}) {
+  return {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'durable-flywheel-closure-test',
+      participantId: 'durable-flywheel-controller',
+      timestampUtc: NOW,
+      correlationId: 'goal-4242-closure',
+      relatedIssue: '#4242',
+      receivedRecordId: 'programme-projection-test',
+      disposition: 'active',
+      summary: 'CLOSE_CANONICAL_GOAL: canonical goal retired.',
+      proofRefs: ['receipts/durable-flywheel-closure-test.json'],
+    }),
+    schema: 'stephanos.durable-flywheel-cycle-receipt.vnext',
+    controllerId: 'durable-flywheel-controller',
+    goalClosureState: 'CLOSED_COMPLETED',
+    goalClosureStateReason: 'completed',
+    goalClosureRepository: CANONICAL_GOAL_REPOSITORY,
+    goalClosureIssueNumber: 4242,
+    goalClosureResultProofRefs: ['proof/result-4242.json'],
+    goalClosureReusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    goalClosureSharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+    mergeAuthority: false,
+    ...overrides,
+  };
+}
+
+test('canonical CLOSE_READY goal closes once and a forged scheduler binding cannot reach GitHub', async () => {
+  const calls = [];
+  const projection = goalClosureProjection();
+  const result = await closeCanonicalGoalFromProgrammeProjection(projection, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      closeGithubGoalIssue: async ({ issueNumber }) => {
+        calls.push(issueNumber);
+        return {
+          number: issueNumber,
+          state: 'closed',
+          state_reason: 'completed',
+          labels: [{ name: 'goal' }],
+          repository: CANONICAL_GOAL_REPOSITORY,
+        };
+      },
+    }),
+  });
+  assert.deepEqual(calls, [4242]);
+  assert.equal(result.state, 'CLOSED_COMPLETED');
+  assert.equal(result.stateReason, 'completed');
+  assert.deepEqual(result.resultProofRefs, ['proof/result-4242.json']);
+
+  let reads = 0;
+  const forged = {
+    ...projection,
+    goalClosurePlan: {
+      ...projection.goalClosurePlan,
+      request: { ...projection.goalClosurePlan.request, sharedLessonId: 'FORGED_LESSON' },
+    },
+  };
+  const blocked = await closeCanonicalGoalFromProgrammeProjection(forged, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      readGithubGoalIssue: async () => { reads += 1; return {}; },
+    }),
+  });
+  assert.equal(blocked.state, 'BLOCKED');
+  assert.equal(blocked.reason, 'CANONICAL_GOAL_CLOSURE_PLAN_SCHEDULER_MISMATCH');
+  assert.equal(reads, 0);
+});
+
+test('goal closure accepts GitHub issue identity returned as a decimal string', async () => {
+  const projection = goalClosureProjection();
+  const result = await closeCanonicalGoalFromProgrammeProjection(projection, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      readGithubGoalIssue: async ({ issueNumber }) => ({
+        number: String(issueNumber),
+        state: 'open',
+        state_reason: '',
+        labels: [{ name: 'goal' }],
+        pull_request: null,
+        repository: CANONICAL_GOAL_REPOSITORY,
+      }),
+      closeGithubGoalIssue: async ({ issueNumber }) => ({
+        number: String(issueNumber),
+        state: 'closed',
+        state_reason: 'completed',
+        labels: [{ name: 'goal' }],
+        repository: CANONICAL_GOAL_REPOSITORY,
+      }),
+    }),
+  });
+  assert.equal(result.state, 'CLOSED_COMPLETED');
+  assert.equal(result.issueNumber, 4242);
+});
+
+test('goal closure planner refuses COMPLETE work without all human-AI flywheel outputs', () => {
+  for (const patch of [
+    { resultProofRefs: [] },
+    { reusableCapabilityId: '' },
+    { sharedLessonId: '' },
+  ]) {
+    const plan = planCanonicalGoalClosure({
+      repository: CANONICAL_GOAL_REPOSITORY,
+      schedulerInput: { now: NOW, goals: [completedClosureGoal(patch)] },
+    });
+    assert.equal(plan.state, 'BLOCKED');
+    assert.equal(plan.issueStateMutationAllowed, false);
+  }
+});
+
+test('durable completed receipt closes only its bound goal and newer GitHub reopen truth wins', () => {
+  const goal = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: 'goal-4242',
+    participantId: 'programme-authority',
+    timestampUtc: '2026-07-30T09:59:00.000Z',
+    issueNumber: 4242,
+    title: 'Goal: preserve history',
+    state: 'COMPLETE',
+    status: 'COMPLETE',
+    resultProofRefs: ['proof/result-4242.json'],
+    reusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    sharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+  };
+  const unrelated = { ...goal, goalId: 'goal-4243', issueNumber: 4243, title: 'Goal: unrelated' };
+
+  const closed = applyGoalClosureReceipts([goal, unrelated], [durableGoalClosureReceipt()]);
+  assert.equal(closed[0].state, 'CLOSED');
+  assert.equal(closed[0].title, goal.title);
+  assert.equal(closed[0].goalClosureState, 'CLOSED_COMPLETED');
+  assert.equal(closed[1].state, 'COMPLETE');
+
+  const reopenedAt = '2026-07-30T10:01:00.000Z';
+  const reopened = applyGoalClosureReceipts(
+    [goal],
+    [durableGoalClosureReceipt()],
+    { ok: true, issues: [{ issueNumber: 4242, state: 'open', retrievedAt: reopenedAt }] },
+  );
+  assert.equal(reopened[0].state, 'READY');
+  assert.equal(reopened[0].goalClosureState, 'REOPENED_AFTER_COMPLETION');
+
+  for (const forged of [
+    durableGoalClosureReceipt({ goalClosureRepository: 'other/repo' }),
+    durableGoalClosureReceipt({ goalClosureStateReason: 'not_planned' }),
+    durableGoalClosureReceipt({ goalClosureResultProofRefs: [] }),
+    durableGoalClosureReceipt({ goalClosureReusableCapabilityId: null }),
+    durableGoalClosureReceipt({ controllerId: 'other-controller' }),
+    durableGoalClosureReceipt({ mergeAuthority: true }),
+  ]) {
+    const [unchanged] = applyGoalClosureReceipts([goal], [forged]);
+    assert.equal(unchanged.state, 'COMPLETE');
+  }
+});
+
+test('GitHub goal close adapter emits only the canonical completed-state PATCH', async () => {
+  const calls = [];
+  const auth = { configured: true, token: 'test-only-token', authority: 'test-only' };
+  const closed = await closeGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            number: 4242,
+            state: 'closed',
+            state_reason: 'completed',
+            title: 'Goal: test',
+            labels: [{ name: 'goal' }],
+          };
+        },
+      };
+    },
+  });
+  assert.equal(closed.state_reason, 'completed');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    state: 'closed',
+    state_reason: 'completed',
+  });
+
+  let networkCalls = 0;
+  const rejected = await closeGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'other-repo',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async () => { networkCalls += 1; throw new Error('must not run'); },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED');
+  assert.equal(networkCalls, 0);
+
+  const read = await readGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { number: 4242, state: 'open', labels: [{ name: 'goal' }], pull_request: null };
+      },
+    }),
+  });
+  assert.equal(read.number, 4242);
+  assert.deepEqual(read.labels, [{ name: 'goal' }]);
+});
+
+
+test('canonical mirror refresh carries, replaces and removes only current admitted acceptance tests', () => {
+  const commands = ['node --test scripts/sovereign-goal-builder-worker-evidence.test.mjs'];
+  const live = requiredTests => ({ ok: true, retrievedAt: NOW, issues: [{ issueNumber: 2314, repository: REPOSITORY,
+    title: 'Bounded acceptance task', retrievedAt: NOW, admission: {
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs'],
+      ...(requiredTests === undefined ? {} : { requiredTests }),
+    } }], discoveredIssues: [{ issueNumber: 2314 }] });
+  const first = buildGithubGoalMirrorEstate([], live(commands), NOW);
+  assert.deepEqual(first.records[0].requiredTests, commands);
+  assert.equal(first.records[0].mirrorBuildPickupAllowed, true);
+  assert.deepEqual(first.records[0].resourceIds, ['repo:cheekyfellastef/stephan-os:path:shared/agents/source.mjs']);
+  const second = buildGithubGoalMirrorEstate(first.records, live(['node --test scripts/other.test.mjs']), NOW);
+  assert.deepEqual(second.records[0].requiredTests, ['node --test scripts/other.test.mjs']);
+  const removed = buildGithubGoalMirrorEstate(second.records, live(undefined), NOW);
+  assert.equal(removed.records[0].requiredTests, undefined);
+  assert.deepEqual(first.records[0].requiredTests, commands, 'prior observations remain immutable');
+});
+
+test('GitHub goal estate is mirrored durably with a bounded outage lease', async () => {
+  const goalEstate = {
+    ok: true,
+    reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      htmlUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/2002',
+      admission: {
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  };
+  const mirror = buildGithubGoalMirrorEstate([], goalEstate, NOW);
+  assert.equal(mirror.ok, true);
+  assert.deepEqual(mirror.mirroredIssueNumbers, [2002]);
+  assert.equal(mirror.records.length, 1);
+  const record = mirror.records[0];
+  assert.equal(record.goalId, 'goal-2002');
+  assert.equal(record.source, 'github-goal-estate-mirror');
+  assert.equal(record.mirrorBuildPickupAllowed, true);
+  assert.equal(record.state, 'READY');
+  assert.equal(record.route, 'OPENCLAW_LOCAL');
+  assert.equal(record.mergeAuthority, false);
+  assert.equal(
+    Date.parse(record.mirrorLeaseExpiresAtUtc) - Date.parse(record.mirrorObservedAtUtc),
+    24 * 60 * 60 * 1000,
+  );
+
+  const writes = [];
+  const publication = await publishGithubGoalMirrorEstate(mirror, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({
+        ok: true,
+        release: async () => true,
+      }),
+      readFile: async () => {
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async (root, segments, candidate) => {
+        writes.push({ root, segments, candidate });
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(publication.ok, true);
+  assert.deepEqual(publication.publishedIssueNumbers, [2002]);
+  const goalWrite = writes.find(({ segments }) => segments.join('/') === 'goals/goal-2002.json');
+  assert.deepEqual(goalWrite.segments, ['goals', 'goal-2002.json']);
+  assert.equal(publication.reconciliationStatus.status, 'READY');
+  assert.equal(publication.reconciliationStatus.fallbackAllowed, true);
+});
+
+test('goal mirror provides bounded failover when GitHub goal estate is unavailable', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const reconciliationStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  const twoHoursLater = '2026-07-30T12:00:00.000Z';
+  const fallback = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    twoHoursLater,
+    [reconciliationStatus],
+  );
+  assert.equal(fallback.active, true);
+  assert.equal(fallback.valid, true);
+  assert.deepEqual(fallback.issueNumbers, [2002]);
+  assert.equal(fallback.singleCanonicalScheduler, true);
+  assert.equal(fallback.duplicateMissionPreventionByCanonicalIssueIdentity, true);
+
+  const expired = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-31T11:00:01.000Z',
+    [reconciliationStatus],
+  );
+  assert.equal(expired.active, true);
+  assert.equal(expired.valid, false);
+  assert.deepEqual(expired.missingIssueNumbers, [2002]);
+});
+
+test('goal mirror parks unadmitted goals and tombstones goals missing from the live GitHub estate', () => {
+  const initial = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+
+  const parked = buildGithubGoalMirrorEstate(initial.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T10:30:00.000Z',
+    issues: [],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: '2026-07-30T10:30:00.000Z' }],
+  }, '2026-07-30T10:30:00.000Z');
+  assert.equal(parked.records[0].state, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(parked.records[0].githubAdmissionState, 'ADMISSION_UNPROVEN');
+  assert.equal(parked.records[0].mirrorBuildPickupAllowed, false);
+
+  const tombstoned = buildGithubGoalMirrorEstate(parked.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T11:00:00.000Z',
+    issues: [],
+    discoveredIssues: [],
+  }, '2026-07-30T11:00:00.000Z');
+  assert.equal(tombstoned.records[0].state, 'CLOSED');
+  assert.equal(tombstoned.records[0].route, 'CLOSED');
+  assert.equal(tombstoned.records[0].githubAdmissionState, 'NOT_OPEN_OR_GOAL_LABEL_REMOVED');
+  assert.equal(tombstoned.records[0].mirrorBuildPickupAllowed, false);
+});
+
+
+test('fresh valid admission resurrects only mirror-generated parked goal state', () => {
+  const initial = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: '2026-07-30T09:00:00.000Z',
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: '2026-07-30T09:00:00.000Z',
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:00:00.000Z' }],
+  }, '2026-07-30T09:00:00.000Z');
+
+  const parked = buildGithubGoalMirrorEstate(initial.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T09:30:00.000Z',
+    issues: [],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:30:00.000Z' }],
+  }, '2026-07-30T09:30:00.000Z');
+  assert.equal(parked.records[0].state, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(parked.records[0].githubAdmissionState, 'ADMISSION_UNPROVEN');
+  assert.equal(parked.records[0].mirrorBuildPickupAllowed, false);
+
+  const readmitted = buildGithubGoalMirrorEstate(parked.records, {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: NOW,
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: NOW }],
+  }, NOW);
+
+  assert.equal(readmitted.records[0].state, 'READY');
+  assert.equal(readmitted.records[0].status, 'READY');
+  assert.equal(readmitted.records[0].route, 'OPENCLAW_LOCAL');
+  assert.equal(readmitted.records[0].githubAdmissionState, 'ADMISSION_PROVEN');
+  assert.equal(readmitted.records[0].mirrorBuildPickupAllowed, true);
+  assert.equal(readmitted.records[0].evidenceAt, NOW);
+});
+
+test('goal mirror refresh preserves active and complete lifecycle truth', () => {
+  for (const [state, route] of [
+    ['ACTIVE', 'CHATGPT_GITHUB'],
+    ['COMPLETE', 'WAITING_FOR_EXTERNAL_CONDITION'],
+  ]) {
+    const existing = {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+      goalId: 'goal-2002',
+      participantId: 'programme-authority',
+      timestampUtc: '2026-07-30T09:00:00.000Z',
+      issueNumber: 2002,
+      relatedIssue: '#2002',
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      status: state,
+      state,
+      route,
+      prerequisites: [],
+      resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'],
+      mirrorSchema: 'stephanos.github-goal-mirror.v1',
+      mirrorRepository: REPOSITORY,
+      mirrorIssueNumber: 2002,
+      mirrorObservedAtUtc: '2026-07-30T09:00:00.000Z',
+      mirrorLeaseExpiresAtUtc: '2026-07-31T09:00:00.000Z',
+      mirrorBuildPickupAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryShellAllowed: false,
+    };
+    const refreshed = buildGithubGoalMirrorEstate([existing], {
+      ok: true,
+      retrievedAt: NOW,
+      issues: [{
+        issueNumber: 2002,
+        repository: REPOSITORY,
+        title: 'Goal Building Agent',
+        retrievedAt: NOW,
+        admission: { resourceIds: existing.resourceIds },
+        operatorLaneContainment: { active: false },
+      }],
+      discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+    }, NOW);
+    assert.equal(refreshed.records[0].state, state);
+    assert.equal(refreshed.records[0].route, route);
+    assert.equal(refreshed.records[0].mirrorBuildPickupAllowed, false);
+  }
+});
+
+test('goal mirror publication serializes observations and rejects an older overlapping refresh', async () => {
+  const older = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const newerStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: '2026-07-30T10:30:00.000Z',
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: '2026-07-30T10:30:00.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:30:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  let writes = 0;
+  const result = await publishGithubGoalMirrorEstate(older, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({ ok: true, release: async () => true }),
+      readFile: async (pathValue) => {
+        if (String(pathValue).includes('github-goal-mirror-reconciliation.json')) {
+          return JSON.stringify(newerStatus);
+        }
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async () => {
+        writes += 1;
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED');
+  assert.deepEqual(result.supersededIssueNumbers, [2002]);
+  assert.equal(writes, 0);
+});
+
+test('failed goal revocation leaves a durable fail-closed reconciliation fence', async () => {
+  const priorReady = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: '2026-07-30T09:00:00.000Z',
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: '2026-07-30T09:00:00.000Z',
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: '2026-07-30T09:00:00.000Z' }],
+  }, '2026-07-30T09:00:00.000Z').records[0];
+
+  const revoked = buildGithubGoalMirrorEstate([priorReady], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [],
+    discoveredIssues: [],
+  }, NOW);
+  const statusWrites = [];
+  const result = await publishGithubGoalMirrorEstate(revoked, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({ ok: true, release: async () => true }),
+      readFile: async (pathValue) => {
+        if (String(pathValue).includes('goal-2002.json')) return JSON.stringify(priorReady);
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async (root, segments, candidate) => {
+        if (segments.join('/') === 'goals/goal-2002.json') {
+          return { ok: false, reason: 'SIMULATED_GOAL_WRITE_FAILURE' };
+        }
+        statusWrites.push(candidate);
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackFenced, true);
+  assert.equal(result.reconciliationStatus.status, 'BLOCKED');
+  assert.equal(result.reconciliationStatus.fallbackAllowed, false);
+  assert.ok(statusWrites.some((record) => record.status === 'RECONCILING'));
+  assert.ok(statusWrites.some((record) => record.status === 'BLOCKED'));
+
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const fallback = projectGithubGoalMirrorFallback(
+    [priorReady],
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [result.reconciliationStatus],
+  );
+  assert.equal(fallback.valid, false);
+  assert.equal(fallback.classification, 'GOAL_MIRROR_FAILOVER_RECONCILIATION_UNPROVEN');
+});
+
+
+test('goal mirror outage lease is capped at 24 hours even when caller requests more', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW, { maxOutageMs: 72 * 60 * 60 * 1000 });
+
+  const record = mirror.records[0];
+  assert.equal(
+    Date.parse(record.mirrorLeaseExpiresAtUtc) - Date.parse(record.mirrorObservedAtUtc),
+    24 * 60 * 60 * 1000,
+  );
+});
+
+test('goal mirror failover rejects persisted goal or reconciliation leases longer than 24 hours', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const readyStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+
+  const overlongGoal = {
+    ...mirror.records[0],
+    mirrorLeaseExpiresAtUtc: '2026-08-01T10:00:00.000Z',
+  };
+  const goalRejected = projectGithubGoalMirrorFallback(
+    [overlongGoal],
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [readyStatus],
+  );
+  assert.equal(goalRejected.valid, false);
+  assert.deepEqual(goalRejected.missingIssueNumbers, [2002]);
+
+  const overlongStatus = {
+    ...readyStatus,
+    mirrorLeaseExpiresAtUtc: '2026-08-01T10:00:00.000Z',
+  };
+  const statusRejected = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [overlongStatus],
+  );
+  assert.equal(statusRejected.valid, false);
+  assert.equal(statusRejected.classification, 'GOAL_MIRROR_FAILOVER_RECONCILIATION_UNPROVEN');
+});
+
+test('superseded reconciliation projects from the durable winning mirror rather than stale caller memory', () => {
+  const staleCallerRecord = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: 'goal-2002',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    issueNumber: 2002,
+    relatedIssue: '#2002',
+    repository: REPOSITORY,
+    title: 'Goal Building Agent',
+    status: 'READY',
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1',
+    mirrorRepository: REPOSITORY,
+    mirrorIssueNumber: 2002,
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirrorBuildPickupAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  const winningDurableRecord = {
+    ...staleCallerRecord,
+    timestampUtc: '2026-07-30T10:30:00.000Z',
+    status: 'CLOSED',
+    state: 'CLOSED',
+    route: 'CLOSED',
+    mirrorObservedAtUtc: '2026-07-30T10:30:00.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:30:00.000Z',
+    mirrorBuildPickupAllowed: false,
+    githubAdmissionState: 'NOT_OPEN_OR_GOAL_LABEL_REMOVED',
+  };
+
+  const selected = selectGoalRecordsForProgrammeProjection(
+    { records: [staleCallerRecord] },
+    { ok: true, classification: 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED' },
+    { records: { goalRecords: [winningDurableRecord] } },
+  );
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].state, 'CLOSED');
+  assert.equal(selected[0].mirrorBuildPickupAllowed, false);
+  assert.equal(selected[0].mirrorObservedAtUtc, '2026-07-30T10:30:00.000Z');
+});
+
+test('canonical guarded release can reconcile an exact expired lease without seizing a new writer', async () => {
+  await fixture(async ({ root, repoRoot }) => {
+    const staleRecord = leaseInput({
+      expiresAtUtc: '2026-07-30T09:45:00.000Z',
+    });
+    const claim = await claimSourceMutationLease(
+      staleRecord, githubAuthorityOptions(root, repoRoot),
+    );
+    assert.equal(claim.ok, true);
+    const before = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(before.ok, true);
+    assert.equal(before.present, true);
+    assert.equal(before.validation.valid, true);
+    assert.equal(before.validation.stale, true);
+    const release = await releaseSourceMutationLease({
+      ...staleRecord,
+      nowUtc: NOW,
+    }, { root, repoRoot });
+    assert.equal(release.ok, true);
+    assert.equal(release.released, true);
+    assert.equal(release.releaseOnlyExactLease, true);
+    const after = await readSourceMutationLease({ root, repoRoot, nowUtc: NOW });
+    assert.equal(after.ok, true);
+    assert.equal(after.present, false);
+    assert.equal(after.reason, 'SOURCE_MUTATION_LEASE_NOT_CLAIMED');
+  });
+});
+
+
+test('live authority brackets heartbeat reads after asynchronous workspace work without accepting future evidence', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  await fixture(async ({ root, home, repoRoot }) => {
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home);
+    let advanced = false;
+    const dependencies = {
+      readRepositoryHead: async () => ({ ok: true, reason: 'CANONICAL_REPOSITORY_HEAD_READ', branch: 'main', headSha: HEAD }),
+      listMissionRecords: async () => [],
+      readWorkspaceFeed: async () => {
+        if (!advanced) {
+          advanced = true;
+          t.mock.timers.tick(90000);
+          await publishWorkerHeartbeat(home, { timestampUtc: new Date().toISOString() });
+        }
+        return { state: 'ready', records: { goalRecords: [], statusRecords: [], proofRecords: [], receiptRecords: [] } };
+      },
+      resolveGithubTokenConfig: async () => ({ configured: false }),
+    };
+    const options = { root, home, repoRoot, env: {}, testOnly: true, dependencies };
+    const live = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(live.workerHeartbeat.valid, true, JSON.stringify(live.workerHeartbeat.errors));
+    assert.equal(live.workerHeartbeat.fresh, true);
+    assert.ok(Date.parse(live.observedAtUtc) >= Date.parse(live.workerHeartbeat.timestampUtc));
+    const expired = await readAuthoritativeProgrammeProjection({ ...options, dependencies: {
+      ...dependencies, buildCapabilityRegistry: () => {
+        t.mock.timers.tick(125000); return {};
+      },
+    } });
+    assert.equal(expired.workerHeartbeat.fresh, false, 'an initially valid heartbeat must age out during later reads');
+    assert.equal(expired.status, 'HOLD');
+    await publishWorkerHeartbeat(home, { timestampUtc: new Date(Date.now() + 90000).toISOString() });
+    const future = await readAuthoritativeProgrammeProjection(options);
+    assert.equal(future.workerHeartbeat.valid, false, 'genuine future heartbeat must remain invalid');
+  });
 });

@@ -1,0 +1,309 @@
+{
+  "schemaVersion": "stephanos.vr-teaching-source-packet.v1",
+  "sourceId": "battle-bridge-installed-vr-corpus",
+  "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+  "generatedFrom": "operator-owned Battle Bridge installation metadata",
+  "records": [
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.flat-vr-sibling-differential",
+      "candidateKey": "battle-bridge:flat-vr-sibling-differential",
+      "reusableMethod": "Before designing a conversion for an engine family, diff an installed flat title against its native/separate VR sibling to isolate VR-specific executables, runtime libraries, data, configuration and extension seams.",
+      "applicability": "Engine families or titles where both flat and VR variants are available; strongest local pairs are Skyrim, Fallout 4 and Borderlands 2.",
+      "nonApplicability": "Does not prove the same binary offsets, code or assets can be reused across games or builds.",
+      "constraints": [
+        "Compare exact builds and architectures.",
+        "Attribute each observed difference to the correct title/layer.",
+        "Do not copy proprietary binaries or assets."
+      ],
+      "failureModes": [
+        "Treating unrelated version drift as a VR change.",
+        "Assuming a sibling implementation can be transplanted wholesale."
+      ],
+      "fallback": "Use public engine/runtime evidence and title-specific instrumentation when no sibling exists."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.separate-vr-edition-detection",
+      "candidateKey": "battle-bridge:separate-vr-edition-detection",
+      "reusableMethod": "Model a separate VR edition as a potentially distinct executable/runtime product rather than assuming the flat executable merely receives a camera hook.",
+      "applicability": "Commercial VR editions such as Borderlands 2 VR, Skyrim VR, Fallout 4 VR and Hellblade VR.",
+      "nonApplicability": "Not appropriate for titles whose VR mode lives inside the same executable/install.",
+      "constraints": [
+        "Record executable architecture and runtime libraries.",
+        "Preserve flat and VR identities separately."
+      ],
+      "failureModes": [
+        "Underestimating renderer/input/platform changes hidden behind a familiar title name."
+      ],
+      "fallback": "Classify as in-place native VR or injected conversion when evidence supports those routes."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.in-place-native-vr-mode",
+      "candidateKey": "battle-bridge:in-place-native-vr-mode",
+      "reusableMethod": "Recognise and preserve the single-install native-VR pattern where the same title adds a VR runtime path without a separately branded VR executable.",
+      "applicability": "Installed examples include No Man's Sky and Thumper.",
+      "nonApplicability": "Does not imply the VR path shares every renderer, UI or input behaviour with flat mode.",
+      "constraints": [
+        "Separate common game content from VR runtime/config evidence.",
+        "Test mode selection and rollback explicitly."
+      ],
+      "failureModes": [
+        "Mistaking an optional runtime DLL for proof that VR is currently functional."
+      ],
+      "fallback": "Require a launch/runtime acceptance test before promoting capability."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.native-base-plus-embodiment-layers",
+      "candidateKey": "battle-bridge:native-base-plus-embodiment-layers",
+      "reusableMethod": "Separate native VR plumbing from higher interaction parity: use bounded extension/plugin layers for body IK, hands, grabbing, collision, holsters and physics rather than entangling them with the base runtime.",
+      "applicability": "Strongly evidenced by the installed Skyrim VR SKSEVR + VRIK/HIGGS/PLANCK stack and supported by Fallout 4 VR's F4SEVR seam.",
+      "nonApplicability": "Plugin APIs, offsets and licences are title-specific and cannot be assumed portable.",
+      "constraints": [
+        "Attribute each capability to base game, extender or exact plugin.",
+        "Keep component versions and licences explicit."
+      ],
+      "failureModes": [
+        "Flattening multiple mods into one untraceable capability claim.",
+        "Allowing an interaction layer to destabilise locomotion/runtime plumbing."
+      ],
+      "fallback": "Retain the native VR baseline with interaction layers disabled independently."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.graphics-proxy-openxr-config-seam",
+      "candidateKey": "battle-bridge:graphics-proxy-openxr-config-seam",
+      "reusableMethod": "For flat-game conversion research, inspect the game-root graphics proxy/interception seam, VR loader and title configuration as separate components before modifying engine logic.",
+      "applicability": "The installed Starfield route exposes root dxgi.dll, openxr_loader.dll and dedicated VR config/UI files.",
+      "nonApplicability": "File co-location alone does not identify exact implementation provenance or prove runtime success.",
+      "constraints": [
+        "Keep the flat baseline reversible.",
+        "Bind findings to exact game/tool builds.",
+        "Treat proxy/loaders as privileged compatibility surfaces."
+      ],
+      "failureModes": [
+        "Replacing graphics DLLs without rollback.",
+        "Conflating runtime loading with correct stereo/camera behaviour."
+      ],
+      "fallback": "Use an external or engine-specific adapter route if root interception is unavailable or unsafe."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.multi-runtime-device-abstraction",
+      "candidateKey": "battle-bridge:multi-runtime-device-abstraction",
+      "reusableMethod": "Put headset runtime, display, tracking and controller-device choices behind explicit adapters and data-driven bindings where the engine permits it.",
+      "applicability": "Installed Cyberpunk vorpX, VRChat, GORN and Hellblade VR expose multiple runtime/device integration surfaces.",
+      "nonApplicability": "Does not imply every title can switch runtimes without title-specific compatibility work.",
+      "constraints": [
+        "Keep runtime selection explicit.",
+        "Version bindings with the title/runtime.",
+        "Do not treat vendor-specific plugins as standards."
+      ],
+      "failureModes": [
+        "Hard-wiring one headset path into core game logic.",
+        "Mixing tracking and rendering backend state invisibly."
+      ],
+      "fallback": "Provide one proven runtime plus a clearly isolated alternate adapter."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.common-framework-title-adapter",
+      "candidateKey": "battle-bridge:common-framework-title-adapter",
+      "reusableMethod": "Structure difficult flat-to-VR conversions as a common VR/interception framework plus a narrow title adapter and title-specific correction configuration.",
+      "applicability": "The installed RDR2 R.E.A.L. VR topology exposes RealVR64 framework, RDR2 ASI adapter, graphics/input/API interception and title configuration as distinct pieces.",
+      "nonApplicability": "The proprietary R.E.A.L. VR implementation is analysis-only; this teaches architecture, not code reuse.",
+      "constraints": [
+        "Preserve framework/title boundaries.",
+        "Keep proprietary implementation out of the corpus.",
+        "Pin game build compatibility."
+      ],
+      "failureModes": [
+        "Building one giant title-specific patch with no reusable framework seam.",
+        "Treating creator framework metadata as independent proof."
+      ],
+      "fallback": "Use a standards-based independent framework with a separately authored title adapter."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.temporal-stereo-repair-layer",
+      "candidateKey": "battle-bridge:temporal-stereo-repair-layer",
+      "reusableMethod": "Model temporal reconstruction/stereo correction as its own conversion layer, separate from head pose and runtime transport.",
+      "applicability": "Starfield config exposes DLSS/AER and Nvidia DLSS/TAA repair controls; RDR2 config exposes stereo TAA repair, render mode and yaw prediction controls.",
+      "nonApplicability": "Specific algorithms/settings are title/build-specific and should not be copied blindly.",
+      "constraints": [
+        "Measure per-eye coherence and frame timing.",
+        "Keep repair toggles reversible and independently testable."
+      ],
+      "failureModes": [
+        "Calling a route 'VR-ready' when pose works but temporal history diverges between eyes.",
+        "Masking artefacts with unrelated comfort changes."
+      ],
+      "fallback": "Disable the unstable temporal feature or use a lower-complexity stereo path for diagnosis."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.spatial-ui-camera-decoupling",
+      "candidateKey": "battle-bridge:spatial-ui-camera-decoupling",
+      "reusableMethod": "Treat world scale, HUD geometry/distance, dominant eye, camera recentering, FOV and head-follow behaviour as separate calibration dimensions.",
+      "applicability": "Installed Starfield and RDR2 conversion configs expose these dimensions independently.",
+      "nonApplicability": "Values from one title or headset are not universal defaults.",
+      "constraints": [
+        "Keep seated and standing calibration distinct when needed.",
+        "Record operator/headset acceptance separately from config presence."
+      ],
+      "failureModes": [
+        "Using one global scale/FOV knob to compensate for unrelated UI or camera faults."
+      ],
+      "fallback": "Return to neutral scale and calibrate one spatial dimension at a time."
+    },
+    {
+      "sourceId": "battle-bridge-installed-vr-corpus",
+      "observedIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "evidencePlanes": [
+        "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+        "STEPHANOS_INFERENCE_OR_PROPOSAL"
+      ],
+      "confidence": "high",
+      "licenceBoundary": "Mixed proprietary/open corpus. Reuse only independently authored methods and specifically licensed open components; never copy game/mod binaries, assets, proprietary profiles or restricted implementation.",
+      "requiredProofLevel": "APPROVED_LOCAL_PACKAGE_EVIDENCE",
+      "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+      "parityProjectionState": "CANDIDATE",
+      "proofRefs": [
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
+      ],
+      "teachingKey": "vr.method.data-driven-input-bindings",
+      "candidateKey": "battle-bridge:data-driven-input-bindings",
+      "reusableMethod": "Externalise VR actions and controller-family bindings as versioned data where practical so device support can evolve without rewriting title logic.",
+      "applicability": "VRChat, GORN and the installed Cyberpunk vorpX package expose action/binding files for multiple controllers/runtimes.",
+      "nonApplicability": "Game actions still require title-specific semantic adapters.",
+      "constraints": [
+        "Keep action semantics stable across device mappings.",
+        "Test handedness and fallback controls explicitly."
+      ],
+      "failureModes": [
+        "Embedding controller-specific button assumptions throughout gameplay code.",
+        "Changing action semantics when adding a new device."
+      ],
+      "fallback": "Use a canonical action layer with one proven mapping and add devices incrementally."
+    }
+  ]
+}

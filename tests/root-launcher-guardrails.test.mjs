@@ -28,3 +28,13 @@ test('root workspace sessions use canonical shell, lane, and side breathing room
   assert.match(launcherHtml, /grid-template-columns:minmax\(18px,clamp\(20px,4vw,88px\)\) minmax\(0,min\(100%,1840px\)\) minmax\(18px,clamp\(20px,4vw,88px\)\)/);
   assert.match(launcherHtml, /#workspace-content\.stephanos-root-workspace-canvas > \*/);
 });
+
+test('launcher health monitor is single-flight and does not poll while backgrounded', () => {
+  assert.match(launcherMain, /const foregroundIntervalMs = 30_000/);
+  assert.match(launcherMain, /if \(stopped \|\| inFlight\)/);
+  assert.match(launcherMain, /document\.visibilityState === "hidden" \|\| !document\.hasFocus\(\)/);
+  assert.match(launcherMain, /inFlight = true[\s\S]*finally \{[\s\S]*inFlight = false/);
+  assert.match(launcherMain, /window\.setInterval\(\(\) => \{[\s\S]*void monitor\(\)[\s\S]*foregroundIntervalMs/);
+  assert.match(launcherMain, /document\.addEventListener\("visibilitychange", handleVisibilityChange\)/);
+  assert.doesNotMatch(launcherMain, /window\.setInterval\(monitor, 2000\)/);
+});

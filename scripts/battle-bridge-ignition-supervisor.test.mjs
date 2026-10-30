@@ -9,15 +9,57 @@ import {
   BATTLE_BRIDGE_IGNITION_AUTHORITY,
   BATTLE_BRIDGE_IGNITION_PHASES,
   BATTLE_BRIDGE_IGNITION_PHASE_STATES,
+  collectCanonicalIgnitionSourceTruth,
   createBattleBridgeSupervisorStatus,
+  evaluateCanonicalIgnitionSourceTruth,
+  getCurrentGitHead,
   projectBattleBridgeSupervisorStatus,
+  resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
+  launchOptionalOpenClawCompanionSurfaces,
+  runCanonicalSupervisorHousekeep,
+  runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
-  runBattleBridgeIgnitionSupervisor,
+  evaluateBattleBridgeMutationHeadBinding,
+  projectUiRepairObservation,
+  runBattleBridgeIgnitionSupervisor as runActualSupervisor,
   evaluateServedRuntimeExactHeadProof,
 } from './battle-bridge-ignition-supervisor.mjs';
 import { buildOpenClawGatewayStartupTarget, npmGlobalBinCandidatesForOpenClaw, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
+import {
+  BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+  BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS,
+  BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE,
+  battleBridgeCanonicalRepositoryArgs,
+  battleBridgeGitFixedConfigArgs,
+  resolveBattleBridgeGitExecutable,
+} from '../shared/agents/battleBridgeExecutionBoundaryV1.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
+
+const testWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'ignition-supervisor-proof-'));
+const runBattleBridgeIgnitionSupervisor = options => runActualSupervisor({ ...options,
+  sharedWorkspace: options.sharedWorkspace ?? fs.mkdtempSync(path.join(testWorkspace, 'case-')) });
+test.after(() => {
+  assert.equal(path.dirname(path.resolve(testWorkspace)), path.resolve(os.tmpdir()));
+  assert.ok(path.basename(testWorkspace).startsWith('ignition-supervisor-proof-'));
+  fs.rmSync(testWorkspace, { recursive: true });
+});
+
+test('bounded UI repair diagnostics retain typed failure without copying raw process output', () => {
+  const result = projectUiRepairObservation({ action: 'start-ui-4173-failed', started: false,
+    ready: 'false', pid: -1, expectedHead: 'a'.repeat(40), observedHead: 'b'.repeat(40),
+    spawnError: { code: 'ENOENT', message: 'private process details' },
+    stdout: 'private output', blockers: Array.from({ length: 20 }, () => ({ id: 'ui-repair-current-head-unproven', detail: 'private detail' })),
+  }, 2);
+  assert.equal(result.spawnErrorCode, 'ENOENT');
+  assert.equal(result.readyClaimed, false);
+  assert.equal(result.pid, null);
+  assert.equal(result.blockers.length, 12);
+  assert.equal(JSON.stringify(result).includes('private'), false);
+  assert.equal(result.runtimeActivationGranted, false);
+  assert.equal(projectUiRepairObservation(null, 1).receiptParsed, false);
+});
 
 
 const readyRuntimeProof = async () => ({ ready: true, currentHead: '51600ceb00000000000000000000000000000000', healthOk: true, distOk: true, gitCommitMatches: true, runtimeMarkerMatches: true, gitCommit: '51600ceb', runtimeMarker: 'antifriction-live-v3::51600ceb::fixture' });
@@ -39,14 +81,158 @@ function factsFor({ backend = true, openclaw = true, ui = true, stale = [], cave
   };
 }
 
+function canonicalSourceTruth(overrides = {}) {
+  return {
+    branch: 'main',
+    detachedHead: false,
+    hasUpstream: true,
+    upstreamBranch: 'origin/main',
+    workingTreeDirty: false,
+    aheadCount: 0,
+    behindCount: 0,
+    headPublished: true,
+    blockedForRemoteTruth: false,
+    publicationState: 'healthy-synced',
+    head: 'a'.repeat(40),
+    originHead: 'a'.repeat(40),
+    ...overrides,
+  };
+}
+
+const COLLECTOR_HEAD = 'a'.repeat(40);
+const COLLECTOR_CONFIG = `remote.origin.url\n${BATTLE_BRIDGE_CANONICAL_REMOTE_URL}\0`;
+
+function runSourceCollectorFixture({
+  statusBefore = '',
+  statusAfter = statusBefore,
+  statusFinal = statusAfter,
+  ignoredRuntimeChildrenBefore = '',
+  ignoredRuntimeChildrenAfter = ignoredRuntimeChildrenBefore,
+  ignoredRuntimeChildrenFinal = ignoredRuntimeChildrenAfter,
+  configurationBefore = COLLECTOR_CONFIG,
+  configurationAfter = configurationBefore,
+  trackedVisibilityBefore = 'H tracked-source.mjs\n',
+  trackedVisibilityAfter = trackedVisibilityBefore,
+  trackedVisibilityFinal = trackedVisibilityAfter,
+  branchBefore = 'main',
+  branchAfter = branchBefore,
+  upstreamBefore = 'origin/main',
+  upstreamAfter = upstreamBefore,
+  headBefore = COLLECTOR_HEAD,
+  headAfter = headBefore,
+  originHead = headBefore,
+  originHeadAfter = originHead,
+  headFinal = headAfter,
+  originHeadFinal = originHeadAfter,
+  divergence = '0\t0\n',
+  failOperation = '',
+  failCallNumber = 0,
+  fetchAuthorityState = null,
+  topologyAfter = null,
+  platform = 'win32',
+  environment = { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+} = {}) {
+  const calls = [];
+  const ignoredRuntimeScanCalls = [];
+  const counts = Object.create(null);
+  let topologyCalls = 0;
+  const topologyOptions = [];
+  const stableTopology = Object.freeze({ config: 'stable-config', HEAD: 'stable-head' });
+  const inspectTopologyFn = (_cwd, options = {}) => {
+    topologyCalls += 1;
+    topologyOptions.push(options);
+    return topologyCalls === 1
+      ? { ok: true, stableIdentities: stableTopology }
+      : (topologyAfter || { ok: true, stableIdentities: stableTopology });
+  };
+  const spawnSyncFn = (command, args, options) => {
+    const workTreeIndex = args.findIndex((arg) => String(arg).startsWith('--work-tree='));
+    const operationArgs = args.slice(workTreeIndex + 1);
+    const operation = String(operationArgs[0] || '');
+    counts[operation] = Number(counts[operation] || 0) + 1;
+    calls.push({ command, args, operationArgs, options });
+    if (calls.length === failCallNumber) return { status: 1, stdout: '', stderr: 'PRIVATE source failure',
+      error: Object.assign(new Error('PRIVATE source path'), { code: 'PRIVATE_ERROR' }) };
+    if (operation === failOperation) return { status: 1, stdout: '', stderr: 'fixture failure' };
+    if (operation === 'config') return { status: 0, stdout: counts.config === 1 ? configurationBefore : configurationAfter, stderr: '' };
+    if (operation === 'ls-files') {
+      counts.trackedVisibility = Number(counts.trackedVisibility || 0) + 1;
+      return { status: 0, stdout: [trackedVisibilityBefore, trackedVisibilityAfter, trackedVisibilityFinal][counts.trackedVisibility - 1], stderr: '' };
+    }
+    if (operation === 'status') {
+      return { status: 0, stdout: [statusBefore, statusAfter, statusFinal][counts.status - 1], stderr: '' };
+    }
+    if (operation === 'branch') return { status: 0, stdout: `${counts.branch === 1 ? branchBefore : branchAfter}\n`, stderr: '' };
+    if (operation === 'fetch') {
+      if (fetchAuthorityState) {
+        if (operationArgs.includes('--prune')) fetchAuthorityState.originMainExists = false;
+        if (operationArgs.includes('refs/heads/main:refs/remotes/origin/main')) {
+          fetchAuthorityState.originMainExists = true;
+        }
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (operation === 'rev-list') return { status: 0, stdout: divergence, stderr: '' };
+    if (operation === 'rev-parse' && operationArgs.includes('@{upstream}')) {
+      counts.upstream = Number(counts.upstream || 0) + 1;
+      const value = counts.upstream === 1 ? upstreamBefore : upstreamAfter;
+      return value === null
+        ? { status: 1, stdout: '', stderr: 'no upstream configured' }
+        : { status: 0, stdout: `${value}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'HEAD' && operationArgs[2] === 'origin/main') {
+      return { status: 0, stdout: `${headFinal}\n${originHeadFinal}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'HEAD') {
+      counts.headRead = Number(counts.headRead || 0) + 1;
+      return { status: 0, stdout: `${counts.headRead === 1 ? headBefore : headAfter}\n`, stderr: '' };
+    }
+    if (operation === 'rev-parse' && operationArgs[1] === 'origin/main') {
+      if (fetchAuthorityState?.originMainExists === false) {
+        return { status: 128, stdout: '', stderr: 'unknown revision origin/main' };
+      }
+      counts.originRead = Number(counts.originRead || 0) + 1;
+      return { status: 0, stdout: `${counts.originRead === 1 ? originHead : originHeadAfter}\n`, stderr: '' };
+    }
+    throw new Error(`unexpected fixed Git operation: ${operationArgs.join(' ')}`);
+  };
+  const result = collectCanonicalIgnitionSourceTruth({
+    cwd: '/canonical/repo',
+    createGitProbeContextFn: () => null,
+    environment,
+    platform,
+    spawnSyncFn,
+    inspectTopologyFn,
+    scanIgnoredRuntimeAggregatePathsFn: ({ repoRoot, aggregatePaths }) => {
+      ignoredRuntimeScanCalls.push({ repoRoot, aggregatePaths });
+      const index = ignoredRuntimeScanCalls.length - 1;
+      return [ignoredRuntimeChildrenBefore, ignoredRuntimeChildrenAfter, ignoredRuntimeChildrenFinal][index] || '';
+    },
+  });
+  return { result, calls, ignoredRuntimeScanCalls, topologyCalls, topologyOptions };
+}
+
 test('supervisor status model exposes required phases and states', () => {
   const status = createBattleBridgeSupervisorStatus();
   assert.deepEqual(Object.keys(status.phases), [...BATTLE_BRIDGE_IGNITION_PHASES]);
+  assert.deepEqual(BATTLE_BRIDGE_IGNITION_PHASES.slice(0, 2), ['source truth', 'housekeeping']);
+  assert.equal(status.currentPhase, 'source truth');
   assert.deepEqual([...BATTLE_BRIDGE_IGNITION_PHASE_STATES], ['pending', 'running', 'ready', 'degraded', 'blocked', 'failed']);
   const updated = projectBattleBridgeSupervisorStatus({ status, phase: 'backend 8787', phaseState: 'ready', readinessReport: factsFor() });
   assert.equal(updated.currentPhase, 'backend 8787');
   assert.equal(updated.services.backend8787.ready, true);
   assert.equal(updated.trafficLight, 'blue');
+});
+
+test('service mutation head binding accepts only the same exact 40-character head', () => {
+  const head = 'a'.repeat(40);
+  assert.deepEqual(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: head }), {
+    ok: true,
+    expectedHead: head,
+    observedHead: head,
+  });
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: head, observedHead: 'b'.repeat(40) }).ok, false);
+  assert.equal(evaluateBattleBridgeMutationHeadBinding({ expectedHead: 'abc1234', observedHead: 'abc1234' }).ok, false);
 });
 
 test('publisher is refreshed before UI repair and stale records are refreshed by supervisor', async () => {
@@ -57,7 +243,7 @@ test('publisher is refreshed before UI repair and stale records are refreshed by
     sharedWorkspace: workspace,
     housekeepFn: () => calls.push('housekeeping'),
     publisherFn: async () => { calls.push('publisher'); },
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => {
       collectCount += 1;
       calls.push(`collect-${collectCount}`);
@@ -80,7 +266,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
     publisherFn: async () => {},
-    sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ ui: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -92,7 +278,7 @@ test('partial-ui-missing triggers repair and ready is only reported after 4173 p
 
 test('missing 4173 repair attempt records structured degraded result when proof does not become ready', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: false, action: 'start-ui-4173-spawned-but-not-ready' })); return 0; },
@@ -101,6 +287,31 @@ test('missing 4173 repair attempt records structured degraded result when proof 
   assert.equal(result.ok, false);
   assert.equal(result.status.phases['Stephanos UI 4173'].state, 'blocked');
   assert.notEqual(result.status.phases.ready.state, 'ready');
+  assert.equal(result.status.uiRepairObservations[0].action, 'start-ui-4173-spawned-but-not-ready');
+  assert.equal(result.status.uiRepairObservations[0].readyClaimed, false);
+});
+
+test('actual supervisor persistence retains the failed spawn diagnostic after later readiness projection', async () => {
+  const sharedWorkspace = fs.mkdtempSync(path.join(testWorkspace, 'failed-spawn-'));
+  const result = await runBattleBridgeIgnitionSupervisor({
+    sharedWorkspace, housekeepFn: () => {}, publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(), collectFactsFn: async () => factsFor({ ui: false }),
+    plannerFn: facts => ({ ...facts, finalVerdict: 'partial-ui-missing' }),
+    repairFn: async ({ stdout }) => {
+      stdout.write(JSON.stringify({ ready: false, started: false, action: 'start-ui-4173-failed',
+        spawnError: { code: 'ENOENT', message: 'must not be copied' },
+        blockers: [{ id: 'ui-repair-current-head-unproven' }] }));
+      return 1;
+    },
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  const persisted = JSON.parse(fs.readFileSync(path.join(sharedWorkspace, 'status', 'battle-bridge-ignition-supervisor-current.json')));
+  assert.equal(result.ok, false);
+  assert.equal(persisted.services.stephanosUi4173.ready, false);
+  assert.equal(persisted.uiRepairObservations[0].spawnErrorCode, 'ENOENT');
+  assert.equal(persisted.uiRepairObservations[0].exitCode, 1);
+  assert.equal(persisted.uiRepairObservations[0].started, false);
+  assert.equal(JSON.stringify(persisted.uiRepairObservations).includes('must not be copied'), false);
 });
 
 test('non-main stale branch reports blocker to splash/status model', async () => {
@@ -111,6 +322,534 @@ test('non-main stale branch reports blocker to splash/status model', async () =>
   assert.equal(result.ok, false);
   assert.equal(result.status.blockerId, 'non-main-source-truth');
   assert.equal(result.status.phases['source truth'].state, 'blocked');
+});
+
+test('canonical source truth gate accepts only clean synchronized main tracking origin/main', () => {
+  const ready = evaluateCanonicalIgnitionSourceTruth(canonicalSourceTruth());
+  assert.equal(ready.ok, true);
+  assert.equal(ready.publicationState, 'healthy-synced');
+
+  const rejected = [
+    [{ publicationState: 'source-truth-unproven', blockedForRemoteTruth: true }, 'source-truth-unproven'],
+    [canonicalSourceTruth({ branch: 'HEAD', detachedHead: true, publicationState: 'detached-head', hasUpstream: false, upstreamBranch: '', headPublished: false, blockedForRemoteTruth: true }), 'detached-source-truth'],
+    [canonicalSourceTruth({ branch: 'feature/test' }), 'non-main-source-truth'],
+    [canonicalSourceTruth({ upstreamBranch: 'origin/feature' }), 'noncanonical-upstream-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'local-uncommitted', workingTreeDirty: true }), 'dirty-source-truth'],
+    [canonicalSourceTruth({ head: '', originHead: '' }), 'source-head-truth-unproven'],
+    [canonicalSourceTruth({ originHead: 'b'.repeat(40) }), 'source-head-truth-unproven'],
+    [canonicalSourceTruth({ publicationState: 'stale-behind', behindCount: 1, headPublished: true }), 'stale-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'diverged', aheadCount: 1, behindCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
+    [canonicalSourceTruth({ publicationState: 'unpublished-local-only', aheadCount: 1, headPublished: false, blockedForRemoteTruth: true }), 'unpublished-source-truth'],
+  ];
+  for (const [truth, blockerId] of rejected) {
+    const result = evaluateCanonicalIgnitionSourceTruth(truth);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.id, blockerId);
+  }
+});
+
+test('source-truth-only report exposes a canonical head without service mutation', () => {
+  const writes = [];
+  const code = runCanonicalIgnitionSourceTruthReport({
+    sourceTruthFn: () => canonicalSourceTruth(),
+    stdout: { write: (chunk) => writes.push(String(chunk)) },
+  });
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(writes.join('')), {
+    ok: true,
+    head: COLLECTOR_HEAD,
+    publicationState: 'healthy-synced',
+  });
+});
+
+test('fixed source collector ignores attacker PATH and fetches only the canonical URL after preflight', () => {
+  const { result, calls, topologyCalls, topologyOptions } = runSourceCollectorFixture();
+  assert.equal(result.ok, true);
+  assert.equal(result.publicationState, 'healthy-synced');
+  assert.equal(result.head, COLLECTOR_HEAD);
+  assert.equal(result.originHead, COLLECTOR_HEAD);
+  assert.equal(topologyCalls, 3);
+  assert.equal(topologyOptions.every((options) => options.stabilizeIndex === true), true);
+  assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
+  assert.deepEqual(calls.slice(0, 3).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+  const fetchCall = calls.find((call) => call.operationArgs[0] === 'fetch');
+  assert.deepEqual(fetchCall.operationArgs, [
+    'fetch', BATTLE_BRIDGE_CANONICAL_REMOTE_URL, 'refs/heads/main:refs/remotes/origin/main',
+  ]);
+  assert.notEqual(fetchCall.options.env.PATH, 'C:\\attacker');
+  assert.equal(fetchCall.options.env.NODE_OPTIONS, undefined);
+  assert.equal(fetchCall.options.env.GIT_CONFIG_GLOBAL, 'NUL');
+  assert.equal(fetchCall.options.shell, false);
+});
+
+test('fixed source collector preserves its canonical remote-tracking authority ref across repeated fetch proofs', () => {
+  const fetchAuthorityState = { originMainExists: true };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { result, calls } = runSourceCollectorFixture({ fetchAuthorityState });
+    assert.equal(result.ok, true);
+    assert.equal(fetchAuthorityState.originMainExists, true);
+    const fetchCall = calls.find((call) => call.operationArgs[0] === 'fetch');
+    assert.equal(fetchCall.operationArgs.includes('--prune'), false);
+    assert.deepEqual(fetchCall.operationArgs.slice(-2), [
+      BATTLE_BRIDGE_CANONICAL_REMOTE_URL,
+      'refs/heads/main:refs/remotes/origin/main',
+    ]);
+  }
+});
+
+test('fixed source collector selects an absolute platform-valid Git executable on Linux and macOS', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const { result, calls } = runSourceCollectorFixture({
+      platform,
+      environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+    assert.equal(calls.every((call) => path.isAbsolute(call.command)), true);
+    assert.equal(calls.every((call) => call.options.env.PATH !== '/attacker'), true);
+    assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  }
+});
+
+test('source dirt blocks before the canonical fetch or any service mutation', () => {
+  const { result, calls } = runSourceCollectorFixture({
+    statusBefore: ' M scripts/run-battle-bridge-ignition.mjs\n',
+  });
+  assert.equal(result.publicationState, 'local-uncommitted');
+  assert.equal(result.workingTreeDirty, true);
+  assert.equal(result.blockedForRemoteTruth, true);
+  assert.equal(result.blocker.id, 'dirty-source-truth');
+  assert.equal(result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('hidden tracked paths and tracked-visibility drift fail closed around the fetch', () => {
+  for (const trackedVisibilityBefore of ['S hidden-source.mjs\n', 'h assumed-source.mjs\n']) {
+    const hiddenBefore = runSourceCollectorFixture({ trackedVisibilityBefore });
+    assert.equal(hiddenBefore.result.ok, false);
+    assert.equal(hiddenBefore.result.blocker.id, 'hidden-tracked-source-truth');
+    assert.equal(hiddenBefore.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+    assert.deepEqual(hiddenBefore.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files']);
+  }
+
+  const changedAfter = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'H different-source.mjs\n',
+  });
+  assert.equal(changedAfter.result.ok, false);
+  assert.equal(changedAfter.result.blocker.id, 'hidden-tracked-source-truth');
+  assert.equal(changedAfter.result.blocker.code, 'CANONICAL_TRACKED_VISIBILITY_CHANGED');
+
+  const hiddenAfter = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'S tracked-source.mjs\n',
+  });
+  assert.equal(hiddenAfter.result.ok, false);
+  assert.equal(hiddenAfter.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+});
+
+test('attacker-configured origin is rejected before fetch even when PATH and ambient Git variables are hostile', () => {
+  const { result, calls } = runSourceCollectorFixture({
+    configurationBefore: 'remote.origin.url\nhttps://attacker.invalid/repository.git\0',
+    environment: {
+      PATH: 'C:\\attacker',
+      GIT_CONFIG_GLOBAL: 'C:\\attacker\\gitconfig',
+      GIT_SSH_COMMAND: 'C:\\attacker\\ssh.exe',
+      NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs',
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker.code, 'CANONICAL_GIT_CONFIGURATION_INVALID');
+  assert.deepEqual(calls.map((call) => call.operationArgs[0]), ['config']);
+  assert.equal(calls[0].command, BATTLE_BRIDGE_WINDOWS_HOST.git);
+  assert.equal(calls[0].options.env.GIT_SSH_COMMAND, undefined);
+});
+
+test('configuration refusal reports only closed predicates and the actual existing read phase', () => {
+  const baseline = 'remote.origin.url\n' + BATTLE_BRIDGE_CANONICAL_REMOTE_URL + '\0';
+  const privateConfiguration = baseline
+    + 'remote.origin.url\nhttps://PRIVATE:SECRET@example.invalid/repo.git\0'
+    + 'credential.https://PRIVATE:SECRET@example.invalid.helper\nPRIVATE command\0'
+    + 'core.untrackedcache\ntrue\0';
+  for (const [fixture, stage, code, diagnostic] of [
+    [{ configurationBefore: privateConfiguration }, 'BEFORE_FETCH', 'CANONICAL_GIT_CONFIGURATION_INVALID',
+      { originCount: 'MULTIPLE', originMatch: 'NONCANONICAL', riskCategories: ['CORE_UNTRACKED_CACHE', 'CREDENTIAL'] }],
+    [{ configurationAfter: privateConfiguration }, 'AFTER_FETCH', 'CANONICAL_GIT_CONFIGURATION_INVALID',
+      { originCount: 'MULTIPLE', originMatch: 'NONCANONICAL', riskCategories: ['CORE_UNTRACKED_CACHE', 'CREDENTIAL'] }],
+    [{ configurationAfter: baseline + 'core.autocrlf\ntrue\0' }, 'AFTER_FETCH', 'CANONICAL_GIT_CONFIGURATION_CHANGED',
+      { originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [] }],
+  ]) {
+    const { result, calls } = runSourceCollectorFixture(fixture);
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.code, code);
+    assert.deepEqual(result.blocker.sourceConfiguration, { stage, ...diagnostic });
+    assert.equal(calls.filter(call => call.operationArgs[0] === 'config').length, stage === 'BEFORE_FETCH' ? 1 : 2);
+    if (stage === 'BEFORE_FETCH') assert.deepEqual(calls.map(call => call.operationArgs[0]), ['config']);
+    const writes = [];
+    assert.equal(runCanonicalIgnitionSourceTruthReport({
+      sourceTruthFn: () => result, stdout: { write: chunk => writes.push(String(chunk)) },
+    }), 2);
+    const wire = writes.join('');
+    assert.deepEqual(JSON.parse(wire).blocker.sourceConfiguration, { stage, ...diagnostic });
+    assert.doesNotMatch(wire, /PRIVATE|SECRET|configurationProof|riskyKeys|https/);
+  }
+});
+
+test('allowed configuration diagnostics leave successful source truth and every fixed Git call unchanged', () => {
+  const baseline = runSourceCollectorFixture();
+  const configuration = 'remote.origin.url\n' + BATTLE_BRIDGE_CANONICAL_REMOTE_URL + '\0'
+    + 'core.hooksPath\n.githooks\0commit.gpgSign\nfalse\0tag.gpgSign\nFALSE\0'
+    + 'harmless.PRIVATE_SECRET\nPRIVATE SECRET value\0';
+  const allowed = runSourceCollectorFixture({ configurationBefore: configuration, configurationAfter: configuration });
+  assert.equal(allowed.result.ok, true);
+  assert.deepEqual(allowed.result, baseline.result);
+  assert.deepEqual(allowed.calls, baseline.calls);
+  assert.equal(allowed.topologyCalls, baseline.topologyCalls);
+  assert.deepEqual(allowed.topologyOptions, baseline.topologyOptions);
+});
+
+test('missing or noncanonical upstream blocks before the canonical fetch', () => {
+  for (const upstreamBefore of [null, 'origin/feature']) {
+    const { result, calls } = runSourceCollectorFixture({ upstreamBefore });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.id, 'noncanonical-upstream-source-truth');
+    assert.equal(result.blocker.code, 'CANONICAL_UPSTREAM_UNPROVEN');
+    assert.equal(result.hasUpstream, upstreamBefore !== null);
+    assert.equal(result.upstreamBranch, upstreamBefore || '');
+    assert.equal(calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+  }
+});
+
+test('collector aligns dream-memory runtime dirt while secret-shaped children remain pre-fetch blockers', () => {
+  const runtime = runSourceCollectorFixture({
+    statusBefore: '!! memory/.dreams/session.json\n!! memory/dreaming/deep/session.json\n!! memory/dreaming/light/session.json\n!! memory/dreaming/rem/session.json\n',
+  });
+  assert.equal(runtime.result.ok, true);
+  assert.equal(runtime.result.workingTreeDirty, false);
+  assert.equal(runtime.result.runtimeOnlyDirt.length, 4);
+
+  const secret = runSourceCollectorFixture({
+    statusBefore: '!! memory/.dreams/token.json\n!! memory/dreaming/rem/private-key.json\n',
+  });
+  assert.equal(secret.result.ok, false);
+  assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(secret.calls.map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status']);
+});
+
+test('collector accepts the exact Battle Bridge ignored local-runtime estate without weakening child checks', () => {
+  const status = [
+    '!! .stephanos/local-state-checkpoints/',
+    '!! package-lock.json',
+    '!! stephanos-server/data/durable-memory.json',
+    '!! stephanos-server/data/local-rag/',
+    '!! stephanos-server/data/provider-secrets.json',
+    '!! stephanos-server/data/tile-state.json',
+    '!! stephanos-server/package-lock.json',
+  ].join('\n') + '\n';
+  const accepted = runSourceCollectorFixture({ statusBefore: status });
+  assert.equal(accepted.result.ok, true);
+  assert.equal(accepted.result.workingTreeDirty, false);
+  assert.deepEqual(accepted.ignoredRuntimeScanCalls[0], {
+    repoRoot: '/canonical/repo',
+    aggregatePaths: ['.stephanos/local-state-checkpoints/', 'stephanos-server/data/local-rag/'],
+  });
+
+  const blockedChild = runSourceCollectorFixture({
+    statusBefore: status,
+    ignoredRuntimeChildrenBefore: '.stephanos/local-state-checkpoints/private-key.json\n',
+  });
+  assert.equal(blockedChild.result.ok, false);
+  assert.equal(blockedChild.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(blockedChild.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+});
+
+test('collector enumerates ignored log children before accepting the logs runtime aggregate', () => {
+  const benign = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\n',
+  });
+  assert.equal(benign.result.ok, true);
+  assert.equal(benign.ignoredRuntimeScanCalls.length, 3);
+  assert.deepEqual(benign.ignoredRuntimeScanCalls[0], { repoRoot: '/canonical/repo', aggregatePaths: ['logs/'] });
+
+  const secret = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    ignoredRuntimeChildrenBefore: 'logs/battle-bridge/backend.stdout.log\nlogs/credential.json\n',
+  });
+  assert.equal(secret.result.ok, false);
+  assert.equal(secret.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(secret.ignoredRuntimeScanCalls.length, 1);
+  assert.equal(secret.calls.some((call) => call.operationArgs[0] === 'fetch'), false);
+});
+
+test('collector final recheck rejects source dirt or topology drift after canonical fetch', () => {
+  const dirtyAfter = runSourceCollectorFixture({
+    statusBefore: '!! logs/\n',
+    statusAfter: '!! logs/\n M scripts/after-fetch.mjs\n',
+  });
+  assert.equal(dirtyAfter.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.equal(dirtyAfter.calls.some((call) => call.operationArgs[0] === 'fetch'), true);
+
+  const topologyDrift = runSourceCollectorFixture({
+    topologyAfter: { ok: true, stableIdentities: { config: 'changed', HEAD: 'stable-head' } },
+  });
+  assert.equal(topologyDrift.result.blocker.code, 'CANONICAL_GIT_TOPOLOGY_CHANGED');
+});
+
+test('collector repeats status and hidden-index proof after every other post-fetch Git check', () => {
+  const lateDirt = runSourceCollectorFixture({
+    statusBefore: '',
+    statusAfter: '',
+    statusFinal: ' M scripts/late-source-change.mjs\n',
+  });
+  assert.equal(lateDirt.result.ok, false);
+  assert.equal(lateDirt.result.blocker.code, 'CANONICAL_CHECKOUT_DIRTY');
+  assert.deepEqual(lateDirt.calls.slice(-2).map((call) => call.operationArgs[0]), ['status', 'ls-files']);
+
+  const lateHidden = runSourceCollectorFixture({
+    trackedVisibilityBefore: 'H tracked-source.mjs\n',
+    trackedVisibilityAfter: 'H tracked-source.mjs\n',
+    trackedVisibilityFinal: 'S tracked-source.mjs\n',
+  });
+  assert.equal(lateHidden.result.ok, false);
+  assert.equal(lateHidden.result.blocker.code, 'HIDDEN_TRACKED_PATHS_PRESENT');
+  assert.deepEqual(lateHidden.calls.slice(-2).map((call) => call.operationArgs[0]), ['status', 'ls-files']);
+});
+
+test('collector binds local and fetched refs again at the final source boundary', () => {
+  const lateRefDrift = runSourceCollectorFixture({
+    headFinal: 'c'.repeat(40),
+    originHeadFinal: 'c'.repeat(40),
+  });
+  assert.equal(lateRefDrift.result.ok, false);
+  assert.equal(lateRefDrift.result.blocker.code, 'CANONICAL_SOURCE_TRUTH_CHANGED');
+  assert.deepEqual(lateRefDrift.calls.at(-1).operationArgs, ['rev-parse', 'HEAD', 'origin/main']);
+});
+
+test('live source collector fails closed when current origin/main cannot be fetched', () => {
+  const { result, calls } = runSourceCollectorFixture({ failOperation: 'fetch' });
+  const verdict = evaluateCanonicalIgnitionSourceTruth(result);
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.blocker.id, 'source-truth-unproven');
+  assert.equal(verdict.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+  assert.equal(verdict.blocker.sourceStep, 'source-fetch');
+  assert.deepEqual(calls.slice(0, 7).map((call) => call.operationArgs[0]), ['config', 'ls-files', 'status', 'branch', 'rev-parse', 'rev-parse', 'fetch']);
+});
+
+test('failed fixed Git captures retain only their literal diagnostic step without changing the stop boundary', () => {
+  const steps = [
+    'source-config-before-fetch', 'source-tracked-visibility-before-fetch', 'source-status-before-fetch',
+    'source-branch-before-fetch', null, 'source-head-before-fetch', 'source-fetch', 'source-origin-head',
+    'source-divergence', 'source-status-after-fetch', 'source-config-after-fetch', 'source-branch-after-fetch',
+    null, 'source-head-after-fetch', 'source-origin-head-after-fetch', 'source-tracked-visibility-after-fetch',
+    'source-status-final', 'source-tracked-visibility-final', 'source-heads-final',
+  ];
+  for (const [index, sourceStep] of steps.entries()) {
+    if (!sourceStep) continue; // The two optional upstream reads retain their existing nonthrowing semantics.
+    const { result, calls } = runSourceCollectorFixture({ failCallNumber: index + 1 });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker.code, 'FIXED_AUTHORITY_GIT_FAILED');
+    assert.equal(result.blocker.sourceStep, sourceStep);
+    assert.equal(calls.length, index + 1, sourceStep);
+  }
+});
+
+test('standalone supervisor housekeeping ignores hostile PATH and uses only the fixed Git boundary', () => {
+  const calls = [];
+  let receivedOptions = null;
+  const cwd = '/canonical/repo';
+  const result = runCanonicalSupervisorHousekeep(
+    { dryRun: false, compact: true, preserveRuntimeDirt: true },
+    {
+      cwd,
+      environment: { PATH: 'C:\\attacker', NODE_OPTIONS: '--require=C:\\attacker\\inject.cjs' },
+      platform: 'win32',
+      spawnSyncFn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      housekeepFn: (options) => {
+        receivedOptions = options;
+        options.captureStepFn('git-status', 'git', ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=matching']);
+        options.runStepFn('git-clean-runtime-untracked', 'git', ['clean', '-fd', '--', 'data/activity/']);
+        return { ok: true };
+      },
+    },
+  );
+  assert.deepEqual(result, { ok: true });
+  assert.equal(receivedOptions.preserveRuntimeDirt, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every((call) => call.command === BATTLE_BRIDGE_WINDOWS_HOST.git), true);
+  assert.deepEqual(calls[0].args.slice(0, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length), [...BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS]);
+  assert.deepEqual(
+    calls[0].args.slice(BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length, BATTLE_BRIDGE_GIT_FIXED_CONFIG_ARGS.length + 2),
+    [...battleBridgeCanonicalRepositoryArgs(cwd)],
+  );
+  assert.equal(calls.every((call) => call.options.env.PATH !== 'C:\\attacker'), true);
+  assert.equal(calls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  assert.equal(calls.every((call) => call.options.shell === false), true);
+});
+
+test('current-head reads use the same fixed Git boundary and never hostile PATH', () => {
+  const expectedHead = 'd'.repeat(40);
+  for (const platform of ['win32', 'linux', 'darwin']) {
+    const calls = [];
+    const head = getCurrentGitHead({
+      cwd: '/canonical/repo',
+      platform,
+      environment: { PATH: platform === 'win32' ? 'C:\\attacker' : '/attacker', NODE_OPTIONS: '--require=attacker.js' },
+      spawnSyncFn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, stdout: `${expectedHead}\n`, stderr: '' };
+      },
+    });
+    assert.equal(head, expectedHead);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, resolveBattleBridgeGitExecutable(platform));
+    assert.deepEqual(calls[0].args, [
+      ...battleBridgeGitFixedConfigArgs(platform),
+      ...battleBridgeCanonicalRepositoryArgs('/canonical/repo'),
+      'rev-parse', 'HEAD',
+    ]);
+    assert.notEqual(calls[0].options.env.PATH, platform === 'win32' ? 'C:\\attacker' : '/attacker');
+    assert.equal(calls[0].options.env.NODE_OPTIONS, undefined);
+    assert.equal(calls[0].options.shell, false);
+  }
+});
+
+test('real evaluator-shaped diverged source blocks before publisher or service mutation', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => { calls.push('housekeeping'); },
+    sourceTruthFn: () => {
+      calls.push('source-truth');
+      return canonicalSourceTruth({
+        publicationState: 'diverged',
+        aheadCount: 1,
+        behindCount: 2,
+        headPublished: false,
+        blockedForRemoteTruth: true,
+      });
+    },
+    publisherFn: async () => { calls.push('publisher'); },
+    backendStartFn: async () => { calls.push('backend'); },
+    openClawStartFn: async () => { calls.push('openclaw'); },
+    repairFn: async () => { calls.push('ui'); },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'unpublished-source-truth');
+  assert.equal(result.status.sourceTruthVerdict.state, 'blocked');
+  assert.deepEqual(calls, ['source-truth']);
+});
+
+test('supervisor threads the fixed collector head through backend, UI, and runtime proof without a later head adapter read', async () => {
+  const expectedHead = 'd'.repeat(40);
+  const calls = [];
+  const gitCalls = [];
+  let factsCount = 0;
+  let hostileHeadReads = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
+    cwd: '/canonical/repo',
+    platform: 'linux',
+    environment: { PATH: '/attacker', NODE_OPTIONS: '--require=/attacker/inject.cjs' },
+    spawnSyncFn: (command, args, options) => {
+      gitCalls.push({ command, args, options });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    collectFactsFn: async ({ execFile }) => {
+      execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: '/canonical/repo', encoding: 'utf8' });
+      factsCount += 1;
+      if (factsCount === 1) return factsFor({ backend: false, ui: false });
+      if (factsCount === 2) return factsFor({ ui: false });
+      return factsFor();
+    },
+    plannerFn: (facts) => facts,
+    backendStartFn: async ({ expectedHead: receivedHead }) => {
+      calls.push({ phase: 'backend', expectedHead: receivedHead });
+      return { started: true, exitCode: 0 };
+    },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => {
+      calls.push({ phase: 'ui', expectedHead: receivedHead });
+      stdout.write(JSON.stringify({ ready: true }));
+      return 0;
+    },
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
+      calls.push({ phase: 'runtime', currentHead, expectedHead: receivedHead });
+      return { ready: currentHead === expectedHead && receivedHead === expectedHead, currentHead };
+    },
+    currentHeadFn: () => {
+      hostileHeadReads += 1;
+      return 'e'.repeat(40);
+    },
+    stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(hostileHeadReads, 0);
+  assert.equal(result.status.sourceTruthVerdict.expectedHead, expectedHead);
+  assert.equal(gitCalls.length, 3);
+  assert.equal(gitCalls.every((call) => call.command === BATTLE_BRIDGE_POSIX_GIT_EXECUTABLE), true);
+  assert.equal(gitCalls.every((call) => call.options.env.PATH === '/usr/bin:/bin'), true);
+  assert.equal(gitCalls.every((call) => call.options.env.NODE_OPTIONS === undefined), true);
+  assert.deepEqual(calls, [
+    { phase: 'backend', expectedHead },
+    { phase: 'ui', expectedHead },
+    { phase: 'runtime', currentHead: expectedHead, expectedHead },
+  ]);
+});
+
+test('supervisor re-proves canonical source head before runtime proof and never publishes ready after drift', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => { runtimeProofCalls += 1; return { ready: true }; },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-runtime-proof');
+  assert.equal(runtimeProofCalls, 0);
+  assert.equal(sourceTruthReads, 2);
+});
+
+test('supervisor re-proves canonical source head again after runtime proof before ready publication', async () => {
+  const expectedHead = 'd'.repeat(40);
+  let sourceTruthReads = 0;
+  let runtimeProofCalls = 0;
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads < 3 ? expectedHead : 'e'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor(),
+    plannerFn: (facts) => facts,
+    runtimeProofFn: async () => {
+      runtimeProofCalls += 1;
+      return { ready: true, currentHead: expectedHead };
+    },
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-ready');
+  assert.equal(runtimeProofCalls, 1);
+  assert.equal(sourceTruthReads, 3);
 });
 
 test('tracked runtime activity dirt guidance and runtime-only dist caveat are separate', () => {
@@ -134,7 +873,7 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ backend: collectCount > 1, ui: false }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices.backend.ready ? 'partial-ui-missing' : 'blocked-needs-supervisor-repair' }),
     backendStartFn: async ({ commandIdentity }) => { calls.push(commandIdentity.commandText); return { started: true, commandIdentity }; },
@@ -147,7 +886,7 @@ test('backend missing plus UI missing does not enter browser/runtime proof and s
 
 test('backend missing has deterministic backend blocker and no empty blockerId when approved start fails proof', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false }),
@@ -162,7 +901,7 @@ test('backend missing has deterministic backend blocker and no empty blockerId w
 
 test('backend start unavailable returns adapter blocker', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ unavailable: true }),
@@ -175,6 +914,80 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
+
+test('optional OpenClaw companion surfaces launch configured chat and dashboard without becoming ignition requirements', async () => {
+  const spawned = [];
+  let unrefs = 0;
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    cwd: '/repo',
+    env: {
+      STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js',
+      STEPHANOS_OPENCLAW_DASHBOARD_COMMAND: 'node openclaw-dashboard.js',
+    },
+    spawnFn: (command, args, options) => {
+      spawned.push({ command, args, options });
+      return { pid: 9000 + spawned.length, unref() { unrefs += 1; } };
+    },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, false);
+  assert.deepEqual(result.surfaces.map((surface) => surface.surface), ['chat', 'dashboard']);
+  assert.deepEqual(spawned.map((entry) => entry.args[0]), ['openclaw-chat.js', 'openclaw-dashboard.js']);
+  assert.equal(spawned.every((entry) => entry.options.detached === true && entry.options.shell === false && entry.options.stdio === 'ignore'), true);
+  assert.equal(spawned.every((entry) => entry.options.env.STEPHANOS_OPENCLAW_AUTOSTART === 'runtime-surfaces-only'), true);
+  assert.equal(unrefs, 2);
+});
+
+test('optional OpenClaw companion surface launch failure is recorded and never thrown', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js' },
+    spawnFn: () => { throw new Error('app launch failed'); },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').started, false);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').reason, 'companion-launch-failed');
+});
+
+test('asynchronous OpenClaw companion spawn errors are captured as non-blocking degradation', async () => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const resultPromise = launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'missing-openclaw-chat.exe' },
+    settleTimeoutMs: 50,
+    spawnFn: () => {
+      queueMicrotask(() => child.emit('error', new Error('ENOENT missing-openclaw-chat.exe')));
+      return child;
+    },
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'companion-launch-failed');
+  assert.match(chat.error, /ENOENT/);
+});
+
+test('configured but rejected OpenClaw companion intent remains visible as degradation', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'openclaw task execute mutate-files' },
+  });
+
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.rejected, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'approved-launch-command-violates-guardrails');
+});
 
 test('OpenClaw gateway start blocks with startup-approval-required without approval when 18789 is down', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-no-approval-'));
@@ -209,6 +1022,7 @@ test('approved OpenClaw gateway start uses config-safe start command shape, env 
     sharedWorkspace: workspace,
     token: 'test-token',
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -255,6 +1069,7 @@ test('approved OpenClaw gateway start runs without token and writes non-skipped 
     sharedWorkspace: workspace,
     env: {},
     approved: true,
+    platform: 'linux',
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => {
@@ -329,6 +1144,7 @@ test('Windows OpenClaw gateway execution uses cmd.exe wrapper for openclaw.cmd i
     env: { APPDATA: appData, Path: '' },
     approved: true,
     platform: 'win32',
+    existsSync: (candidate) => candidate === cmdShim,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: (command, args, options) => { spawnCalls.push({ command, args, options }); return child; },
@@ -459,6 +1275,7 @@ test('approved OpenClaw gateway start writes all log paths on timeout', async ()
     sharedWorkspace: workspace,
     token: 'test-token',
     approved: true,
+    platform: 'win32', env: { PATH: 'C:\\fixture-bin', SystemRoot: 'C:\\Windows' }, existsSync: () => true,
     readyTimeoutMs: 1,
     retryIntervalMs: 0,
     spawnFn: () => child,
@@ -472,6 +1289,68 @@ test('approved OpenClaw gateway start writes all log paths on timeout', async ()
   assert.equal(fs.existsSync(result.logs.exitLogPath), true);
   assert.equal(fs.existsSync(result.logs.healthProofLogPath), true);
   assert.match(fs.readFileSync(result.logs.healthProofLogPath, 'utf8'), /still down/);
+});
+
+test('optional OpenClaw launch returns immediately after spawn without readiness polling', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-optional-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  let healthCalls = 0;
+  let unrefCalls = 0;
+  child.unref = () => { unrefCalls += 1; };
+
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    platform: 'win32', env: { PATH: 'C:\\fixture-bin', SystemRoot: 'C:\\Windows' }, existsSync: () => true,
+    waitForReady: false,
+    readyTimeoutMs: 60000,
+    retryIntervalMs: 500,
+    spawnFn: () => child,
+    fetchFn: async () => {
+      healthCalls += 1;
+      throw new Error('not listening before optional start');
+    },
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.background, true);
+  assert.equal(result.healthProof.deferred, true);
+  assert.equal(result.healthProof.reason, 'optional-openclaw-health-proof-deferred');
+  assert.equal(healthCalls, 1);
+  assert.equal(unrefCalls, 1);
+});
+
+test('optional OpenClaw launch cannot hang forever on a stalled preflight health endpoint', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-stalled-probe-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+
+  const result = await Promise.race([
+    runApprovedOpenClawGateway18789Start({
+      sharedWorkspace: workspace,
+      token: 'test-token',
+      approved: true,
+      platform: 'win32', env: { PATH: 'C:\\fixture-bin', SystemRoot: 'C:\\Windows' }, existsSync: () => true,
+      waitForReady: false,
+      healthProbeTimeoutMs: 5,
+      spawnFn: () => child,
+      fetchFn: async () => new Promise(() => {}),
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('optional OpenClaw probe did not return')), 250)),
+  ]);
+
+  assert.equal(result.started, true);
+  assert.equal(result.background, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.healthProof.deferred, true);
 });
 
 test('Windows OpenClaw spawn EINVAL is captured in exit log for start-failed classification', async () => {
@@ -528,48 +1407,150 @@ test('approved OpenClaw gateway start reuses healthy 18789 and avoids duplicate 
   assert.match(result.logPath, /logs[\\/]openclaw-gateway-18789-start/);
 });
 
-test('supervisor calls approved OpenClaw startup adapter when 18789 is missing', async () => {
+test('approved OpenClaw gateway start blocks exact-head drift immediately before spawn', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-head-drift-'));
+  const expectedHead = 'a'.repeat(40);
+  const spawnCalls = [];
+  const result = await runApprovedOpenClawGateway18789Start({
+    sharedWorkspace: workspace,
+    token: 'test-token',
+    approved: true,
+    platform: 'win32', env: { PATH: 'C:\\fixture-bin', SystemRoot: 'C:\\Windows' }, existsSync: () => true,
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
+    readyTimeoutMs: 1,
+    retryIntervalMs: 0,
+    spawnFn: (...args) => { spawnCalls.push(args); throw new Error('must not spawn after source drift'); },
+    fetchFn: async () => { throw new Error('gateway down before start'); },
+  });
+
+  assert.equal(spawnCalls.length, 0);
+  assert.equal(result.ready, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.deepEqual(result.sourceHeadProof, {
+    ok: false,
+    expectedHead,
+    observedHead: 'b'.repeat(40),
+  });
+});
+
+test('supervisor launches optional OpenClaw without waiting for readiness', async () => {
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return factsFor({ openclaw: collectCount > 1 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['openclaw-gateway'].ready ? 'ready' : 'partial-openclaw-missing' }),
-    openClawStartFn: async ({ sharedWorkspace }) => { calls.push(sharedWorkspace); return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } }; },
+    openClawStartFn: async ({ sharedWorkspace, waitForReady }) => {
+      calls.push({ sharedWorkspace, waitForReady });
+      return { ready: true, started: true, target: { commandText: 'openclaw gateway run --port 18789 --bind loopback' }, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: true, health: { json: { ok: true } } } };
+    },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].waitForReady, false);
   assert.equal(result.status.services.openClaw18789.start.logPath, '/canonical/openclaw-log');
 });
 
-test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
-  const calls = [];
+test('supervisor blocks source drift before invoking the OpenClaw startup mutator', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let sourceTruthReads = 0;
+  let openClawStarts = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => {
+      sourceTruthReads += 1;
+      const head = sourceTruthReads === 1 ? expectedHead : 'b'.repeat(40);
+      return canonicalSourceTruth({ head, originHead: head });
+    },
+    collectFactsFn: async () => factsFor({ openclaw: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
-    openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
-    repairFn: async () => { calls.push('ui-repair'); return 0; },
-    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+    openClawStartFn: async () => { openClawStarts += 1; return { ready: true }; },
+    stdout: { write() {} },
   });
+
   assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-start-failed');
-  assert.deepEqual(calls, []);
+  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-openclaw-start');
+  assert.equal(openClawStarts, 0);
+  assert.equal(sourceTruthReads, 2);
 });
 
-test('OpenClaw running without health proof blocks with no-health-proof and surfaces logPath', async () => {
+test('supervisor launches OpenClaw companions even when gateway is already healthy', async () => {
+  const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawStartFn: async () => { throw new Error('gateway start must not run when already healthy'); },
+    openClawCompanionStartFn: ({ env, cwd }) => {
+      calls.push({ env, cwd });
+      return { requiredForIgnition: false, attempted: true, degraded: false, surfaces: [{ surface: 'chat', configured: true, started: true }] };
+    },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.surfaces[0].started, true);
+});
+
+test('unexpected OpenClaw companion adapter failure remains non-blocking', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawCompanionStartFn: () => { throw new Error('companion adapter broke'); },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.degraded, true);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.reason, 'companion-launch-adapter-failed');
+});
+
+test('OpenClaw command failure degrades capability but does not block Stephanos startup', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
+    openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
+    runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-start-failed');
+  assert.equal(result.status.phases['OpenClaw gateway 18789'].state, 'degraded');
+  assert.equal(result.status.trafficLight, 'green');
+});
+
+test('OpenClaw without health proof stays degraded while Stephanos reaches ready', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: true, exitCode: null, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: false, health: { json: { service: 'openclaw-readonly-adapter-stub', status: 'healthy' } } } }),
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-no-health-proof');
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-no-health-proof');
   assert.equal(result.status.phases['OpenClaw gateway 18789'].logPath, '/canonical/openclaw-log');
-  assert.match(result.status.nextOperatorAction, /\/canonical\/openclaw-log/);
+  assert.match(result.status.services.openClaw18789.recoveryAction, /does not wait on OpenClaw/);
+  assert.equal(result.status.trafficLight, 'green');
 });
 
 test('default shared workspace is canonical Documents path, not temp Battle Bridge workspace', () => {
@@ -588,6 +1569,7 @@ test('approved backend repair command captures stdout stderr exit code and canon
   const spawnCalls = [];
   const promise = runApprovedBackend8787Start({
     sharedWorkspace: workspace,
+    platform: 'linux',
     spawnFn: (command, args, options) => {
       spawnCalls.push({ command, args, options });
       queueMicrotask(() => {
@@ -609,12 +1591,38 @@ test('approved backend repair command captures stdout stderr exit code and canon
   assert.equal(fs.readFileSync(result.logs.stderrLogPath, 'utf8'), 'backend stderr proof\n');
 });
 
+test('approved backend repair rejects collector-head drift before spawning', async () => {
+  const expectedHead = 'a'.repeat(40);
+  let spawnCalls = 0;
+  const result = await runApprovedBackend8787Start({
+    expectedHead,
+    currentHeadFn: () => 'b'.repeat(40),
+    spawnFn: () => {
+      spawnCalls += 1;
+      throw new Error('head-mismatched backend must not spawn');
+    },
+  });
+  assert.equal(result.started, false);
+  assert.equal(result.reason, 'canonical-source-head-mismatch');
+  assert.equal(result.expectedHead, expectedHead);
+  assert.equal(result.observedHead, 'b'.repeat(40));
+  assert.equal(result.sourceHeadProof.ok, false);
+  assert.equal(spawnCalls, 0);
+});
+
+test('Windows backend repair pins System32 cmd and Program Files npm entrypoints', () => {
+  const execution = resolveBackendRepairExecution('win32');
+  assert.equal(execution.command, BATTLE_BRIDGE_WINDOWS_HOST.cmd);
+  assert.deepEqual(execution.args.slice(0, 3), ['/d', '/s', '/c']);
+  assert.equal(execution.args[3], `""${BATTLE_BRIDGE_WINDOWS_HOST.npm}" run stephanos:battle-bridge:repair"`);
+});
+
 
 test('backend repair success without health proof blocks with no-health-proof and surfaces canonical logPath', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-supervisor-canonical-'));
   const logPath = path.join(workspace, 'logs', 'battle-bridge-backend-8787-repair', 'fixture');
   const result = await runBattleBridgeIgnitionSupervisor({
-    sharedWorkspace: workspace, housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    sharedWorkspace: workspace, housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: true, exitCode: 0, logPath, logs: { logPath, stdoutLogPath: path.join(logPath, 'stdout.log'), stderrLogPath: path.join(logPath, 'stderr.log') } }),
@@ -630,7 +1638,7 @@ test('backend repair success without health proof blocks with no-health-proof an
 test('backend repair nonzero blocks with backend repair failed and does not run UI repair', async () => {
   const calls = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => factsFor({ backend: false, ui: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'blocked-needs-supervisor-repair' }),
     backendStartFn: async () => ({ started: false, exitCode: 7, logPath: '/canonical/log' }),
@@ -647,7 +1655,7 @@ test('backend and OpenClaw ready with UI missing refreshes publisher before UI r
   const calls = [];
   let collectCount = 0;
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => { calls.push('publisher'); }, sourceTruthFn: () => canonicalSourceTruth(),
     collectFactsFn: async () => { collectCount += 1; return collectCount === 1 ? factsFor({ ui: false, stale: ['old UNKNOWN'] }) : factsFor({ ui: collectCount > 2 }); },
     plannerFn: (facts) => ({ ...facts, finalVerdict: facts.observedServices['stephanos-ui'].ready ? 'ready' : 'partial-ui-missing' }),
     repairFn: async ({ stdout }) => { calls.push('repair'); stdout.write(JSON.stringify({ ready: true })); return 0; },
@@ -668,11 +1676,11 @@ test('served runtime exact-head proof accepts full or unambiguous short head in 
 });
 
 test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommit after guarded repair', async () => {
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
     runtimeProofFn: async ({ currentHead }) => evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: '0f0aa30d', runtimeMarker: 'antifriction-live-v3::0f0aa30d::fixture' }, dist: { ok: true, statusCode: 200 } }),
     repairFn: async ({ stdout }) => { stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
@@ -686,20 +1694,25 @@ test('supervisor blocks with served-runtime-stale when 4173 reports old gitCommi
 test('stale served runtime triggers guarded repair and final ready only after exact-head proof', async () => {
   let proofCount = 0;
   let repairCount = 0;
+  const expectedHead = '51600ceb1234567890abcdef1234567890abcdef';
+  const proofHeads = [];
+  const repairHeads = [];
   const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => ({ publicationState: 'source-current' }),
+    housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth({ head: expectedHead, originHead: expectedHead }),
     collectFactsFn: async () => factsFor(),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    currentHeadFn: () => '51600ceb1234567890abcdef1234567890abcdef',
-    runtimeProofFn: async ({ currentHead }) => {
+    runtimeProofFn: async ({ currentHead, expectedHead: receivedHead }) => {
       proofCount += 1;
+      proofHeads.push([currentHead, receivedHead]);
       const commit = proofCount > 1 ? '51600ceb' : '0f0aa30d';
       return evaluateServedRuntimeExactHeadProof({ currentHead, health: { ok: true, gitCommit: commit, runtimeMarker: `antifriction-live-v3::${commit}::fixture` }, dist: { ok: true, statusCode: 200 } });
     },
-    repairFn: async ({ stdout }) => { repairCount += 1; stdout.write(JSON.stringify({ ready: true })); return 0; },
+    repairFn: async ({ expectedHead: receivedHead, stdout }) => { repairCount += 1; repairHeads.push(receivedHead); stdout.write(JSON.stringify({ ready: true })); return 0; },
     stdout: { write() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(repairCount, 1);
+  assert.deepEqual(repairHeads, [expectedHead]);
+  assert.deepEqual(proofHeads, [[expectedHead, expectedHead], [expectedHead, expectedHead]]);
   assert.equal(result.status.services.stephanosUi4173.servedRuntimeProof.ready, true);
 });

@@ -1,11 +1,16 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
   SHARED_WORKSPACE_DIRECTORIES,
   createSharedWorkspaceMessage,
 } from './sharedAgentWorkspace.mjs';
+import {
+  ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1,
+  validateEngineeringIncidentMethodRecordInputV1,
+} from './engineeringIncidentMethodMemoryV1.mjs';
 
 export const SHARED_WORKSPACE_RECORD_SCHEMA_VERSION = 'shared-agent-workspace-record.v1';
 export const SHARED_WORKSPACE_RECORD_KINDS = Object.freeze({
@@ -14,6 +19,7 @@ export const SHARED_WORKSPACE_RECORD_KINDS = Object.freeze({
   PROOF: 'stephanos.shared_workspace.proof',
   CAPABILITY: 'stephanos.shared_workspace.agent_capability',
   EVENT: 'stephanos.shared_workspace.event',
+  LESSON: 'stephanos.shared_workspace.lesson',
   MESSAGE: 'stephanos.shared_workspace.record.message',
   RECEIPT: 'stephanos.shared_workspace.record.receipt',
   HANDOFF: 'stephanos.shared_workspace.record.handoff',
@@ -33,6 +39,8 @@ export const OPENCLAW_DEFAULT_CAPABILITY = Object.freeze({
   arbitraryShellAllowed: false,
 });
 export const DEFAULT_STALE_AFTER_MS = 60 * 60 * 1000;
+export const DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([20, 50, 100, 200, 400]);
+export const ATOMIC_RENAME_RETRY_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
 
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const MAX_RECORD_BODY_BYTES = 16 * 1024;
@@ -55,21 +63,63 @@ function isWithin(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
-function assertNoSecrets(value, path = []) {
-  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)]));
+function isBoundedCoreLaneTelemetry(record, key, value) {
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    || record?.participantId !== 'stephanos-core') return false;
+  const coreStatus = record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record.statusId === 'stephanos-core-daemon-current';
+  const coreProof = record.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
+    && record.proofId === 'stephanos-core-daemon-current';
+  if (!coreStatus && !coreProof) return false;
+  if (key === 'logicalLaneTruth') return value === 'CURRENT' || value === 'UNKNOWN';
+  if (key === 'logicalLaneDeficitToTarget' && value === null) return true;
+  if (![
+    'logicalControllerCount',
+    'logicalActiveLaneCount',
+    'logicalTrackingLaneCount',
+    'logicalParkedLaneCount',
+    'logicalSelectedForAdmissionCount',
+    'logicalLaneDeficitToTarget',
+  ].includes(key)) return false;
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isAllowedBuildTruthTelemetryField(root, path, key) {
+  return key === 'logicalLaneId'
+    && root?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && root?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && root?.statusId === 'stephanos-build-truth-current'
+    && root?.stephanosBuildTruth?.schemaVersion === 'stephanos.sovereign-build-truth.v1'
+    && path.length === 3
+    && path[0] === 'stephanosBuildTruth'
+    && path[1] === 'goals'
+    && /^\d+$/.test(path[2]);
+}
+
+function assertNoSecrets(value, path = [], root = value) {
+  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)], root));
   if (!value || typeof value !== 'object') {
     return typeof value === 'string' && FORBIDDEN_VALUE.test(value) ? [`forbidden-secret-value:${path.join('.') || 'value'}`] : [];
   }
   const errors = [];
   for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_KEY.test(key)) errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
-    errors.push(...assertNoSecrets(child, [...path, key]));
+    if (FORBIDDEN_KEY.test(key)
+      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))
+      && !isAllowedBuildTruthTelemetryField(root, path, key)) {
+      errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    }
+    errors.push(...assertNoSecrets(child, [...path, key], root));
   }
   return errors;
 }
 
 function safeId(value) {
   return SAFE_SEGMENT.test(text(value)) ? text(value) : '';
+}
+
+export function isSharedWorkspaceParticipantId(value) {
+  const normalized = text(value);
+  return Boolean(normalized && safeId(normalized) === normalized);
 }
 
 function bytes(value) {
@@ -81,7 +131,7 @@ function list(value) {
 }
 
 function firstRecordId(record = {}) {
-  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId;
+  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId || record.lessonId;
 }
 
 function hasRequiredIssueOrPr(record = {}) {
@@ -127,6 +177,49 @@ export function resolveSharedWorkspacePath(input = {}) {
   return { ok: true, reason: 'WORKSPACE_PATH_RESOLVED', root, path: target };
 }
 
+export async function validateSharedWorkspaceWriteAncestors(resolved) {
+  if (!resolved?.ok || !resolved.root || !resolved.path) {
+    return { ok: false, reason: 'WORKSPACE_PATH_UNRESOLVED' };
+  }
+  const root = resolve(resolved.root);
+  const targetParent = dirname(resolve(resolved.path));
+  let rootInfo;
+  try {
+    rootInfo = await lstat(root);
+  } catch (error) {
+    return { ok: false, reason: error?.code === 'ENOENT' ? 'WORKSPACE_ROOT_MISSING' : 'WORKSPACE_ROOT_STAT_FAILED' };
+  }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    return { ok: false, reason: 'WORKSPACE_ROOT_LINKED_OR_NOT_DIRECTORY' };
+  }
+
+  const rel = relative(root, targetParent);
+  const parts = rel === '' ? [] : rel.split(/[\\/]+/).filter(Boolean);
+  let cursor = root;
+  for (const part of parts) {
+    cursor = resolve(cursor, part);
+    let info;
+    try {
+      info = await lstat(cursor);
+    } catch (error) {
+      return { ok: false, reason: error?.code === 'ENOENT' ? 'WORKSPACE_ANCESTOR_MISSING' : 'WORKSPACE_ANCESTOR_STAT_FAILED', path: cursor };
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      return { ok: false, reason: 'WORKSPACE_ANCESTOR_LINKED_OR_NOT_DIRECTORY', path: cursor };
+    }
+  }
+
+  try {
+    const [realRoot, realParent] = await Promise.all([realpath(root), realpath(targetParent)]);
+    if (!isWithin(realRoot, realParent)) {
+      return { ok: false, reason: 'WORKSPACE_ANCESTOR_ESCAPES_ROOT', path: targetParent };
+    }
+  } catch {
+    return { ok: false, reason: 'WORKSPACE_ANCESTOR_REALPATH_FAILED', path: targetParent };
+  }
+  return { ok: true, reason: 'WORKSPACE_ANCESTORS_SAFE' };
+}
+
 export async function ensureSharedWorkspaceLayout(input = {}) {
   const resolved = resolveSharedWorkspacePath(input);
   if (!resolved.ok) return { ok: false, reason: resolved.reason, created: [] };
@@ -157,6 +250,26 @@ export function createAgentCapabilityRecord(input = {}) {
   };
 }
 
+export function createSharedWorkspaceLessonRecord(input = {}) {
+  const engineeringRecord = input.engineeringRecord && typeof input.engineeringRecord === 'object'
+    ? input.engineeringRecord
+    : null;
+  return {
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.LESSON,
+    lessonId: safeId(input.lessonId) || 'engineering-lesson',
+    participantId: safeId(input.participantId) || 'stephanos',
+    timestampUtc: text(input.timestampUtc, 'pending'),
+    summary: text(input.summary),
+    reflection: text(input.reflection),
+    sourceEventIds: list(input.sourceEventIds),
+    engineeringRecord,
+    readOnly: true,
+    mergeAuthority: false,
+    runtimeMutationAllowed: false,
+  };
+}
+
 export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   const errors = assertNoSecrets(record);
   if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION) errors.push('invalid-schema-version');
@@ -175,11 +288,96 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
     if (record.arbitraryShellAllowed === true) errors.push('arbitrary-shell-forbidden');
     if (record.agentId === 'openclaw' && (record.mode !== 'design_only' || record.boundedWritePath !== '/courier-open' || record.trustedBuilder !== false)) errors.push('openclaw-default-capability-violated');
   }
+  if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON) {
+    if (!safeId(record.participantId)) errors.push('invalid-participant-id');
+    if (!text(record.summary)) errors.push('lesson-summary-required');
+    if (record.mergeAuthority === true) errors.push('lesson-merge-authority-forbidden');
+    if (record.runtimeMutationAllowed === true) errors.push('lesson-runtime-mutation-forbidden');
+    if (!record.engineeringRecord || typeof record.engineeringRecord !== 'object' || Array.isArray(record.engineeringRecord)) {
+      errors.push('lesson-engineering-record-required');
+    } else if (record.engineeringRecord.schemaVersion !== ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1) {
+      errors.push('lesson-engineering-record-schema-invalid');
+    } else {
+      const engineeringValidation = validateEngineeringIncidentMethodRecordInputV1(record.engineeringRecord);
+      if (!engineeringValidation.valid) {
+        errors.push(...engineeringValidation.blockers.map((blocker) => `lesson-engineering-record:${blocker}`));
+      } else if (engineeringValidation.record?.recordId !== record.engineeringRecord.recordId) {
+        errors.push('lesson-engineering-record-id-mismatch');
+      }
+    }
+  }
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const recordMs = timestampMs(record?.timestampUtc);
-  const stale = Number.isFinite(recordMs) && nowMs - recordMs > staleAfterMs;
+  const stale = record?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON
+    ? false
+    : Number.isFinite(recordMs) && nowMs - recordMs > staleAfterMs;
   return { valid: errors.length === 0, errors, stale, classification: stale ? 'STALE_RECORD' : (errors.length ? 'INVALID_RECORD' : 'CURRENT_RECORD'), refusalReason: errors[0] || '', finalVerdict: errors.length ? 'SHARED_WORKSPACE_RECORD_BLOCKED' : 'SHARED_WORKSPACE_RECORD_PASS' };
+}
+
+function waitForAtomicRenameRetry(delayMs) {
+  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
+}
+
+function isTransientAtomicRenameError(error) {
+  return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
+}
+
+async function replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options = {}) {
+  const openFn = typeof options.openFn === 'function' ? options.openFn : open;
+  const lstatFn = typeof options.lstatFn === 'function' ? options.lstatFn : lstat;
+  const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const unlinkFn = typeof options.unlinkFn === 'function' ? options.unlinkFn : unlink;
+  const observed = await lstatFn(targetPath);
+  const safeFile = (info) => info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+  const sameFile = (info) => safeFile(info) && info.dev === observed.dev && info.ino === observed.ino;
+  if (!safeFile(observed)) throw new Error('WORKSPACE_PINNED_TARGET_UNSAFE');
+  const payload = await readFileFn(sourcePath);
+  let handle;
+  try {
+    handle = await openFn(targetPath, 'r+');
+    if (!sameFile(await handle.stat()) || !sameFile(await lstatFn(targetPath))) {
+      throw new Error('WORKSPACE_PINNED_TARGET_CHANGED');
+    }
+    await handle.writeFile(payload);
+    await handle.truncate(payload.length);
+    await handle.sync();
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  await unlinkFn(sourcePath);
+}
+
+export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
+  const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
+  const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
+  const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
+    ? options.atomicRenameRetryDelaysMs
+    : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  const platform = String(options.platform || process.platform).toLowerCase();
+  let attempts = 0;
+  while (true) {
+    attempts += 1;
+    try {
+      await renameFn(sourcePath, targetPath);
+      return attempts;
+    } catch (error) {
+      const transient = isTransientAtomicRenameError(error);
+      const delayMs = Number(retryDelaysMs[attempts - 1]);
+      if (transient && Number.isFinite(delayMs) && delayMs >= 0) {
+        await sleepFn(delayMs);
+        continue;
+      }
+      const pinnedStatus = basename(dirname(targetPath)) === 'status'
+        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+      if (transient && platform === 'win32' && pinnedStatus) {
+        await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
+        return attempts;
+      }
+      if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+      throw error;
+    }
+  }
 }
 
 export async function writeAtomicJson(rootInput, segments, record, options = {}) {
@@ -188,10 +386,22 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const resolved = resolveSharedWorkspacePath({ root: rootInput, repoRoot: options.repoRoot, segments });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   await mkdir(dirname(resolved.path), { recursive: true });
+  const initialAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!initialAncestors.ok) return { ok: false, reason: initialAncestors.reason, path: initialAncestors.path || resolved.path };
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
-  await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
-  await rename(tempPath, resolved.path);
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600, ...(options.durable ? { flush: true } : {}) });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlink(tempPath); } catch {}
+      return { ok: false, reason: publicationAncestors.reason, path: publicationAncestors.path || resolved.path };
+    }
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
+  } catch (error) {
+    try { await unlink(tempPath); } catch {}
+    throw error;
+  }
   return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: resolved.path, bytes: Buffer.byteLength(payload) };
 }
 
@@ -201,6 +411,8 @@ export async function appendWorkspaceJsonl(rootInput, segments, record, options 
   const resolved = resolveSharedWorkspacePath({ root: rootInput, repoRoot: options.repoRoot, segments });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   await mkdir(dirname(resolved.path), { recursive: true });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return { ok: false, reason: ancestors.reason, path: ancestors.path || resolved.path };
   const payload = `${JSON.stringify(record)}\n`;
   await writeFile(resolved.path, payload, { flag: 'a', mode: 0o600 });
   return { ok: true, reason: 'JSONL_EVENT_APPENDED', path: resolved.path, bytes: Buffer.byteLength(payload) };
@@ -223,6 +435,35 @@ async function latestJson(root, directory, options) {
   return records[0] || null;
 }
 
+export async function listLatestSharedWorkspaceParticipantStatuses(rootInput, options = {}) {
+  const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
+  if (!layout.ok) return { ok: false, reason: layout.reason, records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_BLOCKED' };
+  const resolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status'] });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason, records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_BLOCKED' };
+  let names = [];
+  try { names = await readdir(resolved.path); } catch { return { ok: true, reason: 'STATUS_DIRECTORY_EMPTY', records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY' }; }
+  const latestByStatusId = new Map();
+  for (const name of names.filter((item) => item.endsWith('.json') && SAFE_SEGMENT.test(item.slice(0, -5)))) {
+    try {
+      const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
+      if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS) continue;
+      const validation = validateSharedWorkspaceRecord(record, options);
+      if (!validation.valid) continue;
+      const participantStatusId = safeId(record.participantStatusId);
+      const participantId = safeId(record.participantId);
+      if (!participantStatusId || !participantId) continue;
+      const observedMs = timestampMs(record.timestampUtc) || 0;
+      const existing = latestByStatusId.get(participantStatusId);
+      if (!existing || observedMs > existing.observedMs) latestByStatusId.set(participantStatusId, { record, observedMs });
+    } catch {}
+  }
+  const records = [...latestByStatusId.values()]
+    .sort((left, right) => text(left.record.participantId).localeCompare(text(right.record.participantId))
+      || text(left.record.participantStatusId).localeCompare(text(right.record.participantStatusId)))
+    .map((entry) => entry.record);
+  return { ok: true, reason: 'PARTICIPANT_STATUS_RECORDS_LISTED', records: Object.freeze(records), finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY' };
+}
+
 export async function aggregateLatestSharedWorkspaceStatus(rootInput, options = {}) {
   const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
   if (!layout.ok) return { ok: false, reason: layout.reason, finalVerdict: 'SHARED_WORKSPACE_AGGREGATION_BLOCKED' };
@@ -237,16 +478,47 @@ export async function aggregateLatestSharedWorkspaceStatus(rootInput, options = 
 }
 
 export function createSharedWorkspaceStatusRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
+  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: safeId(input.statusId) || 'status-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), relatedIssue: text(input.relatedIssue, ''), relatedPr: text(input.relatedPr, ''), status: text(input.status, 'pending'), summary: text(input.summary, 'No summary supplied.'), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceGoalRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL, goalId: safeId(input.goalId) || 'goal-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), title: text(input.title, 'Untitled goal'), status: text(input.status, 'open') };
+  const directOperatorIntentAuthority = input.directOperatorIntentAuthority && typeof input.directOperatorIntentAuthority === 'object' && !Array.isArray(input.directOperatorIntentAuthority)
+    ? structuredClone(input.directOperatorIntentAuthority)
+    : null;
+  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL, goalId: safeId(input.goalId) || 'goal-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), title: text(input.title, 'Untitled goal'), status: text(input.status, 'open'), ...(directOperatorIntentAuthority ? { directOperatorIntentAuthority } : {}) };
 }
 export function createSharedWorkspaceProofRecord(input = {}) {
   return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), correlationId: safeId(input.correlationId), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceEventRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT, eventId: safeId(input.eventId) || 'event-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), eventKind: text(input.eventKind, 'status'), summary: text(input.summary, 'No event summary supplied.') };
+  const eventId = safeId(input.eventId) || 'event-current';
+  const participantId = safeId(input.participantId || input.agentId) || 'codex';
+  const timestampUtc = text(input.timestampUtc, 'pending');
+  const closedLoopLearning = input.capabilityFailure && typeof input.capabilityFailure === 'object' && !Array.isArray(input.capabilityFailure)
+    ? buildClosedLoopLearningPlanV1({
+      ...input.capabilityFailure,
+      eventId,
+      attemptedBy: input.capabilityFailure.attemptedBy || participantId,
+      observedAtUtc: input.capabilityFailure.observedAtUtc || timestampUtc,
+      taskId: input.capabilityFailure.taskId || eventId,
+    })
+    : null;
+  const legacyLearningCandidate = input.learningCandidate && typeof input.learningCandidate === 'object'
+    ? input.learningCandidate
+    : null;
+  const learningCandidate = closedLoopLearning
+    ? closedLoopLearning.learningCandidate
+    : legacyLearningCandidate;
+  return {
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT,
+    eventId,
+    participantId,
+    timestampUtc,
+    eventKind: text(input.eventKind, 'status'),
+    summary: text(input.summary, 'No event summary supplied.'),
+    ...(closedLoopLearning ? { closedLoopLearning } : {}),
+    ...(learningCandidate ? { learningCandidate } : {}),
+  };
 }
 export { createSharedWorkspaceMessage };
 

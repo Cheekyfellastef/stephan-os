@@ -7,6 +7,7 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
+import { projectBattleBridgePublicationEvidence } from '../shared/agents/sharedWorkspaceOperationalFactsV1.mjs';
 
 export const LAUNCHER_READINESS_LIVE_FACTS_SCHEMA = 'stephanos.launcher-readiness-live-facts.v1';
 
@@ -34,11 +35,15 @@ function normalizeRepoRelativePath(value) {
   return value.replace(/\\/g, '/').replace(/^\/+/, '');
 }
 
-function parseGitPorcelain(output) {
-  return output
+function gitPorcelainLines(output) {
+  return String(output || '')
     .split(/\r?\n/)
     .map((line) => line.trimEnd())
-    .filter(Boolean)
+    .filter(Boolean);
+}
+
+function parseGitPorcelain(output) {
+  return gitPorcelainLines(output)
     .map((line) => {
       const rawPath = line.slice(3).trim();
       const renamedPath = rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() : rawPath;
@@ -47,12 +52,20 @@ function parseGitPorcelain(output) {
     .filter(Boolean);
 }
 
-function collectGitDirtyPaths(repoRoot, execFile = execFileSync) {
+function collectGitSourceFacts(repoRoot, execFile = execFileSync) {
   try {
     const output = execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: repoRoot, encoding: 'utf8' });
-    return parseGitPorcelain(output);
+    return {
+      // Preserve exact two-character porcelain status so downstream policy can
+      // distinguish runtime-owned unstaged state from staged/deleted source.
+      statusLines: gitPorcelainLines(output),
+      dirtyPaths: parseGitPorcelain(output),
+    };
   } catch (error) {
-    return [`source-dirt-unknown: git status failed (${error.message})`];
+    return {
+      statusLines: [],
+      dirtyPaths: [`source-dirt-unknown: git status failed (${error.message})`],
+    };
   }
 }
 
@@ -79,14 +92,30 @@ async function collectServiceFacts({ serviceProbe = probeTcpService } = {}) {
 }
 
 function readWorkspaceRecord(filePath) {
-  const stat = fs.statSync(filePath);
-  let parsed = null;
-  if (filePath.endsWith('.json')) {
-    try { parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')); } catch {}
-  }
-  return { path: filePath, mtimeMs: stat.mtimeMs, length: stat.size, parsed };
+  let stat = null, parsed = null, safeFile = false, fd = null;
+  const safe = row => row.isFile() && !row.isSymbolicLink() && row.nlink === 1 && row.size <= 1_048_576;
+  const same = (a, b) => ['dev', 'ino', 'size', 'mtimeMs', 'ctimeMs'].every(key => a[key] === b[key]);
+  try {
+    stat = fs.lstatSync(filePath);
+    if (!safe(stat) || !filePath.endsWith('.json')) throw new Error('PUBLICATION_FILE_UNSAFE');
+    fd = fs.openSync(filePath, 'r');
+    const before = fs.fstatSync(fd);
+    if (!safe(before) || !same(stat, before)) throw new Error('PUBLICATION_FILE_CHANGED');
+    const bytes = Buffer.alloc(before.size);
+    let count = 0;
+    while (count < bytes.length) {
+      const read = fs.readSync(fd, bytes, count, bytes.length - count, count);
+      if (!read) throw new Error('PUBLICATION_FILE_INCOMPLETE');
+      count += read;
+    }
+    const after = fs.fstatSync(fd), pathAfter = fs.lstatSync(filePath);
+    if (!safe(after) || !safe(pathAfter) || !same(before, after) || !same(after, pathAfter)) throw new Error('PUBLICATION_FILE_CHANGED');
+    safeFile = true;
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch { /* Unreadable, malformed or changing evidence remains unproven. */ }
+  finally { if (fd !== null) fs.closeSync(fd); }
+  return { path: filePath, mtimeMs: stat?.mtimeMs ?? NaN, length: stat?.size ?? 0, parsed, safeFile };
 }
-
 
 function isWindowsPlatform(platform = process.platform) {
   return platform === 'win32';
@@ -124,7 +153,6 @@ function recordStatus(record) {
   return typeof status === 'string' ? status : null;
 }
 
-
 function workspaceEvidencePath(repoRoot, absolutePath) {
   const relativePath = path.relative(repoRoot, absolutePath);
   if (relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)) return normalizeRepoRelativePath(relativePath);
@@ -137,10 +165,19 @@ const BATTLE_BRIDGE_CURRENT_RECORD_PATHS = Object.freeze([
   path.join('events', 'battle-bridge-current.json'),
 ]);
 
-function currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs) {
+function currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs, canonicalChannel = null) {
   const ageMs = Math.max(0, now - record.mtimeMs);
   const ageSeconds = Math.floor(ageMs / 1000);
   const status = recordStatus(record);
+  const kind = { status: 'stephanos.shared_workspace.status', proof: 'stephanos.shared_workspace.proof',
+    events: 'stephanos.shared_workspace.event' }[canonicalChannel];
+  const publication = projectBattleBridgePublicationEvidence(record.parsed, { nowMs: now,
+    maxAgeMs: maxRecordAgeMs, expectedKind: kind, expectedId: canonicalChannel ? 'battle-bridge-current' : null });
+  const fileClockValid = Number.isFinite(record.mtimeMs) && Math.floor(record.mtimeMs) <= now;
+  const publicationBlocker = !record.safeFile ? 'PUBLICATION_FILE_UNSAFE'
+    : !fileClockValid ? 'PUBLICATION_FILE_FROM_FUTURE'
+      : ageMs > maxRecordAgeMs ? 'PUBLICATION_FILE_STALE'
+        : !canonicalChannel && status === 'UNKNOWN' ? 'LEGACY_PUBLICATION_UNKNOWN' : publication.reason;
   return {
     path: workspaceEvidencePath(repoRoot, absolutePath),
     mtimeMs: record.mtimeMs,
@@ -149,10 +186,15 @@ function currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAge
     status,
     stale: ageMs > maxRecordAgeMs,
     unknownStatus: status === 'UNKNOWN',
+    publication,
+    publicationBlocker,
+    publicationReady: record.safeFile && fileClockValid && publication.fresh && ageMs <= maxRecordAgeMs
+      && (canonicalChannel !== null || status !== 'UNKNOWN'),
   };
 }
 
-function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DEFAULT_MAX_RECORD_AGE_MS, workspaceCurrentDir = null, sharedWorkspace = null, env = process.env, platform = process.platform } = {}) {
+function collectWorkspaceFacts(repoRoot, { now = null, maxRecordAgeMs = DEFAULT_MAX_RECORD_AGE_MS, workspaceCurrentDir = null, sharedWorkspace = null, env = process.env, platform = process.platform } = {}) {
+  const observeNow = () => now ?? Date.now();
   const resolvedWorkspace = workspaceCurrentDir
     ? { root: path.resolve(repoRoot, workspaceCurrentDir, '..'), source: 'legacy-current-dir-option', fallback: false, currentDir: path.resolve(repoRoot, workspaceCurrentDir) }
     : resolveSharedWorkspaceRoot(repoRoot, { sharedWorkspace, env, platform });
@@ -172,7 +214,7 @@ function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DE
       checkedAbsolutePaths.push(absolutePath);
       checkedPaths.push(workspaceEvidencePath(repoRoot, absolutePath));
       const record = readWorkspaceRecord(absolutePath);
-      foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
+      foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, observeNow(), maxRecordAgeMs));
     }
   } else {
     missingPaths.push(`${workspaceEvidencePath(repoRoot, currentDir)} missing`);
@@ -184,15 +226,18 @@ function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DE
       continue;
     }
     const record = readWorkspaceRecord(absolutePath);
-    foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, now, maxRecordAgeMs));
+    foundRecords.push(currentRecordEvidence(repoRoot, absolutePath, record, observeNow(), maxRecordAgeMs,
+      path.basename(path.dirname(absolutePath))));
   }
 
   for (const record of foundRecords) {
-    if (record.stale) staleRecords.push(`${record.path} stale ageSeconds=${record.ageSeconds}`);
-    if (record.unknownStatus) staleRecords.push(`${record.path} UNKNOWN ageSeconds=${record.ageSeconds}`);
+    if (!record.publicationReady) staleRecords.push(`${record.path} ${record.unknownStatus ? 'UNKNOWN ' : ''}${record.publicationBlocker} ${record.stale ? 'stale ' : ''}ageSeconds=${record.ageSeconds}`);
   }
 
   if (!foundRecords.length) staleRecords.push(...missingPaths);
+  else if (!foundRecords.some(record => record.publicationReady && record.publication.stateRecord)) {
+    staleRecords.push('Shared workspace current status/proof publication missing or invalid');
+  }
 
   const evidence = {
     currentDir: workspaceEvidencePath(repoRoot, currentDir),
@@ -203,6 +248,8 @@ function collectWorkspaceFacts(repoRoot, { now = Date.now(), maxRecordAgeMs = DE
     foundRecords,
     missingPaths,
     records: foundRecords,
+    publicationOnly: true,
+    runtimeUnknownRecords: foundRecords.filter(record => record.unknownStatus).map(record => record.path),
   };
   return { ready: foundRecords.length > 0 && staleRecords.length === 0, evidence, staleRecords };
 }
@@ -213,11 +260,12 @@ export async function collectLauncherReadinessLiveFacts(options = {}) {
   const repoRoot = path.resolve(options.repoRoot || process.cwd());
   const services = await collectServiceFacts(options);
   const workspace = collectWorkspaceFacts(repoRoot, options);
+  const sourceFacts = collectGitSourceFacts(repoRoot, options.execFile);
   services['shared-workspace'] = { ready: workspace.ready, evidence: workspace.evidence };
   return {
     schema: LAUNCHER_READINESS_LIVE_FACTS_SCHEMA,
     observedFacts: { services, staleWorkspaceRecords: workspace.staleRecords, workspace: { staleRecords: workspace.staleRecords } },
-    sourceFacts: { dirtyPaths: collectGitDirtyPaths(repoRoot, options.execFile) },
+    sourceFacts,
     authority: LIVE_COLLECTOR_AUTHORITY,
   };
 }

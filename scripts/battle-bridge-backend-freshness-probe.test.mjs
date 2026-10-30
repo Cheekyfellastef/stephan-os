@@ -22,7 +22,9 @@ function response(status, body, { location = '' } = {}) {
 function canonicalFetch(overrides = {}) {
   return async (url, options) => {
     assert.equal(options.redirect, 'manual');
-    const route = new URL(url).pathname;
+    const parsedUrl = new URL(url);
+    const route = parsedUrl.pathname;
+    if (route === '/api/mission-operations') assert.equal(parsedUrl.searchParams.get('identityOnly'), '1');
     if (overrides[route]) return overrides[route];
     return response(200, route === '/api/health'
       ? { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: identity }
@@ -80,15 +82,16 @@ test('Windows backend recovery authority pins every executable, normalized liste
   assert.match(starter, /StringComparison\]::OrdinalIgnoreCase/);
   assert.match(starter, /function Test-CanonicalBackendCommandLine/);
   assert.match(starter, /-replace '\\s\+', ' '/);
-  assert.match(starter, /'node stephanos-server\/server\.js'/);
-  assert.match(starter, /'node\.exe stephanos-server\/server\.js'/);
+  assert.match(starter, /STEPHANOS_BACKEND_BOOTSTRAP_BASE64/);
+  assert.match(starter, /Get-ExactHeadBackendBootstrapBase64/);
+  assert.match(starter, /--input-type=module', '--eval'/);
   assert.match(starter, /ProcessStartTimeUtc/);
   assert.match(starter, /Publish-VerifiedBackendRuntimeReceipt/);
   assert.match(starter, /\$existingListener[\s\S]*if \(\$existingListener\)[\s\S]*Publish-VerifiedBackendRuntimeReceipt[\s\S]*exit 0/);
   assert.match(starter, /confirmedListener\.ProcessId -ne \$Listener\.ProcessId/);
   assert.match(starter, /confirmedListener\.ProcessStartTimeUtc -ne \$Listener\.ProcessStartTimeUtc/);
   assert.match(starter, /& \$canonicalNpm run --silent openclaw:stub:ensure/);
-  assert.match(starter, /Start-Process -FilePath \$canonicalNpm/);
+  assert.match(starter, /Start-Process -FilePath \$canonicalNode/);
   assert.doesNotMatch(starter, /Get-Command (?:git|npm)/i);
   assert.doesNotMatch(starter, /(^|\r?\n)\s*npm(?:\.cmd)?\s+run/im);
   assert.doesNotMatch(starter, /CommandLine -match|Invoke-Expression|\.Contains\(['"]stephanos-server\/server\.js['"]\)/i);

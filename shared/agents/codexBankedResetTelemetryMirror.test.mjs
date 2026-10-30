@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildCodexBankedResetTelemetryIssueBody,
+  buildCodexBankedResetTelemetryIssueBodyV2,
   createCodexBankedResetTelemetryRecord,
   extractTrustedCodexResetReceipt,
   projectCodexResetExecutionReceipt,
@@ -23,7 +23,7 @@ function receipt(operation, result, overrides = {}) {
     requestId: overrides.requestId || `request-${operation.toLowerCase().replace(/_/g, '-')}`,
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: overrides.issueNumber ?? 3149,
     branch: 'main',
     state: overrides.state || (result.ok === false ? 'BLOCKED' : 'DONE'),
     acceptedAt: overrides.acceptedAt || '2026-07-21T09:00:00.000Z',
@@ -43,6 +43,11 @@ function receipt(operation, result, overrides = {}) {
 test('rejects untrusted receipt authors', () => {
   const raw = receipt('READ_CODEX_BANKED_RESET_STATUS', { ok: true });
   assert.equal(extractTrustedCodexResetReceipt(comment(raw, { login: 'attacker' }), { ownerLogin }), null);
+});
+
+test('rejects receipts from the retired mailbox issue', () => {
+  const raw = receipt('READ_CODEX_BANKED_RESET_STATUS', { ok: true }, { issueNumber: 1507 });
+  assert.equal(extractTrustedCodexResetReceipt(comment(raw), { ownerLogin }), null);
 });
 
 test('projects a read-only status receipt with zero press telemetry and labeled navigation evidence', () => {
@@ -112,7 +117,7 @@ test('projects bounded status error evidence and re-filters unsafe historical re
     }, { requestId: `reset-status-unsafe-error-00${index + 1}` });
     const unsafeRecord = createCodexBankedResetTelemetryRecord([comment(unsafeStatus)], { ownerLogin });
     assert.equal(unsafeRecord.latestStatus.error, '');
-    assert.equal(buildCodexBankedResetTelemetryIssueBody(unsafeRecord).includes(diagnostic), false);
+    assert.equal(buildCodexBankedResetTelemetryIssueBodyV2(unsafeRecord).includes(diagnostic), false);
   }
 });
 
@@ -216,7 +221,7 @@ test('confirms exactly one successful press with changed before and after proof'
   assert.equal(record.latestExecution.matchedUsageLabel, '1 reset available');
   assert.equal(record.latestExecution.usageControlResolution, 'labeled-ancestor');
   assert.equal(record.latestExecution.meterAfter, 'Codex weekly remaining 100%');
-  assert.match(buildCodexBankedResetTelemetryIssueBody(record), /"status": "CONFIRMED"/);
+  assert.match(buildCodexBankedResetTelemetryIssueBodyV2(record), /"status": "CONFIRMED"/);
 });
 
 test('latest receipt wins and unsafe telemetry text is suppressed', () => {

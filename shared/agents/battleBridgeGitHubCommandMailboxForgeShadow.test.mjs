@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   buildBattleBridgeGitHubCommandReceipt,
@@ -24,7 +25,7 @@ function command(overrides = {}) {
     requestId: 'forge-shadow-m2-20260806-001',
     operation: FORGE_SHADOW_BATTLE_BRIDGE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

@@ -7,7 +7,13 @@ import {
   analyzeIndependentSecurityReviewV2,
   validatePersonalRepositoryProtectedWorkflowSource,
 } from './operatorMergeApprovalBoundaryV2.mjs';
-import { isApprovalBoundaryBootstrapAnalysis } from './operatorMergeApprovalGateV2.mjs';
+import {
+  analyzeIndependentSecurityReviewWithFinalSourcePolicyV1,
+} from './operatorMergeApprovalGateV2IndependentReviewFinalSourceV1.mjs';
+import {
+  analyzeIndependentSecurityReview,
+  isApprovalBoundaryBootstrapAnalysis,
+} from './operatorMergeApprovalGateV2.mjs';
 import { createProviderNeutralReviewReceipt } from './providerNeutralReviewV1.mjs';
 import {
   QUALIFIED_SPECIALIST_REVIEW_MARKER,
@@ -71,6 +77,7 @@ test('classifies every live v2 approval-boundary path', () => {
     '.github/workflows/operator-merge-approval-gate.yml',
     '.github/workflows/independent-merge-security-review.yml',
     '.github/workflows/build-stephanos-ui.yml',
+    '.github/workflows/deploy-stephanos-pages.yml',
     '.github/workflows/pr-clean.yml',
     '.github/workflows/exact-head-review-dispatch.yml',
     '.github/workflows/battle-bridge-publisher-proof.yml',
@@ -85,8 +92,13 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
+    'shared/agents/protectedMergeReadOnlyPriorFailureV1.mjs',
+    'shared/agents/protectedWorkflowDispatchMailboxV1.mjs',
+    'scripts/dispatch-protected-merge-from-mailbox.mjs',
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
     'shared/agents/providerNeutralReviewV1.mjs',
     'shared/agents/qualifiedSpecialistReviewV1.mjs',
@@ -333,7 +345,7 @@ test('fails closed when any live v2 boundary attempts to review itself', () => {
 test('valid final exact-head workflow source prevents hunk-only false trust findings', () => {
   const path = '.github/workflows/independent-merge-security-review.yml';
   const finalContent = workflowContent(path).replace('timeout-minutes: 15', 'timeout-minutes: 16');
-  const result = analyzeIndependentSecurityReviewV2({
+  const result = analyzeIndependentSecurityReviewWithFinalSourcePolicyV1({
     changedFiles: [{ filename: path, status: 'modified' }],
     diff: diffFor(path, ['timeout-minutes: 16']),
     repository,
@@ -422,7 +434,12 @@ test('protected workflow evidence is bound to exact ref, size, blob and least-au
 
 test('failed independent reviews still publish immutable findings evidence', () => {
   const workflow = workflowContent('.github/workflows/independent-merge-security-review.yml');
-  assert.match(workflow, /Upload the exact-run immutable independent review result[\s\S]*?if: \$\{\{ always\(\) \}\}[\s\S]*?actions\/upload-artifact@v4/);
+  // Findings are still uploaded after a real review failure. An exhausted
+  // installation budget is different: no review ran and no API follow-up is safe.
+  assert.ok(workflow.includes("if: ${{ always() && steps.github_budget.outcome == 'success' }}"));
+  assert.ok(workflow.includes('name: Upload the exact-run immutable independent review result'));
+  assert.ok(workflow.includes('name: Surface terminal exact-head findings or pre-artifact failure'));
+  assert.ok(workflow.includes('actions/upload-artifact@v4'));
   const reviewer = readFileSync(new URL('../../scripts/independent-merge-security-review-v2.mjs', import.meta.url), 'utf8');
   const findingsBranch = reviewer.slice(
     reviewer.indexOf("if (analysis.finalVerdict !== 'INDEPENDENT_SECURITY_REVIEW_CLEAN'"),
@@ -446,6 +463,53 @@ test('protects the live v2 policy engine and wrapper from clean self-attestation
       item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
       && item.path === path
     )));
+  }
+});
+
+test('Pages deployment retains qualified review when only its relocated workflow changes', () => {
+  for (const path of [
+    '.github/workflows/build-stephanos-ui.yml',
+    '.github/workflows/deploy-stephanos-pages.yml',
+  ]) {
+    const result = analyzeIndependentSecurityReview({
+      changedFiles: [{ filename: path, status: 'modified' }],
+      diff: diffFor(path, ['permissions:', '  pages: write', '  id-token: write']),
+    });
+    assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+    assert.ok(result.findings.some((item) => (
+      item.severity === 'P0'
+      && item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === path
+    )), `qualified review must protect ${path} independently`);
+  }
+});
+
+test('Pages deployment qualified review follows both sides of a GitHub workflow rename', () => {
+  const protectedPath = '.github/workflows/deploy-stephanos-pages.yml';
+  const otherPath = '.github/workflows/pages-renamed.yml';
+  for (const [previousPath, nextPath] of [
+    [protectedPath, otherPath],
+    [otherPath, protectedPath],
+  ]) {
+    const result = analyzeIndependentSecurityReview({
+      changedFiles: [{
+        filename: nextPath,
+        previous_filename: previousPath,
+        status: 'renamed',
+      }],
+      diff: [
+        `diff --git a/${previousPath} b/${nextPath}`,
+        'similarity index 100%',
+        `rename from ${previousPath}`,
+        `rename to ${nextPath}`,
+      ].join('\n'),
+    });
+    assert.equal(result.finalVerdict, 'INDEPENDENT_SECURITY_REVIEW_FINDINGS');
+    assert.ok(result.findings.some((item) => (
+      item.severity === 'P0'
+      && item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === protectedPath
+    )), `qualified review must survive rename ${previousPath} -> ${nextPath}`);
   }
 });
 
@@ -525,6 +589,26 @@ test('rejects command authority in the exact-base binding module', () => {
     diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
   });
   assert.ok(result.findings.some((item) => item.code === 'base-binding-module-gained-command-authority'));
+});
+
+test('extracted main-movement gate modules remain approval boundaries and cannot self-attest command authority', () => {
+  for (const path of [
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
+  ]) {
+    const result = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
+    });
+    assert.ok(result.findings.some((item) => (
+      item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === path
+    )));
+    assert.ok(result.findings.some((item) => (
+      item.code === 'base-binding-module-gained-command-authority'
+      && item.path === path
+    )));
+  }
 });
 
 function specialistAnalysis(paths = ['scripts/windows/start-stephanos-backend.ps1']) {

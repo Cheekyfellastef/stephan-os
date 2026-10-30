@@ -1,0 +1,93 @@
+/*
+ * Music Tile compositor safety layer.
+ *
+ * The visual design previously combined moving full-screen blur filters,
+ * backdrop filters and an animated filtered hero. That forces large paint
+ * areas through the compositor every frame and can make the whole surface
+ * feel as though it is running in slow motion. Keep the same lighting and
+ * orbit language, but make the expensive ambient layers static and keep the
+ * remaining motion on cheap transform-only layers.
+ *
+ * This file intentionally does not target player cards, iframes, the
+ * Listening Room, ratings, search results or any playback-bearing node.
+ */
+
+/* Replace the two huge moving blur filters with static radial light fields. */
+.aurora {
+  animation: none !important;
+  filter: none !important;
+  opacity: 0.16;
+  transform: none !important;
+}
+
+.aurora--violet {
+  background: radial-gradient(
+    circle at center,
+    rgba(140, 98, 255, 0.46) 0%,
+    rgba(140, 98, 255, 0.16) 42%,
+    rgba(140, 98, 255, 0) 72%
+  ) !important;
+}
+
+.aurora--cyan {
+  background: radial-gradient(
+    circle at center,
+    rgba(99, 230, 255, 0.34) 0%,
+    rgba(99, 230, 255, 0.12) 42%,
+    rgba(99, 230, 255, 0) 72%
+  ) !important;
+}
+
+/* A sticky translucent layer over moving content is a continual repaint tax. */
+.cockpit-header {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: rgba(5, 5, 9, 0.965);
+}
+
+/* Keep the hero alive without filtering or paint-clipping the complete 500px animated tree. */
+.signal-orbit {
+  filter: none !important;
+  contain: layout style;
+  isolation: isolate;
+}
+
+.signal-orbit::before {
+  filter: none !important;
+  background: radial-gradient(
+    circle,
+    rgba(140, 98, 255, 0.2) 0%,
+    rgba(99, 230, 255, 0.06) 45%,
+    rgba(5, 5, 9, 0) 72%
+  );
+}
+
+.orbit-core {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* The surviving ambient motion is compositor-friendly transform/opacity work. */
+.orbit-ring--outer,
+.orbit-ring--middle {
+  will-change: transform;
+  transform: translateZ(0);
+}
+
+.orbit-ring--inner {
+  will-change: transform, opacity;
+}
+
+/* Avoid spending frames on motion the platform has told us not to prioritise. */
+@media (prefers-reduced-motion: reduce), (update: slow) {
+  .aurora,
+  .orbit-ring--outer,
+  .orbit-ring--middle,
+  .orbit-ring--inner {
+    animation: none !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+}

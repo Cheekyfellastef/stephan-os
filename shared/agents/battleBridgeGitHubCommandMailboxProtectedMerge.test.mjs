@@ -9,6 +9,7 @@ import {
   BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
   executeBattleBridgeGitHubCommand,
+  selectBattleBridgeGitHubCommandBatch,
   validateBattleBridgeGitHubCommand,
 } from './battleBridgeGitHubCommandMailbox.mjs';
 import {
@@ -20,6 +21,8 @@ import {
   buildProtectedOpenClawMergePlan,
   validateProtectedOpenClawBootstrapFindings,
   validateProtectedOpenClawMergeChecks,
+  validateProtectedOpenClawReviewArtifactMetadata,
+  validateProtectedOpenClawReviewRunIdentity,
 } from './protectedOpenClawMergeMailboxAdapter.mjs';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
@@ -90,6 +93,105 @@ test('execution plan binds exact head, base and fixed signed OpenClaw identity',
   assert.match(plan.claims.branch, /^openclaw\//);
 });
 
+function reviewPull() {
+  return {
+    number: command.prNumber,
+    head: { ref: 'fix/example', sha: head, repo: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY } },
+    base: { ref: 'main', sha: base, repo: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY } },
+  };
+}
+
+function reviewRun(overrides = {}) {
+  const name = `stephanos-independent-review-pr-${command.prNumber}-head-${head}-binding-legacy-pull-request-target`;
+  return {
+    id: command.reviewRunId,
+    run_attempt: command.reviewRunAttempt,
+    name,
+    display_title: name,
+    path: '.github/workflows/independent-merge-security-review.yml',
+    event: 'pull_request_target',
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: head,
+    head_branch: 'fix/example',
+    repository: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY },
+    head_repository: { full_name: BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY },
+    pull_requests: [{
+      number: command.prNumber,
+      head: { ref: 'fix/example', sha: head, repo: { url: `https://api.github.com/repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}` } },
+      base: { ref: 'main', sha: base, repo: { url: `https://api.github.com/repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}` } },
+    }],
+    ...overrides,
+  };
+}
+
+test('protected merge accepts only the deterministic exact-bound pull-request review run', () => {
+  const pull = reviewPull();
+  const exact = reviewRun();
+  assert.equal(validateProtectedOpenClawReviewRunIdentity(exact, pull, command), true);
+  for (const changed of [
+    { name: 'Independent Merge Security Review', display_title: 'Independent Merge Security Review' },
+    { display_title: 'different' },
+    { path: '.github/workflows/other.yml' },
+    { event: 'pull_request' },
+    { head_sha: '0'.repeat(40) },
+    { head_branch: 'other' },
+    { repository: { full_name: 'other/repo' } },
+    { pull_requests: [] },
+  ]) {
+    assert.equal(validateProtectedOpenClawReviewRunIdentity({ ...exact, ...changed }, pull, command), false);
+  }
+});
+
+test('workflow-dispatch review identity is exact target-name bound while GitHub executes trusted main', () => {
+  const pull = reviewPull();
+  const binding = 'a'.repeat(64);
+  const name = `stephanos-independent-review-pr-${command.prNumber}-head-${head}-binding-${binding}`;
+  const exact = reviewRun({
+    name,
+    display_title: name,
+    event: 'workflow_dispatch',
+    head_sha: base,
+    head_branch: 'main',
+    pull_requests: [],
+  });
+  assert.equal(validateProtectedOpenClawReviewRunIdentity(exact, pull, command), true);
+  for (const changed of [
+    { name: name.replace(String(command.prNumber), '9999'), display_title: name.replace(String(command.prNumber), '9999') },
+    { name: name.replace(head, '0'.repeat(40)), display_title: name.replace(head, '0'.repeat(40)) },
+    { name: name.slice(0, -1) + 'z', display_title: name.slice(0, -1) + 'z' },
+    { head_sha: head },
+    { head_branch: 'fix/example' },
+    { pull_requests: reviewRun().pull_requests },
+  ]) {
+    assert.equal(validateProtectedOpenClawReviewRunIdentity({ ...exact, ...changed }, pull, command), false);
+  }
+});
+
+test('artifact metadata follows the validated GitHub execution ref without weakening target binding', () => {
+  const archive = (run, headSha, headBranch) => ({
+    id: command.reviewArtifactId,
+    name: `stephanos-independent-review-${command.reviewRunId}-attempt-${command.reviewRunAttempt}`,
+    expired: false,
+    digest: command.reviewArtifactDigest,
+    workflow_run: { id: command.reviewRunId, head_sha: headSha, head_branch: headBranch },
+  });
+  const pullRun = reviewRun();
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(pullRun, head, 'fix/example'), command, pullRun,
+  ), true);
+  const dispatchRun = reviewRun({ event: 'workflow_dispatch', head_sha: base, head_branch: 'main' });
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, base, 'main'), command, dispatchRun,
+  ), true);
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, head, 'main'), command, dispatchRun,
+  ), false);
+  assert.equal(validateProtectedOpenClawReviewArtifactMetadata(
+    archive(dispatchRun, base, 'fix/example'), command, dispatchRun,
+  ), false);
+});
+
 test('bootstrap adapter accepts one or more unique self-change findings only', () => {
   const finding = (path, overrides = {}) => ({
     severity: 'P0',
@@ -126,6 +228,7 @@ function successfulRequiredChecks() {
     name: workflow === 'Build Stephanos UI' ? 'build' : 'proof',
     workflow,
     state: 'SUCCESS',
+    ...(workflow === 'Build Stephanos UI' ? { event: 'pull_request' } : {}),
   }));
 }
 
@@ -181,12 +284,87 @@ test('protected merge ignores non-required workflow conclusions but rejects malf
 
 test('protected merge check inspection requests exact name, state and workflow identities', () => {
   const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
-  assert.match(source, /'--json', 'name,state,workflow'/);
+  assert.match(source, /'--json', 'name,state,workflow,event'/);
   assert.doesNotMatch(source, /'--json', 'state'/);
 });
 
+test('protected merge executor lets parseable gh checks exit 1 reach the canonical classifier', () => {
+  const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const checksResult = runCommand\(BATTLE_BRIDGE_WINDOWS_HOST\.githubCli/);
+  assert.match(source, /!\[0, 1\]\.includes\(checksStatus\)/);
+  assert.match(source, /validateProtectedOpenClawMergeChecks\(checks\)/);
+  assert.doesNotMatch(source, /const checks = parseJson\(runOk\(runCommand, BATTLE_BRIDGE_WINDOWS_HOST\.githubCli/);
+});
+
 test('feature branches emit only the pull-request build checks consumed by protected merge', () => {
-  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8')
+    .replace(/\r\n/g, '\n');
   assert.match(source, /^  push:\n    branches:\n      - main\n    paths:\s*$/m);
   assert.match(source, /^  pull_request:\s*$/m);
+});
+
+test('protected merge mailbox compares reviewed PR expectedBase to main, never PR source head', () => {
+  const authoredAt = new Date('2026-08-05T16:29:00.000Z').toISOString();
+  const payload = {
+    ...command,
+    requestId: 'protected-bootstrap-source-base-admission',
+    expectedHead: head,
+    expectedBase: base,
+  };
+  const entry = {
+    id: 12345,
+    created_at: authoredAt,
+    user: { login: 'Cheekyfellastef' },
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(payload) + '\n```',
+  };
+  const options = { now: new Date('2026-08-05T16:30:00.000Z') };
+
+  const admitted = selectBattleBridgeGitHubCommandBatch([entry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(admitted.ok, true);
+  assert.equal(admitted.commands.length, 1);
+  assert.equal(admitted.commands[0].command.operation, PROTECTED_OPENCLAW_MERGE_OPERATION);
+  assert.equal(admitted.commands[0].command.expectedHead, head);
+  assert.equal(admitted.commands[0].command.expectedBase, base);
+  assert.equal(admitted.terminalRejections.length, 0);
+
+  const staleBase = selectBattleBridgeGitHubCommandBatch([entry], {
+    ...options, currentHead: 'f'.repeat(40),
+  });
+  assert.equal(staleBase.verdict, 'NO_COMMAND_READY');
+  assert.equal(staleBase.terminalRejections.length, 1);
+  assert.equal(staleBase.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(staleBase.rejected[0].expectedHead, head);
+  assert.equal(staleBase.rejected[0].expectedMainHead, base);
+  assert.equal(staleBase.rejected[0].githubMainHead, 'f'.repeat(40));
+
+  const normal = { ...payload, operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE' };
+  const normalEntry = { ...entry, body: '```stephanos-battle-bridge-command\n' + JSON.stringify(normal) + '\n```' };
+  const strict = selectBattleBridgeGitHubCommandBatch([normalEntry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(strict.verdict, 'NO_COMMAND_READY');
+  assert.equal(strict.terminalRejections[0].blocker, 'PROTECTED_MERGE_FIELD_NOT_ALLOWED');
+  const ordinary = {
+    schemaVersion: payload.schemaVersion,
+    requestId: 'strict-control-head-not-pr',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+    repository: payload.repository,
+    issueNumber: payload.issueNumber,
+    branch: payload.branch,
+    operatorApproval: payload.operatorApproval,
+    expectedHead: head,
+    expiresAt: payload.expiresAt,
+  };
+  const ordinaryEntry = {
+    ...entry,
+    body: '```stephanos-battle-bridge-command\n' + JSON.stringify(ordinary) + '\n```',
+  };
+  const strictOrdinary = selectBattleBridgeGitHubCommandBatch([ordinaryEntry], {
+    ...options, currentHead: base,
+  });
+  assert.equal(strictOrdinary.verdict, 'NO_COMMAND_READY');
+  assert.equal(strictOrdinary.terminalRejections[0].blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  assert.equal(strictOrdinary.rejected[0].expectedMainHead, head);
 });

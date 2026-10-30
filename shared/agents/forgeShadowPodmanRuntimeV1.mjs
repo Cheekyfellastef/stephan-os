@@ -13,6 +13,12 @@ export const FORGE_SHADOW_PODMAN_HOST = '127.0.0.1';
 export const FORGE_SHADOW_PODMAN_PORT = 3340;
 export const FORGE_SHADOW_LOCAL_OWNER = 'stephanos-shadow';
 export const FORGE_SHADOW_REMOTE_URL = 'https://github.com/Cheekyfellastef/stephan-os.git';
+export const FORGE_SHADOW_WINDOWS_HOST_ADAPTER = 'podman-desktop-windows10-wsl2-v1';
+export const FORGE_SHADOW_MINIMUM_WINDOWS_BUILD = 19043;
+export const FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE = 22000;
+export const FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE = 'X64';
+
+const WSL2_EVIDENCE = Object.freeze(['default-version-2', 'distribution-version-2']);
 
 export const FORGE_SHADOW_PODMAN_DECISIONS = Object.freeze({
   BLOCKED: 'FORGE_SHADOW_PODMAN_BLOCKED',
@@ -34,8 +40,13 @@ const TOP_LEVEL_KEYS = Object.freeze([
   'facts',
 ]);
 const FACT_KEYS = Object.freeze([
-  'windows11OrNewer',
+  'windowsBuild',
+  'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
+  'windowsArchitecture',
   'wsl2Available',
+  'wsl2Evidence',
   'podmanPresent',
   'podmanVersion',
   'machineExists',
@@ -54,8 +65,26 @@ const FACT_KEYS = Object.freeze([
   'parityReady',
   'backupReady',
 ]);
-const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => !['podmanVersion', 'mirrorSourceHead'].includes(key)));
-const STRING_FACT_KEYS = Object.freeze(['podmanVersion', 'mirrorSourceHead']);
+const BOOLEAN_FACT_KEYS = Object.freeze(FACT_KEYS.filter((key) => ![
+  'windowsBuild',
+  'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
+  'windowsArchitecture',
+  'wsl2Evidence',
+  'podmanVersion',
+  'mirrorSourceHead',
+].includes(key)));
+const STRING_FACT_KEYS = Object.freeze([
+  'windowsHostAdapter',
+  'windowsProductName',
+  'windowsInstallationType',
+  'windowsArchitecture',
+  'wsl2Evidence',
+  'podmanVersion',
+  'mirrorSourceHead',
+]);
+const INTEGER_FACT_KEYS = Object.freeze(['windowsBuild']);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -75,6 +104,9 @@ function factTypeBlockers(facts) {
   }
   for (const key of STRING_FACT_KEYS) {
     if (typeof facts?.[key] !== 'string') blockers.push(`runtime-fact-type-invalid:${key}`);
+  }
+  for (const key of INTEGER_FACT_KEYS) {
+    if (!Number.isSafeInteger(facts?.[key]) || facts[key] < 0) blockers.push(`runtime-fact-type-invalid:${key}`);
   }
   return blockers;
 }
@@ -119,6 +151,10 @@ function fixedIdentity(imageDigest) {
     port: FORGE_SHADOW_PODMAN_PORT,
     localOwner: FORGE_SHADOW_LOCAL_OWNER,
     remoteUrl: FORGE_SHADOW_REMOTE_URL,
+    windowsHostAdapter: FORGE_SHADOW_WINDOWS_HOST_ADAPTER,
+    minimumWindowsBuild: FORGE_SHADOW_MINIMUM_WINDOWS_BUILD,
+    maximumWindowsBuildExclusive: FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE,
+    requiredWindowsArchitecture: FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE,
   });
 }
 
@@ -141,8 +177,24 @@ export function planForgeShadowPodmanRuntime(input = {}) {
   if (!SHA256_DIGEST.test(imageDigest)) blockers.push('forgejo-image-digest-invalid');
 
   if (!blockers.some((blocker) => blocker.startsWith('runtime-fact-type-invalid:'))) {
-    if (facts.windows11OrNewer !== true) blockers.push('windows-11-or-newer-not-proved');
-    if (facts.wsl2Available !== true) blockers.push('wsl2-not-proved');
+    if (facts.windowsHostAdapter !== FORGE_SHADOW_WINDOWS_HOST_ADAPTER) {
+      blockers.push('windows-host-adapter-not-allowlisted');
+    }
+    if (facts.windowsInstallationType !== 'Client' || !/^Windows 10(?:\s|$)/.test(facts.windowsProductName)) {
+      blockers.push('windows-10-client-not-proved');
+    }
+    if (
+      facts.windowsBuild < FORGE_SHADOW_MINIMUM_WINDOWS_BUILD
+      || facts.windowsBuild >= FORGE_SHADOW_MAXIMUM_WINDOWS_BUILD_EXCLUSIVE
+    ) {
+      blockers.push('windows-10-build-range-not-proved');
+    }
+    if (facts.windowsArchitecture !== FORGE_SHADOW_REQUIRED_WINDOWS_ARCHITECTURE) {
+      blockers.push('windows-x64-not-proved');
+    }
+    if (facts.wsl2Available !== true || !WSL2_EVIDENCE.includes(facts.wsl2Evidence)) {
+      blockers.push('wsl2-not-proved');
+    }
     if (facts.githubCredentialPresent !== false) blockers.push('github-credential-not-allowed');
     if (facts.machineRootful === true) blockers.push('podman-machine-rootful-not-allowed');
     if (facts.bootstrapCredentialContained === false && facts.bootstrapIdentityPresent === true) {

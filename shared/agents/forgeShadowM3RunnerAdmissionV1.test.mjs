@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  FORGE_SHADOW_M3_ISSUE,
   FORGE_SHADOW_M3_BLOCKED_VERDICT,
   FORGE_SHADOW_M3_READY_VERDICT,
   planForgeShadowM3RunnerAdmission,
@@ -21,7 +22,7 @@ function m2Receipt(overrides = {}) {
     requestId: 'forge-m2-install-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: FORGE_SHADOW_M3_ISSUE,
     branch: 'main',
     expectedHead: HEAD,
     forgejoVersion: '15.0.6',

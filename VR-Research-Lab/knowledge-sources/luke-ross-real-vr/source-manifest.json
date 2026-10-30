@@ -8,12 +8,15 @@
   "canonical_sources": [
     "https://www.patreon.com/realvr/posts/welcome-152405833",
     "https://www.patreon.com/realvr/sitemap",
-    "https://github.com/LukeRoss00/gta5-real-mod"
+    "https://github.com/LukeRoss00/gta5-real-mod",
+    "https://github.com/LukeRoss00/nolf2-real-mod"
   ],
   "snapshot": {
-    "observed_date": "2026-07-29",
+    "observed_date": "2026-10-03",
     "public_framework_description": "ReShade-based common VR framework supporting more than 40 games",
-    "historical_repository_commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93"
+    "historical_repository_commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93",
+    "gta5_repository_commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93",
+    "nolf2_repository_commit": "b05774555af804749e9c913df262ec7e084ad1da"
   },
   "licence_posture": "Current framework is creator-controlled and not admitted for copying. The historical GTA V repository declares no root licence, so it is also analysis-only unless file-level permission is established.",
   "evidence_scope": [
@@ -23,7 +26,12 @@
     "wide AAA title coverage",
     "overlay, resolution and performance configuration",
     "rapid repair after game, driver and upscaler updates",
-    "publisher-policy, DMCA and availability risk"
+    "publisher-policy, DMCA and availability risk",
+    "dynamic stereo under changing camera FOV",
+    "dominant-eye weapon alignment",
+    "recentring gesture and room-scale recovery",
+    "cutscene camera/FOV comfort controls",
+    "supersampling and frame-pacing trade-offs documented in historical public releases"
   ],
   "ingestion_policy": {
     "allowed": [
@@ -43,6 +51,27 @@
   },
   "refresh_owner": 1596,
   "extraction_owner": 1593,
-  "programme_links": [1591, 1593, 1596, 1597, 1605],
-  "promotion_rule": "Promote methods and verified behaviour, never unauthorised artefacts. Record legal and availability state as part of compatibility evidence."
+  "programme_links": [
+    1591,
+    1593,
+    1596,
+    1597,
+    1605
+  ],
+  "promotion_rule": "Promote methods and verified behaviour, never unauthorised artefacts. Record legal and availability state as part of compatibility evidence.",
+  "public_historical_repositories": [
+    {
+      "repository": "LukeRoss00/gta5-real-mod",
+      "commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93",
+      "licence": "NOASSERTION",
+      "policy": "public documentation and behaviour extraction only"
+    },
+    {
+      "repository": "LukeRoss00/nolf2-real-mod",
+      "commit": "b05774555af804749e9c913df262ec7e084ad1da",
+      "licence": "NOASSERTION",
+      "policy": "public documentation and behaviour extraction only"
+    }
+  ],
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json"
 }
