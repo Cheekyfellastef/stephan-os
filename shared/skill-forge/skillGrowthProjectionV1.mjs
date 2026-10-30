@@ -1,5 +1,6 @@
 // Pure read-only projection. A candidate, a learning event, and an installed skill
 // are different claims. Never promote one to another without an explicit receipt.
+import { deriveGateSkillIntakeV1 } from './gateRepairSkillIntakeV1.mjs';
 export const SKILL_GROWTH_OBSERVATORY_SCHEMA = 'stephanos.skill-growth-observatory.v1';
 export const SKILL_TRANSFER_ACTORS = Object.freeze([
   { id: 'openclaw-local', label: 'OpenClaw Local', scope: 'Stephanos source and product only' },
@@ -138,7 +139,9 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
       tags: ['openclaw-related'],
       provenance: 'EXTERNAL_DRAFT_NOT_INSTALLED',
     }));
+  const gateRepair = deriveGateSkillIntakeV1(feed.projection?.goalBuildGateObservatory, { feedState: feed.state });
   const skillCandidates = [
+    ...gateRepair.skillCandidates,
     ...externalDrafts,
     ...rows(seedSkills).map(skill => ({ ...skill, provenance: 'STATIC_SEED_NOT_INSTALLED' })),
     ...learnedDrafts,
@@ -190,11 +193,13 @@ export function deriveSkillGrowthObservatoryV1({ payload = {}, seedSkills = [], 
     sourceTruth: !feedReadable ? 'UNAVAILABLE' : feed.state === 'stale' ? 'STALE' : 'REPORTED',
     reason: text(feed.reason, 'No verified Shared Workspace response'),
     nextAction: text(feed.exactNextAction, 'Verify the Shared Workspace backend connection.'),
-    skillCandidates,
+    skillCandidates, gateRepair,
     publishedSkills, learningEvents, stages, observedActors,
     timeline: learningEvents.slice(0, 16),
     summary: Object.freeze({
       proposals: skillCandidates.length,
+      verifiedGateFailures: gateRepair.summary.failedGateCount,
+      gateCapabilityDrafts: gateRepair.summary.skillReviewDraftCount,
       witnessedLearning: learningEvents.length,
       verifiedLessons: learningEvents.filter(event => event.verified).length,
       publishedSkillRecords: publishedSkills.length,

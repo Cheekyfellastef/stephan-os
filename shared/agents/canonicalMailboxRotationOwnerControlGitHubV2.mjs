@@ -74,6 +74,9 @@ async function boundedGet(fetchImpl, path, token, signal, deadline) {
     'OWNER_CONTROL_GITHUB_RESPONSE_INVALID');
   const size = response.headers.get('content-length');
   requireValue(size === null || (/^[0-9]{1,10}$/.test(size) && Number(size) <= MAX_JSON), 'OWNER_CONTROL_GITHUB_RESPONSE_TOO_LARGE');
+  const contentEncoding = (response.headers.get('content-encoding') ?? 'identity').trim().toLowerCase();
+  requireValue(['identity', 'gzip', 'br', 'deflate'].includes(contentEncoding),
+    'OWNER_CONTROL_GITHUB_RESPONSE_INVALID');
   const reader = response.body?.getReader();
   requireValue(reader, 'OWNER_CONTROL_GITHUB_BODY_MISSING');
   const chunks = []; let total = 0;
@@ -88,7 +91,11 @@ async function boundedGet(fetchImpl, path, token, signal, deadline) {
       chunks.push(Buffer.from(value));
     }
   } finally { await reader.cancel().catch(() => {}); }
-  requireValue(size === null || Number(size) === total, 'OWNER_CONTROL_GITHUB_BODY_INVALID');
+  // Node fetch decodes supported content encodings but retains the wire length.
+  // The streamed limit above always bounds decoded bytes; only identity lengths
+  // describe the same byte sequence and can be compared here.
+  requireValue(size === null || contentEncoding !== 'identity' || Number(size) === total,
+    'OWNER_CONTROL_GITHUB_BODY_INVALID');
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(Buffer.concat(chunks, total));
   const result = JSON.parse(text);
   requireValue(result && typeof result === 'object' && !Array.isArray(result), 'OWNER_CONTROL_GITHUB_JSON_INVALID');

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { gzipSync, brotliCompressSync, deflateSync } from 'node:zlib';
 import {
   createMailboxRotationOwnerControlGitHubTestReaderV2 as createReader,
   readMailboxRotationOwnerControlGitHubV2 as productionRead,
@@ -204,10 +205,34 @@ for (const [name, build] of [
   ['unexpected content type', u => response(u, {}, { headers: { 'content-type': 'text/html' } })],
   ['wrong final URL', () => response('https://untrusted.invalid/collect', {})],
   ['truncated response', u => response(u, {}, { headers: { 'content-length': '3' } })],
+  ['identity length mismatch', u => response(u, {}, { headers: { 'content-encoding': 'identity', 'content-length': '3' } })],
+  ['unknown content encoding', u => response(u, {}, { headers: { 'content-encoding': 'unknown' } })],
+  ['empty content encoding', u => response(u, {}, { headers: { 'content-encoding': '' } })],
+  ['stacked content encodings', u => response(u, {}, { headers: { 'content-encoding': 'gzip, br' } })],
+  ['compressed oversized declared body', u => response(u, {}, { headers: { 'content-encoding': 'gzip', 'content-length': '262145' } })],
+  ['compressed oversized decoded body', u => response(u, {}, { raw: 'x'.repeat(262145), headers: { 'content-encoding': 'gzip', 'content-length': '290' } })],
+  ['compressed invalid UTF8', u => response(u, {}, { raw: new Uint8Array([0xff]), headers: { 'content-encoding': 'gzip', 'content-length': '21' } })],
+  ['compressed truncated JSON', u => response(u, {}, { raw: '{', headers: { 'content-encoding': 'gzip', 'content-length': '21' } })],
 ]) test('rejects ' + name, async () => {
   const f = fixture(({ url }) => build(url)), result = await f.reader.read(f.input);
   assert.equal(result.ok, false); noAuthority(result);
 });
+for (const [encoding, compress] of [['gzip', gzipSync], ['br', brotliCompressSync], ['deflate', deflateSync]]) {
+  test('accepts fetch-decoded ' + encoding + ' bodies on read and recheck with wire length headers', async () => {
+    const f = fixture(({ url, value }) => {
+      const decoded = JSON.stringify(value);
+      const wireLength = compress(Buffer.from(decoded)).length;
+      assert.notEqual(wireLength, Buffer.byteLength(decoded));
+      return response(url, value, { headers: { 'content-encoding': encoding, 'content-length': String(wireLength) } });
+    });
+    const first = await f.reader.read(f.input);
+    assert.equal(first.ok, true, first.blocker); noAuthority(first);
+    const next = await f.reader.recheck(first, { token: secret, observation: f.observation });
+    assert.equal(next.ok, true, next.blocker); assert.equal(next.requestId, first.requestId);
+    assert.equal(f.reader.recognized(first), false); assert.equal(f.reader.recognized(next), true);
+    assert.equal(f.calls.length, 26); noAuthority(next);
+  });
+}
 test('transport errors never disclose the credential or provider error body', async () => {
   const f = fixture(() => { throw Error('OWNER_CONTROL_' + secret.toUpperCase()); });
   const result = await f.reader.read(f.input);
