@@ -74,6 +74,86 @@ test('history reads overlap within a fixed bound without losing validation, orde
   assert.equal(refreshed.errors.length, 1);
 });
 
+test('one stalled file does not hold the next batch and completion order stays deterministic', async () => {
+  const root = await tempWorkspace();
+  const names = Array.from({ length: 40 }, (_, i) => `status-${String(i).padStart(2, '0')}.json`);
+  await Promise.all(names.map(name => writeJson(root, 'status', name,
+    createSharedWorkspaceStatusRecord({ statusId: name, timestampUtc: '2026-07-07T00:00:00.000Z' }))));
+  let releaseSlow;
+  const slow = new Promise(resolve => { releaseSlow = resolve; });
+  let reachedTail;
+  const tail = new Promise(resolve => { reachedTail = resolve; });
+  const reader = async (...args) => {
+    if (String(args[0]).endsWith(names[0])) await slow;
+    if (String(args[0]).endsWith(names.at(-1))) reachedTail();
+    return readFile(...args);
+  };
+  const reading = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader });
+  let deadline;
+  try {
+    // Deadline is only a deadlock guard; progress is asserted while the first
+    // read is deliberately unresolved, not against disk timing thresholds.
+    await Promise.race([tail, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('later files blocked behind a slow batch')), 3000);
+    })]);
+  } finally { clearTimeout(deadline); releaseSlow(); await reading; }
+  const result = await reading;
+  assert.deepEqual(result.records.map(record => record.statusId), await readdir(join(root, 'status')));
+});
+
+test('overlapping directories share one read allowance and failures release their slots', async () => {
+  const roots = await Promise.all([tempWorkspace(), tempWorkspace(), tempWorkspace()]);
+  await Promise.all(roots.map(root => Promise.all(Array.from({ length: 33 }, (_, i) => writeJson(root, 'status', `status-${i}.json`,
+    createSharedWorkspaceStatusRecord({ statusId: `status-${i}`, timestampUtc: '2026-07-07T00:00:00.000Z' }))))));
+  let active = 0;
+  let peak = 0;
+  const reader = async (...args) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    try {
+      await setImmediate();
+      if (String(args[0]).endsWith('status-0.json')) throw new Error('injected read refusal');
+      return await readFile(...args);
+    } finally { active -= 1; }
+  };
+  const results = await Promise.all(roots.map(root => readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader })));
+  assert.ok(peak > 1);
+  assert.ok(peak <= 16, `shared read allowance exceeded: ${peak}`);
+  assert.equal(active, 0);
+  for (const result of results) {
+    assert.equal(result.records.length, 32);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0], /injected read refusal/);
+  }
+  const again = await readSharedWorkspaceRecordDirectory(roots[0], 'status', { readFile: reader });
+  assert.equal(again.records.length, 32, 'failed reads must not strand later polling');
+});
+
+test('full feed starts independent directories without changing canonical error order', async () => {
+  const root = await tempWorkspace();
+  await writeFile(join(root, 'status', 'bad-status.json'), '{broken');
+  await writeFile(join(root, 'proof', 'bad-proof.json'), '{broken');
+  let releaseStatus;
+  const statusGate = new Promise(resolve => { releaseStatus = resolve; });
+  let proofStarted;
+  const proofGate = new Promise(resolve => { proofStarted = resolve; });
+  const reading = readSharedWorkspaceDashboardFeed({ root, readFile: async (...args) => {
+    if (String(args[0]).endsWith('bad-status.json')) await statusGate;
+    if (String(args[0]).endsWith('bad-proof.json')) proofStarted();
+    return readFile(...args);
+  } });
+  let deadline;
+  try {
+    await Promise.race([proofGate, new Promise((_, reject) => {
+      deadline = setTimeout(() => reject(new Error('independent proof directory did not start')), 3000);
+    })]);
+  } finally { clearTimeout(deadline); releaseStatus(); await reading; }
+  const result = await reading;
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0], /^status\/bad-status.json:PARSE_FAILED/);
+  assert.match(result.errors[1], /^proof\/bad-proof.json:PARSE_FAILED/);
+});
+
 test('polling contract clamps to safe read-only interval and loading state is explicit', () => {
   const contract = createSharedWorkspaceDashboardPollingContract({ pollIntervalMs: 100 });
   assert.equal(contract.readOnly, true);
