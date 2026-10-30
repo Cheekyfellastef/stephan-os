@@ -30,6 +30,8 @@ on:
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.test.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.js'
+      - 'stephanos-server/services/sourceArtifactEscrowStore.test.js'
       - 'stephanos-server/services/programmeAuthorityService.js'
       - 'stephanos-server/services/programmeAuthorityService.test.js'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
@@ -80,6 +82,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
           node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check stephanos-server/services/sourceArtifactEscrowStore.js
           node --check stephanos-server/services/programmeAuthorityService.js
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
@@ -107,6 +110,7 @@ jobs:
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
           stephanos-server/services/providerNeutralSourceBuilderService.test.js
+          stephanos-server/services/sourceArtifactEscrowStore.test.js
           shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           stephanos-server/services/missionOrchestratorWorkerService.test.js

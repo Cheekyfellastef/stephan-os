@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { projectElasticMissionExecutionObligation } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { appendMissionEvent, listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
@@ -88,20 +89,63 @@ export function createMissionWorkerControllerLogProjection(controller, checkedAt
 
 export function createMissionWorkerTickLogProjection(result, checkedAt) {
   const publication = ownData(result, 'publish');
-  return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true });
+  const processing = ownData(result, 'processed');
+  return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true,
+    processed:ownData(processing,'processed')===true,
+    processingSuccess:missionWorkerTickMadeProgress(result),
+    processingVerdict:typedProcessingCode(result,'finalVerdict'),
+    processingBlocker:typedProcessingCode(result,'reason') });
 }
 
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
-export function missionWorkerTickMadeProgress(result) { const processing = ownData(result, 'processed'); return ownData(processing, 'processed') === true; }
-function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || missionWorkerTickMadeProgress(result); }
+function workerProcessingOutcome(result) {
+  const processing = ownData(result, 'processed');
+  const consumed = ownData(processing, 'result');
+  return ownData(consumed, 'schemaVersion') === 'stephanos.mission-worker-consumption-result.v1'
+    ? consumed : processing;
+}
+function typedProcessingCode(result,key) {
+  const code=processResultText(workerProcessingOutcome(result),key);
+  return /^[A-Z][A-Z0-9_:-]{0,95}$/.test(code)?code:'';
+}
+export function missionWorkerTickMadeProgress(result) {
+  const processing = ownData(result, 'processed');
+  if (ownData(processing, 'processed') !== true || ownData(processing, 'success') === false) return false;
+  if(ownData(processing,'schemaVersion')==='stephanos.provider-neutral-source-builder.v1') {
+    return ownData(processing,'processed')===true && ownData(processing,'success')===true
+      && ownData(processing,'testsPassed')===true && ownData(processing,'executionCustodyReleased')===true
+      && processResultText(processing,'finalVerdict')==='PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
+      && Boolean(processResultText(processing,'sourceArtifactRef'))
+      && Boolean(processResultText(processing,'offlinePublicationOutboxId'));
+  }
+  // Ordinary consumers put their terminal outcome inside result. The outer
+  // processed bit only means the queue claim was handled, including failures.
+  const consumed = ownData(processing, 'result');
+  if (ownData(consumed, 'schemaVersion') !== 'stephanos.mission-worker-consumption-result.v1') return false;
+  const verdict = processResultText(consumed, 'finalVerdict');
+  const adapter = processResultText(consumed, 'adapter');
+  if (verdict === 'VERIFICATION_EVIDENCE_GROUNDED') {
+    const count = ownData(consumed, 'evidenceReceiptCount');
+    return adapter === 'verification' && Number.isSafeInteger(count) && count > 0;
+  }
+  if (verdict !== 'MISSION_WORKER_ITEM_COMPLETE') return false;
+  if (adapter === 'forge-publication') {
+    const prNumber = ownData(consumed, 'prNumber');
+    return Number.isSafeInteger(prNumber) && prNumber > 0
+      && SHA_40.test(processResultText(consumed, 'commitSha'));
+  }
+  return ownData(ownData(consumed, 'execution'), 'success') === true;
+}
+function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || ownData(ownData(result,'processed'),'processed')===true; }
 
 function executionSurfaceId(actionGrant) {
   return boundedText(ownData(actionGrant, 'adapter'), 80).toLowerCase();
 }
 
 function executionSurfaceFailureClass(result, fallback = 'NO_MATERIAL_PROGRESS') {
-  return boundedText(ownData(result, 'blocker'), 96)
+  return typedProcessingCode(result,'reason') || typedProcessingCode(result,'finalVerdict')
+    || boundedText(ownData(result, 'blocker'), 96)
     || boundedText(ownData(result, 'finalVerdict'), 96)
     || boundedText(ownData(result, 'status'), 64)
     || fallback;
@@ -307,15 +351,20 @@ export function controllerRequiresMaterialProgress(controller) {
   const projection = ownData(controller, 'authoritativeProjection');
   const status = boundedText(ownData(projection, 'status'), 32).toUpperCase();
   if (!status || status === 'HOLD') return false;
-  // READY alone is not an executable grant. Preserve defect reporting if a
-  // specific mission was selected but the controller failed to grant it.
+  // An observed PR/lease is not material execution. Consume the canonical
+  // lane's ACTIVE decision rather than recreating authority from its presence.
+  // An elastic selected mission may instead be an occupied external fallback.
+  // Only a coherent canonical inventory can establish that observation state.
   const action = ownData(controller, 'actionResult');
   const admission = ownData(action, 'elasticAdmission');
   const critical = ownData(action, 'projection');
+  const occupied = ownData(critical, 'decision') === 'WAIT_EXTERNAL_ACTIVE_MISSION'
+    && Boolean(ownData(critical, 'activeMission'))
+    && projectElasticMissionExecutionObligation(admission, ownData(critical, 'activeMission')).state === 'OCCUPIED';
   return ownData(controller, 'allowWorkerTick') === true
-    || Boolean(ownData(projection, 'lane'))
-    || Boolean(ownData(admission, 'selectedMission'))
-    || Boolean(ownData(critical, 'activeMission'));
+    || ownData(ownData(projection, 'lane'), 'active') === true
+    || (!occupied && (Boolean(ownData(admission, 'selectedMission'))
+      || Boolean(ownData(critical, 'activeMission'))));
 }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -488,7 +537,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
     let emptyControllerCycle = false;
-    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
+    const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { return await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
     await queueHeartbeat(authoritativeHeartbeatVerdict(), checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict()); }, heartbeatIntervalMs);
     try {
@@ -579,9 +628,54 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       materialProgressRequired = controllerRequiresMaterialProgress(controller);
       if (controller?.allowWorkerTick === true) {
         const actionGrant = controller.workerActionGrant; attemptedSurfaceId = executionSurfaceId(actionGrant); attemptedMissionId = boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(); adapterInvocationStarted = false; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
-        const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat(authoritativeHeartbeatVerdict()); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
+        // Publication completion is task-local. A selected or merely read claim
+        // cannot stand in for the existing heartbeat writer's atomic receipt.
+        const originalGrantJson = JSON.stringify(actionGrant);
+        let settleClaimPublication, claimPublicationOutcome = null, claimPublicationTimer;
+        const claimPublication = new Promise(resolvePublication => { settleClaimPublication = resolvePublication; });
+        const finishClaimPublication = value => {
+          if (claimPublicationOutcome !== null) return;
+          claimPublicationOutcome = value === true;
+          clearTimeout(claimPublicationTimer);
+          settleClaimPublication(claimPublicationOutcome);
+        };
+        const sameInFlightGrant = grant => !tickSettled && activeActionGrant === actionGrant
+          && JSON.stringify(actionGrant) === originalGrantJson && JSON.stringify(grant) === originalGrantJson;
+        const awaitActiveClaimHeartbeat = async grant => {
+          if (!sameInFlightGrant(grant)) return false;
+          if (!claimPublicationTimer && claimPublicationOutcome === null)
+            claimPublicationTimer = setTimeout(() => finishClaimPublication(false), 5000);
+          const published = await claimPublication;
+          return published && sameInFlightGrant(grant);
+        };
+        const watchActiveClaim = async () => {
+          while (!tickSettled && !activeClaimHeartbeatPublished && claimPublicationOutcome !== false) {
+            let activeClaim = null;
+            try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; }
+            if (tickSettled) { finishClaimPublication(false); return; }
+            if (activeClaim) {
+              const published = await queueHeartbeat(authoritativeHeartbeatVerdict());
+              const record = ownData(published, 'record');
+              const exact = sameInFlightGrant(actionGrant) && ownData(published, 'ok') === true
+                && ownData(record, 'activeTaskId') === ownData(actionGrant, 'actionId')
+                && ownData(record, 'activeTaskId') === ownData(activeClaim, 'activeTaskId')
+                && ownData(record, 'activeReceiptId') === ownData(activeClaim, 'activeReceiptId')
+                && ownData(record, 'executionPhase') === ownData(activeClaim, 'executionPhase')
+                && ownData(record, 'lastTickVerdict') === 'MISSION_WORKER_TICK_RUNNING';
+              activeClaimHeartbeatPublished = exact;
+              finishClaimPublication(exact);
+              return;
+            }
+            await sleepActiveClaimProbe(claimProbeIntervalMs);
+          }
+          if (!activeClaimHeartbeatPublished) finishClaimPublication(false);
+        };
         adapterInvocationStarted = true;
-        let result; const tickPromise = runTick({ env, actionGrant, capacityRouting }); const activeClaimWatcher = watchActiveClaim(); try { result = await tickPromise; } finally { tickSettled = true; await activeClaimWatcher; activeActionGrant = undefined; }
+        let result;
+        const tickPromise = runTick({ env, actionGrant, capacityRouting, awaitActiveClaimHeartbeat });
+        const activeClaimWatcher = watchActiveClaim();
+        try { result = await tickPromise; }
+        finally { tickSettled = true; finishClaimPublication(false); await activeClaimWatcher; activeActionGrant = undefined; }
         const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
         if (externalHandoffPending(result)) {
           pendingExternalHandoff = Object.freeze({

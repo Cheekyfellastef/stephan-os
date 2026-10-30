@@ -267,6 +267,23 @@ read-only governor boundaries; it is not the complete Windows qualification.
 The full unfiltered adapter suite remains mandatory in hosted protected CI.
 No copied binary is installed on the OS or granted runtime authority.
 
+## Production generated-host placement
+
+The unchanged approved cooperative host is deployed at the fixed path
+`.stephanos/local-state-checkpoints/rescue-island-native-host/bin/Release/net8.0-windows/`.
+Both production adapters use `rescueIslandNativeHostLocationV1.mjs` to derive that
+location and verify all seven original artifact hashes and pinned native source
+inputs before use. Missing, modified, extra or redirected artifacts hold admission.
+The six-level layout preserves the native executable's original source-root
+resolution. `src/windows/.../bin` remains a build/test location; source-proof
+rules are not relaxed to admit it as deployed runtime state.
+
+The source change does not restore or launch the host. An independently approved
+restoration must preserve the existing checkpoint, create only the exact original
+files at this fixed location and verify the bytes again. Fresh owner consent,
+complete claim inventory, gaming/serial CPU admission and runtime custody remain
+separate. Artifact presence or a matching digest is not an execution grant.
+
 ## Supervised Island 02 documentation route
 
 The same narrow native ingress can dispatch a documentation task for

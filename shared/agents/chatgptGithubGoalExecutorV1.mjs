@@ -129,9 +129,12 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
     if (current.commentSha256 !== task.commentSha256) stop('OWNER_TASK_CHANGED');
     if (await verifyReservation({task,lease}) !== true) stop('CANONICAL_RESERVATION_LOST');
     if (Date.parse(task.expiresAt) <= Date.parse(now())) stop('OWNER_TASK_EXPIRED');
-    return request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:false,
+    // Open in DRAFT: GitHub may automatically request a metered Codex review on
+    // an ordinary ready PR. Only the existing protected READY/review lifecycle
+    // may later move this PR to reviewable state after separate qualification.
+    return request(`${ROOT}/pulls`,'POST',{base:'main', head:task.branch, draft:true,
       title:`Goal #${task.issueNumber}: ${task.taskId}`,
-      body:`Bounded GitHub source task under #${task.issueNumber}. Owner intake comment ${task.commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nExisting CI, independent exact-head review and operator-protected merge are required. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
+      body:`Bounded GitHub source task under #${task.issueNumber}. Owner intake comment ${task.commentId}; SHA-256 ${task.commentSha256}.\n\nCanonical reservation ${lease.reservationId}. Source head ${head}.\n\nPublished as DRAFT to avoid automatically soliciting optional metered review at creation. CI, qualified independent exact-head review and a separately authorised protected READY/merge remain required. External Codex auto-review settings may still trigger at READY. No Battle Bridge pickup, deployment, lease release or unattended refill is claimed.`});
   }
 
   return Object.freeze({
@@ -208,7 +211,11 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
         if (!positive(pull.number) || pull.head?.sha !== head || pull.head?.ref !== task.branch
           || pull.head?.repo?.full_name !== REPO || pull.base?.repo?.full_name !== REPO
           || pull.base?.ref !== 'main') stop('PR_PUBLICATION_UNPROVEN');
+        // Keep the returned PR number for a non-replaying recovery, even if GitHub
+        // did not actually retain the requested draft state.
         prNumber = pull.number;
+        if (pull.draft !== true || pull.merged !== false)
+          stop('PR_DRAFT_STATE_UNPROVEN');
         await checkpoint('progress','PR_OPEN_AWAITING_CI_AND_INDEPENDENT_REVIEW',
           [`https://github.com/${REPO}/pull/${prNumber}`,`https://github.com/${REPO}/commit/${head}`]);
         return {verdict:'PR_OPEN', taskId:task.taskId, branch:task.branch, head, prNumber, receipts,
@@ -257,6 +264,10 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
           if (!positive(pull?.number) || pull.head?.sha !== head || pull.head?.ref !== task.branch
             || pull.head?.repo?.full_name !== REPO || pull.base?.repo?.full_name !== REPO || pull.base?.ref !== 'main')
             stop('RECOVERY_PR_IDENTITY_UNPROVEN');
+          // A read-only recovery cannot authenticate a separately approved READY
+          // transition. Preserve the existing PR and hold without republishing.
+          if (pull.draft !== true && pull.merged !== true)
+            stop('RECOVERY_PR_DRAFT_STATE_UNPROVEN');
           const evidence = {phase:'SOURCE_PUBLICATION_RECOVERED',commentSha256:task.commentSha256,
             reservationId:execution.lease.reservationId,branch:task.branch,head,prNumber:pull.number,
             originalExecutionId:`chatgpt-${commentId}`};
@@ -284,10 +295,14 @@ export function createChatgptGithubGoalExecutorV1(host = {}) {
         || pull.head?.ref !== execution.branch || pull.head?.repo?.full_name !== REPO
         || pull.base?.repo?.full_name !== REPO || pull.base?.ref !== 'main')
         return {verdict:'HELD', blocker:'PR_IDENTITY_CHANGED'};
-      if (pull.merged !== true || !SHA.test(pull.merge_commit_sha || ''))
-        return pull.state === 'closed'
-          ? {verdict:'HELD',blocker:'PR_CLOSED_UNMERGED_PRESERVE_SOURCE',prNumber:execution.prNumber}
-          : {verdict:'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE', prNumber:execution.prNumber};
+      if (pull.merged !== true || !SHA.test(pull.merge_commit_sha || '')) {
+        if (pull.state === 'closed')
+          return {verdict:'HELD',blocker:'PR_CLOSED_UNMERGED_PRESERVE_SOURCE',prNumber:execution.prNumber};
+        // Only the separate protected owner can authenticate a READY transition.
+        if (pull.draft !== true)
+          return {verdict:'HELD',blocker:'PR_READY_REVIEW_AUTHORITY_UNPROVEN',prNumber:execution.prNumber};
+        return {verdict:'AWAITING_EXISTING_CI_REVIEW_AND_PROTECTED_MERGE',prNumber:execution.prNumber};
+      }
       // Separate trusted collector proves actual protected workflow/environment,
       // exact reviewed head/base and immutable review artifact. We never approve.
       if (await confirmProtectedMerge({execution, pull}) !== true)

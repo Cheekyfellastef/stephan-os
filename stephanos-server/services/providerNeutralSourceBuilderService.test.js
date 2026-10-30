@@ -7,7 +7,82 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { processNextProviderNeutralSourceBuild } from './providerNeutralSourceBuilderService.js';
+import { produceProviderNeutralSourceBuildProposalV1, processNextProviderNeutralSourceBuild as buildSource } from './providerNeutralSourceBuilderService.js';
+
+// Existing edit fixtures describe a complete model message. Present them on the
+// real streaming Response interface now used by the builder transport.
+function processNextProviderNeutralSourceBuild(options) {
+  const fetchFixture = options.localModelFetchImpl;
+  return buildSource({ ...options, ...(fetchFixture ? { localModelFetchImpl: async (...args) => {
+    const reply = await fetchFixture(...args);
+    if (reply.body) return reply;
+    return new Response(JSON.stringify({ ...await reply.json(), done: true }) + '\n',
+      { status: reply.status || (reply.ok ? 200 : 500) });
+  } } : {}) });
+}
+
+test('partial model stream cannot mutate source or satisfy a source receipt', async () => {
+  const fx = await fixture(['node --check shared/agents/example.mjs']);
+  fx.action.allowedFiles = ['shared/agents/example.mjs'];
+  const original = await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8');
+  const edits = [{path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;'}];
+  const result = await buildSource({
+    preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+    repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+    claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+    localModelFetchImpl: async (_url, request) => {
+      const sent = JSON.parse(request.body);
+      assert.equal(sent.stream, true);
+      assert.equal(sent.options.num_predict, 8192);
+      assert.equal(sent.format.additionalProperties, false);
+      assert.deepEqual(sent.format.required, ['edits', 'summary']);
+      assert.deepEqual(sent.format.properties.edits.items.required, ['path', 'old', 'new']);
+      assert.match(sent.messages[0].content, /smallest unique old-text anchors/);
+      return new Response(JSON.stringify({done: false, message: {content: JSON.stringify({edits})}}) + '\n');
+    },
+    collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.failureStage, 'PROVIDER');
+  assert.match(result.error, /MODEL_RESPONSE_INCOMPLETE/);
+  assert.equal(result.providerCompleted, false);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared/agents/example.mjs'), 'utf8'), original);
+  assert.equal(result.sourceArtifact ?? null, null);
+});
+
+test('model sees bounded required tests while their edit authority stays closed', async t => {
+  for (const attemptTestEdit of [false, true]) await t.test(String(attemptTestEdit), async () => {
+    const fx = await fixture(['node --test tests/acceptance.test.mjs']);
+    fx.action.allowedFiles = ['shared/agents/example.mjs'];
+    await mkdir(join(fx.repoRoot, 'tests'));
+    const testSource = "import assert from 'node:assert/strict';\nimport { value } from '../shared/agents/example.mjs';\nassert.equal(value, 2, 'readonly-acceptance-marker');\n";
+    await writeFile(join(fx.repoRoot, 'tests/acceptance.test.mjs'), testSource);
+    assert.equal(run('git.exe', ['-C', fx.repoRoot, 'add', '.'], {cwd: fx.repoRoot}).status, 0);
+    assert.equal(run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'independent acceptance'], {cwd: fx.repoRoot}).status, 0);
+    fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], {cwd: fx.repoRoot}).stdout.trim();
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge', sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+      repoRoot: fx.repoRoot, actionGrant: fx.actionGrant, runCommand: run,
+      claimNext: async adapter => adapter === 'foundry-forge' ? fx.claim : null,
+      localModelFetchImpl: async (_url, request) => {
+        const prompt = JSON.parse(request.body).messages[0].content;
+        assert.match(prompt, /Read-only required-test context/);
+        assert.match(prompt, /readonly-acceptance-marker/);
+        const edit = attemptTestEdit
+          ? {path: 'tests/acceptance.test.mjs', old: testSource, new: '// bypass\n'}
+          : {path: 'shared/agents/example.mjs', old: 'export const value = 1;', new: 'export const value = 2;'};
+        return {ok: true, json: async () => ({message: {content: JSON.stringify({edits: [edit], summary: 'bounded test-driven repair'})}})};
+      },
+      collectAgentWorkerResult: async () => ({state: {revision: 1}}),
+    });
+    assert.equal(result.success, !attemptTestEdit, result.error);
+    assert.equal(await readFile(join(fx.repoRoot, 'tests/acceptance.test.mjs'), 'utf8'), testSource);
+    if (attemptTestEdit) assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION/);
+    else assert.equal(result.testsPassed, true);
+  });
+});
 
 function run(executable, args, options = {}) {
   const childEnv = { ...(options.env || process.env) };
@@ -1499,4 +1574,51 @@ test('adding a missing single final newline remains a permitted structured sourc
     collectAgentWorkerResult: async () => ({state: {revision: 1}}),
   });
   assert.equal(result.success, true, result.error);
+});
+
+
+test('owned local source proposal edits tests and captures bytes without terminal authority', async () => {
+  const fx = await fixture();
+  Object.assign(fx.actionGrant, {
+    adapter: 'foundry-forge', actionKind: 'agent-handoff',
+    capacityRoute: 'FOUNDRY_FORGE', workerId: 'stephanos-forge-lifeboat-local',
+    boundedActionCount: 1, mergeAuthority: false, leaseSeizureAllowed: false,
+    missionId: fx.action.missionId, actionId: fx.action.actionId,
+    repository: fx.action.repository, branch: fx.action.branch,
+  });
+  Object.assign(fx.claim.item, {schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'foundry-forge', missionId: fx.action.missionId, actionId: fx.action.actionId});
+  await writeFile(fx.claim.processingPath, JSON.stringify(fx.claim.item));
+  const originalClaim = await readFile(fx.claim.processingPath, 'utf8');
+  const forbidden = () => { throw new Error('PROPOSAL_TERMINAL_AUTHORITY_USED'); };
+  const result = await produceProviderNeutralSourceBuildProposalV1(fx.claim, {
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot, repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant, runCommand: run,
+    readMissionRecord: async () => ({state: {missionId: fx.action.missionId, cancelled: false}}),
+    claimNext: forbidden, collectAgentWorkerResult: forbidden,
+    finalizeMissionWorkerQueueClaim: forbidden,
+    localModelFetchImpl: async () => new Response(JSON.stringify({done: true,
+      message: {content: JSON.stringify({edits: [{path:'shared/agents/example.mjs',
+        old:'export const value = 1;', new:'export const value = 2;'}, {path:'shared/agents/example.identity.test.mjs',old:'',
+        new:"import assert from 'node:assert/strict';\nimport {value} from './example.mjs';\nassert.equal(value,2);\n"}], summary:'fixture repair'})}}) + '\n'),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.identity.test.mjs','shared/agents/example.mjs']);
+  assert.equal(result.execution.ownedRegressionReceipts.length,1);
+  assert.equal(result.execution.sourceTestReceipts.length,2);
+  assert.deepEqual(result.execution.changedFiles, result.changedFiles);
+  assert.ok(result.sourceArtifactIdentity);
+  assert.equal(await readFile(fx.claim.processingPath, 'utf8'), originalClaim);
+  assert.match(await readFile(join(fx.repoRoot,'shared/agents/example.mjs'),'utf8'), /value = 2/);
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot,'source-artifacts')), false);
+  assert.equal(existsSync(join(fx.sharedWorkspaceRoot,'publication-outbox')), false);
+});
+
+test('source proposal rejects absent bounded runner and wrong class before execution', async () => {
+  const fx = await fixture();
+  await assert.rejects(produceProviderNeutralSourceBuildProposalV1(fx.claim), /BOUNDED_RUNNER_REQUIRED/);
+  await assert.rejects(produceProviderNeutralSourceBuildProposalV1(fx.claim, {
+    runCommand: () => { throw new Error('RUNNER_MUST_NOT_RUN'); },
+    localModelFetchImpl: () => { throw new Error('MODEL_MUST_NOT_RUN'); },
+  }), /LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED/);
 });

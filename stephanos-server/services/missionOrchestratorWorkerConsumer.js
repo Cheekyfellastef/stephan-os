@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
+import { projectModelTransportFailureProofV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
 import {
   appendExecutionReceipt,
   createExecutionReceipt,
@@ -15,7 +16,7 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
 import { appendMissionEvent, readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
-import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { assertMissionWorkerPendingCapacityCurrent, collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
 function providerNeutralTerminalQueueReleaseProven(item, result, adapter) {
@@ -531,9 +532,35 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
           'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
         continue;
       }
-      // Lane 7 admission must survive the awaited queue and source-fence reads.
-      if (options.assertClaimCustody) options.assertClaimCustody();
-      await rename(pendingPath, processingPath);
+      const acquirePending = async (state) => {
+        if (state?.cancelled === true || state?.currentPhase === 'CANCELLED'
+            || state?.storeMetadata?.originalSourceAttemptFence
+            || state?.storeMetadata?.supervisedRecoveryMaintenance) {
+          throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+        }
+        if (actionIsHandoff) {
+          // Publication and pickup share the existing mission lock. Re-read
+          // after acquiring it; never rename a refreshed envelope using stale
+          // in-memory grant bytes or overwrite an existing processing owner.
+          if (!(await readFile(pendingPath)).equals(bytes)) {
+            throw new Error('MISSION_WORKER_PENDING_ITEM_CHANGED');
+          }
+          await assertMissionWorkerPendingCapacityCurrent(item, bytes, options, state);
+          const existing = await readFile(processingPath).catch(error => {
+            if (error?.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (existing) throw new Error('MISSION_WORKER_PROCESSING_CLAIM_ALREADY_PRESENT');
+        }
+        // Custody and the complete grant must survive all awaited reads.
+        if (options.assertPendingClaimContract) options.assertPendingClaimContract(item);
+        if (options.assertClaimCustody) options.assertClaimCustody();
+        await rename(pendingPath, processingPath);
+      };
+      const actionIsHandoff = item.payload.actionKind === 'agent-handoff';
+      if (actionIsHandoff) {
+        await runWithMissionStatePrecondition(item.missionId, {}, acquirePending, options);
+      } else await acquirePending();
       const claim = { adapter, item, processingPath, paths };
       try {
         claim.pickupProof = await proveProcessingClaim(claim, options);
@@ -707,6 +734,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   return Object.freeze({
     ok: true,
     classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    providerTransportFailure: providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)
+      ? projectModelTransportFailureProofV1(result, terminalReceipt) : null,
     missionId: normalizedMissionId,
     actionId: normalizedActionId,
     adapter: normalizedAdapter,

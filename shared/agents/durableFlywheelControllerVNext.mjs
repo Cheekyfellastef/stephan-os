@@ -41,6 +41,7 @@ import {
 } from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
 import {
   buildMissionWorkerAction,
+  createMissionWorkerActionGrantV1,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
 
@@ -331,7 +332,7 @@ async function exactPublishedReviewGrantProjection(projection, readCurrentMissio
   return { ...projection, criticalBacklog: { ...projection.criticalBacklog, activeMission: mission } };
 }
 
-function createExactWorkerActionGrant(
+export function createExactWorkerActionGrant(
   projection = {},
   sourceRevision = '',
   capacityRouting = null,
@@ -372,7 +373,7 @@ function createExactWorkerActionGrant(
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
   const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
-  return freeze({
+  return freeze(createMissionWorkerActionGrantV1({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
     controllerId: DURABLE_FLYWHEEL_CONTROLLER_ID,
@@ -384,6 +385,7 @@ function createExactWorkerActionGrant(
     actionKind: text(action.actionKind),
     adapter,
     operation: text(action.operation),
+    providerRouteIntent: text(actionState.providerRouteIntent, 'AUTO').toUpperCase(),
     capacityRoute: text(action.capacityRoute),
     capacityReceiptId: text(action.capacityReceiptId) || null,
     capacityProofRefs: freeze(list(action.capacityProofRefs)),
@@ -399,7 +401,7 @@ function createExactWorkerActionGrant(
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-  });
+  }));
 }
 
 export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';

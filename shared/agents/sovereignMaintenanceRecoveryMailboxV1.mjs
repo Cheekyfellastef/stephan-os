@@ -1,5 +1,6 @@
 // Fixed adapter to the existing maintenance recovery owner, never a shell route.
 import { projectMaintenanceSourceDiagnosticV1 } from './sovereignMaintenanceSourceDiagnosticV1.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 
 export const MAINTENANCE_RECOVERY_OPERATIONS = Object.freeze([
   'OBSERVE_SOVEREIGN_MAINTENANCE_RECOVERY',
@@ -73,7 +74,7 @@ export function validateMaintenanceRecoveryCommandShape(command = {}) {
   if (!MAINTENANCE_RECOVERY_OPERATIONS.includes(command?.operation))
     return Object.freeze({ ok: true, requested: false });
   if (Object.keys(command).some(key => !fields.has(key))) return fail('RECOVERY_MAILBOX_FIELD_NOT_ALLOWED');
-  if (command.repository !== 'Cheekyfellastef/stephan-os' || command.issueNumber !== 3149
+  if (command.repository !== 'Cheekyfellastef/stephan-os' || command.issueNumber !== CANONICAL_MAILBOX_ISSUE
       || command.branch !== 'main' || command.operatorApproval !== 'operator-approved'
       || !sha.test(command.expectedHead ?? '')) return fail('RECOVERY_MAILBOX_EXACT_ENVELOPE_REQUIRED');
   if (command.operation === MAINTENANCE_RECOVERY_OPERATIONS[1]) {

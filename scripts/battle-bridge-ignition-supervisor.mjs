@@ -78,6 +78,27 @@ export function evaluateBattleBridgeMutationHeadBinding({ expectedHead = '', obs
   });
 }
 
+export function projectUiRepairObservation(result, code) {
+  const row = result && typeof result === 'object' && !Array.isArray(result) ? result : null;
+  const id = value => typeof value === 'string' && /^[a-z0-9_-]{1,96}$/i.test(value) ? value : 'UNPROVEN';
+  const number = value => Number.isSafeInteger(value) ? value : null;
+  const blockers = Array.isArray(row?.blockers) ? row.blockers.slice(0, 12).map(item => ({ id: id(item?.id) })) : [];
+  return Object.freeze({ receiptParsed: row !== null, action: id(row?.action),
+    exitCode: number(code), started: row?.started === true, readyClaimed: row?.ready === true,
+    pid: number(row?.pid) > 0 ? row.pid : null,
+    expectedHead: SHA40.test(row?.expectedHead || '') ? row.expectedHead : '',
+    observedHead: SHA40.test(row?.observedHead || '') ? row.observedHead : '',
+    spawnErrorCode: row?.spawnError ? id(row.spawnError.code) : '',
+    childExitCode: number(row?.exit?.code), blockers,
+    runtimeActivationGranted: false,
+  });
+}
+
+function retainUiRepairObservation(status, result, code) {
+  const previous = Array.isArray(status.uiRepairObservations) ? status.uiRepairObservations : [];
+  status.uiRepairObservations = [...previous.slice(-1), projectUiRepairObservation(result, code)];
+}
+
 function structuredSourceTruthBlocker({
   id = 'source-truth-unproven',
   code = 'CANONICAL_SOURCE_TRUTH_UNPROVEN',
@@ -1334,8 +1355,9 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     const code = mutation.value;
     let repairResult = null;
     try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
-    const uiBlocker = repairResult?.ready ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
-    status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: repairResult?.ready ? 'ready' : (code === 0 ? 'blocked' : 'failed'), blocker: uiBlocker, logPath: repairResult?.logs?.logPath || '' }); await persist();
+    retainUiRepairObservation(status, repairResult, code);
+    const uiBlocker = repairResult?.ready === true ? null : requiredServiceBlocker('stephanos-ui-4173-missing', 'Stephanos UI 4173 did not pass readiness proof after guarded repair.', repairResult?.nextOperatorAction || `Inspect UI repair logs, then rerun proof. Approved command: ${UI_4173_REPAIR_AUTHORITY ? 'npm run stephanos:ignite:launcher-root' : 'source adapter required'}`);
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'Stephanos UI 4173', phaseState: repairResult?.ready === true ? 'ready' : (code === 0 ? 'blocked' : 'failed'), blocker: uiBlocker, logPath: repairResult?.logs?.logPath || '' }); await persist();
     await publisherFn({ sharedWorkspace });
   }
   const proofFacts = await collectFacts({ sharedWorkspace });
@@ -1359,6 +1381,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
       const code = mutation.value;
       let repairResult = null;
       try { repairResult = JSON.parse(repairOutput.chunks); } catch {}
+      retainUiRepairObservation(status, repairResult, code);
       await publisherFn({ sharedWorkspace });
       const repairedFacts = await collectFacts({ sharedWorkspace });
       const repairedReport = plannerFn(repairedFacts);

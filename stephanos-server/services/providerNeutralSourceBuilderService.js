@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { withOriginalSourceAttemptMutationGuard } from './originalSourceAttemptFenceService.js';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
@@ -12,8 +13,11 @@ import {
   finalizeMissionWorkerQueueClaim,
 } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
-import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { captureSourceArtifactIdentityFromWorktreeV1, finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { analyzeImportStructureInSource } from '../../scripts/guard-import-structure.mjs';
+import { projectGoalTestContextPathsV1 } from '../../shared/agents/goalAdmissionRequiredTestsV1.mjs';
+import { requestBoundedOllamaJsonReplyV1 } from '../../shared/ai/boundedOllamaJsonReplyV1.mjs';
+import { createLocalBuilderModelRequestV1 } from '../../shared/ai/localBuilderModelRequestV1.mjs';
 import {
   readGithubGoalIssue,
   resolveGithubTokenConfig,
@@ -280,7 +284,7 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
     }
     const bytes = await readFileImpl(absolutePath);
     if (bytes.length > MAX_PER_FILE_BYTES) continue;
-    if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
+    if (totalBytes + bytes.length > Math.min(MAX_TOTAL_BYTES, options.maxContextBytes ?? MAX_TOTAL_BYTES)) continue;
     totalBytes += bytes.length;
     snapshot.push(Object.freeze({ path, content: bytes.toString('utf8') }));
   }
@@ -563,7 +567,7 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
   return text(issue?.body).slice(0, MAX_GOAL_CONTEXT_BYTES);
 }
 
-function localBuilderPrompt(action = {}, sourceSnapshots = []) {
+function localBuilderPrompt(action = {}, sourceSnapshots = [], testSnapshots = []) {
   const sourceSnapshotsSection = sourceSnapshots.length
     ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
     : '';
@@ -575,6 +579,8 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'For an existing file, each path must be one of the supplied Source snapshots and old must be copied exactly from that snapshot, be non-empty, and occur exactly once at the point it is applied.',
         'To create a new allowed file that is absent from Source snapshots, use old as the empty string and new as the complete file contents.',
         'new is the exact replacement text or complete new-file contents.',
+        'For existing files, return compact edits using the smallest unique old-text anchors and only the replacement text. Do not copy unchanged functions or the whole file into old or new.',
+        'Keep the entire response within 8192 generated tokens; use a short summary and no explanations.',
         'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
@@ -596,6 +602,7 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
+    testSnapshots.length ? `Read-only required-test context (never permission to edit):\n${JSON.stringify(testSnapshots, null, 2)}` : '',
     sourceSnapshotsSection,
     goalContextSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
@@ -647,19 +654,10 @@ async function callLocalBuilder(action, options = {}) {
     const retryInstruction = attempt > 1
       ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
-    const response = await fetchImpl(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        format: 'json',
-        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) + retryInstruction }],
-        options: { temperature: 0.1 },
-      }),
-    });
-    if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
-    const payload = await response.json();
+    const payload = await requestBoundedOllamaJsonReplyV1(endpoint, createLocalBuilderModelRequestV1({
+      model, patchFallbackAllowed,
+      prompt: localBuilderPrompt(action, sourceSnapshots, options.testSnapshots) + retryInstruction,
+    }), { fetchImpl });
     let parsed;
     try {
       parsed = JSON.parse(text(payload?.message?.content));
@@ -891,6 +889,48 @@ async function claimExternal(options = {}) {
   return null;
 }
 
+
+export const PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA = 'stephanos.provider-neutral-source-build-proposal.v1';
+// Only the explicit proposal entry can select this internal behavior. Serialized
+// options cannot turn ordinary legacy execution into a different authority lane.
+const SOURCE_BUILD_PROPOSAL_MODE = Symbol('source-build-proposal');
+
+function requireLocalOwnedSourceProposalClaim(claim) {
+  const item = claim?.item;
+  const action = item?.payload;
+  const grant = item?.actionGrant;
+  const same = key => text(grant?.[key]).toLowerCase() === text(action?.[key]).toLowerCase();
+  if (claim?.adapter !== 'foundry-forge' || item?.adapter !== 'foundry-forge'
+      || item?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+      || action?.adapter !== 'foundry-forge' || action?.actionKind !== 'agent-handoff'
+      || grant?.schemaVersion !== 'stephanos.mission-worker-action-grant.v1'
+      || grant.adapter !== 'foundry-forge' || grant.actionKind !== 'agent-handoff'
+      || grant.capacityRoute !== MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE
+      || grant.workerId !== FORGE_LIFEBOAT_WORKER_ID
+      || grant.boundedActionCount !== 1 || grant.mergeAuthority !== false
+      || grant.leaseSeizureAllowed !== false || !text(claim.processingPath)
+      || !text(action.missionId) || !text(action.actionId)
+      || !same('missionId') || !same('actionId') || !same('repository')
+      || text(item.missionId).toLowerCase() !== text(action.missionId).toLowerCase()
+      || text(item.actionId).toLowerCase() !== text(action.actionId).toLowerCase()
+      || text(grant.branch) !== text(action.branch)
+      || text(action.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
+      || !/^[a-f0-9]{40}$/.test(text(grant.sourceRevision).toLowerCase())) {
+    throw new Error('PROVIDER_NEUTRAL_LOCAL_SOURCE_PROPOSAL_CLAIM_REQUIRED');
+  }
+}
+
+// Data producer for an ALREADY-OWNED parent claim, not a claim/qualification API.
+// The fixed native driver and original parent remain responsible for authentic
+// admission, native lifetime, original ownership, scope/test binding and CAS.
+export async function produceProviderNeutralSourceBuildProposalV1(claim, options = {}) {
+  if (typeof options.runCommand !== 'function') {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_PROPOSAL_BOUNDED_RUNNER_REQUIRED');
+  }
+  requireLocalOwnedSourceProposalClaim(claim);
+  return runClaimedProviderNeutralSourceBuild(claim, options, SOURCE_BUILD_PROPOSAL_MODE);
+}
+
 export async function processNextProviderNeutralSourceBuild(options = {}) {
   const pendingQueueDiagnostics = [];
   const claim = await claimExternal({
@@ -915,6 +955,11 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       finalVerdict: quarantined ? 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY' : '',
     });
   }
+  return runClaimedProviderNeutralSourceBuild(claim, options);
+}
+
+async function runClaimedProviderNeutralSourceBuild(claim, options, mode) {
+  const proposalOnly = mode === SOURCE_BUILD_PROPOSAL_MODE;
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
   // Future native Job Object execution needs its own independent Windows
@@ -925,6 +970,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let completedAt = '';
   let patchPath = '';
   let mutationApplied = false;
+  let mutationAttempted = false;
   let structuredEditsApplied = false;
   let patchRecountUsed = false;
   let succeeded = false;
@@ -943,7 +989,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
 
-    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
+    if (!proposalOnly) executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
 
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
@@ -972,13 +1018,17 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       run,
       { ...options, sourceContextHint },
     );
+    const testContextPaths = projectGoalTestContextPathsV1(action.requiredTests);
+    const testSnapshots = testContextPaths.length ? await collectSourceSnapshots(
+      worktreePath, testContextPaths, run, { ...options, sourceContextHint, maxContextBytes: 16 * 1024 },
+    ) : [];
     providerInvoked = true;
     const generated = await callLocalBuilder(
       { ...sourceBuildAction, goalContext },
-      { ...options, sourceSnapshots },
+      { ...options, sourceSnapshots, testSnapshots },
     );
     providerCompleted = true;
-    const { finalized, receipt, sourceTestReceipts } = await guardMutation(async () => {
+    const { finalized, receipt, sourceTestReceipts, proposalExecution, proposalIdentity } = await guardMutation(async () => {
 
       if (Array.isArray(generated.edits)) {
         const structuredEditSnapshots = await hydrateStructuredEditTargetSnapshots(
@@ -989,6 +1039,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           options,
         );
         const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, structuredEditSnapshots);
+        mutationAttempted = true;
         mutationSnapshot = await applyStructuredEdits(worktreePath, edits, structuredEditSnapshots, options);
         mutationEvidence = JSON.stringify(edits);
         structuredEditsApplied = true;
@@ -1016,6 +1067,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
           patchRecountUsed = true;
           applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
         }
+        mutationAttempted = true;
         const apply = run('git.exe', applyArgs, { cwd: worktreePath });
         if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
         mutationEvidence = patch;
@@ -1039,7 +1091,16 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         }
       }
 
-      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      const requiredTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      // Newly owned regression files are additive evidence; never rewrite the
+      // immutable owner-required command identity to make them an oracle.
+      const ownedRegressionCommands = mutationSnapshot
+        .filter(saved => saved.existed === false && files.includes(saved.path)
+          && /\.(?:test|spec)\.(?:mjs|js)$/.test(saved.path))
+        .map(saved => 'node --test ' + saved.path);
+      const ownedRegressionReceipts = ownedRegressionCommands.length
+        ? runRequiredTests({ ...action, requiredTests: ownedRegressionCommands }, worktreePath, run, options) : [];
+      const sourceTestReceipts = Object.freeze([...requiredTestReceipts, ...ownedRegressionReceipts]);
       // options.now is an admission snapshot, not the completion clock.
       completedAt = new Date().toISOString();
       const receipt = Object.freeze({
@@ -1060,10 +1121,20 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         receipt,
         evidenceReceipts: sourceTestReceipts,
         sourceTestReceipts,
+        ownedRegressionReceipts,
         stage: 'TESTED',
         testsPassed: true,
         summary: generated.summary,
       });
+      if (proposalOnly) {
+        const identity = await captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, {
+          ...options,
+          actionGrant: claim.item?.actionGrant || options.actionGrant,
+          runCommand: run,
+          repoRoot: options.repoRoot || action.repositoryRoot,
+        });
+        return { proposalExecution: execution, proposalIdentity: identity, receipt, sourceTestReceipts };
+      }
       const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
         action,
         execution,
@@ -1080,6 +1151,28 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       }
       return { finalized, receipt, sourceTestReceipts };
     });
+
+    if (proposalOnly) {
+      succeeded = true;
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: true,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: '',
+        sourceState: 'SOURCE_CHANGED_TESTED_CAPTURED',
+        sourceInspection: Object.freeze({ known: true, error: '' }),
+        changedFiles: proposalExecution.changedFiles,
+        partialSourcePossible: false,
+        execution: proposalExecution,
+        sourceArtifactIdentity: proposalIdentity,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_READY',
+      });
+    }
 
     await collectResult({
       missionId: action.missionId,
@@ -1131,6 +1224,55 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     return completedResult;
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
+
+    if (proposalOnly) {
+      let rollbackState = 'NOT_ATTEMPTED';
+      if (mutationApplied && !succeeded) {
+        try {
+          const rollbackPaths = changedFiles(worktreePath, run);
+          await guardMutation(async () => {
+            if (structuredEditsApplied) {
+              await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+            } else if (patchPath) {
+              await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+            }
+          });
+          rollbackState = 'RESTORED';
+        } catch (rollbackError) {
+          rollbackState = 'FAILED';
+          failure += ';' + (rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED');
+        }
+      }
+      let observedFiles = null;
+      let inspectionError = '';
+      try { observedFiles = changedFiles(worktreePath, run); }
+      catch (inspectionFailure) {
+        inspectionError = inspectionFailure?.message || 'PROVIDER_NEUTRAL_SOURCE_INSPECTION_FAILED';
+      }
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_SCHEMA,
+        processed: true,
+        success: false,
+        adapter: claim.adapter,
+        missionId: text(action.missionId),
+        actionId: text(action.actionId),
+        providerInvoked,
+        providerCompleted,
+        failureStage: providerInvoked && !providerCompleted ? 'PROVIDER'
+          : providerCompleted ? 'SOURCE_OR_TEST' : 'WORKER_PRE_PROVIDER',
+        sourceState: observedFiles === null ? 'UNKNOWN'
+          : observedFiles.length ? (mutationAttempted ? 'PARTIAL_SOURCE_PRESERVED' : 'PREEXISTING_SOURCE_PRESERVED')
+            : 'UNCHANGED_OBSERVED',
+        sourceInspection: Object.freeze({ known: observedFiles !== null, error: inspectionError }),
+        changedFiles: observedFiles === null ? null : Object.freeze(observedFiles),
+        partialSourcePossible: mutationAttempted && (observedFiles === null || observedFiles.length > 0),
+        rollbackState,
+        execution: null,
+        sourceArtifactIdentity: null,
+        error: failure,
+        finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_PROPOSAL_BLOCKED',
+      });
+    }
     if (mutationApplied && !succeeded) {
       const rollbackPaths = changedFiles(worktreePath, run);
       try {

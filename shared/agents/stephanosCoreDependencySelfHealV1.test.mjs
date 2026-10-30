@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed } from './stephanosCoreDaemonV1.mjs';
 import { projectStephanosControlPlaneSpine } from './stephanosControlPlaneSpineV1.mjs';
 import { canonicalMissionWorkerEvidenceAllowsWork } from './canonicalMissionWorkerEvidenceV1.mjs';
+import { unqualifiedCoreWindowsRepairV1 } from './sovereignMaintenanceAdmissionV1.mjs';
 
 const HEAD = 'a'.repeat(40);
 const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
@@ -55,12 +56,12 @@ test('the actual Core Flywheel entry cannot enter indirect repair while worker c
 
 // Exercise the actual daemon repair routine with controlled observations and
 // maintenance receipts, without loading its entrypoint or touching PC state.
-test('each actual Octopus maintenance edge re-samples worker evidence immediately before dispatch', async () => {
+test('each actual Octopus maintenance edge re-samples worker evidence before automatic custody admission', async () => {
   const maintenanceStart = source.indexOf('async function runBoundedOctopusMaintenance(');
   const maintenanceEnd = source.indexOf('async function runBoundedOctopusSelfHeal(', maintenanceStart);
   let age = 0, samples = 0, dispatches = 0;
   const context = vm.createContext({
-    Object, projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed,
+    Object, projectStephanosCoreDaemonState, coreWorkerDependentWorkAllowed, unqualifiedCoreWindowsRepairV1,
     readCanonicalMissionWorkerHeartbeatAgeMs: ({ expectedSourceHead }) => { assert.equal(expectedSourceHead, HEAD); samples++; return age; },
     repoRoot: 'repo-fixture', workspaceRoot: 'workspace-fixture',
     buildStephanosExecutionSurfaceCatalogV1: () => ({}),
@@ -73,7 +74,10 @@ test('each actual Octopus maintenance edge re-samples worker evidence immediatel
   vm.runInContext(source.slice(maintenanceStart, maintenanceEnd), context);
   for (const phase of ['goal-builder', 'control-plane', 'goal-builder-retry']) {
     age = 0;
-    assert.equal((await context.runBoundedOctopusMaintenance('fixed-fixture', HEAD, phase)).ok, true);
+    const fresh = await context.runBoundedOctopusMaintenance('fixed-fixture', HEAD, phase);
+    assert.equal(fresh.ok, false);
+    assert.equal(fresh.blocker, 'SOVEREIGN_CORE_WINDOWS_JOB_CUSTODY_UNAVAILABLE');
+    assert.equal(fresh.maintenanceReservationCreated, false);
     const count = dispatches;
     for (age of [null, undefined, -1, NaN, '0', 300001, 900000]) {
       const result = await context.runBoundedOctopusMaintenance('fixed-fixture', HEAD, phase);
@@ -83,7 +87,7 @@ test('each actual Octopus maintenance edge re-samples worker evidence immediatel
       assert.equal(dispatches, count);
     }
   }
-  assert.equal(samples, 24); assert.equal(dispatches, 3);
+  assert.equal(samples, 24); assert.equal(dispatches, 0);
 });
 
 function isolatedRepair({ verifiedAge = null, repairOk = true } = {}) {

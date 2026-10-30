@@ -72,3 +72,94 @@ test('build status keeps external-only meters explicit and unknown', () => {
   assert.equal(status.arbitraryShellAllowed, false);
   assert.equal(status.secretMaterialIncluded, false);
 });
+
+test('a recent unknown or contradictory meter record cannot turn green', () => {
+  for (const candidate of [
+    { truthState: 'UNKNOWN', meterTruthUsable: true },
+    { truthState: 'CURRENT', meterTruthUsable: false },
+    { truthState: 'CURRENT' },
+  ]) {
+    const meter = normalizeWorkspaceMeterRecord({
+      participantStatusId: 'codex-capacity-current',
+      timestampUtc: '2026-10-02T11:44:00.000Z',
+      remainingPercent: 95,
+      availability: 'AVAILABLE',
+      ...candidate,
+    }, { nowMs: NOW.getTime() });
+    assert.equal(meter.trafficLight, 'AMBER');
+    assert.equal(meter.observationState, 'STALE');
+  }
+});
+
+test('future-dated meter evidence never proves available capacity', () => {
+  const meter = normalizeWorkspaceMeterRecord({
+    participantStatusId: 'remote-desktop-commander-capacity',
+    timestampUtc: '2026-10-02T11:46:00.000Z',
+    truthState: 'CURRENT',
+    meterTruthUsable: true,
+    remainingPercent: 99,
+    availability: 'AVAILABLE',
+  }, { nowMs: NOW.getTime() });
+  assert.equal(meter.trafficLight, 'AMBER');
+  assert.equal(meter.observationState, 'STALE');
+  assert.equal(meter.ageSeconds, null);
+});
+
+test('null and blank percentages stay unknown, never counterfeit depleted capacity', () => {
+  for (const value of [null, '', '   ']) {
+    const meter = normalizeWorkspaceMeterRecord({
+      participantStatusId: 'codex-capacity-current',
+      timestampUtc: '2026-10-02T11:44:00.000Z',
+      truthState: 'CURRENT',
+      meterTruthUsable: true,
+      remainingPercent: value,
+    }, { nowMs: NOW.getTime() });
+    assert.equal(meter.remainingPercent, null);
+    assert.equal(meter.trafficLight, 'GREY');
+    assert.equal(meter.observationState, 'UNKNOWN');
+  }
+});
+
+test('impossible GitHub rate counters are omitted and missing reset is not Unix epoch', () => {
+  const meters = normalizeGithubRateResources({
+    core: { limit: 5000, remaining: null, reset: null },
+    search: { limit: 30, remaining: 31, reset: null },
+    graphql: { limit: 100, remaining: 50, reset: null },
+  }, { nowMs: NOW.getTime() });
+  assert.deepEqual(meters.map((item) => item.meterId), ['github-graphql']);
+  assert.equal(meters[0].remainingPercent, 50);
+  assert.equal(meters[0].naturalResetAtUtc, '');
+});
+
+test('an untrusted newer duplicate cannot replace an older current usable meter', () => {
+  const result = buildSovereignMeterStatus({
+    workspaceRecords: [
+      { participantStatusId: 'codex-capacity-current', timestampUtc: '2026-10-02T11:44:00.000Z',
+        truthState: 'CURRENT', meterTruthUsable: true, remainingPercent: 12 },
+      { participantStatusId: 'codex-capacity-current', timestampUtc: '2026-10-02T11:44:30.000Z',
+        truthState: 'UNKNOWN', meterTruthUsable: false, remainingPercent: 95 },
+    ],
+    now: NOW,
+  });
+  const meter = result.meters.find((item) => item.meterId === 'codex-capacity');
+  assert.equal(meter.remainingPercent, 12);
+  assert.equal(meter.observationState, 'CURRENT');
+  assert.equal(meter.trafficLight, 'AMBER');
+});
+
+test('even a trusted current numeric quota is not green when provider availability is unknown or unavailable', () => {
+  const base = {
+    participantStatusId: 'codex-capacity-current',
+    timestampUtc: '2026-10-02T11:44:00.000Z',
+    truthState: 'CURRENT',
+    meterTruthUsable: true,
+    remainingPercent: 95,
+  };
+  const observe = (availability) => normalizeWorkspaceMeterRecord({
+    ...base, availability,
+  }, { nowMs: NOW.getTime() });
+  assert.equal(observe('UNKNOWN').trafficLight, 'AMBER');
+  assert.equal(observe('UNAVAILABLE').trafficLight, 'RED');
+  assert.equal(observe('CAPACITY_UNAVAILABLE').trafficLight, 'RED');
+  assert.equal(observe('AVAILABLE').trafficLight, 'GREEN');
+});

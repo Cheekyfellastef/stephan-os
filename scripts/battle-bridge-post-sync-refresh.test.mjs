@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,6 +11,98 @@ import {
 } from './battle-bridge-post-sync-refresh.mjs';
 
 const source = await readFile(new URL('./battle-bridge-post-sync-refresh.mjs', import.meta.url), 'utf8');
+
+async function retainedRefreshFixture(t, { complete = false } = {}) {
+  const root = await mkdtemp(join(tmpdir(), 'post-sync-retained-debt-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const paths = { repoRoot: join(root, 'repo'), workspaceRoot: join(root, 'workspace') };
+  await mkdir(paths.repoRoot);
+  const A = 'a'.repeat(40), B = 'b'.repeat(40), C = 'c'.repeat(40), D = 'd'.repeat(40);
+  const calls = [];
+  const adapter = (head, changedPaths, options = {}) => ({
+    inspectHeads: () => ({ ok: true, exactHeadProofOk: true, sourceHead: head }),
+    isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }),
+    changedPaths: input => { calls.push({ kind: 'diff', beforeHead: input.beforeHead, afterHead: input.afterHead }); return { ok: true, paths: changedPaths }; },
+    refreshUi: () => { calls.push({ kind: 'ui' }); return { ok: true, exactHeadProofOk: true, sourceHead: head }; },
+    restartApprovedTarget: () => { calls.push({ kind: 'worker' }); return { ok: complete, exactHeadProofOk: complete, sourceHead: head, blocker: complete ? '' : 'FIXTURE_WORKER_HELD' }; },
+    reconcileControlPlane: () => ({ ok: true, exactHeadProofOk: true, sourceHead: head }),
+    ...options,
+  });
+  const initial = await runBattleBridgePostSyncRefresh({ paths, expectedPaths: paths, beforeHead: A, afterHead: B,
+    adapter: adapter(B, ['main.js', 'scripts/mission-orchestrator-worker.mjs']) });
+  assert.equal(initial.ok, complete);
+  calls.length = 0;
+  const statusPath = join(paths.workspaceRoot, 'status', 'post-sync-runtime-refresh-current.json');
+  return { paths, A, B, C, D, adapter, calls, statusPath };
+}
+
+test('a reverted or missing retained target holds before replacing the original failed report', async t => {
+  const fx = await retainedRefreshFixture(t);
+  const before = await readFile(fx.statusPath);
+  // UI was proven, worker was not. Both original selected targets remain due.
+  const result = await runBattleBridgePostSyncRefresh({ paths: fx.paths, expectedPaths: fx.paths, beforeHead: fx.B, afterHead: fx.C,
+    adapter: fx.adapter(fx.C, ['main.js']) });
+  assert.equal(result.blocker, 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN');
+  assert.deepEqual(fx.calls, [{ kind: 'diff', beforeHead: fx.A, afterHead: fx.C }]);
+  assert.deepEqual(await readFile(fx.statusPath), before);
+});
+
+test('unrelated, future or malformed retained refresh reports hold without replacing evidence', async t => {
+  for (const scenario of ['unrelated', 'future', 'malformed']) {
+    const fx = await retainedRefreshFixture(t);
+    let adapter = fx.adapter(fx.C, ['main.js', 'scripts/mission-orchestrator-worker.mjs']);
+    if (scenario === 'unrelated') adapter.isAncestor = () => ({ ok: true, ancestor: false });
+    if (scenario === 'future') {
+      const record = JSON.parse(await readFile(fx.statusPath, 'utf8')); record.afterHead = fx.D;
+      await writeFile(fx.statusPath, JSON.stringify(record));
+    }
+    if (scenario === 'malformed') {
+      const record = JSON.parse(await readFile(fx.statusPath, 'utf8')); delete record.classification;
+      await writeFile(fx.statusPath, JSON.stringify(record));
+    }
+    const before = await readFile(fx.statusPath);
+    const result = await runBattleBridgePostSyncRefresh({ paths: fx.paths, expectedPaths: fx.paths, beforeHead: fx.B, afterHead: fx.C, adapter });
+    assert.equal(result.ok, false, scenario);
+    assert.match(result.blocker, /^PENDING_POST_SYNC_/);
+    assert.deepEqual(fx.calls, [], scenario);
+    assert.deepEqual(await readFile(fx.statusPath), before, scenario);
+  }
+});
+
+test('exact covered completed receipt is reused without replaying its native target handlers', async t => {
+  const fx = await retainedRefreshFixture(t, { complete: true });
+  const before = await readFile(fx.statusPath);
+  const result = await runBattleBridgePostSyncRefresh({ paths: fx.paths, expectedPaths: fx.paths, beforeHead: fx.A, afterHead: fx.B,
+    adapter: fx.adapter(fx.B, ['main.js', 'scripts/mission-orchestrator-worker.mjs']) });
+  assert.equal(result.ok, true);
+  assert.equal(result.retainedCompletionReused, true);
+  assert.deepEqual(fx.calls, []);
+  assert.deepEqual(await readFile(fx.statusPath), before);
+});
+
+test('fresh child uses the new delta after old completion so an intermediate UI revert cannot disappear', async t => {
+  const fx = await retainedRefreshFixture(t, { complete: true });
+  await writeFile(join(fx.paths.workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'), JSON.stringify({
+    schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status', statusId: 'battle-bridge-github-sync-current',
+    classification: 'BLOCKED_POST_SYNC_REFRESH_REQUIRED', localHeadBefore: fx.A, localHeadAfter: fx.B,
+  }));
+  const result = await runBattleBridgePostSyncRefresh({ paths: fx.paths, expectedPaths: fx.paths, beforeHead: fx.B, afterHead: fx.C,
+    adapter: fx.adapter(fx.C, ['main.js']) });
+  assert.equal(result.ok, true);
+  assert.equal(result.beforeHead, fx.B);
+  assert.deepEqual(fx.calls, [{ kind: 'diff', beforeHead: fx.B, afterHead: fx.C }, { kind: 'ui' }]);
+});
+
+test('fixed refresh ancestry is bounded, primitive-only and never treats probe errors as ancestry', () => {
+  const A = 'a'.repeat(40), B = 'b'.repeat(40), calls = [];
+  const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn: (command, args, options) => { calls.push({ command, args, options }); return { status: 0, error: { code: 'ETIMEDOUT' }, stdout: '', stderr: '' }; } });
+  assert.equal(adapter.isAncestor(A, B, '/fixture').ok, false);
+  for (const value of [[A], A.toUpperCase(), ` ${A}`, 'main']) assert.equal(adapter.isAncestor(value, B, '/fixture').ok, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.shell, false);
+  assert.ok(calls[0].options.timeout <= 1000);
+  assert.equal(calls[0].options.maxBuffer, 64 * 1024);
+});
 
 test('fresh coordinator compares immutable heads through fixed shell-free git argv', () => {
   assert.match(source, /merge-base', '--is-ancestor'/);

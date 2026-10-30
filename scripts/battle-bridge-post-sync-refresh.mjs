@@ -4,6 +4,7 @@ import { mkdir, open, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { collectPostSyncRefreshDebt, resolvePostSyncRefreshDebt } from './battle-bridge-github-sync-policy.mjs';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -77,7 +78,7 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
   });
 }
 
-function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSync } = {}) {
+function fixedRun(command, args, { cwd, timeout = 180_000, maxBuffer = 1024 * 1024, spawnSyncFn = spawnSync } = {}) {
   const result = spawnSyncFn(command, [...args], {
     cwd,
     encoding: 'utf8',
@@ -85,6 +86,7 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout,
+    maxBuffer,
   });
   return Object.freeze({
     ok: !result?.error && result?.status === 0,
@@ -115,7 +117,18 @@ function parseJsonOutput(stdout) {
 
 export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, refreshUiFn = refreshStephanosUi4173 } = {}) {
   const gitCommand = process.platform === 'win32' ? 'git.exe' : 'git';
+  let ancestryBudgetMs = 5_000;
   return Object.freeze({
+    isAncestor(beforeHead, afterHead, repoRoot) {
+      if (typeof beforeHead !== 'string' || typeof afterHead !== 'string' || !/^[0-9a-f]{40}$/.test(beforeHead)
+        || !/^[0-9a-f]{40}$/.test(afterHead) || ancestryBudgetMs <= 0) return { ok: false, ancestor: false };
+      const started = Date.now();
+      const result = fixedRun(gitCommand, ['merge-base', '--is-ancestor', beforeHead, afterHead], {
+        cwd: repoRoot, spawnSyncFn, timeout: Math.min(1_000, ancestryBudgetMs), maxBuffer: 64 * 1024,
+      });
+      ancestryBudgetMs -= Math.max(1, Date.now() - started);
+      return { ok: !result.errorCode && [0, 1].includes(result.status), ancestor: result.status === 0 };
+    },
     inspectHeads({ beforeHead, afterHead, repoRoot }) {
       if (!isSafeHead(beforeHead) || !isSafeHead(afterHead)) return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID' };
       const branch = fixedRun(gitCommand, ['branch', '--show-current'], { cwd: repoRoot, spawnSyncFn });
@@ -415,7 +428,7 @@ export async function runBattleBridgePostSyncRefresh({
   expectedPaths = resolveCanonicalPostSyncRefreshPaths({ env }),
   adapter = createFixedPostSyncRuntimeAdapter(),
 } = {}) {
-  const normalizedBefore = text(beforeHead).toLowerCase();
+  let normalizedBefore = text(beforeHead).toLowerCase();
   const normalizedAfter = text(afterHead).toLowerCase();
   if (!isSafeHead(normalizedBefore) || !isSafeHead(normalizedAfter) || normalizedBefore === normalizedAfter) {
     return Object.freeze({ ok: false, blocker: 'POST_SYNC_HEADS_INVALID', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
@@ -429,10 +442,38 @@ export async function runBattleBridgePostSyncRefresh({
   try {
     const inspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!inspection.ok) return Object.freeze({ ok: false, blocker: inspection.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    const requestedBefore = normalizedBefore;
+    const records = {};
+    for (const [key, filename] of [['syncRecord', 'battle-bridge-github-sync-current.json'], ['refreshRecord', 'post-sync-runtime-refresh-current.json']]) {
+      try {
+        const raw = await readFile(path.join(paths.workspaceRoot, 'status', filename), 'utf8');
+        records[key] = raw.length <= 64 * 1024 ? JSON.parse(raw) : {};
+      } catch (error) { records[key] = error?.code === 'ENOENT' ? null : {}; }
+    }
+    const evidence = collectPostSyncRefreshDebt(records);
+    if (!evidence.ok) return Object.freeze({ ok: false, blocker: evidence.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    const retained = resolvePostSyncRefreshDebt({ ...evidence,
+      requestedSpans: [{ beforeHead: normalizedBefore, afterHead: normalizedAfter }],
+      currentHead: normalizedAfter,
+      isAncestor: (before, after) => before === requestedBefore && after === normalizedAfter ? { ok: true, ancestor: true }
+        : before === normalizedAfter && after === requestedBefore ? { ok: true, ancestor: false }
+          : adapter.isAncestor?.(before, after, paths.repoRoot),
+    });
+    if (!retained.ok) return Object.freeze({ ok: false, blocker: retained.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    if (!retained.debt) return Object.freeze({
+      ...records.refreshRecord, schemaVersion: 'stephanos.post-sync-runtime-refresh.v1', ok: true,
+      sourceHead: normalizedAfter, retainedCompletionReused: true, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+    });
+    normalizedBefore = retained.debt.beforeHead;
+    const retainedInspection = adapter.inspectHeads({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
+    if (!retainedInspection.ok) return Object.freeze({ ok: false, blocker: retainedInspection.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
     const changed = adapter.changedPaths({ beforeHead: normalizedBefore, afterHead: normalizedAfter, repoRoot: paths.repoRoot });
     if (!changed.ok) return Object.freeze({ ok: false, blocker: changed.blocker, exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
 
     const plan = classifyPostSyncRefresh(changed.paths);
+    if (retained.debt.requiredTargetIds.some(id => !plan.targetIds.includes(id))) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_RETAINED_TARGET_COVERAGE_UNPROVEN', exactHeadProofOk: false, finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' });
+    }
     const completedResults = await loadResumeResults(paths.workspaceRoot, normalizedAfter);
     const planProjection = buildPostSyncRefreshProjection({ ok: false, classification: plan.classification, plan, results: completedResults }, { beforeHead: normalizedBefore, afterHead: normalizedAfter });
     const planPublication = await publishProjection({ workspaceRoot: paths.workspaceRoot, repoRoot: paths.repoRoot, projection: planProjection, afterHead: normalizedAfter, phase: 'plan', now });
@@ -486,6 +527,7 @@ export async function runBattleBridgePostSyncRefresh({
     return Object.freeze({
       ...projection,
       ok: effectiveExecution.ok === true,
+      phase: effectiveExecution.ok ? 'complete' : 'blocked',
       proofRefs: publication.proofRefs,
       sourceHead: normalizedAfter,
       exactHeadProofOk: effectiveExecution.exactHeadProofOk === true && controlPlaneReconcile.ok === true,
