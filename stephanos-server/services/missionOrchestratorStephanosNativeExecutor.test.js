@@ -204,3 +204,66 @@ test('native executor rolls the source file back when the focused test fails', a
   );
   assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
 });
+
+test('native executor consumes expanded admission scope and every owner test without changing permissions', async () => {
+  const value = await fixture();
+  value.action.allowedFiles = [SOURCE_PATH, SOURCE_PATH + '/**'];
+  value.action.requiredTests = ['npm run stephanos:verify', TEST_COMMAND,
+    'node --test shared/agents/second.test.mjs', 'node --test shared/agents/third.test.mjs'];
+  const permissions = structuredClone(value.action.allowedFiles);
+  await writeFile(join(value.worktreePath, 'package.json'), JSON.stringify({scripts: {
+    'stephanos:verify': 'node scripts/verify-stephanos-dist.mjs',
+  }}));
+  const commands = [];
+  const originalRun = value.options.runCommand;
+  value.options.runCommand = (executable, args, options) => {
+    if (executable === process.execPath) commands.push([...args]);
+    if (executable === process.execPath && args[0] === 'scripts/verify-stephanos-dist.mjs')
+      return {status: 0, stdout: 'fixed verification passed', stderr: ''};
+    const result = originalRun(executable, args, options);
+    return executable === process.execPath
+      ? {...result, stdout: args.join(' ') + '\n' + result.stdout} : result;
+  };
+  const result = await executeStephanosNativeAction(value.action, value.claim, value.options);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.changedFiles, [SOURCE_PATH]);
+  assert.deepEqual(result.sourceTestReceipts.map(r => r.testCommand), value.action.requiredTests);
+  assert.deepEqual(commands, [['scripts/verify-stephanos-dist.mjs'], ['--test', ...TEST_COMMAND.split(' ').slice(2)],
+    ['--test', 'shared/agents/second.test.mjs'], ['--test', 'shared/agents/third.test.mjs']]);
+  assert.deepEqual(value.action.allowedFiles, permissions);
+  assert.equal(await readFile(value.sourceFile, 'utf8'), value.after);
+});
+
+test('native fixed verification refuses package substitution and hooks before calling the model', async t => {
+  for (const scripts of [undefined, {'stephanos:verify': 'node attacker.mjs'},
+    {'stephanos:verify': 'node scripts/verify-stephanos-dist.mjs', 'prestephanos:verify': 'node hook.mjs'},
+    {'stephanos:verify': 'node scripts/verify-stephanos-dist.mjs', 'poststephanos:verify': 'node hook.mjs'}]) {
+    await t.test(JSON.stringify(scripts) || 'missing script', async () => {
+      const value = await fixture();
+      value.action.requiredTests = ['npm run stephanos:verify', TEST_COMMAND];
+      await writeFile(join(value.worktreePath, 'package.json'), JSON.stringify({scripts}));
+      value.options.fetchImpl = async () => assert.fail('model must not run for an invalid test contract');
+      await assert.rejects(() => executeStephanosNativeAction(value.action, value.claim, value.options),
+        /STEPHANOS_NATIVE_VERIFY_CONTRACT_INVALID/);
+      assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
+    });
+  }
+});
+
+test('expanded native source scope still refuses an incumbent source lease before promotion', async () => {
+  const value = await fixture();
+  value.action.allowedFiles = [SOURCE_PATH + '/**', SOURCE_PATH];
+  value.options.readSourceMutationLease = async () => ({ok: true, present: true,
+    record: {leaseId: 'existing-other-owner'}, validation: {active: true}});
+  await assert.rejects(() => executeStephanosNativeAction(value.action, value.claim, value.options),
+    /STEPHANOS_NATIVE_MUTATION_LEASE_CONFLICT:existing-other-owner/);
+  assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
+});
+
+test('native executor retains proof-binding refusal for colliding test output records', async () => {
+  const value = await fixture();
+  value.action.requiredTests = [TEST_COMMAND, 'node --test shared/agents/second.test.mjs'];
+  await assert.rejects(() => executeStephanosNativeAction(value.action, value.claim, value.options),
+    /STEPHANOS_NATIVE_TEST_SCOPE_PROOF_BLOCKED/);
+  assert.equal(await readFile(value.sourceFile, 'utf8'), value.before);
+});

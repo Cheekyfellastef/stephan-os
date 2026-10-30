@@ -16,6 +16,8 @@ export const SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE = Object.freeze({
 const DIRECT_PARITY = Object.freeze({
   'get-config': 'get_config',
   'read-file': 'read_file',
+  'read-multiple-files': 'read_multiple_files',
+  'get-file-info': 'get_file_info',
   'write-file': 'write_file',
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
@@ -28,6 +30,7 @@ const DIRECT_PARITY = Object.freeze({
   'list-devices': 'visibility-snapshot',
   'device-status': 'visibility-snapshot',
   'connection-status': 'visibility-snapshot',
+  'source-construction': 'sovereign-source-construction-lane',
 });
 
 const BOUNDARY_PATTERN =
@@ -56,7 +59,8 @@ function operationFromEntry(entry = {}) {
     item?.operation,
     item?.actionKind,
   ];
-  return capabilityId(candidates.map(text).find(Boolean) || 'source-construction');
+  const observed = candidates.map((value) => text(value)).find(Boolean) || 'source-construction';
+  return capabilityId(observed === 'agent-handoff' ? 'source-construction' : observed);
 }
 
 function authorityWideningRequested(entry = {}) {

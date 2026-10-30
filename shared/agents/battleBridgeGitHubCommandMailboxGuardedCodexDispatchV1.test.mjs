@@ -41,7 +41,7 @@ function approvalReceipt() {
   const result = createRemoteCodexOperatorApprovalReceipt({
     approvalId: 'approval-final-link-codex-2373',
     requestId: 'final-link-codex-2373-v1',
-    owningIssue: 2590,
+    owningIssue: 3149,
     expectedHead: HEAD,
     task: TASK,
     requestedProofCommands: PROOF_COMMANDS,
@@ -59,7 +59,7 @@ function command(overrides = {}) {
     requestId: 'final-link-codex-2373-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -87,7 +87,7 @@ function directProofNotApplicable() {
 function comment(value = command()) {
   return {
     id: 12345,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2590#issuecomment-12345',
+    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/3149#issuecomment-12345',
     created_at: '2026-09-25T05:40:00.000Z',
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${core.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(value)}\n\`\`\``,
@@ -222,7 +222,7 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
   assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
 });
 
-test('successful provider-neutral native dispatch preserves the selected route in mailbox-safe telemetry', async () => {
+test('provider-neutral route selection stays non-terminal until provider pickup is proven', async () => {
   const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
@@ -248,15 +248,22 @@ test('successful provider-neutral native dispatch preserves the selected route i
     }),
   });
 
-  assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
+  assert.equal(result.blocker, 'PROVIDER_NEUTRAL_PICKUP_NOT_PROVEN');
+  assert.equal(result.finalVerdict, 'CODEX_CAPACITY_REROUTE_PENDING_PICKUP');
   assert.equal(result.selectedProvider, 'OPENCLAW');
   assert.equal(result.executionProvider, 'openclaw-local');
   assert.equal(result.taskId, '');
   assert.equal(result.dispatchJobId, 'codex-job-11111111111111111111');
   assert.equal(result.providerTaskId, '');
   assert.equal(result.providerExecutionStarted, false);
+  assert.equal(result.pickupProven, false);
+  assert.equal(result.handoffResponsibilityRetained, true);
+  assert.equal(result.publicationIsTerminal, false);
+  assert.equal(result.retryCodexAllowed, false);
   assert.equal(result.resultReadbackOperation, '');
+  assert.match(result.nextAutomaticAction, /canonical provider router/i);
   assert.equal(result.transport, 'battle-bridge-native');
   assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.mergeAuthority, false);
@@ -270,13 +277,14 @@ test('provider-neutral mailbox receipt does not advertise a Codex task before pr
     requestId: 'provider-neutral-truth-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
-    state: 'DONE',
+    state: 'BLOCKED',
     expectedHead: HEAD,
     result: {
-      ok: true,
-      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      blocker: 'PROVIDER_NEUTRAL_PICKUP_NOT_PROVEN',
       operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
       requestId: 'provider-neutral-truth-v1',
       result: {
@@ -426,7 +434,7 @@ test('mailbox-safe projection preserves bounded dispatcher blocker telemetry', (
     requestId: 'dispatch-blocker-telemetry-v1',
     operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 3149,
     branch: 'main',
     state: 'BLOCKED',
     expectedHead: HEAD,

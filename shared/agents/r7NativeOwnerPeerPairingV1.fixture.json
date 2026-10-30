@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "local.r7-native-owner-peer-pairing-golden-fixture.v1",
+  "fixtureOnly": true,
+  "notLiveFreshnessEvidence": true,
+  "context": {
+    "expectedMain": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "runId": "123456789012",
+    "runAttempt": "1",
+    "permitSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "challenge": {
+    "Audience": "stephanos:r7:first-root-owner-permit:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1677d3380e71a101e886e3e88ae85a0e40cdb036685f987de37604015060a9ac",
+    "PublicSpkiBase64": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyd29/D1W60gkEmPf78KTDtd6j0F93Gos+AS2xtkR9yeWq1/G2JhWmAhHusKeOqPDRvigkUwpHvBI9vudmiIkbti5FbVV0pyLcGRinEoJ7QHMkZRrS4s0k0bR1t4osI4BzHp162JWaUpCYl0OErJ1dUK8En0kMHrM6A6Gx/8Z0izpVNREejoB8Aua/Rk7HcXGPz5cBUHdOpYymSI/+AlKIO9lCqUEcUnuwYi8xJt/B4eRU/3IswflyIEQo4i5PuQpR3FOU+DBpExD3Wh+FDgDxul+nLaH7156NVLV1j/COg8S9OD6D3XdjPsPxN4hb4gperuzmoKoOEJS/B3n3EiDXQIDAQAB",
+    "PublicSpkiSha256": "1677d3380e71a101e886e3e88ae85a0e40cdb036685f987de37604015060a9ac",
+    "IssuedAtUtc": "2026-10-21T21:30:00.000Z",
+    "ExpiresAtUtc": "2026-10-21T21:35:00.000Z"
+  },
+  "expectedWire": "{\"schemaVersion\":\"stephanos.r7-native-owner-peer-pairing.v1\",\"purpose\":\"ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY\",\"repository\":\"Cheekyfellastef/stephan-os\",\"workflowRef\":\"Cheekyfellastef/stephan-os/.github/workflows/operator-merge-approval-gate.yml@refs/heads/main\",\"expectedMain\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"runId\":\"123456789012\",\"runAttempt\":\"1\",\"permitSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"nativeAudience\":\"stephanos:r7:first-root-owner-permit:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:1677d3380e71a101e886e3e88ae85a0e40cdb036685f987de37604015060a9ac\",\"nativeRecipientSpkiSha256\":\"1677d3380e71a101e886e3e88ae85a0e40cdb036685f987de37604015060a9ac\",\"nativeIssuedAtUtc\":\"2026-10-21T21:30:00.000Z\",\"nativeExpiresAtUtc\":\"2026-10-21T21:35:00.000Z\"}",
+  "expectedFingerprint": "442ba74864242c8139ee8e760d6846ba4646c585980aa557ff73c770d29cb22b",
+  "expectedComment": "ENROLL_EPHEMERAL_R7_OWNER_POLICY_PEER_ONLY:442ba74864242c8139ee8e760d6846ba4646c585980aa557ff73c770d29cb22b",
+  "expectedRunUrl": "https://github.com/Cheekyfellastef/stephan-os/actions/runs/123456789012/attempts/1"
+}

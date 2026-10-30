@@ -6,6 +6,7 @@ import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-teleme
 
 const performance = await readFile(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const recorder = await readFile(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url), 'utf8');
+const runtimeProducer = await readFile(new URL('./windows/starfield-vr-runtime-metrics-producer.ps1', import.meta.url), 'utf8');
 const diagnosis = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
 const reporter = await readFile(new URL('./report-starfield-vr-telemetry.mjs', import.meta.url), 'utf8');
 const verdictPrompt = await readFile(new URL('./windows/starfield-vr-physical-verdict-prompt.ps1', import.meta.url), 'utf8');
@@ -60,6 +61,41 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /openXrRenderWidth = Get-StarfieldVrBoundedNumber .* -Minimum 1 -Maximum 32768/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = Get-StarfieldVrOptionalNumber/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
+});
+
+test('Meta Air Link runtime metrics producer feeds measured render and transport telemetry', () => {
+  assert.match(runtimeProducer, /META_OCULUS_PERFLOG_XRS_STATS/);
+  assert.match(runtimeProducer, /oculus_pc_xrs_stats_event/);
+  assert.match(runtimeProducer, /render_duration_seconds_p50/);
+  assert.match(runtimeProducer, /render_duration_seconds_p95/);
+  assert.match(runtimeProducer, /num_pc_presented_frames/);
+  assert.match(runtimeProducer, /network_rtt_ms_p50/);
+  assert.match(runtimeProducer, /network_rtt_ms_jitter/);
+  assert.match(runtimeProducer, /encode_duration_seconds_p50/);
+  assert.match(runtimeProducer, /decode_duration_seconds_p50/);
+  assert.match(runtimeProducer, /total_network_video_goodput_Mbps/);
+  assert.match(runtimeProducer, /app_render_width/);
+  assert.match(runtimeProducer, /app_render_height/);
+  assert.match(runtimeProducer, /SessionStartedAtUtc/);
+  assert.match(runtimeProducer, /NoGameGraceSeconds = 35/);
+  assert.match(runtimeProducer, /eventUtc -ge \$sessionStartUtc\.AddSeconds\(-2\)/);
+  assert.match(performance, /starfield-vr-runtime-metrics-producer\.ps1/);
+  assert.match(performance, /source = 'META_OCULUS_PERFLOG_XRS_STATS'/);
+  assert.match(performance, /freshnessSeconds = 75/);
+  assert.match(performance, /-MaxAgeSeconds \$runtimeMetricsFreshnessSeconds/);
+});
+
+test('VR guard preserves finalization on Windows PowerShell and boosts the CPU-bound VR path reversibly', () => {
+  assert.match(performance, /observedGameProcessIds = \$observedGameProcessIds\.ToArray\(\)/);
+  assert.match(performance, /Get-StarfieldVrTelemetryCompleteness -Samples \$samples\.ToArray\(\)/);
+  assert.doesNotMatch(performance, /Get-StarfieldVrTelemetryCompleteness -Samples @\(\$samples\)/);
+  assert.match(performance, /Apply-StarfieldVrPriorityBoost/);
+  assert.match(performance, /Set-VrProcessPriority -ProcessId \$GameProcessId -Priority High/);
+  assert.match(performance, /Get-Process -Name 'OVRServer_x64'/);
+  assert.match(performance, /Get-Process -Name 'OculusDash'/);
+  assert.match(performance, /Restore-StarfieldVrPriorities/);
+  assert.match(performance, /priorityRestoreCount/);
+  assert.match(performance, /restoreFailure/);
 });
 
 test('playtest guard adapts capture cadence and produces configuration, crash and completeness proof', () => {

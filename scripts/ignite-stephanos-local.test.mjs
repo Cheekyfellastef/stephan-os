@@ -623,90 +623,82 @@ test('static server restart failure returns blocked repair packet behavior', asy
   );
 });
 
-test('served metadata mismatch blocks with repair packet when post-start verification runs', async () => {
+test('post-start verification is deferred until the replacement 4173 server is live', async () => {
   let healthCalls = 0;
-  await assert.rejects(
-    () => ensureLocalStaticServerRestartWithDeps({
-      expectedMetadata: {
-        runtimeMarker: 'marker-current',
-        gitCommit: 'new222',
-        buildTimestamp: '2026-06-22T00:00:00.000Z',
-        sourceFingerprint: 'fingerprint-current',
-      },
-      verifyServedAfterStart: true,
-      fetchFn: async (url) => {
-        if (String(url).includes('/__stephanos/health')) {
-          healthCalls += 1;
-          return {
-            ok: true,
-            json: async () => ({
-              runtimeMarker: 'marker-old',
-              gitCommit: 'old111',
-              buildTimestamp: '2026-06-21T00:00:00.000Z',
-              sourceFingerprint: 'fingerprint-old',
-            }),
-          };
-        }
-        return { ok: true, status: 202 };
-      },
-      log: () => {},
-    }),
-    /served-runtime-metadata-mismatch/
-  );
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    verifyServedAfterStart: true,
+    fetchFn: async (url) => {
+      if (String(url).includes('/__stephanos/health')) {
+        healthCalls += 1;
+        return {
+          ok: true,
+          json: async () => ({
+            runtimeMarker: 'marker-old',
+            gitCommit: 'old111',
+            buildTimestamp: '2026-06-21T00:00:00.000Z',
+            sourceFingerprint: 'fingerprint-old',
+          }),
+        };
+      }
+      return { ok: true, status: 202 };
+    },
+    log: () => {},
+  });
 
-  assert.equal(healthCalls, 2);
+  assert.equal(healthCalls, 1);
+  assert.equal(report.serverStopped, true);
+  assert.equal(report.postStartVerificationRequested, true);
+  assert.equal(report.postStartVerificationDeferred, true);
 });
 
 
-test('static server restart blocks when metadata matches but module MIME checks fail', async () => {
-  const logs = [];
+test('static server restart does not probe replacement MIME before the serve handoff', async () => {
   let restartCalls = 0;
   let healthCalls = 0;
-  await assert.rejects(
-    () => ensureLocalStaticServerRestartWithDeps({
-      expectedMetadata: {
-        runtimeMarker: 'marker-current',
-        gitCommit: 'new222',
-        buildTimestamp: '2026-06-22T00:00:00.000Z',
-        sourceFingerprint: 'fingerprint-current',
-      },
-      verifyServedAfterStart: true,
-      fetchFn: async (url, options = {}) => {
-        const target = String(url);
-        if (target.includes('/__stephanos/health')) {
-          healthCalls += 1;
-          return {
-            ok: true,
-            status: 200,
-            json: async () => ({
-              runtimeMarker: 'marker-current',
-              gitCommit: 'new222',
-              buildTimestamp: '2026-06-22T00:00:00.000Z',
-              sourceFingerprint: 'fingerprint-current',
-            }),
-          };
-        }
-        if ((options.method || 'GET') === 'POST' && target.includes('/__stephanos/restart')) {
-          restartCalls += 1;
-          return { ok: true, status: 202, json: async () => ({ accepted: true }) };
-        }
-        if (target.includes('/shared/runtime/runtimeStatusModel.mjs')) {
-          return { ok: true, status: 200, headers: { get: () => 'text/javascript; charset=utf-8' } };
-        }
-        if (target.includes('/shared/runtime/stephanosLocalUrls.mjs')) {
-          return { ok: true, status: 200, headers: { get: () => 'application/octet-stream' } };
-        }
-        throw new Error(`unexpected fetch ${target}`);
-      },
-      log: (message) => logs.push(message),
-    }),
-    /served-runtime-module-mime-mismatch/,
-  );
+  let mimeCalls = 0;
+  const report = await ensureLocalStaticServerRestartWithDeps({
+    expectedMetadata: {
+      runtimeMarker: 'marker-current',
+      gitCommit: 'new222',
+      buildTimestamp: '2026-06-22T00:00:00.000Z',
+      sourceFingerprint: 'fingerprint-current',
+    },
+    verifyServedAfterStart: true,
+    fetchFn: async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/__stephanos/health')) {
+        healthCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            runtimeMarker: 'marker-current',
+            gitCommit: 'new222',
+            buildTimestamp: '2026-06-22T00:00:00.000Z',
+            sourceFingerprint: 'fingerprint-current',
+          }),
+        };
+      }
+      if ((options.method || 'GET') === 'POST' && target.includes('/__stephanos/restart')) {
+        restartCalls += 1;
+        return { ok: true, status: 202, json: async () => ({ accepted: true }) };
+      }
+      if (target.includes('/shared/runtime/')) mimeCalls += 1;
+      throw new Error(`unexpected fetch ${target}`);
+    },
+    log: () => {},
+  });
 
   assert.equal(restartCalls, 1);
-  assert.equal(healthCalls, 2);
-  assert.match(logs.join('\n'), /servedRuntimeMatchesExpectedDistMetadata":false/);
-  assert.match(logs.join('\n'), /served-runtime-module-mime-mismatch/);
+  assert.equal(healthCalls, 1);
+  assert.equal(mimeCalls, 0);
+  assert.equal(report.postStartVerificationDeferred, true);
 });
 
 test('approved local merge recovery still hands off to static server restart helper', async () => {
@@ -882,6 +874,7 @@ test('ignition status evaluator admits only the exact canonical ignored local-ru
   const approved = [
     '.stephanos/local-state-checkpoints/',
     'package-lock.json',
+    'VR-Research-Lab/internal/',
     'stephanos-server/data/durable-memory.json',
     'stephanos-server/data/local-rag/',
     'stephanos-server/data/provider-secrets.json',

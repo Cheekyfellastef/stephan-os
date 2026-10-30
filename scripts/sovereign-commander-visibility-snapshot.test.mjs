@@ -4,16 +4,102 @@ import {
   SOVEREIGN_VISIBILITY_SNAPSHOT_SCHEMA,
   SOVEREIGN_VISIBILITY_SNAPSHOT_MAX_BYTES,
   buildSovereignVisibilitySnapshot,
+  buildHeadSyncVisibility,
   collectRepositoryVisibility,
+  collectCoreDaemonVisibility,
+  collectMaintenanceCustodyVisibility,
   renderSovereignVisibilitySnapshotLine,
 } from './sovereign-commander-visibility-snapshot.mjs';
 
 const HEAD = 'a'.repeat(40);
 
+const ownerHealth = () => ({ ok: true, service: 'stephanos-sovereign-commander',
+  continuousRepairGuardian: { timeoutCustodyHeld: true, running: false, maintenanceInFlight: false,
+    lastCycleId: '2a5f269f-bc64-45da-a62c-ab0e4c772294',
+    lastBlocker: 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT_CUSTODY_UNPROVEN',
+    persistentCustody: { held: true, blocker: 'MAINTENANCE_CUSTODY_STATE_MISSING', token: 'DO_NOT_PUBLISH' },
+  } });
+
+test('live executor hold survives a reset Core heartbeat and ready services', async () => {
+  const maintenanceCustody = await collectMaintenanceCustodyVisibility({ fetchFn: async (url, options) => {
+    assert.equal(url, 'http://127.0.0.1:18791/health');
+    assert.equal(options.method, 'GET'); assert.equal(options.redirect, 'error');
+    assert.ok(options.signal instanceof AbortSignal);
+    return Response.json(ownerHealth());
+  } });
+  const snapshot = buildSovereignVisibilitySnapshot({
+    repository: { available: true, head: HEAD, branch: 'main', remoteMainAvailable: true, remoteMainHead: HEAD },
+    core: { sourceHead: HEAD, wakeState: 'BOOTSTRAPPING' },
+    selfHeal: { outerBridgeRunCount: 2, octopusSelfHealAttemptCount: 0 }, maintenanceCustody,
+  });
+  assert.equal(snapshot.maintenanceCustody.state, 'HELD');
+  assert.equal(snapshot.maintenanceCustody.lastCycleId, ownerHealth().continuousRepairGuardian.lastCycleId);
+  assert.equal(snapshot.maintenanceCustody.blocker, 'MAINTENANCE_CUSTODY_STATE_MISSING');
+  assert.equal(snapshot.health.maintenanceCustody, 'RED');
+  assert.equal(snapshot.finalVerdict, 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED');
+  assert.equal(snapshot.maintenanceCustody.executionAuthority, false);
+  assert.ok(!JSON.stringify(snapshot).includes('DO_NOT_PUBLISH'));
+});
+
+test('either live hold wins; a negative health observation grants no execution authority', async () => {
+  for (const timeoutCustodyHeld of [true, false]) for (const held of [true, false]) {
+    const health = ownerHealth(), g = health.continuousRepairGuardian;
+    g.timeoutCustodyHeld = timeoutCustodyHeld; g.persistentCustody = { held, blocker: '' };
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn: async () => Response.json(health) });
+    assert.equal(result.state, timeoutCustodyHeld || held ? 'HELD' : 'NOT_HELD_REPORTED');
+    assert.equal(result.executionAuthority, false);
+  }
+});
+
+test('missing, malformed or unavailable owner evidence remains unknown without a repair action', async () => {
+  const malformed = [null, {}, { ok: true, service: 'another-service' },
+    { ...ownerHealth(), ok: false }];
+  for (const change of [g => { delete g.persistentCustody; }, g => { g.timeoutCustodyHeld = 'false'; },
+    g => { g.persistentCustody.blocker = 'private/path or arbitrary text'; }]) {
+    const h = ownerHealth(); change(h.continuousRepairGuardian); malformed.push(h);
+  }
+  for (const h of malformed) {
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn: async () => Response.json(h) });
+    assert.equal(result.available, false); assert.equal(result.state, 'UNKNOWN');
+    assert.equal(buildSovereignVisibilitySnapshot({ maintenanceCustody: result }).health.maintenanceCustody, 'AMBER');
+  }
+  for (const fetchFn of [async () => { throw Error('offline'); }, async () => new Response('{}', { status: 503 }),
+    async () => new Response('x'.repeat(65537))]) {
+    const result = await collectMaintenanceCustodyVisibility({ fetchFn });
+    assert.equal(result.state, 'UNKNOWN'); assert.equal(result.executionAuthority, false);
+  }
+});
+
+test('Core visibility preserves unknown inventory as null rather than zero owners', () => {
+  for (const evidence of [
+    { processCount: null, processInventoryComplete: false },
+    { processCount: 0, processInventoryComplete: false },
+    { processCount: 0 },
+    { processCount: '0', processInventoryComplete: true },
+  ]) {
+    const result = collectCoreDaemonVisibility({ spawnSyncFn: () => ({
+      status: 0, stdout: JSON.stringify({
+        schemaVersion: 'stephanos.core-daemon-status.v1', ...evidence,
+        ok: true,
+        processObservationBlocker: 'CORE_PROCESS_INVENTORY_UNPROVEN',
+      }),
+    }) });
+    assert.equal(result.processCount, null);
+    assert.equal(result.ok, false);
+    assert.equal(result.processObservationBlocker, 'CORE_PROCESS_INVENTORY_UNPROVEN');
+  }
+  const absent = collectCoreDaemonVisibility({ spawnSyncFn: () => ({ status: 0,
+    stdout: JSON.stringify({ schemaVersion: 'stephanos.core-daemon-status.v1',
+      processCount: 0, processInventoryComplete: true }),
+  }) });
+  assert.equal(absent.processCount, 0);
+  assert.equal(absent.processInventoryComplete, true);
+});
+
 test('visibility snapshot is green only for exact-head awake healthy runtime', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
     capturedAtUtc: '2026-10-04T12:00:00.000Z',
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: HEAD, rawPathsReturned: false },
     observation: {
       services: {
         ui: { ready: true },
@@ -25,6 +111,8 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
     core: {
       available: true,
       ok: true,
+      processInventoryComplete: true,
+      processCount: 1,
       daemonHealthy: true,
       readiness: 'READY',
       wakeState: 'AWAKE',
@@ -34,6 +122,9 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
       heartbeatAgeSeconds: 4,
     },
     selfHeal: { available: true, dependencySelfHealEnabled: true },
+    maintenanceCustody: { available: true, timeoutCustodyHeld: false, persistentHeld: false,
+      running: false, maintenanceInFlight: false, blocker: '',
+      evidenceSource: 'LIVE_MAINTENANCE_OWNER_HEALTH', executionAuthority: false },
     controllers: { lanes: { refillHealth: 'GREEN' } },
     meters: { ok: true },
     relay: { available: true, daemonHealthy: true, carrierHealthy: true, heartbeatAgeSeconds: 3 },
@@ -44,10 +135,18 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
   assert.deepEqual(snapshot.health, {
     repository: 'GREEN',
     core: 'GREEN',
+    headSync: 'GREEN',
     services: 'GREEN',
     laneRefill: 'GREEN',
     transport: 'GREEN',
+    maintenanceCustody: 'GREEN',
   });
+  assert.equal(snapshot.headSync.syncState, 'CURRENT');
+  assert.equal(snapshot.headSync.canonicalMainHead, HEAD);
+  assert.equal(snapshot.headSync.repositoryHead, HEAD);
+  assert.equal(snapshot.headSync.runtimeHead, HEAD);
+  assert.equal(snapshot.headSync.exactHeadChainProven, true);
+  assert.equal(snapshot.headSync.exactNextAction, 'NONE');
   assert.equal(snapshot.readOnly, true);
   assert.equal(snapshot.sourceMutationAllowed, false);
   assert.equal(snapshot.arbitraryShellAllowed, false);
@@ -63,13 +162,14 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
 
 test('stale core and degraded fast carrier remain visible rather than false green', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, remoteMainAvailable: true, remoteMainHead: HEAD },
     observation: { services: { backend: { ready: true }, 'sovereign-commander': { ready: true }, ui: { ready: true }, openclaw: { ready: true } } },
     core: { available: true, ok: false, daemonHealthy: true, readiness: 'READY', wakeState: 'AWAKE', awake: true, repairRequired: false, sourceHead: HEAD, heartbeatAgeSeconds: 90 },
     controllers: { lanes: { refillHealth: 'AMBER' } },
     relay: { available: true, daemonHealthy: true, carrierHealthy: false, heartbeatAgeSeconds: 4 },
   });
   assert.equal(snapshot.health.core, 'RED');
+  assert.equal(snapshot.health.headSync, 'GREEN');
   assert.equal(snapshot.health.laneRefill, 'AMBER');
   assert.equal(snapshot.health.transport, 'AMBER');
   assert.equal(snapshot.finalVerdict, 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED');
@@ -80,6 +180,7 @@ test('repository visibility returns counts without leaking filenames', () => {
     ['rev-parse HEAD', { status: 0, stdout: `${HEAD}\n` }],
     ['rev-parse --abbrev-ref HEAD', { status: 0, stdout: 'main\n' }],
     ['status --porcelain=v1 --untracked-files=normal', { status: 0, stdout: ' M secret-looking-name.txt\n?? another-name.env\n' }],
+    ['ls-remote --heads origin refs/heads/main', { status: 0, stdout: `${HEAD}\trefs/heads/main\n` }],
   ]);
   const spawnSyncFn = (_exe, args) => {
     const command = args.slice(2).join(' ');
@@ -92,8 +193,47 @@ test('repository visibility returns counts without leaking filenames', () => {
   assert.equal(repository.changedEntryCount, 2);
   assert.equal(repository.trackedChangeCount, 1);
   assert.equal(repository.untrackedCount, 1);
+  assert.equal(repository.remoteMainAvailable, true);
+  assert.equal(repository.remoteMainHead, HEAD);
   assert.equal(repository.rawPathsReturned, false);
   assert.equal('paths' in repository, false);
+});
+
+test('head sync distinguishes repository drift from runtime drift', () => {
+  const NEXT = 'b'.repeat(40);
+  const repositoryDrift = buildHeadSyncVisibility({
+    repository: { available: true, head: HEAD, remoteMainAvailable: true, remoteMainHead: NEXT },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(repositoryDrift.syncState, 'REPOSITORY_DRIFT');
+  assert.equal(repositoryDrift.trafficLight, 'RED');
+  assert.equal(repositoryDrift.exactNextAction, 'SYNC_REPOSITORY_TO_MAIN');
+  assert.equal(repositoryDrift.mainChangedSinceRepository, true);
+  assert.equal(repositoryDrift.mainChangedSinceRuntime, true);
+  assert.equal(repositoryDrift.exactHeadChainProven, false);
+
+  const runtimeDrift = buildHeadSyncVisibility({
+    repository: { available: true, head: NEXT, remoteMainAvailable: true, remoteMainHead: NEXT },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(runtimeDrift.syncState, 'RUNTIME_DRIFT');
+  assert.equal(runtimeDrift.trafficLight, 'RED');
+  assert.equal(runtimeDrift.exactNextAction, 'RELOAD_RUNTIME_AT_REPOSITORY_HEAD');
+  assert.equal(runtimeDrift.repositoryMatchesMain, true);
+  assert.equal(runtimeDrift.runtimeMatchesRepository, false);
+  assert.equal(runtimeDrift.mainChangedSinceRuntime, true);
+});
+
+test('head sync never promotes unknown remote main to green', () => {
+  const unknown = buildHeadSyncVisibility({
+    repository: { available: true, head: HEAD, remoteMainAvailable: false, remoteMainHead: '' },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(unknown.syncState, 'REMOTE_MAIN_UNKNOWN');
+  assert.equal(unknown.trafficLight, 'AMBER');
+  assert.equal(unknown.exactNextAction, 'REFRESH_REMOTE_MAIN_PROOF');
+  assert.equal(unknown.exactHeadChainProven, false);
+  assert.equal(unknown.unknownMeansGreen, false);
 });
 
 
@@ -120,7 +260,7 @@ test('visibility snapshot remains below Sovereign maintenance stdout cap under f
   }));
   const snapshot = buildSovereignVisibilitySnapshot({
     capturedAtUtc: '2026-10-05T09:00:00.000Z',
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: HEAD, rawPathsReturned: false },
     observation: {
       schemaVersion: 'stephanos.battle-bridge-observation.v1',
       ok: true,
@@ -189,4 +329,48 @@ test('visibility snapshot remains below Sovereign maintenance stdout cap under f
   assert.equal(snapshot.meters.attentionMeters.length, 12);
   assert.equal(snapshot.meters.attentionMetersTruncated, true);
   assert.deepEqual(snapshot.meters.counts, { total: 64, green: 0, amber: 0, red: 0, grey: 64 });
+});
+
+
+test('Sovereign outer bridge status is carried read-only only on exact source and fresh cycle',()=>{
+  const base={
+    capturedAtUtc:'2026-10-12T13:35:00.000Z',
+    repository:{available:true,head:HEAD,branch:'main',remoteMainAvailable:true,remoteMainHead:HEAD},
+    core:{available:true,ok:true,daemonHealthy:true,sourceHead:HEAD,readiness:'READY'},
+    outerBridge:{
+      available:true,current:true,sourceHead:HEAD,observedAtUtc:'2026-10-12T13:34:40.000Z',
+      cycleAgeSeconds:20,stage:'OUTER_BRIDGE_WIDE',
+      rescueBlocker:'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN',
+      canonicalLeaseReleaseProven:false,readOnly:true,
+    },
+  };
+  const value=buildSovereignVisibilitySnapshot(base);
+  assert.equal(value.outerBridge.current,true);
+  assert.equal(value.outerBridge.stage,'OUTER_BRIDGE_WIDE');
+  assert.equal(value.outerBridge.rescueBlocker,'REPAIR_ORIGINAL_TERMINAL_SOURCE_BINDING_UNPROVEN');
+  assert.equal(value.outerBridge.canonicalLeaseReleaseProven,false);
+  assert.equal(value.outerBridge.canonicalHandbackEligible,false);
+  assert.equal(value.outerBridge.sourceMutationAllowed,false);
+  const drift=buildSovereignVisibilitySnapshot({...base,core:{...base.core,sourceHead:'b'.repeat(40)}});
+  assert.equal(drift.outerBridge.current,false);
+  assert.equal(drift.outerBridge.stage,'UNVERIFIED');
+  assert.equal(drift.outerBridge.canonicalLeaseReleaseProven,false);
+});
+
+test('unknown or old bridge cannot claim pickup or rejoin from local fields alone',()=>{
+  for(const candidate of [
+    {},
+    {available:true,current:false,sourceHead:HEAD,stage:'CANONICAL_REJOIN_READY',canonicalLeaseReleaseProven:true},
+    {available:true,current:true,sourceHead:'b'.repeat(40),stage:'CANONICAL_REJOIN_READY',canonicalLeaseReleaseProven:true},
+  ]){
+    const result=buildSovereignVisibilitySnapshot({
+      repository:{available:true,head:HEAD,branch:'main',remoteMainAvailable:true,remoteMainHead:HEAD},
+      core:{available:true,ok:true,daemonHealthy:true,sourceHead:HEAD},
+      outerBridge:candidate,
+    });
+    assert.equal(result.outerBridge.current,false);
+    assert.equal(result.outerBridge.canonicalLeaseReleaseProven,false);
+    assert.equal(result.outerBridge.physicalPickupProven,false);
+    assert.equal(result.outerBridge.twoUnattendedRefillsProven,false);
+  }
 });

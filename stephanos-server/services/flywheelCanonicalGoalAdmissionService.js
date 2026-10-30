@@ -8,6 +8,7 @@ import {
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { acquireSharedWorkspaceOperationLock } from '../../shared/agents/executionReceiptV1.mjs';
+import { validateSeedGrowthWorkV1 } from '../../shared/runtime/seedGrowthWorkV1.mjs';
 
 export const FLYWHEEL_CANONICAL_GOAL_ADMISSION_SCHEMA_V1 =
   'stephanos.flywheel-canonical-goal-admission.v1';
@@ -129,6 +130,16 @@ export function buildFlywheelCanonicalGoalIssueV1(input = {}) {
     '',
     '## Required outcome',
     '',
+    ...(input.seedGrowthWork ? [
+      `Seed owner: ${input.seedGrowthWork.ownerIssueRef}.`,
+      `Seed: \`${input.seedGrowthWork.seedId}\`. Contract: \`${input.seedGrowthWork.contractSource}\`.`,
+      `Pressure key: \`${input.seedGrowthWork.pressureKey}\`. Target rung: \`${input.seedGrowthWork.targetRung}\`.`,
+      '',
+      input.seedGrowthWork.nextBestAction,
+      '',
+      'Return resultProofRefs, reusableCapabilityId and sharedLessonId to this canonical Shared Workspace goal. Completion does not by itself prove the target growth rung; replay the seed-specific acceptance evidence.',
+      '',
+    ] : []),
     '- Re-run existing-goal ownership checks before implementation and attach/close as duplicate if a better canonical owner is proven.',
     '- Build the smallest reusable repair through the existing #1556 scheduler, Mission Worker, builders, review and proof machinery.',
     '- Replay the original capability failure plus transfer variants before closure.',
@@ -167,6 +178,7 @@ export function buildFlywheelCanonicalGoalIssueV1(input = {}) {
     title,
     body,
     evidenceRefs,
+    ...(input.seedGrowthWork ? { seedGrowthWork: input.seedGrowthWork } : {}),
   });
 }
 
@@ -209,12 +221,12 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     mergeAllowed: false,
-    async findByMarker(marker) {
+    async findByMarker(marker, { includeClosed = false } = {}) {
       const safeMarker = text(marker);
       if (!safeMarker || safeMarker.length > 160) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_MARKER_INVALID' });
       }
-      const query = `repo:${repository} is:issue is:open in:body "${safeMarker}"`;
+      const query = `repo:${repository} is:issue ${includeClosed ? '' : 'is:open '}in:body "${safeMarker}"`;
       const result = await captureGithub(
         execFileFn,
         ghCommand,
@@ -235,7 +247,12 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
       if (!payload || !Array.isArray(payload.items)) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_SEARCH_JSON_INVALID' });
       }
-      const found = payload.items.find((item) => text(item?.state).toLowerCase() === 'open' && text(item?.body).includes(safeMarker));
+      const matches = payload.items.filter((item) => (includeClosed || text(item?.state).toLowerCase() === 'open')
+        && text(item?.body).includes(`<!-- ${safeMarker} -->`) && !item.pull_request);
+      if (includeClosed && (matches.length > 1 || payload.total_count > payload.items.length)) {
+        return freeze({ ok: false, reason: 'FLYWHEEL_SEED_GROWTH_OWNER_AMBIGUOUS' });
+      }
+      const found = includeClosed ? matches[0] : payload.items.find((item) => text(item?.state).toLowerCase() === 'open' && text(item?.body).includes(safeMarker));
       if (!found) return freeze({ ok: true, reason: 'FLYWHEEL_CANONICAL_GOAL_NOT_FOUND', issue: null });
       const number = issueNumber(found.number);
       if (!number) return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_SEARCH_ID_INVALID' });
@@ -306,7 +323,8 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
       const result = await captureGithub(
         execFileFn,
         ghCommand,
-        ['api', `repos/${repository}/issues`, '--method', 'POST', '-f', `title=${title}`, '-f', `body=${body}`],
+        ['api', `repos/${repository}/issues`, '--method', 'POST', '-f', `title=${title}`, '-f', `body=${body}`,
+          ...(issue.seedGrowthWork ? ['-f', 'labels[]=goal'] : [])],
         cwd,
       );
       if (!result.ok) {
@@ -365,6 +383,7 @@ function schedulerGoalRecord(issue, issueShape, nowUtc) {
     resultProofRefs: Object.freeze([]),
     admissionSource: 'flywheel-canonical-goal-admission-v1',
     correlationId: issueShape.eventId,
+    ...(issueShape.seedGrowthWork ? { seedGrowthWork: issueShape.seedGrowthWork } : {}),
   });
 }
 
@@ -397,6 +416,11 @@ async function admitSchedulerGoal({
     const existing = JSON.parse(await readFileFn(resolved.path, 'utf8'));
     if (issueNumber(existing?.issueNumber) === record.issueNumber
       && text(existing?.repository).toLowerCase() === FLYWHEEL_CANONICAL_GOAL_REPOSITORY_V1.toLowerCase()) {
+      if (issueShape.seedGrowthWork && (
+        !validateSeedGrowthWorkV1(existing.seedGrowthWork)
+        || existing.seedGrowthWork.pressureKey !== issueShape.seedGrowthWork.pressureKey
+        || existing.seedGrowthWork.seedId !== issueShape.seedGrowthWork.seedId
+      )) return freeze({ ok: false, reason: 'FLYWHEEL_SEED_GROWTH_GOAL_BINDING_CONFLICT' });
       return freeze({
         ok: true,
         reason: 'FLYWHEEL_CANONICAL_SCHEDULER_GOAL_ALREADY_ADMITTED',
@@ -466,6 +490,10 @@ async function withCanonicalGoalAdmissionLock({ root, repoRoot, acquireOperation
 }
 
 export async function admitFlywheelCanonicalGoalV1(input = {}) {
+  if (input.seedGrowthWork && (!validateSeedGrowthWorkV1(input.seedGrowthWork)
+    || input.capabilityId !== input.seedGrowthWork.pressureKey)) {
+    return freeze({ ok: false, authorized: false, reason: 'FLYWHEEL_SEED_GROWTH_BINDING_INVALID' });
+  }
   const policy = input.policy || FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1;
   const policyValidation = validateFlywheelCanonicalGoalAdmissionPolicyV1(policy);
   if (!policyValidation.valid) {
@@ -502,7 +530,7 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
     repoRoot,
     acquireOperationLock,
   }, async () => {
-  const existing = await adapter.findByMarker(issueShape.marker);
+  const existing = await adapter.findByMarker(issueShape.marker, { includeClosed: Boolean(issueShape.seedGrowthWork) });
   if (existing?.ok !== true) {
     return freeze({
       ok: false,
@@ -521,7 +549,7 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
         reason: 'FLYWHEEL_CANONICAL_GOAL_OWNER_SEARCH_REQUIRED',
       });
     }
-    const ownerSearch = await adapter.findOwnerCandidates(issueShape.capabilityId);
+    const ownerSearch = await adapter.findOwnerCandidates(issueShape.seedGrowthWork?.capabilityGapId || issueShape.capabilityId);
     if (ownerSearch?.ok !== true) {
       return freeze({
         ok: false,
@@ -556,6 +584,11 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
     }
     issue = creation.issue;
     created = true;
+  }
+
+  if (issueShape.seedGrowthWork && text(issue.state).toLowerCase() !== 'open') {
+    return freeze({ ok: false, authorized: true, retryableHold: true, issue,
+      reason: 'FLYWHEEL_SEED_GROWTH_CLOSED_OWNER_REQUIRES_COMPLETION_PROOF' });
   }
 
   let schedulerAdmission;

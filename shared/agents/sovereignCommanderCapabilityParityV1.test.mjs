@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+// Exercise the existing fleet supervisor fail-closed tests in the trusted parity CI lane.
+import './sovereignCommanderFleetGoalSupervisorV1.test.mjs';
+
 import {
   SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE,
   buildSovereignCommanderCapabilityParityLedger,
@@ -63,14 +66,29 @@ test('Remote Commander project search resolves to native Sovereign search parity
   }
 });
 
-test('source construction becomes a buildable gap owned by the one standing parity goal', () => {
+test('source construction resolves to the proven Sovereign canonical build lane', () => {
   const result = classifyRemoteCommanderCapabilityObservation(remote('source-construction'));
-  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
   assert.equal(result.sovereignEquivalent, 'sovereign-source-construction-lane');
   assert.equal(result.canonicalOwnerGoal, '#2573');
   assert.equal(result.createDuplicateGoalAllowed, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('canonical Desktop Commander agent handoff normalizes to source construction parity', () => {
+  const result = classifyRemoteCommanderCapabilityObservation({
+    adapter: 'desktop-commander',
+    path: 'C:/queue/source-build.json',
+    item: {
+      missionId: 'critical-2573-parity',
+      actionId: 'desktop-source-build',
+      payload: { actionKind: 'agent-handoff' },
+    },
+  });
+  assert.equal(result.capabilityId, 'source-construction');
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(result.sovereignEquivalent, 'sovereign-source-construction-lane');
 });
 
 test('forbidden authority is held at the boundary instead of cloned for parity', () => {
@@ -89,7 +107,8 @@ test('repeated observations deduplicate into one durable capability entry', () =
 
   assert.equal(first.capabilities.length, 1);
   assert.equal(first.capabilities[0].observationCount, 2);
-  assert.equal(first.buildableGapCount, 1);
+  assert.equal(first.buildableGapCount, 0);
+  assert.equal(first.parityPresentCount, 1);
 
   const second = buildSovereignCommanderCapabilityParityLedger([], {
     priorLedger: first,
@@ -99,10 +118,11 @@ test('repeated observations deduplicate into one durable capability entry', () =
   assert.equal(second.capabilities.length, 1);
   assert.equal(second.capabilities[0].currentObserved, false);
   assert.equal(second.capabilities[0].observationCount, 2);
-  assert.equal(second.buildableGapCount, 1);
-  assert.equal(second.zeroGapInvariantSatisfied, false);
-  assert.equal(second.closureRequired, true);
-  assert.equal(second.daemonMayReportGreen, false);
+  assert.equal(second.buildableGapCount, 0);
+  assert.equal(second.parityPresentCount, 1);
+  assert.equal(second.zeroGapInvariantSatisfied, true);
+  assert.equal(second.closureRequired, false);
+  assert.equal(second.daemonMayReportGreen, true);
   assert.equal(second.mustContinueUntilZero, true);
   assert.equal(second.duplicateGoalCreationAllowed, false);
   assert.equal(second.standingGoalMustRemainOpen, true);
@@ -114,4 +134,18 @@ test('non Remote Commander queue entries are ignored', () => {
   ], { nowUtc: '2026-10-01T20:00:00.000Z' });
   assert.equal(ledger.retainedCapabilityCount, 0);
   assert.equal(ledger.buildableGapCount, 0);
+});
+
+test('new unmetered private read-only diagnostics map to Sovereign capabilities', () => {
+  const equivalences = {
+    'get-file-info': 'get_file_info',
+    'read-multiple-files': 'read_multiple_files',
+  };
+  for (const [operation, expected] of Object.entries(equivalences)) {
+    const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
+    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+    assert.equal(result.sovereignEquivalent, expected);
+    assert.equal(result.mergeAuthority, false);
+    assert.equal(result.arbitraryShellAllowed, false);
+  }
 });

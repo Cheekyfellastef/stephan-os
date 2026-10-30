@@ -10,7 +10,11 @@ import {
   buildSharedWorkspaceHeartbeat,
   buildSharedWorkspaceReceipt,
   classifyDirt,
+  collectPostSyncRefreshDebt,
   evaluateSyncPolicy,
+  inspectPostSyncRefreshCompletion,
+  pendingPostSyncRefreshDebt,
+  resolvePostSyncRefreshDebt,
   rejectArbitraryShellPlan,
 } from './battle-bridge-github-sync-policy.mjs';
 
@@ -18,6 +22,83 @@ const LOCAL_HEAD = 'a'.repeat(40);
 const REMOTE_HEAD = 'b'.repeat(40);
 const OTHER_HEAD = 'c'.repeat(40);
 const WRONG_BEFORE_HEAD = 'd'.repeat(40);
+
+function refreshReport(overrides = {}) {
+  return { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status',
+    statusId: 'post-sync-runtime-refresh-current', beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD,
+    phase: 'complete', classification: 'REFRESH_COMPLETE', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_PASS',
+    exactHeadProofOk: true, blocker: '', targetIds: ['stephanos-ui-4173'],
+    resultTargets: [{ targetId: 'stephanos-ui-4173', ok: true, exactHeadProofOk: true, sourceHead: REMOTE_HEAD, blocker: '' }],
+    changedPathCount: 1, noRuntimePathCount: 0, unknownPathCount: 0, unsafePathCount: 0,
+    openClawPathCount: 0, pluginHostActivationRequired: false, ...overrides };
+}
+
+test('refresh completion requires coherent native target proofs and strict primitive fields', () => {
+  assert.equal(inspectPostSyncRefreshCompletion(refreshReport()).ok, true);
+  const invalid = [
+    { beforeHead: [LOCAL_HEAD] }, { afterHead: ` ${REMOTE_HEAD}` }, { phase: 'plan' },
+    { exactHeadProofOk: 'true' }, { finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED' },
+    { blocker: 'STILL_BLOCKED' }, { targetIds: [] }, { targetIds: ['stephanos-ui-4173', 'stephanos-ui-4173'] },
+    { resultTargets: [] }, { resultTargets: [{ targetId: 'stephanos-ui-4173', ok: true, exactHeadProofOk: true, sourceHead: LOCAL_HEAD, blocker: '' }] },
+    { resultTargets: [{ targetId: 'stephanos-ui-4173', ok: false, exactHeadProofOk: true, sourceHead: REMOTE_HEAD, blocker: '' }] },
+    { changedPathCount: 0 }, { noRuntimePathCount: 1 }, { unknownPathCount: 1 }, { unsafePathCount: 1 },
+    { openClawPathCount: 1 }, { pluginHostActivationRequired: true }, { changedPathCount: '1' },
+  ];
+  for (const mutation of invalid) assert.equal(inspectPostSyncRefreshCompletion(refreshReport(mutation)).ok, false, JSON.stringify(mutation));
+  const noRuntime = refreshReport({ classification: 'NO_RUNTIME_REFRESH_REQUIRED', targetIds: [], resultTargets: [], noRuntimePathCount: 1 });
+  assert.equal(inspectPostSyncRefreshCompletion(noRuntime).ok, true);
+  assert.equal(inspectPostSyncRefreshCompletion({ ...noRuntime, changedPathCount: 2 }).ok, false);
+});
+
+test('refresh debt parser retains legacy blocked reports and rejects incomplete owned records', () => {
+  const blocked = refreshReport({ phase: 'blocked', classification: 'BLOCKED_REFRESH_FAILED', finalVerdict: 'POST_SYNC_RUNTIME_REFRESH_BLOCKED', exactHeadProofOk: false });
+  const recovered = collectPostSyncRefreshDebt({ refreshRecord: blocked });
+  assert.deepEqual(recovered.spans, [{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }]);
+  assert.deepEqual(recovered.requiredTargetIds, ['stephanos-ui-4173']);
+  for (const key of ['classification', 'finalVerdict', 'exactHeadProofOk', 'targetIds', 'changedPathCount', 'pluginHostActivationRequired']) {
+    const malformed = { ...blocked }; delete malformed[key];
+    assert.equal(collectPostSyncRefreshDebt({ refreshRecord: malformed }).ok, false, key);
+  }
+  const missingClassification = { schemaVersion: 'shared-agent-workspace-record.v1', kind: 'stephanos.shared_workspace.status', statusId: 'battle-bridge-github-sync-current' };
+  assert.equal(collectPostSyncRefreshDebt({ syncRecord: missingClassification }).ok, false);
+  assert.equal(collectPostSyncRefreshDebt({ syncRecord: { ...missingClassification, classification: 'SYNC_NO_CHANGE' } }).ok, true);
+});
+
+test('completed span discharges only a covered ancestry chain and retained target obligations', () => {
+  const isAncestor = (before, after) => ({ ok: true, ancestor: before <= after });
+  const debt = { beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD };
+  const complete = inspectPostSyncRefreshCompletion(refreshReport());
+  const resolve = options => resolvePostSyncRefreshDebt({ spans: [debt], requiredTargetIds: ['stephanos-ui-4173'], currentHead: OTHER_HEAD, isAncestor, ...options });
+  assert.equal(resolve({ completion: complete }).debt, null);
+  assert.deepEqual(resolve({ completion: { ...complete, beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD } }).debt, { ...debt, requiredTargetIds: ['stephanos-ui-4173'] });
+  assert.ok(resolve({ completion: { ...complete, targetIds: ['natural-reload'] } }).debt);
+  assert.equal(resolve({ completion: { ...complete, afterHead: WRONG_BEFORE_HEAD } }).ok, false);
+  assert.equal(resolve({ spans: [{ beforeHead: REMOTE_HEAD, afterHead: LOCAL_HEAD }] }).blocker, 'PENDING_POST_SYNC_SPAN_REVERSED');
+  assert.equal(resolve({ isAncestor: () => ({ ok: false, ancestor: false }) }).blocker, 'PENDING_POST_SYNC_ANCESTRY_UNPROVEN');
+  assert.equal(resolve({ isAncestor: () => ({ ok: true, ancestor: false }) }).blocker, 'PENDING_POST_SYNC_SPANS_UNRELATED');
+  assert.equal(resolve({ currentHead: LOCAL_HEAD }).blocker, 'PENDING_POST_SYNC_RETAINED_HEAD_NOT_CURRENT');
+});
+
+test('same-after spans retain the oldest proven before head and reject unrelated branches', () => {
+  const spans = [{ beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD }, { beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD }];
+  const resolved = resolvePostSyncRefreshDebt({ spans, currentHead: OTHER_HEAD, isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }) });
+  assert.equal(resolved.debt.beforeHead, LOCAL_HEAD);
+  const forked = resolvePostSyncRefreshDebt({ spans, currentHead: OTHER_HEAD, isAncestor: (before, after) => ({ ok: true, ancestor: after === OTHER_HEAD }) });
+  assert.equal(forked.blocker, 'PENDING_POST_SYNC_SPANS_UNRELATED');
+  assert.equal(pendingPostSyncRefreshDebt([{ beforeHead: [LOCAL_HEAD], afterHead: REMOTE_HEAD }]).state, 'HELD');
+});
+
+test('covered old debt is paid before a new revert delta, while unresolved coalesced debt retains intermediate target effects', () => {
+  const completion = inspectPostSyncRefreshCompletion(refreshReport());
+  const base = { completion, currentHead: OTHER_HEAD, isAncestor: (before, after) => ({ ok: true, ancestor: before <= after }) };
+  const next = resolvePostSyncRefreshDebt({ ...base,
+    spans: [{ beforeHead: LOCAL_HEAD, afterHead: REMOTE_HEAD }],
+    requestedSpans: [{ beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD }],
+  });
+  assert.deepEqual(next.debt, { beforeHead: REMOTE_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: [] });
+  const coalesced = resolvePostSyncRefreshDebt({ ...base, spans: [{ beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD }] });
+  assert.deepEqual(coalesced.debt, { beforeHead: LOCAL_HEAD, afterHead: OTHER_HEAD, requiredTargetIds: ['stephanos-ui-4173'] });
+});
 
 const baseFacts = Object.freeze({
   currentBranch: 'main',

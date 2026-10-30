@@ -17,6 +17,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { settleMailboxRotationDrain } from '../shared/agents/canonicalMailboxRotationV1.mjs';
 
 export const MAILBOX_OUTBOX_GUARD_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-guard.v1';
 export const MAILBOX_OUTBOX_DEFERRED_SCHEMA = 'stephanos.battle-bridge-mailbox-outbox-deferred.v1';
@@ -1332,10 +1333,25 @@ function acquireGuardLock(path, now, {
     const exactOwnerAlive = validKnownProcessIdentity(liveIdentity)
       && liveIdentity.bootId === existing?.ownerBootId
       && liveIdentity.processStartId === existing?.ownerProcessStartId;
-    const exactOwnerAbsent = liveIdentity?.state === 'dead'
+    // The lock already carries the Windows boot identity that owned it. When the
+    // current guard can prove it is running in a different boot, the old owner
+    // cannot still be alive even if querying that historical PID is inconclusive.
+    // This matters after abrupt power loss, where a stale lock can survive while
+    // Get-Process/CIM temporarily reports the old PID identity as unknown.
+    const priorBootOwner = PROCESS_IDENTITY_COMPONENT.test(String(existing?.ownerBootId || ''))
+      && existing.ownerBootId !== selfIdentity.bootId;
+    const exactOwnerAbsent = priorBootOwner
+      || liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
+    const unreadableStaleLock = !existing
+      && Number.isFinite(info.mtimeMs)
+      && info.mtimeMs <= latestTrustedTimeMs
+      && (now.getTime() - info.mtimeMs) > staleAfterMs;
     const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
+    if (allowRecovery && (
+      (Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent)
+      || unreadableStaleLock
+    )) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;
@@ -1434,6 +1450,23 @@ function releaseGuardLock(lock) {
   } catch {}
 }
 
+// The existing source-sync operation uses the same singleton guard during an
+// epoch transition. This is an internal synchronous adapter, not a new worker,
+// caller-selected path, shell capability or alternate source authority.
+export function withMailboxOutboxGuardLock(operation, { env = process.env } = {}) {
+  if (typeof operation !== 'function') throw new Error('MAILBOX_OUTBOX_OPERATION_REQUIRED');
+  const deferredPath = join(mailboxStateRootFromEnv(env), 'receipt-publication-deferred-v1.json');
+  const lock = acquireGuardLock(deferredPath, new Date(), { tokenFn: () => randomUUID().replaceAll('-', ''),
+    processIdentityFn: defaultProcessIdentity, staleAfterMs: MAILBOX_LOCK_STALE_AFTER_MS });
+  try {
+    verifyGuardLock(lock);
+    const result = operation(lock);
+    if (result && typeof result.then === 'function') throw new Error('MAILBOX_OUTBOX_SYNCHRONOUS_OPERATION_REQUIRED');
+    verifyGuardLock(lock);
+    return result;
+  } finally { releaseGuardLock(lock); }
+}
+
 function resolveProductionPaths({ env = process.env, repoRoot = defaultRepoRoot } = {}) {
   const actualRepoRoot = resolve(repoRoot);
   const expectedRepoRoot = resolve(env.USERPROFILE || homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -1527,10 +1560,10 @@ export function runMailboxOutboxGuard({
       metrics,
       faultFn,
     );
-    atomicWriteJson(statePath, {
+    atomicWriteJson(statePath, settleMailboxRotationDrain({
       ...stateAfter,
       pendingReceiptPublications: [],
-    }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
+    }, { outboxPendingCount: pendingCount(manifest), now: now().toISOString() }), { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
 
     const childOk = !child?.error && child?.status === 0;
     const childStatus = parseMailboxChildStatus(child?.stdout);
