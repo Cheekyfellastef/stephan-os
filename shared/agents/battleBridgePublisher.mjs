@@ -8,6 +8,8 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import { createVerifierResult, aggregateVerificationResults, VERIFICATION_STATUS } from './verificationHarness.mjs';
+import { BATTLE_BRIDGE_SERVICE_STATUS } from './sharedWorkspaceOperationalFactsV1.mjs';
+export { BATTLE_BRIDGE_SERVICE_STATUS, projectBattleBridgePublicationEvidence } from './sharedWorkspaceOperationalFactsV1.mjs';
 
 export const BATTLE_BRIDGE_PUBLISHER_SCHEMA_VERSION = 'battle-bridge-publisher.v1';
 export const BATTLE_BRIDGE_PUBLISHER_RECORD_KIND = 'stephanos.battle_bridge.publisher.slice';
@@ -18,47 +20,6 @@ export const BATTLE_BRIDGE_PUBLISHER_SERVICES = Object.freeze([
   'mission-worker',
   'openclaw-gateway',
 ]);
-
-export const BATTLE_BRIDGE_SERVICE_STATUS = Object.freeze({
-  READY: 'READY',
-  DEGRADED: 'DEGRADED',
-  UNKNOWN: 'UNKNOWN',
-  STALE: 'STALE',
-});
-
-// Publication presence is not the published runtime verdict. In particular,
-// an honest UNKNOWN observation cannot require an already-green consumer.
-export function projectBattleBridgePublicationEvidence(record, {
-  nowMs = Date.now(), maxAgeMs = 300_000, expectedKind = null, expectedId = null,
-} = {}) {
-  const envelope = record && typeof record === 'object' && !Array.isArray(record) ? record : {};
-  const validation = validateSharedWorkspaceRecord(envelope, { nowMs });
-  const idKey = { 'stephanos.shared_workspace.status': 'statusId',
-    'stephanos.shared_workspace.proof': 'proofId', 'stephanos.shared_workspace.event': 'eventId' }[record?.kind];
-  const identityValid = Boolean(idKey && typeof record[idKey] === 'string' && record[idKey].length > 0
-    && !['recordId', 'statusId', 'proofId', 'eventId'].some(key => key !== idKey && Object.hasOwn(envelope, key))
-    && (!expectedKind || record.kind === expectedKind)
-    && (!expectedId || record[idKey] === expectedId));
-  // Canonical event envelopes intentionally have no proofRefs/status fields;
-  // status/proof observations must carry their declared proof references.
-  const publicationShapeValid = idKey === 'eventId' || (Array.isArray(record?.proofRefs)
-    && record.proofRefs.length > 0
-    && record.proofRefs.every(ref => typeof ref === 'string' && ref.length > 0 && ref === ref.trim())
-    && Object.values(BATTLE_BRIDGE_SERVICE_STATUS).includes(record?.status));
-  const timestamp = Date.parse(record?.timestampUtc);
-  const clockValid = Number.isFinite(nowMs) && Number.isFinite(timestamp)
-    && Number.isFinite(maxAgeMs) && maxAgeMs >= 0;
-  const future = clockValid && timestamp > nowMs;
-  const stale = clockValid && nowMs - timestamp > maxAgeMs;
-  const valid = validation.valid && identityValid && publicationShapeValid && clockValid;
-  return Object.freeze({ valid, fresh: valid && !future && !stale,
-    future, stale, runtimeStatus: typeof record?.status === 'string' ? record.status : 'NOT_REPORTED',
-    stateRecord: idKey === 'statusId' || idKey === 'proofId',
-    publicationOnly: true, runtimeActivationGranted: false,
-    reason: !valid ? 'PUBLICATION_ENVELOPE_INVALID' : future ? 'PUBLICATION_FROM_FUTURE'
-      : stale ? 'PUBLICATION_STALE' : 'PUBLICATION_CURRENT',
-  });
-}
 
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/#() -]{0,240}$/i;

@@ -22,4 +22,4 @@ while(queue.length){const file=queue.shift();if(seen.has(file))continue;seen.add
  }
 }
 for(const input of maintenance?[]:['scripts/windows/read-sovereign-maintenance-boot-witness.ps1','scripts/windows/read-sovereign-maintenance-owner-v2.ps1','scripts/windows/sovereign-maintenance-audit-anchor.ps1','scripts/windows/sovereign-maintenance-journal-policy-v2.ps1','scripts/windows/install-sovereign-fixed-runtime-v1.ps1'])if(!members.has(input))missing.push({runtimeRead:input});
-console.log(JSON.stringify({memberCount:members.size,parsed:seen.size,missing,bare,repositoryModulesEvaluated:false}));
+console.log(JSON.stringify({memberCount:members.size,parsed:seen.size,parsedPaths:[...seen].sort(),missing,bare,repositoryModulesEvaluated:false}));

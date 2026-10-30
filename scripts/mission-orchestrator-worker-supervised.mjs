@@ -91,19 +91,26 @@ export function createMissionWorkerTickLogProjection(result, checkedAt) {
   const processing = ownData(result, 'processed');
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-tick', checkedAt: boundedText(checkedAt, 32), status: boundedText(ownData(result, 'status'), 32), state: boundedText(ownData(result, 'state'), 32), phase: boundedText(ownData(result, 'phase'), 48), finalVerdict: boundedText(ownData(result, 'finalVerdict'), 64), blocker: boundedText(ownData(result, 'blocker'), 96), publishOk: ownData(publication, 'published') === true,
     processed:ownData(processing,'processed')===true,
-    processingSuccess:ownData(processing,'success')===true,
+    processingSuccess:missionWorkerTickMadeProgress(result),
     processingVerdict:typedProcessingCode(result,'finalVerdict'),
     processingBlocker:typedProcessingCode(result,'reason') });
 }
 
 function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stable } = projection; return JSON.stringify(stable); }
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
+function workerProcessingOutcome(result) {
+  const processing = ownData(result, 'processed');
+  const consumed = ownData(processing, 'result');
+  return ownData(consumed, 'schemaVersion') === 'stephanos.mission-worker-consumption-result.v1'
+    ? consumed : processing;
+}
 function typedProcessingCode(result,key) {
-  const code=processResultText(ownData(result,'processed'),key);
+  const code=processResultText(workerProcessingOutcome(result),key);
   return /^[A-Z][A-Z0-9_:-]{0,95}$/.test(code)?code:'';
 }
 export function missionWorkerTickMadeProgress(result) {
   const processing = ownData(result, 'processed');
+  if (ownData(processing, 'processed') !== true || ownData(processing, 'success') === false) return false;
   if(ownData(processing,'schemaVersion')==='stephanos.provider-neutral-source-builder.v1') {
     return ownData(processing,'processed')===true && ownData(processing,'success')===true
       && ownData(processing,'testsPassed')===true && ownData(processing,'executionCustodyReleased')===true
@@ -111,9 +118,23 @@ export function missionWorkerTickMadeProgress(result) {
       && Boolean(processResultText(processing,'sourceArtifactRef'))
       && Boolean(processResultText(processing,'offlinePublicationOutboxId'));
   }
-  return ownData(processing, 'processed') === true
-    && ownData(processing, 'success') !== false
-    && !/HELD|BLOCKED|FAILED|UNKNOWN/.test(processResultText(processing, 'finalVerdict'));
+  // Ordinary consumers put their terminal outcome inside result. The outer
+  // processed bit only means the queue claim was handled, including failures.
+  const consumed = ownData(processing, 'result');
+  if (ownData(consumed, 'schemaVersion') !== 'stephanos.mission-worker-consumption-result.v1') return false;
+  const verdict = processResultText(consumed, 'finalVerdict');
+  const adapter = processResultText(consumed, 'adapter');
+  if (verdict === 'VERIFICATION_EVIDENCE_GROUNDED') {
+    const count = ownData(consumed, 'evidenceReceiptCount');
+    return adapter === 'verification' && Number.isSafeInteger(count) && count > 0;
+  }
+  if (verdict !== 'MISSION_WORKER_ITEM_COMPLETE') return false;
+  if (adapter === 'forge-publication') {
+    const prNumber = ownData(consumed, 'prNumber');
+    return Number.isSafeInteger(prNumber) && prNumber > 0
+      && SHA_40.test(processResultText(consumed, 'commitSha'));
+  }
+  return ownData(ownData(consumed, 'execution'), 'success') === true;
 }
 function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || ownData(ownData(result,'processed'),'processed')===true; }
 

@@ -30,6 +30,16 @@ A source success additionally needs its successful typed outcome, passing tests,
 released execution custody and preserved source/outbox references. This avoids
 clearing a carried defect merely because an item was processed.
 
+That distinction also applies to the ordinary queue consumers: their outer
+`processed` flag records handling, while the typed terminal outcome lives in
+`result`. Material progress and bounded logs consume that same nested outcome.
+Only the producer's positive completion contract qualifies: successful execution,
+an exact published Forge commit/PR, or grounded verification receipts. Missing or
+unrecognised outcomes, failures and cancellation remain non-progress; extending
+a denylist of failure strings cannot make absent success proof affirmative.
+Composition regressions pass actual consumer results into the supervisor,
+including failed escrow, rejected replay and ungrounded verification results.
+
 Regression proof calls both actual production factories, mutates every bound
 authority field, challenges memory and object shapes, verifies pending refusal
 before pickup, and exercises real temporary mission/queue/receipt stores through

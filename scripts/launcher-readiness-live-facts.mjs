@@ -7,7 +7,7 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createLauncherReadinessReport } from './launcher-readiness-report.mjs';
-import { projectBattleBridgePublicationEvidence } from '../shared/agents/battleBridgePublisher.mjs';
+import { projectBattleBridgePublicationEvidence } from '../shared/agents/sharedWorkspaceOperationalFactsV1.mjs';
 
 export const LAUNCHER_READINESS_LIVE_FACTS_SCHEMA = 'stephanos.launcher-readiness-live-facts.v1';
 

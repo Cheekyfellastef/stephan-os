@@ -26,6 +26,105 @@ function sink() {
   return { stream: { write(chunk) { value += chunk; } }, read: () => value };
 }
 
+function consumedWorkerResult(overrides = {}) {
+  return {
+    processed: true,
+    result: {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+      execution: { success: true },
+      ...overrides,
+    },
+  };
+}
+
+test('worker material progress requires a typed positive producer outcome', () => {
+  const progress = (processed) => missionWorkerTickMadeProgress({ processed });
+  assert.equal(progress(consumedWorkerResult()), true);
+  for (const processed of [
+    { processed: true },
+    { processed: true, success: true },
+    { processed: true, success: false },
+    { processed: true, success: true, finalVerdict: 'ERROR' },
+    { processed: true, success: true, finalVerdict: 'CANCELLED' },
+    consumedWorkerResult({ schemaVersion: 'unrecognized-result' }),
+    consumedWorkerResult({ execution: undefined }),
+    consumedWorkerResult({ execution: { success: false } }),
+    consumedWorkerResult({ execution: { success: 'true' } }),
+    ...['', 'ERROR', 'CANCELLED', 'MISSION_WORKER_ITEM_FAILED',
+      'MISSION_WORKER_ITEM_BLOCKED', 'VERIFICATION_EVIDENCE_NOT_GROUNDED']
+      .map((finalVerdict) => consumedWorkerResult({ finalVerdict })),
+  ]) assert.equal(progress(processed), false, JSON.stringify(processed));
+
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'forge-publication', execution: undefined, prNumber: 3002,
+    commitSha: 'd'.repeat(40),
+  })), true);
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'forge-publication', execution: undefined, prNumber: 0,
+    commitSha: 'd'.repeat(40),
+  })), false);
+  assert.equal(progress(consumedWorkerResult({
+    adapter: 'verification', execution: undefined,
+    finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount: 1,
+  })), true);
+  for (const evidenceReceiptCount of [0, -1, '1', undefined]) {
+    assert.equal(progress(consumedWorkerResult({
+      adapter: 'verification', execution: undefined,
+      finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED', evidenceReceiptCount,
+    })), false);
+  }
+});
+
+test('worker log projection consumes the same nested result as material-progress truth', () => {
+  const failed = consumedWorkerResult({
+    finalVerdict: 'MISSION_WORKER_ITEM_BLOCKED', execution: { success: false },
+  });
+  const failedLog = createMissionWorkerTickLogProjection({ processed: failed }, '2026-10-30T17:00:00Z');
+  assert.equal(failedLog.processed, true);
+  assert.equal(failedLog.processingSuccess, false);
+  assert.equal(failedLog.processingVerdict, 'MISSION_WORKER_ITEM_BLOCKED');
+  const completedLog = createMissionWorkerTickLogProjection({ processed: consumedWorkerResult() }, '2026-10-30T17:00:00Z');
+  assert.equal(completedLog.processingSuccess, true);
+  assert.equal(completedLog.processingVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
+});
+
+test('nested consumer failure stays visible through the next idle supervisor cycle', async () => {
+  const heartbeats = [];
+  const liveness = [];
+  let cycles = 0;
+  let sleeps = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    loadCapacityRoutingInput: async () => ({}),
+    listMissionState: async () => [],
+    readMissionState: async () => null,
+    readActiveClaim: async () => null,
+    runControllerCycle: async (_machinery, options) => {
+      liveness.push(options.controllerLivenessEvidence.surfaceFailures);
+      cycles += 1;
+      return cycles === 1
+        ? { status: 'ACTIVE', authoritativeProjection: { status: 'ACTIVE' },
+          allowWorkerTick: true, workerActionGrant: actionGrant }
+        : { status: 'IDLE', authoritativeProjection: { status: 'READY' }, allowWorkerTick: false };
+    },
+    runTick: async () => ({ processed: consumedWorkerResult({
+      finalVerdict: 'MISSION_WORKER_ITEM_BLOCKED', execution: { success: false },
+    }) }),
+    writeHeartbeat: async (options) => { heartbeats.push(options); },
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => { if (++sleeps === 2) throw new Error('stop-after-idle-observation'); },
+  }), /stop-after-idle-observation/);
+  assert.equal(liveness[1][0].failureClass, 'MISSION_WORKER_ITEM_BLOCKED');
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS');
+});
+
 test('held native source processing is activity, never successful material progress', () => {
   const held={schemaVersion:'stephanos.provider-neutral-source-builder.v1',processed:true,
     success:false,finalVerdict:'NATIVE_SOURCE_FINALIZATION_HELD'};
@@ -156,7 +255,7 @@ test('supervised worker launches due calibration lane and still executes the gra
     },
     runTick: async () => {
       ticks += 1;
-      return { processed: { processed: true }, publish: { published: true } };
+      return { processed: consumedWorkerResult(), publish: { published: true } };
     },
     writeHeartbeat: async () => {},
     setIntervalFn: () => 17,
@@ -753,7 +852,14 @@ test('worker progress detection is descriptor-safe and ignores caller-shaped get
   });
   assert.equal(missionWorkerTickMadeProgress({ publish: publication }), false);
   assert.equal(touched, 0);
-  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), true);
+  assert.equal(missionWorkerTickMadeProgress({ processed: { processed: true } }), false);
+  assert.equal(missionWorkerTickMadeProgress({ processed: consumedWorkerResult() }), true);
+  const nested = consumedWorkerResult();
+  Object.defineProperty(nested.result.execution, 'success', {
+    get() { touched += 1; return true; },
+  });
+  assert.equal(missionWorkerTickMadeProgress({ processed: nested }), false);
+  assert.equal(touched, 0);
 });
 
 test('worker log byte bounds hold for escaped Unicode fields and accessor-shaped lists', () => {
@@ -1275,7 +1381,7 @@ test('repeated stuck mission is sidelined and the persistent controller advances
       };
     },
     runTick: async ({ actionGrant }) => actionGrant.missionId === nextMissionId
-      ? { processed: { processed: true }, publish: { published: true } }
+      ? { processed: consumedWorkerResult(), publish: { published: true } }
       : { processed: { processed: false }, publish: { published: false }, blocker: 'NO_MATERIAL_PROGRESS' },
 
     writeHeartbeat: async () => {},
@@ -1364,7 +1470,7 @@ test('surface-quarantine HOLD sidelines the stuck mission instead of becoming na
     runTick: async ({ actionGrant }) => {
       if (actionGrant.missionId === nextMissionId) {
         nextMissionTicks += 1;
-        return { processed: { processed: true }, publish: { published: true } };
+        return { processed: consumedWorkerResult(), publish: { published: true } };
       }
       firstMissionTicks += 1;
       return { processed: { processed: false }, publish: { published: false }, blocker: 'WRITE_BLOCKED' };

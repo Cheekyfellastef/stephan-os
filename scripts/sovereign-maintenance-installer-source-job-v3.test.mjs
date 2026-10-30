@@ -19,7 +19,7 @@ const literal = s => "'" + s.replaceAll("'", "''") + "'";
 const encoded = s => Buffer.from(s, 'utf16le').toString('base64');
 const gitExecution = resolveBattleBridgeGitExecution();
 
-test('maintenance bootstrap pins the complete transitive probe graph before module evaluation', () => {
+test('maintenance probe keeps the complete original 40-file boundary through the shared publication projection', () => {
   const fixture = fileURLToPath(new URL('./fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs', import.meta.url));
   const observe = omitted => JSON.parse(spawnSync(process.execPath,
     ['--experimental-vm-modules', fixture, '--maintenance-v3', ...(omitted ? ['--omit=' + omitted] : [])],
@@ -29,10 +29,16 @@ test('maintenance bootstrap pins the complete transitive probe graph before modu
   assert.deepEqual(complete.bare, []);
   assert.equal(complete.repositoryModulesEvaluated, false);
   assert.equal(complete.memberCount, MAINTENANCE_SOURCE_CLOSURE_V3.length);
+  assert.equal(complete.memberCount, 40);
+  for (const excluded of ['shared/agents/battleBridgePublisher.mjs', 'shared/agents/verificationHarness.mjs']) {
+    assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.includes(excluded), false);
+    assert.equal(complete.parsedPaths.includes(excluded), false, 'maintenance must not load publisher implementation: ' + excluded);
+  }
   const installer = readFileSync(resolve(root, 'scripts/windows/install-sovereign-maintenance-journal-v2.ps1'), 'utf8');
   assert.ok(installer.includes('ClosureCount -ne ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
   assert.ok(installer.includes('Handles.Count -lt ' + MAINTENANCE_SOURCE_CLOSURE_V3.length + ' -or'));
-  for (const omitted of ['shared/agents/battleBridgePublisher.mjs', 'shared/agents/verificationHarness.mjs']) {
+  for (const omitted of ['shared/agents/sharedWorkspaceOperationalFactsV1.mjs', 'shared/agents/sharedAgentWorkspaceStore.mjs']) {
+    assert.ok(complete.parsedPaths.includes(omitted), 'must prove the real canonical projection dependency: ' + omitted);
     const negative = observe(omitted);
     assert.ok(negative.missing.some(row => row.target === omitted), 'must reject omitted transitive dependency: ' + omitted);
     assert.equal(negative.repositoryModulesEvaluated, false);
@@ -253,7 +259,7 @@ test('bootstrap candidate binds each fixed blob, never promotes caller input to 
   assert.match(c.script, /foreach\(\$relative in \$manifest.Keys\)\{\$texts\[\$relative\]=Read-Pinned[\s\S]*Add-Type/);
   assert.match(c.script, /PinDirectoryChain/);
   assert.match(c.script, /FileShare\]::Read/);
-  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 42);
+  assert.equal(MAINTENANCE_SOURCE_CLOSURE_V3.length, 40);
   for (const bad of [records.slice(1), [...records.slice(1), records[1]],
     records.map((r, i) => i ? r : { ...r, blobSha: '0'.repeat(40) }),
     records.map((r, i) => i ? r : { ...r, path: '../untrusted.ps1' })]) {

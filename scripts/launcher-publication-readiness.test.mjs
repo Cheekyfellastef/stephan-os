@@ -8,12 +8,18 @@ const repo = fileURLToPath(new URL('../', import.meta.url));
 const moduleAt = name => import(pathToFileURL(path.join(repo, name)).href);
 const { createBattleBridgeSharedWorkspaceRecords } = await moduleAt('scripts/battle-bridge-shared-workspace-publisher.mjs');
 const { buildBattleBridgePublisherLiveSlice } = await moduleAt('stephanos-server/services/battleBridgePublisherLifecycle.js');
-const { createBattleBridgePublisherWorkspaceRecords, projectBattleBridgePublicationEvidence } = await moduleAt('shared/agents/battleBridgePublisher.mjs');
+const { createBattleBridgePublisherWorkspaceRecords, projectBattleBridgePublicationEvidence, BATTLE_BRIDGE_SERVICE_STATUS } = await moduleAt('shared/agents/battleBridgePublisher.mjs');
+const publicationFacts = await moduleAt('shared/agents/sharedWorkspaceOperationalFactsV1.mjs');
 const { collectLauncherReadinessLiveFacts } = await moduleAt('scripts/launcher-readiness-live-facts.mjs');
 const { planLauncherReadiness } = await moduleAt('scripts/launcher-readiness-planner.mjs');
 const { evaluateUi4173Repair } = await moduleAt('scripts/battle-bridge-ui-4173-repair.mjs');
 const NOW = '2026-10-30T13:00:00.000Z';
 const HEAD = '9c650175d569ab30f22a5f2f8970695372316dc5';
+test('publisher preserves the canonical shared publication projector and service-status vocabulary', () => {
+  assert.equal(projectBattleBridgePublicationEvidence, publicationFacts.projectBattleBridgePublicationEvidence);
+  assert.equal(BATTLE_BRIDGE_SERVICE_STATUS, publicationFacts.BATTLE_BRIDGE_SERVICE_STATUS);
+  assert.equal(Object.isFrozen(BATTLE_BRIDGE_SERVICE_STATUS), true);
+});
 const fixtures = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-publication-proof-'));
 test.after(() => {
   assert.equal(path.dirname(path.resolve(fixtures)), path.resolve(os.tmpdir()));

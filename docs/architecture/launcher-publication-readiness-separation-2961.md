@@ -13,7 +13,7 @@ Independent current-main tests also found that malformed JSON, empty objects,
 wrong identities and future/old content with fresh filesystem time could pass.
 Repeated startup attempts cannot repair either invariant.
 
-The existing shared publisher model now projects publication integrity and
+The existing shared operational-facts model now projects publication integrity and
 freshness separately while preserving the original runtime status. Only the
 fixed canonical Battle Bridge paths can use a valid `UNKNOWN` status/proof as
 publication presence. Legacy `UNKNOWN` stays held. Schema, kind, record identity,
@@ -51,9 +51,15 @@ Independent baseline was seven failures and one pass; candidate proof is source
 validation, not installed or browser acceptance.
 
 The maintenance installer and fixed runtime authenticate separate source
-closures. Both must cover the full transitive probe graph before evaluation;
-the maintenance bootstrap and its receiving installer agree on exactly 42
-pinned files. A parse-only graph regression rejects either missing new import.
+closures. Both must cover the full transitive probe graph before evaluation.
+The pure publication projector and service-status vocabulary live in the existing
+shared operational-facts module, with the publisher re-exporting those same
+function/object identities. The launcher imports this shared projection directly,
+so its maintenance probe does not load the publisher or verification harness.
+The original 40-file maintenance manifest and receiving installer remain
+unchanged. Parse-only graph proof checks the complete actual transitive closure,
+confirms both publishing dependencies are absent, and rejects omission of either
+the shared projection or canonical record validator before any module evaluation.
 Publication state proof references must each be nonempty, trimmed strings;
 coerced values and whitespace cannot establish publication authority.
 

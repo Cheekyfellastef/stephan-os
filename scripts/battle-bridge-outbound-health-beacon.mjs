@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { resolveSharedWorkspacePath } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  projectSovereignCommanderRepairReportContract,
+  SOVEREIGN_COMMANDER_REPAIR_REPORT_SCHEMA,
+} from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
 import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { projectPublicGoalGateObservatoryV1 } from '../shared/runtime/goalBuildGatePublicProjectionV1.mjs';
@@ -39,7 +43,6 @@ const CONTROLLER_LANE_STATUS_SPEC = Object.freeze({
 });
 // Existing Sovereign relay status, never another native execution carrier.
 const SOVEREIGN_RELAY_STATUS_PATH = 'status/sovereign-relay-current.json';
-const SOVEREIGN_REPAIR_OUTCOMES = new Set(['HEALTHY', 'REPAIRED', 'NEEDS_REPAIR', 'BLOCKED']);
 const WORKER_WATCHDOG_CLASSIFICATIONS = new Set([
   'WORKER_WATCHDOG_HEALTHY',
   'WORKER_WATCHDOG_RECOVERED',
@@ -172,7 +175,8 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
 }
 
 export function projectSovereignRepairBeaconFacts(record = null, expectedHead = '', nowMs = Date.now()) {
-  const expected = validHead(expectedHead);
+  const expected = typeof expectedHead === 'string' && /^[a-f0-9]{40}$/i.test(expectedHead)
+    ? expectedHead.toLowerCase() : '';
   const empty = (state, blocker, trafficLight = 'GREY') => Object.freeze({
     available: false,
     state,
@@ -207,7 +211,7 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
   if (!record || typeof record !== 'object' || Array.isArray(record)) {
     return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_MISSING');
   }
-  if (record.reportSchema !== 'stephanos.sovereign-commander-repair-report.v1'
+  if (record.reportSchema !== SOVEREIGN_COMMANDER_REPAIR_REPORT_SCHEMA
     || record.statusId !== 'sovereign-commander-repair-current') {
     return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_SCHEMA_INVALID');
   }
@@ -217,11 +221,15 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
     return Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)).toISOString() : '';
   })();
   const observedMs = Date.parse(observedAtUtc);
-  const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
+  const ageMs = Number.isFinite(observedMs) && Number.isFinite(nowMs) && observedMs <= nowMs
+    ? nowMs - observedMs : null;
   const sourceHead = validHead(record.sourceHead);
   const exactHeadMatch = Boolean(expected && sourceHead && expected === sourceHead);
-  const outcome = text(record.outcome, 40).toUpperCase();
-  const status = text(record.status, 40).toUpperCase();
+  const contract = projectSovereignCommanderRepairReportContract(record);
+  if (!contract) return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_INVALID');
+  const { outcome, status } = contract;
+  const scopedMaintenance = Boolean(contract.scope);
+  const maintenanceCompleted = outcome === 'MAINTENANCE_COMPLETED';
   const cycleIdCandidate = text(record.cycleId, 80);
   const cycleId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(cycleIdCandidate) ? cycleIdCandidate : '';
   const safeToken = (value, limit = 160) => {
@@ -248,15 +256,16 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
   const rawVerification = record.verification && typeof record.verification === 'object' && !Array.isArray(record.verification)
     ? record.verification
     : {};
-  const heartbeatAgeSeconds = Number(rawVerification.heartbeatAgeSeconds);
-  const verification = Object.freeze({
+  const heartbeatAgeSeconds = rawVerification.heartbeatAgeSeconds;
+  const verification = contract.verification || Object.freeze({
     readiness: safeToken(rawVerification.readiness, 64),
     wakeState: safeToken(rawVerification.wakeState, 64),
     awake: rawVerification.awake === true,
     repairRequired: rawVerification.repairRequired === true,
     heartbeatFresh: rawVerification.heartbeatFresh === true,
     busyGraceActive: rawVerification.busyGraceActive === true,
-    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0
+    heartbeatAgeSeconds: typeof heartbeatAgeSeconds === 'number'
+      && Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0
       ? Math.min(heartbeatAgeSeconds, 31_536_000)
       : null,
   });
@@ -264,26 +273,28 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
   const stale = ageMs === null || ageMs > SOVEREIGN_REPAIR_SPEC.staleAfterMs;
   const structurallyValid = Boolean(
     observedAtUtc
-    && sourceHead
-    && SOVEREIGN_REPAIR_OUTCOMES.has(outcome)
-    && ['READY', 'ATTENTION_REQUIRED'].includes(status)
+    && (sourceHead || (scopedMaintenance && outcome === 'BLOCKED' && record.sourceHead === ''))
     && cycleId,
   );
   if (!structurallyValid) return empty('UNPROVEN', 'SOVEREIGN_REPAIR_REPORT_INVALID');
   const state = stale
     ? 'STALE'
-    : !exactHeadMatch
+    : !sourceHead
+      ? 'UNPROVEN'
+      : !exactHeadMatch
       ? 'HEAD_MISMATCH'
       : outcome;
-  const trafficLight = stale || !exactHeadMatch
+  const trafficLight = stale || !exactHeadMatch || maintenanceCompleted
     ? 'AMBER'
     : ['HEALTHY', 'REPAIRED'].includes(outcome) && status === 'READY'
       ? 'GREEN'
       : 'RED';
-  const blocker = trafficLight === 'GREEN'
+  const blocker = trafficLight === 'GREEN' || (maintenanceCompleted && !stale && exactHeadMatch)
     ? ''
     : detectedFaults[0]
-      || (stale ? 'SOVEREIGN_REPAIR_REPORT_STALE' : !exactHeadMatch ? 'SOVEREIGN_REPAIR_REPORT_HEAD_MISMATCH' : 'SOVEREIGN_REPAIR_ATTENTION_REQUIRED');
+      || (stale ? 'SOVEREIGN_REPAIR_REPORT_STALE'
+        : !sourceHead ? 'SOVEREIGN_REPAIR_REPORT_HEAD_UNPROVEN'
+          : !exactHeadMatch ? 'SOVEREIGN_REPAIR_REPORT_HEAD_MISMATCH' : 'SOVEREIGN_REPAIR_ATTENTION_REQUIRED');
 
   return Object.freeze({
     available: true,
@@ -300,6 +311,7 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
     detectedFaults,
     actions,
     verification,
+    ...(scopedMaintenance ? { scope: contract.scope, fullStephanosRepairProven: false } : {}),
     blocker,
     readOnly: true,
     rawPathsReturned: false,
@@ -308,9 +320,11 @@ export function projectSovereignRepairBeaconFacts(record = null, expectedHead = 
     unknownMeansGreen: false,
     finalVerdict: trafficLight === 'GREEN'
       ? 'SOVEREIGN_REPAIR_PROOF_GREEN'
-      : trafficLight === 'RED'
-        ? 'SOVEREIGN_REPAIR_PROOF_ATTENTION_REQUIRED'
-        : 'SOVEREIGN_REPAIR_PROOF_UNPROVEN',
+      : maintenanceCompleted && !stale && exactHeadMatch
+        ? 'SOVEREIGN_MAINTENANCE_PROOF_OBSERVED'
+        : trafficLight === 'RED'
+          ? 'SOVEREIGN_REPAIR_PROOF_ATTENTION_REQUIRED'
+          : 'SOVEREIGN_REPAIR_PROOF_UNPROVEN',
   });
 }
 
