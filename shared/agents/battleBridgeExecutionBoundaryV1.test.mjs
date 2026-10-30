@@ -64,6 +64,8 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   const fixedValues = Array.from({ length: Number(result.GIT_CONFIG_COUNT) }, (_, index) => result[`GIT_CONFIG_VALUE_${index}`]);
   assert.equal(fixedKeys.includes('core.hooksPath'), true);
   assert.equal(fixedValues[fixedKeys.indexOf('core.hooksPath')], 'NUL');
+  assert.equal(fixedValues[fixedKeys.indexOf('commit.gpgSign')], 'false');
+  assert.equal(fixedValues[fixedKeys.indexOf('tag.gpgSign')], 'false');
   assert.equal(fixedValues[fixedKeys.indexOf('core.trustctime')], 'true');
   assert.equal(fixedValues[fixedKeys.indexOf('core.checkStat')], 'default');
   assert.equal(fixedValues[fixedKeys.indexOf('core.ignoreStat')], 'false');
@@ -73,6 +75,16 @@ test('minimal child environment removes Node/Git/shell injection variables', () 
   assert.equal(result.GIT_GRAFT_FILE, 'NUL');
   assert.equal(result.PATH.includes('attacker'), false);
   assert.equal(result.PATH.includes('C:\\Windows\\System32\\WindowsPowerShell\\v1.0'), true);
+});
+
+test('all Git signing program families and signing activation are rejected', () => {
+  const base = 'remote.origin.url\nhttps://github.com/Cheekyfellastef/stephan-os.git\0';
+  assert.equal(validateBattleBridgeLocalGitConfiguration(base).ok, true);
+  for (const assignment of ['commit.gpgsign\ntrue', 'tag.gpgsign\ntrue',
+    'gpg.program\nattacker', 'gpg.ssh.program\nattacker', 'gpg.x509.program\nattacker',
+    'gpg.openpgp.program\nattacker', 'gpg.format\nssh']) {
+    assert.equal(validateBattleBridgeLocalGitConfiguration(base + assignment + '\0').ok, false, assignment);
+  }
 });
 
 test('Git topology rejects graft, common-dir, and object-alternate redirects', () => {
@@ -100,7 +112,7 @@ test('Git topology rejects linked critical metadata descendants', () => {
   mkdirSync(path.join(root, '.git'), { recursive: true });
   writeFileSync(path.join(root, '.git', 'config'), '[core]\n\trepositoryformatversion = 0\n');
   writeFileSync(path.join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-  symlinkSync(target, path.join(root, '.git', 'objects'), 'dir');
+  symlinkSync(target, path.join(root, '.git', 'objects'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.equal(inspectBattleBridgeGitTopology(root).blocker, 'CANONICAL_GIT_REPARSE_POINT_PRESENT');
 });
 
@@ -150,4 +162,100 @@ test('local Git configuration admits only the fixed origin and blocks executable
     assert.equal(validateBattleBridgeLocalGitConfiguration(`${baseline}${injected}`).ok, false, injected);
   }
   assert.equal(validateBattleBridgeLocalGitConfiguration('remote.origin.url\nhttps://evil.invalid/repo.git\0').ok, false);
+});
+
+const canonicalConfiguration = 'remote.origin.url\n' + BATTLE_BRIDGE_CANONICAL_REMOTE_URL + '\0';
+const configurationRiskCases = [
+  ['alias.PRIVATE_SECRET', 'ALIAS'],
+  ['core.worktree', 'CORE_WORKTREE'],
+  ['core.sparsecheckout', 'CORE_SPARSE_CHECKOUT'],
+  ['core.sparsecheckoutcone', 'CORE_SPARSE_CHECKOUT_CONE'],
+  ['index.sparse', 'INDEX_SPARSE'],
+  ['core.hookspath', 'CORE_HOOKS_PATH'],
+  ['core.fsmonitor', 'CORE_FSMONITOR'],
+  ['core.trustctime', 'CORE_TRUST_CTIME'],
+  ['core.checkstat', 'CORE_CHECK_STAT'],
+  ['core.ignorestat', 'CORE_IGNORE_STAT'],
+  ['core.untrackedcache', 'CORE_UNTRACKED_CACHE'],
+  ['core.sshcommand', 'CORE_SSH_COMMAND'],
+  ['core.alternaterefscommand', 'CORE_ALTERNATE_REFS_COMMAND'],
+  ['core.askpass', 'CORE_ASKPASS'],
+  ['core.gitproxy', 'CORE_GIT_PROXY'],
+  ['core.pager', 'CORE_PAGER'],
+  ['diff.external', 'DIFF_EXTERNAL'],
+  ['credential.https://PRIVATE:SECRET@example.invalid.helper', 'CREDENTIAL'],
+  ['filter.PRIVATE_SECRET.clean', 'FILTER'],
+  ['diff.PRIVATE_SECRET.command', 'DIFF_COMMAND'],
+  ['diff.PRIVATE_SECRET.textconv', 'DIFF_TEXTCONV'],
+  ['merge.PRIVATE_SECRET.driver', 'MERGE_DRIVER'],
+  ['branch.PRIVATE_SECRET.mergeoptions', 'BRANCH_MERGE_OPTIONS'],
+  ['remote.PRIVATE_SECRET.vcs', 'REMOTE_VCS'],
+  ['remote.PRIVATE_SECRET.proxy', 'REMOTE_PROXY'],
+  ['remote.PRIVATE_SECRET.uploadpack', 'REMOTE_UPLOAD_PACK'],
+  ['remote.PRIVATE_SECRET.receivepack', 'REMOTE_RECEIVE_PACK'],
+  ['url.https://PRIVATE:SECRET@example.invalid.insteadof', 'URL_REWRITE'],
+  ['include.path', 'INCLUDE_PATH'],
+  ['includeif.gitdir:PRIVATE_SECRET.path', 'INCLUDE_IF'],
+  ['protocol.PRIVATE_SECRET.allow', 'PROTOCOL'],
+  ['extensions.worktreeconfig', 'EXTENSIONS_WORKTREE_CONFIG'],
+  ['submodule.PRIVATE_SECRET.update', 'SUBMODULE_UPDATE'],
+  ['gc.PRIVATE_SECRET.hook', 'GC_HOOK_OR_COMMAND'],
+  ['gc.PRIVATE_SECRET.command', 'GC_HOOK_OR_COMMAND'],
+  ['gc.recentobjectshook', 'GC_RECENT_OBJECTS_HOOK'],
+  ['pager.PRIVATE_SECRET', 'PAGER'],
+  ['interactive.difffilter', 'INTERACTIVE_DIFF_FILTER'],
+  ['sequence.editor', 'SEQUENCE_EDITOR'],
+  ['core.editor', 'CORE_EDITOR'],
+  ['gpg.PRIVATE_SECRET.program', 'GPG'],
+  ['commit.gpgsign', 'COMMIT_GPG_SIGN'],
+  ['tag.gpgsign', 'TAG_GPG_SIGN'],
+  ['http.https://PRIVATE:SECRET@example.invalid.extraheader', 'HTTP'],
+];
+
+test('configuration diagnostics distinguish origin cardinality and identity without exposing a URL', () => {
+  const noncanonical = 'remote.origin.url\nhttps://PRIVATE:SECRET@example.invalid/repo.git\0';
+  for (const [configuration, ok, originCount, originMatch] of [
+    ['', false, 'ZERO', 'UNKNOWN'],
+    ['PRIVATE malformed configuration\0', false, 'ZERO', 'UNKNOWN'],
+    ['remote.origin.url\0', false, 'ONE', 'NONCANONICAL'],
+    [canonicalConfiguration, true, 'ONE', 'CANONICAL'],
+    [canonicalConfiguration.toUpperCase(), true, 'ONE', 'CANONICAL'],
+    [noncanonical, false, 'ONE', 'NONCANONICAL'],
+    [canonicalConfiguration + canonicalConfiguration, false, 'MULTIPLE', 'CANONICAL'],
+    [canonicalConfiguration + noncanonical, false, 'MULTIPLE', 'NONCANONICAL'],
+    [noncanonical + canonicalConfiguration, false, 'MULTIPLE', 'NONCANONICAL'],
+  ]) {
+    const result = validateBattleBridgeLocalGitConfiguration(configuration);
+    assert.equal(result.ok, ok);
+    assert.equal(result.blocker, ok ? '' : 'CANONICAL_GIT_CONFIGURATION_INVALID');
+    assert.deepEqual(result.diagnostic, { originCount, originMatch, riskCategories: [] });
+    assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE|SECRET|https|remote\.|value/);
+  }
+});
+
+test('every existing rejected configuration key maps to a closed diagnostic category with private subsections removed', () => {
+  const assignments = configurationRiskCases.map(([key]) => key + '\nPRIVATE SECRET value\0');
+  for (const [[, category], assignment] of configurationRiskCases.map((item, index) => [item, assignments[index]])) {
+    const result = validateBattleBridgeLocalGitConfiguration(canonicalConfiguration + assignment);
+    assert.equal(result.ok, false, category);
+    assert.deepEqual(result.diagnostic, {
+      originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [category],
+    });
+    assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE|SECRET|https|value|\/|\\/);
+  }
+  const combined = validateBattleBridgeLocalGitConfiguration(canonicalConfiguration + assignments.join('') + assignments[0]);
+  assert.equal(combined.ok, false);
+  assert.deepEqual(combined.diagnostic.riskCategories, [...new Set(configurationRiskCases.map(([, category]) => category))].sort());
+  assert.doesNotMatch(JSON.stringify(combined.diagnostic), /PRIVATE|SECRET|https|value|\/|\\/);
+});
+
+test('configuration diagnostics preserve allowed hooks, disabled signing and harmless unknown settings', () => {
+  const allowed = canonicalConfiguration
+    + 'core.hooksPath\n.githooks\0commit.gpgSign\nFALSE\0tag.gpgSign\nfalse\0'
+    + 'harmless.PRIVATE_SECRET\nPRIVATE SECRET value\0core.autocrlf\ntrue\0';
+  const result = validateBattleBridgeLocalGitConfiguration(allowed);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.riskyKeys, []);
+  assert.deepEqual(result.diagnostic, { originCount: 'ONE', originMatch: 'CANONICAL', riskCategories: [] });
+  assert.doesNotMatch(JSON.stringify(result.diagnostic), /PRIVATE|SECRET|https|value/);
 });

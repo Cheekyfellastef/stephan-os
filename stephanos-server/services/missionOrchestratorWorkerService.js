@@ -7,6 +7,7 @@ import {
 } from '../../shared/agents/missionOrchestratorWorker.mjs';
 import {
   appendMissionEvent,
+  failedMissionWorkerResultIdentityV1,
   listMissionRecords,
   readMissionRecord,
   resolveMissionOrchestratorRoot,
@@ -381,13 +382,19 @@ function validateExactActionGrant(state, action, grant, options = {}) {
 async function beginRepairIfRequired(state, options) {
   if (state.currentPhase !== 'REPAIR_REQUIRED') return { state, repairStarted: false };
   const round = Number.isInteger(state.repair?.currentRound) ? state.repair.currentRound + 1 : 1;
-  const started = await appendMissionEvent(state.missionId, {
+  let started;
+  try {
+    started = await appendMissionEvent(state.missionId, {
     eventId: `repair-${state.missionId}-round-${round}`.slice(0, 128),
     eventType: 'REPAIR_STARTED',
     expectedRevision: state.revision,
     expectedCurrentPhase: 'REPAIR_REQUIRED',
     summary: `Bounded source repair round ${round} started after required check failure.`,
-  }, options);
+    }, options);
+  } catch (error) {
+    if (error?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw error;
+    return { state, repairStarted: false, preconditionFailed: true, reason: error.message };
+  }
   return {
     state: started.state,
     repairStarted: started.preconditionFailed !== true,
@@ -397,6 +404,10 @@ async function beginRepairIfRequired(state, options) {
 }
 
 async function publishLockedMissionWorkerAction(state, options = {}) {
+  if (state.cancelled === true || state.storeMetadata?.originalSourceAttemptFence
+      || state.storeMetadata?.supervisedRecoveryMaintenance) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
   const action = buildMissionWorkerAction(state, options);
   if (action.executable !== true) {
     return {
@@ -560,6 +571,9 @@ export function replacementSourceForgePublicationBlocked(state = {}) {
 }
 
 export async function publishMissionWorkerAction(inputState, options = {}) {
+  if (inputState.cancelled === true || inputState.storeMetadata?.originalSourceAttemptFence || inputState.storeMetadata?.supervisedRecoveryMaintenance) return {
+    published: false, reason: 'original-source-attempt-fenced', action: null, path: '',
+  };
   if (replacementSourceForgePublicationBlocked(inputState)) return {
     published:false,reason:'replacement-source-already-merged-forge-publication-fenced',
     action:null,path:'',
@@ -708,10 +722,42 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const adapter = text(result?.adapter).toLowerCase();
   if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
+  if (current.state.cancelled === true || current.state.storeMetadata?.originalSourceAttemptFence || current.state.storeMetadata?.supervisedRecoveryMaintenance) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');
   const eventId = `result-${actionId}`.slice(0, 128);
   const resultId = text(result.resultId, actionId);
   const previous = current.state;
+  const resultEvent = {
+    missionId, actionId, adapter, eventId, eventType: 'AGENT_RESULT_RECEIVED',
+    success: result.success === true, resultId,
+    changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [],
+    sourceArtifactEscrow: result.sourceArtifactEscrow,
+    offlinePublicationOutbox: result.offlinePublicationOutbox,
+    receipt: result.receipt, error: text(result.error),
+    summary: `${adapter} result collected from the durable worker queue.`,
+  };
+  const failedIdentity = failedMissionWorkerResultIdentityV1(resultEvent);
+  const exactFailedReplay = state => result.success === false && failedIdentity
+    && (!Array.isArray(result.evidenceReceipts) || result.evidenceReceipts.length === 0)
+    && state.cancelled !== true && !state.storeMetadata?.originalSourceAttemptFence && !state.storeMetadata?.supervisedRecoveryMaintenance
+    && state.currentPhase === 'BLOCKED' && state.dispatch?.status === 'failed'
+    && state.dispatch?.adapter === adapter && state.dispatch?.resultId === resultId
+    && state.storeMetadata?.processedEventIds?.includes(eventId) === true
+    && state.storeMetadata?.lastFailedWorkerResultIdentityV1 === failedIdentity;
+  if (exactFailedReplay(previous)) {
+    const locked = await runWithMissionStatePrecondition(missionId, {
+      expectedRevision: previous.revision, expectedCurrentPhase: previous.currentPhase,
+    }, state => {
+      if (!exactFailedReplay(state)) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_UNPROVEN');
+      if (options.assertResultCustody) options.assertResultCustody(state, resultEvent);
+      return { state, duplicate: true, eventId };
+    }, options);
+    if (locked.preconditionFailed) throw new Error('MISSION_WORKER_FAILED_RESULT_REPLAY_PRECONDITION_FAILED');
+    return locked.result;
+  }
+
   const normalizedFiles = (files) => (Array.isArray(files) ? files : [])
     .map((file) => text(file).replace(/\\\\/g, '/')).sort();
   // A crash between AGENT_RESULT_RECEIVED and EVIDENCE_RECORDED leaves the
@@ -735,11 +781,13 @@ export async function collectAgentWorkerResult(result, options = {}) {
   if (previous.dispatch?.status !== 'running' && !exactSuccessfulReplay) {
     throw new Error('Mission has no active agent dispatch.');
   }
+  if (options.assertResultCustody) options.assertResultCustody(previous, resultEvent);
   let collected = exactSuccessfulReplay
     ? { state: previous, duplicate: true, eventId }
-    : await appendMissionEvent(missionId, { eventId, eventType: 'AGENT_RESULT_RECEIVED', success: result.success === true, resultId, changedFiles: Array.isArray(result.changedFiles) ? result.changedFiles : [], sourceArtifactEscrow: result.sourceArtifactEscrow, offlinePublicationOutbox: result.offlinePublicationOutbox, receipt: result.receipt, error: text(result.error), summary: `${adapter} result collected from the durable worker queue.` }, options);
+    : await appendMissionEvent(missionId, resultEvent, options);
   const evidenceReceipts = Array.isArray(result.evidenceReceipts) ? result.evidenceReceipts : [];
   if (result.success === true && evidenceReceipts.length) {
+    if (options.assertResultCustody) options.assertResultCustody(collected.state, { eventType: 'EVIDENCE_RECORDED' });
     collected = await appendMissionEvent(missionId, {
       eventId: `evidence-${actionId}`.slice(0, 128),
       eventType: 'EVIDENCE_RECORDED',

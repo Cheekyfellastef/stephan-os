@@ -53,6 +53,39 @@ export function createSovereignOuterBridgeSupervisorV1({
     // process owns this single-flight promise and never starts a second one
     // while the first is unresolved. Other core loops continue to heartbeat.
     void (async () => {
+      // Publish STARTED before any potentially slow original-worker queue
+      // forensics. This proves whether the healthy Core loop reached the bridge
+      // even if the canonical reconciler subsequently blocks on an I/O fence.
+      const starting = projectSovereignOuterBridgeV1({
+        observedAtUtc: instant.toISOString(),
+        sourceHead, sourceIdentityVerified: true,
+        rescue: blockedRescue('OUTER_RESCUE_INSPECTION_IN_FLIGHT'),
+      });
+      const startingRecord = {
+        ...createSharedWorkspaceStatusRecord({
+          statusId: 'sovereign-outer-bridge-current',
+          participantId: 'stephanos-core-daemon',
+          relatedIssue: '#2961',
+          timestampUtc: instant.toISOString(),
+          status: 'HELD',
+          summary: 'Outer bridge cycle started; original source receipt and lease recovery remain unverified.',
+        }),
+        bridge: starting,
+      };
+      let startPublished = false;
+      try {
+        const receipt = await publish(workspaceRoot, statusSegments, startingRecord, { repoRoot: root });
+        startPublished = receipt?.ok === true;
+      } catch {
+        // Do not take down the Core heartbeat if this optional status fails.
+      }
+      lastResult = Object.freeze({
+        ...starting,
+        publicationOk: startPublished,
+        finalVerdict: startPublished
+          ? 'SOVEREIGN_OUTER_BRIDGE_INSPECTION_IN_FLIGHT'
+          : 'SOVEREIGN_OUTER_BRIDGE_START_PUBLICATION_FAILED',
+      });
       let rescue;
       try {
         rescue = await runRescue({

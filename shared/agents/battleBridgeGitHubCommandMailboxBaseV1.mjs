@@ -111,8 +111,12 @@ const MISSION_CANCEL_ALLOWED_FIELDS = new Set([
   'commandId',
   'reason',
   'expiresAt',
+  'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
+  'legacyOrphanQuarantineRequested',
 ]);
-const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason']);
+const MISSION_CANCEL_ONLY_FIELDS = Object.freeze(['missionId', 'commandId', 'reason',
+  'originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision',
+  'legacyOrphanQuarantineRequested']);
 const RESET_COMMAND_FIELDS = Object.freeze([
   'resetId',
   'resetExpiresAtUtc',
@@ -249,12 +253,32 @@ function validateMissionCancellation(command = {}) {
   const commandId = String(command.commandId || '').trim().toLowerCase();
   if (!MISSION_COMMAND_ID_PATTERN.test(commandId)) return fail('MISSION_CANCEL_COMMAND_ID_INVALID');
   const reason = String(command.reason || '').trim();
+  if (['originalLeaseId', 'originalLeaseDigest', 'expectedMissionRevision'].some((field) => command[field] !== undefined)
+      && (!/^critical-[1-9]\d*-elastic-goal-r(?:0|[1-9]\d*)-lease$/.test(String(command.originalLeaseId || ''))
+        || !/^[a-f0-9]{64}$/.test(String(command.originalLeaseDigest || ''))
+        || !Number.isSafeInteger(command.expectedMissionRevision) || command.expectedMissionRevision < 0
+        || command.originalLeaseId !== `${missionId}-r${command.expectedMissionRevision}-lease`)) {
+    return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED');
+  }
+  if (command.legacyOrphanQuarantineRequested !== undefined
+      && (command.legacyOrphanQuarantineRequested !== true
+        || missionId !== 'critical-2962-elastic-goal'
+        || command.expectedMissionRevision !== 7
+        || command.originalLeaseId !== 'critical-2962-elastic-goal-r7-lease')) {
+    return fail('MISSION_CANCEL_LEGACY_ORPHAN_SCOPE_FORBIDDEN');
+  }
   if (!reason || reason.length > MISSION_CANCEL_REASON_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(reason)) {
     return fail('MISSION_CANCEL_REASON_INVALID');
   }
   return Object.freeze({
     ok: true,
-    cancellation: Object.freeze({ missionId, commandId, reason }),
+    cancellation: Object.freeze({ missionId, commandId, reason,
+      ...(command.originalLeaseId ? { originalLeaseId: command.originalLeaseId,
+        originalLeaseDigest: command.originalLeaseDigest,
+        expectedMissionRevision: command.expectedMissionRevision,
+        ...(command.legacyOrphanQuarantineRequested === true
+          ? { legacyOrphanQuarantineRequested: true } : {}) } : {}),
+    }),
   });
 }
 
@@ -642,15 +666,24 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     if (seenRequestIds.has(validated.command.requestId)) continue;
     const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
     const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
+    // Protected merges bind the PR source head separately from the base on main.
+    // Keep the usual strict head check for every other CONTROL operation.
+    // The bounded merge executor must still verify source/base/review/approval.
+    const expectedMainHead = validated.command.operation === PROTECTED_OPENCLAW_MERGE_OPERATION
+      ? String(validated.command.expectedBase || '').trim().toLowerCase()
+      : expectedHead;
     if (normalizedCurrentHead
       && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
       && SHA_PATTERN.test(expectedHead)
-      && expectedHead !== normalizedCurrentHead) {
+      && (!SHA_PATTERN.test(expectedMainHead) || expectedMainHead !== normalizedCurrentHead)) {
       seenRequestIds.add(validated.command.requestId);
       const superseded = Object.freeze({
         ok: false,
         blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
         expectedHead,
+        // For protected merges expose the rejected main-base SHA separately
+        // from the reviewed PR source SHA. Never conflate the two identities.
+        expectedMainHead,
         githubMainHead: normalizedCurrentHead,
         finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
       });

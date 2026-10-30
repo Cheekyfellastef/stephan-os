@@ -47,7 +47,7 @@ The same projection exposes the updater observation separately as `HEALTHY`, `RU
 
 The response also contains `windowsProofCoverage`. Each of source, built runtime, served runtime, UI 4173, backend 8787, OpenClaw 18789, Shared Workspace, Recovery Mesh, GitHub Command Mailbox, Mission Worker and the Windows execution surface is independently labelled `PROVEN`, `BLOCKED`, `STALE` or `UNPROVEN`, with its original observation timestamp and age. The aggregate may report `WINDOWS_PROOF_COVERAGE_COMPLETE` only when every required surface is currently proven. Regenerating the response never changes an evidence source timestamp.
 
-Authorised chats obtain read-only Windows diagnostics through the existing #2808 `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
+Authorised chats obtain read-only Windows diagnostics through the current canonical `RUN_BATTLE_BRIDGE_DIAGNOSTICS` mailbox operation and read the correlated terminal receipt. Stephan is not a PowerShell, screenshot or copy/paste courier. A dormant mailbox is itself a typed control-plane blocker; it is not an instruction to ask the operator to relay the proof manually.
 
 ## Stephanos as the conversation surface
 

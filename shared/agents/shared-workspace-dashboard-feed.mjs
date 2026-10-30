@@ -1,6 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../runtime/workspaceReadCancellation.mjs';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
+import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
+import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
@@ -30,6 +33,28 @@ export const SHARED_WORKSPACE_FEED_RECORD_SCOPES = Object.freeze({
 });
 export const MIN_DASHBOARD_FEED_POLL_INTERVAL_MS = 15_000;
 export const DEFAULT_DASHBOARD_FEED_POLL_INTERVAL_MS = 30_000;
+const RECORD_READ_CONCURRENCY = 16;
+const directoryReadFlights = new WeakMap();
+const readerBudgets = new WeakMap();
+
+// Share the I/O allowance across directories and overlapping consumers. A slow
+// file occupies one slot, never an entire batch; FIFO admission prevents a
+// large history scan from continually overtaking another waiting directory.
+async function withinReaderBudget(reader, operation) {
+  let budget = readerBudgets.get(reader);
+  if (!budget) {
+    budget = { active: 0, waiting: [] };
+    readerBudgets.set(reader, budget);
+  }
+  if (budget.active < RECORD_READ_CONCURRENCY) budget.active += 1;
+  else await new Promise(resolve => budget.waiting.push(resolve));
+  try { return await operation(); }
+  finally {
+    const next = budget.waiting.shift();
+    if (next) next();
+    else budget.active -= 1;
+  }
+}
 
 const DIRECTORY_BY_KIND = Object.freeze({
   goals: 'goalRecords',
@@ -115,30 +140,31 @@ function classifyFeed({ resolved, records, projection, errors }) {
 }
 
 export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
+  throwIfWorkspaceReadAborted(options.signal);
   const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
-  let names = [];
-  try {
-    names = await readdir(resolved.path);
-  } catch (error) {
-    if (error?.code === 'ENOENT') return { records: [], errors: [] };
-    return { records: [], errors: [`${directory}:READ_FAILED:${error?.code || error?.message || 'unknown'}`] };
+  const reader = options.readFile || readFile;
+  let flights = directoryReadFlights.get(reader);
+  if (!flights) { flights = new Map(); directoryReadFlights.set(reader, flights); }
+  let flight = flights.get(resolved.path);
+  if (!flight) {
+    flight = readDirectorySnapshot(resolved.path, directory, reader);
+    flights.set(resolved.path, flight);
+    // The operation owns this registry entry until actual settlement. A caller
+    // leaving early must not remove it and admit a duplicate directory scan.
+    const ownedFlight = flight;
+    const retire = () => { if (flights.get(resolved.path) === ownedFlight) flights.delete(resolved.path); };
+    ownedFlight.then(retire, retire);
   }
+  const snapshot = await waitForWorkspaceRead(flight, options.signal);
+  throwIfWorkspaceReadAborted(options.signal);
+  // Share only I/O in progress, never a cached authority/freshness verdict.
+  // Each caller owns its returned objects and validates against its own clock.
   const records = [];
-  const errors = [];
-  for (const name of names.filter((item) => (
-    item.endsWith('.json')
-    // Match the canonical operator inbox namespace before opening files. The
-    // shared receipts directory also contains the much larger runtime journal.
-    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
-    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
-  ))) {
+  const errors = [...snapshot.errors];
+  for (const { name, record: raw } of snapshot.entries) {
     try {
-      const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
-      if (
-        directory === 'receipts'
-        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
-      ) continue;
+      const record = structuredClone(raw);
       const validation = validateSharedWorkspaceRecord(record, options);
       if (validation.valid) records.push(record);
       else errors.push(`${directory}/${name}:${validation.errors.join(',')}`);
@@ -146,8 +172,56 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
       errors.push(`${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}`);
     }
   }
+  errors.sort();
   records.sort((a, b) => timestampMs(b) - timestampMs(a));
   return { records, errors };
+}
+
+async function readDirectorySnapshot(path, directory, reader) {
+  let names = [];
+  try {
+    names = await readdir(path);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { entries: [], errors: [] };
+    return { entries: [], errors: [`${directory}:READ_FAILED:${error?.code || error?.message || 'unknown'}`] };
+  }
+  const entries = [];
+  const errors = [];
+  const selectedNames = names.filter((item) => (
+    item.endsWith('.json')
+    // Match the canonical operator inbox namespace before opening files. The
+    // shared receipts directory also contains the much larger runtime journal.
+    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
+    && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
+  ));
+  // Full-history Flywheel polls must not serialize thousands of disk reads.
+  // Keep I/O bounded and collect in directory order so equal timestamps and
+  // validation errors remain deterministic regardless of read completion order.
+  const readRecord = async (name) => {
+    try {
+      const record = JSON.parse(await reader(join(path, name), 'utf8'));
+      if (
+        directory === 'receipts'
+        && record?.operatorDecisionSchemaVersion !== DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA
+      ) return {};
+      return { entry: { name, record } };
+    } catch (error) {
+      return { error: `${directory}/${name}:PARSE_FAILED:${error?.message || 'unknown'}` };
+    }
+  };
+  const results = new Array(selectedNames.length);
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: Math.min(RECORD_READ_CONCURRENCY, selectedNames.length) }, async () => {
+    while (nextIndex < selectedNames.length) {
+      const index = nextIndex++;
+      results[index] = await withinReaderBudget(reader, () => readRecord(selectedNames[index]));
+    }
+  }));
+  for (const result of results) {
+    if (result.entry) entries.push(result.entry);
+    if (result.error) errors.push(result.error);
+  }
+  return { entries, errors };
 }
 
 
@@ -250,10 +324,11 @@ export function createSharedWorkspaceDashboardPollingContract(input = {}) {
   });
 }
 
-function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs, proofRecords = [], goalGateTrust = {}) {
   return Object.freeze({
     ...projection,
     autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+    goalBuildGateObservatory: projectGoalBuildGateObservatoryV1({ statusRecords, proofRecords, ...goalGateTrust, nowMs, staleAfterMs }),
   });
 }
 
@@ -275,6 +350,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
     polling,
     records: emptyRecords(),
+    proofIndex: projectSharedWorkspaceProofIndexV1({ sourceAvailable: false, nowMs }),
     operationalFacts: projectSharedWorkspaceOperationalFacts({ statusRecords: [], nowMs }),
     brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
     projection,
@@ -290,7 +366,8 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
 }
 
 export async function readSharedWorkspaceDashboardFeed(input = {}) {
-  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  throwIfWorkspaceReadAborted(input.signal);
+  let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
   const recordScope = safeRecordScope(input.recordScope);
@@ -298,12 +375,18 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const records = emptyRecords();
   const errors = [];
   if (resolved.ok) {
-    for (const [directory, key] of Object.entries(DIRECTORY_BY_KIND)) {
-      if (
-        recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
-        && HISTORICAL_DIRECTORIES.has(directory)
-      ) continue;
-      const result = await readSharedWorkspaceRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
+    const directories = Object.entries(DIRECTORY_BY_KIND).filter(([directory]) => !(
+      recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
+      && HISTORICAL_DIRECTORIES.has(directory)
+    ));
+    // Enumerations can overlap, while all generic record reads still share the
+    // same bounded allowance. Collect in canonical directory order, not finish order.
+    const results = await Promise.all(directories.map(([directory]) =>
+      readSharedWorkspaceRecordDirectory(resolved.root, directory, {
+        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile, signal: input.signal,
+      })));
+    for (const [index, [, key]] of directories.entries()) {
+      const result = results[index];
       records[key] = result.records;
       errors.push(...result.errors);
     }
@@ -314,6 +397,9 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const stephanosBuildTruthStatus = resolved.ok
     ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  throwIfWorkspaceReadAborted(input.signal);
+  // A live observation is sampled after the asynchronous record reads.
+  if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
   const latest = {
     goal: records.goalRecords[0] || null,
     status: records.statusRecords[0] || null,
@@ -332,12 +418,13 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
-  }), records.statusRecords, nowMs, staleAfterMs);
+  }), records.statusRecords, nowMs, staleAfterMs, records.proofRecords, input.goalGateTrust || {});
   const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
   const brainState = resolved.ok
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
     : projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
   const classification = classifyFeed({ resolved, records, projection, errors });
+  throwIfWorkspaceReadAborted(input.signal);
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',
@@ -349,6 +436,14 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     polling,
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
+    proofIndex: projectSharedWorkspaceProofIndexV1({
+      sourceAvailable: resolved.ok,
+      proofRecords: records.proofRecords,
+      receiptRecords: records.receiptRecords,
+      goalRecords: records.goalRecords,
+      nowMs,
+      staleAfterMs,
+    }),
     operationalFacts,
     brainState,
     projection,

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { assertOriginalSourceAttemptNotFenced } from './originalSourceAttemptFenceService.js';
 import { basename, resolve } from 'node:path';
+import { projectModelTransportFailureProofV1 } from '../../shared/agents/modelTransportFailureRetryV1.mjs';
 import {
   appendExecutionReceipt,
   createExecutionReceipt,
@@ -13,7 +15,7 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
-import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, readMissionRecord, runWithMissionStatePrecondition } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
@@ -44,10 +46,8 @@ async function ensurePaths(paths) {
 }
 
 function executionReceiptRoot(options = {}) {
-  return options.sharedWorkspaceRoot
-    || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
-    || '';
+  const env = options.env || process.env;
+  return options.sharedWorkspaceRoot || env.STEPHANOS_SHARED_AGENT_WORKSPACE || '';
 }
 
 function executionReceiptOptions(options = {}) {
@@ -171,7 +171,7 @@ function executionWorkerTypeForAdapter(adapter = '') {
   if (normalized === 'codex') return 'remote-codex';
   if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
   if (normalized === 'stephanos-native') return 'orchestration-engine';
-  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander' || normalized === 'sovereign-commander') return 'github-first';
+  if (normalized === 'foundry-forge' || normalized === 'forge-publication' || normalized === 'chatgpt-github' || normalized === 'desktop-commander' || normalized === 'sovereign-commander') return 'github-first';
   return normalized;
 }
 
@@ -237,7 +237,11 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
 
 export async function beginMissionWorkerExecutionReceiptChain(claim, options = {}) {
   const root = executionReceiptRoot(options);
-  if (!root) return null;
+  if (!root) {
+    if (claim?.item?.actionGrant || claim?.item?.executionBinding)
+      throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
+    return null;
+  }
   const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
   if (!executionId) return null;
   const persisted = persistedNativeBinding(claim);
@@ -390,13 +394,31 @@ async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, ob
 
 async function proveProcessingClaim(claim, options = {}) {
   const action = claim?.item?.payload;
+  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
   if (action?.actionKind !== 'agent-handoff') {
+    if (/^critical-[1-9]\d*-elastic-goal$/.test(missionId)) {
+      // Even signed worktree/publication actions must cross the same mission
+      // lock after rename. A preflight read alone can race fence commit.
+      const guarded = await runWithMissionStatePrecondition(missionId, {}, async (state) => {
+        if (state.cancelled === true || state.currentPhase === 'CANCELLED'
+            || state.storeMetadata?.originalSourceAttemptFence
+            || state.storeMetadata?.supervisedRecoveryMaintenance) {
+          throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+        }
+        return Object.freeze({ proven: true, state: 'NON_AGENT_MISSION_FENCE_CHECKED' });
+      }, options);
+      return guarded.result;
+    }
     return Object.freeze({ proven: true, state: 'NOT_AGENT_HANDOFF' });
   }
 
-  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
   const adapter = normalizedText(claim?.adapter).toLowerCase();
   const record = await readMissionRecord(missionId, options);
+  if (record.state.cancelled === true || record.state.currentPhase === 'CANCELLED'
+      || record.state.storeMetadata?.originalSourceAttemptFence
+      || record.state.storeMetadata?.supervisedRecoveryMaintenance) {
+    throw new Error('ORIGINAL_SOURCE_ATTEMPT_FENCED');
+  }
   const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
   const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
 
@@ -412,6 +434,7 @@ async function proveProcessingClaim(claim, options = {}) {
     throw new Error(`MISSION_WORKER_PROCESSING_CLAIM_STATE_INVALID:${status || 'unknown'}`);
   }
 
+  if (options.assertClaimCustody) options.assertClaimCustody();
   const claimed = await appendMissionEvent(missionId, {
     eventId: `pickup-${normalizedText(claim?.item?.actionId)}`.slice(0, 128),
     eventType: 'AGENT_DISPATCHED',
@@ -499,11 +522,29 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         );
         continue;
       }
+      try {
+        await assertOriginalSourceAttemptNotFenced(item.missionId, {
+          env: options.env, missionStoreOptions: { root: options.root },
+        });
+      } catch (fenceError) {
+        if (fenceError?.message !== 'ORIGINAL_SOURCE_ATTEMPT_FENCED') throw fenceError;
+        await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+          'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+        continue;
+      }
+      // Lane 7 admission must survive the awaited queue and source-fence reads.
+      if (options.assertClaimCustody) options.assertClaimCustody();
       await rename(pendingPath, processingPath);
       const claim = { adapter, item, processingPath, paths };
       try {
         claim.pickupProof = await proveProcessingClaim(claim, options);
       } catch (claimError) {
+        if (claimError?.message === 'ORIGINAL_SOURCE_ATTEMPT_FENCED') {
+          await rename(processingPath, pendingPath);
+          await quarantinePendingQueueItem(paths, adapter, entry, pendingPath, bytes,
+            'ORIGINAL_SOURCE_ATTEMPT_FENCED', options);
+          continue;
+        }
         // Do not strand an item in processing when mission-state pickup proof
         // cannot be recorded. Return ownership to pending so the canonical
         // conveyor can safely retry or route it on the next bounded sweep.
@@ -667,6 +708,8 @@ export async function proveMissionWorkerRetryOwnershipReleased({
   return Object.freeze({
     ok: true,
     classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    providerTransportFailure: providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)
+      ? projectModelTransportFailureProofV1(result, terminalReceipt) : null,
     missionId: normalizedMissionId,
     actionId: normalizedActionId,
     adapter: normalizedAdapter,
@@ -725,7 +768,7 @@ function requireSourceEscrowBeforeCompletion(execution = {}) {
   }
 }
 
-async function applyClaimResult(claim, action, execution, inspection) {
+async function applyClaimResult(claim, action, execution, inspection, executionReceipt = null) {
   const event = buildMissionEventFromWorkerResult(action, execution, inspection);
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
   const result = {
@@ -734,8 +777,14 @@ async function applyClaimResult(claim, action, execution, inspection) {
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
   };
+  if (executionReceipt) executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+    executionReceipt, execution.success === true ? 'completed' : 'failed', claim.options, {
+      phase: 'readonly-inspection-result-consumed',
+      proofRefs: [...executionReceipt.proofRefs, event.eventId],
+      expectedNextAction: 'Reconcile only this completed read-only lease against the consumed mission event.',
+    });
   const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
-  return { processed: true, claim, event, applied, result, resultPath };
+  return { processed: true, claim, event, applied, result, resultPath, executionReceipt };
 }
 
 async function failClaim(claim, action, error) {
@@ -971,10 +1020,18 @@ export async function processNextGitHubInspectionItem(options = {}) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  let executionReceipt = null;
   try {
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
     const inspected = await options.inspectGitHub(action, claim);
-    return await applyClaimResult(claim, action, inspected.execution, inspected.inspection);
+    return await applyClaimResult(claim, action, inspected.execution, inspected.inspection, executionReceipt);
   } catch (error) {
+    if (executionReceipt && !EXECUTION_RECEIPT_TERMINAL_STATES.includes(executionReceipt.state)) {
+      try { await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
+        phase: 'readonly-inspection-failed', blocker: error.message,
+        expectedNextAction: 'Keep custody held until canonical failed inspection reconciliation.',
+      }); } catch (receiptError) { error.executionReceiptFailure = receiptError; }
+    }
     return failClaim(claim, action, error);
   }
 }
