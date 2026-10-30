@@ -406,7 +406,7 @@ export function renderChatGptSharedWorkspaceResponse(payload = {}) {
 ## ChatGPT Shared Workspace Response Outbox
 
 \`\`\`json
-${JSON.stringify(safePayload, null, 2)}
+${JSON.stringify(safePayload, null, 1)}
 \`\`\`
 
 The Shared Agent Workspace remains authoritative. This is a bounded sanitized projection and audit handoff only.`;

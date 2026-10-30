@@ -226,6 +226,114 @@ test('actual UI build verify serve and exact-proof tools select UI refresh', () 
   }
 });
 
+test('merged Control Tower commissioning range refreshes the existing UI backend and worker owners', async () => {
+  // Exact d729d17..02f5dea merge range that previously blocked all refreshes.
+  const changedPaths = [
+    'docs/architecture/launcher-publication-readiness-separation-2961.md',
+    'docs/architecture/source-worker-grant-custody-contract-2961.md',
+    'scripts/battle-bridge-ignition-supervisor.mjs',
+    'scripts/battle-bridge-ignition-supervisor.test.mjs',
+    'scripts/battle-bridge-ui-4173-repair.mjs',
+    'scripts/battle-bridge-ui-4173-repair.test.mjs',
+    'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs',
+    'scripts/launcher-publication-readiness.test.mjs',
+    'scripts/launcher-readiness-live-facts.mjs',
+    'scripts/launcher-readiness-live-facts.test.mjs',
+    'scripts/launcher-readiness-planner.mjs',
+    'scripts/mission-orchestrator-worker-supervised.mjs',
+    'scripts/mission-orchestrator-worker-supervised.test.mjs',
+    'scripts/mission-orchestrator-worker.mjs',
+    'scripts/sovereign-fixed-runtime-worker-v1.test.mjs',
+    'scripts/sovereign-maintenance-installer-source-job-v3.test.mjs',
+    'shared/agents/battleBridgePublisher.mjs',
+    'shared/agents/durableFlywheelControllerVNext.mjs',
+    'shared/agents/engineeringIncidentMethodMemoryV1.mjs',
+    'shared/agents/engineeringIncidentMethodMemoryV1.test.mjs',
+    'shared/agents/missionOrchestratorWorker.mjs',
+    'shared/agents/missionWorkerGrantCompositionV1.test.mjs',
+    'shared/agents/sharedWorkspaceOperationalFactsV1.mjs',
+    'stephanos-server/services/criticalBacklogConveyorServiceCore.js',
+    'stephanos-server/services/missionOrchestratorWorkerConsumer.js',
+    'stephanos-server/services/missionOrchestratorWorkerConsumer.test.js',
+    'stephanos-server/services/missionOrchestratorWorkerService.js',
+    'stephanos-server/services/missionOrchestratorWorkerService.test.js',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.changedPathCount, 28);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.deepEqual(plan.internal.unknownPaths, []);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.UI_4173,
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+  ]);
+
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths,
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(); },
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+      restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.exactHeadProofOk, true);
+  assert.deepEqual(calls, ['ui', 'backend', 'worker']);
+});
+
+test('each launcher readiness dependency requires served UI proof and cannot use natural reload proof', async () => {
+  for (const path of [
+    'scripts/launcher-readiness-live-facts.mjs',
+    'scripts/launcher-readiness-planner.mjs',
+  ]) {
+    const plan = classifyPostSyncRefresh([path]);
+    assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY, path);
+    assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173], path);
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: {
+        refreshUi: async () => { calls.push('ui'); return pass(A); },
+        confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+      },
+    });
+    assert.equal(result.ok, false, path);
+    assert.equal(result.exactHeadProofOk, false, path);
+    assert.equal(result.blocker, `REFRESH_PROOF_FAILED:${POST_SYNC_REFRESH_TARGETS.UI_4173}`, path);
+    assert.deepEqual(calls, ['ui'], path);
+  }
+});
+
+test('the parse-only fixed-runtime closure fixture needs no runtime refresh', () => {
+  const path = 'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-v1.mjs';
+  const plan = classifyPostSyncRefresh([path]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.deepEqual(plan.targetIds, []);
+  assert.deepEqual(plan.internal.noRuntimePaths, [path]);
+});
+
+test('launcher and fixture allowances stay exact and refuse unregistered neighbors before any refresh', async () => {
+  for (const path of [
+    'scripts/launcher-readiness-live-facts-unregistered.mjs',
+    'scripts/launcher-readiness-planner-unregistered.mjs',
+    'scripts/launcher-readiness-unregistered.mjs',
+    'scripts/fixtures/sovereign-fixed-runtime-closure-fixture-unregistered.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path, 'main.js'],
+      adapters: { refreshUi: async () => { calls.push('ui'); return pass(); } },
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.deepEqual(result.plan.internal.unknownPaths, [path], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
 test('shared runtime refreshes UI and backend', () => {
   const plan = classifyPostSyncRefresh(['shared/runtime/runtimeStatusModel.mjs']);
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173, POST_SYNC_REFRESH_TARGETS.BACKEND_8787]);
