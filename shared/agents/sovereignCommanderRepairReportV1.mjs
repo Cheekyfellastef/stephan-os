@@ -15,11 +15,13 @@ export const SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE =
   'sovereign-commander-repair-current.json';
 export const SOVEREIGN_COMMANDER_REPAIR_REPORT_EVENT_FILE =
   'sovereign-commander-repair-cycles.ndjson';
+export const SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE = 'QUALIFIED_GOAL_BUILDER_MAINTENANCE';
 export const SOVEREIGN_COMMANDER_REPAIR_OUTCOMES = Object.freeze([
   'NEEDS_REPAIR',
   'REPAIRED',
   'BLOCKED',
   'HEALTHY',
+  'MAINTENANCE_COMPLETED',
 ]);
 
 function text(value) {
@@ -44,6 +46,20 @@ function stepAppliedRepair(step = {}) {
 }
 
 export function classifySovereignCommanderRepairOutcome(repair = {}) {
+  if (repair.scope === SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE) {
+    const maintenance = repair.maintenance;
+    // This is a bounded reporting projection of the real owner's result, never
+    // a runtime qualification or a substitute for private native provenance.
+    const completed = repair.ok === true && !text(repair.blocker)
+      && /^[a-f0-9]{40}$/.test(repair.sourceHead ?? '')
+      && maintenance?.actionId === 'repair-goal-builder-flow'
+      && maintenance?.profile === 'MAINTENANCE_GOAL_BUILDER_V1'
+      && maintenance?.operationOk === true && maintenance?.terminalProven === true
+      && /^[a-f0-9]{64}$/.test(maintenance?.terminalEvidenceSha256 ?? '')
+      && /^[a-f0-9]{64}$/.test(maintenance?.proofHash ?? '');
+    return completed ? 'MAINTENANCE_COMPLETED' : 'BLOCKED';
+  }
+  if (repair.scope !== undefined) return 'BLOCKED';
   if (repair?.ok !== true) {
     return text(repair?.blocker) ? 'BLOCKED' : 'NEEDS_REPAIR';
   }
@@ -92,15 +108,34 @@ export function buildSovereignCommanderRepairReport({
 } = {}) {
   const normalizedCycleId = safeCycleId(cycleId);
   const outcome = classifySovereignCommanderRepairOutcome(repair);
-  const status = outcome === 'BLOCKED' || outcome === 'NEEDS_REPAIR'
+  const scopedMaintenance = repair.scope === SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE;
+  const status = outcome === 'MAINTENANCE_COMPLETED' ? 'OBSERVED'
+    : outcome === 'BLOCKED' || outcome === 'NEEDS_REPAIR'
     ? 'ATTENTION_REQUIRED'
     : 'READY';
-  const detectedFaults = text(repair?.blocker)
-    ? Object.freeze([bounded(repair.blocker)])
+  const blocker = text(repair?.blocker) || (repair.scope !== undefined && outcome === 'BLOCKED'
+    ? 'SOVEREIGN_QUALIFIED_MAINTENANCE_PROOF_UNPROVEN' : '');
+  const detectedFaults = blocker
+    ? Object.freeze([bounded(blocker)])
     : Object.freeze([]);
   const actions = projectedActions(repair);
-  const verification = projectedVerification(repair);
-  const summary = outcome === 'HEALTHY'
+  const verification = scopedMaintenance ? Object.freeze({
+    sourceHead: bounded(repair.sourceHead, 40),
+    readiness: 'UNPROVEN', fullStephanosRepairProven: false,
+    maintenanceActionId: 'repair-goal-builder-flow',
+    maintenanceProfile: 'MAINTENANCE_GOAL_BUILDER_V1',
+    operationCompleted: outcome === 'MAINTENANCE_COMPLETED',
+    terminalEvidenceSha256: /^[a-f0-9]{64}$/.test(repair.maintenance?.terminalEvidenceSha256 ?? '')
+      ? repair.maintenance.terminalEvidenceSha256 : '',
+    proofHash: /^[a-f0-9]{64}$/.test(repair.maintenance?.proofHash ?? '')
+      ? repair.maintenance.proofHash : '',
+    runtimeQualificationGranted: false,
+  }) : projectedVerification(repair);
+  const summary = scopedMaintenance
+    ? outcome === 'MAINTENANCE_COMPLETED'
+      ? 'Sovereign Commander completed qualified goal-builder maintenance; whole-system health remains unproven.'
+      : 'Sovereign Commander could not complete qualified goal-builder maintenance and recorded the blocker.'
+    : outcome === 'HEALTHY'
     ? 'Sovereign Commander completed a repair cycle and verified Stephanos healthy.'
     : outcome === 'REPAIRED'
       ? 'Sovereign Commander repaired Stephanos and verified the post-repair state.'
@@ -120,6 +155,8 @@ export function buildSovereignCommanderRepairReport({
     detectedFaults,
     actions,
     verification,
+    ...(scopedMaintenance ? { scope: SOVEREIGN_QUALIFIED_MAINTENANCE_SCOPE,
+      fullStephanosRepairProven: false } : {}),
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     mergeAuthority: false,
@@ -213,3 +250,4 @@ export async function publishSovereignCommanderRepairReport({
     finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLISHED',
   });
 }
+

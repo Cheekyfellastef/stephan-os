@@ -191,3 +191,41 @@ protocol matrix covers independent parent and native interruption origins;
 temporary-store integration tests cover success/failure proposal combinations,
 missing/forged evidence, and cancellation at durable commit boundaries. These
 are deterministic regression proofs, not native installation or commissioning.
+
+## Existing guardian continuation through the qualified maintenance profile
+
+The production Windows guardian previously rejected its broad `repair-stephanos`
+profile after consuming the first timer, then left no next tick. The broad
+profile remains unenrolled. Its replacement timer request is restricted to the
+already declared `repair-goal-builder-flow` / `MAINTENANCE_GOAL_BUILDER_V1`
+descriptor. It compiles the ordinary fixed command and enters the same existing
+maintenance owner before the first asynchronous boundary. No public action,
+qualification option, profile, scheduler or separate mutation owner is added.
+
+Each tick rechecks actual native qualification. Governor or installation denials
+are recorded as not completed and retried with bounded backoff. Native operation
+failure remains failure even after authentic descendant exclusion. Forged,
+missing or unreleased native terminal evidence retains the original hold and
+does not schedule a replacement. A successful existing authenticated custody
+recovery resumes the next qualified tick; recovery itself is not repair proof.
+Manual work and automatic reporting remain single-flight. Stopping requests
+cancellation of the same native operation, waits for its terminal adjudication
+before closing the journal, and never schedules another cycle.
+
+The existing Shared Workspace repair status and event stream carry the closed
+`QUALIFIED_GOAL_BUILDER_MAINTENANCE` scope. A proven completed action is
+`MAINTENANCE_COMPLETED` / `OBSERVED`, with its source and native terminal digest.
+Whole-system readiness remains `UNPROVEN`, and these reporting fields grant no
+runtime qualification. Failed reporting preserves the actual action result but
+cannot count as a successful reported cycle. Existing broad repair callers
+retain their separate whole-system verification contract.
+
+This continuation does not enroll broad caretaker, Core, UI or service repair,
+qualify a source builder, or prove a physical goal build. Commander retains its
+current normal-operator Interactive task; pre-login execution is still
+unproven. Exact-head independent Windows/security review, protected source
+integration and actual host acceptance remain necessary. The deterministic VM
+regression exercises the production Windows branch with isolated native/report
+adapters and no production qualification injection; it is not Windows kernel
+or installed-host proof.
+
