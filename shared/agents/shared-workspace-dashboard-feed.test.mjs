@@ -31,6 +31,62 @@ async function writeJson(root, directory, name, record) {
   await writeFile(join(root, directory, name), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
 
+test('cancelled subscribers cannot retire a still-pending shared directory flight', async () => {
+  const root = await tempWorkspace();
+  await writeJson(root, 'status', 'current.json', createSharedWorkspaceStatusRecord({ statusId: 'current', timestampUtc: new Date().toISOString(), status: 'CURRENT' }));
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const began = new Promise(resolve => { started = resolve; });
+  let reads = 0;
+  const reader = async (...args) => { reads++; started(); await gate; return readFile(...args); };
+  const first = new AbortController();
+  const second = new AbortController();
+  const left = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, signal: first.signal });
+  const right = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, signal: second.signal });
+  await began;
+  first.abort();
+  await assert.rejects(left, { name: 'AbortError' });
+  assert.equal(second.signal.aborted, false);
+  second.abort();
+  await assert.rejects(right, { name: 'AbortError' });
+  const joined = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader });
+  await setImmediate();
+  assert.equal(reads, 1, 'the new subscriber joins actual pending I/O after every prior subscriber leaves');
+  release();
+  assert.equal((await joined).records.length, 1);
+  await readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader });
+  assert.equal(reads, 2, 'settled snapshots are not a completed authority cache');
+});
+
+test('abandoning a directory read does not free any unfinished global I/O slots', async () => {
+  const root = await tempWorkspace();
+  const other = await tempWorkspace();
+  await Promise.all(Array.from({ length: 16 }, (_, index) => writeJson(root, 'status', `held-${index}.json`, createSharedWorkspaceStatusRecord({ statusId: `held-${index}`, timestampUtc: new Date().toISOString(), status: 'CURRENT' }))));
+  await writeJson(other, 'status', 'next.json', createSharedWorkspaceStatusRecord({ statusId: 'next', timestampUtc: new Date().toISOString(), status: 'CURRENT' }));
+  let release, saturated;
+  const gate = new Promise(resolve => { release = resolve; });
+  const full = new Promise(resolve => { saturated = resolve; });
+  let active = 0, calls = 0, peak = 0;
+  const reader = async (...args) => {
+    active++; calls++; peak = Math.max(peak, active);
+    if (active === 16) saturated();
+    try { if (args[0].startsWith(join(root, 'status'))) await gate; return await readFile(...args); }
+    finally { active--; }
+  };
+  const controller = new AbortController();
+  const abandoned = readSharedWorkspaceRecordDirectory(root, 'status', { readFile: reader, signal: controller.signal });
+  await full;
+  controller.abort();
+  await assert.rejects(abandoned, { name: 'AbortError' });
+  const next = readSharedWorkspaceRecordDirectory(other, 'status', { readFile: reader });
+  await setImmediate(); await setImmediate();
+  assert.equal(calls, 16);
+  assert.equal(active, 16);
+  release();
+  assert.equal((await next).records.length, 1);
+  assert.equal(peak, 16);
+});
+
 test('history reads overlap within a fixed bound without losing validation, order or fresh changes', async () => {
   const root = await tempWorkspace();
   const now = '2026-07-07T00:00:00.000Z';

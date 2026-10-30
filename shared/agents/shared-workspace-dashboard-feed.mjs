@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { throwIfWorkspaceReadAborted, waitForWorkspaceRead } from '../runtime/workspaceReadCancellation.mjs';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
 import { projectSharedWorkspaceProofIndexV1 } from './sharedWorkspaceProofIndexV1.mjs';
 import { projectGoalBuildGateObservatoryV1 } from '../runtime/goalBuildGateObservatoryV1.mjs';
@@ -139,6 +140,7 @@ function classifyFeed({ resolved, records, projection, errors }) {
 }
 
 export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
+  throwIfWorkspaceReadAborted(options.signal);
   const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
   const reader = options.readFile || readFile;
@@ -148,10 +150,14 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
   if (!flight) {
     flight = readDirectorySnapshot(resolved.path, directory, reader);
     flights.set(resolved.path, flight);
+    // The operation owns this registry entry until actual settlement. A caller
+    // leaving early must not remove it and admit a duplicate directory scan.
+    const ownedFlight = flight;
+    const retire = () => { if (flights.get(resolved.path) === ownedFlight) flights.delete(resolved.path); };
+    ownedFlight.then(retire, retire);
   }
-  let snapshot;
-  try { snapshot = await flight; }
-  finally { if (flights.get(resolved.path) === flight) flights.delete(resolved.path); }
+  const snapshot = await waitForWorkspaceRead(flight, options.signal);
+  throwIfWorkspaceReadAborted(options.signal);
   // Share only I/O in progress, never a cached authority/freshness verdict.
   // Each caller owns its returned objects and validates against its own clock.
   const records = [];
@@ -360,6 +366,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
 }
 
 export async function readSharedWorkspaceDashboardFeed(input = {}) {
+  throwIfWorkspaceReadAborted(input.signal);
   let nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const polling = createSharedWorkspaceDashboardPollingContract(input);
@@ -376,7 +383,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     // same bounded allowance. Collect in canonical directory order, not finish order.
     const results = await Promise.all(directories.map(([directory]) =>
       readSharedWorkspaceRecordDirectory(resolved.root, directory, {
-        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile,
+        repoRoot: input.repoRoot, nowMs, staleAfterMs, readFile: input.readFile, signal: input.signal,
       })));
     for (const [index, [, key]] of directories.entries()) {
       const result = results[index];
@@ -390,6 +397,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const stephanosBuildTruthStatus = resolved.ok
     ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  throwIfWorkspaceReadAborted(input.signal);
   // A live observation is sampled after the asynchronous record reads.
   if (!Number.isFinite(input.nowMs)) nowMs = Date.now();
   const latest = {
@@ -416,6 +424,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
     : projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
   const classification = classifyFeed({ resolved, records, projection, errors });
+  throwIfWorkspaceReadAborted(input.signal);
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',
