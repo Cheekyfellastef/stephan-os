@@ -13,7 +13,7 @@ import {spawnSync} from 'node:child_process';
 import * as store from '../stephanos-server/services/missionOrchestratorStore.js';
 import * as consumer from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import {collectAgentWorkerResult} from '../stephanos-server/services/missionOrchestratorWorkerService.js';
-import {buildMissionWorkerAction} from '../shared/agents/missionOrchestratorWorker.mjs';
+import {buildMissionWorkerAction,missionWorkerActionGrantsMatchV1} from '../shared/agents/missionOrchestratorWorker.mjs';
 import {projectNarrowedMissionSourceScopeV1} from '../shared/agents/missionOrchestrator.mjs';
 import {FORGE_LIFEBOAT_WORKER_ID,MISSION_CONTROLLER_ROUTE,projectMissionControllerTaskV1} from '../shared/agents/missionControllerCapacityRouterV1.mjs';
 import {CODEX_TASK_CLASS} from '../shared/agents/codexCapacityGovernorV1.mjs';
@@ -26,9 +26,10 @@ const hash=b=>createHash('sha256').update(b).digest('hex');
 const proof=(requirement,id)=>({receiptId:id,requirement,source:'test',evidenceType:'command-output',verified:true,exitCode:0});
 const text=(v,f='')=>v===null||v===undefined?f:String(v).trim()||f;
 function run(exe,args,options={}){const env={...process.env,...options.env};delete env.NODE_TEST_CONTEXT;return spawnSync(exe==='git.exe'?'git':exe==='node.exe'?process.execPath:exe,args,{cwd:options.cwd,env,shell:false,encoding:options.encoding===null?null:'utf8',timeout:10000,windowsHide:true});}
-for(const mode of ['success','missing-proposal','cancelled','transport-cancel-success','transport-cancel-clean-failure','transport-unproven-clean-failure','transport-unproven-success','transport-mismatch-clean-failure','transport-mismatch-success','transport-missing-clean-failure','transport-missing-success','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
+for(const mode of ['success','prechain-contract-failed','missing-proposal','cancelled','transport-cancel-success','transport-cancel-clean-failure','transport-unproven-clean-failure','transport-unproven-success','transport-mismatch-clean-failure','transport-mismatch-success','transport-missing-clean-failure','transport-missing-success','changed-claim','wrong-payload','forged-zero','clean-failed','partial-proposal','cancel-after-result','prior-receipt','prelaunch-exclusion','publication-failed','contradictory-clean','unknown-proposal',
  'abort-terminal-evidence','abort-clean-failure-evidence','abort-escrow','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt','abort-caller-assert','abort-queue-commit','abort-after-queue-commit','abort-clean-failure-queue-commit'])test('native source parent integration: '+mode,async t=>{
  const invocation=new AbortController();let invocationAborts=0;
+ let holdPublication=null;
  const abortInvocation=()=>{if(!invocation.signal.aborted){invocationAborts++;invocation.abort();}};
  const invocationCase=mode.startsWith('abort-');
  const cleanFailure=mode==='clean-failed'||mode.endsWith('-clean-failure')||mode.startsWith('abort-clean-failure-');
@@ -51,7 +52,7 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
  const ready=await store.appendMissionEvent(missionId,{eventId:'worktree',eventType:'WORKTREE_READY',worktreePath:repoRoot,clean:true,receipt:proof('isolated worktree','worktree')},options);
  const draft={schemaVersion:'stephanos.mission-worker-action-grant.v1',grantId:'fixture-grant',controllerId:'durable-flywheel-controller',sourceRevision:head,missionId,missionRevision:ready.state.revision,currentPhase:ready.state.currentPhase,adapter:'foundry-forge',workerId:FORGE_LIFEBOAT_WORKER_ID,capacityRoute:MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,capacityReceiptId:'fixture-capacity',capacityProofRefs:['proof/fixture-capacity.json'],repository:'Cheekyfellastef/stephan-os',issueNumber:1557,prNumber:null,branch:ready.state.git.branch,headSha:null,boundedActionCount:1,mergeAuthority:false,leaseSeizureAllowed:false};
  const action=buildMissionWorkerAction(ready.state,{actionGrant:draft});
- const grant={...draft,actionId:action.actionId,actionKind:action.actionKind,operation:action.operation||''};
+ const grant={...draft,laneId:missionId,providerRouteIntent:'AUTO',actionId:action.actionId,actionKind:action.actionKind,operation:action.operation||''};
  const item={schemaVersion:'stephanos.mission-worker-queue-item.v1',adapter:'foundry-forge',missionId,actionId:grant.actionId,createdAt:new Date().toISOString(),actionGrant:grant,payload:action,executionBinding:{schemaVersion:'stephanos.mission-worker-queue-execution-binding.v1',executionId:grant.actionId,leaseKey:missionId+'-r'+grant.missionRevision+'-lease',grantId:grant.grantId,missionId,missionRevision:grant.missionRevision,repository:grant.repository,issueNumber:1557,prNumber:null,branch:grant.branch,headSha:'',sourceRevision:head}};
  if(mode==='wrong-payload')item.payload.allowedFiles=['shared/agents/outside.mjs'];
  const pending=join(queueRoot,'foundry-forge','pending');await mkdir(pending,{recursive:true});
@@ -87,11 +88,12 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   const result={ok:!transportCancelled&&(['success','cancel-after-result'].includes(mode)||(invocationCase&&!cleanFailure)),taskExecuted:transportCancelled||['success','cancel-after-result','clean-failed','partial-proposal'].includes(mode)||invocationCase,reason:nativeReason,stdout,nativeReceipt:{Reason:nativeReason,Profile:'SOURCE_TASK_V1',FrameSha256:prepared.FrameSha256,TaskStage:{RootPid:23456}}};
   if(mode!=='forged-zero')brands.add(result);nativeReturned=true;return result;
  };
- const context=vm.createContext({Buffer,process,console,AbortController,setInterval,clearInterval,createHash,randomUUID,resolve,relative,join,homedir,text,
+ const context=vm.createContext({Buffer,JSON,process,console,AbortController,setInterval,clearInterval,createHash,randomUUID,resolve,relative,join,homedir,text,missionWorkerActionGrantsMatchV1,
   lstatSync:fs.lstatSync,openSync:fs.openSync,fstatSync:fs.fstatSync,readFileSync:fs.readFileSync,readSync:fs.readSync,closeSync:fs.closeSync,
   FORGE_LIFEBOAT_WORKER_ID,MISSION_CONTROLLER_ROUTE,CODEX_TASK_CLASS,projectMissionControllerTaskV1,projectNarrowedMissionSourceScopeV1,
   ...store,...consumer,createSharedWorkspaceProofRecord,
-  writeAtomicJson:async(...args)=>{const result=await writeAtomicJson(...args);if(['abort-terminal-evidence','abort-clean-failure-evidence'].includes(mode)&&args[1][1].endsWith('-terminal.json'))abortInvocation();return result;},
+  claimNextMissionWorkerItem:async(...args)=>{const claim=await consumer.claimNextMissionWorkerItem(...args);if(mode==='prechain-contract-failed')claim.item.actionGrant={...claim.item.actionGrant,providerRouteIntent:'FOREIGN'};return claim;},
+  writeAtomicJson:async(...args)=>{const result=await writeAtomicJson(...args);if(args[1][1].startsWith('native-source-held-'))holdPublication=result;if(['abort-terminal-evidence','abort-clean-failure-evidence'].includes(mode)&&args[1][1].endsWith('-terminal.json'))abortInvocation();return result;},
   finalizeSourceArtifactEscrowFromCapturedIdentityV1:async(...args)=>{escrowFinalizations++;const result=await finalizeSourceArtifactEscrowFromCapturedIdentityV1(...args);if(mode==='abort-escrow')abortInvocation();return result;},
   collectAgentWorkerResult:async(...args)=>{collections++;const result=await collectAgentWorkerResult(...args);if(mode==='cancel-after-result')await store.appendMissionEvent(missionId,{eventId:'cancel-after-result',eventType:'MISSION_CANCELLED'},options);if(['abort-collector','abort-clean-failure-collector'].includes(mode))abortInvocation();return result;},
   appendMissionWorkerExecutionReceiptTransition:async(...args)=>{const result=await consumer.appendMissionWorkerExecutionReceiptTransition(...args);if((mode==='abort-final-receipt'&&args[1]==='completed')||(mode==='abort-clean-failure-receipt'&&args[1]==='failed'))abortInvocation();return result;},
@@ -130,10 +132,23 @@ for(const mode of ['success','missing-proposal','cancelled','transport-cancel-su
   const collected=['cancel-after-result','abort-collector','abort-clean-failure-collector','abort-final-receipt','abort-clean-failure-receipt'].includes(mode);
   assert.equal(result.success,false,JSON.stringify(result));assert.equal(collections,collected?1:0);
   assert.equal(fs.existsSync(join(queueRoot,'foundry-forge','processing',grant.actionId+'.json')),true,mode);
-  assert.equal(attempts,['wrong-payload','prior-receipt','publication-failed'].includes(mode)?0:1);
+  assert.equal(attempts,['prechain-contract-failed','wrong-payload','prior-receipt','publication-failed'].includes(mode)?0:1);
   assert.equal(current.state.dispatch.resultId,collected?grant.actionId:'');
   if(invocationCase)assert.equal(result.reason,'NATIVE_SOURCE_INVOCATION_CANCELLED');
   if(['cancelled','cancel-after-result'].includes(mode))assert.equal(current.state.currentPhase,'CANCELLED');
+ }
+ if(mode==='prechain-contract-failed'){
+  assert.equal(result.nativeTransportEntered,false);
+  assert.equal(result.holdDiagnosticPublished,true,JSON.stringify({result,holdPublication}));
+  assert.equal(result.executionCustodyReleased,false);
+  const diagnostic=JSON.parse(await readFile(join(workspace,result.holdDiagnosticRef),'utf8'));
+  const observation=JSON.parse(diagnostic.summary);
+  assert.equal(observation.executionReceiptChainPresent,false);
+  assert.equal(observation.historicalExecutionOutcome,'UNKNOWN');
+  assert.equal(observation.physicalExclusionGranted,false);
+  assert.equal(observation.claimReleaseAuthority,false);
+  const history=await readExecutionReceiptHistory(workspace,{executionId:grant.actionId},{repoRoot});
+  assert.equal(history.receipts.length,0,'A diagnostic must not manufacture an execution chain or terminal');
  }
  if(transportHeld){
   assert.equal(invocation.signal.aborted,false,'Native transport cancelled without caller signal');

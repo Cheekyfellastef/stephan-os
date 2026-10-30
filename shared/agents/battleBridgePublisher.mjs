@@ -8,6 +8,8 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import { createVerifierResult, aggregateVerificationResults, VERIFICATION_STATUS } from './verificationHarness.mjs';
+import { BATTLE_BRIDGE_SERVICE_STATUS } from './sharedWorkspaceOperationalFactsV1.mjs';
+export { BATTLE_BRIDGE_SERVICE_STATUS, projectBattleBridgePublicationEvidence } from './sharedWorkspaceOperationalFactsV1.mjs';
 
 export const BATTLE_BRIDGE_PUBLISHER_SCHEMA_VERSION = 'battle-bridge-publisher.v1';
 export const BATTLE_BRIDGE_PUBLISHER_RECORD_KIND = 'stephanos.battle_bridge.publisher.slice';
@@ -18,13 +20,6 @@ export const BATTLE_BRIDGE_PUBLISHER_SERVICES = Object.freeze([
   'mission-worker',
   'openclaw-gateway',
 ]);
-
-export const BATTLE_BRIDGE_SERVICE_STATUS = Object.freeze({
-  READY: 'READY',
-  DEGRADED: 'DEGRADED',
-  UNKNOWN: 'UNKNOWN',
-  STALE: 'STALE',
-});
 
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,120}$/i;
 const SAFE_TEXT_PATTERN = /^[a-z0-9][a-z0-9._:/#() -]{0,240}$/i;

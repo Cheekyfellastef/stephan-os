@@ -2,6 +2,7 @@ import {createSharedWorkspaceProofRecord,writeAtomicJson} from '../shared/agents
 import { FORGE_LIFEBOAT_WORKER_ID, MISSION_CONTROLLER_ROUTE, projectMissionControllerTaskV1 } from '../shared/agents/missionControllerCapacityRouterV1.mjs';
 import { CODEX_TASK_CLASS } from '../shared/agents/codexCapacityGovernorV1.mjs';
 import { projectNarrowedMissionSourceScopeV1 } from '../shared/agents/missionOrchestrator.mjs';
+import { missionWorkerActionGrantsMatchV1 } from '../shared/agents/missionOrchestratorWorker.mjs';
 import { inspectStephanosNativeCapacityGamingAdmissionV1 } from '../shared/agents/stephanosNativeCapacityGamingAdmissionV1.mjs';
 import { readMissionRecord, runWithMissionStatePrecondition } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { finalizeSourceArtifactEscrowFromCapturedIdentityV1 } from '../stephanos-server/services/sourceArtifactEscrowStore.js';
@@ -1077,10 +1078,15 @@ async function processFixedSourceTaskInWorker(options) {
     return {processed:false,reason:probe.reason||'native-source-profile-unqualified'};
   if(probe.sourceHead!==grant.sourceRevision)return {processed:false,reason:'native-source-grant-head-mismatch'};
   const originalContract=sourceContract(before.state);
-  const claim=await claimNextMissionWorkerItem('foundry-forge',{...options,actionGrant:grant});
+  const claim=await claimNextMissionWorkerItem('foundry-forge',{...options,actionGrant:grant,
+    assertPendingClaimContract:item=>{
+      if(!missionWorkerActionGrantsMatchV1(item.actionGrant,grant))
+        throw new Error('NATIVE_SOURCE_PENDING_GRANT_CONTRACT_CHANGED');
+    }});
   if(!claim)return {processed:false,reason:'native-source-exact-claim-unavailable'};
   let nativeProofRefs=[];
   let chain=null,nativeReleased=false,nativeTerminalProven=false,nativeCompletion=null,nativeResult=null,proposal=null,proposalReadError='',expectedResult=null;
+  let nativeTransportEntered=false;
   let claimSnapshot,binding,claimedState,originalRevision,monitor,monitorBusy=false;
   const controller=new AbortController();
   const forwardAbort=()=>controller.abort();
@@ -1146,19 +1152,19 @@ async function processFixedSourceTaskInWorker(options) {
   try {
     if(claim.pickupProof?.state!=='PROCESSING_CLAIM_PROVEN')
       throw new Error('NATIVE_SOURCE_FRESH_PROCESSING_PICKUP_REQUIRED');
-    const observed=await readMissionRecord(grant.missionId,options);
-    claimedState=observed.state;originalRevision=claimedState.revision;
-    if(originalRevision!==before.state.revision+1 || sourceContract(claimedState)!==originalContract
-      || sourceFingerprint(claim.item.actionGrant)!==sourceFingerprint(grant))
-      throw new Error('NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED');
     claimSnapshot=fixedSourceFile(claim.processingPath,131072);
-    const item=JSON.parse(claimSnapshot.bytes);
-    if(sourceFingerprint(item)!==sourceFingerprint(claim.item))throw new Error('NATIVE_SOURCE_CLAIM_BYTES_CHANGED');
-    let qualification;
     binding=Object.freeze({requestId:'source-'+randomUUID(),sourceHead:grant.sourceRevision,
       custodyRecordSha256:probe.custodyRecordSha256,
       nativeRecordId:probe.nativeRecordId,
       actionId:grant.actionId,missionId:grant.missionId,claimSha256:fixedSourceHash(claimSnapshot.bytes)});
+    const item=JSON.parse(claimSnapshot.bytes);
+    if(sourceFingerprint(item)!==sourceFingerprint(claim.item))throw new Error('NATIVE_SOURCE_CLAIM_BYTES_CHANGED');
+    const observed=await readMissionRecord(grant.missionId,options);
+    claimedState=observed.state;originalRevision=claimedState.revision;
+    if(originalRevision!==before.state.revision+1 || sourceContract(claimedState)!==originalContract
+      || !missionWorkerActionGrantsMatchV1(claim.item.actionGrant,grant))
+      throw new Error('NATIVE_SOURCE_CLAIM_GRANT_OR_REVISION_CHANGED');
+    let qualification;
     assertClaim();assertState(claimedState);
     chain=await beginMissionWorkerExecutionReceiptChain(claim,{...options,actionGrant:grant});
     if(!chain || chain.state!=='progress' || chain.phase!=='worker-execution-active')
@@ -1177,6 +1183,7 @@ async function processFixedSourceTaskInWorker(options) {
       try {const state=(await readMissionRecord(grant.missionId,options)).state;assertState(state);}
       catch{controller.abort();}finally{monitorBusy=false;}
     },1000);
+    nativeTransportEntered=true;
     nativeResult=await executeFixedSourceTaskRuntimeV1(qualification,binding,{
       signal:controller.signal,
       onPrepared:async prepared=>{
@@ -1297,7 +1304,30 @@ async function processFixedSourceTaskInWorker(options) {
     if(terminal.preconditionFailed)return held('NATIVE_SOURCE_FAILURE_TERMINAL_CAS_FAILED');
     return terminal.result;
   } catch(error) {
-    return held(error?.message||'NATIVE_SOURCE_PARENT_INCOMPLETE');
+    const code=/^[A-Z][A-Z0-9_:-]{0,95}$/.test(error?.message??'')
+      ?error.message:'NATIVE_SOURCE_PARENT_INCOMPLETE';
+    const proofId='native-source-held-'+fixedSourceHash(Buffer.from(grant.actionId)).slice(0,24);
+    const proofRef='proof/'+proofId+'.json';
+    let holdDiagnosticPublished=false;
+    let holdDiagnosticBlocker='HOLD_DIAGNOSTIC_PUBLICATION_UNPROVEN';
+    try {
+      const diagnostic=createSharedWorkspaceProofRecord({proofId,participantId:'mission-worker',
+        timestampUtc:new Date().toISOString(),correlationId:grant.actionId,status:'HELD',
+        relatedIssue:'#'+grant.issueNumber,
+        proofRefs:[proofRef],summary:JSON.stringify({reason:code,missionId:grant.missionId,
+          actionId:grant.actionId,sourceHead:grant.sourceRevision,
+          claimSha256:binding?.claimSha256??'UNPROVEN',nativeTransportEntered,
+          executionReceiptChainPresent:chain!==null,originalClaimPreserved:true,
+          historicalExecutionOutcome:'UNKNOWN',physicalExclusionGranted:false,
+          claimReleaseAuthority:false})});
+      const written=await writeAtomicJson(options.sharedWorkspaceRoot,['proof',proofId+'.json'],
+        diagnostic,{repoRoot:options.repoRoot});
+      holdDiagnosticPublished=written.ok===true;
+      if(holdDiagnosticPublished)holdDiagnosticBlocker='';
+      else if(/^[A-Z][A-Z0-9_:-]{0,95}$/.test(written.reason??''))holdDiagnosticBlocker=written.reason;
+    } catch { /* Diagnostic failure never releases ownership or invents a terminal. */ }
+    return held(code,{nativeTransportEntered,holdDiagnosticPublished,holdDiagnosticBlocker,
+      holdDiagnosticRef:holdDiagnosticPublished?proofRef:null});
   } finally {
     if(monitor)clearInterval(monitor);
     options.signal?.removeEventListener('abort',forwardAbort);
