@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
+import { inspectFixedRuntimeQualificationV1, executeFixedMaintenanceRuntimeV1, consumeFixedRuntimeTerminalProvenanceV1, consumeFixedRuntimePrelaunchExclusionV1, fixedRuntimeMaintenanceActionQualifiedV1 } from './sovereign-fixed-runtime-parent-v1.mjs';
 import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mjs';
 import { createMaintenanceCustodyStoreV1, readMaintenanceRecoverySourceV1 } from './sovereign-maintenance-custody-store-v1.mjs';
 import { isProvenSovereignWindowsReviewerPreExecutionDenialV1 } from '../shared/agents/sovereignCommanderV1.mjs';
@@ -298,10 +298,10 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
       if (stopped) return blocked('SOVEREIGN_MAINTENANCE_OWNER_UNAVAILABLE');
       if (child || state.running || state.maintenanceInFlight) return blocked('SOVEREIGN_MAINTENANCE_OWNER_BUSY');
       const nativeWindows = process.platform === 'win32' && !options.spawnImpl;
-      if (nativeWindows && command?.plan?.processId !== 'repair-goal-builder-flow')
+      if (nativeWindows && !fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId))
         return blocked('FIXED_RUNTIME_PROFILE_NOT_QUALIFIED');
       const nativeGoal = nativeWindows
-        && command?.plan?.processId === 'repair-goal-builder-flow';
+        && fixedRuntimeMaintenanceActionQualifiedV1(command?.plan?.processId);
       const qualification = nativeGoal ? inspectFixedRuntimeQualificationV1() : null;
       if (nativeGoal && (!custodyStore || qualification?.ok !== true))
         return blocked(qualification?.reason || 'FIXED_RUNTIME_QUALIFICATION_UNPROVEN');
