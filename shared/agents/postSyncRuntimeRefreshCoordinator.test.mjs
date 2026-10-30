@@ -649,3 +649,131 @@ test('ordinary Commander script refreshes remain independent of desktop-plugin r
   assert.equal(result.ok, true);
   assert.equal(result.plan.pluginHostActivationRequired, false);
 });
+
+test('invocation-loaded ignition sources do not introduce a post-sync service launch', async () => {
+  for (const path of [
+    'scripts/ignite-stephanos-local.mjs',
+    'scripts/ignition-cockpit-model.mjs',
+    'scripts/run-battle-bridge-ignition.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: Object.fromEntries([
+        'refreshUi', 'restartBackend', 'restartMissionWorker',
+        'restartGitHubMailbox', 'refreshSovereignCommander', 'confirmNaturalReload',
+      ].map(name => [name, async () => { calls.push(name); return pass(); }])),
+    });
+    assert.equal(result.ok, true, path);
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED, path);
+    assert.deepEqual(result.plan.internal.noRuntimePaths, [path], path);
+    assert.deepEqual(result.plan.targetIds, [], path);
+    assert.deepEqual(calls, [], path);
+  }
+});
+
+test('the existing relay core uses natural reload and rejects stale source proof', async () => {
+  const path = 'scripts/chatgpt-shared-workspace-github-relay-core.mjs';
+  for (const observedHead of [A, B]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [path],
+      adapters: {
+        confirmNaturalReload: async () => { calls.push('natural'); return pass(observedHead); },
+        refreshUi: async () => { calls.push('ui'); return pass(); },
+        restartBackend: async () => { calls.push('backend'); return pass(); },
+        restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      },
+    });
+    assert.deepEqual(result.plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+    assert.deepEqual(calls, ['natural']);
+    assert.equal(result.ok, observedHead === B);
+    assert.equal(result.exactHeadProofOk, observedHead === B);
+    assert.equal(result.blocker, observedHead === B ? '' : 'REFRESH_PROOF_FAILED:natural-reload');
+  }
+});
+
+// Authenticated protected-main comparison 5e0cdfc..dcecfc6 (PRs 2344, 1832,
+// 3263 and 2481). This is source-range proof, not the private host's debt list.
+const POST_3328_PROTECTED_RANGE = [
+  'docs/architecture/autonomous-failure-sentinel-m1-v1.md',
+  'docs/operations/universal-project-chat-bootstrap-v1.md',
+  'scripts/chatgpt-shared-workspace-github-relay-core.mjs',
+  'scripts/chatgpt-universal-project-chat-bootstrap-wiring.test.mjs',
+  'scripts/ignite-stephanos-local.mjs',
+  'scripts/ignite-stephanos-local.test.mjs',
+  'scripts/ignition-cockpit-model.mjs',
+  'scripts/ignition-cockpit-model.test.mjs',
+  'scripts/mission-orchestrator-worker-supervised.mjs',
+  'scripts/mission-orchestrator-worker-supervised.test.mjs',
+  'scripts/ollama-ignition-autostart.test.mjs',
+  'scripts/run-battle-bridge-ignition.mjs',
+  'scripts/run-battle-bridge-ignition.test.mjs',
+  'shared/agents/autonomousFailureSentinelV1.mjs',
+  'shared/agents/autonomousFailureSentinelV1.test.mjs',
+  'shared/agents/universalProjectChatBootstrapV1.mjs',
+];
+
+test('the actual later protected range retains backend and worker proof requirements', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B, changedPaths: POST_3328_PROTECTED_RANGE,
+    adapters: {
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+      restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.plan.changedPathCount, 16);
+  assert.deepEqual(result.plan.internal.unknownPaths, []);
+  assert.deepEqual(result.plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.deepEqual(calls, ['backend', 'worker', 'natural']);
+  assert.equal(result.ok, true);
+  assert.equal(result.exactHeadProofOk, true);
+});
+
+test('invocation-loaded additions cannot satisfy retained launcher debt with stale UI proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A, afterHead: B,
+    changedPaths: [...POST_3328_PROTECTED_RANGE, 'scripts/battle-bridge-ignition-supervisor.mjs'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(A); },
+      restartBackend: async () => { calls.push('backend'); return pass(); },
+      restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
+  assert.equal(result.blocker, 'REFRESH_PROOF_FAILED:stephanos-ui-4173');
+  assert.deepEqual(calls, ['ui']);
+});
+
+test('relay and ignition allowances refuse unknown neighboring scripts before any target executes', async () => {
+  for (const path of [
+    'scripts/chatgpt-shared-workspace-github-relay-core-unregistered.mjs',
+    'scripts/chatgpt-shared-workspace-github-relay-new-core.mjs',
+    'scripts/ignition-cockpit-model-unregistered.mjs',
+    'scripts/run-battle-bridge-ignition-unregistered.mjs',
+    'scripts/unregistered-ignition.mjs',
+  ]) {
+    const calls = [];
+    const result = await executePostSyncRefreshPlan({
+      beforeHead: A, afterHead: B, changedPaths: [...POST_3328_PROTECTED_RANGE, path],
+      adapters: {
+        restartBackend: async () => { calls.push('backend'); return pass(); },
+        restartMissionWorker: async () => { calls.push('worker'); return pass(); },
+        confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+      },
+    });
+    assert.equal(result.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH, path);
+    assert.equal(result.plan.automaticExecutionAllowed, false, path);
+    assert.ok(result.plan.internal.unknownPaths.includes(path), path);
+    assert.deepEqual(calls, [], path);
+  }
+});
