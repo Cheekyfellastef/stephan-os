@@ -33,13 +33,31 @@ Only a valid canonical READY winner can establish completion. A validated
 RECONCILING/BLOCKED fence can remove the false global live-source veto while
 continuing to refuse outage pickup. Unknown evidence preserves the veto.
 
-A concurrent winner may be newer than the caller's GitHub observation. When its
-observation is at least as recent, the programme refreshes the durable workspace
-and selects only mirror rows from that winning observation, preserving their
-terminal state. Old caller memory and old durable READY rows cannot become
-current again. An incomplete winner can therefore expose fewer runnable goals;
-it does not grant permission to rebuild stale ones. A newer live primary
-observation remains the primary source when the held publisher is older.
+A strict per-record classifier was insufficient: an initially valid READY
+observation can be overtaken by a newer fence during the subsequent feed read.
+The third repair round therefore introduces one admission snapshot rather than
+another condition on an earlier publication flag.
+
+`projectGoalMirrorAdmissionSnapshot` reconciles the publication readback with
+the refreshed feed's canonical status, then makes the winning observation,
+phase, goal-row selection and admission veto together. A known newer validated
+observation dominates an older cached read. A singular later read determines
+the phase within the same observation; conflicting phases in one unordered
+feed remain fenced. Missing or invalid later canonical evidence cannot borrow
+earlier validity.
+
+Only rows matching the winning observation, bounded lease and canonical
+identity are eligible. Conflicting same-issue rows are excluded. Rows ahead of
+the known fence make the snapshot UNKNOWN. A durable FENCED phase cannot admit
+READY rows even in the same observation, since a repeated reconciliation may
+still be revoking them. Terminal and non-pickup rows remain visible. A newer
+live primary observation remains primary when the held publisher is older;
+an older READY cannot certify publication of that newer observation.
+
+The same snapshot supplies selected rows, outage reconciliation input and the
+final programme source veto. Earlier `publication.ok` is historical publisher
+evidence, not the final admission decision. This is proof as of the last
+validated read; it creates no atomic scheduler, lease or execution authority.
 
 Failed lock release also reads the actual canonical state. It never turns a
 READY mirror into a disabled-fallback claim or certifies publication. Observation
@@ -55,3 +73,10 @@ two real publishers sharing a temporary fixture lock. The latter holds a newer
 revocation in progress, proves an older caller cannot project its READY goal,
 then verifies that the winning CLOSED goal persists. These are source proofs;
 production recovery and material source pickup require separate live receipts.
+
+Interleaving properties cover READY(T1) to FENCED(T2) between reads, subsequent
+READY(T2), same-observation phases, newer known fences followed by older cached
+reads, missing/foreign/malformed later evidence and mixed/contradictory rows.
+The original storage-failure and later-feed races both have preserved RED
+counterexamples and GREEN regressions. No clean review or earlier operator
+approval can override a newly reproduced authority-bearing failure.

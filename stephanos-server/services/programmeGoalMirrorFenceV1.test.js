@@ -7,6 +7,7 @@ import {
   buildGithubGoalMirrorEstate, projectGoalMirrorReconciliationState,
   publishGithubGoalMirrorEstate, projectGithubGoalMirrorFallback,
   selectGoalRecordsForProgrammeProjection, readAuthoritativeProgrammeProjection,
+  projectGoalMirrorAdmissionSnapshot,
 } from './programmeAuthorityService.js';
 import { createSharedWorkspaceStatusRecord, writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createProgrammeControllerHeartbeat } from '../../shared/agents/programmeAuthorityV1.mjs';
@@ -110,13 +111,104 @@ test('canonical READY winner is completion evidence, never evidence fallback is 
   assert.equal(projectGithubGoalMirrorFallback(mirror.records, { ok: false }, { selectedGoal: 2002 }, NOW, [result.reconciliationStatus]).valid, true);
 });
 
+test('a newer fence observed during feed refresh invalidates the earlier READY row', async () => {
+  const publication = await busy(fence({ status: 'READY', fallbackAllowed: true }));
+  const observed = '2026-10-30T01:00:30.000Z';
+  const later = fence({ timestampUtc: observed, mirrorObservedAtUtc: observed,
+    mirrorLeaseExpiresAtUtc: '2026-10-31T01:00:30.000Z' });
+  const records = selectGoalRecordsForProgrammeProjection(mirror, publication, { records: {
+    goalRecords: mirror.records, statusRecords: [later],
+  } }, NOW);
+  assert.deepEqual(records, []);
+});
+
+test('admission snapshot properties reconcile phase, epoch and row order together', () => {
+  const at = (offset) => new Date(Date.parse(NOW) + offset).toISOString();
+  const statusAt = (offset, status) => fence({ timestampUtc: at(offset), mirrorObservedAtUtc: at(offset),
+    mirrorLeaseExpiresAtUtc: at(offset + 86400000), status, fallbackAllowed: status === 'READY' });
+  const rowAt = (offset, state = 'READY') => ({ ...mirror.records[0], timestampUtc: at(offset),
+    mirrorObservedAtUtc: at(offset), mirrorLeaseExpiresAtUtc: at(offset + 86400000),
+    state, status: state, route: state === 'CLOSED' ? 'CLOSED' : mirror.records[0].route,
+    mirrorBuildPickupAllowed: state === 'READY' });
+  for (const priorPhase of ['READY', 'RECONCILING', 'BLOCKED']) {
+    for (const laterPhase of ['READY', 'RECONCILING', 'BLOCKED']) {
+      for (const offset of [-30000, 0, 30000]) {
+        for (const rowPhase of ['READY', 'CLOSED']) {
+          const winningOffset = Math.max(0, offset);
+          const winningPhase = offset >= 0 ? laterPhase : priorPhase;
+          const row = rowAt(winningOffset, rowPhase);
+          const snapshot = projectGoalMirrorAdmissionSnapshot(mirror,
+            { ok: true, reconciliationStatus: statusAt(0, priorPhase) }, { records: {
+              statusRecords: [statusAt(offset, laterPhase)], goalRecords: [rowAt(-60000), row],
+            } }, NOW);
+          assert.equal(snapshot.valid, true);
+          assert.equal(snapshot.winningObservedAtUtc, at(winningOffset));
+          assert.equal(snapshot.publicationComplete, winningPhase === 'READY');
+          assert.equal(snapshot.fallbackFenced, winningPhase !== 'READY');
+          assert.deepEqual(snapshot.goalRecords, winningPhase === 'READY' || rowPhase === 'CLOSED' ? [row] : []);
+          assert.equal(snapshot.publicationComplete && snapshot.fallbackFenced, false);
+        }
+      }
+    }
+  }
+  const prior = { ok: true, reconciliationStatus: statusAt(0, 'READY') };
+  for (const [, delta] of invalid) {
+    const record = delta === null ? null : fence(delta);
+    const snapshot = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+      statusRecords: record ? [record] : [], goalRecords: mirror.records,
+    } }, NOW);
+    assert.equal(snapshot.valid, false);
+    assert.equal(snapshot.publicationComplete || snapshot.fallbackFenced, false);
+    assert.deepEqual(snapshot.goalRecords, []);
+  }
+  const ambiguous = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+    statusRecords: [statusAt(0, 'READY'), statusAt(0, 'RECONCILING')], goalRecords: [rowAt(0)],
+  } }, NOW);
+  assert.equal(ambiguous.state, 'FENCED');
+  assert.deepEqual(ambiguous.goalRecords, []);
+  const duplicate = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+    statusRecords: [statusAt(0, 'READY')], goalRecords: [rowAt(0), rowAt(0, 'CLOSED')],
+  } }, NOW);
+  assert.deepEqual(duplicate.goalRecords, []);
+  const ahead = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+    statusRecords: [statusAt(0, 'READY')], goalRecords: [rowAt(0), rowAt(30000, 'CLOSED')],
+  } }, NOW);
+  assert.equal(ahead.valid, false);
+  assert.deepEqual(ahead.goalRecords, []);
+  const noMember = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+    statusRecords: [fence({ status: 'READY', fallbackAllowed: true, mirroredIssueNumbers: [] })], goalRecords: mirror.records,
+  } }, NOW);
+  assert.deepEqual(noMember.goalRecords, []);
+  const contradictoryPhase = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+    statusRecords: [fence()], goalRecords: [{ ...rowAt(0), mirrorBuildPickupAllowed: false }],
+  } }, NOW);
+  assert.deepEqual(contradictoryPhase.goalRecords, []);
+  const ready = statusAt(0, 'READY');
+  for (const bad of [
+    { ...rowAt(0), mergeAuthority: true }, { ...rowAt(0), status: 'CLOSED' },
+    { ...rowAt(0), mirrorBuildPickupAllowed: 'true' }, { ...rowAt(0), mirrorRepository: 'Foreign/repo' },
+  ]) {
+    const snapshot = projectGoalMirrorAdmissionSnapshot(mirror, prior, { records: {
+      statusRecords: [ready], goalRecords: [bad],
+    } }, NOW);
+    assert.deepEqual(snapshot.goalRecords, []);
+    assert.equal(projectGithubGoalMirrorFallback([bad], { ok: false }, { selectedGoal: 2002 }, NOW, [ready]).valid, false);
+  }
+  assert.equal(projectGithubGoalMirrorFallback([rowAt(0), rowAt(0, 'CLOSED')],
+    { ok: false }, { selectedGoal: 2002 }, NOW, [ready]).valid, false);
+});
+
 test('newer in-progress winner excludes older memory and old durable mirror rows', async () => {
   const observed = '2026-10-30T01:00:30.000Z';
   const result = await busy(fence({ timestampUtc: observed, mirrorObservedAtUtc: observed,
     mirrorLeaseExpiresAtUtc: '2026-10-31T01:00:30.000Z' }));
-  const winner = { ...mirror.records[0], mirrorObservedAtUtc: observed, state: 'CLOSED', marker: 'durable-winner' };
+  const winner = { ...mirror.records[0], timestampUtc: observed, mirrorObservedAtUtc: observed,
+    mirrorLeaseExpiresAtUtc: result.reconciliationStatus.mirrorLeaseExpiresAtUtc,
+    state: 'CLOSED', status: 'CLOSED', route: 'CLOSED', mirrorBuildPickupAllowed: false, marker: 'durable-winner' };
   const older = { ...mirror.records[0], goalId: 'goal-2003', marker: 'stale-durable' };
-  const records = selectGoalRecordsForProgrammeProjection(mirror, result, { records: { goalRecords: [winner, older] } });
+  const records = selectGoalRecordsForProgrammeProjection(mirror, result, { records: {
+    goalRecords: [winner, older], statusRecords: [result.reconciliationStatus],
+  } }, NOW);
   assert.deepEqual(records, [winner]);
   assert.equal(records[0].state, 'CLOSED');
 });
@@ -126,9 +218,9 @@ test('older publisher cannot displace a newer live primary observation', async (
     mirrorObservedAtUtc: '2026-10-30T00:59:30.000Z', mirrorLeaseExpiresAtUtc: '2026-10-31T00:59:30.000Z' }));
   assert.equal(result.fallbackFenced, true);
   assert.equal(result.goalRecordsSource, 'live-observation');
-  const closed = { ...mirror.records[0], state: 'CLOSED', mirrorBuildPickupAllowed: false };
-  assert.deepEqual(selectGoalRecordsForProgrammeProjection({ records: [closed] }, result,
-    { records: { goalRecords: mirror.records } }), [closed]);
+  const closed = { ...mirror.records[0], state: 'CLOSED', status: 'CLOSED', route: 'CLOSED', mirrorBuildPickupAllowed: false };
+  assert.deepEqual(selectGoalRecordsForProgrammeProjection({ ...mirror, records: [closed] }, result,
+    { records: { goalRecords: mirror.records, statusRecords: [result.reconciliationStatus] } }, NOW), [closed]);
 });
 
 test('a malformed newer observation cannot suppress an admitted publisher', async () => {
@@ -171,7 +263,7 @@ test('failed fence write and lock release cannot resurrect an older durable READ
   const olderFence = fence({ timestampUtc: observed, mirrorObservedAtUtc: observed,
     mirrorLeaseExpiresAtUtc: '2026-10-31T00:59:30.000Z' });
   const olderReady = { ...mirror.records[0], mirrorObservedAtUtc: observed };
-  const closed = { ...mirror.records[0], state: 'CLOSED', mirrorBuildPickupAllowed: false };
+  const closed = { ...mirror.records[0], state: 'CLOSED', status: 'CLOSED', route: 'CLOSED', mirrorBuildPickupAllowed: false };
   const current = { ...mirror, records: [closed] };
   const publication = await publishGithubGoalMirrorEstate(current, { root, nowUtc: NOW, testOnly: true,
     dependencies: {
@@ -182,7 +274,7 @@ test('failed fence write and lock release cannot resurrect an older durable READ
   assert.equal(publication.ok, false);
   assert.equal(publication.fallbackFenced, true);
   const records = selectGoalRecordsForProgrammeProjection(current, publication,
-    { records: { goalRecords: [olderReady] } });
+    { records: { goalRecords: [olderReady], statusRecords: [olderFence] } }, NOW);
   assert.deepEqual(records, [closed]);
   assert.equal(records[0].state, 'CLOSED');
 });
@@ -192,7 +284,13 @@ test('actual programme projection clears only the proven BUSY fence veto and ref
     sourceRevision: HEAD, cycleState: 'RECONCILING', timestampUtc: NOW, boundedMutationSteps: 0 });
   const worker = createMissionWorkerHeartbeatRecord({ timestampUtc: NOW, repositoryRoot: paths.repositoryRoot,
     branch: 'main', headSha: HEAD, pid: 12345, launchIdentityId: '1'.repeat(64), workerStartedAtUtc: '2026-10-30T00:59:00.000Z' });
-  for (const [record, expectedVeto] of [[fence(), false], [fence({ mergeAuthority: true }), true], [null, true]]) {
+  const ready = fence({ status: 'READY', fallbackAllowed: true });
+  const newerFence = fence({ timestampUtc: '2026-10-30T01:00:30.000Z', mirrorObservedAtUtc: '2026-10-30T01:00:30.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-10-31T01:00:30.000Z' });
+  for (const [record, later, expectedVeto] of [
+    [fence(), fence(), false], [fence({ mergeAuthority: true }), fence({ mergeAuthority: true }), true], [null, null, true],
+    [ready, newerFence, false], [ready, fence({ mergeAuthority: true }), true], [ready, null, true],
+  ]) {
     let feedReads = 0;
     const projection = await readAuthoritativeProgrammeProjection({ root, home, repoRoot: paths.repositoryRoot,
       env: {}, nowUtc: NOW, testOnly: true, sharedGoalEstateSnapshot: false,
@@ -203,8 +301,8 @@ test('actual programme projection clears only the proven BUSY fence veto and ref
         fetchGithubGoalIssues: async () => ({ status: 'fetched', ...estate }),
         fetchGithubPrEvidence: async () => { throw new Error('unexpected PR access'); },
         readCurrentExecutionReceipt: async () => { throw new Error('unexpected execution access'); },
-        readWorkspaceFeed: async () => { feedReads++; return { state: 'ready', records: {
-          goalRecords: mirror.records, statusRecords: record ? [record] : [], proofRecords: [], receiptRecords: [], capabilityRecords: [],
+        readWorkspaceFeed: async () => { feedReads++; const observed = feedReads === 1 ? record : later; return { state: 'ready', records: {
+          goalRecords: mirror.records, statusRecords: observed ? [observed] : [], proofRecords: [], receiptRecords: [], capabilityRecords: [],
         } }; },
         listMissionRecords: async () => [],
         // Prevent non-injected specialized status publication. Only the actual
@@ -225,7 +323,8 @@ test('actual programme projection clears only the proven BUSY fence veto and ref
       } });
     assert.equal(projection.goalMirrorEstate.ok, true);
     assert.equal(projection.blockers.includes('source:github-goal-mirror-fail-closed-fence-unproven'), expectedVeto);
-    assert.equal(feedReads, expectedVeto ? 1 : 2);
+    assert.equal(feedReads, 2);
+    assert.equal(projection.goalMirrorAdmission.goalRecordsCount, 0);
   }
 });
 
@@ -254,7 +353,10 @@ test('real concurrent publisher keeps the newer revocation and never projects th
     assert.equal(reader.fallbackFenced, true);
     assert.equal(reader.ok, false);
     const before = JSON.parse(await readFile(path.join(fixtureRoot, 'goals', 'goal-2002.json'), 'utf8'));
-    assert.deepEqual(selectGoalRecordsForProgrammeProjection(mirror, reader, { records: { goalRecords: [before] } }), []);
+    const inProgress = JSON.parse(await readFile(path.join(fixtureRoot, 'status', 'github-goal-mirror-reconciliation.json'), 'utf8'));
+    assert.deepEqual(selectGoalRecordsForProgrammeProjection(mirror, reader, { records: {
+      goalRecords: [before], statusRecords: [inProgress],
+    } }, observed), []);
     release();
     assert.equal((await writer).ok, true);
     const after = JSON.parse(await readFile(path.join(fixtureRoot, 'goals', 'goal-2002.json'), 'utf8'));
@@ -263,7 +365,10 @@ test('real concurrent publisher keeps the newer revocation and never projects th
     assert.equal(after.mirrorObservedAtUtc, observed);
     const winner = await publishGithubGoalMirrorEstate(mirror, { root: fixtureRoot, nowUtc: observed });
     assert.equal(winner.classification, 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED');
-    assert.deepEqual(selectGoalRecordsForProgrammeProjection(mirror, winner, { records: { goalRecords: [after] } }), [after]);
+    const committed = JSON.parse(await readFile(path.join(fixtureRoot, 'status', 'github-goal-mirror-reconciliation.json'), 'utf8'));
+    assert.deepEqual(selectGoalRecordsForProgrammeProjection(mirror, winner, { records: {
+      goalRecords: [after], statusRecords: [committed],
+    } }, observed), [after]);
   } finally {
     release();
     if (writer) await writer;
